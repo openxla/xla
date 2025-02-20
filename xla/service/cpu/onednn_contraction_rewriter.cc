@@ -1153,7 +1153,7 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
     }
     // TODO(intel-tf): Remove this condition after enabling weights prepacking
     // for convolutions
-    if constexpr (std::is_same<PrimDesc, dnnl::matmul::primitive_desc>::value) {
+    if constexpr (std::is_same_v<PrimDesc, dnnl::matmul::primitive_desc>) {
       auto weights_prepack = PrepackWeights<PrimDesc>(custom_call);
       if (!weights_prepack.ok()) {
         VLOG(2) << weights_prepack.status();

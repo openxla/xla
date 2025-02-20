@@ -84,31 +84,32 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   if (instr->opcode() != HloOpcode::kCustomCall) {
     return nullptr;
   }
-  auto custom_call = Cast<xla::HloCustomCallInstruction>(instr);
-  auto backend_config = custom_call->backend_config<BackendConfig>();
+  xla::HloCustomCallInstruction* custom_call =
+      Cast<xla::HloCustomCallInstruction>(instr);
+  absl::StatusOr<BackendConfig> backend_config =
+      custom_call->backend_config<BackendConfig>();
   if (!backend_config.ok()) {
     return nullptr;
   }
   auto& conv_config = backend_config.value().onednn_conv_config();
-  auto operands = custom_call->operands();
-  auto input = operands[0];
-  auto weight = operands[1];  // assuming weights is the second operand
-  auto input_shape = input->shape();
-  auto weight_shape = weight->shape();
-  auto output_shape = custom_call->shape().IsTuple()
-                          ? custom_call->shape().tuple_shapes(0)
-                          : custom_call->shape();
+  absl::InlinedVector<HloInstruction*, 2> operands = custom_call->operands();
+  Shape input_shape = operands[0]->shape();
+  Shape weight_shape =
+      operands[1]->shape();  // assuming weights is the second operand
+  Shape output_shape = custom_call->shape().IsTuple()
+                           ? custom_call->shape().tuple_shapes(0)
+                           : custom_call->shape();
 
-  auto fused_operands =
+  absl::InlinedVector<HloInstruction*, 2> fused_operands =
       HloInstruction::InstructionVector(operands.begin() + 2, operands.end());
   std::vector<Shape> fused_shapes;
   std::transform(fused_operands.begin(), fused_operands.end(),
                  std::back_inserter(fused_shapes),
                  [](const HloInstruction* instr) { return instr->shape(); });
 
-  auto input_md = ShapeToMemDesc(input_shape);
-  auto weights_md = ShapeToMemDesc(weight_shape);
-  auto output_md = ShapeToMemDesc(output_shape);
+  memory::desc input_md = ShapeToMemDesc(input_shape);
+  memory::desc weights_md = ShapeToMemDesc(weight_shape);
+  memory::desc output_md = ShapeToMemDesc(output_shape);
 
   std::vector<int64_t> inp_perm_axes(conv_config.dims());
   std::vector<int64_t> ker_perm_axes(conv_config.dims());
@@ -136,18 +137,9 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
       conv_config.output().data().spatial_dims().begin(),
       conv_config.output().data().spatial_dims().end());
 
-  std::for_each(inp_dim_axes.begin(), inp_dim_axes.end(),
-                [&inp_perm_axes, &index_i](int64_t& n) {
-                  inp_perm_axes[--n] = index_i++;
-                });
-  std::for_each(ker_dim_axes.begin(), ker_dim_axes.end(),
-                [&ker_perm_axes, &index_k](int64_t& n) {
-                  ker_perm_axes[--n] = index_k++;
-                });
-  std::for_each(out_dim_axes.begin(), out_dim_axes.end(),
-                [&out_perm_axes, &index_o](int64_t& n) {
-                  out_perm_axes[--n] = index_o++;
-                });
+  for (int64_t& n : inp_dim_axes) inp_perm_axes[--n] = index_i++;
+  for (int64_t& n : ker_dim_axes) ker_perm_axes[--n] = index_k++;
+  for (int64_t& n : out_dim_axes) out_perm_axes[--n] = index_o++;
 
   memory::dims strides(conv_config.window().strides().begin(),
                        conv_config.window().strides().end());
@@ -158,24 +150,23 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   memory::dims rhs_dilations(conv_config.window().window_dilations().begin(),
                              conv_config.window().window_dilations().end());
 
-  std::for_each(strides.begin(), strides.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(pad_left.begin(), pad_left.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(pad_right.begin(), pad_right.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(rhs_dilations.begin(), rhs_dilations.end(),
-                [](int64_t& n) { n -= 2; });
+  for (int64_t& n : strides) n -= 1;
+  for (int64_t& n : pad_left) n -= 1;
+  for (int64_t& n : pad_right) n -= 1;
+  for (int64_t& n : rhs_dilations) n -= 2;
 
-  auto groups = conv_config.feature_groups();
+  uint64_t groups = conv_config.feature_groups();
 
   std::vector<int> inp_axes(inp_perm_axes.begin(), inp_perm_axes.end());
   std::vector<int> ker_axes(ker_perm_axes.begin(), ker_perm_axes.end());
   std::vector<int> out_axes(out_perm_axes.begin(), out_perm_axes.end());
 
-  auto new_inp_md = input_md.permute_axes(inp_axes);
-  auto new_ker_md = weights_md.permute_axes(ker_axes);
-  auto new_res_md = output_md.permute_axes(out_axes);
+  memory::desc new_inp_md = input_md.permute_axes(inp_axes);
+  memory::desc new_ker_md = weights_md.permute_axes(ker_axes);
+  memory::desc new_res_md = output_md.permute_axes(out_axes);
 
   if (groups > 1) {
-    auto corr_dims = new_ker_md.get_dims();
+    memory::dims corr_dims = new_ker_md.get_dims();
     corr_dims.insert(corr_dims.begin(), 1, groups);
     corr_dims[1] = corr_dims[1] / groups;
     new_ker_md = new_ker_md.reshape(corr_dims);
@@ -186,19 +177,19 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
                  std::back_inserter(fused_mds),
                  [](const Shape& shape) { return ShapeToMemDesc(shape); });
 
-  auto bias_md = memory::desc();
+  memory::desc bias_md = memory::desc();
 
   dnnl::post_ops post_ops =
       PopulateOneDnnPostOps(dnnl::engine(dnnl::engine::kind::cpu, 0), fused_mds,
                             &conv_config.fusions(), nullptr, &bias_md);
 
-  auto any_ker_md =
+  memory::desc any_ker_md =
       memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
                    dnnl::memory::format_tag::any);
-  auto any_inp_md =
+  memory::desc any_inp_md =
       memory::desc(new_inp_md.get_dims(), new_inp_md.get_data_type(),
                    GetFormatTag(new_inp_md.get_ndims()));
-  auto any_res_md =
+  memory::desc any_res_md =
       memory::desc(new_res_md.get_dims(), new_res_md.get_data_type(),
                    GetFormatTag(new_res_md.get_ndims()));
 
