@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
@@ -58,7 +59,6 @@ namespace {
 
 using ::testing::SizeIs;
 using ::tsl::testing::StatusIs;
-using HloModuleAndArguments = ::xla::FunctionalHloRunner::HloModuleAndArguments;
 
 bool IsTestingCpu() {
 #ifdef XLA_TEST_BACKEND_CPU
@@ -612,13 +612,13 @@ TEST_F(FunctionalHloRunnerTest, ReadHloUnoptimizedSnapshot) {
   // Read HloModuleAndArguments from text dump.
   TF_ASSERT_OK_AND_ASSIGN(
       HloModuleAndArguments hlo_module_and_arguments_from_text,
-      FunctionalHloRunner::LoadHloModuleAndArguments(
-          path_to_text_hlo, InputFormat::kUnoptimizedSnapshotProtoText));
+      LoadHloModuleAndArguments(path_to_text_hlo,
+                                InputFormat::kUnoptimizedSnapshotProtoText));
   // Read HloModuleAndArguments from binary dump.
   TF_ASSERT_OK_AND_ASSIGN(
       HloModuleAndArguments hlo_module_and_arguments_from_binary,
-      FunctionalHloRunner::LoadHloModuleAndArguments(
-          path_to_binary_hlo, InputFormat::kUnoptimizedSnapshotProtoBinary));
+      LoadHloModuleAndArguments(path_to_binary_hlo,
+                                InputFormat::kUnoptimizedSnapshotProtoBinary));
 
   // Compare
   CHECK_EQ(hlo_module_and_arguments_from_binary.arguments.size(), 2);

@@ -80,6 +80,41 @@ absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromTextProtoFile(
     absl::string_view hlo_file,
     const DebugOptions& debug_options = DebugOptions::default_instance());
 
+// Supported input formats for HLO modules.
+enum class InputFormat {
+  kText,                 // Text format returned by HloModule::ToString().
+  kProtoText,            // Protobuf text format of an xla::HloProto message.
+  kProtoBinary,          // Protobuf binary format of an xla::HloProto message.
+  kSnapshotProtoBinary,  // HloSnapshot protobuf binary format. Can be dumped by
+                         // TensorFlow by setting the environment variable
+                         // xla_dump_hlo_snapshots.
+  kUnoptimizedSnapshotProtoBinary,  // HloUnoptimizedSnapshot protobuf binary
+                                    // format. Can be dumped by
+                                    // setting the flag
+                                    // xla_dump_hlo_snapshots in conjunction
+                                    // with xla_dump_as_text.
+  kUnoptimizedSnapshotProtoText,    // HloUnoptimizedSnapshot protobuf text
+                                    // format. Can be dumped by TensorFlow by
+                                    // setting the flag xla_dump_hlo_snapshots
+                                    // in conjunction with xla_dump_as_text.
+};
+
+bool AbslParseFlag(absl::string_view text, InputFormat* input_format,
+                   std::string* error);
+std::string AbslUnparseFlag(InputFormat input_format);
+
+struct HloModuleAndArguments {
+  std::unique_ptr<HloModule> hlo_module;
+
+  // The outer `std::vector` represents the list of shards. The inner
+  // `std::vector<Literal>` represents a list of arguments for a single shard
+  // partition.
+  std::vector<std::vector<Literal>> arguments;
+};
+
+absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
+    absl::string_view hlo_file, InputFormat input_format);
+
 // Creates an HloModuleConfig for a given program shape and arguments.
 // If execution_options does not set num_replicas, default_num_replicas is used.
 // num_threads is optional; if not given, intra_op_parallelism_threads not set.
