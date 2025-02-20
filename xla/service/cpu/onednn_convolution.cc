@@ -100,12 +100,10 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
                            ? custom_call->shape().tuple_shapes(0)
                            : custom_call->shape();
 
-  absl::InlinedVector<HloInstruction*, 2> fused_operands =
-      HloInstruction::InstructionVector(operands.begin() + 2, operands.end());
   std::vector<Shape> fused_shapes;
-  std::transform(fused_operands.begin(), fused_operands.end(),
-                 std::back_inserter(fused_shapes),
-                 [](const HloInstruction* instr) { return instr->shape(); });
+  for (int i = 2; i < operands.size(); ++i) {
+    fused_shapes.push_back(operands[i]->shape());
+  }
 
   memory::desc input_md = ShapeToMemDesc(input_shape);
   memory::desc weights_md = ShapeToMemDesc(weight_shape);
@@ -173,9 +171,9 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   }
 
   std::vector<memory::desc> fused_mds;
-  std::transform(fused_shapes.begin(), fused_shapes.end(),
-                 std::back_inserter(fused_mds),
-                 [](const Shape& shape) { return ShapeToMemDesc(shape); });
+  for (const Shape& shape : fused_shapes) {
+    fused_mds.push_back(ShapeToMemDesc(shape));
+  }
 
   memory::desc bias_md = memory::desc();
 
@@ -393,8 +391,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   if (conv_config.optimization_config().user_scratchpad()) {
     XLA_LIGHTWEIGHT_CHECK(scratch != nullptr);
     MemrefInfo scratch_minfo(scratch);
-    auto scratchpad_md = conv_pd->scratchpad_desc();
-    auto scratch_mem = memory(scratchpad_md, cpu_engine, scratch_minfo.Data());
+    memory::desc scratchpad_md = conv_pd->scratchpad_desc();
+    memory scratch_mem =
+        memory(scratchpad_md, cpu_engine, scratch_minfo.Data());
     conv_args.insert({DNNL_ARG_SCRATCHPAD, scratch_mem});
   }
 
