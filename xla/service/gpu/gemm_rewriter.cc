@@ -752,32 +752,24 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       // Attempt to match approximate Swich activation
       // (https://flax.readthedocs.io/en/v0.5.3/_autosummary/flax.linen.swish.html),
       // where: swish(x) = x * sigmoid(x)
-      // where: sigmoid(x) = 1/(1 + exp^(-x))
-      HloInstruction *sigmoid, *slice_or_bitcast = nullptr;
-      if (Match(instr,
-                m::MultiplyAnyOrder(
-                    m::AnyOf<HloInstruction>(
-                        m::Slice(&slice_or_bitcast,
+      // where: sigmoid(x) = 1/(1 + exp(-x))
+      HloInstruction *sigmoid, *x_input = nullptr;
+      if (Match(
+              instr,
+              m::MultiplyAnyOrder(
+                  m::AnyOf<HloInstruction>(
+                      m::Parameter(&x_input, 0),
+                      m::Slice(&x_input, CublasLtMatmulMaybeF8(&existing_gemm)),
+                      m::Bitcast(&x_input,
                                  CublasLtMatmulMaybeF8(&existing_gemm)),
-                        m::Bitcast(&slice_or_bitcast,
-                                   CublasLtMatmulMaybeF8(&existing_gemm)),
-                        CublasLtMatmulMaybeF8(&existing_gemm)),
-                    m::Op(&sigmoid).WithOneUser())) &&
-          Match(
-              sigmoid,
-              m::Divide(
-                  BcastConstScalar(1.0),
-                  m::AddAnyOrder(
-                      BcastConstScalar(1.0),
-                      m::Exp(
-                          m::AnyOf<HloInstruction>(
-                              m::Slice(&slice_or_bitcast,
-                                       CublasLtMatmulMaybeF8(&existing_gemm)),
-                              m::Bitcast(&slice_or_bitcast,
-                                         CublasLtMatmulMaybeF8(&existing_gemm)),
-                              CublasLtMatmulMaybeF8(&existing_gemm)))
-                          .WithOneUser())))) {
-        return FuseSwishActivation(instr, existing_gemm, slice_or_bitcast);
+                      CublasLtMatmulMaybeF8(&existing_gemm)),
+                  m::Op(&sigmoid).WithOneUser())) &&
+          Match(sigmoid,
+                m::Divide(BcastConstScalar(1.0),
+                          m::AddAnyOrder(BcastConstScalar(1.0),
+                                         m::Exp(m::Negate(m::Op().Is(x_input)))
+                                             .WithOneUser())))) {
+        return FuseSwishActivation(instr, existing_gemm, x_input);
       }
     }
     return absl::OkStatus();
