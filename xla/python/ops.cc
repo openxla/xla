@@ -25,12 +25,12 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"    // IWYU pragma: keep
+#include "nanobind/stl/pair.h"        // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"      // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"       // IWYU pragma: keep
+#include "nanobind/stl/vector.h"      // IWYU pragma: keep
 #include "xla/hlo/builder/lib/approx_topk.h"
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/hlo/builder/lib/comparators.h"
@@ -647,8 +647,7 @@ void BuildOpsSubmodule(nb::module_& m) {
           nb::arg("dimension"));
   ops.def("ReplicaId", &ReplicaId, nb::arg("builder"));
   ops.def("Reshape",
-          static_cast<XlaOp (*)(XlaOp, absl::Span<const int64_t>,
-                                absl::Span<const int64_t>)>(&Reshape),
+          static_cast<XlaOp (*)(XlaOp, absl::Span<const int64_t>)>(&Reshape),
           nb::arg("operand"), nb::arg("dimensions"));
   ops.def("Rev", &Rev, nb::arg("operand"), nb::arg("dimensions"));
   ops.def("RngBitGenerator", &RngBitGenerator, nb::arg("algorithm"),
