@@ -208,12 +208,10 @@ TEST_F(FunctionalHloRunnerTest, Sharded2Devices) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -237,13 +235,11 @@ TEST_F(FunctionalHloRunnerTest, UseZerosAsInputs) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   // --hlo_argument_mode=use_zeros_as_input
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -269,13 +265,11 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputs) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   // --hlo_argument_mode=uninitialized
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -350,7 +344,7 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputsWithTupledArguments) {
 
 TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
   // This test corresponds to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=16
+  // --num_replicas=1 --num_partitions=16
   // --run=false --xla_dump_to=dump_dir
 
   tsl::Env* env = tsl::Env::Default();
@@ -362,8 +356,6 @@ TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 16;
   raw_compile_options.xla_dump_to = dump_dir;
@@ -480,12 +472,10 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
 
 absl::Status RunShardedHloWithClient(xla::PjRtClient& client) {
   // This method corresponds to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=16
+  // --num_replicas=1 --num_partitions=16
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 16;
 
@@ -540,12 +530,10 @@ TEST_F(FunctionalHloRunnerTest, Sharded2DevicesHloUnoptimizedSnapshot) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
