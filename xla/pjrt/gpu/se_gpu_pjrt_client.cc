@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -1078,17 +1079,6 @@ void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
 }
 }  // namespace
 
-std::string GetBootId() {
-  std::string boot_id_str;
-  auto boot_id_str_or_status = GetBootIdString();
-  if (!boot_id_str_or_status.ok()) {
-    LOG(INFO) << boot_id_str_or_status.status();
-  } else {
-    boot_id_str = boot_id_str_or_status.value();
-  }
-  return boot_id_str;
-}
-
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
@@ -1101,7 +1091,14 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   LocalTopologyProto local_topology;
   local_topology.set_node_id(node_id);
-  local_topology.set_boot_id(GetBootId());
+  std::string boot_id_str;
+  auto boot_id_str_or_status = GetBootIdString();
+  if (!boot_id_str_or_status.ok()) {
+    LOG(INFO) << boot_id_str_or_status.status();
+  } else {
+    boot_id_str = boot_id_str_or_status.value();
+  }
+  local_topology.set_boot_id(boot_id_str);
   for (const auto& ordinal_and_device : local_device_states) {
     const se::Platform* platform =
         ordinal_and_device.second->executor()->GetPlatform();
@@ -1384,10 +1381,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
   return devices;
 }
 
-void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                           const int device_id) {
-  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
-
+std::string GetDeviceFabricInfo(const int device_id) {
   char pciBusId[] = "00000000:00:00.0";
   cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
   nvmlDevice_t device;
@@ -1404,7 +1398,7 @@ void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
 
   if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
     VLOG(2) << "NVL is not supported";
-    return;
+    return "NOT_SUPPORTED";
   }
 
   char uuid_str[36];
@@ -1419,9 +1413,71 @@ void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
       fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
       fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
       fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
-  TF_CHECK_OK(kv_store->Set(
-      absl::StrCat(GetBootId(), "/", std::to_string(device_id)),
-      absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId))));
+  return absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId));
+}
+
+std::string ConstructNodeFabricInfo(
+    std::vector<std::string>& device_fabric_infos) {
+  std::string device_cliques = device_fabric_infos.at(0);
+  for (int device_id = 1; device_id < device_fabric_infos.size(); ++device_id) {
+    absl::StrAppend(&device_cliques, "#", device_fabric_infos.at(device_id));
+  }
+  return device_cliques;
+}
+
+std::vector<std::string> ParseNodeFabricInfo(
+    absl::string_view node_fabric_info) {
+  return absl::StrSplit(node_fabric_info, "#");
+}
+
+void PopulateFabricInfo(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                        const int node_id, const int num_local_devices) {
+  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
+
+  std::vector<std::string> device_fabric_infos(num_local_devices);
+  for (int device_id = 0; device_id < num_local_devices; ++device_id) {
+    device_fabric_infos.at(device_id) = GetDeviceFabricInfo(device_id);
+  }
+
+  TF_CHECK_OK(
+      kv_store->Set(absl::StrCat("fabric_info/", std::to_string(node_id)),
+                    ConstructNodeFabricInfo(device_fabric_infos)));
+}
+
+absl::StatusOr<absl::flat_hash_map<uint64_t, std::vector<std::string>>>
+GetAllFabricInfos(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                  const int num_nodes) {
+  std::vector<absl::StatusOr<std::string>> fabric_info_strs(num_nodes);
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "GetAllFabricInfo",
+                                      DefaultThreadPoolSize());
+
+  absl::BlockingCounter blocking_counter(num_nodes);
+  absl::Mutex mu;
+  for (int node_id = 0; node_id < num_nodes; node_id++) {
+    thread_pool.Schedule([&, node_id] {
+      absl::StatusOr<std::string> local_topology_str =
+          kv_store->Get(absl::StrCat("fabric_info/", std::to_string(node_id)),
+                        absl::Seconds(10));
+      {
+        absl::MutexLock lock(&mu);
+        fabric_info_strs[node_id] = local_topology_str;
+      }
+      blocking_counter.DecrementCount();
+    });
+  }
+  blocking_counter.Wait();
+
+  absl::flat_hash_map<uint64_t, std::vector<std::string>> fabric_info;
+  for (int node_id = 0; node_id < num_nodes; ++node_id) {
+    const absl::StatusOr<std::string>& str = fabric_info_strs.at(node_id);
+    if (str.ok()) {
+      fabric_info[node_id] = ParseNodeFabricInfo(*str);
+    } else {
+      return absl::InternalError(absl::StrCat(
+          "Getting fabric info failed: ", str.status().message(), "\n\n"));
+    }
+  }
+  return fabric_info;
 }
 
 }  // namespace xla

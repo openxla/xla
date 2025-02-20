@@ -260,8 +260,6 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 
 std::string MakeComputeCapabilityString(const se::DeviceDescription* desc);
 
-std::string GetBootId();
-
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
@@ -275,8 +273,12 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options);
 
-void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                           const int device_id);
+void PopulateFabricInfo(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                        const int node_id, const int num_local_devices);
+
+absl::StatusOr<absl::flat_hash_map<uint64_t, std::vector<std::string>>>
+GetAllFabricInfos(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                  const int num_nodes);
 
 }  // namespace xla
 

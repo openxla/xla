@@ -1074,20 +1074,23 @@ TEST(StreamExecutorGpuClientTest, DistributedInit) {
   }
 }
 
-TEST(StreamExecutorGpuClientTest, PopulateNVLinkKVStore) {
+TEST(StreamExecutorGpuClientTest, PopulateAndRetrieveFabricInfos) {
   auto kv_store = std::make_shared<InMemoryKeyValueStore>();
-  int num_nodes = 4;
-  for (int i = 0; i < num_nodes; i++) {
-    PopulateNVLinkKVStore(kv_store, i);
+  int num_nodes = 2;
+  int devices_per_node = 2;
+  for (int node_id = 0; node_id < num_nodes; ++node_id) {
+    PopulateFabricInfo(kv_store, node_id, devices_per_node);
   }
 
-  for (int device_id = 0; device_id < num_nodes; device_id++) {
-    CHECK_EQ(
-        kv_store
-            ->Get(absl::StrCat(GetBootId(), "/", std::to_string(device_id)),
-                  /*timeout=*/absl::Seconds(1))
-            .value(),
-        "00000000-0000-0000-0000-000000000000/0");
+  for (int node_id = 0; node_id < num_nodes; node_id++) {
+    TF_ASSERT_OK_AND_ASSIGN(auto all_fabric_info,
+                            GetAllFabricInfos(kv_store, num_nodes));
+    CHECK_EQ(all_fabric_info.size(), devices_per_node);
+    for (const auto& [node_id, node_fabric_info] : all_fabric_info) {
+      for (auto& device_fabric_info : node_fabric_info) {
+        CHECK_EQ(device_fabric_info, "00000000-0000-0000-0000-000000000000/0");
+      }
+    }
   }
 }
 
