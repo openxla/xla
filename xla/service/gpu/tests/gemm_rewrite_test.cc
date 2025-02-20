@@ -310,7 +310,7 @@ class ParameterizedGemmRewriteTest
  protected:
   void SetUp() override {
     if (SkipGpuBlasLtTest()) {
-      GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
+      // GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
     }
   }
 
@@ -2216,7 +2216,7 @@ class CublasLtGemmRewriteTest : public GemmRewriteTest {
  protected:
   void SetUp() override {
     if (SkipGpuBlasLtTest()) {
-      GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
+      // GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
     }
   }
 };

@@ -279,6 +279,7 @@ build:tpu --define=enable_mlir_bridge=true
 
 build:tensorrt --repo_env TF_NEED_TENSORRT=1
 
+startup --output_base=/home/atheodor/projects/tmp/bazel/jax_0.5.0
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm_hipcc=true
 build:rocm --define=tensorflow_mkldnn_contraction_kernel=0

@@ -12,3 +12,15 @@ license(
     package_name = "xla",
     license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
 )
+
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+
+    # Specify the targets of interest.
+    # For example, specify a dict of targets and any flags required to build.
+    targets = {
+      "//xla/python:xla_extension": "--config=rocm",
+    },
+)
