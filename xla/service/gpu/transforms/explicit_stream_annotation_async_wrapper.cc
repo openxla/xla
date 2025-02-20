@@ -33,6 +33,16 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
+
+void ClearSchedulingAnnotations(HloInstruction* instr) {
+  // Remove kXlaSchedulingGroupIdAttr and kXlaStreamAnnotationAttr
+  // These attributes are only valid on the async pairs.
+  FrontendAttributes frontend_attributes = instr->frontend_attributes();
+  frontend_attributes.mutable_map()->erase(kXlaSchedulingGroupIdAttr);
+  frontend_attributes.mutable_map()->erase(kXlaStreamAnnotationAttr);
+  instr->set_frontend_attributes(frontend_attributes);
+}
+
 static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   if (instr->opcode() != HloOpcode::kCall ||
       !instr->frontend_attributes().map().contains(kXlaStreamAnnotationAttr)) {
@@ -40,8 +50,15 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   }
   HloComputation* computation = instr->parent();
   auto original_attributes = instr->frontend_attributes();
-  // Clear the op's frontend attributes.
-  instr->set_frontend_attributes(FrontendAttributes());
+
+  // These annotations are only legal on the async instructions, and
+  // can cause issues if the annotations remain on the inner operations,
+  // so we clear them before creating the async pair.
+  for (auto* inner_instr : instr->called_computations()[0]->instructions()) {
+    ClearSchedulingAnnotations(inner_instr);
+  }
+  ClearSchedulingAnnotations(instr);
+
   TF_ASSIGN_OR_RETURN(
       HloInstruction * done,
       computation->CreateAsyncInstructions(
@@ -53,7 +70,7 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   done->mutable_operand(0)->set_frontend_attributes(original_attributes);
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       done->backend_config<GpuBackendConfig>());
-  // Set the false delay of done op to be false so it can be scheduled
+  // Set earliest schedule of done op to be false so it can be scheduled
   // far apart from start.
   gpu_config.set_force_earliest_schedule(false);
   TF_RETURN_IF_ERROR(done->set_backend_config(gpu_config));
