@@ -125,6 +125,10 @@ message DebugOptions {
   bool xla_hlo_pass_fix_detect_cycles = 370;
   // Crash if HloPassFix can not converge after a fixed number of iterations.
   bool xla_unsupported_crash_on_hlo_pass_fix_max_iterations = 363;
+  // Crash if a pass reports that it changes the HLO but in fact it did not.
+  bool xla_unsupported_crash_on_hlo_pass_noop_change = 369;
+  // Crash if a pass reports that it did not change the HLO but in fact it did.
+  bool xla_unsupported_crash_on_hlo_pass_silent_hlo_change = 370;
   // go/keep-sorted end
 
   reserved 346;  // xla_experimental_exec_time_optimization_effort
