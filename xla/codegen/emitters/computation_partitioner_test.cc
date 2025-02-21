@@ -181,12 +181,6 @@ TEST_F(ComputationPartitionerTest, TupleRoot) {
         %add = f32[6]{0} add(%p0, %p1)
         %sub = f32[6]{0} subtract(%p0, %p1)
         ROOT %root = (f32[6]{0}, f32[6]{0}) tuple(%add, %sub)
-      }
-      SUBGRAPH fused_computation_p1 {
-        ROOT %p1 = f32[6]{0} parameter(1)
-      }
-      SUBGRAPH fused_computation_p0 {
-        ROOT %p0 = f32[6]{0} parameter(0)
       })";
   EXPECT_EQ(computation.ToString(6), kExpected);
 }
