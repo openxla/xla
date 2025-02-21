@@ -157,7 +157,9 @@ class CpuOptProvider : public CompiledOptProvider {
         F16, F32, HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kConvolution>);
     AlgebraicSimplifierOptions options;
     options.set_enable_dot_strength_reduction(false);
-    options.set_minmax_propagate_nan(false);
+    // "slow" minmax means we propagate nan.
+    options.set_minmax_propagate_nan(
+        !module_config.debug_options().xla_cpu_enable_fast_min_max());
     options.set_supports_non_canonical_dots(false);
     options.set_executing_on_cpu(true);
     RegisterPass<AlgebraicSimplifier>(options);
