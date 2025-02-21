@@ -836,7 +836,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_enable_dot_strength_reduction(false);
     // "slow" minmax means we propagate nan.
     options.set_minmax_propagate_nan(
-        !module->config.debug_options().xla_cpu_enable_fast_min_max());x());
+        !module->config.debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
