@@ -106,7 +106,7 @@ absl::Status NvshmemCollectives::Initialize() {
       XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_get_uniqueid(&nvshmem_id));
       absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
                                        sizeof(nvshmemx_uniqueid_t));
-      kv_store->Set(kv_store_key_, nvshmem_id_str);
+      TF_RETURN_IF_ERROR(kv_store->Set(kv_store_key_, nvshmem_id_str));
     } else {
       TF_ASSIGN_OR_RETURN(std::string id_str,
                           kv_store->Get(kv_store_key_, absl::Minutes(10)));
