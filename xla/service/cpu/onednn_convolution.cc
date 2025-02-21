@@ -166,11 +166,11 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
 
   uint64_t groups = conv_config.feature_groups();
 
-  auto new_inp_md =
+  memory::desc new_inp_md =
       input_md.permute_axes(ComputeInputPermutations(&conv_config));
-  auto new_ker_md =
+  memory::desc new_ker_md =
       weights_md.permute_axes(ComputeKernelPermutations(&conv_config));
-  auto new_out_md =
+  memory::desc new_out_md =
       output_md.permute_axes(ComputeOutputPermutations(&conv_config));
 
   if (groups > 1) {
