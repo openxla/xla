@@ -52,6 +52,53 @@ using dnnl::convolution_forward;
 using dnnl::memory;
 using dnnl::prop_kind;
 using dnnl::stream;
+
+memory::dims GetPrimitiveParameter(
+    const tsl::protobuf::RepeatedField<uint64_t> field, int offset) {
+  memory::dims param_field(field.begin(), field.end());
+  // Subtract the offset so that values are interpreted accurately
+  for (int64_t& n : param_field) n -= offset;
+  return param_field;
+}
+
+std::vector<int> PopulateSpatialDimIndeces(
+    const tsl::protobuf::RepeatedField<uint64_t> spatial_dims,
+    std::vector<int> perm_axes, int index) {
+  std::vector<int64_t> dim_axes(spatial_dims.begin(), spatial_dims.end());
+  for (int64_t& n : dim_axes) perm_axes[--n] = index++;
+  return perm_axes;
+}
+
+std::vector<int> ComputeInputPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->input().data().batch_dim()] = index++;
+  perm_axes[conv_config->input().data().feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(conv_config->input().data().spatial_dims(),
+                                   perm_axes, index);
+}
+
+std::vector<int> ComputeKernelPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->kernel().filter().output_feature_dim()] = index++;
+  perm_axes[conv_config->kernel().filter().input_feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(
+      conv_config->kernel().filter().spatial_dims(), perm_axes, index);
+}
+
+std::vector<int> ComputeOutputPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->output().data().batch_dim()] = index++;
+  perm_axes[conv_config->output().data().feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(conv_config->output().data().spatial_dims(),
+                                   perm_axes, index);
+}
+
 }  // namespace
 
 dnnl::memory ReorderMemory(const dnnl::engine& engine,
@@ -94,8 +141,7 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   auto& conv_config = backend_config.value().onednn_conv_config();
   absl::InlinedVector<HloInstruction*, 2> operands = custom_call->operands();
   Shape input_shape = operands[0]->shape();
-  Shape weight_shape =
-      operands[1]->shape();  // assuming weights is the second operand
+  Shape weight_shape = operands[1]->shape();
   Shape output_shape = custom_call->shape().IsTuple()
                            ? custom_call->shape().tuple_shapes(0)
                            : custom_call->shape();
@@ -109,59 +155,23 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   memory::desc weights_md = ShapeToMemDesc(weight_shape);
   memory::desc output_md = ShapeToMemDesc(output_shape);
 
-  std::vector<int64_t> inp_perm_axes(conv_config.dims());
-  std::vector<int64_t> ker_perm_axes(conv_config.dims());
-  std::vector<int64_t> out_perm_axes(conv_config.dims());
-
-  int index_i = 0;
-  int index_o = 0;
-  int index_k = 0;
-
-  inp_perm_axes[conv_config.input().data().batch_dim()] = index_i++;
-  out_perm_axes[conv_config.output().data().batch_dim()] = index_o++;
-  ker_perm_axes[conv_config.kernel().filter().output_feature_dim()] = index_k++;
-
-  inp_perm_axes[conv_config.input().data().feature_dim()] = index_i++;
-  out_perm_axes[conv_config.output().data().feature_dim()] = index_o++;
-  ker_perm_axes[conv_config.kernel().filter().input_feature_dim()] = index_k++;
-
-  std::vector<int64_t> inp_dim_axes(
-      conv_config.input().data().spatial_dims().begin(),
-      conv_config.input().data().spatial_dims().end());
-  std::vector<int64_t> ker_dim_axes(
-      conv_config.kernel().filter().spatial_dims().begin(),
-      conv_config.kernel().filter().spatial_dims().end());
-  std::vector<int64_t> out_dim_axes(
-      conv_config.output().data().spatial_dims().begin(),
-      conv_config.output().data().spatial_dims().end());
-
-  for (int64_t& n : inp_dim_axes) inp_perm_axes[--n] = index_i++;
-  for (int64_t& n : ker_dim_axes) ker_perm_axes[--n] = index_k++;
-  for (int64_t& n : out_dim_axes) out_perm_axes[--n] = index_o++;
-
-  memory::dims strides(conv_config.window().strides().begin(),
-                       conv_config.window().strides().end());
-  memory::dims pad_left(conv_config.window().pad_left().begin(),
-                        conv_config.window().pad_left().end());
-  memory::dims pad_right(conv_config.window().pad_right().begin(),
-                         conv_config.window().pad_right().end());
-  memory::dims rhs_dilations(conv_config.window().window_dilations().begin(),
-                             conv_config.window().window_dilations().end());
-
-  for (int64_t& n : strides) n -= 1;
-  for (int64_t& n : pad_left) n -= 1;
-  for (int64_t& n : pad_right) n -= 1;
-  for (int64_t& n : rhs_dilations) n -= 2;
+  memory::dims strides =
+      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims pad_left =
+      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+  memory::dims pad_right =
+      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+  memory::dims rhs_dilations =
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
 
   uint64_t groups = conv_config.feature_groups();
 
-  std::vector<int> inp_axes(inp_perm_axes.begin(), inp_perm_axes.end());
-  std::vector<int> ker_axes(ker_perm_axes.begin(), ker_perm_axes.end());
-  std::vector<int> out_axes(out_perm_axes.begin(), out_perm_axes.end());
-
-  memory::desc new_inp_md = input_md.permute_axes(inp_axes);
-  memory::desc new_ker_md = weights_md.permute_axes(ker_axes);
-  memory::desc new_res_md = output_md.permute_axes(out_axes);
+  auto new_inp_md =
+      input_md.permute_axes(ComputeInputPermutations(&conv_config));
+  auto new_ker_md =
+      weights_md.permute_axes(ComputeKernelPermutations(&conv_config));
+  auto new_out_md =
+      output_md.permute_axes(ComputeOutputPermutations(&conv_config));
 
   if (groups > 1) {
     memory::dims corr_dims = new_ker_md.get_dims();
@@ -188,8 +198,8 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
       memory::desc(new_inp_md.get_dims(), new_inp_md.get_data_type(),
                    GetFormatTag(new_inp_md.get_ndims()));
   memory::desc any_res_md =
-      memory::desc(new_res_md.get_dims(), new_res_md.get_data_type(),
-                   GetFormatTag(new_res_md.get_ndims()));
+      memory::desc(new_out_md.get_dims(), new_out_md.get_data_type(),
+                   GetFormatTag(new_out_md.get_ndims()));
 
   dnnl::primitive_attr attrs;
 
