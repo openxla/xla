@@ -26,13 +26,13 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/protobuf.h"
 
-const std::string kUsage = R"(
-Reads an HLO module and outputs it in the requested format.
-Supported formats: text, proto_text, proto_binary.
-)";
-
 namespace xla {
 namespace {
+
+constexpr char kUsage[] = R"(
+  Reads an HLO module and outputs it in the requested format.
+  Supported formats: text, proto_text, proto_binary.
+)";
 
 enum class Format {
   kText,
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
       tsl::Flag("output_format", &output_format_str, "Output format."),
   };
   const std::string kUsageAndFlags =
-      absl::StrCat(kUsage, "\n", tsl::Flags::Usage(argv[0], flag_list));
+      absl::StrCat(xla::kUsage, "\n", tsl::Flags::Usage(argv[0], flag_list));
   bool parse_ok = tsl::Flags::Parse(&argc, argv, flag_list);
   tsl::port::InitMain(kUsageAndFlags.c_str(), &argc, &argv);
   CHECK(parse_ok && argc == 2) << "\n" << kUsageAndFlags;
