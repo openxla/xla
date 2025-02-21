@@ -309,10 +309,10 @@ cc_library(
     deps = [
         "//xla/core/collectives",
         "//xla/core/collectives:collectives_registry",
+        "//xla/pjrt/distributed:key_value_store_interface",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_googlesource_code_re2//:re2",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:numbers",

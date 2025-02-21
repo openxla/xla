@@ -82,14 +82,11 @@ NvshmemCollectives* NvshmemCollectives::Default() {
 
 void NvshmemCollectives::SetEnvInfo(
     int process_id, size_t num_processes, size_t device_count_per_process,
-    std::function<absl::StatusOr<std::string>(absl::string_view)> kv_store_get,
-    std::function<absl::Status(absl::string_view, absl::string_view)>
-        kv_store_set) {
+    std::weak_ptr<KeyValueStoreInterface> kv_store) {
   process_id_ = process_id;
   num_processes_ = num_processes;
   device_count_per_process_ = device_count_per_process;
-  kv_store_get_ = kv_store_get;
-  kv_store_set_ = kv_store_set;
+  kv_store_ = kv_store;
 }
 
 absl::Status NvshmemCollectives::Initialize() {
@@ -104,15 +101,21 @@ absl::Status NvshmemCollectives::Initialize() {
   nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
 
   // Initialize NVSHMEM
-  if (process_id_ == 0) {
-    XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_get_uniqueid(&nvshmem_id));
-    absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
-                                     sizeof(nvshmemx_uniqueid_t));
-    TF_RETURN_IF_ERROR(kv_store_set_(kv_store_key_, nvshmem_id_str));
+  if (std::shared_ptr<KeyValueStoreInterface> kv_store = kv_store_.lock()) {
+    if (process_id_ == 0) {
+      XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_get_uniqueid(&nvshmem_id));
+      absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
+                                       sizeof(nvshmemx_uniqueid_t));
+      kv_store->Set(kv_store_key_, nvshmem_id_str);
+    } else {
+      TF_ASSIGN_OR_RETURN(std::string id_str,
+                          kv_store->Get(kv_store_key_, absl::Minutes(10)));
+      std::copy(id_str.data(), id_str.data() + sizeof(nvshmemx_uniqueid_t),
+                reinterpret_cast<char*>(&nvshmem_id));
+    }
   } else {
-    TF_ASSIGN_OR_RETURN(std::string id_str, kv_store_get_(kv_store_key_));
-    std::copy(id_str.data(), id_str.data() + sizeof(nvshmemx_uniqueid_t),
-              reinterpret_cast<char*>(&nvshmem_id));
+    return absl::InternalError(
+        "KV store is not available for nvshmem initialization.");
   }
 
   XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_set_attr_uniqueid_args(

@@ -75,28 +75,9 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
   TF_QCHECK_OK(distributed_client->Connect());
   auto kv_store =
       GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"gpu:");
-  std::weak_ptr<KeyValueStoreInterface> kv_store_weak_ptr = kv_store;
-  auto store_get_fn =
-      [kv_store_weak_ptr](absl::string_view key) -> absl::StatusOr<std::string> {
-    if (std::shared_ptr<KeyValueStoreInterface> kv_store =
-            kv_store_weak_ptr.lock()) {
-      return kv_store->Get(key, absl::Minutes(10));
-    }
-    return absl::InternalError(
-        "KV store is not available for nvshmem initialization");
-  };
-  auto store_set_fn = [kv_store_weak_ptr](
-                          absl::string_view key,
-                          absl::string_view value) -> absl::Status {
-    if (std::shared_ptr<KeyValueStoreInterface> kv_store =
-            kv_store_weak_ptr.lock()) {
-      return kv_store->Set(key, value);
-    }
-    return absl::InternalError(
-        "KV store is not available for nvshmem initialization");
-  };
-  xla::gpu::NvshmemCollectives::Default()->SetEnvInfo(
-      node_id, num_nodes, 1, store_get_fn, store_set_fn);
+
+  xla::gpu::NvshmemCollectives::Default()->SetEnvInfo(node_id, num_nodes, 1,
+                                                      kv_store);
   cudaSetDevice(node_id);
   TF_ASSIGN_OR_RETURN(void* ptr,
                       xla::gpu::NvshmemCollectives::Default()->Allocate(1024));
