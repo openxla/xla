@@ -123,6 +123,7 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
 
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();
+  VLOG(3) << "hlo_computation: " << hlo_computation->ToString();
 
   auto generate = [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
     VLOG(3) << "Generating: " << suggested_kernel_name;
@@ -214,7 +215,8 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
 
     return {{kernel->getName().str(), launch_dimensions,
              triton_wrapper_result.cluster_dim,
-             triton_wrapper_result.shmem_bytes}};
+             triton_wrapper_result.shmem_bytes, /*binary=*/"",
+             triton_wrapper_result.tma_metadata}};
   };
 
   auto [status_or_entry, was_cached] =
@@ -226,10 +228,22 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<KernelThunk>(
       &fusion, entry->kernel_name, kernel_arguments.args(),
-      entry->launch_dimensions, entry->cluster_dim, entry->shmem_bytes));
+      entry->launch_dimensions, entry->cluster_dim, entry->shmem_bytes,
+      entry->tma_metadata));
 
   return result;
 }
+
+namespace {
+int64_t GetNumberOfBlocks(absl::Span<const int64_t> dimensions,
+                          absl::Span<const int64_t> tile_sizes) {
+  int64_t num_blocks = 1;
+  for (auto [dim_size, dim_tile_size] : llvm::zip(dimensions, tile_sizes)) {
+    num_blocks *= (dim_size + dim_tile_size - 1) / dim_tile_size;
+  }
+  return num_blocks;
+}
+}  // namespace
 
 std::optional<TritonFusion::LaunchConfig> TritonFusion::launch_config() const {
   if (analysis_.fusion_backend_config().has_block_level_fusion_config()) {
@@ -237,11 +251,15 @@ std::optional<TritonFusion::LaunchConfig> TritonFusion::launch_config() const {
         BlockLevelParameters::FromBlockLevelFusionConfig(
             analysis_.fusion_backend_config().block_level_fusion_config());
 
-    int64_t num_blocks = 1;
-    for (auto [dim_size, dim_tile_size] :
-         llvm::zip(analysis_.fusion_root(0).shape().dimensions(),
-                   block_level_parameters.output_tile_sizes)) {
-      num_blocks *= (dim_size + dim_tile_size - 1) / dim_tile_size;
+    // We expect all roots to have the same number of blocks. Otherwise we
+    // cannot codegen it.
+    int64_t num_blocks =
+        GetNumberOfBlocks(analysis_.fusion_root(0).shape().dimensions(),
+                          block_level_parameters.output_tile_sizes[0]);
+    for (int64_t i = 1; i < analysis_.fusion_root_count(); ++i) {
+      CHECK_EQ(GetNumberOfBlocks(analysis_.fusion_root(i).shape().dimensions(),
+                                 block_level_parameters.output_tile_sizes[i]),
+               num_blocks);
     }
 
     LaunchConfig launch_config;

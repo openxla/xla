@@ -566,6 +566,16 @@ TEST(XlaBuilderTest, BroadcastInDimWithDegeneratedDim) {
               GmockMatch(m::Broadcast(m::Reshape(m::Broadcast()))));
 }
 
+TEST(XlaBuilderTest, BroadcastInDimWithBoundedDim) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(const Shape shape, ParseShape("f32[2, <=3]"));
+  auto x = Parameter(&b, 0, shape, "x");
+  BroadcastInDim(x, {1, 2, 3},
+                 /*broadcast_dimensions=*/{1, 2});
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module), GmockMatch(m::Broadcast()));
+}
+
 TEST(XlaBuilderTest, BroadcastInDimWithNegativeSize) {
   XlaBuilder b(TestName());
   auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 1, 4}), "x");
@@ -1518,6 +1528,31 @@ TEST(XlaBuilderTest, RaggedDotContractingWithPreferredElementType) {
             /*precision_config=*/nullptr, /*preferred_element_type=*/F32);
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[3, 11, 7]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, BatchedRaggedDotNonContractingWithPreferredElementType) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(S8, {19, 11, 5}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(S8, {3, 19, 5, 7}), "rhs");
+  auto group_sizes =
+      Parameter(&b, 2, ShapeUtil::MakeShape(U32, {19, 3}), "group_sizes");
+
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_batch_dimensions(0);
+  dot_dnums.add_lhs_contracting_dimensions(2);
+  dot_dnums.add_rhs_batch_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(2);
+  RaggedDotDimensionNumbers ragged_dot_dnums;
+  *ragged_dot_dnums.mutable_dot_dimension_numbers() = dot_dnums;
+  ragged_dot_dnums.add_lhs_ragged_dimensions(1);
+  ragged_dot_dnums.add_rhs_group_dimensions(0);
+
+  RaggedDot(lhs, rhs, group_sizes, ragged_dot_dnums,
+            /*precision_config=*/nullptr, /*preferred_element_type=*/S32);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("s32[19, 11, 7]"));
   EXPECT_THAT(GetRoot(*module),
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }

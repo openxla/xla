@@ -278,6 +278,8 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BufferizationInterfaces",
@@ -407,5 +409,19 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+    ],
+)
+
+xla_cc_test(
+    name = "transpose_test",
+    srcs = ["transpose_test.cc"],
+    deps = [
+        ":transpose",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
     ],
 )

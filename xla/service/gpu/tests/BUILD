@@ -124,6 +124,7 @@ xla_cc_test(
         "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:xla_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
@@ -320,7 +321,7 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_v100",
-        "gpu_b100",
+        "gpu_b200",
         "gpu_amd_any",
     ],
     deps = [
@@ -506,7 +507,7 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -613,8 +614,8 @@ lit_test_suite(
 #     srcs = ["xla-opt.cc"],
 #     deps = [
 #         "//xla/backends/gpu/codegen/emitters/transforms:passes",
-#         "//xla/backends/gpu/codegen/triton:xla_triton",
-#         "//xla/backends/gpu/codegen/triton:xla_triton_passes",
+#         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+#         "//xla/backends/gpu/codegen/triton/transforms:passes",
 #         "//xla/codegen/emitters/transforms:passes",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",
@@ -685,7 +686,7 @@ xla_test(
     srcs = ["tensor_float_32_global_var_test.cc"],
     backends = [
         "gpu_a100",
-        "gpu_b100",
+        "gpu_b200",
         "gpu_amd_any",
     ] + if_oss([
         "gpu_any",
@@ -704,7 +705,7 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
+        "gpu_b200",
     ],
     tags = ["cuda-only"],
     deps = if_cuda_is_configured(
@@ -748,7 +749,7 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
+        "gpu_b200",
     ],
     shard_count = 2,
     deps = [

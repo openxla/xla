@@ -7,11 +7,7 @@ load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility([
-        ":users",
-        ":friends",
-        ":internal",
-    ]),
+    default_visibility = internal_visibility([":internal"]),
 )
 
 exports_files([
@@ -70,6 +66,11 @@ cc_library(
         "value.h",
     ],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":array_spec_proto_cc",
         ":attribute_map",
@@ -99,14 +100,12 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_set",
-        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -138,6 +137,11 @@ cc_library(
     srcs = ["attribute_map.cc"],
     hdrs = ["attribute_map.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":attribute_map_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -162,6 +166,11 @@ tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
     protodeps = [":attribute_map_proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 xla_cc_test(
@@ -251,6 +260,7 @@ xla_cc_test(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
@@ -261,6 +271,11 @@ cc_library(
     testonly = True,
     srcs = ["test_util.cc"],
     hdrs = ["test_util.h"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":ifrt",
         "//xla/tsl/concurrency:ref_count",
@@ -268,6 +283,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -282,7 +298,12 @@ cc_library(
     testonly = True,
     srcs = ["device_test_util.cc"],
     hdrs = ["device_test_util.h"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
+        ":basic_device_list",
         ":ifrt",
         ":mock",
         ":test_util",
@@ -292,7 +313,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -301,6 +321,10 @@ cc_library(
     name = "no_impl_test_main",
     testonly = True,
     srcs = ["no_impl_test_main.cc"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
         "@com_google_googletest//:gtest",
     ],
@@ -310,6 +334,10 @@ cc_library(
     name = "array_impl_test_lib",
     testonly = True,
     srcs = ["array_impl_test_lib.cc"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
         ":ifrt",
         ":test_util",
@@ -320,6 +348,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -340,12 +369,21 @@ xla_cc_test(
 tf_proto_library(
     name = "attribute_map_proto",
     srcs = ["attribute_map.proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 cc_library(
     name = "client_impl_test_lib",
     testonly = True,
     srcs = ["client_impl_test_lib.cc"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
         ":ifrt",
         ":test_util",
@@ -369,6 +407,10 @@ cc_library(
     name = "tuple_impl_test_lib",
     testonly = True,
     srcs = ["tuple_impl_test_lib.cc"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
         ":ifrt",
         ":test_util",
@@ -376,6 +418,7 @@ cc_library(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
@@ -395,9 +438,16 @@ cc_library(
     testonly = True,
     srcs = ["mock.cc"],
     hdrs = ["mock.h"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":attribute_map",
+        ":basic_device_list",
         ":ifrt",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
         "//xla/pjrt:pjrt_executable",
@@ -405,6 +455,7 @@ cc_library(
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -418,6 +469,11 @@ cc_library(
     srcs = ["serdes.cc"],
     hdrs = ["serdes.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":serdes_proto_cc",
         "//xla/tsl/platform:statusor",
@@ -452,6 +508,11 @@ xla_cc_test(
 tf_proto_library(
     name = "serdes_proto",
     srcs = ["serdes.proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 cc_library(
@@ -459,11 +520,15 @@ cc_library(
     srcs = ["program_serdes.cc"],
     hdrs = ["program_serdes.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":ifrt",
         ":serdes",
         "//xla:util",
-        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -472,6 +537,11 @@ cc_library(
     name = "sharding_serdes",
     srcs = ["sharding_serdes.cc"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":ifrt",
         ":serdes",
@@ -497,7 +567,6 @@ xla_cc_test(
         ":sharding_serdes",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -510,6 +579,11 @@ tf_proto_library(
         ":shape_proto",
         ":sharding_proto",
     ],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 xla_cc_test(
@@ -521,8 +595,10 @@ xla_cc_test(
         ":device_test_util",
         ":ifrt",
         ":sharding_serdes",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_layout",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
@@ -531,6 +607,11 @@ xla_cc_test(
 tf_proto_library(
     name = "device_proto",
     srcs = ["device.proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 xla_cc_test(
@@ -543,16 +624,43 @@ xla_cc_test(
         ":ifrt",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:platform_port",
     ],
 )
 
+cc_library(
+    name = "basic_device_list",
+    srcs = ["basic_device_list.cc"],
+    hdrs = ["basic_device_list.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
+    deps = [
+        ":device_proto_cc",
+        ":ifrt",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 tf_proto_library(
     name = "dtype_proto",
     srcs = ["dtype.proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 xla_cc_test(
@@ -572,6 +680,11 @@ tf_proto_library(
     name = "remap_plan_proto",
     srcs = ["remap_plan.proto"],
     protodeps = [":array_spec_proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 xla_cc_test(
@@ -581,6 +694,7 @@ xla_cc_test(
     deps = [
         ":device_test_util",
         ":ifrt",
+        ":remap_plan_proto_cc",
         ":sharding_serdes",
         "//xla:shape_util",
         "//xla/pjrt:pjrt_layout",
@@ -591,6 +705,7 @@ xla_cc_test(
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
@@ -600,6 +715,10 @@ cc_library(
     name = "remap_impl_test_lib",
     testonly = True,
     srcs = ["remap_impl_test_lib.cc"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
     deps = [
         ":ifrt",
         ":test_util",
@@ -609,6 +728,7 @@ cc_library(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -620,12 +740,22 @@ cc_library(
 tf_proto_library(
     name = "shape_proto",
     srcs = ["shape.proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 tf_proto_library(
     name = "sharding_proto",
     srcs = ["sharding.proto"],
     protodeps = [":serdes_proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 tf_proto_library(
@@ -636,6 +766,11 @@ tf_proto_library(
         ":shape_proto",
         "//xla/python/ifrt/ir:sharding_param_proto",
     ],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 cc_library(
@@ -643,6 +778,11 @@ cc_library(
     srcs = ["plugin_program.cc"],
     hdrs = ["plugin_program.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":ifrt",
         "@llvm-project//llvm:Support",
@@ -653,6 +793,11 @@ cc_library(
     name = "plugin_program_serdes",
     srcs = ["plugin_program_serdes.cc"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":plugin_program",
         ":serdes",
@@ -686,6 +831,11 @@ cc_library(
     srcs = ["custom_call_program.cc"],
     hdrs = ["custom_call_program.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":ifrt",
         "//xla/tsl/concurrency:ref_count",
@@ -701,12 +851,22 @@ tf_proto_library(
         ":array_spec_proto",
         ":device_proto",
     ],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
 )
 
 cc_library(
     name = "custom_call_program_serdes",
     srcs = ["custom_call_program_serdes.cc"],
     compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
     deps = [
         ":array_spec_proto_cc",
         ":custom_call_program",
@@ -743,7 +903,6 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest_main",

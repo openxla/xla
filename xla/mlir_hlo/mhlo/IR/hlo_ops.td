@@ -343,6 +343,10 @@ def MHLO_ExpOp: MHLO_UnaryElementwiseOp<"exponential",
     %result = mhlo.exponential %operand : tensor<2x2xf64>
     ```
   }];
+  let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
+   DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr, "::mlir::mhlo::ResultAccuracyMode::DEFAULT">:$result_accuracy);
+  let results = (outs MHLO_FpComplexOrQuantizedIntTensor:$result);
+  let hasVerifier = 1;
   let hasFolder = 1;
 }
 def MHLO_Expm1Op: MHLO_UnaryElementwiseOp<"exponential_minus_one",
@@ -2118,7 +2122,7 @@ def MHLO_BroadcastInDimOp : MHLO_Op<"broadcast_in_dim",
     MHLO_BroadcastDimAttr:$broadcast_dimensions
   );
 
-  let results = (outs MHLO_AnyTensor);
+  let results = (outs MHLO_StaticShapeOrBoundedDimTensor);
 
   let hasFolder = 1;
   let hasCanonicalizer = 1;
@@ -2664,12 +2668,12 @@ def MHLO_RaggedDotOp: MHLO_Op<"ragged_dot", [Pure]> {
     most one group dimension. The op has three modes, depending on the kind of
     the lhs ragged dimension.
 
-    In mode 1, the shape-signature is `[b,m,k], [g,b,k,n], [g] -> [b,m,n]`.
+    In mode 1, the shape-signature is `[b,m,k], [g,b,k,n], [b,g] -> [b,m,n]`.
     Here the ragged dimension is an lhs non-contracting dimension (`m`). The
     dimensions `b` and `k` represent batch and contracting dimensions
     respectively. The rhs is required to have a group dimension (`g`).
 
-    In mode 2, the shape-signature is `[b,m,k], [b,k,n], [g] -> [g,b,m,n]`.
+    In mode 2, the shape-signature is `[b,m,k], [b,k,n], [b,g] -> [g,b,m,n]`.
     Here the ragged dimension is an lhs/rhs contracting dimension (`k`).
 
     In mode 3, the shape-signature is `[b,m,k], [b,k,n], [g] -> [b,m,n]`. Here
@@ -2877,7 +2881,7 @@ def MHLO_ReshapeOp: MHLO_Op<"reshape",
 
   let arguments = (ins MHLO_AnyTensor:$operand);
 
-  let results = (outs MHLO_AnyTensor);
+  let results = (outs MHLO_StaticShapeOrBoundedDimTensor);
   let hasFolder = 1;
   let hasCanonicalizer = 1;
   let hasVerifier = 1;

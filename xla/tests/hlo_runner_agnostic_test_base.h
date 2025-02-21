@@ -34,12 +34,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tsl/platform/test.h"
@@ -105,9 +105,16 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
   ParseAndReturnVerifiedModule(absl::string_view hlo_text,
                                int64_t replica_count = 1,
                                int64_t num_partitions = 1);
+  // Parses the given string and returns module as a VerifiedHloModule.
+  //
+  // To obtain a HloModuleConfig with a specific replica and partition count and
+  // no further customization, either use the overload above or use
+  // GetModuleConfigForTest. The latter option may be useful if you want to pass
+  // custom HloParserOptions as well.
   absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
-  ParseAndReturnVerifiedModule(absl::string_view hlo_text,
-                               const HloModuleConfig& config);
+  ParseAndReturnVerifiedModule(
+      absl::string_view hlo_text, const HloModuleConfig& config,
+      const HloParserOptions& parser_options = HloParserOptions());
 
   HloComputation* AddEntryComputationAndUpdateEntryComputationLayout(
       HloModule*, std::unique_ptr<HloComputation> computation);
@@ -127,7 +134,7 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
                              absl::Span<Literal* const> arguments);
 
   // Compile the given module to an executable.
-  absl::StatusOr<std::unique_ptr<Executable>> CreateExecutable(
+  absl::StatusOr<std::unique_ptr<OpaqueExecutable>> CreateExecutable(
       std::unique_ptr<HloModule> module, bool run_hlo_passes) {
     return test_runner_->CreateExecutable(std::move(module), run_hlo_passes);
   }
@@ -149,7 +156,7 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
 
   // Same as above, but allows passing different programs for replicas.
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
-      std::function<Executable*(int64_t)> executable_provider,
+      std::function<OpaqueExecutable*(int64_t)> executable_provider,
       std::function<int64_t(int64_t)> argument_count_provider,
       std::function<const Literal*(int64_t, int64_t)> argument_provider,
       int64_t num_replicas, bool run_hlo_passes,

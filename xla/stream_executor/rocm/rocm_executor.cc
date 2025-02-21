@@ -60,7 +60,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
-#include "xla/stream_executor/host_memory_allocation.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -85,6 +84,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/casts.h"
@@ -450,16 +450,31 @@ void DeviceDeallocate(Context* context, void* location) {
 }
 
 // Allocates memory on the host.
-void* HostAllocate(Context* context, uint64_t bytes) {
+absl::StatusOr<void*> HostAllocate(Context* context, uint64_t bytes) {
   ScopedActivateContext activation(context);
   void* host_mem = nullptr;
   // "Portable" memory is visible to all ROCM contexts. Safe for our use model.
-  hipError_t res = wrap::hipHostMalloc(&host_mem, bytes, hipHostMallocPortable);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "failed to alloc " << bytes
-               << " bytes on host: " << ToString(res);
-  }
+  TF_RETURN_IF_ERROR(
+      ToStatus(wrap::hipHostMalloc(&host_mem, bytes, hipHostMallocPortable),
+               "failed to allocate host memory"));
   return host_mem;
+}
+
+absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
+    RocmContext* rocm_context, uint64_t size) {
+  TF_ASSIGN_OR_RETURN(void* ptr, HostAllocate(rocm_context, size));
+  VLOG(2) << "allocated " << ptr << " for context " << rocm_context << " of "
+          << size << " bytes of host memory";
+  return std::make_unique<GenericMemoryAllocation>(
+      ptr, size, [rocm_context](void* location, uint64_t size) {
+        hipError_t res = wrap::hipHostFree(location);
+        if (res != hipSuccess) {
+          LOG(ERROR) << "error deallocating host memory at " << location << ": "
+                     << ToString(res);
+        }
+        VLOG(2) << "deallocated host memory at " << location << " for context "
+                << rocm_context;
+      });
 }
 
 }  // namespace
@@ -717,30 +732,22 @@ absl::StatusOr<ModuleHandle> RocmExecutor::LoadModuleFromHsaco(
 }
 
 DeviceMemoryBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
-  if (memory_space ==
-      static_cast<int64_t>(stream_executor::MemoryType::kHost)) {
-    return DeviceMemoryBase(HostAllocate(rocm_context_, size), size);
+  switch (static_cast<MemoryType>(memory_space)) {
+    case MemoryType::kCollective:
+    case MemoryType::kDevice:
+      return DeviceMemoryBase(DeviceAllocate(rocm_context_, size), size);
+    case MemoryType::kHost:
+      if (auto result = HostAllocate(rocm_context_, size); result.ok()) {
+        return DeviceMemoryBase(*result, size);
+      }
+      return DeviceMemoryBase(nullptr, 0);
+    default:
+      LOG(FATAL) << "Unsupported memory space: " << memory_space;
   }
-  CHECK_EQ(memory_space, 0);
-  return DeviceMemoryBase(DeviceAllocate(rocm_context_, size), size);
 }
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 RocmExecutor::HostMemoryAllocate(uint64_t size) {
-  auto* buffer = HostAllocate(rocm_context_, size);
-  if (buffer == nullptr && size > 0) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to allocate HostMemory of size %d", size));
-  }
-  return std::make_unique<HostMemoryAllocation>(buffer, size, this);
-}
-
-void RocmExecutor::HostMemoryDeallocate(void* location) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  hipError_t res = wrap::hipHostFree(location);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "error deallocating host memory at " << location << ": "
-               << ToString(res);
-  }
+  return AllocateHostMemory(rocm_context_, size);
 }
 
 void RocmExecutor::Deallocate(DeviceMemoryBase* mem) {
@@ -749,50 +756,69 @@ void RocmExecutor::Deallocate(DeviceMemoryBase* mem) {
 
 absl::StatusOr<std::unique_ptr<MemoryAllocator>>
 RocmExecutor::CreateMemoryAllocator(MemoryType type) {
-  if (type == MemoryType::kUnified) {
-    return std::make_unique<GenericMemoryAllocator>(
-        [this](uint64_t size)
-            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          void* ptr = UnifiedMemoryAllocate(size);
-          if (ptr == nullptr) {
-            return absl::InternalError("Failed to allocate unified memory");
-          }
-          return std::make_unique<GenericMemoryAllocation>(
-              ptr, size, [this](void* ptr, uint64_t size) {
-                UnifiedMemoryDeallocate(ptr);
-              });
-        });
-  }
-  return absl::UnimplementedError(
-      absl::StrFormat("Unsupported memory type %d", type));
-}
-
-void* RocmExecutor::UnifiedMemoryAllocate(uint64_t size) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  hipDeviceptr_t result = 0;
-  // "managed" memory is visible to both CPU and GPU.
-  hipError_t res = wrap::hipMallocManaged(&result, size, hipMemAttachGlobal);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "failed to alloc " << size
-               << " bytes unified memory; result: " << ToString(res);
-    return nullptr;
-  }
-  void* ptr = reinterpret_cast<void*>(result);
-  VLOG(2) << "allocated " << ptr << " for context " << rocm_context_ << " of "
-          << size << " bytes in unified memory";
-  return ptr;
-}
-
-void RocmExecutor::UnifiedMemoryDeallocate(void* location) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  hipDeviceptr_t pointer = absl::bit_cast<hipDeviceptr_t>(location);
-  hipError_t res = wrap::hipFree(pointer);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "failed to free unified memory at " << location
-               << "; result: " << ToString(res);
-  } else {
-    VLOG(2) << "deallocated unified memory at " << location << " for context "
-            << rocm_context_;
+  switch (type) {
+    case MemoryType::kUnified:
+      return std::make_unique<GenericMemoryAllocator>(
+          [this](uint64_t size)
+              -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
+            std::unique_ptr<ActivateContext> activation = Activate();
+            hipDeviceptr_t result = nullptr;
+            // "managed" memory is visible to both CPU and GPU.
+            TF_RETURN_IF_ERROR(ToStatus(
+                wrap::hipMallocManaged(&result, size, hipMemAttachGlobal),
+                "Failed to allocate managed memory"));
+            void* ptr = reinterpret_cast<void*>(result);
+            VLOG(2) << "allocated " << ptr << " for context " << rocm_context_
+                    << " of " << size << " bytes in unified memory";
+            return std::make_unique<GenericMemoryAllocation>(
+                ptr, size, [this](void* location, uint64_t size) {
+                  std::unique_ptr<ActivateContext> activation = Activate();
+                  hipDeviceptr_t pointer =
+                      absl::bit_cast<hipDeviceptr_t>(location);
+                  hipError_t res = wrap::hipFree(pointer);
+                  if (res != hipSuccess) {
+                    LOG(ERROR) << "failed to free unified memory at "
+                               << location << "; result: " << ToString(res);
+                  } else {
+                    VLOG(2) << "deallocated unified memory at " << location
+                            << " for context " << rocm_context_;
+                  }
+                });
+          });
+    case MemoryType::kCollective:
+      return std::make_unique<GenericMemoryAllocator>(
+          [](uint64_t size)
+              -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
+            void* ptr = nullptr;
+            auto hipResult = wrap::hipMalloc(&ptr, size);
+            if (hipResult != hipSuccess) {
+              return absl::InternalError(absl::StrFormat(
+                  "failed to allocate %s (%llu bytes) from device collective "
+                  "memory: %s, "
+                  "Last NCCL warning(error)",
+                  tsl::strings::HumanReadableNumBytes(size), size,
+                  hipGetErrorString(hipResult)));
+            }
+            VLOG(2) << "allocated " << ptr << " of " << size
+                    << " bytes of collective memory";
+            return std::make_unique<GenericMemoryAllocation>(
+                ptr, size, [](void* location, uint64_t size) {
+                  auto status = wrap::hipFree(location);
+                  if (status != hipSuccess) {
+                    LOG(ERROR) << "failed to free collective memory at "
+                               << location << "; result: " << status;
+                  } else {
+                    VLOG(2) << "deallocated collective memory at " << location;
+                  }
+                });
+          });
+    case MemoryType::kHost:
+      return std::make_unique<GenericMemoryAllocator>([this](uint64_t size) {
+        return AllocateHostMemory(rocm_context_, size);
+      });
+    default:
+      return absl::UnimplementedError(
+          absl::StrFormat("Unsupported memory type %d", type));
   }
 }
 
@@ -1004,8 +1030,11 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     desc.set_pci_bus_id(pci_bus_id);
 
     // Read the NUMA node corresponding to the PCI bus ID out of sysfs.
-    int numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
-    desc.set_numa_node(numa_node);
+    std::optional<int> numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
+    // If the kernel reports -1, adjust to 0; leave as -1 if no value could be
+    // obtained.
+    desc.set_numa_node(numa_node.has_value() ? std::max(0, *numa_node)
+                                             : tsl::port::kNUMANoAffinity);
   }
 
   hipDeviceProp_t prop;
@@ -1045,7 +1074,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
 
   {
     TF_ASSIGN_OR_RETURN(std::string device_name, GetDeviceName(device));
-    desc.set_name(device_name);
+    desc.set_name(device_name.empty() ? gcn_arch_name : device_name);
   }
 
   desc.set_platform_version(

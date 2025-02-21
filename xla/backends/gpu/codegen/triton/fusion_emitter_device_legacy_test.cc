@@ -875,6 +875,19 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+TEST_F(TritonGemmTest, S8xS8) {
+  const std::string hlo_text = R"(
+HloModule t
+
+ENTRY f {
+  x = s8[1024,1024]{1,0} parameter(0)
+  y = s8[1024,1024]{1,0} parameter(1)
+  ROOT z = s32[1024,1024]{1,0} dot(x, y),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 TEST_F(TritonGemmTest, SplitLhsNoncontractingTransposeRhs) {
   const std::string hlo_text = R"(
 HloModule t
@@ -1494,7 +1507,7 @@ class TritonGemmTestAny : public TritonGemmTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = TritonGemmTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_triton_gemm_any(true);
+    debug_options.set_xla_gpu_unsupported_force_triton_gemm(true);
     return debug_options;
   }
 };
@@ -4076,7 +4089,7 @@ class TritonGemmContractionDims : public TritonGemmTest {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = TritonGemmTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_ensure_minor_dot_contraction_dims(true);
-    debug_options.set_xla_gpu_triton_gemm_any(true);
+    debug_options.set_xla_gpu_unsupported_force_triton_gemm(true);
 
     return debug_options;
   }

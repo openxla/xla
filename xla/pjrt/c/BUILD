@@ -126,6 +126,49 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_raw_buffer_extension_hdrs",
+    hdrs = ["pjrt_c_api_raw_buffer_extension.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_raw_buffer_internal",
+    srcs = ["pjrt_c_api_raw_buffer_internal.cc"],
+    hdrs = ["pjrt_c_api_raw_buffer_internal.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_raw_buffer_extension_hdrs",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:raw_buffer",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_raw_buffer_external",
+    srcs = ["pjrt_c_api_raw_buffer_external.cc"],
+    hdrs = ["pjrt_c_api_raw_buffer_external.h"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_raw_buffer_extension_hdrs",
+        "//xla/pjrt:pjrt_c_api_client",
+        "//xla/pjrt:pjrt_future",
+        "//xla/pjrt:raw_buffer",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_custom_partitioner_extension_hdrs",
     hdrs = ["pjrt_c_api_custom_partitioner_extension.h"],
     visibility = ["//visibility:public"],
@@ -182,6 +225,8 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -197,8 +242,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
     ],
@@ -224,6 +267,9 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -236,10 +282,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
     ],
@@ -338,6 +380,7 @@ cc_library(
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # To register GPU AOT compiler
+        "//xla/python:custom_call_batch_partitioner",
         "//xla/python:custom_partition_callback",
         "//xla/python:inspect_sharding",  # To register "InspectSharding" custom partitioning handler.
         "//xla/service:compiler",
@@ -409,7 +452,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -443,11 +485,13 @@ xla_test(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/service:custom_call_target_registry",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
@@ -473,6 +517,9 @@ xla_cc_test(
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -480,9 +527,6 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -523,6 +567,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:status",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -533,6 +578,5 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:status",
     ],
 )

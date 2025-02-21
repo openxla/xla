@@ -9141,6 +9141,38 @@ TEST_F(MemorySpaceAssignmentTest, HoistCopyStart) {
   }
 }
 
+// This test verifies that MSA's internal map of instructions and their operands
+// in alternate memory is correct in the presenece of a cross-program prefetch.
+// Internally, at the end of MSA, it validates that it's internal map is
+// correct. So, as long as this test allocates a cross-program-prefetch in
+// alternate memory and doesn't crash, it has passed.
+TEST_F(MemorySpaceAssignmentTest,
+       OperandsInAlternateMemoryWithCrossProgramPrefetch) {
+  absl::string_view hlo_string = R"(
+  HloModule cross_program_prefetch, is_scheduled=true
+
+  ENTRY cross_program_prefetch {
+    p0 = (f32[8,8]{1,0}, f32[8,2]{1,0}) parameter(0)
+    get-tuple-element.0 = f32[8,8]{1,0} get-tuple-element(p0), index=0
+    add.0 = f32[8,8]{1,0} add(get-tuple-element.0, get-tuple-element.0)
+    get-tuple-element.1 = f32[8,2]{1,0} get-tuple-element(p0), index=1
+    dot.0 = f32[8,2]{1,0} dot(add.0, get-tuple-element.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    negate.1 = f32[8,2]{1,0} negate(dot.0)
+    negate.2 = f32[8,2]{1,0} negate(negate.1)
+    ROOT dot.1 = f32[2,2]{1,0} dot(negate.2, get-tuple-element.1), lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_cross_program_prefetch = true;
+  AssignMemorySpace(module.get(), options);
+
+  // Ensure that get-tuple-element.1 is chosen for cross-program prefetch.
+  auto cross_program_prefetches = module->CrossProgramPrefetches();
+  ASSERT_EQ(cross_program_prefetches.size(), 1);
+}
+
 TEST_F(MemorySpaceAssignmentTest, WindowPrefetch) {
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true
@@ -9185,18 +9217,83 @@ entry {
   AssignMemorySpace(module.get(), options, /*max_prefetch_interval=*/10,
                     /*min_prefetch_interval=*/0);
   const HloInstruction* fusion = FindInstruction(module.get(), "fusion");
-  // The fusion instruction should have 7 operands: the 3 original operands
-  // plus 2 window prefetch buffers, plus 2 sync flags.
-  EXPECT_EQ(fusion->operand_count(), 7);
+  // The fusion instruction should have 9 operands: the 3 original operands
+  // plus 3 window prefetch buffers, plus 3 sync flags.
+  EXPECT_EQ(fusion->operand_count(), 9);
 
   // The added operands are GetTupleElements of WindowPrefetch custom calls.
-  for (int i = 3; i < 7; i++) {
+  for (int i = 3; i < 9; i++) {
     EXPECT_EQ(fusion->operand(i)->opcode(), HloOpcode::kGetTupleElement);
     const HloInstruction* window_prefetch = fusion->operand(i)->operand(0);
     EXPECT_TRUE(window_prefetch->IsCustomCall("WindowPrefetch"));
   }
 
   VLOG(2) << "module: " << module->ToString();
+}
+
+// The test verifies the schedule of prefetching window buffers. We use
+// reserved_scoped_memory_fn to reserve a large amount of memory for an
+// instruction that's not too far from the fusion and verify that a valid
+// schedule can still be found, which prefetches the window buffers right
+// after that instruction.
+TEST_F(MemorySpaceAssignmentTest, WindowPrefetchSchedule) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%fused_computation {
+  %p0 = bf16[64,8]{1,0:T(8,128)(2,1)} parameter(0)
+  ROOT %neg = bf16[64,8]{1,0:T(8,128)(2,1)} negate(%p0)
+}
+
+entry {
+  t0 = bf16[64,8]{1,0:T(8,128)(2,1)} parameter(0)
+  t1 = bf16[64,8]{1,0:T(8,128)(2,1)} negate(t0)
+  t2 = bf16[64,8]{1,0:T(8,128)(2,1)} negate(t1)
+  t3 = bf16[64,8]{1,0:T(8,128)(2,1)} fusion(bf16[64,8]{1,0:T(8,128)(2,1)} t0), kind=kLoop, calls=%fused_computation
+  ROOT t4 = bf16[64,8]{1,0:T(8,128)(2,1)} add(t2, t3)
+}
+
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  // Get info about window prefetch buffers, such as which operands they
+  // correspond to and their sizes.
+  auto window_prefetch_detail_fn = [&](const HloInstruction* instruction) {
+    WindowPrefetchDetail window_prefetch_detail;
+    const HloInstruction* fusion = FindInstruction(module.get(), "t3");
+    if (instruction == fusion) {
+      auto* window_buffer = window_prefetch_detail.add_windows();
+      window_buffer->set_operand(0);
+      window_buffer->set_size(32);
+    }
+    return window_prefetch_detail;
+  };
+
+  // Set the reserved scoped memory of the negate instruction to be 128MB. This
+  // will prevent the prefetching of window buffers from starting too early.
+  auto reserved_scoped_memory_fn =
+      [&](const HloInstruction* instruction,
+          const absl::flat_hash_set<std::pair<int, ShapeIndex>>
+              operands_in_alternate_memory,
+          const absl::flat_hash_set<ShapeIndex> outputs_in_alternate_memory) {
+        if (instruction->name() == "t1") {
+          return 128 * 1024 * 1024;
+        }
+        return 0;
+      };
+
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_window_prefetch = true;
+  options.window_prefetch_detail_fn = window_prefetch_detail_fn;
+  options.reserved_scoped_memory_fn = reserved_scoped_memory_fn;
+  AssignMemorySpace(module.get(), options, /*max_prefetch_interval=*/10,
+                    /*min_prefetch_interval=*/0);
+  const HloInstruction* fusion = FindInstruction(module.get(), "t3");
+  // Verify that the fusion instruction is window prefetched. If the fusion
+  // instruction's operand is window prefetched, the fusion instruction should
+  // have more than one operand.
+  EXPECT_GT(fusion->operand_count(), 1);
 }
 
 // This test verifies that window prefetched operands are seen by the

@@ -80,12 +80,13 @@ class GpuLatencyHidingSchedulerBaseTest : public HloTestBase {
 
   HloModuleConfig GetModuleConfig(
       absl::string_view fdo_profile,
-      bool enable_experimental_pipeline_parallelism_opt = false) {
+      DebugOptions::PipelineParallelismOptLevel pipeline_parallelism_opt_level =
+          DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE) {
     HloModuleConfig config;
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
-    debug_options.set_xla_gpu_enable_experimental_pipeline_parallelism_opt(
-        enable_experimental_pipeline_parallelism_opt);
+    debug_options.set_xla_gpu_experimental_pipeline_parallelism_opt_level(
+        pipeline_parallelism_opt_level);
     config.set_debug_options(debug_options);
     config.set_fdo_profile(fdo_profile);
     return config;
@@ -111,7 +112,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       bitcast0 = f32[2,16] bitcast(parameter1)
       partition-id0 = u32[] partition-id()
       replica-id0 = u32[] replica-id()
-      tuple0 = (f32[], f32[2,16], u32[], u32[]) tuple(parameter0, bitcast0, partition-id0, replica-id0)
+      tuple0 = (f32[], f32[2,16], u32[], u32[]) tuple(parameter0, bitcast0,
+          partition-id0, replica-id0)
       opt-barrier = (f32[], f32[2,16], u32[], u32[]) opt-barrier(tuple0)
       ROOT _ = get-tuple-element(opt-barrier), index=0
     }
@@ -232,9 +234,11 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       p1 = f32[2] parameter(1)
       ar_0 = f32[] all-reduce-start(p0), to_apply=reduce
       ar_1 = f32[] all-reduce-done(ar_0)
-      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce, dimensions={0}
+      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce,
+          dimensions={0}
       rs_1 = f32[1] reduce-scatter-done(rs_0)
-      ag_0 = (f32[2], f32[4]) all-gather-start(p1), replica_groups={{0,1}}, dimensions={0}
+      ag_0 = (f32[2], f32[4]) all-gather-start(p1), replica_groups={{0,1}},
+          dimensions={0}
       ag_1 = f32[4] all-gather-done(ag_0)
       ROOT _ = (f32[], f32[1], f32[4]) tuple(ar_1, rs_1, ag_1)
     }
@@ -364,7 +368,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       p2 = f32[2] parameter(2)
       ar_0 = f32[] all-reduce-start(p0), to_apply=reduce
       ar_1 = f32[] all-reduce-done(ar_0)
-      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce, dimensions={0}
+      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce,
+          dimensions={0}
       rs_1 = f32[1] reduce-scatter-done(rs_0)
       add_0 = f32[2] add(p1, p2)
       ROOT _ = (f32[], f32[1], f32[2]) tuple(ar_1, rs_1, add_0)
@@ -418,7 +423,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       p2 = f32[2] parameter(2)
       ar_0 = f32[] all-reduce-start(p0), to_apply=reduce, replica_groups={{0,1}}
       ar_1 = f32[] all-reduce-done(ar_0)
-      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce, dimensions={0}, replica_groups={{0, 1}}
+      rs_0 = ((f32[2]), f32[1]) reduce-scatter-start(p1), to_apply=reduce,
+          dimensions={0}, replica_groups={{0, 1}}
       rs_1 = f32[1] reduce-scatter-done(rs_0)
       add_0 = f32[2] add(p1, p2)
       ROOT _ = (f32[], f32[1], f32[2]) tuple(ar_1, rs_1, add_0)
@@ -518,7 +524,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, SchedulePipelinedSendRecvsLate) {
 
   absl::string_view kFdoProfile = "";
   auto config = GetModuleConfig(
-      kFdoProfile, /*enable_experimental_pipeline_parallelism_opt=*/true);
+      kFdoProfile, /*pipeline_parallelism_opt_level=*/DebugOptions::
+          PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE);
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloModule, config));
 
@@ -550,6 +557,99 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, SchedulePipelinedSendRecvsLate) {
             GetIndexByName(while_body_instrs, "send_ctx_"));
   EXPECT_LT(GetIndexByName(while_body_instrs, "send_ctx_"),
             GetIndexByName(while_body_instrs, "some_res"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       ScheduleAnnotatedCollectivesOnP2PResource) {
+  absl::string_view kHloModule = R"(
+    HloModule test
+
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT result = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      param = f32[64] parameter(0)
+      after_all = token[] after-all()
+
+      // Recv on p2p resource.
+      recv_start = (f32[64], u32[], token[]) recv(after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}},_xla_gpu_collective_stream="p2p"}
+      recv_done = (f32[64], token[]) recv-done(recv_start)
+      recv_data = f32[64] get-tuple-element(recv_done), index=0
+
+      // Send on p2p resource.
+      send_start = (f32[64], u32[], token[]) send(param, after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}},_xla_gpu_collective_stream="p2p"}
+      send_done = token[] send-done(send_start)
+
+      // Collective-permute on p2p resource.
+      cp_start = (f32[64], f32[64], u32[], u32[])
+          collective-permute-start(recv_data),
+          source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, channel_id=1,
+          frontend_attributes={_xla_gpu_collective_stream="p2p"}
+      cp_done = f32[64]collective-permute-done(cp_start)
+
+      // All-reduce on uncontested collective resource.
+      ar_start = f32[64] all-reduce-start(param), to_apply=add
+      ar_done = f32[64] all-reduce-done(ar_start)
+
+      ROOT tuple = (f32[64], f32[64]) tuple(cp_done, ar_done)
+    }
+  )";
+
+  // Make it attractive for the AR to overlap with all that is possible.
+  absl::string_view kFdoProfile = R"pb(
+    costs { name: "ar_start" cost_us: 1000000.0 }
+  )pb";
+  auto config = GetModuleConfig(
+      kFdoProfile, /*pipeline_parallelism_opt_level=*/DebugOptions::
+          PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule, config));
+
+  TF_EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/1,
+                              DebugOptions::PGLE_STRICTNESS_LEVEL_OFF));
+  auto schedule = module->schedule();
+
+  VLOG(3) << module->schedule().ToString();
+  HloComputation* main_computation = FindComputation(module.get(), "main");
+  std::vector<HloInstruction*> main_instructions =
+      schedule.sequence(main_computation).instructions();
+
+  // Expect the ar to overlap with p2p communication for recv and
+  // collective-permute. Note the send is scheduled last as it is not explored
+  // from the computations root. We expect this schedule:
+  //   - send_start
+  //   - send_done
+  //   - ar_start
+  //   - recv_start
+  //   - recv_done
+  //   - recv_data
+  //   - cp_start
+  //   - cp_done
+  //   - ar_done
+  //   - tuple
+  EXPECT_LT(GetIndexByName(main_instructions, "send_start"),
+            GetIndexByName(main_instructions, "send_done"));
+  EXPECT_LT(GetIndexByName(main_instructions, "send_done"),
+            GetIndexByName(main_instructions, "ar_start"));
+  EXPECT_LT(GetIndexByName(main_instructions, "ar_start"),
+            GetIndexByName(main_instructions, "recv_start"));
+  EXPECT_LT(GetIndexByName(main_instructions, "recv_start"),
+            GetIndexByName(main_instructions, "recv_done"));
+  EXPECT_LT(GetIndexByName(main_instructions, "recv_done"),
+            GetIndexByName(main_instructions, "recv_data"));
+  EXPECT_LT(GetIndexByName(main_instructions, "recv_data"),
+            GetIndexByName(main_instructions, "cp_start"));
+  EXPECT_LT(GetIndexByName(main_instructions, "cp_start"),
+            GetIndexByName(main_instructions, "cp_done"));
+  EXPECT_LT(GetIndexByName(main_instructions, "cp_done"),
+            GetIndexByName(main_instructions, "ar_done"));
+  EXPECT_LT(GetIndexByName(main_instructions, "ar_done"),
+            GetIndexByName(main_instructions, "tuple"));
 }
 
 }  // namespace

@@ -17,6 +17,8 @@ cc_library(
         "//xla/python:__pkg__",
     ],
     deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@nanobind",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
@@ -47,8 +49,6 @@ tsl_pybind_extension(
 py_strict_test(
     name = "profile_data_test",
     srcs = ["profile_data_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = [
         "no_oss",  # TODO(phawkins): This test passes, but requires --config=monolithic.
         "optonly",

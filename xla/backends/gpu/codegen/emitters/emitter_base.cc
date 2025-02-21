@@ -410,6 +410,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
       mlir::ArrayAttr::get(&context, arg_attrs),
       /*res_attrs=*/mlir::ArrayAttr{});
   entry_func->setAttr("xla.entry", mlir::UnitAttr::get(&context));
+  SetBackendKind(&context, entry_func, BackendKind::kGpu);
 
   TF_RETURN_IF_ERROR(EmitMlir(module.get(), entry_func, fusion));
   return module;
@@ -573,17 +574,17 @@ absl::Status EmitterBase::RunPassPipeline(
 }
 
 void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
-  pm.addNestedPass<FuncOp>(CreateSimplifyArithPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addPass(CreateEraseDeadFunctionsPass());
+  pm.addPass(emitters::CreateEraseDeadFunctionsPass());
   pm.addPass(mlir::createCSEPass());
 }
 
 void AddLoopTransformationPasses(mlir::OpPassManager& pm,
                                  const se::DeviceDescription& device) {
   pm.addNestedPass<FuncOp>(
-      CreateLowerXlaGpuToScfPass(device.threads_per_warp()));
+      emitters::CreateLowerXlaToScfPass(device.threads_per_warp()));
   pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());
   pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
     // CSE after inlining because inlining can introduce duplicates.
@@ -592,14 +593,14 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<FuncOp>(CreatePeelLoopsPass());
-  pm.addNestedPass<FuncOp>(CreateLowerXlaGpuLoopsToScfPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateLowerXlaLoopsToScfPass());
   pm.addPass(mlir::mhlo::createConvertToSignlessPass());
-  pm.addPass(CreatePropagateSliceIndicesPass());
+  pm.addPass(emitters::CreatePropagateSliceIndicesPass());
   pm.addPass(emitters::CreateFlattenTensorsPass());
   // We need LICM before unswitching loops, because our loop unswitcher only
   // detects for loops with a single if inside them.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<FuncOp>(CreateUnswitchLoopsPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateUnswitchLoopsPass());
   // We need LICM again after unswitching, because that can introduce new
   // opportunities for LICM. This would not be necessary if LICM also moved
   // instructions over ifs.
@@ -612,17 +613,17 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
 
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device) {
-  pm.addNestedPass<FuncOp>(CreateConvertPureCallOpsPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateConvertPureCallOpsPass());
   pm.addPass(emitters::CreateLowerTensorsPass(device));
   pm.addPass(mlir::createConvertComplexToStandardPass());
-  pm.addPass(CreateMergePointersToSameSlicePass());
+  pm.addPass(emitters::CreateMergePointersToSameSlicePass());
 
   // LowerTensors creates new affine.apply ops. Fold and CSE them so
   // simplify-affine has maximally folded expressions to work with.
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addNestedPass<FuncOp>(CreateSimplifyArithPass());
-  pm.addPass(CreateSimplifyAffinePass());
+  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass());
+  pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(CreateConvertIndexTypePass());
   // simplify-affine lowers most affine.apply ops, but if it can't prove a
   // division or modulo is unsigned, affine.apply ops will remain.
@@ -640,7 +641,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
 
   pm.addPass(emitters::CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
-  pm.addPass(mlir::createConvertSCFToCFPass());
+  pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(emitters::CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }

@@ -96,13 +96,14 @@ absl::Status CreateTritonIrAndFileCheck(
 
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(
-      auto module, CreateTritonModule("triton_fn", fusion,
-                                      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                                      block_level_parameters, context));
+      auto triton_module,
+      CreateTritonModule("triton_fn", fusion,
+                         TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+                         block_level_parameters, context));
 
   std::string out;
   llvm::raw_string_ostream os(out);
-  module->print(os);
+  triton_module.module->print(os);
   TF_ASSIGN_OR_RETURN(bool succeeded, RunFileCheck(out, filecheck_pattern));
   if (!succeeded) {
     return absl::InternalError("FileCheck failed.");
@@ -193,6 +194,11 @@ std::string TritonSupportTestTwoTypesAndDeviceToString(
 std::string TritonSupportTestTypeToString(
     const ::testing::TestParamInfo<PrimitiveType>& data) {
   return primitive_util::LowercasePrimitiveTypeName(data.param);
+}
+
+std::string TritonSupportTestDeviceToString(
+    const ::testing::TestParamInfo<se::GpuComputeCapability>& data) {
+  return ComputeCapabilityToString(data.param);
 }
 
 namespace {

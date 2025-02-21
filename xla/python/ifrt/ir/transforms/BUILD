@@ -3,7 +3,7 @@ load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla/python/ifrt:friends"],
+    default_visibility = ["//xla/python/ifrt:users"],
     licenses = ["notice"],
 )
 
@@ -89,6 +89,7 @@ cc_library(
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -114,11 +115,9 @@ cc_library(
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

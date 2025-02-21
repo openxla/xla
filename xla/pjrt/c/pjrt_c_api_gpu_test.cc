@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
+#include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_future.h"
@@ -64,6 +65,7 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/mem.h"
 
@@ -128,6 +130,7 @@ TEST_F(PjrtCApiGpuTest, CreateViewOfDeviceBuffer) {
       c_layout_data, pjrt::ConvertToBufferMemoryLayoutData(shape.layout()));
   create_view_args.layout = &(c_layout_data.c_layout);
   create_view_args.device = device_args.device;
+  create_view_args.memory = nullptr;
   std::function<void()> on_delete_callback = []() mutable {};
   create_view_args.on_delete_callback_arg =
       new std::function(on_delete_callback);
@@ -289,6 +292,33 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
   destroy_args.context = create_arg.context;
 
   api_->PJRT_ExecuteContext_Destroy(&destroy_args);
+}
+
+TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
+  void* host_dma_ptr = nullptr;
+  size_t dma_size = 1024 * 1024;
+  ASSERT_EQ(posix_memalign(&host_dma_ptr, dma_size, dma_size), 0);
+
+  PJRT_Client_DmaMap_Args dma_args;
+  dma_args.struct_size = PJRT_Client_DmaMap_Args_STRUCT_SIZE;
+  dma_args.extension_start = nullptr;
+  dma_args.client = client_;
+  dma_args.data = host_dma_ptr;
+  dma_args.size = dma_size;
+  PJRT_Error* dma_error = api_->PJRT_Client_DmaMap(&dma_args);
+  ASSERT_EQ(dma_error, nullptr);
+  MakeErrorDeleter(api_)(dma_error);
+
+  PJRT_Client_DmaUnmap_Args unmap_args;
+  unmap_args.struct_size = PJRT_Client_DmaUnmap_Args_STRUCT_SIZE;
+  unmap_args.extension_start = nullptr;
+  unmap_args.client = client_;
+  unmap_args.data = host_dma_ptr;
+  PJRT_Error* unmap_error = api_->PJRT_Client_DmaUnmap(&unmap_args);
+  ASSERT_EQ(unmap_error, nullptr);
+  MakeErrorDeleter(api_)(unmap_error);
+
+  free(host_dma_ptr);
 }
 
 TEST_F(PjrtCApiGpuTransferManagerTest, SetBufferError) {
@@ -657,6 +687,70 @@ TEST(PjrtCApiPlatformNameTest, UnavailablePlatformName) {
   error_destroy_args.error = error;
 
   api->PJRT_Error_Destroy(&error_destroy_args);
+}
+
+TEST(PjrtCApiGpuExtensionTest,
+     ShouldStageHostToDeviceTransferWithOptionSetToTrue) {
+  auto api = GetPjrtApi();
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+      {"should_stage_host_to_device_transfers", true},
+      {"visible_devices", xla::PjRtValueType(std::vector<int64_t>{0})},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                          ::pjrt::ConvertToPjRtNamedValueList(options));
+  PJRT_Client_Create_Args create_arg;
+  create_arg.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  create_arg.extension_start = nullptr;
+  create_arg.client = nullptr;
+  create_arg.create_options = c_options.data();
+  create_arg.num_options = c_options.size();
+  PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
+  EXPECT_EQ(error, nullptr) << error->status.message();
+
+  xla::PjRtClient* cpp_client = create_arg.client->client.get();
+  auto* gpu_client =
+      tensorflow::down_cast<xla::StreamExecutorGpuClient*>(cpp_client);
+  EXPECT_TRUE(gpu_client->should_stage_host_to_device_transfers());
+
+  PJRT_Client_Destroy_Args destroy_args;
+  destroy_args.struct_size = PJRT_Client_Destroy_Args_STRUCT_SIZE;
+  destroy_args.extension_start = nullptr;
+  destroy_args.client = create_arg.client;
+  PJRT_Error* destroy_error = api->PJRT_Client_Destroy(&destroy_args);
+  CHECK_EQ(destroy_error, nullptr);
+}
+
+TEST(PjrtCApiGpuExtensionTest,
+     ShouldStageHostToDeviceTransferWithOptionSetToFalse) {
+  auto api = GetPjrtApi();
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+      {"should_stage_host_to_device_transfers", false},
+      {"visible_devices", xla::PjRtValueType(std::vector<int64_t>{0})},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                          ::pjrt::ConvertToPjRtNamedValueList(options));
+  PJRT_Client_Create_Args create_arg;
+  create_arg.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  create_arg.extension_start = nullptr;
+  create_arg.client = nullptr;
+  create_arg.create_options = c_options.data();
+  create_arg.num_options = c_options.size();
+  PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
+  EXPECT_EQ(error, nullptr) << error->status.message();
+
+  xla::PjRtClient* cpp_client = create_arg.client->client.get();
+  auto* gpu_client =
+      tensorflow::down_cast<xla::StreamExecutorGpuClient*>(cpp_client);
+  EXPECT_FALSE(gpu_client->should_stage_host_to_device_transfers());
+
+  PJRT_Client_Destroy_Args destroy_args;
+  destroy_args.struct_size = PJRT_Client_Destroy_Args_STRUCT_SIZE;
+  destroy_args.extension_start = nullptr;
+  destroy_args.client = create_arg.client;
+  PJRT_Error* destroy_error = api->PJRT_Client_Destroy(&destroy_args);
+  CHECK_EQ(destroy_error, nullptr);
 }
 
 TEST(PJRTGpuDeviceTopologyTest, CreateGpuTopology) {

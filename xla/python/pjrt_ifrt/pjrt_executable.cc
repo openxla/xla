@@ -35,10 +35,12 @@ limitations under the License.
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -538,20 +540,26 @@ PjRtLoadedExecutable::Execute(
     }
   }
 
-  const bool returned_future_supported =
-      pjrt_loaded_executable_->IsReturnedFutureSupported();
-
   xla::ExecuteOptions opts;
   opts.untuple_result = true;
   opts.launch_id = options.launch_id;
   opts.use_major_to_minor_data_layout_for_callbacks = true;
   opts.non_donatable_input_indices = options.non_donatable_input_indices;
 
-  if (!all_loaded_host_callbacks_->empty() && !returned_future_supported) {
-    return Internal(
-        "Host callback not supported without returned future support in "
-        "runtime: %s",
-        client_->runtime_type());
+  auto context = std::make_shared<xla::ExecuteContext>();
+  auto platform_id = pjrt_loaded_executable_->client()->platform_id();
+  // Forward callbacks via FFI's ExecutionContext for CPU/GPU platforms only.
+  if (platform_id == CpuId() || platform_id == CudaId() ||
+      platform_id == RocmId() || platform_id == SyclId()) {
+    CHECK_OK(context->ffi_context().Insert(all_loaded_host_callbacks_.get()));
+    opts.context = context.get();
+  }
+
+  // When using host callbacks on CPU, we need to use synchronous dispatch to
+  // avoid deadlocks with reentrant callbacks. Note that this option only
+  // affects the CPU runtime.
+  if (!all_loaded_host_callbacks_->empty()) {
+    opts.execution_mode = xla::ExecuteOptions::ExecutionMode::kSynchronous;
   }
 
   std::unique_ptr<HostCallbackStates> host_callback_states;
@@ -586,29 +594,19 @@ PjRtLoadedExecutable::Execute(
         pjrt_loaded_executable_->ExecutePortable(
             argument_handles.front(), portable_execution_device->pjrt_device(),
             opts, returned_pjrt_future,
-            /*fill_future=*/returned_future_supported));
+            /*fill_future=*/true));
 
     pjrt_outputs.push_back(std::move(single_device_pjrt_results));
-    if (returned_future_supported) {
-      status = *std::move(returned_pjrt_future);
-    } else {
-      status = Future<>(absl::OkStatus());
-    }
+    status = *std::move(returned_pjrt_future);
   } else {
     std::optional<std::vector<PjRtFuture<>>> returned_pjrt_futures;
-    if (returned_future_supported) {
-      returned_pjrt_futures.emplace();
-    }
+    returned_pjrt_futures.emplace();
 
     TF_ASSIGN_OR_RETURN(
         pjrt_outputs, pjrt_loaded_executable_->Execute(argument_handles, opts,
                                                        returned_pjrt_futures));
 
-    if (returned_future_supported) {
-      status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
-    } else {
-      status = Future<>(absl::OkStatus());
-    }
+    status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
   }
 
   if (!all_loaded_host_callbacks_->empty()) {
@@ -616,8 +614,8 @@ PjRtLoadedExecutable::Execute(
     // can use the futures to extend the lifetime of the host callbacks until
     // the execution finishes.
     status.OnReady([all_loaded_host_callbacks = all_loaded_host_callbacks_,
-                    host_callback_states =
-                        std::move(host_callback_states)](absl::Status) mutable {
+                    host_callback_states = std::move(host_callback_states),
+                    context = std::move(context)](absl::Status) mutable {
       all_loaded_host_callbacks.reset();
     });
   }

@@ -4,7 +4,7 @@
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
 # Import TSL Workspaces
-load("@tsl//:workspace2.bzl", "tsl_workspace2")
+load("//:tsl_workspace2.bzl", "tsl_workspace2")
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 
@@ -45,17 +45,17 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "3306f4178c8594b689165d385e644f03a3154c3be044f6ae36dd170fbf182cf5",
-        strip_prefix = "XNNPACK-983d013300f19fd3f4e33220b6401408e97a8d12",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/983d013300f19fd3f4e33220b6401408e97a8d12.zip"),
+        sha256 = "face04056299ca22e2dbbf122a27aef289443dc7b1ad7e33a52714d6acc084eb",
+        strip_prefix = "XNNPACK-e55b3998cadb320188759aaada27328cbacc3253",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/e55b3998cadb320188759aaada27328cbacc3253.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
     tf_http_archive(
         name = "KleidiAI",
-        sha256 = "ad37707084a6d4ff41be10cbe8540c75bea057ba79d0de6c367c1bfac6ba0852",
-        strip_prefix = "kleidiai-40a926833857fb64786e02f97703e42b1537cb57",
-        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/40a926833857fb64786e02f97703e42b1537cb57/kleidiai-40a926833857fb64786e02f97703e42b1537cb57.zip"),
+        sha256 = "f3ea4fce53f3b31076958dbff229f0048dae15bf454929673c78292a56279d52",
+        strip_prefix = "kleidiai-847ebd19d0192528659b0a0fa2c6057eed674c6a",
+        urls = tf_mirror_urls("https://gitlab.arm.com/kleidi/kleidiai/-/archive/847ebd19d0192528659b0a0fa2c6057eed674c6a/kleidiai-40a926833857fb64786e02f97703e42b1537cb57.zip"),
     )
 
     tf_http_archive(
@@ -74,9 +74,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "pthreadpool",
-        sha256 = "a4cf06de57bfdf8d7b537c61f1c3071bce74e57524fe053e0bbd2332feca7f95",
-        strip_prefix = "pthreadpool-4fe0e1e183925bf8cfa6aae24237e724a96479b8",
-        urls = tf_mirror_urls("https://github.com/Maratyszcza/pthreadpool/archive/4fe0e1e183925bf8cfa6aae24237e724a96479b8.zip"),
+        sha256 = "cb668c32d6e05099492cc7ea19168e2dad0d1dcc4cbaa0e34fd4b38d39f0e03e",
+        strip_prefix = "pthreadpool-f94ab76fe99754960035d520dce28e15b647e8cf",
+        urls = tf_mirror_urls("https://github.com/Maratyszcza/pthreadpool/archive/f94ab76fe99754960035d520dce28e15b647e8cf.zip"),
     )
 
     tf_http_archive(
@@ -91,9 +91,9 @@ def _tf_repositories():
         name = "cudnn_frontend_archive",
         build_file = "//third_party:cudnn_frontend.BUILD",
         patch_file = ["//third_party:cudnn_frontend_header_fix.patch"],
-        sha256 = "7be8afebc693f0ef75bbc673ce5c1cf422673e84ea7d53e488201756c046496e",
-        strip_prefix = "cudnn-frontend-1.9.0",
-        urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.9.0.zip"),
+        sha256 = "59fb63e273c845cb85996d536194a7e2b22012810983cbbf06c4a46b09d17a32",
+        strip_prefix = "cudnn-frontend-1.10.0",
+        urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.10.0.zip"),
     )
 
     tf_http_archive(

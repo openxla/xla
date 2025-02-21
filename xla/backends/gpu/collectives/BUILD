@@ -39,12 +39,12 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:lockable",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -58,6 +58,7 @@ cc_library(
         "//xla/core/collectives:clique_key",
         "//xla/service:global_device_id",
         "//xla/tsl/lib/gtl:int_type",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log:check",
@@ -65,7 +66,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -76,12 +76,12 @@ xla_cc_test(
         ":gpu_clique_key",
         "//xla/core/collectives:clique_id",
         "//xla/service:global_device_id",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -144,12 +144,12 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -179,8 +179,8 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "//xla:util",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -256,6 +256,38 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+    ] + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rccl",
+    ]),
+)
+
+xla_cc_test(
+    name = "nccl_communicator_test",
+    srcs = if_gpu_is_configured(["nccl_communicator_test.cc"]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    tags = ["requires-gpu-nvidia"],
+    deps = [
+        ":gpu_collectives",
+        ":nccl_communicator",
+        ":nccl_errors",
+        "//xla/core/collectives:rank_id",
+        "//xla/service:collective_ops_utils",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/utility",
+        "@com_google_googletest//:gtest_main",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]) + if_rocm_is_configured([

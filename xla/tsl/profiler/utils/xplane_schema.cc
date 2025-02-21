@@ -287,6 +287,8 @@ const StatTypeMap& GetStatTypeMap() {
        {"bytes_transferred", kBytesTransferred},
        {"queue", kDmaQueue},
        {"dcn_collective_info", kDcnCollectiveInfo},
+       {"all_reduce_id", kAllReduceId},
+       {"all_reduce_unique_id", kAllReduceUniqueId},
        // Performance counter related.
        {"Raw Value", kRawValue},
        {"Scaled Value", kScaledValue},
@@ -375,6 +377,8 @@ const MegaScaleStatTypeMap& GetMegaScaleStatTypeMap() {
        {"num_actions", kMegaScaleNumActions},
        {"collective_type", kMegaScaleCollectiveType},
        {"input_size", kMegaScaleInputSize},
+       {"send_channel_id", kMegaScaleSendChannelId},
+       {"recv_channel_id", kMegaScaleRecvChannelId},
        {"slack_us", kMegaScaleSlackUs},
        {"action_type", kMegaScaleActionType},
        {"start_end_type", kMegaScaleStartEndType},

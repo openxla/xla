@@ -126,6 +126,7 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCholeskyThunk(const HloInstruction* instr);
   absl::Status EmitCustomCallThunk(const HloCustomCallInstruction* instr);
   absl::Status EmitFftThunk(const HloFftInstruction* instr);
+  absl::Status EmitAsyncComputation(const HloInstruction* instr);
   absl::Status EmitFusion(const HloFusionInstruction* instr);
   absl::Status EmitCopy(const HloInstruction* instr);
   absl::Status EmitAsyncCustomCallStart(const HloInstruction* instr);
@@ -329,6 +330,9 @@ class IrEmitterUnnested : public IrEmitter {
 
   // Container for async copy-start/copy-done events.
   std::shared_ptr<CopyThunk::AsyncEvents> copy_events_;
+
+  // Cache to store the call_graph.
+  std::unique_ptr<CallGraph> call_graph_;
 };
 
 }  // namespace gpu

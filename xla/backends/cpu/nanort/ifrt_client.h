@@ -114,6 +114,13 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
       ifrt::ArrayCopySemantics array_copy_semantics,
       ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override;
+  absl::StatusOr<tsl::RCReference<ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      ifrt::DType dtype, ifrt::Shape shape,
+      absl::Nonnull<std::shared_ptr<const ifrt::Sharding>> sharding,
+      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
+      ifrt::ArrayCopySemantics array_copy_semantics,
+      ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> CopyArrays(
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
@@ -154,6 +161,9 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
       ifrt::DeviceId device_id) const override;
   absl::StatusOr<ifrt::Device*> LookupAddressableDevice(
       int local_hardware_id) const override;
+
+  tsl::RCReference<ifrt::DeviceList> MakeDeviceList(
+      absl::Span<ifrt::Device* const> devices) const override;
 
   ifrt::Compiler* GetDefaultCompiler() override;
 

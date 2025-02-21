@@ -30,8 +30,8 @@ filegroup(
 filegroup(
     name = "runtime_hdrs",
     srcs = [
-        "concurrency.h",
         "convolution_thunk_internal.h",
+        "work_queue.h",
     ],
     visibility = internal_visibility([":friends"]),
 )
@@ -115,9 +115,10 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -131,7 +132,69 @@ cc_library(
         ":kernel_c_api",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "object_pool",
+    hdrs = ["object_pool.h"],
+    deps = [
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "object_pool_test",
+    srcs = ["object_pool_test.cc"],
+    deps = [
+        ":object_pool",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
+    name = "parallel_loop_runner",
+    srcs = ["parallel_loop_runner.cc"],
+    hdrs = ["parallel_loop_runner.h"],
+    deps = [
+        "//xla/backends/cpu/runtime:work_queue",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/lib/math:math_util",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:fixed_array",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/time",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
+xla_cc_test(
+    name = "parallel_loop_runner_test",
+    srcs = ["parallel_loop_runner_test.cc"],
+    deps = [
+        ":parallel_loop_runner",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -261,11 +324,11 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
         "@eigen_archive//:eigen3",
     ],
 )
@@ -349,24 +412,23 @@ cc_library(
 )
 
 cc_library(
-    name = "concurrency",
-    hdrs = ["concurrency.h"],
+    name = "convolution_lib",
+    srcs = ["convolution_lib.cc"],
+    hdrs = ["convolution_lib.h"],
     deps = [
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-xla_cc_test(
-    name = "concurrency_test",
-    srcs = ["concurrency_test.cc"],
-    deps = [
-        ":concurrency",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -380,11 +442,12 @@ cc_library(
     copts = runtime_copts(),
     visibility = internal_visibility([":friends"]),
     deps = [
-        ":concurrency",
+        ":work_queue",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
+        "//xla/tsl/platform:logging",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -394,6 +457,7 @@ cc_library(
     hdrs = ["convolution_thunk.h"],
     copts = runtime_copts(),
     deps = [
+        ":convolution_lib",
         ":convolution_thunk_internal",
         ":thunk",
         "//xla:executable_run_options",
@@ -403,7 +467,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
-        "//xla/service/cpu:runtime_conv2d_acl",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
@@ -420,12 +483,29 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "convolution_thunk_test_util",
+    testonly = True,
+    hdrs = ["convolution_thunk_test_util.h"],
+    deps = [
+        ":buffer_allocations",
+        ":convolution_thunk",
+        ":thunk_testlib",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_cc_test(
     name = "convolution_thunk_test",
     srcs = ["convolution_thunk_test.cc"],
     deps = [
         ":buffer_allocations",
         ":convolution_thunk",
+        ":convolution_thunk_test_util",
         ":thunk",
         ":thunk_testlib",
         "//xla:literal",
@@ -631,6 +711,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
@@ -743,10 +824,12 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:test_main",
     ],
@@ -784,6 +867,7 @@ xla_cc_test(
         ":resource_use",
         ":thunk",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
@@ -866,6 +950,7 @@ xla_cc_test(
         ":resource_use",
         ":thunk",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
@@ -905,6 +990,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/profiler/lib:traceme",
@@ -923,6 +1009,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla/service:buffer_assignment",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
@@ -990,6 +1077,7 @@ cc_library(
         ":thunk",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
@@ -1032,10 +1120,10 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -1134,9 +1222,9 @@ cc_library(
 )
 
 cc_library(
-    name = "thunk_serdes_proto",
-    srcs = ["thunk_serdes_proto.cc"],
-    hdrs = ["thunk_serdes_proto.h"],
+    name = "thunk_proto_serdes",
+    srcs = ["thunk_proto_serdes.cc"],
+    hdrs = ["thunk_proto_serdes.h"],
     deps = [
         ":all_gather_thunk",
         ":all_reduce_thunk",
@@ -1145,6 +1233,7 @@ cc_library(
         ":collective_permute_thunk",
         ":collective_thunk",
         ":conditional_thunk",
+        ":convolution_lib",
         ":convolution_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
@@ -1152,6 +1241,7 @@ cc_library(
         ":fft_thunk",
         ":infeed_thunk",
         ":kernel_thunk",
+        ":logical_id_thunk",
         ":outfeed_thunk",
         ":reduce_scatter_thunk",
         ":resource_use",
@@ -1163,7 +1253,10 @@ cc_library(
         ":topk_thunk",
         ":while_thunk",
         "//xla:shape_util",
+        "//xla:util",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:launch_dim",
@@ -1174,6 +1267,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1213,5 +1307,61 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
+    ],
+)
+
+xla_cc_test(
+    name = "thunk_sequence_serdes_test",
+    srcs = ["thunk_sequence_serdes_test.cc"],
+    deps = [
+        ":all_gather_thunk",
+        ":all_reduce_thunk",
+        ":all_to_all_thunk",
+        ":call_thunk",
+        ":collective_permute_thunk",
+        ":collective_thunk",
+        ":conditional_thunk",
+        ":convolution_thunk",
+        ":convolution_thunk_test_util",
+        ":copy_thunk",
+        ":custom_call_thunk",
+        ":dot_thunk",
+        ":fft_thunk",
+        ":infeed_thunk",
+        ":kernel_thunk",
+        ":logical_id_thunk",
+        ":outfeed_thunk",
+        ":reduce_scatter_thunk",
+        ":resource_use",
+        ":rng_state_thunk",
+        ":serdes_base",
+        ":sort_thunk",
+        ":thunk",
+        ":thunk_executor",
+        ":thunk_proto_serdes",
+        ":thunk_testlib",
+        ":topk_thunk",
+        ":while_thunk",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
+        "//xla/service:buffer_assignment",
+        "//xla/service:collective_ops_utils",
+        "//xla/service:hlo_proto_cc",
+        "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:casts",
     ],
 )

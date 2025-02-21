@@ -40,9 +40,9 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -412,7 +412,7 @@ module {
       tsl::RCReference<Array> input,
       CreateArray({data.data()}, Shape({2}), DType(DType::kS32),
                   ShardingParam({1}, {{0}, {1}}),
-                  BasicDeviceList::Create({devices->devices()[0]})));
+                  client_->MakeDeviceList({devices->devices()[0]})));
 
   ExecuteOptions options;
   options.fill_status = true;
@@ -425,7 +425,7 @@ module {
   ASSERT_EQ(result.outputs.size(), 1);
   ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
       result.outputs[0], DType(DType::kS32), Shape({2}), {{1, 2}},
-      BasicDeviceList::Create({devices->devices()[1]})));
+      client_->MakeDeviceList({devices->devices()[1]})));
 }
 
 TEST_F(IfrtIrExecutableImplTest, Reshard) {
@@ -459,7 +459,7 @@ module {
       tsl::RCReference<Array> input,
       CreateArray({data.data()}, Shape({2, 2}), DType(DType::kS32),
                   ShardingParam({1, 1}, {{0}, {1}}),
-                  BasicDeviceList::Create({devices->devices()[0]})));
+                  client_->MakeDeviceList({devices->devices()[0]})));
 
   ExecuteOptions options;
   options.fill_status = true;
@@ -475,7 +475,7 @@ module {
                               Shape({1, 2}), {{0, 1}, {2, 3}}, devices));
   ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
       result.outputs[1], DType(DType::kS32), Shape({2, 2}), {{0, 1, 2, 3}},
-      BasicDeviceList::Create({devices->devices()[1]})));
+      client_->MakeDeviceList({devices->devices()[1]})));
 }
 
 TEST_F(IfrtIrExecutableImplTest, ZeroInput) {
@@ -711,10 +711,10 @@ module {
   ASSERT_EQ(result.outputs.size(), 2);
   ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
       result.outputs[0], DType(DType::kS32), Shape({1, 2}), {{0, 1}},
-      BasicDeviceList::Create({devices->devices()[0]})));
+      client_->MakeDeviceList({devices->devices()[0]})));
   ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
       result.outputs[1], DType(DType::kS32), Shape({1, 2}), {{2, 3}},
-      BasicDeviceList::Create({devices->devices()[1]})));
+      client_->MakeDeviceList({devices->devices()[1]})));
 }
 
 TEST_F(IfrtIrExecutableImplTest, LoadedExecBinding) {

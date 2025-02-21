@@ -44,11 +44,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -378,6 +378,10 @@ absl::StatusOr<nb_dtype> IfrtDtypeToNbDtype(ifrt::DType dtype) {
 }
 
 absl::StatusOr<ifrt::DType> DtypeToIfRtDType(nb_dtype dtype) {
+  // String does not have a corresponding XLA primitive type.
+  if (dtype.kind() == 'T') {
+    return ifrt::DType(ifrt::DType::kString);
+  }
   TF_ASSIGN_OR_RETURN(auto primitive_type, DtypeToPrimitiveType(dtype));
   return ifrt::ToDType(primitive_type);
 }

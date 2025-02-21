@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/index_domain.h"
@@ -41,9 +42,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -85,6 +86,11 @@ std::shared_ptr<MockClient> MakeTestClient(int num_devices) {
   ON_CALL(*client, devices)
       .WillByDefault(
           [state]() -> absl::Span<Device* const> { return state->devices; });
+  ON_CALL(*client, MakeDeviceList)
+      .WillByDefault([](absl::Span<Device* const> devices)
+                         -> tsl::RCReference<DeviceList> {
+        return BasicDeviceList::Create(devices);
+      });
   return client;
 }
 

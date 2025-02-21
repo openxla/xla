@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -54,6 +56,7 @@ limitations under the License.
 #include "xla/python/ifrt/tuple.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace ifrt {
@@ -135,6 +138,14 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
                ArrayCopySemantics array_copy_semantics,
                SingleDeviceShardSemantics single_device_shard_semantics),
               (final));
+  MOCK_METHOD(absl::StatusOr<tsl::RCReference<Array>>,
+              AssembleArrayFromSingleDeviceArrays,
+              (DType dtype, Shape shape,
+               absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+               absl::Span<tsl::RCReference<Array>> arrays,
+               ArrayCopySemantics array_copy_semantics,
+               SingleDeviceShardSemantics single_device_shard_semantics),
+              (final));
   MOCK_METHOD(absl::StatusOr<std::vector<tsl::RCReference<Array>>>, CopyArrays,
               (absl::Span<tsl::RCReference<Array>> arrays,
                std::optional<tsl::RCReference<DeviceList>> devices,
@@ -169,6 +180,8 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
               (const, final));
   MOCK_METHOD(absl::StatusOr<Device*>, LookupAddressableDevice,
               (int local_hardware_id), (const, final));
+  MOCK_METHOD(tsl::RCReference<DeviceList>, MakeDeviceList,
+              (absl::Span<Device* const> devices), (const));
   MOCK_METHOD(Compiler*, GetDefaultCompiler, (), (final));
   MOCK_METHOD(absl::StatusOr<std::shared_ptr<Topology>>, GetTopologyForDevices,
               (const tsl::RCReference<xla::ifrt::DeviceList>& devices),
@@ -385,6 +398,7 @@ class MockSharding : public llvm::RTTIExtends<MockSharding, Sharding> {
               (std::optional<tsl::RCReference<DeviceList>> devices,
                std::optional<MemoryKind> memory_kind),
               (const final));
+  MOCK_METHOD(void, Hash, (absl::HashState), (const final));
 
   std::string DebugString() const final { return "MockSharding"; }
 

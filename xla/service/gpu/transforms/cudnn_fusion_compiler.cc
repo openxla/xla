@@ -496,9 +496,9 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         return std::nullopt;
       }
     } else if (HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBitcast,
-                                HloOpcode::kTranspose, HloOpcode::kCopy>(hlo) ||
-               ((HloPredicateIsOp<HloOpcode::kBroadcast, HloOpcode::kSlice>(
-                   hlo)))) {
+                                HloOpcode::kTranspose, HloOpcode::kCopy,
+                                HloOpcode::kBroadcast, HloOpcode::kSlice>(
+                   hlo)) {
       // All these are accounted for separately as transformations of strides.
       hlo_to_cudnn[hlo] = operand(0);
     } else if (hlo->IsElementwise()) {
@@ -642,6 +642,8 @@ absl::StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
   computation->set_root_instruction(output_tuple, true);
   HloInstruction* new_fusion = fusion.parent()->AddInstruction(
       fusion.CloneWithNewShape(output_tuple->shape()));
+  TF_RETURN_IF_ERROR(new_fusion->CopyAllControlDepsFrom(&fusion));
+  TF_RETURN_IF_ERROR(fusion.DropAllControlDeps());
   TF_RETURN_IF_ERROR(fusion.ReplaceAllUsesWith(fusion.parent()->AddInstruction(
       HloInstruction::CreateGetTupleElement(new_fusion, 0))));
   TF_RETURN_IF_ERROR(fusion.parent()->RemoveInstruction(&fusion));

@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -185,7 +186,8 @@ namespace gpu {
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
       send_recv_events_(std::make_shared<SendRecvAsyncEvents>()),
-      copy_events_(std::make_shared<CopyThunk::AsyncEvents>()) {}
+      copy_events_(std::make_shared<CopyThunk::AsyncEvents>()),
+      call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())) {}
 
 std::unique_ptr<IrEmitterUnnested> IrEmitterUnnested::Create(
     IrEmitterContext* ir_emitter_context) {
@@ -1504,14 +1506,49 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
   return absl::OkStatus();
 }
 
+absl::Status IrEmitterUnnested::EmitAsyncComputation(
+    const HloInstruction* instr) {
+  const HloInstruction* wrapped = instr->async_wrapped_instruction();
+  const ExecutionStreamAssignment& stream_assignment =
+      ir_emitter_context_->execution_stream_assignment();
+  TF_ASSIGN_OR_RETURN(auto stream,
+                      stream_assignment.GetSyncExecutionStreamId(wrapped));
+  TF_RET_CHECK(wrapped->called_computations().size() == 1);
+  auto computation = wrapped->called_computations().front();
+  auto ir_emitter = IrEmitterUnnested::Create(ir_emitter_context_);
+  TF_RETURN_IF_ERROR(ir_emitter->EmitHloComputation(computation));
+  std::unique_ptr<SequentialThunk> thunk_sequence =
+      ir_emitter->ConsumeThunkSequence();
+  for (auto& thunk : thunk_sequence->thunks()) {
+    thunk->set_execution_stream_id(stream);
+  }
+  auto* async_start = Cast<HloAsyncInstruction>(instr);
+  TF_ASSIGN_OR_RETURN(
+      ExecutionStreamAssignment::AsyncExecutionStreamIds async_streams,
+      stream_assignment.GetAsyncExecutionStreamIds(async_start));
+  // We launch the thunk sequence computation on a concurrent stream.
+  // The concurrent stream needs to first wait until the main stream has
+  // finished calculating any values that may be used as input.
+  // We enforce this by inlining a `WaitForStreams` thunk on the main
+  // stream.
+  AddThunkToThunkSequence(std::make_unique<WaitForStreamsThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      async_streams.destination_stream_id, async_streams.source_stream_id));
+  AddThunkToThunkSequence(std::move(thunk_sequence));
+  return absl::OkStatus();
+}
+
 absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
   const se::DeviceDescription& device_info =
       ir_emitter_context_->gpu_device_info();
   const HloFusionAnalysis fusion_analysis =
       HloFusionAnalysis::Create(*instr, device_info);
-
-  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(HloFusionInfo(
-      fusion_analysis, instr, &ir_emitter_context_->buffer_assignment()));
+  VLOG(3) << "IrEmitterUnnested::EmitFusion:start";
+  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(
+      /*fusion_info=*/HloFusionInfo(
+          /*analysis=*/fusion_analysis, instr,
+          /*buffer_assignment=*/&ir_emitter_context_->buffer_assignment(),
+          /*call_graph=*/*call_graph_));
   TF_ASSIGN_OR_RETURN(auto result, emitter->Emit(*ir_emitter_context_, *instr));
 
   const ExecutionStreamAssignment& stream_assignment =
@@ -1522,6 +1559,7 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
     thunk->set_execution_stream_id(execution_stream_id);
     AddThunkToThunkSequence(std::move(thunk));
   }
+  VLOG(3) << "IrEmitterUnnested::EmitFusion:complete";
   return absl::OkStatus();
 }
 
@@ -2541,6 +2579,19 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   return absl::OkStatus();
 }
 
+// If the fusion instruction is a dynamic-slice-fusion instruction, with a
+// collective hero operation, then this function returns the collective
+// operation. Returns std::nullopt otherwise.
+std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
+    const HloFusionInstruction* instruction) {
+  if (!IsDynamicSliceFusion(instruction)) {
+    return std::nullopt;
+  }
+  return HloBfsFindIf(
+      {instruction->fused_instructions_computation()->root_instruction()},
+      [](const HloInstruction* instr) { return IsCollective(instr); });
+}
+
 absl::Status IrEmitterUnnested::EmitHloInstruction(
     const HloInstruction* instr) {
   switch (instr->opcode()) {
@@ -2576,7 +2627,28 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclAsyncDone(Thunk::kNcclRaggedAllToAllDone, instr);
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
-        case HloOpcode::kFusion:
+        case HloOpcode::kFusion: {
+          auto collective_hero = GetCollectiveHeroForDynamicSliceFusion(
+              Cast<HloFusionInstruction>(wrapped));
+          if (collective_hero.has_value()) {
+            switch ((*collective_hero)->opcode()) {
+              case HloOpcode::kReduceScatter:
+                TF_RETURN_IF_ERROR(
+                    EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr));
+                break;
+              default:
+                return absl::InternalError(absl::StrFormat(
+                    "Unhandled collective in dynamic slice fusion "
+                    "instruction: %s",
+                    (*collective_hero)
+                        ->fused_instructions_computation()
+                        ->ToString()));
+            }
+          }
+          // We still want to emit the stream done thunk.
+          [[clang::fallthrough]];
+        }
+        case HloOpcode::kCall:
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
@@ -2647,6 +2719,9 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
               streams.destination_stream_id, streams.source_stream_id));
           return EmitFusion(Cast<HloFusionInstruction>(wrapped));
         }
+        case HloOpcode::kCall: {
+          return EmitAsyncComputation(instr);
+        }
         case HloOpcode::kCustomCall: {
           return EmitAsyncCustomCallStart(instr);
         }
@@ -2684,7 +2759,8 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       if (IsCustomCallToDnnNorm(*instr)) {
         return EmitNormThunk(custom_call);
       }
-      if (IsCustomCallTofMHA(*instr) || IsCustomCallTofMHAF8(*instr)) {
+      if (IsCustomCallTofMHA(*instr) || IsCustomCallTofMHAF8(*instr) ||
+          IsCustomCallToBlockScaledDot(*instr)) {
         return EmitCuDnnThunk(custom_call);
       }
       if (IsCustomCallToTopK(*instr)) {

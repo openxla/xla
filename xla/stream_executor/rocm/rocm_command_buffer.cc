@@ -45,10 +45,10 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_kernel.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -122,7 +122,7 @@ absl::Status RocmCommandBuffer::LaunchSetIfElseConditionKernel(
 
 absl::Status RocmCommandBuffer::LaunchSetCaseConditionKernel(
     ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-    DeviceMemory<int32_t> index, int32_t batch_offset,
+    DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
     bool enable_conditional_default) {
   return absl::UnimplementedError("Conditionals are not supported on ROCM.");
 }

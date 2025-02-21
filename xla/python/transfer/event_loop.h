@@ -23,6 +23,18 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/time/time.h"
+
+// socket.h in conda sysroot include directory does not define
+// SO_ZEROCOPY and SO_EE_ORIGIN_ZEROCOPY that were introduced in a
+// newer kernel version compared to one used by the conda sysroot, see
+// openxla/xla#22083.
+#ifndef SO_ZEROCOPY
+#define SO_ZEROCOPY 60
+#endif
+#ifndef SO_EE_ORIGIN_ZEROCOPY
+#define SO_EE_ORIGIN_ZEROCOPY 5
+#endif
 
 namespace aux {
 
@@ -59,6 +71,10 @@ class PollEventLoop {
 
   // Notifies the EventLoop to call HandleEvents with a spurious wake.
   virtual void SendWake(Handler* handler) = 0;
+
+  // Run callback on the event loop at some point in the future.
+  virtual void ScheduleAt(absl::Time time,
+                          absl::AnyInvocable<void() &&> cb) = 0;
 
  private:
   // Implementation detail of Handler::Register.

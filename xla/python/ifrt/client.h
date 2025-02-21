@@ -116,7 +116,7 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
 
   // Builds a larger array out of individual per-device shards.
   // TODO(hyeontaek): Replace this API with the version that takes
-  // `SingleDeviceShardSemantics`.
+  // `SingleDeviceShardSemantics` and `dtype`.
   virtual absl::StatusOr<tsl::RCReference<Array>>
   AssembleArrayFromSingleDeviceArrays(
       Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
@@ -125,6 +125,13 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual absl::StatusOr<tsl::RCReference<Array>>
   AssembleArrayFromSingleDeviceArrays(
       Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) = 0;
+  virtual absl::StatusOr<tsl::RCReference<Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      DType dtype, Shape shape,
+      absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics array_copy_semantics,
       SingleDeviceShardSemantics single_device_shard_semantics) = 0;
@@ -228,6 +235,10 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual absl::StatusOr<Device*> LookupDevice(DeviceId device_id) const = 0;
   virtual absl::StatusOr<Device*> LookupAddressableDevice(
       int local_hardware_id) const = 0;
+
+  // Creates a device list from the given list of devices.
+  virtual tsl::RCReference<DeviceList> MakeDeviceList(
+      absl::Span<Device* const> devices) const = 0;
 
   // TODO(hyeontaek): Potentially remove this method to encourage supporting
   // only ahead-of-time compilation.

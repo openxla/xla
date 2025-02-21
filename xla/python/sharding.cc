@@ -39,8 +39,8 @@ limitations under the License.
 #include "xla/python/py_device_list.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace jax {
 
@@ -182,6 +182,10 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
       parsed_pspec_(std::move(parsed_pspec)),
       manual_axes_(std::move(manual_axes)),
       logical_device_ids_(std::move(logical_device_ids)) {
+  if (spec_.is_none()) {
+    throw nb::type_error(
+        "Unexpected None passed as spec for NamedSharding. Did you mean P()?");
+  }
   nb::object idl = nb::object(mesh_.attr("_internal_device_list"));
   if (idl.is_none()) {
     internal_device_list_ = std::nullopt;

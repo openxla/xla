@@ -1,6 +1,8 @@
 # Tools and utilities that aid in XLA development and usage.
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("//xla:lit.bzl", "lit_test_suite")
+load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load(
     "//xla:xla.bzl",
     "xla_cc_binary",
@@ -132,6 +134,36 @@ xla_cc_binary(
     ],
 )
 
+xla_cc_binary(
+    name = "convert",
+    srcs = ["convert.cc"],
+    deps = [
+        "//xla/service:hlo_module_util",
+        "//xla/service:hlo_proto_util",
+        "//xla/tsl/util:command_line_flags",
+        "//xla/tsl/util:fixed_option_set_flag",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+lit_test_suite(
+    name = "hlo_convert_tests",
+    srcs = [
+        "tests/convert_to_pbtxt.hlo",
+        "tests/convert_to_text.hlo",
+    ],
+    cfg = "//xla:lit.cfg.py",
+    data = [
+        "tests/convert_to_text.hlo.pb",
+    ],
+    tools = [
+        ":convert",
+        "@llvm-project//llvm:FileCheck",
+    ],
+)
+
 build_test(
     name = "hlo_proto_to_json_build_test",
     targets = [
@@ -164,7 +196,6 @@ xla_cc_binary(
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/translate:stablehlo",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "//xla/mlir_hlo",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_proto_util",
@@ -174,16 +205,14 @@ xla_cc_binary(
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TranslateLib",
-        "@stablehlo//:register",
+        "@stablehlo//:stablehlo_passes",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -194,5 +223,39 @@ xla_cc_binary(
     linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
     deps = [
         "//xla/hlo/tools/hlo_opt:opt_main",
+    ],
+)
+
+py_strict_library(
+    name = "generate_hlo_test_checks",
+    srcs = ["generate_hlo_test_checks.py"],
+    srcs_version = "PY3",
+)
+
+py_strict_test(
+    name = "generate_hlo_test_checks_test",
+    srcs = ["generate_hlo_test_checks_test.py"],
+    data = [
+        "generate_hlo_test_checks_test_input.hlo",
+        "generate_hlo_test_checks_test_output.hlo",
+        ":hlo-opt",
+    ],
+    python_version = "PY3",
+    deps = [
+        ":generate_hlo_test_checks",
+        "@absl_py//absl/testing:absltest",
+    ],
+)
+
+# Whereas `:generate_hlo_test_checks_test` checks that the test-generation tool
+# behaves as expected, this test verifies that the expected reference output
+# from that test is itself a passing test.
+lit_test_suite(
+    name = "generate_hlo_test_checks_meta_test",
+    srcs = ["generate_hlo_test_checks_test_output.hlo"],
+    cfg = "//xla:lit.cfg.py",
+    tools = [
+        "//xla/hlo/tools:hlo-opt",
+        "@llvm-project//llvm:FileCheck",
     ],
 )

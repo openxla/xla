@@ -20,13 +20,15 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "xla/debug_options_flags.h"
 #include "xla/parse_flags_from_env.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace {

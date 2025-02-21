@@ -83,6 +83,7 @@ enum class ResourceType {
   kRecvHost,
   kCollectiveBroadcast,
   kNumResources,
+  kRaggedAllToAll,
   kTargetDefinedResourceTypeBegin,
 };
 
@@ -126,6 +127,7 @@ struct SchedulerConfig {
   int64_t collective_broadcast_overlap_limit = 1;
   int64_t collective_permute_overlap_limit = 1;
   int64_t all_to_all_overlap_limit = 1;
+  int64_t ragged_all_to_all_overlap_limit = 1;
   int64_t all_gather_overlap_limit = 1;
   int64_t all_reduce_overlap_limit = 1;
   int64_t reduce_scatter_overlap_limit = 1;
@@ -450,6 +452,7 @@ class HloEdge {
   }
   const HloGraphNode& Target() const { return *target_; }
   HloGraphNode& Target() { return *target_; }
+  HloGraphNode* TargetPtr() { return target_; }
   std::string ToString() const;
 
  private:
@@ -1066,6 +1069,8 @@ class DefaultSchedulerCore : public SchedulerCore {
   int64_t GetRerunTimes() override { return config_.rerun; }
   bool SchedulingAnnotationCrossesOverlapLimit(
       const SchedulingState& sched_state, int64_t annotation);
+  absl::flat_hash_map<int64_t, int64_t> GetNumResourcesNeededForAnnotation(
+      const SchedulingState& sched_state, int64_t annotation);
 
  protected:
   virtual void LogInstruction(const HloInstruction* instr) const;
@@ -1116,6 +1121,7 @@ class LatencyHidingScheduler : public HloModulePass {
     double collective_broadcast_wasted_cycles = 0;
     double collective_permute_wasted_cycles = 0;
     double all_to_all_wasted_cycles = 0;
+    double ragged_all_to_all_wasted_cycles = 0;
     double reduce_scatter_wasted_cycles = 0;
     double send_wasted_cycles = 0;
     double recv_wasted_cycles = 0;

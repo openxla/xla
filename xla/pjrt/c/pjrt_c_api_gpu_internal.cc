@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/custom_call_batch_partitioner.h"
 #include "xla/python/custom_partition_callback.h"
 #include "xla/service/compiler.h"
 #include "xla/service/custom_call_target_registry.h"
@@ -84,6 +85,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
           {"visible_devices", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64List},
           {"node_id", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"num_nodes", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+          {"should_stage_host_to_device_transfers",
+           PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
           {"enable_mock_nccl", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
           {"mock_gpu_topology", PJRT_NamedValue_Type::PJRT_NamedValue_kString},
       });
@@ -108,7 +111,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       allocator_config.kind = xla::GpuAllocatorConfig::Kind::kCudaAsync;
     } else {
       return new PJRT_Error{absl::UnimplementedError(absl::StrFormat(
-          "Allocator %s not supported for PJRT GPU plugin. Supported allocator "
+          "Allocator %s not supported for PJRT GPU plugin. Supported "
+          "allocator "
           "options are: 'default', 'platform', 'bfc' and 'cuda_async'.",
           allocator_name))};
     }
@@ -139,6 +143,11 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   if (auto it = create_options.find("num_nodes"); it != create_options.end()) {
     num_nodes = std::get<int64_t>(it->second);
   }
+  bool should_stage_host_to_device_transfers = true;
+  if (auto it = create_options.find("should_stage_host_to_device_transfers");
+      it != create_options.end()) {
+    should_stage_host_to_device_transfers = std::get<bool>(it->second);
+  }
   bool enable_mock_nccl = false;
   if (auto it = create_options.find("enable_mock_nccl");
       it != create_options.end()) {
@@ -159,6 +168,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   options.kv_store = pjrt::ToCppKeyValueStore(
       args->kv_get_callback, args->kv_get_user_arg, args->kv_try_get_callback,
       args->kv_try_get_user_arg, args->kv_put_callback, args->kv_put_user_arg);
+  options.should_stage_host_to_device_transfers =
+      should_stage_host_to_device_transfers;
   options.enable_mock_nccl = enable_mock_nccl;
   options.mock_gpu_topology = mock_gpu_topology;
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtClient> client,
@@ -256,9 +267,10 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
     // If the user did not specify the topology and we did not
     // get any devices from the client, then error out because
     // we do not know how many devices the topology should have.
-    return new PJRT_Error{absl::FailedPreconditionError(
-        "Cannot create topology without an explicit topology shape or without "
-        "a client")};
+    return new PJRT_Error{
+        absl::FailedPreconditionError("Cannot create topology without an "
+                                      "explicit topology shape or without "
+                                      "a client")};
   }
 
   if (sizes.GetDeviceCount() != device_ids.size()) {
@@ -317,11 +329,23 @@ PJRT_Error* PJRT_Register_Custom_Partitioner(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Register_Batch_Partitionable(
+    PJRT_Register_Batch_Partitionable_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Register_Batch_Partitionable_Args",
+      PJRT_Register_Batch_Partitionable_Args_STRUCT_SIZE, args->struct_size));
+  std::string name(args->name, args->name_size);
+  RegisterCustomCallPartitioner(
+      name, std::make_unique<xla::CustomCallBatchPartitioner>());
+  return nullptr;
+}
+
 PJRT_Custom_Partitioner_Extension custom_partitioner{
     /*struct_size=*/PJRT_Custom_Partitioner_Extension_STRUCT_SIZE,
     /*type=*/PJRT_Extension_Type::PJRT_Extension_Type_Custom_Partitioner,
     /*next=*/reinterpret_cast<PJRT_Extension_Base*>(&profiler_extension),
     /*register_custom_partitioner=*/PJRT_Register_Custom_Partitioner,
+    /*register_batch_partitionable=*/PJRT_Register_Batch_Partitionable,
 };
 
 PJRT_Error* PJRT_Get_Stream_For_External_Ready_Events(

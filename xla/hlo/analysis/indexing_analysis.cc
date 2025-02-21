@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -700,12 +701,11 @@ HloInstructionIndexing ComputeOutputToInputPadOpIndexing(
 }
 
 HloInstructionIndexing ComputeOutputToInputReduceOpIndexing(
-    const HloReduceInstruction* reduce, int output_id,
-    MLIRContext* mlir_context) {
+    const HloReduceInstruction* reduce, MLIRContext* mlir_context) {
   absl::flat_hash_set<int64_t> reduce_dims_ids(reduce->dimensions().begin(),
                                                reduce->dimensions().end());
 
-  const Shape& input_shape = reduce->operand(output_id)->shape();
+  const Shape& input_shape = reduce->operand(0)->shape();
   const Shape& output_shape = GetOutputShape(reduce, 0);
 
   std::vector<int64_t> parallel_dims_sizes;
@@ -849,7 +849,7 @@ IndexingMap ComposeIndexingMapsForWindow(
 // represented as a composition of pad op and reduce-window that never goes out
 // of bounds.
 HloInstructionIndexing ComputeOutputToInputReduceWindowOpIndexing(
-    const HloReduceWindowInstruction* reduce_window, int output_id,
+    const HloReduceWindowInstruction* reduce_window,
     MLIRContext* mlir_context) {
   const Shape& input_shape = reduce_window->operand(0)->shape();
   const Shape& output_shape = GetOutputShape(reduce_window, 0);
@@ -1427,13 +1427,12 @@ bool HloInstructionIndexing::Simplify() {
   for (auto& operand_indexing : indexing_maps) {
     std::vector<IndexingMap> to_remove, to_add;
     for (IndexingMap map : operand_indexing) {
-      to_remove.push_back(map);
-      if (map.IsUndefined()) {
-        to_add.push_back(map);
-      } else if (map.Simplify()) {
+      if (map.Simplify()) {
         map.RemoveUnusedSymbols();
-      } else {
-        to_remove.pop_back();
+        to_add.push_back(map);
+      }
+      if (map.IsUndefined()) {
+        to_remove.push_back(map);
       }
     }
     for (auto& map : to_remove) {
@@ -1614,11 +1613,10 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
     return ComputeOutputToInputPadOpIndexing(pad, ctx);
   }
   if (auto reduce = DynCast<HloReduceInstruction>(instr)) {
-    return ComputeOutputToInputReduceOpIndexing(reduce, output_id, ctx);
+    return ComputeOutputToInputReduceOpIndexing(reduce, ctx);
   }
   if (auto reduce_window = DynCast<HloReduceWindowInstruction>(instr)) {
-    return ComputeOutputToInputReduceWindowOpIndexing(reduce_window, output_id,
-                                                      ctx);
+    return ComputeOutputToInputReduceWindowOpIndexing(reduce_window, ctx);
   }
   if (auto convolution = DynCast<HloConvolutionInstruction>(instr)) {
     return ComputeOutputToInputConvolutionOpIndexing(convolution, ctx);
@@ -1635,6 +1633,8 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
     return ComputeOutputToInputTransposeOpIndexing(transpose, ctx);
   }
+  LOG(ERROR) << "ComputeOutputToInputIndexing is not implemented for opcode "
+             << instr->opcode();
   // If we cannot compute output-to-input indexing, we return std::nullopt for
   // every op parameter.
   return CreateUnknownIndexing(instr->operand_count());

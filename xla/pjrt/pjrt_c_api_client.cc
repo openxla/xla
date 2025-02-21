@@ -558,32 +558,8 @@ PjRtCApiClient::BufferFromHostBuffer(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-PjRtCApiClient::BufferFromHostBuffer(
-    const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
-    std::optional<absl::Span<int64_t const>> byte_strides,
-    HostBufferSemantics host_buffer_semantics,
-    absl::AnyInvocable<void() &&> on_done_with_host_buffer, PjRtDevice* device,
-    const Layout* device_layout) {
-  return BufferFromHostBufferInternalImpl(
-      data, type, dims, byte_strides, host_buffer_semantics,
-      std::move(on_done_with_host_buffer), device, device_layout);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-PjRtCApiClient::BufferFromHostBuffer(
-    const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
-    std::optional<absl::Span<int64_t const>> byte_strides,
-    HostBufferSemantics host_buffer_semantics,
-    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-    PjRtDevice* device) {
-  return BufferFromHostBufferInternalImpl(
-      data, type, dims, byte_strides, host_buffer_semantics,
-      std::move(on_done_with_host_buffer), device, /*device_layout=*/nullptr);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtCApiClient::CreateViewOfDeviceBuffer(
-    void* device_ptr, const Shape& shape, PjRtDevice* device,
+    void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
     std::function<void()> on_delete_callback,
     std::optional<std::intptr_t> stream) {
   PJRT_Client_CreateViewOfDeviceBuffer_Args args;
@@ -614,7 +590,9 @@ PjRtCApiClient::CreateViewOfDeviceBuffer(
     args.on_delete_callback = nullptr;
     args.on_delete_callback_arg = nullptr;
   }
-  args.device = tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
+  args.device = nullptr;
+  args.memory =
+      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
   if (stream.has_value()) {
     args.stream = *stream;
   } else {
@@ -677,13 +655,39 @@ absl::StatusOr<Layout> PjRtCApiClient::GetDefaultLayout(
   return pjrt_layout->xla_layout();
 }
 
+absl::Status PjRtCApiClient::DmaMap(void* data, size_t size) {
+  const PJRT_Api* c_api = pjrt_c_api();
+  PJRT_Client_DmaMap_Args args;
+  args.struct_size = PJRT_Client_DmaMap_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+  args.data = data;
+  args.size = size;
+  RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Client_DmaMap(&args), c_api);
+  return absl::OkStatus();
+}
+
+absl::Status PjRtCApiClient::DmaUnmap(void* data) {
+  const PJRT_Api* c_api = pjrt_c_api();
+  PJRT_Client_DmaUnmap_Args args;
+  args.struct_size = PJRT_Client_DmaUnmap_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+  args.data = data;
+  RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Client_DmaUnmap(&args), c_api);
+  return absl::OkStatus();
+}
+
 class PjRtCApiAsyncHostToDeviceTransferManager
     : public PjRtClient::AsyncHostToDeviceTransferManager {
  public:
   PjRtCApiAsyncHostToDeviceTransferManager(
       PjRtCApiClient* client,
       PJRT_AsyncHostToDeviceTransferManager* c_transfer_manager)
-      : c_client_(client), c_transfer_manager_(std::move(c_transfer_manager)) {}
+      : c_client_(client),
+        c_transfer_manager_(c_transfer_manager,
+                            ::pjrt::MakeAsyncHostToDeviceTransferManagerDeleter(
+                                client->pjrt_c_api())) {}
 
   size_t buffer_count() const override {
     PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args args;
@@ -866,44 +870,6 @@ PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
       c_api->PJRT_Client_CreateBuffersForAsyncHostToDevice(&args), c_api);
   return std::make_unique<PjRtCApiAsyncHostToDeviceTransferManager>(
       this, args.transfer_manager);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
-PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
-    absl::Span<const ShapeSpec> shape_specs,
-    std::optional<absl::Span<const std::optional<Layout>>> device_layouts,
-    PjRtDevice* device) {
-  TF_ASSIGN_OR_RETURN(auto memory_space, device->default_memory_space());
-  return CreateBuffersForAsyncHostToDevice(shape_specs, device_layouts,
-                                           memory_space);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
-PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
-    absl::Span<const Shape> shapes, PjRtDevice* device) {
-  absl::InlinedVector<PjRtClient::ShapeSpec, 4> shape_specs;
-  shape_specs.reserve(shapes.size());
-  for (const auto& shape : shapes) {
-    shape_specs.emplace_back(PjRtClient::ShapeSpec{
-        shape.element_type(),
-        DimensionVector(shape.dimensions().begin(), shape.dimensions().end())});
-  }
-  return CreateBuffersForAsyncHostToDevice(
-      shape_specs, /*device_layouts=*/std::nullopt, device);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
-PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
-    absl::Span<const Shape> shapes, PjRtMemorySpace* memory_space) {
-  absl::InlinedVector<PjRtClient::ShapeSpec, 4> shape_specs;
-  shape_specs.reserve(shapes.size());
-  for (const auto& shape : shapes) {
-    shape_specs.emplace_back(PjRtClient::ShapeSpec{
-        shape.element_type(),
-        DimensionVector(shape.dimensions().begin(), shape.dimensions().end())});
-  }
-  return CreateBuffersForAsyncHostToDevice(
-      shape_specs, /*device_layouts=*/std::nullopt, memory_space);
 }
 
 const PJRT_Api* PjRtCApiClient::pjrt_c_api() const { return c_api_; }
@@ -2136,6 +2102,28 @@ std::shared_ptr<const PjRtLayout> PjRtCApiBuffer::layout() const {
   return layout_;
 }
 
+const Shape& PjRtCApiBuffer::on_device_shape() const {
+  if (!on_device_shape_.has_value()) {
+    Shape shape(element_type(), dimensions(), is_dynamic_dimension(),
+                /*tuple_shapes=*/{});
+    *shape.mutable_layout() = layout()->xla_layout();
+    absl::MutexLock lock(&mu_);
+    on_device_shape_ = shape;
+  }
+  return *on_device_shape_;
+}
+
+absl::StatusOr<Shape> PjRtCApiBuffer::logical_on_device_shape() {
+  absl::StatusOr<std::vector<int64_t>> dims = logical_dimensions();
+  if (!dims.ok()) {
+    return dims.status();
+  }
+  Shape result(element_type(), *dims, is_dynamic_dimension(),
+               /*tuple_shapes=*/{});
+  *result.mutable_layout() = layout()->xla_layout();
+  return result;
+}
+
 bool PjRtCApiBuffer::has_dynamic_dimensions() const {
   PJRT_Buffer_DynamicDimensionIndices_Args args;
   args.struct_size = PJRT_Buffer_DynamicDimensionIndices_Args_STRUCT_SIZE;
@@ -2314,37 +2302,6 @@ PjRtFuture<> PjRtCApiBuffer::CopyRawToHost(void* dst, int64_t offset,
   RETURN_FUTURE_IF_ERROR(api->PJRT_Buffer_CopyRawToHost(&args), api);
   CHECK(args.event != nullptr);
   return pjrt::ConvertCEventToCppFuture(args.event, api);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToDevice(
-    PjRtDevice* dst_device) {
-  if (dst_device->client() == client_) {
-    PJRT_Buffer_CopyToDevice_Args args;
-    args.struct_size = PJRT_Buffer_CopyToDevice_Args_STRUCT_SIZE;
-    args.extension_start = nullptr;
-    args.buffer = buffer_.get();
-    args.dst_device =
-        tensorflow::down_cast<PjRtCApiDevice*>(dst_device)->c_device();
-    const PJRT_Api* api = pjrt_c_api();
-    RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Buffer_CopyToDevice(&args), api);
-    return std::unique_ptr<PjRtBuffer>(
-        std::make_unique<PjRtCApiBuffer>(client_, args.dst_buffer));
-  } else {
-    // Copy across PjRtClients by copying through host
-    TF_ASSIGN_OR_RETURN(std::shared_ptr<Literal> literal, ToLiteralSync());
-    absl::InlinedVector<int64_t, 4> byte_strides(
-        literal->shape().dimensions_size());
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
-    // Avoid use-after-free on `literal` due to unsequenced move and use.
-    Literal* literal_pointer = literal.get();
-    return dst_device->client()->BufferFromHostBuffer(
-        literal_pointer->untyped_data(),
-        literal_pointer->shape().element_type(),
-        literal_pointer->shape().dimensions(), byte_strides,
-        PjRtClient::HostBufferSemantics::kImmutableZeroCopy,
-        [literal{std::move(literal)}]() { /* frees literal */ }, dst_device);
-  }
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToMemorySpace(

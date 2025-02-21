@@ -66,12 +66,8 @@ namespace xla::cpu {
 class Thunk {
  public:
   enum class Kind {
-    kUnknown,
-    kAllGather,
-    kAllReduce,
-    kAllToAll,
     kCall,
-    kCollectivePermute,
+    kCollective,
     kCopy,
     kConditional,
     kConvolution,
@@ -82,13 +78,13 @@ class Thunk {
     kKernel,
     kOutfeed,
     kPartitionId,
-    kReduceScatter,
     kReplicaId,
     kRngGetAndUpdateState,
     kSort,
     kTopK,
     kWhile,
     kXnnFusion,
+    kOneDnnFusion,
   };
 
   struct Info {
@@ -183,12 +179,13 @@ class Thunk {
     static absl::StatusOr<CustomCallExecuteParams> Create(
         const ExecutableRunOptions* run_options);
 
+    RunId run_id;
     int32_t device_ordinal;
     const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
 
    private:
-    CustomCallExecuteParams(int32_t device_ordinal,
+    CustomCallExecuteParams(RunId run_id, int32_t device_ordinal,
                             const Eigen::ThreadPoolDevice* intra_op_thread_pool,
                             const ffi::ExecutionContext* ffi_execution_context);
   };

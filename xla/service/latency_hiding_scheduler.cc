@@ -214,6 +214,7 @@ bool AsyncTracker::IsSupportedAsyncDone(const HloInstruction& hlo) const {
     }
     switch (op.inner) {
       case HloOpcode::kAllToAll:
+      case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectiveBroadcast:
@@ -243,6 +244,7 @@ bool AsyncTracker::IsSupportedAsyncStart(const HloInstruction& hlo) const {
     }
     switch (op.inner) {
       case HloOpcode::kAllToAll:
+      case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectiveBroadcast:
@@ -268,6 +270,8 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
         return ResourceType::kAllGather;
       case HloOpcode::kAllToAll:
         return ResourceType::kAllToAll;
+      case HloOpcode::kRaggedAllToAll:
+        return ResourceType::kRaggedAllToAll;
       case HloOpcode::kCollectiveBroadcast:
         return ResourceType::kCollectiveBroadcast;
       case HloOpcode::kCollectivePermute:
@@ -420,6 +424,8 @@ void AsyncTracker::SetConcurrentResourceLimits(
       config_.copy_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllToAll)] =
       config_.all_to_all_overlap_limit;
+  max_concurrent_resource[ResourceTypeToIndex(ResourceType::kRaggedAllToAll)] =
+      config_.ragged_all_to_all_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllGather)] =
       config_.all_gather_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllReduce)] =
@@ -453,6 +459,8 @@ absl::string_view AsyncTracker::GetResourceName(int64_t resource_type) const {
       return "kNoResource";
     case ResourceTypeToIndex(ResourceType::kAllToAll):
       return "kAllToAll";
+    case ResourceTypeToIndex(ResourceType::kRaggedAllToAll):
+      return "kRaggedAllToAll";
     case ResourceTypeToIndex(ResourceType::kAllGather):
       return "kAllGather";
     case ResourceTypeToIndex(ResourceType::kAllReduce):
@@ -483,6 +491,9 @@ absl::string_view AsyncTracker::GetResourceUsageName(
 
 ResourceHazardType AsyncTracker::GetResourceHazardType(
     int64_t resource_type) const {
+  if (resource_type == ResourceTypeToIndex(ResourceType::kCopy)) {
+    return ResourceHazardType::kShareable;
+  }
   return ResourceHazardType::kUnshareable;
 }
 
@@ -1401,6 +1412,24 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
     }
   }
   if (ready_chosen.node == nullptr) {
+    if (!sched_state.ready_annotations.empty()) {
+      std::string error_message = absl::StrCat(
+          "There is a scheduling group which exceeds the overlap limits. "
+          "Annotation id: ",
+          sched_state.ready_annotations.front(), ". ");
+      absl::flat_hash_map<int64_t, int64_t> num_resources_needed =
+          GetNumResourcesNeededForAnnotation(
+              sched_state, sched_state.ready_annotations.front());
+      for (const auto& [resource, num_needed] : num_resources_needed) {
+        int64_t limit = sched_state.max_concurrent_resource.at(resource);
+        if (num_needed > limit) {
+          absl::StrAppend(&error_message, "It needs ", num_needed, " ",
+                          sched_state.async_tracker->GetResourceName(resource),
+                          " resources, but the limit is ", limit, ". ");
+        }
+      }
+      return absl::InternalError(error_message);
+    }
     return absl::InternalError(absl::StrCat(
         "FindAndExtractBestNodeAvailable failed to find a node to "
         "schedule, skipped nodes: ",
@@ -1528,6 +1557,21 @@ bool DefaultSchedulerCore::AddOccupierToResource(
   for (; it != occupiers.end(); it++) {
     it->second += accumulated_delay;
   }
+
+  // Update the ready time of the occupiers.
+  for (auto it = occupiers.begin(); it != occupiers.end(); it++) {
+    HloGraphNode* done_node = it->first->TargetPtr();
+    if (done_node == nullptr) {
+      continue;
+    }
+    if (done_node->GetReadyTime() < it->second) {
+      for (HloEdge& start_edge : done_node->GetPredecessors()) {
+        if (start_edge.Target().GetReadyTime() < it->second) {
+          start_edge.Target().SetReadyTime(it->second);
+        }
+      }
+    }
+  }
   return true;
 }
 
@@ -1559,18 +1603,29 @@ class AnnotationReadySetLt {
   }
 };
 absl::StatusOr<HloGraphNode*> FindAndExtractBestAnnotatedNode(
-    DefaultSchedulerCore::ReadyQueueSet& annotation_ready) {
+    DefaultSchedulerCore::SchedulingState& sched_state,
+    DefaultSchedulerCore::OverlapLimitRule
+        scheduling_instruction_crosses_overlap_limit) {
   using ScheduleCandidate = DefaultSchedulerCore::ScheduleCandidate;
   using CandidateResult = DefaultSchedulerCore::CandidateResult;
   AnnotationReadySetLt ready_lt;
   // Construct a schedule candidate for caching.
   ScheduleCandidate ready_chosen;
+  auto& annotation_ready = sched_state.annotation_ready;
   auto chosen_it = annotation_ready.end();
   // Try to pick nodes from the ready set first as are the ones that cause the
   // most latency hiding.
   for (auto ready_node_it = annotation_ready.begin(),
             e = annotation_ready.end();
        ready_node_it != e; ++ready_node_it) {
+    // If this node would cause the max_concurrent_resource count to go beyond
+    // the limit do not schedule it and pass to the next node.
+    if (scheduling_instruction_crosses_overlap_limit(sched_state,
+                                                     *ready_node_it)) {
+      VLOG(2) << "Annotation instructions crosses overlap limit:"
+              << (*ready_node_it)->GetInstr().name();
+      continue;
+    }
     ScheduleCandidate ready_candidate;
     ready_candidate.node = *ready_node_it;
     if (ready_chosen.node == nullptr) {
@@ -1646,7 +1701,8 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
     // Find the best annotated node to schedule.
     TF_ASSIGN_OR_RETURN(
         HloGraphNode * node,
-        FindAndExtractBestAnnotatedNode(sched_state->annotation_ready));
+        FindAndExtractBestAnnotatedNode(
+            *sched_state, scheduling_instruction_crosses_overlap_limit_));
 
     TF_RET_CHECK(node != nullptr)
         << "Couldn't find an annotated node to schedule.";
@@ -2307,14 +2363,32 @@ absl::Status DefaultSchedulerCore::SchedulingStep(
   return absl::OkStatus();
 }
 
-bool DefaultSchedulerCore::SchedulingAnnotationCrossesOverlapLimit(
+absl::flat_hash_map<int64_t, int64_t>
+DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
     const SchedulingState& sched_state, int64_t annotation) {
+  absl::flat_hash_map<int64_t, int64_t> num_resources_needed;
   const HloComputation* comp =
       sched_state.sched_graph.GetOriginalInstrList()[0]->parent();
   for (const HloInstruction* instr :
        annotation_tracker_->GetInstructions(comp, annotation)) {
-    if (scheduling_instruction_crosses_overlap_limit_(
-            sched_state, &sched_state.sched_graph.GetNode(instr))) {
+    absl::Span<const ResourcePair> rv =
+        sched_state.async_tracker->GetResourcesFromInstruction(*instr);
+    for (const auto& [resource, usage] : rv) {
+      if (usage == ResourceUsageType::kResourceOccupy) {
+        num_resources_needed[resource]++;
+      }
+    }
+  }
+  return num_resources_needed;
+}
+
+bool DefaultSchedulerCore::SchedulingAnnotationCrossesOverlapLimit(
+    const SchedulingState& sched_state, int64_t annotation) {
+  absl::flat_hash_map<int64_t, int64_t> num_resources_needed =
+      GetNumResourcesNeededForAnnotation(sched_state, annotation);
+  for (const auto& [resource, num_needed] : num_resources_needed) {
+    int64_t limit = sched_state.max_concurrent_resource.at(resource);
+    if (num_needed > limit) {
       return true;
     }
   }
@@ -2499,6 +2573,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     kAllReduce,
     kCollectivePermute,
     kAllToAll,
+    kRaggedAllToAll,
     kReduceScatter,
     kSend,
     kRecv,
@@ -2516,6 +2591,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
         return AsyncKind::kCollectivePermute;
       case HloOpcode::kAllToAll:
         return AsyncKind::kAllToAll;
+      case HloOpcode::kRaggedAllToAll:
+        return AsyncKind::kRaggedAllToAll;
       case HloOpcode::kReduceScatter:
         return AsyncKind::kReduceScatter;
       case HloOpcode::kSend:
@@ -2614,6 +2691,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
       wasted_time_per_collective[AsyncKind::kCollectivePermute],
       /*all_to_all_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kAllToAll],
+      /*ragged_all_to_all_wasted_cycles=*/
+      wasted_time_per_collective[AsyncKind::kRaggedAllToAll],
       /*reduce_scatter_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kReduceScatter],
       /*send_wasted_cycles=*/wasted_time_per_collective[AsyncKind::kSend],
@@ -2640,6 +2719,7 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                       sched_stats.collective_broadcast_wasted_cycles +
                       sched_stats.collective_permute_wasted_cycles +
                       sched_stats.all_to_all_wasted_cycles +
+                      sched_stats.ragged_all_to_all_wasted_cycles +
                       sched_stats.reduce_scatter_wasted_cycles +
                       sched_stats.send_wasted_cycles +
                       sched_stats.recv_wasted_cycles,
@@ -2654,6 +2734,8 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                   sched_stats.collective_permute_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for all-to-all: ",
                   sched_stats.all_to_all_wasted_cycles, "\n");
+  absl::StrAppend(&result, "Wasted cycles for ragged-all-to-all: ",
+                  sched_stats.ragged_all_to_all_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for reduce-scatter: ",
                   sched_stats.reduce_scatter_wasted_cycles, "\n");
   absl::StrAppend(&result,

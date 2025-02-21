@@ -30,14 +30,16 @@ cc_library(
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/service:hlo_module_config",
         "//xla/tests:test_utils",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -98,6 +100,42 @@ xla_cc_test(
 xla_cc_test(
     name = "elementwise_benchmark_test",
     srcs = ["elementwise_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "exp_benchmark_test",
+    srcs = ["exp_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "log_benchmark_test",
+    srcs = ["log_benchmark_test.cc"],
     deps = [
         ":hlo_benchmark_runner",
         "//xla:literal",
@@ -325,6 +363,60 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:scatter_simplifier",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "transposed_copy_benchmark_test",
+    srcs = ["transposed_copy_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "transposed_dot_benchmark_test",
+    srcs = ["transposed_dot_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "xnn_fusion_benchmark_test",
+    srcs = ["xnn_fusion_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",

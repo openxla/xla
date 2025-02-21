@@ -57,10 +57,10 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -519,11 +519,14 @@ AbstractTfrtCpuBuffer::CopyToDeviceAcrossClients(PjRtDevice* dst_device) {
       literal->shape().dimensions_size());
   TF_RETURN_IF_ERROR(
       ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
+  TF_ASSIGN_OR_RETURN(PjRtMemorySpace * dst_memory_space,
+                      dst_device->default_memory_space());
   return dst_device->client()->BufferFromHostBuffer(
       literal_pointer->untyped_data(), literal_pointer->shape().element_type(),
       literal_pointer->shape().dimensions(), byte_strides,
       PjRtClient::HostBufferSemantics::kImmutableZeroCopy,
-      [literal{std::move(literal)}]() { /* frees literal */ }, dst_device);
+      [literal{std::move(literal)}]() { /* frees literal */ }, dst_memory_space,
+      /*device_layout=*/nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<TrackedTfrtCpuDeviceBuffer>>

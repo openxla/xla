@@ -5,7 +5,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("//xla:package_groups.bzl", "xla_tests_package_groups")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -16,7 +15,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility([":friends"]),
+    default_visibility = internal_visibility(["//xla/tests:friends"]),
     licenses = ["notice"],
 )
 
@@ -29,8 +28,6 @@ filegroup(
     ]),
 )
 
-xla_tests_package_groups()
-
 cc_library(
     name = "verified_hlo_module",
     testonly = True,
@@ -39,18 +36,17 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -67,6 +63,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
@@ -74,6 +71,10 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
@@ -81,9 +82,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -98,14 +99,14 @@ cc_library(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla:types",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:resource_loader",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
     ],
 )
@@ -119,7 +120,7 @@ cc_library(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
-        "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -127,11 +128,11 @@ cc_library(
     name = "test",
     testonly = 1,
     hdrs = ["test.h"],
-    visibility = internal_visibility([":friends"]),
+    visibility = internal_visibility(["//xla/tests:friends"]),
     deps = [
+        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -139,10 +140,10 @@ cc_library(
     name = "test_helpers",
     testonly = 1,
     hdrs = ["test_helpers.h"],
-    visibility = internal_visibility([":friends"]),
+    visibility = internal_visibility(["//xla/tests:friends"]),
     deps = [
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )

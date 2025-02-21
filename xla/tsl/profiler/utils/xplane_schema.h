@@ -349,7 +349,9 @@ enum StatType {
   kDeviceDurationPs,
   kScopeRangeId,
   kCoreDetails,
-  kLastStatType = kCoreDetails,
+  kAllReduceId,
+  kAllReduceUniqueId,
+  kLastStatType = kAllReduceUniqueId,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -359,6 +361,8 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleNumActions,
   kMegaScaleCollectiveType,
   kMegaScaleInputSize,
+  kMegaScaleSendChannelId,
+  kMegaScaleRecvChannelId,
   kMegaScaleSlackUs,
   kMegaScaleActionType,
   kMegaScaleStartEndType,

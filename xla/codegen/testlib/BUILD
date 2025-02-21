@@ -26,6 +26,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
@@ -47,6 +48,7 @@ tsl_pybind_extension(
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:comparison_util",
+        "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:util",
@@ -59,6 +61,7 @@ tsl_pybind_extension(
         "//xla/python:nb_absl_inlined_vector",
         "//xla/python:nb_absl_span",
         "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
     ],
 )
 
@@ -69,12 +72,11 @@ pytype_strict_library(
         "__init__.py",
         "utilities.py",
     ],
-    srcs_version = "PY3",
     deps = [
         ":_extension",
         "//third_party/py/numpy",
         "//xla/python:xla_extension",
-        "@ml_dtypes",  # buildcleaner: keep (transitively depend on it via xla_extension)
+        "@ml_dtypes_py//ml_dtypes",  # buildcleaner: keep (transitively depend on it via xla_extension)
     ],
 )
 
@@ -82,8 +84,6 @@ py_strict_test(
     name = "kernel_runner_test_py",
     srcs = ["kernel_runner_test.py"],
     main = "kernel_runner_test.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = [
         "no_oss",
     ],
@@ -91,6 +91,7 @@ py_strict_test(
         ":_extension",
         ":testlib",
         "//third_party/py/numpy",
+        "//xla/python:xla_extension",
         "@absl_py//absl/testing:absltest",
     ],
 )

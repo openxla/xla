@@ -75,12 +75,13 @@ limitations under the License.
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/map_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -274,6 +275,7 @@ class HloParserImpl : public HloParser {
   ParseConvolutionDimensionNumbersOnly();
   absl::StatusOr<PaddingConfig> ParsePaddingConfigOnly();
   absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly();
+  absl::StatusOr<CollectiveDeviceList> ParseCollectiveDeviceListOnly();
 
  private:
   // Types of attributes.
@@ -551,7 +553,7 @@ class HloParserImpl : public HloParser {
   bool ParseJsonDict(std::string* result);
   bool ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
                            std::vector<bool>* dynamic_dimensions);
-  bool ParseShape(Shape* result);
+  bool ParseShape(Shape* result, bool allow_fallback_to_default_layout = true);
   bool ParseLayout(Layout* layout);
   bool ParseLayoutIntAttribute(int64_t* attr_value,
                                absl::string_view attr_description);
@@ -922,7 +924,9 @@ bool HloParserImpl::ParseComputationLayout(
   }
   while (lexer_.GetKind() != TokKind::kRparen) {
     Shape param;
-    if (!ParseShape(&param)) {
+    if (!ParseShape(&param,
+                    /* allow_fallback_to_default_layout=*/
+                    !options_.keep_module_auto_layouts())) {
       return false;
     }
     computation_layout->add_parameter_layout(ShapeLayout(param));
@@ -942,7 +946,9 @@ bool HloParserImpl::ParseComputationLayout(
     return false;
   }
   Shape result;
-  if (!ParseShape(&result)) {
+  if (!ParseShape(&result,
+                  /* allow_fallback_to_default_layout=*/
+                  !options_.keep_module_auto_layouts())) {
     return false;
   }
   *computation_layout->mutable_result_layout() = ShapeLayout(result);
@@ -1467,18 +1473,37 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
   }
   if (metadata) {
     instruction->set_metadata(*metadata);
+    if (instruction->IsAsynchronous()) {
+      instruction->async_wrapped_instruction()->set_metadata(*metadata);
+    }
   }
   if (original_value) {
     instruction->set_original_value(*original_value);
+    if (instruction->IsAsynchronous()) {
+      instruction->async_wrapped_instruction()->set_original_value(
+          *original_value);
+    }
   }
   if (backend_config) {
-    instruction->set_raw_backend_config_string(std::move(*backend_config));
+    instruction->set_raw_backend_config_string(*backend_config);
+    if (instruction->IsAsynchronous()) {
+      instruction->async_wrapped_instruction()->set_raw_backend_config_string(
+          *backend_config);
+    }
   }
   if (frontend_attributes) {
     instruction->set_frontend_attributes(*frontend_attributes);
+    if (instruction->IsAsynchronous()) {
+      instruction->async_wrapped_instruction()->set_frontend_attributes(
+          *frontend_attributes);
+    }
   }
   if (statistics_viz) {
     instruction->set_statistics_viz(*statistics_viz);
+    if (instruction->IsAsynchronous()) {
+      instruction->async_wrapped_instruction()->set_statistics_viz(
+          *statistics_viz);
+    }
   }
 
   return AddInstruction(name, instruction, name_loc);
@@ -6252,7 +6277,8 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
 // tuple_elements
 //   ::= /*empty*/
 //   ::= shape (',' shape)*
-bool HloParserImpl::ParseShape(Shape* result) {
+bool HloParserImpl::ParseShape(Shape* result,
+                               bool allow_fallback_to_default_layout) {
   if (EatIfPresent(TokKind::kLparen)) {  // Tuple
     std::vector<Shape> shapes;
     if (lexer_.GetKind() == TokKind::kRparen) {
@@ -6261,7 +6287,7 @@ bool HloParserImpl::ParseShape(Shape* result) {
       // shape (',' shape)*
       do {
         shapes.emplace_back();
-        if (!ParseShape(&shapes.back())) {
+        if (!ParseShape(&shapes.back(), allow_fallback_to_default_layout)) {
           return false;
         }
       } while (EatIfPresent(TokKind::kComma));
@@ -6287,7 +6313,8 @@ bool HloParserImpl::ParseShape(Shape* result) {
     result->add_dimensions(dimension_sizes[i]);
     result->set_dynamic_dimension(i, dynamic_dimensions[i]);
   }
-  if (options_.fill_missing_layouts() || ShapeUtil::IsScalar(*result)) {
+  if ((allow_fallback_to_default_layout && options_.fill_missing_layouts()) ||
+      ShapeUtil::IsScalar(*result)) {
     LayoutUtil::SetToDefaultLayout(result);
   }
   // We need to lookahead to see if a following open brace is the start of a
@@ -7136,6 +7163,20 @@ HloParserImpl::ParseReplicaGroupsOnly() {
   return replica_groups;
 }
 
+absl::StatusOr<CollectiveDeviceList>
+HloParserImpl::ParseCollectiveDeviceListOnly() {
+  lexer_.Lex();
+  CollectiveDeviceList collective_device_list;
+  if (!ParseCollectiveDeviceList(&collective_device_list)) {
+    return InvalidArgument("Syntax error:\n%s", GetError());
+  }
+  if (lexer_.GetKind() != TokKind::kEof) {
+    return InvalidArgument(
+        "Syntax error:\nExtra content after collective device list");
+  }
+  return collective_device_list;
+}
+
 absl::StatusOr<Window> HloParserImpl::ParseWindowOnly() {
   lexer_.Lex();
   Window window;
@@ -7276,6 +7317,12 @@ absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly(
   return parser.ParseReplicaGroupsOnly();
 }
 
+absl::StatusOr<CollectiveDeviceList> ParseCollectiveDeviceListOnly(
+    absl::string_view str) {
+  HloParserImpl parser(str);
+  return parser.ParseCollectiveDeviceListOnly();
+}
+
 absl::StatusOr<Window> ParseWindow(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseWindowOnly();
@@ -7303,8 +7350,8 @@ absl::StatusOr<Layout> ParseLayout(absl::string_view str) {
 }
 
 std::unique_ptr<HloParser> HloParser::CreateHloParserForTests(
-    absl::string_view str) {
-  return std::make_unique<HloParserImpl>(str);
+    absl::string_view str, const HloParserOptions& options) {
+  return std::make_unique<HloParserImpl>(str, options);
 }
 
 }  // namespace xla

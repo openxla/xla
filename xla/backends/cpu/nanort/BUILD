@@ -61,10 +61,10 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -113,6 +113,9 @@ cc_library(
     name = "ifrt_client",
     srcs = ["ifrt_client.cc"],
     hdrs = ["ifrt_client.h"],
+    visibility = internal_visibility([
+        "//xla/backends/cpu/nanort:nanort_users",
+    ]),
     deps = [
         ":nanort_client",
         ":nanort_executable",
@@ -131,6 +134,7 @@ cc_library(
         "//xla/pjrt:utils",
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
+        "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "//xla/python/pjrt_ifrt:xla_ifrt",
@@ -162,6 +166,9 @@ cc_library(
     name = "register_nanort_for_ifrt_tests",
     testonly = True,
     srcs = ["register_nanort_for_ifrt_tests.cc"],
+    visibility = internal_visibility([
+        "//xla/backends/cpu/nanort:nanort_users",
+    ]),
     deps = [
         ":ifrt_client",
         "//xla/python/ifrt:test_util",

@@ -35,6 +35,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
@@ -84,14 +85,15 @@ HloRunnerAgnosticTestBase::ParseAndReturnVerifiedModule(
 
 absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
 HloRunnerAgnosticTestBase::ParseAndReturnVerifiedModule(
-    absl::string_view hlo_text, const HloModuleConfig& config) {
+    absl::string_view hlo_text, const HloModuleConfig& config,
+    const HloParserOptions& parser_options) {
   auto module = std::make_unique<VerifiedHloModule>(
       TestName(), config, verifier_layout_sensitive(),
       allow_mixed_precision_in_hlo_verifier(),
       test_runner_->device_shape_size_fn(),
       instruction_can_change_layout_func());
-  TF_RETURN_IF_ERROR(module->ParseHloStringAndVerifyModule(hlo_text));
-  UpdateEntryComputationLayout(module.get());
+  TF_RETURN_IF_ERROR(
+      module->ParseHloStringAndVerifyModule(hlo_text, parser_options));
   return std::move(module);
 }
 
@@ -106,6 +108,7 @@ HloRunnerAgnosticTestBase::AddEntryComputationAndUpdateEntryComputationLayout(
 
 void HloRunnerAgnosticTestBase::UpdateEntryComputationLayout(
     HloModule* const module) const {
+  // TODO - b/391868033: Remove UpdateEntryComputationLayout from this class.
   xla::UpdateEntryComputationLayout(
       module, test_runner_->device_shape_representation_fn());
 }
@@ -162,7 +165,7 @@ HloRunnerAgnosticTestBase::ExecuteReplicated(
 
 absl::StatusOr<std::vector<Literal>>
 HloRunnerAgnosticTestBase::ExecuteReplicated(
-    const std::function<Executable*(int64_t)> executable_provider,
+    const std::function<OpaqueExecutable*(int64_t)> executable_provider,
     const std::function<int64_t(int64_t)> argument_count_provider,
     const std::function<const Literal*(int64_t, int64_t)> argument_provider,
     const int64_t num_replicas, const bool run_hlo_passes,
@@ -187,7 +190,7 @@ HloRunnerAgnosticTestBase::ExecuteReplicated(
         "expect arguments for each replica");
   int64_t argument_count = arguments.front().size();
   TF_ASSIGN_OR_RETURN(
-      const std::unique_ptr<Executable> executable,
+      const std::unique_ptr<OpaqueExecutable> executable,
       test_runner_->CreateExecutable(std::move(module), run_hlo_passes));
   return ExecuteReplicated(
       /*executable_provider=*/[&](int64_t) { return executable.get(); },
@@ -544,7 +547,7 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoModulesReplicated(
   const int n = profiles->size();
   std::vector<std::vector<Literal*>> fake_argument_ptrs(n);
   std::vector<std::vector<Literal>> fake_arguments(n);
-  std::vector<std::unique_ptr<Executable>> executables(n);
+  std::vector<std::unique_ptr<OpaqueExecutable>> executables(n);
 
   for (int i = 0; i < n; ++i) {
     absl::StatusOr<std::unique_ptr<VerifiedHloModule>> module =
@@ -576,7 +579,7 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoModulesReplicated(
                     : ::testing::AssertionFailure() << s.message();
     }
 
-    absl::StatusOr<std::unique_ptr<Executable>> executable =
+    absl::StatusOr<std::unique_ptr<OpaqueExecutable>> executable =
         test_runner_->CreateExecutable(*std::move(module), run_hlo_passes);
     if (!executable.ok()) {
       return ::testing::AssertionFailure() << executable.status().message();

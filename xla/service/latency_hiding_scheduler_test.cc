@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -3912,6 +3913,113 @@ TEST_F(LatencyHidingSchedulerTest, CrossComputationAnnotation) {
             GetIndex(loop_instruction_sequence, "c1"));
   EXPECT_LT(GetIndex(loop_instruction_sequence, "c1"),
             GetIndex(loop_instruction_sequence, "cpd1"));
+}
+
+TEST_F(LatencyHidingSchedulerTest, RaggedAllToAll) {
+  constexpr absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  async_computation {
+        input = f32[8,128,1024]{2,1,0:T(8,128)} parameter(0)
+        output = f32[8,128,1024]{2,1,0:T(8,128)} parameter(1)
+        input_offsets = s32[8]{0} parameter(2)
+        send_sizes = s32[8]{0} parameter(3)
+        output_offsets = s32[8]{0} parameter(4)
+        recv_sizes = s32[8]{0} parameter(5)
+        ROOT ra2a = f32[8,128,1024]{2,1,0:T(8,128)} ragged-all-to-all(input, output,input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7}}
+      }
+
+  ENTRY RA2A {
+    p0 = f32[8,128,1024]{2,1,0:T(8,128)} parameter(0)
+    c0 = f32[] constant(0)
+    output = f32[8,128,1024]{2,1,0:T(8,128)} broadcast(c0), dimensions={}
+    p1 = s32[8]{0} parameter(1)
+    p2 = s32[8]{0} parameter(2)
+    p3 = s32[8]{0} parameter(3)
+    p4 = s32[8]{0} parameter(4)
+    p5 = f32[1024, 1024]{1,0:T(8,128)} parameter(5)
+    input = f32[8,128,1024]{2,1,0:T(8,128)} copy(p0)
+    input_offsets = s32[8]{0} copy(p1)
+    send_sizes = s32[8]{0} copy(p2)
+    output_offsets = s32[8]{0} copy(p3)
+    recv_sizes = s32[8]{0} copy(p4)
+    ra2a-start = ((f32[8,128,1024]{2,1,0:T(8,128)}, f32[8,128,1024]{2,1,0:T(8,128)}, s32[8]{0}, s32[8]{0}, s32[8]{0}, s32[8]{0}),
+                     f32[8,128,1024]{2,1,0:T(8,128)}, u32[]{:S(2)}, u32[]{:S(2)}) async-start(input, output, input_offsets, send_sizes, output_offsets, recv_sizes), calls=async_computation
+    ra2a-done = f32[8,128,1024]{2,1,0:T(8,128)} async-done(ra2a-start), calls=async_computation
+    d = f32[1024,1024]{1,0:T(8,128)} dot(p5, p5), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT tuple = (f32[8,128,1024]{2,1,0:T(8,128)}, f32[1024,1024]{1,0:T(8,128)}) tuple(ra2a-done, d)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto sched_config = GetDefaultSchedConfig();
+  EXPECT_TRUE(RunScheduler(hlo_module.get(), sched_config).ok());
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(hlo_module->entry_computation()).instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+
+  EXPECT_LT(GetIndex(new_instruction_sequence, "ra2a-start"),
+            GetIndex(new_instruction_sequence, "d"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "d"),
+            GetIndex(new_instruction_sequence, "ra2a-done"));
+}
+
+TEST_F(LatencyHidingSchedulerTest, InvalidAnnotationOverlap) {
+  constexpr absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  while_cond {
+    param = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, pred[]) parameter(0)
+    ROOT gte = pred[] get-tuple-element(param), index=2
+  }
+
+  while_body {
+    param = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, pred[]) parameter(0)
+    gte0 = f32[16,64,256]{2,1,0} get-tuple-element(param), index=0
+    gte1 = f32[16,64,256]{2,1,0} get-tuple-element(param), index=1
+    gte2 = pred[] get-tuple-element(param), index=2
+    cps1 = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, u32[], u32[]) collective-permute-start(gte1), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, frontend_attributes={_scheduling_group_id="1"}
+    cpd1 = f32[16,64,256]{2,1,0} collective-permute-done(cps1), frontend_attributes={_scheduling_group_id="1"}
+    c1 = f32[16,256,256]{2,1,0} convolution(gte0, gte0), window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="1"}
+    slice = f32[16,64,256]{2,1,0} slice(c1), slice={[0:16], [0:64], [0:256]}
+    add = f32[16,64,256]{2,1,0} add(gte0, slice)
+    ROOT tuple = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, pred[]) tuple(add, cpd1, gte2)
+  }
+
+  ENTRY entry {
+    p0 = f32[256,1024]{1,0} parameter(0)
+    p1 = f32[16,64,256]{2,1,0} parameter(1)
+    p2 = f32[16,64,256]{2,1,0} parameter(2)
+    p3 = pred[] parameter(3)
+    c0 = f32[16,256,256]{2,1,0} convolution(p1, p2), window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="1"}
+    ags0 = (f32[256,1024]{1,0}, f32[1024,1024]{1,0}) all-gather-start(p0), replica_groups={{0,1,2,3}}, dimensions={0}, frontend_attributes={_scheduling_group_id="1"}
+    ags1 = (f32[256,1024]{1,0}, f32[1024,1024]{1,0}) all-gather-start(p0), replica_groups={{0,1,2,3}}, dimensions={0}, frontend_attributes={_scheduling_group_id="1"}
+    tuple = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, pred[]) tuple(p1, p2, p3)
+    while = (f32[16,64,256]{2,1,0}, f32[16,64,256]{2,1,0}, pred[]) while(tuple), condition=while_cond, body=while_body
+    agd1 = f32[1024,1024]{1,0} all-gather-done(ags1), frontend_attributes={_scheduling_group_id="1"}
+    agd0 = f32[1024,1024]{1,0} all-gather-done(ags0), frontend_attributes={_scheduling_group_id="1"}
+    gte = f32[16,64,256]{2,1,0} get-tuple-element(while), index=0
+    ROOT tuple1 = (f32[16,64,256]{2,1,0}, f32[16,256,256]{2,1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) tuple(gte, c0, agd0, agd1)
+  }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.all_gather_overlap_limit = 1;
+  auto status = RunScheduler(hlo_module.get(), sched_config,
+                             std::make_unique<TestLatencyEstimator>())
+                    .status();
+  EXPECT_IS_NOT_OK(status);
+  EXPECT_EQ(status.message(),
+            "There is a scheduling group which exceeds the overlap limits. "
+            "Annotation id: 1. It needs 2 kAllGather resources, but the limit "
+            "is 1. ");
 }
 
 }  // namespace xla

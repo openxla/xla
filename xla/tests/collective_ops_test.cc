@@ -585,7 +585,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncAllReduce)) {
 
       ENTRY test_computation {
         id = u32[] replica-id()
-        start = u32[] all-reduce-start(id), to_apply=apply_op, backend_config="{\"is_sync\":false}"
+        start = u32[] all-reduce-start(id), to_apply=apply_op, backend_config={"collective_backend_config": {"is_sync": false}}
         ROOT done = u32[] all-reduce-done(start)
       }
     )";
@@ -621,7 +621,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncAllReduceTwoOperands)) {
       ENTRY test_computation {
         id = u32[] replica-id()
         id2 = u32[] multiply(id, id)
-        start = (u32[], u32[]) all-reduce-start(id, id2), to_apply=apply_op, backend_config="{\"is_sync\":false}"
+        start = (u32[], u32[]) all-reduce-start(id, id2), to_apply=apply_op, backend_config={"collective_backend_config": {"is_sync": false}}
         ROOT done = (u32[], u32[]) all-reduce-done(start)
       }
     )";
@@ -963,7 +963,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncCollectivePermute)) {
         ten = u32[] constant(10)
         sum = u32[] add(replica, ten)
         p = u32[2] broadcast(sum), dimensions={}
-        start = (u32[2], u32[2]) collective-permute-start(p), source_target_pairs={{0,1}, {1,0}}, backend_config="{\"is_sync\":false}"
+        start = (u32[2], u32[2]) collective-permute-start(p), source_target_pairs={{0,1}, {1,0}}, backend_config={"collective_backend_config": {"is_sync": false}}
         ROOT done = u32[2] collective-permute-done(start)
       }
     )";
@@ -1255,12 +1255,6 @@ XLA_TEST_F(CollectiveOpsTest, AllGather_Dim1) {
 }
 
 XLA_TEST_F(CollectiveOpsTest, AllReduce_TupleAllReduce) {
-  if (IsMlirLoweringEnabled()) {
-    // TupleAllReduce is not supported by MHLO. As of late 2022, there is no
-    // known way to generate it from any frontend.
-    GTEST_SKIP();
-  }
-
   std::string hlo_string = R"(
     HloModule test
 
@@ -2052,7 +2046,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncAllGather)) {
     id2 = u32[1, 2] broadcast(id), dimensions={}
     a0 = u32[1, 2] constant({{10, 15}})
     a1 = u32[1, 2] add(id2, a0)
-    ags = (u32[1, 2], u32[2, 2]) all-gather-start(a1), dimensions={0}, backend_config="{\"is_sync\":false}"
+    ags = (u32[1, 2], u32[2, 2]) all-gather-start(a1), dimensions={0}, backend_config={"collective_backend_config": {"is_sync": false}}
     allgather = u32[2,2] all-gather-done(ags)
     ROOT out = u32[4] reshape(allgather)
   }
@@ -2100,7 +2094,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncReduceScatter)) {
     pb = pred[8] broadcast(p), dimensions={}
     // data = c0 for replica 0 and c1 for replica 1
     data = u32[8] select(pb, c0, c1)
-    rs-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} %data), calls=reduce_scatter, backend_config="{\"is_sync\":false}"
+    rs-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} %data), calls=reduce_scatter, backend_config={"collective_backend_config": {"is_sync": false}}
     ROOT %ars = u32[4]{0} async-done(((u32[8]{0}), u32[4]{0}) %rs-start), calls=reduce_scatter
   }
   )";
@@ -2134,7 +2128,7 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(AsyncAllToAll)) {
     id2 = u32[2] broadcast(id), dimensions={}
     a0 = u32[2] constant({10, 15})
     a1 = u32[2] add(id2, a0)
-    a2a-start = ((u32[2]), u32[2]) async-start(u32[2] %a1), calls=all_to_all, backend_config="{\"is_sync\":false}"
+    a2a-start = ((u32[2]), u32[2]) async-start(u32[2] %a1), calls=all_to_all, backend_config={"collective_backend_config": {"is_sync": false}}
     ROOT a2s = u32[2] async-done(a2a-start), calls=all_to_all
   }
   )";
@@ -2607,6 +2601,7 @@ class Fp8CollectiveOpsTest : public CollectiveOpsTest {
         IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
     replacements_[kF8E5M2DatatypePlaceholder] =
         IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
+    replacements_[kF8E8M0DatatypePlaceholder] = "f8e8m0fnu";
   }
 
  protected:
@@ -2626,33 +2621,45 @@ class Fp8CollectiveOpsTest : public CollectiveOpsTest {
  private:
   static constexpr const char* kF8E4M3DatatypePlaceholder{"<<F8E4M3>>"};
   static constexpr const char* kF8E5M2DatatypePlaceholder{"<<F8E5M2>>"};
+  static constexpr const char* kF8E8M0DatatypePlaceholder{"<<F8E8M0>>"};
 };
 
 XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllGather_8BitFloat)) {
-  const char* const kModuleStr = R"(
+  const char* const kModuleTemplate = R"(
   HloModule test
   ENTRY test_computation {
-    a0 = <<F8E4M3>>[1,2] constant({{1,2}})
-    allgather = <<F8E4M3>>[2, 2] all-gather(a0), dimensions={0}
-    p = <<F8E4M3>>[4] reshape(allgather)
+    a0 = <<TYPE>>[1,2] constant({{1,2}})
+    allgather = <<TYPE>>[2, 2] all-gather(a0), dimensions={0}
+    p = <<TYPE>>[4] reshape(allgather)
     ROOT out = f32[4] convert(p)
   }
   )";
   const int64_t kNumReplicas = 2;
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(
-                       absl::StrReplaceAll(kModuleStr, replacements_), config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
-                        kNumReplicas,
-                        /*use_threads=*/true, /*run_hlo_passes=*/true));
-  ASSERT_EQ(results.size(), kNumReplicas);
-  for (const Literal& result : results) {
-    LiteralTestUtil::ExpectR1Equal<float>({1, 2, 1, 2}, result);
-  }
+  auto runTestForType = [&](const std::string& type) {
+    std::string hlo_str =
+        absl::StrReplaceAll(kModuleTemplate, {{"TYPE", type}});
+
+    // Parse the HLO module and execute it
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto module, ParseAndReturnVerifiedModule(
+                         absl::StrReplaceAll(hlo_str, replacements_), config));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> results,
+        ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
+                          kNumReplicas, /*use_threads=*/true,
+                          /*run_hlo_passes=*/true));
+
+    // Verify the results
+    ASSERT_EQ(results.size(), kNumReplicas);
+    for (const Literal& result : results) {
+      LiteralTestUtil::ExpectR1Equal<float>({1, 2, 1, 2}, result);
+    }
+  };
+  runTestForType("F8E8M0");
+  runTestForType("F8E4M3");
+  runTestForType("F8E5M2");
 }
 
 XLA_TEST_F(Fp8CollectiveOpsTest, DISABLED_ON_CPU(AllToAll_8BitFloat)) {

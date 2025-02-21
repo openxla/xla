@@ -49,6 +49,8 @@ message DebugOptions {
     ALLTOALL = 5;
     COLLECTIVEPERMUTE = 6;
     RAGGEDALLTOALL = 7;
+    // Add more collectives before ALL
+    ALLCOLLECTIVES = 8;
   }
 
   // Commands are categorized into 5 types:
@@ -118,6 +120,9 @@ message DebugOptions {
   // XLA backend-agnostic options.
   //--------------------------------------------------------------------------//
   // go/keep-sorted start
+
+  // Perform hash-based cycle detection in fixed-point loops.
+  bool xla_hlo_pass_fix_detect_cycles = 370;
   // Crash if HloPassFix can not converge after a fixed number of iterations.
   bool xla_unsupported_crash_on_hlo_pass_fix_max_iterations = 363;
   // go/keep-sorted end
@@ -127,7 +132,16 @@ message DebugOptions {
   //--------------------------------------------------------------------------//
   // XLA:CPU options.
   //--------------------------------------------------------------------------//
-  // go/keep-sorted start newline_separated=yes skip_lines=1
+  // clang-format off
+  // go/keep-sorted start newline_separated=yes skip_lines=1 ignore_prefixes=["bool","int32","string"]
+  // clang-format on
+  // Controls XnnGraphFusion HLO pass.
+  XnnGraphFusionMode xla_cpu_experimental_xnn_graph_fusion_mode = 365;
+
+  enum XnnGraphFusionMode {
+    XNN_GRAPH_FUSION_MODE_DISABLED = 0;
+    XNN_GRAPH_FUSION_MODE_GREEDY = 1;
+  }
 
   // Use region analysis in copy insertion pass.
   bool xla_cpu_copy_insertion_use_region_analysis = 337;
@@ -176,14 +190,10 @@ message DebugOptions {
   // false.
   bool xla_cpu_fast_math_honor_nans = 120;
 
-  // When true, XLA:CPU uses the thunk runtime to execute compiled program.
-  bool xla_cpu_use_thunk_runtime = 298;
-
-  // When true, XLA:CPU uses XNNPACK to execute supported operations.
-  bool xla_cpu_use_xnnpack = 359;
-
-  // Enabling this will enable optimizations that ignore the possibility of NaN.
-  bool xla_enable_fast_math = 335;
+  // When set, XLA:CPU will only generate code up to the specified ISA.
+  // (It will not use newer ISAs.) Using the string format allows us to extend
+  // the flag for more flexible control if necessary.
+  string xla_cpu_max_isa = 333;
 
   // The number of parts to split the LLVM module into before codegen. This
   // allows XLA to compile all parts in parallel, and resolve kernel symbols
@@ -194,10 +204,14 @@ message DebugOptions {
   // value is `256` (AVX2 on x86 platforms).
   int32 xla_cpu_prefer_vector_width = 308;
 
-  // When set, XLA:CPU will only generate code up to the specified ISA.
-  // (It will not use newer ISAs.) Using the string format allows us to extend
-  // the flag for more flexible control if necessary.
-  string xla_cpu_max_isa = 333;
+  // When true, XLA:CPU uses the thunk runtime to execute compiled program.
+  bool xla_cpu_use_thunk_runtime = 298;
+
+  // When true, XLA:CPU uses XNNPACK to execute supported operations.
+  bool xla_cpu_use_xnnpack = 359;
+
+  // Enabling this will enable optimizations that ignore the possibility of NaN.
+  bool xla_enable_fast_math = 335;
 
   // go/keep-sorted end
 
@@ -207,6 +221,24 @@ message DebugOptions {
   // clang-format off
   // go/keep-sorted start newline_separated=yes skip_lines=2 ignore_prefixes=["AutotuneCacheMode","bool","float","int32","int64","LibNvJitLinkMode","map<string, string>","PGLEStrictnessLevel","repeated CollectiveOpType","repeated CommandBufferCmdType","repeated string","ShapeChecks","string","WhileLoopUnrolling"] // NOLINT
   // clang-format on
+
+  PipelineParallelismOptLevel
+      xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
+
+  // Experimental optimizations for SPMD-based pipeline parallelism on GPU.
+  enum PipelineParallelismOptLevel {
+    PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE = 0;
+    // Enable only collective-permute decomposer to overlap send and recv
+    // separately, allowing to reveive data in the previous iteration while
+    // sending the current iteration.
+    PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE = 1;
+    // Additionally, enable collective-permute cycle decomposer. This set of
+    // optimizations will lead to best overlap for trivial pipeline parallelism
+    // implementation.
+    // TODO(b/393127848): Remove these optimizations when all users implement
+    // cycle decomposition at the JAX level.
+    PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE_CYCLE_DECOMPOSER = 2;
+  }
 
   // Denylist for cuDNN convolutions.
   string xla_gpu_algorithm_denylist_path = 128;
@@ -348,12 +380,6 @@ message DebugOptions {
 
   bool xla_gpu_enable_approx_costly_collectives = 305;
 
-  // If enabled, uses bf16_3way gemm to compute F32 gemm.
-  bool xla_gpu_enable_bf16_3way_gemm = 279;
-
-  // If enabled, uses bf16_6way gemm to compute F32 gemm.
-  bool xla_gpu_enable_bf16_6way_gemm = 271;
-
   // Determine the types of commands that are recorded into command buffers.
   repeated CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
 
@@ -362,8 +388,6 @@ message DebugOptions {
 
   // Whether to use cuBLASLt for GEMMs on GPUs.
   bool xla_gpu_enable_cublaslt = 166;
-
-  bool xla_gpu_enable_cudnn_fmha = 218;
 
   // Whether to use the cuDNN frontend API for convolutions when possible.
   bool xla_gpu_enable_cudnn_frontend = 160;
@@ -385,10 +409,6 @@ message DebugOptions {
   // Enables address computation fusion to optimize dynamic-slice and
   // dynamic-update-slice operations around library calls.
   bool xla_gpu_enable_dynamic_slice_fusion = 105;
-
-  // Experimental optimizations for SPMD-based pipeline parallelism on GPU.
-  // TODO(bchetioui): adjust this name to follow the naming convention.
-  bool xla_gpu_enable_experimental_pipeline_parallelism_opt = 351;
 
   // When true we lower the Minimum and Maximum hlos in the GPU backend such
   // that Min(NotNaN, NaN) = Min(NaN, NotNaN) = NotNaN.  In other words, if flag
@@ -512,6 +532,15 @@ message DebugOptions {
   //
   // Pre-existing block-level fusions are left unmodified.
   bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
+
+  // Enable fusion for the subchannel dequantisation sequences like
+  // [x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot.
+  // Performance can be worse, because some block sizes / split-k > 1 is
+  // not considered for subchannel dequant fusions.
+  bool xla_gpu_experimental_enable_subchannel_dequantisation_fusion = 368;
+
+  // If true, enable synchronous collective combining.
+  bool xla_gpu_experimental_enable_sync_collective_combining = 366;
 
   // When enabled, the PriorityFusion pass will try to make Triton fusions first
   // and foremost where it is possible.
@@ -719,11 +748,21 @@ message DebugOptions {
   // the code that emits a particular instruction.
   bool xla_gpu_unsupported_annotate_with_emitter_loc = 358;
 
+  // Enable experimental tiling for Triton GEMM fusions.
+  // TODO(b/393299275): remove the flag once the feature is stable.
+  bool xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms = 367;
+
   // Internal testing flag to switch RaggedAllToAllDecomposer on or off.
   bool xla_gpu_unsupported_enable_ragged_all_to_all_decomposer = 350;
 
   // Internal debug/testing flag to switch Triton GEMM fusions on or off.
   bool xla_gpu_unsupported_enable_triton_gemm = 322;
+
+  // Internal debug/testing flag to force all GEMMs to use Triton, independently
+  // of known issues.
+  // TODO(b/395903738): use to make specific tests pass on A100 while working
+  // around this bug. The can be removed once the bug is fixed.
+  bool xla_gpu_unsupported_force_triton_gemm = 369;
 
   // This instructs the runtime whether to use memcpy for p2p communication when
   // source and target are located within a node(nvlink).
@@ -899,6 +938,7 @@ message DebugOptions {
 
   // Directory to dump into.
   string xla_dump_to = 109;
+  bool xla_flags_reset = 364;
 
   // If specified, will only dump modules which match this regexp.
   string xla_dump_hlo_module_re = 110;
@@ -1014,21 +1054,13 @@ message DebugOptions {
 
   bool xla_dump_latency_hiding_schedule = 182;
 
-  // By default, MLIR lowering will use Linalg elementwise fusion. If this flag
-  // is enabled, the pipeline will use tiling, fusion, peeling, vectorization
-  // instead.
-  bool xla_cpu_enable_mlir_tiling_and_fusion = 184;
-
-  // XLA:CPU-Next tiling parameters for matmul.
-  bool xla_cpu_enable_custom_matmul_tiling = 195;
-  int64 xla_cpu_matmul_tiling_m_dim = 196;
-  int64 xla_cpu_matmul_tiling_n_dim = 197;
-  int64 xla_cpu_matmul_tiling_k_dim = 198;
-
-  bool xla_cpu_enable_mlir_fusion_outlining = 192;
-
-  // If set, use the experimental deallocation pass from mlir-hlo.
-  bool xla_cpu_enable_experimental_deallocation = 191;
+  reserved 184;  // Was xla_cpu_enable_mlir_tiling_and_fusion.
+  reserved 192;  // Was xla_cpu_enable_mlir_fusion_outlining.
+  reserved 191;  // Was xla_cpu_enable_experimental_deallocation.
+  reserved 195;  // Was xla_cpu_enable_custom_matmul_tiling.
+  reserved 196;  // Was xla_cpu_matmul_tiling_m_dim.
+  reserved 197;  // Was xla_cpu_matmul_tiling_n_dim.
+  reserved 198;  // Was xla_cpu_matmul_tiling_k_dim.
 
   reserved 204;  // Was xla_gpu_lhs_enable_gpu_async_tracker.
   reserved 313;  // Was xla_gpu_run_post_layout_collective_pipeliner.
@@ -1122,13 +1154,18 @@ message DebugOptions {
 
   // Whether to ignore channel ids(including verifier channel id checks)
   // for collectives in the given HLO.
-  bool xla_experimental_ignore_channel_id = 330;
+  bool xla_ignore_channel_id = 330;
 
   bool xla_pjrt_allow_auto_layout_in_hlo = 344;
 
+  // If false, platform_util::GetDefaultPlatform() will return an error. Used as
+  // a safeguard for tests where GetDefaultPlatform() won't work properly and
+  // its use indicates an error in test setup.
+  bool xla_allow_get_default_platform = 371;
+
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
-  // Next id: 364
+  // Next id: 372
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1152,8 +1189,11 @@ message DebugOptions {
   // xla_gpu_enable_heuristic_pass_configuration
   // xla_gpu_enable_dot_strength_reduction
   // xla_gpu_triton_fusion_level
+  // xla_gpu_enable_bf16_3way_gemm
+  // xla_gpu_enable_bf16_6way_gemm
+  // xla_gpu_enable_cudnn_fmha
   reserved 5, 117, 133, 139, 176, 178, 180, 193, 214, 194, 221, 242, 206, 320,
-      325, 326, 332, 361, 270, 229;
+      325, 326, 332, 361, 270, 229, 271, 279, 218;
 }
 
 // Contains flags which affects the GPU compilation result.
@@ -1175,7 +1215,7 @@ message ShardableValueUpdatePairProto {
 // will have an effect on every platform.
 //
 // When adding new fields, keep in mind that boolean fields default to false.
-// Next id: 27.
+// Next id: 29.
 message ExecutionOptions {
   // This optional field's layout is used as a hint when storing the output of
   // this computation.  Subsequent transfers of this output array to the client
@@ -1238,7 +1278,8 @@ message ExecutionOptions {
   // research use cases that prefer faster compilations to iterate more quickly.
   // Positive values, on the other hand, might enable costly optimizations that
   // are off by default.
-  float exec_time_optimization_effort = 25;
+  // DEPRECATED: Use optimization_level instead.
+  float exec_time_optimization_effort = 25 [deprecated = true];
 
   // The amount of effort to spend on making the program fit in memory (where
   // "fit in memory" here has a backend-dependent meaning), as a value in
@@ -1247,7 +1288,35 @@ message ExecutionOptions {
   // for use cases that wish to spend minimal effort here and fail as quickly as
   // possible instead. Positive values, on the other hand, might enable costly
   // algorithms to reduce memory usage that are off by default.
-  float memory_fitting_effort = 26;
+  // DEPRECATED: Use memory_fitting_level instead.
+  float memory_fitting_effort = 26 [deprecated = true];
+
+  enum EffortLevel {
+    EFFORT_UNKNOWN = 0;
+
+    // The values in this enum are intended to be comparable, such that higher
+    // values represent higher effort spent. The addition of new values must
+    // maintain this property.
+    EFFORT_O0 = 9;
+    EFFORT_O1 = 19;
+    EFFORT_O2 = 29;
+    EFFORT_O3 = 39;
+  }
+
+  // The amount of effort to spend on optimizing for minimizing program
+  // execution time. As a general guideline, O2 strongly prioritizes execution
+  // time, and is typically suitable for production workloads. O3 may enable
+  // costly or experimental optimizations that may greatly increase compile
+  // time.
+  EffortLevel optimization_level = 27;
+
+  // The amount of effort to spend on making the program fit in memory (where
+  // "fit in memory" here has a backend-dependent meaning). As a general
+  // guideline, O2 will expend significant effort on attempting to make the
+  // program fit. O0 will spend minimal effort and fail as quickly as possible
+  // instead. O3 might enable costly algorithms to reduce memory usage that may
+  // greatly increase compile time.
+  EffortLevel memory_fitting_level = 28;
 
   // If set, deduplicate hlo into function calls to reduce binary size. Only
   // works on TPU.
@@ -1310,7 +1379,7 @@ message ExecutionOptions {
 // Serialization of HloModuleConfig. See the C++ class definition for
 // descriptions of each field.
 // There are no guarantees of backwards or forwards compatibility.
-// Next id: 39.
+// Next id: 41.
 message HloModuleConfigProto {
   enum FusionConfigCollection {
     OFF = 0;       // Do not collect configuration.
@@ -1338,8 +1407,10 @@ message HloModuleConfigProto {
   bool use_auto_spmd_partitioning = 8;
   repeated int64 auto_spmd_partitioning_mesh_shape = 9;
   repeated int64 auto_spmd_partitioning_mesh_ids = 10;
-  float exec_time_optimization_effort = 36;
-  float memory_fitting_effort = 37;
+  float exec_time_optimization_effort = 36 [deprecated = true];
+  float memory_fitting_effort = 37 [deprecated = true];
+  ExecutionOptions.EffortLevel optimization_level = 39;
+  ExecutionOptions.EffortLevel memory_fitting_level = 40;
   bool deduplicate_hlo = 11;
   int64 intra_op_parallelism_threads = 12;
   string device_type = 13;

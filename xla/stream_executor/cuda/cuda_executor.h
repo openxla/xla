@@ -68,14 +68,6 @@ class CudaExecutor : public GpuExecutor {
   absl::StatusOr<DeviceMemoryBase> GetMemoryRange(
       const DeviceMemoryBase& location) override;
 
-  absl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t size) override {
-    return CudaCollectives::CollectiveMemoryAllocate(this, size);
-  }
-
-  absl::Status CollectiveMemoryDeallocate(void* location) override {
-    return CudaCollectives::CollectiveMemoryDeallocate(this, location);
-  }
-
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
@@ -116,12 +108,9 @@ class CudaExecutor : public GpuExecutor {
       const override {
     return CudaExecutor::CreateDeviceDescription(device_ordinal());
   }
-  void* UnifiedMemoryAllocate(uint64_t size) override;
-  void UnifiedMemoryDeallocate(void* location) override;
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> HostMemoryAllocate(
       uint64_t size) override;
 
-  void HostMemoryDeallocate(void* location) override;
   bool HostMemoryRegister(void* location, uint64_t size) override;
   bool HostMemoryUnregister(void* location) override;
 
@@ -201,6 +190,9 @@ class CudaExecutor : public GpuExecutor {
 
   // The minor version of the compute capability for device_.
   int cc_minor_;
+
+  // The NUMA node of the CPU closest to device_
+  int numa_node_;
 
   // Reader/writer lock for mutable data structures on this object.
   absl::Mutex mu_;

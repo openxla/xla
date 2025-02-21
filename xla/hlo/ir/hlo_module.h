@@ -53,7 +53,8 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
-#include "tsl/platform/logging.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 
@@ -326,7 +327,9 @@ class HloModule {
       const absl::flat_hash_set<HloComputation*>& allow_list) const;
 
   // If config().content_aware_computation_sorting() is true, sorts computations
-  // by their contents, otherwise returns MakeComputationPostOrder().
+  // by their contents, otherwise returns MakeComputationPostOrder(). Note that
+  // the sort is potentially expensive, so this should be used only if a
+  // consistent order is required.
   std::vector<HloComputation*> MakeComputationSorted() const {
     return MakeComputationSorted({});
   }
@@ -353,6 +356,8 @@ class HloModule {
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
   // Same as MakeNonfusionComputations() but sorting computations by content.
+  // Note that the sort is potentially expensive, so this should be used only if
+  // a consistent order is required.
   std::vector<HloComputation*> MakeNonfusionComputationsSorted() const {
     return MakeNonfusionComputationsSorted({});
   }
@@ -416,13 +421,14 @@ class HloModule {
   HloModuleProto ToProto() const;
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProto(
       const HloModuleProto& proto, const HloModuleConfig& module_config,
-      bool prohibit_empty_literal = true);
+      bool prohibit_empty_literal = true,
+      std::unique_ptr<CompilationEnvironments> comp_envs = nullptr);
 
   // Convert an HloModule to or from a proto that includes module configuration
   HloModuleProtoWithConfig ToProtoWithConfig() const;
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProtoWithConfig(
-      const HloModuleProtoWithConfig& proto,
-      bool prohibit_empty_literal = true);
+      const HloModuleProtoWithConfig& proto, bool prohibit_empty_literal = true,
+      std::unique_ptr<CompilationEnvironments> comp_envs = nullptr);
 
   // Creates and returns an HloModuleConfig with an appropriate program shape
   // for the HLO module in the given proto.

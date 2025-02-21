@@ -19,26 +19,29 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/base/macros.h"
+#include "absl/base/nullability.h"
+#include "absl/log/die_if_null.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/executable.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/shape.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
+class HloRunnerInterface;
 class BufferAssignmentProto;
 
 // Tags to identify particular properties of a HloRunnerInterface
@@ -73,9 +76,85 @@ class HloRunnerPropertyTag final {
   // Default, reserved value for HloRunnerPropertyTag. Perhaps this could be
   // used as a sentinel value for a tag that is not present. Do not use.
   static constexpr Type kDefault = 0;
+  // Indicates that the runner is using ROCm.
+  static constexpr Type kUsingGpuRocm = 1;
+  // Indicates that this runner is a CPU runner.
+  static constexpr Type kCpu = 2;
 
  private:
   HloRunnerPropertyTag() = default;
+};
+
+// Runner implementations only support the execution of executables that were
+// created by the same runner. We use the this class to represent these
+// executables when they leave the runner without exposing any details of the
+// underlying implementation. See go/xla-opaque-executable for more details.
+class OpaqueExecutable {
+ public:
+  virtual ~OpaqueExecutable() = default;
+
+  // !!! STOP !!!
+  // Before adding any methods to this class, please consider if they could be
+  // added to the HloRunnerInterface instead.
+  //
+  // Adding methods to this class imposes a burden on runners as they must
+  // implement and support any/all types used in the signature. The runner
+  // itself should serve as the only means of accessing information about the
+  // executable, since only the runner is capable of unwrapping the executable.
+  //
+  // E.g. you might be inclined to add a method to this class that returns a
+  // HloModule. DON'T. Not all executables may have a HloModule, while some may
+  // even have multiple. The runner interface has a HloModuleFromWrapped method
+  // that has the semantics of returning the first HloModule in the executable
+  // if there are multiple, or the sole HloModule if there is only one.
+  // !!! STOP !!!
+
+ protected:
+  explicit OpaqueExecutable(absl::Nonnull<const HloRunnerInterface*> creator)
+      : creator_(ABSL_DIE_IF_NULL(creator)) {}
+  // Cannot be moved or copied.
+  OpaqueExecutable(const OpaqueExecutable&) = default;
+  OpaqueExecutable& operator=(const OpaqueExecutable&) = default;
+
+  template <typename T>
+  static absl::StatusOr<absl::Nonnull<T*>> TryUnwrap(
+      const HloRunnerInterface& runner,
+      absl::Nonnull<OpaqueExecutable*> const wrapped) {
+    static_assert(
+        std::is_base_of_v<OpaqueExecutable, T>,
+        "TryUnwrap must be used with a subclass of OpaqueExecutable.");
+    if (wrapped->creator_ != &runner) {
+      return absl::InvalidArgumentError(
+          "Executable was not created by this runner.");
+    }
+
+    if (T* const executable = tensorflow::down_cast<T*>(wrapped);
+        executable != nullptr) {
+      return executable;
+    }
+    return absl::InvalidArgumentError("Invalid opaque executable.");
+  }
+
+  template <typename T>
+  static absl::StatusOr<absl::Nonnull<const T*>> TryUnwrap(
+      const HloRunnerInterface& runner,
+      absl::Nonnull<const OpaqueExecutable*> const wrapped) {
+    static_assert(
+        std::is_base_of_v<OpaqueExecutable, T>,
+        "TryUnwrap must be used with a subclass of OpaqueExecutable.");
+    if (wrapped->creator_ != &runner) {
+      return absl::InvalidArgumentError(
+          "Executable was not created by this runner.");
+    }
+
+    if (const T* const executable = tensorflow::down_cast<const T*>(wrapped);
+        executable != nullptr) {
+      return executable;
+    }
+    return absl::InvalidArgumentError("Invalid opaque executable.");
+  }
+
+  const HloRunnerInterface* const creator_;
 };
 
 // A base class for running an HloModule. This executes the given HloModule on a
@@ -132,37 +211,24 @@ class HloRunnerInterface {
 
   // Converts an HloModule from the given hlo textual IR string (in
   // HloModule::ToString format).
-  static absl::StatusOr<std::unique_ptr<HloModule>> CreateModuleFromString(
-      absl::string_view hlo_string, const DebugOptions& debug_options);
+  ABSL_DEPRECATE_AND_INLINE()
+  inline static absl::StatusOr<std::unique_ptr<HloModule>>
+  CreateModuleFromString(absl::string_view hlo_string,
+                         const DebugOptions& debug_options) {
+    return xla::CreateModuleFromString(hlo_string, debug_options);
+  }
 
-  // Reads the proto file in xla.HloProto format, creates and returns the
-  // HloModule.
-  static absl::StatusOr<std::unique_ptr<HloModule>>
-  ReadModuleFromBinaryProtoFile(const std::string& filename,
-                                const DebugOptions& debug_options);
-
-  // Reads the proto file in xla.HloModule format, creates and returns the
-  // HloModule.
-  static absl::StatusOr<std::unique_ptr<HloModule>>
-  ReadModuleFromModuleBinaryProtofile(const std::string& filename,
-                                      const DebugOptions& debug_options);
-
-  // Reads the hlo text dump file in HloModule::ToString format, creates and
-  // returns the HloModule.
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromHloTextFile(
-      const std::string& filename, const DebugOptions& debug_options,
-      const HloParserOptions& options = HloParserOptions());
-
-  // Creates an executable object given an HLO module. If run_hlo_passes is
-  // true, the HLO passes will be run as part of compilation.
-  virtual absl::StatusOr<std::unique_ptr<Executable>> CreateExecutable(
+  // Creates a runner-internal executable object given an HLO module and returns
+  // a OpaqueExecutable. If run_hlo_passes is true, the HLO passes will be run
+  // as part of compilation.
+  virtual absl::StatusOr<std::unique_ptr<OpaqueExecutable>> CreateExecutable(
       std::unique_ptr<HloModule> module, bool run_hlo_passes) = 0;
 
   // Same as above, except it takes buffer assignment as input.
   // Note: The default implementation of the API here does not utilize the given
   // buffer assignment. A derived runner interface is expected to override the
   // following method to achieve this functionality.
-  virtual absl::StatusOr<std::unique_ptr<Executable>>
+  virtual absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
   CreateExecutableWithBufferAssignment(
       std::unique_ptr<HloModule> module,
       const BufferAssignmentProto* /*buffer_assignment_proto*/,
@@ -222,16 +288,17 @@ class HloRunnerInterface {
 
   // Same as 3 Execute methods above, but with Executable as input.
   absl::StatusOr<Literal> ExecuteWithExecutable(
-      Executable* executable, absl::Span<const Literal> arguments,
+      OpaqueExecutable* executable, absl::Span<const Literal> arguments,
       ExecutionProfile* profile = nullptr);
 
   absl::StatusOr<Literal> ExecuteWithExecutable(
-      Executable* executable, absl::Span<const Literal* const> arguments) {
+      OpaqueExecutable* executable,
+      absl::Span<const Literal* const> arguments) {
     return ExecuteWithExecutable(executable, arguments, nullptr);
   }
 
   virtual absl::StatusOr<Literal> ExecuteWithExecutable(
-      Executable* executable, absl::Span<const Literal* const> arguments,
+      OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
       ExecutionProfile* profile) = 0;
 
   // Executes a given HLO module into a set of replicas, and returns a map
@@ -249,7 +316,7 @@ class HloRunnerInterface {
       DeviceAssignment* device_assignment) = 0;
 
   virtual absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
-      std::function<Executable*(int64_t)> executable_provider,
+      std::function<OpaqueExecutable*(int64_t)> executable_provider,
       std::function<int64_t(int64_t)> argument_count_provider,
       std::function<const Literal*(int64_t, int64_t)> argument_provider,
       const ReplicatedExecuteOptions& options,
@@ -273,6 +340,13 @@ class HloRunnerInterface {
   // Returns true if the condition corresponding to the given tag is true for
   // this runner.
   virtual bool HasProperty(HloRunnerPropertyTag::Type tag) const = 0;
+
+  // Returns the first (or only) HloModule associated with the given
+  // OpaqueExecutable. Returns an error if the OpaqueExecutable cannot be
+  // unwrapped, or if the OpaqueExecutable does not contain at least one
+  // HloModule.
+  virtual absl::StatusOr<absl::Nonnull<const HloModule*>> HloModuleFromWrapped(
+      const OpaqueExecutable* wrapped) const = 0;
 };
 
 }  // namespace xla
