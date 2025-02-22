@@ -296,6 +296,544 @@ TEST_F(WhileLoopConvertPeelerTest, DynamicSliceNonRootWhileTwoBuffers) {
       RunAndCompareTwoModules(module->ToString(), hlo, ErrorSpec{1e-5, 1e-5}));
 }
 
+TEST_F(WhileLoopConvertPeelerTest, NoDynamicSliceOperationShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    data_new = f32[8,8] add(data, data)
+    bf16_data_new = bf16[1,8] add(bf16_data, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data_new, bf16_data_new)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       NonDeterminableInductionVariableIdxShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    // The induction variable cannot be determined because initialization is not a constant.
+    %iter_init = s32[] parameter(0)
+    %data_init = f32[8,8] parameter(1)
+    %bf16_data_init = bf16[1,8] parameter(2)
+    tuple_init = (s32[], f32[8,8], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest, BufferIsNotGetTupleElementShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    buffer = f32[8,8] add(data, data)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(buffer, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[8,8] parameter(0)
+    %bf16_data_init = bf16[1,8] parameter(1)
+    tuple_init = (s32[], f32[8,8], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       BufferIsNotGetTupleElementOnParameterShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    custom_call = (f32[8,8], s32[8]) custom-call(data, iter), custom_call_target="my_custom_call"
+    buffer = f32[8,8] get-tuple-element(custom_call), index=0
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(buffer, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[8,8] parameter(0)
+    %bf16_data_init = bf16[1,8] parameter(1)
+    tuple_init = (s32[], f32[8,8], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceMultipleVariableIndicesShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, iter), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[8,8] parameter(0)
+    %bf16_data_init = bf16[1,8] parameter(1)
+    tuple_init = (s32[], f32[8,8], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceNoVariableIndicesShouldNotChange) {
+  // The aim of this test is to ensure that if we have no variable indices, we
+  // should not change the instruction. We also have the condition "For all
+  // indices i < k, we should have that dimension[i]=slice_size[i]=1 and
+  // offset[i]=0." In this case, all indices should satisfy this condition. This
+  // means that the dimensions of buffer should be [1,1,...,1], which should be
+  // the same as dimensions of dynamic-slice. This means that the dynamic-slice
+  // is a no-op. Such a condition should never arise in practice, because the
+  // algebraic simplifier should already remove such a dynamic-slice.
+
+  // This testcase is only to ensure that the peeler does nothing in the case of
+  // all constant offsets, if the algebraic simplifier is not run. However, in
+  // the future, it is okay if the peeler peels this convert too because peeling
+  // it does not change the semantics of the module.
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[1,1], bf16[1,1]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[1,1] get-tuple-element(param), index=1
+    bf16_data = bf16[1,1] get-tuple-element(param), index=2
+    c0 = s32[] constant(0)
+    ds = f32[1,1] dynamic-slice(data, c0, c0), dynamic_slice_sizes={1,1}
+    convert = bf16[1,1] convert(ds)
+    add = bf16[1,1] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[1,1], bf16[1,1]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[1,1], bf16[1,1]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[1,1] parameter(0)
+    %bf16_data_init = bf16[1,1] parameter(1)
+    tuple_init = (s32[], f32[1,1], bf16[1,1]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[1,1], bf16[1,1]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceNonContigousSliceOffsetShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,12], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,12] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c4 = s32[] constant(4)
+    ds = f32[1,8] dynamic-slice(data, iter, c4), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,12], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,12], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[8,12] parameter(0)
+    %bf16_data_init = bf16[1,8] parameter(1)
+    tuple_init = (s32[], f32[8,12], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,12], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceNonContiguousSliceSizeShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,12], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,12] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    ROOT tuple = (s32[], f32[8,12], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,12], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %iter_init = s32[] constant(0)
+    %data_init = f32[8,12] parameter(0)
+    %bf16_data_init = bf16[1,8] parameter(1)
+    tuple_init = (s32[], f32[8,12], bf16[1,8]) tuple(%iter_init, %data_init, %bf16_data_init)
+    ROOT while = (s32[], f32[8,12], bf16[1,8]) while(tuple_init), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceVariableIndexDoesNotCoverFullBufferShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[9,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[9,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    ROOT tuple = (s32[], f32[9,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[9,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[9,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+    tuple = (s32[], f32[9,8], bf16[1,8]) tuple(c0, %p0, %p1)
+    ROOT while = (s32[], f32[9,8], bf16[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(
+    WhileLoopConvertPeelerTest,
+    DynamicSliceVariableIndexDoesNotCoverFullBufferStepNotOneShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c2 = s32[] constant(2)
+    iter_plus_two = s32[] add(iter, c2)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_two, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+    tuple = (s32[], f32[8,8], bf16[1,8]) tuple(c0, %p0, %p1)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest, DynamicSliceMoreThanOneUserShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8], f32[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    f32_accum = f32[1,8] get-tuple-element(param), index=3
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add.1 = f32[1,8] add(ds, f32_accum)
+    add = bf16[1,8] add(convert, bf16_data)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8], f32[1,8]) tuple(iter_plus_one, data, add, add.1)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8], f32[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+    %p2 = f32[1,8] parameter(2)
+    tuple = (s32[], f32[8,8], bf16[1,8], f32[1,8]) tuple(c0, %p0, %p1, %p2)
+    ROOT while = (s32[], f32[8,8], bf16[1,8], f32[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceMoreThanOneUserBufferShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    custom_call = bf16[1,8] custom-call(data), custom_call_target="my_custom_call"
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    add.1 = bf16[1,8] add(custom_call, add)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+    tuple = (s32[], f32[8,8], bf16[1,8]) tuple(c0, %p0, %p1)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceBufferNotPassedToNextIterationShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    bf16_data = bf16[1,8] get-tuple-element(param), index=2
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    custom_call = f32[8,8] custom-call(data), custom_call_target="my_custom_call"
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    ROOT tuple = (s32[], f32[8,8], bf16[1,8]) tuple(iter_plus_one, custom_call, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = bf16[1,8] parameter(1)
+    tuple = (s32[], f32[8,8], bf16[1,8]) tuple(c0, %p0, %p1)
+    ROOT while = (s32[], f32[8,8], bf16[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(WhileLoopConvertPeelerTest,
+       DynamicSliceBufferPassedAtDifferentIndexShouldNotChange) {
+  const char* hlo = R"(
+  HloModule test
+  body {
+    param = (s32[], f32[8,8], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    data = f32[8,8] get-tuple-element(param), index=1
+    f32_data = f32[8,8] get-tuple-element(param), index=2
+    bf16_data = bf16[1,8] get-tuple-element(param), index=3
+    c1 = s32[] constant(1)
+    iter_plus_one = s32[] add(iter, c1)
+    c0 = s32[] constant(0)
+    ds = f32[1,8] dynamic-slice(data, iter, c0), dynamic_slice_sizes={1,8}
+    convert = bf16[1,8] convert(ds)
+    add = bf16[1,8] add(convert, bf16_data)
+    ROOT tuple = (s32[], f32[8,8], f32[8,8], bf16[1,8]) tuple(iter_plus_one, f32_data, data, add)
+  }
+  condition {
+    param = (s32[], f32[8,8], f32[8,8], bf16[1,8]) parameter(0)
+    iter = s32[] get-tuple-element(param), index=0
+    c8 = s32[] constant(8)
+    ROOT lt = pred[] compare(iter, c8), direction=LT
+  }
+  ENTRY main {
+    %c0 = s32[] constant(0)
+    %p0 = f32[8,8] parameter(0)
+    %p1 = f32[8,8] parameter(1)
+    %p2 = bf16[1,8] parameter(2)
+    tuple = (s32[], f32[8,8], f32[8,8], bf16[1,8]) tuple(c0, %p0, %p1, %p2)
+    ROOT while = (s32[], f32[8,8], f32[8,8], bf16[1,8]) while(tuple), body=body, condition=condition
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConvertPeeler().Run(module.get(), {}));
+  EXPECT_FALSE(changed);
+}
 }  // namespace
 
 }  // namespace xla::gpu

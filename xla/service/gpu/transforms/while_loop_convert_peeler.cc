@@ -130,7 +130,8 @@ WhileLoopConvertPeeler::CollectConvertInfos(
                     buffer->shape().dimensions(idx) ||
                 LiteralUtil::LiteralAsScalarInt64(idx_operand->literal()) !=
                     0) {
-              VLOG(2) << "\tSlice size mismatch.";
+              VLOG(2) << "\tSlice size mismatch. Skipping dynamic-slice "
+                         "instruction.";
               multiple_variable_indices = true;
               break;
             }
@@ -149,7 +150,8 @@ WhileLoopConvertPeeler::CollectConvertInfos(
                 dynamic_slice->slice_sizes(idx) != 1 ||
                 LiteralUtil::LiteralAsScalarInt64(idx_operand->literal()) !=
                     0) {
-              VLOG(2) << "\tSlice size mismatch.";
+              VLOG(2) << "\tSlice size mismatch. Skipping dynamic-slice "
+                         "instruction.";
               multiple_variable_indices = true;
               break;
             }
@@ -171,8 +173,8 @@ WhileLoopConvertPeeler::CollectConvertInfos(
             k_range->min().GetSignedValue() != 0 ||
             k_range->max()->GetSignedValue() + 1 !=
                 buffer->shape().dimensions(k)) {
-          VLOG(2) << "Skipping dynamic-slice instruction. Unable to identify "
-                     "the range of the variable index: "
+          VLOG(2) << "Skipping dynamic-slice instruction. The range of the "
+                     "variable index does not cover the full buffer: "
                   << instr->ToString();
           if (k_range.has_value()) {
             VLOG(2) << "Range: " << k_range->ToString();
