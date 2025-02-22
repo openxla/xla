@@ -55,6 +55,9 @@ class NanoRtExecutable {
     template <typename T>
     Argument(const T* data, int64_t size);
 
+    Argument(const void* data, int64_t size)
+        : data_(reinterpret_cast<const std::byte*>(data), size) {}
+
     template <typename T>
     explicit Argument(absl::Span<const T> data);
 
@@ -69,6 +72,9 @@ class NanoRtExecutable {
    public:
     template <typename T>
     Result(T* data, int64_t size);
+
+    Result(void* data, int64_t size)
+        : data_(reinterpret_cast<std::byte*>(data), size) {}
 
     template <typename T>
     explicit Result(absl::Span<T> data);

@@ -1,7 +1,9 @@
 # Description:
 #    LLVM-based CPU backend for XLA.
 
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("//third_party/bazel_rules/rules_cc/cc:cc_library.bzl", "cc_library")
 load(
     "//third_party/compute_library:build_defs.bzl",
     "acl_deps",
@@ -343,6 +345,7 @@ cc_library(
         "//xla/stream_executor/host:host_platform_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
@@ -422,10 +425,13 @@ cc_library(
     hdrs = ["cpu_compiler.h"],
     deps = [
         "cpu_compiler_pure",
+        ":buffer_info_util",
         ":executable_proto_cc",
         "//xla:cpu_function_runtime",
         "//xla:util",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime:thunk_proto_serdes",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/service:buffer_assignment",
@@ -438,9 +444,14 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/host:host_platform_id",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
     ],
     alwayslink = True,  # Contains compiler registration
 )
@@ -477,6 +488,7 @@ tf_proto_library(
         "//xla:xla_proto",
         "//xla/backends/cpu/runtime:thunk_proto",
     ],
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
@@ -2011,6 +2023,16 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "onednn_rewriter",
+    hdrs = ["onednn_rewriter.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+    ],
+)
+
 xla_cc_test(
     name = "metrics_test",
     srcs = ["metrics_test.cc"],
@@ -2021,4 +2043,12 @@ xla_cc_test(
         "//xla/tsl/lib/monitoring:collection_registry",
         "@tsl//tsl/platform:test",
     ],
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
+    deps = ["//xla/tsl:tsl_bzl"],
 )
