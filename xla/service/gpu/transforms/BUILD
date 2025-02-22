@@ -3416,3 +3416,33 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "while_loop_convert_peeler",
+    srcs = ["while_loop_convert_peeler.cc"],
+    hdrs = ["while_loop_convert_peeler.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/analysis:while_loop_analysis",
+        "//xla/hlo/utils:hlo_query",
+        "//xla:literal_util",
+        "//xla/service:value_range",
+        "//xla/tests:test_utils",
+    ],
+)
+
+xla_cc_test(
+    name = "while_loop_convert_peeler_test",
+    srcs = ["while_loop_convert_peeler_test.cc"],
+    deps = [
+        ":while_loop_convert_peeler",
+        "@com_google_googletest//:gtest_main",
+        "//xla/tests:hlo_runner_agnostic_test_base",
+        "//xla/tests:test_utils",
+        "//xla/service:platform_util",
+        "//xla/service:hlo_runner",
+        "//xla/hlo/testlib:pattern_matcher_gmock",
+        "//xla/service:pattern_matcher",
+    ],
+)
