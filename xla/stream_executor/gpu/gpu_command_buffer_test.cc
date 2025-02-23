@@ -51,8 +51,10 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 
 namespace stream_executor::gpu {
+using testing::Each;
 using testing::ElementsAre;
 using testing::IsEmpty;
 using tsl::testing::IsOkAndHolds;
@@ -1624,7 +1626,8 @@ TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
 TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                          executor->CreateStream());
   dnn::DnnSupport& dnn_support = *executor->AsDnn();
 
   if (dnn_support.GetVersion().value_or(dnn::VersionInfo{0, 0, 0}) <
@@ -1638,12 +1641,14 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   CudnnGraph graph([]() {
     cudnn_frontend::graph::Graph graph;
     graph.set_compute_data_type(cudnn_frontend::DataType_t::INT32);
-    auto lhs = graph.tensor(cudnn_frontend::graph::Tensor_attributes()
-                                .set_dim({1, dim_size, dim_size})
-                                .set_stride({dim_size * dim_size, dim_size, 1})
-                                .set_data_type(cudnn_frontend::DataType_t::INT8)
-                                .set_uid(1));
-    auto rhs = graph.tensor_like(lhs);
+    std::shared_ptr<cudnn_frontend::graph::Tensor_attributes> lhs =
+        graph.tensor(cudnn_frontend::graph::Tensor_attributes()
+                         .set_dim({1, dim_size, dim_size})
+                         .set_stride({dim_size * dim_size, dim_size, 1})
+                         .set_data_type(cudnn_frontend::DataType_t::INT8)
+                         .set_uid(1));
+    std::shared_ptr<cudnn_frontend::graph::Tensor_attributes> rhs =
+        graph.tensor_like(lhs);
     rhs->set_uid(2);
     graph.matmul(lhs, rhs, cudnn_frontend::graph::Matmul_attributes())
         ->set_output(true)
@@ -1653,7 +1658,8 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   }());
   TF_ASSERT_OK(graph.Prepare(dnn_support, NumericOptions{}));
   TF_ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
-  ASSERT_TRUE(graph.SupportsExplicitCommandBufferConstruction().value());
+  EXPECT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
+              IsOkAndHolds(true));
 
   DeviceMemory<int8_t> input = executor->AllocateArray<int8_t>(total_elements);
   TF_ASSERT_OK(stream->MemZero(&input, input.size()));
@@ -1669,7 +1675,7 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
     workspace = executor->Allocate(graph.Graph().get_workspace_size());
     operands.push_back(workspace);
   }
-  TF_ASSERT_OK_AND_ASSIGN(auto cmd_buffer,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
                           executor->CreateCommandBuffer(primary));
   TF_ASSERT_OK(cmd_buffer->DnnGraph(cmd_buffer->kDefaultExecutionScope, graph,
                                     *stream,
@@ -1682,7 +1688,7 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   TF_ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
   TF_ASSERT_OK(stream->Memcpy(host_buffer.data(), output0, output0.size()));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
-  EXPECT_TRUE(absl::c_all_of(host_buffer, [](int32_t x) { return x == 123; }));
+  EXPECT_THAT(host_buffer, Each(123));
 
   // Run the computation.
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
@@ -1690,7 +1696,7 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   // Check the output after execution.
   TF_ASSERT_OK(stream->Memcpy(host_buffer.data(), output0, output0.size()));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
-  EXPECT_TRUE(absl::c_all_of(host_buffer, [](int32_t x) { return x == 0; }));
+  EXPECT_THAT(host_buffer, Each(0));
 
   // Swap the output buffer.
   DeviceMemory<int32_t> output1 =
@@ -1702,7 +1708,7 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   TF_ASSERT_OK(stream->Memset32(&output1, 456, output1.size()));
   TF_ASSERT_OK(stream->Memcpy(host_buffer.data(), output1, output1.size()));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
-  EXPECT_TRUE(absl::c_all_of(host_buffer, [](int32_t x) { return x == 456; }));
+  EXPECT_THAT(host_buffer, Each(456));
 
   // Update the command buffer to write into the new output buffer.
   TF_ASSERT_OK(cmd_buffer->Update());
@@ -1717,7 +1723,7 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   // Check the output after execution.
   TF_ASSERT_OK(stream->Memcpy(host_buffer.data(), output1, output1.size()));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
-  EXPECT_TRUE(absl::c_all_of(host_buffer, [](int32_t x) { return x == 0; }));
+  EXPECT_THAT(host_buffer, Each(0));
 }
 
 //===----------------------------------------------------------------------===//

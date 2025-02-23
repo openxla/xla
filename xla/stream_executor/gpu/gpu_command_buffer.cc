@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -456,8 +457,9 @@ absl::Status GpuCommandBuffer::DnnGraph(ExecutionScopeId execution_scope_id,
 
   TF_RETURN_IF_ERROR(CheckNotFinalized());
 
-  TF_ASSIGN_OR_RETURN(auto nested, stream.parent()->CreateCommandBuffer(
-                                       CommandBuffer::Mode::kNested));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<CommandBuffer> nested,
+      stream.parent()->CreateCommandBuffer(CommandBuffer::Mode::kNested));
   GpuCommandBuffer& nested_gpu =
       tensorflow::down_cast<GpuCommandBuffer&>(*nested);
 
