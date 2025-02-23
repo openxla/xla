@@ -35,12 +35,9 @@ namespace xla::gpu {
 namespace {
 
 void ClearSchedulingAnnotations(HloInstruction* instr) {
-  // Remove kXlaSchedulingGroupIdAttr and kXlaStreamAnnotationAttr
   // These attributes are only valid on the async pairs.
-  FrontendAttributes frontend_attributes = instr->frontend_attributes();
-  frontend_attributes.mutable_map()->erase(kXlaSchedulingGroupIdAttr);
-  frontend_attributes.mutable_map()->erase(kXlaStreamAnnotationAttr);
-  instr->set_frontend_attributes(frontend_attributes);
+  instr->erase_frontend_attribute(kXlaSchedulingGroupIdAttr);
+  instr->erase_frontend_attribute(kXlaStreamAnnotationAttr);
 }
 
 static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
@@ -51,7 +48,7 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   HloComputation* computation = instr->parent();
   auto original_attributes = instr->frontend_attributes();
 
-  // These annotations are only legal on the async instructions, and
+  // These annotations are only legal on the async instructions and
   // can cause issues if the annotations remain on the inner operations,
   // so we clear them before creating the async pair.
   for (auto* inner_instr : instr->called_computations()[0]->instructions()) {
