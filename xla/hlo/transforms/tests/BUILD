@@ -29,6 +29,7 @@ lit_test_suite(
             "cholesky_expander.hlo",
             "hlo_opt_emit_proto.hlo",
             "hlo_opt_expect_failure.hlo",
+            "rng_bit_generator_expander.hlo",
             "run_multiple_passes.hlo",
             "run_single_pass.hlo",
             # go/keep-sorted end
