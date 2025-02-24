@@ -105,7 +105,11 @@ int main(int argc, char* argv[]) {
   tsl::Flags::Parse(&argc, argv, flag_list);
   testing::InitGoogleTest(&argc, argv);
   if (node_id >= 0) {
-    return xla::InitializationTestBody(node_id, num_nodes).raw_code();
+    absl::Status result = xla::InitializationTestBody(node_id, num_nodes);
+    if (!result.ok()) {
+      LOG(ERROR) << result.ToString();
+    }
+    return result.raw_code();
   }
   return RUN_ALL_TESTS();
 }

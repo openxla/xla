@@ -28,41 +28,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-//==-----------------------------------------------------------------------===//
-// Macros to return or warn on NVSHMEM errors.
-//==-----------------------------------------------------------------------===//
-
-static absl::Status NvshmemToStatus(int s, const char* file, int64_t line,
-                                    const char* expr) {
-  if (s == 0) return absl::OkStatus();
-
-  return absl::InternalError(
-      absl::StrFormat("%s:%d: NVSHMEM operation %s failed."
-                      " For extra logging, rerun with 'NVSHMEM_DEBUG=INFO'.",
-                      file, line, expr));
-}
-
-#define XLA_NVSHMEM_STATUS(expr) \
-  xla::gpu::NvshmemToStatus(expr, __FILE__, __LINE__, #expr)
-
-#define XLA_NVSHMEM_RETURN_IF_ERROR(expr)      \
-  do {                                         \
-    absl::Status s = XLA_NVSHMEM_STATUS(expr); \
-    if (!s.ok()) {                             \
-      return s;                                \
-    }                                          \
-  } while (0)
-
-#define XLA_NVSHMEM_LOG_IF_ERROR(expr)         \
-  do {                                         \
-    absl::Status s = XLA_NVSHMEM_STATUS(expr); \
-    if (!s.ok()) {                             \
-      LOG(ERROR) << s.ToString();              \
-    }                                          \
-  } while (0)
-
-#define XLA_NVSHMEM_CHECK(expr) CHECK(XLA_NVSHMEM_STATUS(expr).ok())
-
 NvshmemCollectives::~NvshmemCollectives() {
   if (initialized_) Finalize();
 }
@@ -103,7 +68,9 @@ absl::Status NvshmemCollectives::Initialize() {
   // Initialize NVSHMEM
   if (std::shared_ptr<KeyValueStoreInterface> kv_store = kv_store_.lock()) {
     if (process_id_ == 0) {
-      XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_get_uniqueid(&nvshmem_id));
+      if (nvshmemx_get_uniqueid(&nvshmem_id) != 0) {
+        return absl::InternalError("nvshmemx_get_uniqueid failed.");
+      }
       absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
                                        sizeof(nvshmemx_uniqueid_t));
       TF_RETURN_IF_ERROR(kv_store->Set(kv_store_key_, nvshmem_id_str));
@@ -118,10 +85,14 @@ absl::Status NvshmemCollectives::Initialize() {
         "KV store is not available for nvshmem initialization.");
   }
 
-  XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_set_attr_uniqueid_args(
-      process_id_, num_processes_, &nvshmem_id, &nvshmem_init_attr));
-  XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_hostlib_init_attr(
-      NVSHMEMX_INIT_WITH_UNIQUEID, &nvshmem_init_attr));
+  if (nvshmemx_set_attr_uniqueid_args(process_id_, num_processes_, &nvshmem_id,
+                                      &nvshmem_init_attr) != 0) {
+    return absl::InternalError("nvshmemx_set_attr_uniqueid_args failed.");
+  }
+  if (nvshmemx_hostlib_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID,
+                                 &nvshmem_init_attr) != 0) {
+    return absl::InternalError("nvshmemx_hostlib_init_attr failed.");
+  }
 
   VLOG(3) << absl::StreamFormat(
       "Initialized NVSHMEM on process %d; num_processes=%llu", process_id_,
