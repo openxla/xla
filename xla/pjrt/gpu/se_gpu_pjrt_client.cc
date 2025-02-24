@@ -1381,9 +1381,12 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
   return devices;
 }
 
-std::string GetDeviceFabricInfo(const int device_id) {
+namespace {
+// Get the fabric info of a local device ordinal in the formate of
+// "clusterUuid/cliqueId".
+std::string GetDeviceFabricInfo(const int device_ordinal) {
   char pciBusId[] = "00000000:00:00.0";
-  cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
+  cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_ordinal);
   nvmlDevice_t device;
   auto get_bus_id_status =
       xla_nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
@@ -1416,6 +1419,9 @@ std::string GetDeviceFabricInfo(const int device_id) {
   return absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId));
 }
 
+// Construct a string containing all device fabric infos of a node. Device
+// fabric infos are seperated by "#". The i'th fabric info corresponds to device
+// ordinal i.
 std::string ConstructNodeFabricInfo(
     std::vector<std::string>& device_fabric_infos) {
   std::string device_cliques = device_fabric_infos.at(0);
@@ -1425,18 +1431,31 @@ std::string ConstructNodeFabricInfo(
   return device_cliques;
 }
 
+// Reverse function of ConstructNodeFabricInfo. Given a string format of node
+// fabric info, parse it to a vector of strings where the i'th element is the
+// fabric info of device ordinal i.
 std::vector<std::string> ParseNodeFabricInfo(
     absl::string_view node_fabric_info) {
   return absl::StrSplit(node_fabric_info, "#");
 }
+}  // namespace
 
 void PopulateFabricInfo(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                        const int node_id, const int num_local_devices) {
+                        const int node_id,
+                        absl::Span<PjRtDevice* const> addressable_devices) {
   CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
 
-  std::vector<std::string> device_fabric_infos(num_local_devices);
-  for (int device_id = 0; device_id < num_local_devices; ++device_id) {
-    device_fabric_infos.at(device_id) = GetDeviceFabricInfo(device_id);
+  std::vector<std::string> device_fabric_infos(addressable_devices.size());
+  for (const PjRtDevice* device : addressable_devices) {
+    LocalDeviceState* local_device_state =
+        tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
+            ->local_device_state();
+    if (local_device_state != nullptr) {
+      se::StreamExecutor* executor = local_device_state->executor();
+      int device_ordinal = executor->device_ordinal();
+      device_fabric_infos.at(device_ordinal) =
+          GetDeviceFabricInfo(device_ordinal);
+    }
   }
 
   TF_CHECK_OK(

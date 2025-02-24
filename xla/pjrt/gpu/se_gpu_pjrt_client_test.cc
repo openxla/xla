@@ -1076,21 +1076,39 @@ TEST(StreamExecutorGpuClientTest, DistributedInit) {
 
 TEST(StreamExecutorGpuClientTest, PopulateAndRetrieveFabricInfos) {
   auto kv_store = std::make_shared<InMemoryKeyValueStore>();
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(),
+                                      "PopulateAndRetrieveFabricInfos", 4);
   int num_nodes = 2;
-  int devices_per_node = 2;
   for (int node_id = 0; node_id < num_nodes; ++node_id) {
-    PopulateFabricInfo(kv_store, node_id, devices_per_node);
+    thread_pool.Schedule([kv_store, node_id, num_nodes] {
+      GpuClientOptions options;
+      options.node_id = node_id;
+      options.num_nodes = num_nodes;
+      options.kv_store = kv_store;
+      TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+      PopulateFabricInfo(kv_store, node_id, client->addressable_devices());
+    });
   }
 
   for (int node_id = 0; node_id < num_nodes; node_id++) {
-    TF_ASSERT_OK_AND_ASSIGN(auto all_fabric_info,
-                            GetAllFabricInfos(kv_store, num_nodes));
-    CHECK_EQ(all_fabric_info.size(), devices_per_node);
-    for (const auto& [node_id, node_fabric_info] : all_fabric_info) {
-      for (auto& device_fabric_info : node_fabric_info) {
-        CHECK_EQ(device_fabric_info, "00000000-0000-0000-0000-000000000000/0");
+    thread_pool.Schedule([kv_store, node_id, num_nodes] {
+      TF_ASSERT_OK_AND_ASSIGN(auto all_fabric_info,
+                              GetAllFabricInfos(kv_store, num_nodes));
+      GpuClientOptions options;
+      options.node_id = node_id;
+      options.num_nodes = num_nodes;
+      options.kv_store = kv_store;
+      TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+      CHECK_EQ(all_fabric_info.size(), num_nodes);
+      CHECK_EQ(all_fabric_info.at(node_id).size(),
+               client->addressable_device_count());
+      for (const auto& [node_id, node_fabric_info] : all_fabric_info) {
+        for (auto& device_fabric_info : node_fabric_info) {
+          CHECK_EQ(device_fabric_info,
+                   "00000000-0000-0000-0000-000000000000/0");
+        }
       }
-    }
+    });
   }
 }
 
