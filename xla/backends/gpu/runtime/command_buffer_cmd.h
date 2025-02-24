@@ -777,8 +777,7 @@ class CaseCmd : public CommandBufferCmd {
  public:
   static constexpr size_t kBranchBatchSize = 8;
   CaseCmd(
-      BufferAllocation::Slice cond_alloc_slice,
-      bool index_is_bool,
+      BufferAllocation::Slice cond_alloc_slice, bool index_is_bool,
       std::vector<std::unique_ptr<CommandBufferCmdSequence>> branches_commands);
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
@@ -810,11 +809,8 @@ class CaseCmd : public CommandBufferCmd {
   std::vector<std::unique_ptr<CommandBufferCmdSequence>> branches_commands_;
 
   std::vector<GraphConditionalHandle> case_branch_handles_;
-  std::vector<CommandBufferCmd::GraphNodeHandle> set_case_handle_kernel_nodes_;
-
-  std::vector<GraphNodeHandle> cond_nodes_;
-
-  // created from loop_commands_
+  GraphNodeHandles set_case_handle_kernel_nodes_;
+  GraphNodeHandles cond_nodes_;
   std::vector<std::unique_ptr<se::CommandBuffer>> branch_command_buffers_;
 };
 

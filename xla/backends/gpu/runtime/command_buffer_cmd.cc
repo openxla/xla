@@ -233,10 +233,29 @@ absl::Status CommandBufferCmdSequence::Initialize(
 
 std::unique_ptr<CommandBufferCmdSequence> CommandBufferCmdSequence::Clone()
     const {
-  auto clone =
+  auto cloned_sequence =
       std::make_unique<CommandBufferCmdSequence>(synchronization_mode_);
+
+  absl::flat_hash_map<const CommandBufferCmd*, int64_t> cmd_to_index;
+  absl::flat_hash_map<int64_t, absl::flat_hash_set<int64_t>> cmd_idx_to_deps;
+
+  int64_t idx = 0;
   for (const auto& command : commands_) {
-    clone->Append(command->Clone());
+    cmd_to_index[command.get()] = idx;
+    for (const auto& dep : command->dependencies()) {
+      cmd_idx_to_deps[idx].insert(cmd_to_index[dep]);
+    }
+    idx++;
+  }
+
+  idx = 0;
+  for (const auto& command : commands_) {
+    auto cloned_cmd = command->Clone();
+    for (const auto& dep : cmd_idx_to_deps[idx]) {
+      cloned_cmd->add_dependency(cloned_sequence->get_command(dep));
+    }
+    cloned_sequence->Append(std::move(cloned_cmd));
+    idx++;
   }
   return clone;
 }
@@ -952,8 +971,7 @@ CommandBufferCmd::BufferUseVector IfElseCmd::buffers() {
 //===----------------------------------------------------------------------===//
 
 CaseCmd::CaseCmd(
-    BufferAllocation::Slice index,
-    bool index_is_bool,
+    BufferAllocation::Slice index, bool index_is_bool,
     std::vector<std::unique_ptr<CommandBufferCmdSequence>> branches_commands)
     : CommandBufferCmd(CommandBufferCmdType::kCaseCmd),
       index_(index),
