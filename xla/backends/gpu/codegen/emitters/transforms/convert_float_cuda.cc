@@ -34,14 +34,12 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
 
-#ifdef GOOGLE_CUDA
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
-#endif
 
 namespace xla {
 namespace gpu {
 
-#define GEN_PASS_DEF_CONVERTFLOATNVIDIAPASS
+#define GEN_PASS_DEF_CONVERTFLOATPASS
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h.inc"
 
 namespace {
@@ -237,10 +235,10 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
   }
 };
 
-class ConvertFloatNvidiaPass
-    : public impl::ConvertFloatNvidiaPassBase<ConvertFloatNvidiaPass> {
+class ConvertFloatPass
+    : public impl::ConvertFloatPassBase<ConvertFloatPass> {
  public:
-  using ConvertFloatNvidiaPassBase::ConvertFloatNvidiaPassBase;
+  using ConvertFloatPassBase::ConvertFloatPassBase;
 
   void runOnOperation() override {
     mlir::RewritePatternSet patterns(&getContext());
@@ -254,13 +252,15 @@ class ConvertFloatNvidiaPass
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass() {
-  return std::make_unique<ConvertFloatNvidiaPass>();
+std::unique_ptr<mlir::Pass> CreateConvertFloatPass(
+    const std::string& gpu_device_info) {
+  ConvertFloatPassOptions options;
+  options.gpu_device_info_ = gpu_device_info;
+  return std::make_unique<ConvertFloatPass>(options);
 }
 
-std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
+std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
     const se::DeviceDescription& device_description) {
-#ifdef GOOGLE_CUDA
   se::SemanticVersion ptx_version =
       nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
           device_description.runtime_version());
@@ -270,9 +270,8 @@ std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
   // Older ptx versions only support FP8 conversion for sm90
   if ((ptx_version >= se::SemanticVersion(8, 1, 0) && cc.IsAtLeast(8, 9)) ||
       (ptx_version >= se::SemanticVersion(7, 8, 0) && cc.IsAtLeast(9, 0))) {
-    return CreateConvertFloatNvidiaPass();
+    return CreateConvertFloatPass();
   }
-#endif
   return std::nullopt;
 }
 
