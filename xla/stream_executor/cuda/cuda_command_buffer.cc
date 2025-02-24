@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
@@ -55,15 +54,16 @@ limitations under the License.
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
 
 namespace stream_executor::gpu {
 namespace {
 absl::StatusOr<CUgraph> CreateGraph() {
-  VLOG(2) << "Create new CUDA graph";
   CUgraph graph = nullptr;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuGraphCreate(&graph, /*flags=*/0),
                                     "Failed to create CUDA graph"));
-  VLOG(2) << "Created CUDA graph " << graph;
+  VLOG(2) << "Create CUDA graph " << graph;
   return graph;
 }
 
@@ -71,50 +71,52 @@ CUdeviceptr AsDevicePtr(const DeviceMemoryBase& mem) {
   return absl::bit_cast<CUdeviceptr>(mem.opaque());
 }
 
-using GraphNodeHandle = GpuCommandBuffer::GraphNodeHandle;
-using GraphConditionalHandle = GpuCommandBuffer::GraphConditionalHandle;
+using CommandBufferNodeHandle = CommandBuffer::CommandBufferNodeHandle;
+using CommandBufferConditionalHandle =
+    CommandBuffer::CommandBufferConditionalHandle;
 
-// Converts a platform independent GraphNodeHandle into a CUDA specific
+// Converts a platform independent CommandBufferNodeHandle into a CUDA specific
 // CUgraphNode.
-CUgraphNode ToCudaGraphHandle(GraphNodeHandle handle) {
+CUgraphNode ToCudaGraphHandle(CommandBufferNodeHandle handle) {
   return absl::bit_cast<CUgraphNode>(handle);
 }
 
-// Converts a platform independent GraphConditionalHandle into a CUDA specific
-// CUgraphConditionalHandle.
-CUgraphConditionalHandle ToCudaGraphHandle(GraphConditionalHandle handle) {
+// Converts a platform independent CommandBufferConditionalHandle into a CUDA
+// specific CUgraphConditionalHandle.
+CUgraphConditionalHandle ToCudaGraphHandle(
+    CommandBufferConditionalHandle handle) {
   return absl::bit_cast<CUgraphConditionalHandle>(handle);
 }
 
-// Converts a list of platform independent GraphNodeHandles into a list of
-// CUDA specific CUgraphNode.
+// Converts a list of platform independent std::vector<CommandBufferNodeHandle>
+// into a list of CUDA specific CUgraphNode.
 std::vector<CUgraphNode> ToCudaGraphHandles(
-    absl::Span<const GraphNodeHandle> opaque_handles) {
+    absl::Span<const CommandBufferNodeHandle> opaque_handles) {
   std::vector<CUgraphNode> handles;
-  handles.reserve(opaque_handles.size());
-  for (const GraphNodeHandle opaque_handle : opaque_handles) {
+  for (const CommandBufferNodeHandle opaque_handle : opaque_handles) {
     handles.push_back(ToCudaGraphHandle(opaque_handle));
   }
   return handles;
 }
 
 // Converts a CUDA specific CUgraphNode into a platform independent
-// GraphNodeHandle.
-GraphNodeHandle FromCudaGraphHandle(CUgraphNode handle) {
-  return absl::bit_cast<GraphNodeHandle>(handle);
+// CommandBufferNodeHandle.
+CommandBufferNodeHandle FromCudaGraphHandle(CUgraphNode handle) {
+  return absl::bit_cast<CommandBufferNodeHandle>(handle);
 }
 
 // Converts a CUDA specific CUgraphConditionalHandle into a platform
-// independent GraphConditionalHandle.
-GraphConditionalHandle FromCudaGraphHandle(CUgraphConditionalHandle handle) {
-  return absl::bit_cast<GraphConditionalHandle>(handle);
+// independent CommandBufferConditionalHandle.
+CommandBufferConditionalHandle FromCudaGraphHandle(
+    CUgraphConditionalHandle handle) {
+  return absl::bit_cast<CommandBufferConditionalHandle>(handle);
 }
 
-std::string ConditionalTypeToString(GpuCommandBuffer::ConditionType type) {
+std::string ConditionalTypeToString(CommandBuffer::ConditionType type) {
   switch (type) {
-    case GpuCommandBuffer::ConditionType::kIf:
+    case CommandBuffer::ConditionType::kIf:
       return "IF";
-    case GpuCommandBuffer::ConditionType::kWhile:
+    case CommandBuffer::ConditionType::kWhile:
       return "WHILE";
   }
 }
@@ -135,118 +137,245 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
-    Mode mode, StreamExecutor* parent, CudaContext* cuda_context) {
+    Mode mode, StreamExecutor* stream_executor, CudaContext* cuda_context) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
   return std::unique_ptr<CudaCommandBuffer>(
-      new CudaCommandBuffer(mode, parent, cuda_context, graph,
+      new CudaCommandBuffer(mode, stream_executor, cuda_context, graph,
                             /*is_owned_graph=*/true));
 }
 
-absl::Status CudaCommandBuffer::LaunchSetIfElseConditionKernel(
-    ExecutionScopeId execution_scope_id, GraphConditionalHandle if_conditional,
-    GraphConditionalHandle else_conditional, DeviceMemory<bool> predicate) {
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateLaunchNode(
+    Dependencies dependencies, const ThreadDim& threads, const BlockDim& blocks,
+    const Kernel& kernel, const KernelArgs& args) {
+  if (finalized_) {
+    return absl::InternalError(
+        "Trying to create launch node in a finalized command buffer");
+  }
+
+  // If arguments are already packed we can just launch the kernel.
+  if (auto* packed = DynCast<KernelArgsPackedArrayBase>(&args)) {
+    return CreateKernelNode(dependencies, threads, blocks, kernel, *packed);
+  }
+
+  // For device memory array we rely on a custom kernel arguments packing.
+  if (auto* device_mem = DynCast<KernelArgsDeviceMemoryArray>(&args)) {
+    auto& pack = kernel.args_packing();
+    if (!pack) {
+      return absl::InternalError(
+          "Kernel is missing a custom arguments packing function for device "
+          "memory arguments array");
+    }
+
+    TF_ASSIGN_OR_RETURN(auto packed, pack(kernel, *device_mem));
+    return CreateKernelNode(dependencies, threads, blocks, kernel, *packed);
+  }
+
+  return absl::InternalError("Unsupported kernel arguments type");
+}
+
+absl::Status CudaCommandBuffer::UpdateLaunchNode(CommandBufferNodeHandle node,
+                                                 const ThreadDim& threads,
+                                                 const BlockDim& blocks,
+                                                 const Kernel& kernel,
+                                                 const KernelArgs& args) {
+  CHECK(finalized_)
+      << "Trying to update launch node when command buffer is not finalized";
+
+  // If arguments are already packed we can just launch the kernel.
+  if (auto* packed = DynCast<KernelArgsPackedArrayBase>(&args)) {
+    return UpdateKernelNode(node, threads, blocks, kernel, *packed);
+  }
+
+  // For device memory array we rely on a custom kernel arguments packing.
+  if (auto* device_mem = DynCast<KernelArgsDeviceMemoryArray>(&args)) {
+    auto& pack = kernel.args_packing();
+    if (!pack) {
+      return absl::InternalError(
+          "Kernel is missing a custom arguments packing function for device "
+          "memory arguments array");
+    }
+
+    TF_ASSIGN_OR_RETURN(auto packed, pack(kernel, *device_mem));
+    return UpdateKernelNode(node, threads, blocks, kernel, *packed);
+  }
+  return absl::InternalError("Unsupported kernel arguments type");
+}
+
+absl::StatusOr<CommandBufferNodeHandle>
+CudaCommandBuffer::CreateIfElseConditionNode(
+    Dependencies dependencies, CommandBufferConditionalHandle then_conditional,
+    CommandBufferConditionalHandle else_conditional,
+    DeviceMemory<bool> predicate) {
   if (!set_if_else_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec,
                         cuda::GetSetIfElseConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_if_else_condition_kernel_,
-        SetIfElseConditionKernel::FactoryType::Create(parent_, spec));
+        SetIfElseConditionKernel::FactoryType::Create(stream_executor_, spec));
   }
-  return Launch(set_if_else_condition_kernel_, execution_scope_id, ThreadDim(),
-                BlockDim(), ToCudaGraphHandle(if_conditional),
-                ToCudaGraphHandle(else_conditional), predicate);
+  return CreateTypedLaunchNode(dependencies, ThreadDim(), BlockDim(),
+                               set_if_else_condition_kernel_,
+                               ToCudaGraphHandle(then_conditional),
+                               ToCudaGraphHandle(else_conditional), predicate);
 }
-absl::Status CudaCommandBuffer::LaunchSetIfConditionKernel(
-    ExecutionScopeId execution_scope_id, GraphConditionalHandle if_conditional,
+
+absl::Status CudaCommandBuffer::UpdateIfElseConditionNode(
+    CommandBufferNodeHandle node,
+    CommandBufferConditionalHandle then_conditional,
+    CommandBufferConditionalHandle else_conditional,
+    DeviceMemory<bool> predicate) {
+  CHECK(set_if_else_condition_kernel_)
+      << "SetIfElseConditionKernel is not initialized";
+  return UpdateTypedLaunchNode(node, ThreadDim(), BlockDim(),
+                               set_if_else_condition_kernel_,
+                               ToCudaGraphHandle(then_conditional),
+                               ToCudaGraphHandle(else_conditional), predicate);
+}
+
+absl::StatusOr<CommandBufferNodeHandle>
+CudaCommandBuffer::CreateIfConditionNode(
+    Dependencies dependencies, CommandBufferConditionalHandle then_conditional,
     DeviceMemory<bool> predicate) {
   if (!set_if_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetIfConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_if_condition_kernel_,
-        SetIfConditionKernel::FactoryType::Create(parent_, spec));
+        SetIfConditionKernel::FactoryType::Create(stream_executor_, spec));
   }
-  return Launch(set_if_condition_kernel_, execution_scope_id, ThreadDim(),
-                BlockDim(), ToCudaGraphHandle(if_conditional), predicate);
+  return CreateTypedLaunchNode(dependencies, ThreadDim(), BlockDim(),
+                               set_if_condition_kernel_,
+                               ToCudaGraphHandle(then_conditional), predicate);
 }
-absl::Status CudaCommandBuffer::LaunchSetForConditionKernel(
-    ExecutionScopeId execution_scope_id, GraphConditionalHandle conditional,
+
+absl::Status CudaCommandBuffer::UpdateIfConditionNode(
+    CommandBufferNodeHandle node,
+    CommandBufferConditionalHandle then_conditional,
+    DeviceMemory<bool> predicate) {
+  CHECK(set_if_condition_kernel_) << "SetIfConditionKernel is not initialized";
+  return UpdateTypedLaunchNode(node, ThreadDim(), BlockDim(),
+                               set_if_condition_kernel_,
+                               ToCudaGraphHandle(then_conditional), predicate);
+}
+
+absl::StatusOr<CommandBufferNodeHandle>
+CudaCommandBuffer::CreateForConditionNode(
+    Dependencies dependencies, CommandBufferConditionalHandle condition,
     DeviceMemory<int32_t> loop_counter, int32_t iterations) {
   if (!set_for_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetForConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_for_condition_kernel_,
-        SetForConditionKernel::FactoryType::Create(parent_, spec));
+        SetForConditionKernel::FactoryType::Create(stream_executor_, spec));
   }
-
-  return CommandBuffer::Launch(
-      set_for_condition_kernel_, execution_scope_id, ThreadDim(), BlockDim(),
-      ToCudaGraphHandle(conditional), loop_counter, iterations);
+  return CreateTypedLaunchNode(
+      dependencies, ThreadDim(), BlockDim(), set_for_condition_kernel_,
+      ToCudaGraphHandle(condition), loop_counter, iterations);
 }
-absl::Status CudaCommandBuffer::LaunchSetWhileConditionKernel(
-    ExecutionScopeId execution_scope_id, GraphConditionalHandle conditional,
+
+absl::Status CudaCommandBuffer::UpdateForConditionNode(
+    CommandBufferNodeHandle node, CommandBufferConditionalHandle condition,
+    DeviceMemory<int32_t> loop_counter, int32_t iterations) {
+  CHECK(set_for_condition_kernel_)
+      << "SetForConditionKernel is not initialized";
+  return UpdateTypedLaunchNode(
+      node, ThreadDim(), BlockDim(), set_for_condition_kernel_,
+      ToCudaGraphHandle(condition), loop_counter, iterations);
+}
+
+absl::StatusOr<CommandBufferNodeHandle>
+CudaCommandBuffer::CreateWhileConditionNode(
+    Dependencies dependencies, CommandBufferConditionalHandle condition,
     DeviceMemory<bool> predicate) {
   if (!set_while_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec,
                         cuda::GetSetWhileConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_while_condition_kernel_,
-        SetWhileConditionKernel::FactoryType::Create(parent_, spec));
+        SetWhileConditionKernel::FactoryType::Create(stream_executor_, spec));
   }
-
-  return Launch(set_while_condition_kernel_, execution_scope_id, ThreadDim(),
-                BlockDim(), ToCudaGraphHandle(conditional), predicate);
+  return CreateTypedLaunchNode(dependencies, ThreadDim(), BlockDim(),
+                               set_while_condition_kernel_,
+                               ToCudaGraphHandle(condition), predicate);
 }
 
-absl::Status CudaCommandBuffer::LaunchSetCaseConditionKernel(
-    ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-    DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
-    bool enable_conditional_default) {
-  constexpr int kCaseBranchBatchSize = 8;
-  CHECK(conditionals.size() <= kCaseBranchBatchSize);
+absl::Status CudaCommandBuffer::UpdateWhileConditionNode(
+    CommandBufferNodeHandle node, CommandBufferConditionalHandle condition,
+    DeviceMemory<bool> predicate) {
+  CHECK(set_while_condition_kernel_)
+      << "SetWhileConditionKernel is not initialized";
+  return UpdateTypedLaunchNode(node, ThreadDim(), BlockDim(),
+                               set_while_condition_kernel_,
+                               ToCudaGraphHandle(condition), predicate);
+}
 
+absl::StatusOr<CommandBufferNodeHandle>
+CudaCommandBuffer::CreateCaseConditionNode(
+    Dependencies dependencies, CommandBufferConditionalHandle condition0,
+    CommandBufferConditionalHandle condition1,
+    CommandBufferConditionalHandle condition2,
+    CommandBufferConditionalHandle condition3,
+    CommandBufferConditionalHandle condition4,
+    CommandBufferConditionalHandle condition5,
+    CommandBufferConditionalHandle condition6,
+    CommandBufferConditionalHandle condition7, DeviceMemory<uint8_t> index,
+    bool index_is_bool, int32_t batch_offset, int32_t num_branches,
+    bool enable_conditional_default) {
   if (!set_case_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetCaseConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_case_condition_kernel_,
-        SetCaseConditionKernel::FactoryType::Create(parent_, spec));
+        SetCaseConditionKernel::FactoryType::Create(stream_executor_, spec));
   }
 
-  // Pad handles up to size 8 with a default initialized handle.
-  std::vector<CUgraphConditionalHandle> padded_handles{};
-  padded_handles.resize(kCaseBranchBatchSize);
-  std::transform(conditionals.begin(), conditionals.end(),
-                 padded_handles.begin(),
-                 [](GraphConditionalHandle conditional) {
-                   return ToCudaGraphHandle(conditional);
-                 });
+  return CreateTypedLaunchNode(
+      dependencies, ThreadDim(), BlockDim(), set_case_condition_kernel_,
+      ToCudaGraphHandle(condition0), ToCudaGraphHandle(condition1),
+      ToCudaGraphHandle(condition2), ToCudaGraphHandle(condition3),
+      ToCudaGraphHandle(condition4), ToCudaGraphHandle(condition5),
+      ToCudaGraphHandle(condition6), ToCudaGraphHandle(condition7), index,
+      index_is_bool, batch_offset, num_branches, enable_conditional_default);
+}
 
-  return Launch(
-      set_case_condition_kernel_, execution_scope_id, ThreadDim(), BlockDim(),
-      padded_handles[0], padded_handles[1], padded_handles[2],
-      padded_handles[3], padded_handles[4], padded_handles[5],
-      padded_handles[6], padded_handles[7], index, index_is_bool, batch_offset,
-      static_cast<int32_t>(conditionals.size()), enable_conditional_default);
+absl::Status CudaCommandBuffer::UpdateCaseConditionNode(
+    CommandBufferNodeHandle node, CommandBufferConditionalHandle condition0,
+    CommandBufferConditionalHandle condition1,
+    CommandBufferConditionalHandle condition2,
+    CommandBufferConditionalHandle condition3,
+    CommandBufferConditionalHandle condition4,
+    CommandBufferConditionalHandle condition5,
+    CommandBufferConditionalHandle condition6,
+    CommandBufferConditionalHandle condition7, DeviceMemory<uint8_t> index,
+    bool index_is_bool, int32_t batch_offset, int32_t num_branches,
+    bool enable_conditional_default) {
+  CHECK(set_case_condition_kernel_)
+      << "SetCaseConditionKernel is not initialized";
+  return UpdateTypedLaunchNode(
+      node, ThreadDim(), BlockDim(), set_case_condition_kernel_,
+      ToCudaGraphHandle(condition0), ToCudaGraphHandle(condition1),
+      ToCudaGraphHandle(condition2), ToCudaGraphHandle(condition3),
+      ToCudaGraphHandle(condition4), ToCudaGraphHandle(condition5),
+      ToCudaGraphHandle(condition6), ToCudaGraphHandle(condition7), index,
+      index_is_bool, batch_offset, num_branches, enable_conditional_default);
 }
 
 absl::StatusOr<CudaCommandBuffer::NoOpKernel*>
 CudaCommandBuffer::GetNoOpKernel() {
   if (!noop_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetNoOpKernelLoaderSpec());
-    TF_ASSIGN_OR_RETURN(noop_kernel_,
-                        NoOpKernel::FactoryType::Create(parent_, spec));
+    TF_ASSIGN_OR_RETURN(
+        noop_kernel_, NoOpKernel::FactoryType::Create(stream_executor_, spec));
   }
   return &noop_kernel_;
 }
 
-absl::StatusOr<GpuCommandBuffer::ConditionalNodeResult>
-CudaCommandBuffer::CreateConditionalNode(const Dependencies& dependencies,
-                                         GraphConditionalHandle conditional,
-                                         ConditionType type) {
+absl::StatusOr<CommandBuffer::ConditionalNodeResult>
+CudaCommandBuffer::CreateConditionalNode(
+    Dependencies dependencies, CommandBufferConditionalHandle conditional,
+    CommandBuffer::ConditionType type) {
 #if CUDA_VERSION >= 12030
   // Add conditional node to a graph.
   VLOG(2) << "Add conditional node to a graph " << graph_
-          << "; type: " << ConditionalTypeToString(type)
-          << "; deps: " << dependencies.size();
+          << "; type: " << ConditionalTypeToString(type);
 
   CUgraphNodeParams cu_params;
   std::memset(&cu_params, 0, sizeof(cu_params));
@@ -257,10 +386,10 @@ CudaCommandBuffer::CreateConditionalNode(const Dependencies& dependencies,
   cu_params.conditional.size = 1;
 
   switch (type) {
-    case GpuCommandBuffer::ConditionType::kIf:
+    case CommandBuffer::ConditionType::kIf:
       cu_params.conditional.type = CU_GRAPH_COND_TYPE_IF;
       break;
-    case GpuCommandBuffer::ConditionType::kWhile:
+    case CommandBuffer::ConditionType::kWhile:
       cu_params.conditional.type = CU_GRAPH_COND_TYPE_WHILE;
       break;
   }
@@ -278,7 +407,7 @@ CudaCommandBuffer::CreateConditionalNode(const Dependencies& dependencies,
   return ConditionalNodeResult{
       FromCudaGraphHandle(node_handle),
       std::unique_ptr<CudaCommandBuffer>(
-          new CudaCommandBuffer(Mode::kNested, parent_, cuda_context_,
+          new CudaCommandBuffer(Mode::kNested, stream_executor_, cuda_context_,
                                 cu_params.conditional.phGraph_out[0],
                                 /*is_owned_graph=*/false))};
 #else
@@ -286,15 +415,15 @@ CudaCommandBuffer::CreateConditionalNode(const Dependencies& dependencies,
 #endif  // CUDA_VERSION >= 12030
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemsetNode(
-    const Dependencies& dependencies, DeviceMemoryBase destination,
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateMemsetNode(
+    Dependencies dependencies, DeviceMemoryBase destination,
     BitPattern bit_pattern, size_t num_elements) {
   VLOG(2) << "Add memset node to a graph " << graph_
           << "; dst: " << destination.opaque()
           << "; bit_pattern: " << bit_pattern.ToString()
           << "; num_elements: " << num_elements
-          << "; context: " << cuda_context_->context()
-          << "; deps: " << dependencies.size();
+          << "; dependencies: " << GraphNodeHandlesToString(dependencies)
+          << "; context: " << cuda_context_->context();
 
   CUDA_MEMSET_NODE_PARAMS params{};
   params.dst = AsDevicePtr(destination);
@@ -315,10 +444,9 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemsetNode(
   return FromCudaGraphHandle(node_handle);
 }
 
-absl::Status CudaCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
-                                                 DeviceMemoryBase destination,
-                                                 BitPattern bit_pattern,
-                                                 size_t num_elements) {
+absl::Status CudaCommandBuffer::UpdateMemsetNode(
+    CommandBufferNodeHandle node_handle, DeviceMemoryBase destination,
+    BitPattern bit_pattern, size_t num_elements) {
   VLOG(2) << "Set memset node params " << node_handle << " in graph executable "
           << exec_ << "; dst: " << destination.opaque()
           << "; bit_pattern: " << bit_pattern.ToString()
@@ -334,18 +462,17 @@ absl::Status CudaCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
   params.width = num_elements;
 
   return cuda::ToStatus(
-      cuGraphExecMemsetNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
-                                     &params, cuda_context_->context()),
+      cuGraphMemsetNodeSetParams(ToCudaGraphHandle(node_handle), &params),
       "Failed to set memset node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemcpyD2DNode(
-    const Dependencies& dependencies, DeviceMemoryBase destination,
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateMemcpyD2DNode(
+    Dependencies dependencies, DeviceMemoryBase destination,
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph_
+          << "; dependencies: " << GraphNodeHandlesToString(dependencies)
           << "; dst: " << destination.opaque() << "; src: " << source.opaque()
-          << "; size: " << size << "; context: " << cuda_context_->context()
-          << "; deps: " << dependencies.size();
+          << "; size: " << size << "; context: " << cuda_context_->context();
 
   CUDA_MEMCPY3D params{};
   params.srcMemoryType = CU_MEMORYTYPE_DEVICE;
@@ -367,7 +494,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemcpyD2DNode(
 }
 
 absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
-    GraphNodeHandle node_handle, DeviceMemoryBase destination,
+    CommandBufferNodeHandle node_handle, DeviceMemoryBase destination,
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Set memcpy d2d node params " << node_handle
           << " in graph executable " << exec_
@@ -384,17 +511,17 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
   params.Depth = 1;
 
   return cuda::ToStatus(
-      cuGraphExecMemcpyNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
-                                     &params, cuda_context_->context()),
+      cuGraphMemcpyNodeSetParams(ToCudaGraphHandle(node_handle), &params),
       "Failed to set memcpy d2d node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
-    const Dependencies& dependencies, const CommandBuffer& nested) {
-  CUgraph child_graph =
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateChildNode(
+    Dependencies dependencies, const CommandBuffer& nested) {
+  const CUgraph& child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
-          << " and add it to " << graph_ << "; deps: " << dependencies.size();
+          << " and add it to " << graph_
+          << "; dependencies: " << GraphNodeHandlesToString(dependencies);
 
   std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
 
@@ -407,30 +534,34 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
   return FromCudaGraphHandle(node_handle);
 }
 
-absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
-                                                const CommandBuffer& nested) {
+absl::Status CudaCommandBuffer::UpdateChildNode(
+    CommandBufferNodeHandle node_handle, const CommandBuffer& nested) {
   CUgraph child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Set child node params " << node_handle << " in graph executable "
-          << exec_ << "to params contained in " << child_graph;
+          << exec_ << " to params contained in " << child_graph;
 
-  return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
-                            exec_, ToCudaGraphHandle(node_handle), child_graph),
-                        "Failed to set CUDA graph child node params");
+  CUgraphNodeParams cu_params;
+  std::memset(&cu_params, 0, sizeof(cu_params));
+
+  cu_params.type = CU_GRAPH_NODE_TYPE_GRAPH;
+  cu_params.graph.graph = child_graph;
+
+  return cuda::ToStatus(
+      cuGraphNodeSetParams(ToCudaGraphHandle(node_handle), &cu_params),
+      "Failed to set CUDA graph child node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
-    const Dependencies& dependencies, const ThreadDim& threads,
-    const BlockDim& blocks, const Kernel& kernel,
-    const KernelArgsPackedArrayBase& args) {
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateKernelNode(
+    Dependencies dependencies, const ThreadDim& threads, const BlockDim& blocks,
+    const Kernel& kernel, const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
-
   VLOG(2) << "Add kernel node to a graph " << graph_
+          << "; dependencies: " << GraphNodeHandlesToString(dependencies)
           << "; kernel: " << kernel.name() << "; gdx: " << blocks.x
           << " gdy: " << blocks.y << " gdz: " << blocks.z
           << " bdx: " << threads.x << " bdy: " << threads.y
-          << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes
-          << "; deps: " << dependencies.size();
+          << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes;
 
   CUDA_KERNEL_NODE_PARAMS params{};
 
@@ -468,7 +599,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
 }
 
 absl::Status CudaCommandBuffer::UpdateKernelNode(
-    GraphNodeHandle node_handle, const ThreadDim& threads,
+    CommandBufferNodeHandle node_handle, const ThreadDim& threads,
     const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
@@ -503,14 +634,14 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
         "Failed to set shared memory size"));
   }
 
-  return cuda::ToStatus(cuGraphExecKernelNodeSetParams(
-                            exec_, ToCudaGraphHandle(node_handle), &params),
-                        "Failed to set CUDA graph kernel node params");
+  return cuda::ToStatus(
+      cuGraphKernelNodeSetParams(ToCudaGraphHandle(node_handle), &params),
+      "Failed to set CUDA graph kernel node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateBarrierNode(
-    const Dependencies& dependencies) {
-  if (parent_->GetDeviceDescription().driver_version() <
+absl::StatusOr<CommandBufferNodeHandle> CudaCommandBuffer::CreateEmptyNode(
+    Dependencies dependencies) {
+  if (stream_executor_->GetDeviceDescription().driver_version() <
       SemanticVersion(12, 4, 0)) {
     // Instead of empty nodes we create no-op kernel nodes as barriers because
     // CUDA 12.3 does not support empty nodes inside conditional command
@@ -521,8 +652,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateBarrierNode(
   }
 
   VLOG(2) << "Add empty node to a graph " << graph_
-          << "; deps: " << dependencies.size();
-
+          << " with dependencies: " << GraphNodeHandlesToString(dependencies);
   CUgraphNode barrier_handle = nullptr;
   std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
   TF_RETURN_IF_ERROR(cuda::ToStatus(
@@ -539,14 +669,14 @@ absl::Status CudaCommandBuffer::Trace(
       "StreamBeginCaptureToGraph is not implemented for CUDA below version "
       "12.3. Therefore tracing is not supported.");
 #else
-  if (parent_->GetDeviceDescription().driver_version() <
+  if (stream_executor_->GetDeviceDescription().driver_version() <
       SemanticVersion{12, 3, 0}) {
     return absl::UnimplementedError(
         "StreamBeginCaptureToGraph is not implemented for CUDA below version "
         "12.3. Therefore tracing is not supported.");
   }
 
-  TF_RETURN_IF_ERROR(CheckNotFinalized());
+  CHECK(!finalized_) << "Trying to trace a finalized command buffer";
 
   VLOG(5) << "Trace into GPU command buffer graph " << graph_
           << " on a stream: " << stream;
@@ -585,15 +715,101 @@ absl::Status CudaCommandBuffer::Trace(
 #endif
 }
 
-absl::Status CudaCommandBuffer::SetNodeExecutionEnabled(
-    GraphNodeHandle node_handle, bool enabled) {
-  // Node is enabled if value != 0, otherwise the node is disabled.
-  unsigned value = enabled ? 1 : 0;
-  VLOG(2) << "Set CUDA executable graph " << exec_ << " node " << node_handle
-          << " enabled flag to " << value;
-  return cuda::ToStatus(
-      cuGraphNodeSetEnabled(exec_, ToCudaGraphHandle(node_handle), value),
-      "Failed to set CUDA graph node enabled flag");
+/*static*/ int64_t CudaCommandBuffer::NotifyExecCreated() {
+  alive_execs.fetch_add(1, std::memory_order_relaxed);
+  return allocated_execs.fetch_add(1, std::memory_order_relaxed);
+}
+
+/*static*/ int64_t CudaCommandBuffer::NotifyExecDestroyed() {
+  DCHECK_GE(alive_execs.load(std::memory_order_relaxed), 1);
+  return alive_execs.fetch_sub(1, std::memory_order_relaxed) - 1;
+}
+
+/*static*/ int64_t CudaCommandBuffer::AliveExecs() {
+  return alive_execs.load(std::memory_order_relaxed);
+}
+
+absl::Status CudaCommandBuffer::Finalize() {
+  TF_RETURN_IF_ERROR(PrepareFinalization());
+
+  // Maybe dump created CUDA graph to a dot file for debugging.
+  // if (VLOG_IS_ON(10) && mode() == Mode::kPrimary) {
+  if (VLOG_IS_ON(10)) {
+    std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
+    TF_RETURN_IF_ERROR(WriteGraphToDotFile(path));
+    if (VLOG_IS_ON(100)) {
+      std::string dot_file_contents;
+      TF_RETURN_IF_ERROR(
+          tsl::ReadFileToString(tsl::Env::Default(), path, &dot_file_contents));
+      VLOG(100) << "Contents of " << path << " is:\n" << dot_file_contents;
+    }
+  }
+
+  // Collect number of nodes and conditionals for logging below.
+  size_t num_nodes = 0, num_cond_cmd_buffers = 0;
+
+  if (mode() == Mode::kPrimary) {
+    uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+
+    if (exec_ == nullptr) {
+      // If this is the first time we finalize command buffer after
+      // construction, we need to instantiate it to an executable graph.
+      auto instantiated = InstantiateGraph();
+
+      if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
+        return absl::ResourceExhaustedError(absl::StrFormat(
+            "Underlying backend ran out of memory trying to instantiate "
+            "graph "
+            "with %d nodes and %d conditionals (total of %d alive graphs "
+            "in the process). You can try to (a) Give more memory to the "
+            "driver by reducing XLA_CLIENT_MEM_FRACTION (b) Disable "
+            "command buffers with "
+            "'XLA_FLAGS=--xla_gpu_enable_command_buffer=' "
+            "(empty set). Original error: %s",
+            num_nodes, num_cond_cmd_buffers, AliveExecs(),
+            instantiated.message()));
+      }
+      TF_RETURN_IF_ERROR(instantiated);
+
+      uint64_t end_nanos = tsl::Env::Default()->NowNanos();
+      TF_ASSIGN_OR_RETURN(auto node_count, GetNodeCount());
+      auto exec_num = NotifyExecCreated();
+      VLOG(5) << "Instantiated executable graph #" << exec_num << " in "
+              << (end_nanos - start_nanos) / 1000 << " μs"
+              << "; nodes: " << node_count
+              << "; conditionals: " << num_cond_cmd_buffers
+              << "; alive executable graphs: " << AliveExecs();
+    } else {
+      VLOG(5) << "Update existing executor " << exec_
+              << " by updating with graph " << graph_;
+      CUgraphExecUpdateResultInfo resultInfo;
+      TF_RETURN_IF_ERROR(
+          cuda::ToStatus(cuGraphExecUpdate(exec_, graph_, &resultInfo),
+                         "Failed to update CUDA graph executable"));
+      VLOG(5) << "Updated CUDA graph executable " << exec_;
+    }
+  } else {
+    // Nested command buffers do not have executable graphs.
+    VLOG(5) << "Finalize nested command buffer without instantiating "
+               "executable graph";
+  }
+
+  finalized_ = true;
+  return absl::OkStatus();
+}
+
+absl::Status CudaCommandBuffer::Submit(Stream* stream) {
+  if (mode() != Mode::kPrimary) {
+    return absl::InvalidArgumentError(
+        "Can't submit non-primary command buffer for execution");
+  }
+
+  if (!finalized_) {
+    return absl::InvalidArgumentError(
+        "Can't submit command buffer that is not finalized");
+  }
+
+  return LaunchGraph(stream);
 }
 
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
@@ -602,6 +818,7 @@ absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   return cuda::ToStatus(cuGraphLaunch(exec_, AsGpuStreamValue(stream)),
                         "Failed to launch CUDA graph");
 }
+
 absl::StatusOr<size_t> CudaCommandBuffer::GetNodeCount() const {
   size_t num_nodes;
   TF_RETURN_IF_ERROR(
@@ -618,13 +835,16 @@ absl::Status CudaCommandBuffer::PrepareFinalization() {
   }
 
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
-  TF_RETURN_IF_ERROR(CommandBuffer::Launch(*noop, kDefaultExecutionScope,
-                                           ThreadDim(), BlockDim()));
-
+  TF_ASSIGN_OR_RETURN(
+      auto node,
+      CreateLaunchNode(absl::InlinedVector<CommandBufferNodeHandle, 1>{},
+                       ThreadDim(), BlockDim(), **noop,
+                       KernelArgsPackedArray<0>()));
+  (void)node;
   return absl::OkStatus();
 }
 
-absl::StatusOr<GraphConditionalHandle>
+absl::StatusOr<CommandBufferConditionalHandle>
 CudaCommandBuffer::CreateConditionalHandle() {
   constexpr int kDefaultLaunchValue = 0;
   constexpr int kNoFlags = 0;
@@ -668,7 +888,7 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
     LOG(WARNING) << "Retry CUDA graph instantiation after OOM error";
     CUdevice device;
     TF_RETURN_IF_ERROR(
-        cuda::ToStatus(cuDeviceGet(&device, parent_->device_ordinal()),
+        cuda::ToStatus(cuDeviceGet(&device, stream_executor_->device_ordinal()),
                        "Failed call to cuDeviceGet"));
     TF_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGraphMemTrim(device),
                                       "Failed to trim device graph memory"));
@@ -677,35 +897,21 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
     TF_RETURN_IF_ERROR(instantiated);
   }
 
+  VLOG(1) << "Instantiate graph " << std::hex << exec_;
+
   return absl::OkStatus();
 }
 
-std::unique_ptr<ScopedUpdateMode> CudaCommandBuffer::ActivateUpdateMode(
-    GpuCommandBuffer* nested_cmd_buffer) {
-  auto nested_cuda_cmd_buffer =
-      static_cast<CudaCommandBuffer*>(nested_cmd_buffer);
-
-  auto scoped_graph_exec = std::make_unique<ScopedCudaGraphExec>(
-      &nested_cuda_cmd_buffer->exec_,
-      &nested_cuda_cmd_buffer->is_owned_graph_exec_);
-
-  // We need to store the graph exec handle in the nested command buffer.
-  // The scoped_graph_exec will restore the old state once we are done.
-  nested_cuda_cmd_buffer->exec_ = exec_;
-  nested_cuda_cmd_buffer->is_owned_graph_exec_ = false;
-
-  return std::move(scoped_graph_exec);
-}
-
 CudaCommandBuffer::~CudaCommandBuffer() {
-  if (exec_ != nullptr && is_owned_graph_exec_) {
+  if (exec_ != nullptr && mode() == Mode::kPrimary) {
     auto exec_num = NotifyExecDestroyed();
     VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
             << "(remaining alive executable graphs: " << exec_num << ")";
     if (auto status = cuda::ToStatus(cuGraphExecDestroy(exec_),
                                      "Failed to destroy CUDA executable graph");
         !status.ok()) {
-      LOG(ERROR) << status.message();
+      LOG(ERROR) << status.message() << " executable " << exec_ << " graph "
+                 << graph_;
     }
   }
   if (graph_ != nullptr && is_owned_graph_) {
@@ -725,8 +931,8 @@ absl::Status CudaCommandBuffer::CheckCanBeUpdated() {
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<GraphNodeHandle>>
-CudaCommandBuffer::GetNodeDependencies(GraphNodeHandle node) {
+absl::StatusOr<std::vector<CommandBufferNodeHandle>>
+CudaCommandBuffer::GetNodeDependencies(CommandBufferNodeHandle node) {
   VLOG(2) << "Get CUDA graph node " << node << " dependencies";
 
   std::vector<CUgraphNode> dependencies;
@@ -743,11 +949,11 @@ CudaCommandBuffer::GetNodeDependencies(GraphNodeHandle node) {
                                  &num_dependencies),
       "Failed to get CUDA graph node depedencies"));
 
-  std::vector<GraphNodeHandle> result;
+  std::vector<CommandBufferNodeHandle> result;
   result.reserve(dependencies.size());
-  absl::c_transform(
-      dependencies, std::back_inserter(result),
-      static_cast<GraphNodeHandle (*)(CUgraphNode)>(&FromCudaGraphHandle));
+  absl::c_transform(dependencies, std::back_inserter(result),
+                    static_cast<CommandBufferNodeHandle (*)(CUgraphNode)>(
+                        &FromCudaGraphHandle));
 
   return result;
 }
