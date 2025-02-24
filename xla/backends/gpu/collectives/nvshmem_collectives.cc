@@ -54,57 +54,57 @@ void NvshmemCollectives::SetEnvInfo(
   kv_store_ = kv_store;
 }
 
-absl::Status NvshmemCollectives::Initialize() {
-  if (process_id_ == -1) {
-    LOG(FATAL) << "NvshmemCollectives::SetEnvInfo was not called before using "
-                  "NVSHMEM API";
-  }
-  if (device_count_per_process_ != 1) {
-    LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
-  }
-  nvshmemx_init_attr_t nvshmem_init_attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
-  nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
-
-  // Initialize NVSHMEM
-  if (std::shared_ptr<KeyValueStoreInterface> kv_store = kv_store_.lock()) {
-    if (process_id_ == 0) {
-      if (nvshmemx_get_uniqueid(&nvshmem_id) != 0) {
-        return absl::InternalError("nvshmemx_get_uniqueid failed.");
-      }
-      absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
-                                       sizeof(nvshmemx_uniqueid_t));
-      TF_RETURN_IF_ERROR(kv_store->Set(kv_store_key_, nvshmem_id_str));
-    } else {
-      TF_ASSIGN_OR_RETURN(std::string id_str,
-                          kv_store->Get(kv_store_key_, absl::Minutes(10)));
-      std::copy(id_str.data(), id_str.data() + sizeof(nvshmemx_uniqueid_t),
-                reinterpret_cast<char*>(&nvshmem_id));
-    }
-  } else {
-    return absl::InternalError(
-        "KV store is not available for nvshmem initialization.");
-  }
-
-  if (nvshmemx_set_attr_uniqueid_args(process_id_, num_processes_, &nvshmem_id,
-                                      &nvshmem_init_attr) != 0) {
-    return absl::InternalError("nvshmemx_set_attr_uniqueid_args failed.");
-  }
-  if (nvshmemx_hostlib_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID,
-                                 &nvshmem_init_attr) != 0) {
-    return absl::InternalError("nvshmemx_hostlib_init_attr failed.");
-  }
-
-  VLOG(3) << absl::StreamFormat(
-      "Initialized NVSHMEM on process %d; num_processes=%llu", process_id_,
-      num_processes_);
-  return absl::OkStatus();
-}
-
 absl::Status NvshmemCollectives::InitializeOnce() {
+  auto init_fn = [this]() -> absl::Status {
+    if (process_id_ == -1) {
+      LOG(FATAL) << "NvshmemCollectives::SetEnvInfo was not called before using "
+                    "NVSHMEM API";
+    }
+    if (device_count_per_process_ != 1) {
+      LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
+    }
+    nvshmemx_init_attr_t nvshmem_init_attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
+    nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
+
+    // Initialize NVSHMEM
+    if (std::shared_ptr<KeyValueStoreInterface> kv_store = kv_store_.lock()) {
+      if (process_id_ == 0) {
+        if (nvshmemx_get_uniqueid(&nvshmem_id) != 0) {
+          return absl::InternalError("nvshmemx_get_uniqueid failed.");
+        }
+        absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
+                                        sizeof(nvshmemx_uniqueid_t));
+        TF_RETURN_IF_ERROR(kv_store->Set(kv_store_key_, nvshmem_id_str));
+      } else {
+        TF_ASSIGN_OR_RETURN(std::string id_str,
+                            kv_store->Get(kv_store_key_, absl::Minutes(10)));
+        std::copy(id_str.data(), id_str.data() + sizeof(nvshmemx_uniqueid_t),
+                  reinterpret_cast<char*>(&nvshmem_id));
+      }
+    } else {
+      return absl::InternalError(
+          "KV store is not available for nvshmem initialization.");
+    }
+
+    if (nvshmemx_set_attr_uniqueid_args(process_id_, num_processes_, &nvshmem_id,
+                                        &nvshmem_init_attr) != 0) {
+      return absl::InternalError("nvshmemx_set_attr_uniqueid_args failed.");
+    }
+    if (nvshmemx_hostlib_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID,
+                                  &nvshmem_init_attr) != 0) {
+      return absl::InternalError("nvshmemx_hostlib_init_attr failed.");
+    }
+
+    VLOG(3) << absl::StreamFormat(
+        "Initialized NVSHMEM on process %d; num_processes=%llu", process_id_,
+        num_processes_);
+    return absl::OkStatus();
+  };
+
   static absl::once_flag once_flag;
   absl::Status status = absl::OkStatus();
   absl::call_once(once_flag, [&]() {
-    status = Initialize();
+    status = init_fn();
     initialized_ = true;
   });
   return status;

@@ -59,7 +59,6 @@ class NvshmemCollectives : public Collectives {
   }
 
  private:
-  absl::Status Initialize();
   absl::Status InitializeOnce();
 
   void Finalize();
