@@ -53,7 +53,6 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
-#include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
@@ -78,8 +77,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/tsl/platform/default/statusor.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "tsl/platform/env.h"
@@ -243,6 +240,7 @@ std::unique_ptr<CommandBufferCmdSequence> CommandBufferCmdSequence::Clone()
   for (const auto& command : commands_) {
     cmd_to_index[command.get()] = idx;
     for (const auto& dep : command->dependencies()) {
+      CHECK(cmd_idx_to_deps.contains(idx));
       cmd_idx_to_deps[idx].insert(cmd_to_index[dep]);
     }
     idx++;
@@ -257,7 +255,7 @@ std::unique_ptr<CommandBufferCmdSequence> CommandBufferCmdSequence::Clone()
     cloned_sequence->Append(std::move(cloned_cmd));
     idx++;
   }
-  return clone;
+  return cloned_sequence;
 }
 
 absl::Status CommandBufferCmdSequence::Record(
@@ -988,7 +986,8 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
           << ")";
 
   int64_t num_branches = branches_commands_.size();
-  int64_t set_case_handle_batches_num = num_branches / kBranchBatchSize;
+  int64_t set_case_handle_batches_num =
+      (num_branches + kBranchBatchSize - 1) / kBranchBatchSize;
 
   if (create) {
     case_branch_handles_.reserve(set_case_handle_batches_num *
@@ -997,8 +996,8 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
       TF_ASSIGN_OR_RETURN(case_branch_handles_.emplace_back(),
                           command_buffer->CreateConditionalHandle());
     }
-    int64_t batch_offset = 0;
     case_branch_handles_.resize(set_case_handle_batches_num * kBranchBatchSize);
+    int64_t batch_offset = 0;
     for (int64_t i = 0; i < set_case_handle_batches_num; ++i) {
       batch_offset += i * kBranchBatchSize;
       bool enable_conditional_default = (i == set_case_handle_batches_num - 1);
@@ -1013,13 +1012,12 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
               case_branch_handles_[batch_offset + 5],
               case_branch_handles_[batch_offset + 6],
               case_branch_handles_[batch_offset + 7],
-              se::DeviceMemory<int32_t>(index_memory_base), index_is_bool_,
+              se::DeviceMemory<uint8_t>(index_memory_base), index_is_bool_,
               batch_offset, static_cast<int32_t>(num_branches),
               enable_conditional_default));
     }
 
     branch_command_buffers_.reserve(num_branches);
-
     for (int64_t i = 0; i < num_branches; ++i) {
       TF_ASSIGN_OR_RETURN(
           auto case_branch_node_result,
@@ -1044,7 +1042,7 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
           case_branch_handles_[batch_offset + 5],
           case_branch_handles_[batch_offset + 6],
           case_branch_handles_[batch_offset + 7],
-          se::DeviceMemory<int32_t>(index_memory_base), index_is_bool_,
+          se::DeviceMemory<uint8_t>(index_memory_base), index_is_bool_,
           batch_offset, static_cast<int32_t>(num_branches),
           enable_conditional_default));
     }
@@ -1084,12 +1082,12 @@ CommandBufferCmd::BufferUseVector CaseCmd::buffers() {
 //===----------------------------------------------------------------------===//
 
 LaunchSetForConditionKernelCmd::LaunchSetForConditionKernelCmd(
-    GraphConditionalHandle cond_handle, int32_t num_iterations,
-    BufferAllocation::Slice loop_counter)
+    GraphConditionalHandle cond_handle, BufferAllocation::Slice loop_counter,
+    int32_t num_iterations)
     : CommandBufferCmd(CommandBufferCmdType::kLaunchSetForConditionKernelCmd),
       cond_handle_(cond_handle),
-      num_iterations_(num_iterations),
-      loop_counter_(loop_counter) {}
+      loop_counter_(loop_counter),
+      num_iterations_(num_iterations) {}
 
 absl::Status LaunchSetForConditionKernelCmd::Record(
     const Thunk::ExecuteParams& execute_params,
@@ -1142,11 +1140,10 @@ absl::Status ForCmd::Record(const Thunk::ExecuteParams& execute_params,
           << loop_counter.opaque() << ")";
 
   if (create) {
-    TF_ASSIGN_OR_RETURN(
-        initialize_counter_node_,
-        command_buffer->CreateMemsetNode(
-            ToDependentNodes(), loop_counter, uint32_t(0),
-            /*num_elements=*/loop_counter.size() / sizeof(uint32_t)));
+    TF_ASSIGN_OR_RETURN(initialize_counter_node_,
+                        command_buffer->CreateMemsetNode(
+                            ToDependentNodes(), loop_counter, uint32_t(0),
+                            /*num_elements=*/1));
 
     TF_ASSIGN_OR_RETURN(cond_handle_,
                         command_buffer->CreateConditionalHandle());
@@ -1165,7 +1162,7 @@ absl::Status ForCmd::Record(const Thunk::ExecuteParams& execute_params,
         std::make_unique<ChildCmd>(body_commands_->Clone()));
     body_and_predict_commands_.Append(
         std::make_unique<LaunchSetForConditionKernelCmd>(
-            cond_handle_, num_iterations_, loop_counter_));
+            cond_handle_, loop_counter_, num_iterations_));
   } else {
     TF_RETURN_IF_ERROR(command_buffer->UpdateMemsetNode(
         initialize_counter_node_, loop_counter, uint32_t(0),
@@ -1274,8 +1271,7 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params,
 absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
                                   StateManager& state) {
   TF_RETURN_IF_ERROR(body_commands_->Initialize(params, state));
-
-  TF_RETURN_IF_ERROR(cond_commands_->Initialize(params, state));
+  return cond_commands_->Initialize(params, state);
 }
 
 bool WhileCmd::force_update() {
@@ -1744,13 +1740,6 @@ CommandBufferCmd::BufferUseVector CustomCallCmd::buffers() {
 BarrierCmd::BarrierCmd()
     : CommandBufferCmd(CommandBufferCmdType::kBarrierCmd) {}
 
-BarrierCmd::BarrierCmd(DependencySet dependencies)
-    : CommandBufferCmd(CommandBufferCmdType::kBarrierCmd) {
-  for (const CommandBufferCmd* cmd : dependencies) {
-    add_dependency(cmd);
-  }
-}
-
 absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
                                 const RecordParams& record_params,
                                 se::CommandBuffer* command_buffer,
@@ -1805,12 +1794,12 @@ absl::Status CollectiveCmd::Prepare(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(collectives, *params.collective_params,
-                      config().replica_groups, config().group_mode,
+                      config_.replica_groups, config_.group_mode,
                       nccl_stream_id(), GetAsyncStreamKind()));
   TF_ASSIGN_OR_RETURN(
       size_t num_local_participants,
-      GetNumLocalParticipants(*params.collective_params,
-                              config().replica_groups, config().group_mode));
+      GetNumLocalParticipants(*params.collective_params, config_.replica_groups,
+                              config_.group_mode));
   return resource_requests.AddClique(clique_key, num_local_participants);
 }
 
@@ -1858,7 +1847,7 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
+                             config_.operand_element_type));
 
   VLOG(5) << "AllReduceCmd: reduction=" << ReductionKindString(reduction_kind_);
 
@@ -1880,8 +1869,8 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetNcclComm(collectives, *execute_params.collective_params,
-                  *execute_params.collective_cliques, config().replica_groups,
-                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
+                  *execute_params.collective_cliques, config_.replica_groups,
+                  config_.group_mode, nccl_stream_id(), GetAsyncStreamKind()));
 
   return RecordTracedCommandBuffer(
       execute_params, record_params, command_buffer, create,
@@ -1918,7 +1907,7 @@ absl::Status ReduceScatterCmd::Record(
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
+                             config_.operand_element_type));
 
   VLOG(5) << "ReduceScatterCmd: reduction="
           << ReductionKindString(reduction_kind_);
@@ -1941,8 +1930,8 @@ absl::Status ReduceScatterCmd::Record(
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetNcclComm(collectives, *execute_params.collective_params,
-                  *execute_params.collective_cliques, config().replica_groups,
-                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
+                  *execute_params.collective_cliques, config_.replica_groups,
+                  config_.group_mode, nccl_stream_id(), GetAsyncStreamKind()));
 
   return RecordTracedCommandBuffer(
       execute_params, record_params, command_buffer, create,
@@ -1978,7 +1967,7 @@ absl::Status AllToAllCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
+                             config_.operand_element_type));
 
   VLOG(5) << "Record AllToAllCmd, has_split_dimension=" << has_split_dimension_;
 
@@ -1999,8 +1988,8 @@ absl::Status AllToAllCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetNcclComm(collectives, *execute_params.collective_params,
-                  *execute_params.collective_cliques, config().replica_groups,
-                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
+                  *execute_params.collective_cliques, config_.replica_groups,
+                  config_.group_mode, nccl_stream_id(), GetAsyncStreamKind()));
 
   return RecordTracedCommandBuffer(
       execute_params, record_params, command_buffer, create,
@@ -2036,7 +2025,7 @@ absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
+                             config_.operand_element_type));
 
   if VLOG_IS_ON (5) {
     VLOG(5) << "Recording AllGatherCmd.";
@@ -2059,8 +2048,8 @@ absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetNcclComm(collectives, *execute_params.collective_params,
-                  *execute_params.collective_cliques, config().replica_groups,
-                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
+                  *execute_params.collective_cliques, config_.replica_groups,
+                  config_.group_mode, nccl_stream_id(), GetAsyncStreamKind()));
 
   return RecordTracedCommandBuffer(
       execute_params, record_params, command_buffer, create,
@@ -2097,7 +2086,7 @@ absl::Status CollectiveBroadcastCmd::Record(
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
+                             config_.operand_element_type));
 
   VLOG(5) << "Recording CollectiveBroadcastCmd";
 
@@ -2119,8 +2108,8 @@ absl::Status CollectiveBroadcastCmd::Record(
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetNcclComm(collectives, *execute_params.collective_params,
-                  *execute_params.collective_cliques, config().replica_groups,
-                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
+                  *execute_params.collective_cliques, config_.replica_groups,
+                  config_.group_mode, nccl_stream_id(), GetAsyncStreamKind()));
 
   return RecordTracedCommandBuffer(
       execute_params, record_params, command_buffer, create,

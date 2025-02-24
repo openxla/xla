@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/runtime/buffer_use.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
@@ -793,7 +792,7 @@ class CaseCmd : public CommandBufferCmd {
     for (const auto& branch : branches_commands_) {
       cloned_branches_commands.push_back(branch->Clone());
     }
-    return std::make_unique<CaseCmd>(index_,
+    return std::make_unique<CaseCmd>(index_, index_is_bool_,
                                      std::move(cloned_branches_commands));
   }
 
@@ -816,13 +815,15 @@ class CaseCmd : public CommandBufferCmd {
 
 //===----------------------------------------------------------------------===//
 // LaunchSetForConditionKernelCmd
+// Internal command, not used externally.
+// Set the condition handle before running conditional node
 //===----------------------------------------------------------------------===//
 
 class LaunchSetForConditionKernelCmd : public CommandBufferCmd {
  public:
   LaunchSetForConditionKernelCmd(GraphConditionalHandle cond_handle,
-                                 int32_t num_iterations,
-                                 BufferAllocation::Slice loop_counter);
+                                 BufferAllocation::Slice loop_counter,
+                                 int32_t num_iterations);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -835,13 +836,14 @@ class LaunchSetForConditionKernelCmd : public CommandBufferCmd {
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
     return std::make_unique<LaunchSetForConditionKernelCmd>(
-        cond_handle_, num_iterations_, loop_counter_);
+        cond_handle_, loop_counter_, num_iterations_);
   }
 
  private:
   GraphConditionalHandle cond_handle_;
-  int32_t num_iterations_;
   BufferAllocation::Slice loop_counter_;
+  int32_t num_iterations_;
+
   GraphNodeHandle node_;
 };
 
@@ -880,13 +882,19 @@ class ForCmd : public CommandBufferCmd {
   BufferAllocation::Slice loop_counter_;
   std::unique_ptr<CommandBufferCmdSequence> body_commands_;
 
+  // First node: memset loop counter to 0
+  GraphNodeHandle initialize_counter_node_;
+
+  // Second node: set the condition handle before running for loop
+  GraphConditionalHandle cond_handle_;
+  CommandBufferCmd::GraphNodeHandle set_cond_handle_node_;
+
   // body_commands appended with LaunchSetForConditionKernelCmd
   CommandBufferCmdSequence body_and_predict_commands_;
 
-  GraphNodeHandle initialize_counter_node_;
-  GraphConditionalHandle cond_handle_;
-  CommandBufferCmd::GraphNodeHandle set_cond_handle_node_;
+  // Third node: the conditional node that will run the for loop
   GraphNodeHandle cond_node_;
+
   std::unique_ptr<se::CommandBuffer> body_command_buffer_;
 };
 
@@ -1197,25 +1205,20 @@ class CustomCallCmd : public CommandBufferCmd {
   AttributesMap attributes_;
   const HloComputation* called_computation_;
 
-  GraphNodeHandle node_;
-
   std::vector<std::optional<Slice>> operands_;
   std::vector<std::optional<Slice>> results_;
+
+  GraphNodeHandle node_;
 };
 
 //===----------------------------------------------------------------------===//
-// BarrierCmd insert a barrier that will depends on either all previous commands
-// or commands specified by parameter dependencies.
+// BarrierCmd
 //===----------------------------------------------------------------------===//
-
 class BarrierCmd : public CommandBufferCmd {
  public:
-  // Creates a barrier that will synchronize all previous commands.
-  BarrierCmd();
-
   // Creates a barrier that will synchronize with commands specified
   // by dependencies.
-  explicit BarrierCmd(DependencySet dependencies);
+  explicit BarrierCmd();
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1227,7 +1230,7 @@ class BarrierCmd : public CommandBufferCmd {
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<BarrierCmd>(dependencies());
+    return std::make_unique<BarrierCmd>();
   }
 
  private:
@@ -1292,10 +1295,9 @@ class CollectiveCmd : public CommandBufferCmd {
   }
 
  protected:
-  const NcclCollectiveConfig& config() const { return config_; }
+  NcclCollectiveConfig config_;
 
  private:
-  NcclCollectiveConfig config_;
   GraphNodeHandle node_;
 };
 
@@ -1319,7 +1321,7 @@ class AllReduceCmd : public CollectiveCmd {
   };
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<AllReduceCmd>(config(), reduction_kind_, buffers_);
+    return std::make_unique<AllReduceCmd>(config_, reduction_kind_, buffers_);
   }
 
  private:
@@ -1347,7 +1349,7 @@ class ReduceScatterCmd : public CollectiveCmd {
   };
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<ReduceScatterCmd>(config(), reduction_kind_,
+    return std::make_unique<ReduceScatterCmd>(config_, reduction_kind_,
                                               buffers_);
   }
 
@@ -1376,7 +1378,7 @@ class AllToAllCmd : public CollectiveCmd {
   };
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<AllToAllCmd>(config(), has_split_dimension_,
+    return std::make_unique<AllToAllCmd>(config_, has_split_dimension_,
                                          buffers_);
   }
 
@@ -1405,7 +1407,7 @@ class AllGatherCmd : public CollectiveCmd {
   };
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<AllGatherCmd>(config(), buffers_);
+    return std::make_unique<AllGatherCmd>(config_, buffers_);
   }
 
  private:
@@ -1432,7 +1434,7 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
   BufferUseVector buffers() override;
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
-    return std::make_unique<CollectiveBroadcastCmd>(config(), buffers_);
+    return std::make_unique<CollectiveBroadcastCmd>(config_, buffers_);
   }
 
  private:

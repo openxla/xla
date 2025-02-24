@@ -147,14 +147,15 @@ class CommandBuffer {
   // arguments is different do disambiguate from the regular launch API.
   template <typename... Params, typename... Args>
   absl::StatusOr<GraphNodeHandle> CreateTypedLaunchNode(
-      GraphNodeHandles deps, const TypedKernel<Params...>& kernel,
-      const ThreadDim& threads, const BlockDim& blocks, Args... args);
+      GraphNodeHandles deps, const ThreadDim& threads, const BlockDim& blocks,
+      const TypedKernel<Params...>& kernel, Args... args);
 
   template <typename... Params, typename... Args>
   absl::Status UpdateTypedLaunchNode(GraphNodeHandle node,
-                                     const TypedKernel<Params...>& kernel,
                                      const ThreadDim& threads,
-                                     const BlockDim& blocks, Args... args);
+                                     const BlockDim& blocks,
+                                     const TypedKernel<Params...>& kernel,
+                                     Args... args);
 
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
       GraphNodeHandles deps, const CommandBuffer& child) = 0;
@@ -234,8 +235,8 @@ class CommandBuffer {
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
-      GraphConditionalHandle handle7, DeviceMemory<int32_t> index,
-      int32_t batch_offset, int32_t num_branches,
+      GraphConditionalHandle handle7, DeviceMemory<uint8_t> index,
+      bool index_is_bool, int32_t batch_offset, int32_t num_branches,
       bool enable_conditional_default) = 0;
 
   virtual absl::Status UpdateSetCaseConditionKernelNode(
@@ -243,8 +244,8 @@ class CommandBuffer {
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
-      GraphConditionalHandle handle7, DeviceMemory<int32_t> index,
-      int32_t batch_offset, int32_t num_branches,
+      GraphConditionalHandle handle7, DeviceMemory<uint8_t> index,
+      bool index_is_bool, int32_t batch_offset, int32_t num_branches,
       bool enable_conditional_default) = 0;
 
   // Submits the command buffer for execution.
@@ -292,17 +293,19 @@ class CommandBuffer {
 template <typename... Params, typename... Args>
 inline absl::StatusOr<CommandBuffer::GraphNodeHandle>
 CommandBuffer::CreateTypedLaunchNode(CommandBuffer::GraphNodeHandles deps,
-                                     const TypedKernel<Params...>& kernel,
                                      const ThreadDim& threads,
-                                     const BlockDim& blocks, Args... args) {
+                                     const BlockDim& blocks,
+                                     const TypedKernel<Params...>& kernel,
+                                     Args... args) {
   auto kernel_args = PackKernelArgs(kernel, args...);
   return CreateLaunchNode(deps, threads, blocks, *kernel, *kernel_args);
 }
 
 template <typename... Params, typename... Args>
 inline absl::Status CommandBuffer::UpdateTypedLaunchNode(
-    CommandBuffer::GraphNodeHandle node, const TypedKernel<Params...>& kernel,
-    const ThreadDim& threads, const BlockDim& blocks, Args... args) {
+    CommandBuffer::GraphNodeHandle node, const ThreadDim& threads,
+    const BlockDim& blocks, const TypedKernel<Params...>& kernel,
+    Args... args) {
   auto kernel_args = PackKernelArgs(kernel, args...);
   return UpdateLaunchNode(node, threads, blocks, *kernel, *kernel_args);
 }

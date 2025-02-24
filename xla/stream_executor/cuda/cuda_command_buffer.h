@@ -155,8 +155,8 @@ class CudaCommandBuffer final : public CommandBuffer {
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
-      GraphConditionalHandle handle7, DeviceMemory<int32_t> index,
-      int32_t batch_offset, int32_t num_branches,
+      GraphConditionalHandle handle7, DeviceMemory<uint8_t> index,
+      bool index_is_bool, int32_t batch_offset, int32_t num_branches,
       bool enable_conditional_default) override;
 
   absl::Status UpdateSetCaseConditionKernelNode(
@@ -164,8 +164,8 @@ class CudaCommandBuffer final : public CommandBuffer {
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
-      GraphConditionalHandle handle7, DeviceMemory<int32_t> index,
-      int32_t batch_offset, int32_t num_branches,
+      GraphConditionalHandle handle7, DeviceMemory<uint8_t> index,
+      bool index_is_bool, int32_t batch_offset, int32_t num_branches,
       bool enable_conditional_default) override;
 
   absl::Status Submit(Stream* stream) override;
@@ -187,11 +187,6 @@ class CudaCommandBuffer final : public CommandBuffer {
             << "; is_owned_graph=" << is_owned_graph_
             << "; parent=" << reinterpret_cast<void*>(parent);
   }
-
-  // Converts a list of platform independent GraphNodeHandles into a list of
-  // CUDA specific CUgraphNode.
-  absl::StatusOr<std::vector<CUgraphNode>> ToCudaGraphHandles(
-      GraphNodeHandles dependencies);
 
   CUgraphExec GetPrimaryExec() const {
     if (mode() == Mode::kPrimary) {
