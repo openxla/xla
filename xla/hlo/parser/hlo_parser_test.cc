@@ -2835,8 +2835,10 @@ class HloParameterizedParserTest
           /*verifier_layout_sensitive=*/false,
           /*allow_mixed_precision_in_hlo_verifier=*/true,
           ShapeUtil::ByteSizeOfElements);
-      TF_ASSERT_OK(
-          verified_module->ParseHloStringAndVerifyModule(module->ToString()));
+      TF_ASSERT_OK(verified_module->ParseHloStringAndVerifyModule(
+          module->ToString(HloPrintOptions()
+                               .set_print_large_constants(true)
+                               .set_print_operand_shape(true))));
       module = std::move(verified_module);
     } else {
       TF_ASSERT_OK_AND_ASSIGN(module,
