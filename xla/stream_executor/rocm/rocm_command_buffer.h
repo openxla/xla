@@ -239,9 +239,6 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   absl::Status InstantiateGraph() override;
 
   using ScopedRocmGraphExec = ScopedGraphExec<hipGraphExec_t>;
-  std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
-      GpuCommandBuffer* nested_cmd_buffer) override;
-
   absl::Status CheckCanBeUpdated() override;
 
   StreamExecutor* stream_executor_;
