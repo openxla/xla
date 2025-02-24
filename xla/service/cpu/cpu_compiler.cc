@@ -680,8 +680,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   // Run the following passes to a fixed point.
-  [&pipeline =
-       pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification")] {
+  [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),
+   &module] {
     AddHloVerifier(&pipeline, HloVerifierOpts{},
                    /*debug_only=*/true);
 
@@ -689,7 +689,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     options.set_enable_dot_strength_reduction(false);
     // "slow" minmax means we propagate nan.
     options.set_minmax_propagate_nan(
-        !module->config.debug_options().xla_cpu_enable_fast_min_max());
+        !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_supports_non_canonical_dots(false);
     options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
@@ -836,7 +836,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_enable_dot_strength_reduction(false);
     // "slow" minmax means we propagate nan.
     options.set_minmax_propagate_nan(
-        !module->config.debug_options().xla_cpu_enable_fast_min_max());
+        !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
