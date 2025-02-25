@@ -783,6 +783,12 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // Useful when we want to use the same visitor over multiple computations.
   void ResetState(HloComputation* computation);
 
+  // For cases where the stride won't ended up being used, we update the limit
+  // and reset the stride to 1. Returns true if the stride is redundant (and the
+  // slice instruction is replaced).
+  // - For example in slices=([0:X:X]), where X == dimension
+  absl::StatusOr<bool> RemoveRedundantStride(HloInstruction* slice);
+
   // Current HloComputation instance the AlgebraicSimplifierVisitor is
   // traversing.
   HloComputation* computation_;
