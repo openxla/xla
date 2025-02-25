@@ -171,12 +171,12 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
-#include "xla/service/gpu/prepare_hlo_for_ir_emitting_pipeline.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/algorithm_checker.h"
+#include "xla/service/gpu/transforms/alias_passthrough_params.h"
 #include "xla/service/gpu/transforms/all_gather_dynamic_slice_simplifier.h"
 #include "xla/service/gpu/transforms/all_gather_optimizer.h"
 #include "xla/service/gpu/transforms/all_reduce_blueconnect.h"
@@ -192,6 +192,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/service/gpu/transforms/command_buffer_scheduling.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
+#include "xla/service/gpu/transforms/copy_fusion.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
@@ -207,6 +208,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/gemm_fusion_swap_operands.h"
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/gemv_rewriter.h"
+#include "xla/service/gpu/transforms/horizontal_loop_fusion.h"
 #include "xla/service/gpu/transforms/layout_assignment.h"
 #include "xla/service/gpu/transforms/move_copy_to_users.h"
 #include "xla/service/gpu/transforms/pipelined_p2p_rewriter.h"
@@ -239,6 +241,7 @@ limitations under the License.
 #include "xla/service/layout_normalization.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/loop_schedule_linearizer.h"
 #include "xla/service/reduce_scatter_reassociate.h"
 #include "xla/service/scatter_determinism_expander.h"
 #include "xla/service/scatter_expander.h"
@@ -1274,11 +1277,69 @@ absl::Status GpuCompiler::RunCollectiveScheduleLinearizerPasses(
   return pipeline.Run(hlo_module).status();
 }
 
+absl::Status GpuCompiler::RunCopyInsertionAndFusionPipeline(
+    HloModule& hlo_module, const se::DeviceDescription& device_description) {
+  const DebugOptions& debug_options = hlo_module.config().debug_options();
+  HloDataflowAnalysis::CanShareBuffer can_share_buffer =
+      GetCanShareBuffer(device_description);
+
+  // In some cases, we have to place the result of an instruction in a temporary
+  // buffer. For instance, the buffer that holds an external parameter is
+  // assumed immutable at this point, and should not be reused for output
+  // (b/27180329). Therefore, in that case, we set the output to be a copy of
+  // the parameter.
+  HloPassPipeline pipeline("copy-insertion-and-fusion");
+  HloVerifierOpts opts =
+      HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
+          LayoutAssignment::InstructionCanChangeLayout);
+  opts.verify_unique_channel_ids = !debug_options.xla_ignore_channel_id();
+  std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
+      std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
+  pipeline.AddInvariantCheckerDebug<HloVerifier>(std::move(verifier_metadata),
+                                                 "hlo verifier (debug)");
+
+  // Copy insertion should be performed after all HLO optimizations to avoid
+  // inserting unnecessary copies (later pass adds an instruction which
+  // materializes the value) or missing a necessary copy (later pass removes an
+  // instruction which materializes a value). DCE must be run immediately before
+  // (and sometime after) copy insertion, to avoid dead code from interfering
+  // with the rewrites.
+  pipeline.AddPass<HloDCE>();
+  if (hlo_module.config().alias_passthrough_params()) {
+    pipeline.AddPass<AliasPassthroughParams>();
+  }
+  pipeline.AddPass<LoopScheduleLinearizer>(can_share_buffer);
+
+  if (debug_options.xla_gpu_copy_insertion_use_region_analysis()) {
+    constexpr int64_t kNoRegionBasedLiveRangeAnalysisLimit = -1;
+    pipeline.AddPass<CopyInsertion>(can_share_buffer,
+                                    kNoRegionBasedLiveRangeAnalysisLimit);
+  } else {
+    pipeline.AddPass<CopyInsertion>(can_share_buffer);
+  }
+
+  // We are using a sub-pipeline here, so that the verifier only runs after both
+  // HorizontalLoopFusion and HloDCE.
+  auto& sub_pipeline =
+      pipeline.AddPass<HloPassPipeline>("horizontal-loop-fusion-for-copy");
+
+  sub_pipeline.AddPass<CopyFusion>(device_description);
+  // Make sure to run HorizontalLoopFusion only inside the entry computation.
+  // Fusing copies outside of the entry computation can break buffer assignment!
+  sub_pipeline.AddPass<HorizontalLoopFusion>(device_description, "copy_",
+                                             /*only_entry_computation=*/true);
+  sub_pipeline.AddPass<HloDCE>();
+  pipeline.AddPass<SanitizeConstantNames>();
+  return pipeline.Run(&hlo_module).status();
+}
+
 // Runs optimization passes on the given HLO module.
 absl::Status GpuCompiler::OptimizeHloModule(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const TargetConfig& gpu_target_config) {
   tsl::profiler::TraceMe traceme("GpuCompiler::OptimizeHloModule");
+  const stream_executor::DeviceDescription& device_description =
+      gpu_target_config.device_description;
 
   CheckNotScheduled(hlo_module);
   LogDebugOptions(hlo_module);
@@ -1301,7 +1362,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, gpu_target_config,
                                            layout_insensitive_algsimp_opts));
   se::GpuComputeCapability gpu_version =
-      gpu_target_config.device_description.gpu_compute_capability();
+      device_description.gpu_compute_capability();
   TF_RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
       hlo_module, layout_insensitive_algsimp_opts, gpu_version));
 
@@ -1315,11 +1376,10 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
   TF_RETURN_IF_ERROR(OptimizeHloConvolutionCanonicalization(
       hlo_module, gpu_version, dnn_version,
-      gpu_target_config.device_description.runtime_version()));
+      device_description.runtime_version()));
 
-  TF_RETURN_IF_ERROR(
-      RunLayoutAssignmentPasses(hlo_module, gpu_version, dnn_version,
-                                gpu_target_config.device_description));
+  TF_RETURN_IF_ERROR(RunLayoutAssignmentPasses(
+      hlo_module, gpu_version, dnn_version, device_description));
 
   TF_RETURN_IF_ERROR(RunLayoutNormalizationPasses(hlo_module, gpu_version));
 
@@ -1334,8 +1394,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunFusionPasses(hlo_module, gpu_target_config,
                                      thread_pool.get_mutable(),
                                      ShapeSizeBytesFunction()));
-  TF_RETURN_IF_ERROR(RunPostFusionPasses(
-      hlo_module, gpu_target_config.device_description, pointer_size_));
+  TF_RETURN_IF_ERROR(
+      RunPostFusionPasses(hlo_module, device_description, pointer_size_));
   TF_RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunPostFusionSimplificationPasses(
       hlo_module, layout_insensitive_algsimp_opts, gpu_version,
@@ -1349,7 +1409,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
 
-  return absl::OkStatus();
+  return RunCopyInsertionAndFusionPipeline(*hlo_module, device_description);
 }  // NOLINT(readability/fn_size)
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
@@ -1357,17 +1417,6 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   AlgebraicSimplifierOptions opts;
   opts.set_enable_dot_strength_reduction(true);
   return opts;
-}
-
-// Modifies the given HLO module so that it will be accepted by IrEmitter.
-// Unlike optimization passes, the passes are necessary for correctness.
-absl::Status GpuCompiler::PrepareHloModuleForIrEmitting(
-    HloModule* hlo_module, const se::DeviceDescription& device_description) {
-  return PrepareHloModuleForIrEmittingPipeline(
-             *hlo_module, GetCanShareBuffer(device_description),
-             device_description)
-      .Run(hlo_module)
-      .status();
 }
 
 namespace {
@@ -1743,15 +1792,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
                                        is_deviceless ? nullptr : stream_exec,
                                        options, gpu_target_config));
 
-  TF_RETURN_IF_ERROR(PrepareHloModuleForIrEmitting(
-      module.get(), gpu_target_config.device_description));
-
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &gpu_target_config.device_description.gpu_compute_capability());
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     // This needs to run after every pass affecting fusions, which includes
-    // `CopyFusion`, which itself must run in the
-    // `PrepareHloModuleForIrEmitting` pipeline.
+    // `CopyFusion`, which itself must run at the end of OptimizeHloModule.
     TF_RETURN_IF_ERROR(
         FusionDispatchPipeline(gpu_target_config.device_description,
                                ShapeSizeBytesFunction())

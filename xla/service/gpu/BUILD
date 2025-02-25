@@ -1346,29 +1346,6 @@ cc_library(
 )
 
 cc_library(
-    name = "prepare_hlo_for_ir_emitting_pipeline",
-    srcs = ["prepare_hlo_for_ir_emitting_pipeline.cc"],
-    hdrs = ["prepare_hlo_for_ir_emitting_pipeline.h"],
-    deps = [
-        "//xla:xla_proto_cc",
-        "//xla/hlo/analysis:hlo_dataflow_analysis",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/hlo/transforms/simplifiers:hlo_dce",
-        "//xla/service:copy_insertion",
-        "//xla/service:cpu_gpu_shape_verifier",
-        "//xla/service:hlo_verifier",
-        "//xla/service:layout_assignment",
-        "//xla/service:loop_schedule_linearizer",
-        "//xla/service/gpu/transforms:alias_passthrough_params",
-        "//xla/service/gpu/transforms:copy_fusion",
-        "//xla/service/gpu/transforms:horizontal_loop_fusion",
-        "//xla/service/gpu/transforms:sanitize_constant_names",
-        "//xla/stream_executor:device_description",
-    ],
-)
-
-cc_library(
     name = "gpu_compiler",
     srcs = if_gpu_is_configured([
         "gpu_compiler.cc",
@@ -1402,7 +1379,6 @@ cc_library(
         ":kernel_reuse_cache",
         ":matmul_utils",
         ":metrics",
-        ":prepare_hlo_for_ir_emitting_pipeline",
         ":reduction_utils",
         ":runtime_intrinsics",
         ":stream_executor_util",
@@ -1504,6 +1480,7 @@ cc_library(
         "//xla/service/gpu/transforms/collectives:gpu_all_reduce_combiner",
         "//xla/service/gpu/transforms/collectives:gpu_collective_combiner_utils",
         "//xla/service/gpu/transforms/collectives:gpu_reduce_scatter_combiner",
+        "//xla/service/gpu/transforms:alias_passthrough_params",
         "//xla/service/gpu/transforms:algebraic_simplifier",
         "//xla/service/gpu/transforms:algorithm_checker",
         "//xla/service/gpu/transforms:all_gather_dynamic_slice_simplifier",
@@ -1517,6 +1494,7 @@ cc_library(
         "//xla/service/gpu/transforms:collective_select_folder",
         "//xla/service/gpu/transforms:command_buffer_scheduling",
         "//xla/service/gpu/transforms:conv_rewriter",
+        "//xla/service/gpu/transforms:copy_fusion",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
@@ -1533,6 +1511,7 @@ cc_library(
         "//xla/service/gpu/transforms:gemm_fusion_swap_operands",
         "//xla/service/gpu/transforms:gemm_rewriter",
         "//xla/service/gpu/transforms:gemv_rewriter",
+        "//xla/service/gpu/transforms:horizontal_loop_fusion",
         "//xla/service/gpu/transforms:layout_assignment",
         "//xla/service/gpu/transforms:move_copy_to_users",
         "//xla/service/gpu/transforms:pipelined_p2p_rewriter",
