@@ -57,8 +57,9 @@ void NvshmemCollectives::SetEnvInfo(
 absl::Status NvshmemCollectives::InitializeOnce() {
   auto init_fn = [this]() -> absl::Status {
     if (process_id_ == -1) {
-      LOG(FATAL) << "NvshmemCollectives::SetEnvInfo was not called before using "
-                    "NVSHMEM API";
+      LOG(FATAL)
+          << "NvshmemCollectives::SetEnvInfo was not called before using "
+             "NVSHMEM API";
     }
     if (device_count_per_process_ != 1) {
       LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
@@ -73,7 +74,7 @@ absl::Status NvshmemCollectives::InitializeOnce() {
           return absl::InternalError("nvshmemx_get_uniqueid failed.");
         }
         absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
-                                        sizeof(nvshmemx_uniqueid_t));
+                                         sizeof(nvshmemx_uniqueid_t));
         TF_RETURN_IF_ERROR(kv_store->Set(kv_store_key_, nvshmem_id_str));
       } else {
         TF_ASSIGN_OR_RETURN(std::string id_str,
@@ -86,12 +87,12 @@ absl::Status NvshmemCollectives::InitializeOnce() {
           "KV store is not available for nvshmem initialization.");
     }
 
-    if (nvshmemx_set_attr_uniqueid_args(process_id_, num_processes_, &nvshmem_id,
-                                        &nvshmem_init_attr) != 0) {
+    if (nvshmemx_set_attr_uniqueid_args(process_id_, num_processes_,
+                                        &nvshmem_id, &nvshmem_init_attr) != 0) {
       return absl::InternalError("nvshmemx_set_attr_uniqueid_args failed.");
     }
     if (nvshmemx_hostlib_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID,
-                                  &nvshmem_init_attr) != 0) {
+                                   &nvshmem_init_attr) != 0) {
       return absl::InternalError("nvshmemx_hostlib_init_attr failed.");
     }
 
