@@ -82,12 +82,11 @@ class BlasLt : public gpu::BlasLt {
   };
 
   struct MatmulPlan : public gpu::BlasLt::MatmulPlan {
-    MatmulPlan(const BlasLt& blas_lt_ref, MatmulDesc&& op_desc,
+    MatmulPlan(MatmulDesc&& op_desc,
                MatrixLayout&& a_desc, MatrixLayout&& b_desc,
                MatrixLayout&& c_desc, MatrixLayout&& d_desc,
                xla::complex128 alpha, double beta, bool must_swap_operands)
-        : blas_lt_ref_(blas_lt_ref),
-          op_desc_(std::move(op_desc)),
+        : op_desc_(std::move(op_desc)),
           a_desc_(std::move(a_desc)),
           b_desc_(std::move(b_desc)),
           c_desc_(std::move(c_desc)),
@@ -99,40 +98,24 @@ class BlasLt : public gpu::BlasLt {
     ~MatmulPlan() override = default;
 
     absl::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a_buffer, DeviceMemoryBase b_buffer,
-        DeviceMemoryBase c_buffer, DeviceMemoryBase d_buffer,
-        DeviceMemoryBase bias_buffer,  // may be null
-        DeviceMemoryBase aux_buffer,   // may be null
-        DeviceMemoryBase a_scale_buffer, DeviceMemoryBase b_scale_buffer,
-        DeviceMemoryBase c_scale_buffer, DeviceMemoryBase d_scale_buffer,
-        DeviceMemoryBase d_amax_buffer, const MatmulAlgorithm& algorithm,
-        std::optional<DeviceMemoryBase> workspace,
-        std::optional<ScratchAllocator*> scratch_allocator,
+        Stream* stream, const gpu::BlasLt::MemoryArgs& args,
         blas::ProfileResult* profile_result) const override;
 
     absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        size_t max_algorithm_count, size_t max_workspace_size) const override;
+        const Stream* stream, size_t max_algorithm_count, 
+        size_t max_workspace_size) const override;
+
+    absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) const override {
+      algorithm_ = algorithm;
+      return absl::OkStatus();
+    }
 
    protected:
-    absl::Status ValidateInputs(blas::DataType scale_type, bool alpha_on_device,
-                                bool beta_on_device, blas::DataType A_type,
-                                blas::DataType B_type, blas::DataType C_type,
-                                blas::DataType D_type) const override;
-
-    absl::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
-                          DeviceMemoryBase b, const void* beta,
-                          DeviceMemoryBase c, DeviceMemoryBase d,
-                          const MatmulAlgorithm& algorithm,
-                          DeviceMemoryBase bias, DeviceMemoryBase aux,
-                          DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
-                          DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
-                          DeviceMemoryBase d_amax,
-                          std::optional<DeviceMemoryBase> workspace,
-                          std::optional<ScratchAllocator*> scratch_allocator,
-                          blas::ProfileResult* profile_result) const override;
+    absl::Status DoMatmul(Stream* stream, const void* alpha, 
+                          const void* beta, const gpu::BlasLt::MemoryArgs& args,
+                          blas::ProfileResult* profile_result) const;
 
    private:
-    const BlasLt& blas_lt_ref_;
     // TODO(cjfj): Add consistency checks for types, shapes, etc.?
     MatmulDesc op_desc_;
     MatrixLayout a_desc_;
@@ -142,6 +125,7 @@ class BlasLt : public gpu::BlasLt {
     xla::complex128 alpha_;
     double beta_;
     bool must_swap_operands_;
+    mutable std::optional< MatmulAlgorithm > algorithm_; // selected algorithm
   };  // class MatmulPlan
 
   explicit BlasLt(StreamExecutor* parent)

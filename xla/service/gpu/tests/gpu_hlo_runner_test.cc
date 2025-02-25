@@ -123,7 +123,7 @@ absl::StatusOr<std::vector<Literal>> MakeSpecialArguments(HloModule* const modul
 
 #define DO_REFERENCE_CHECK 1
 #define USE_MULTIPLE_GPUS 0
-#define USE_SPECIAL_ARGUMENTS 0
+#define USE_SPECIAL_ARGUMENTS 1
 
 class HloRunnerTest : public GpuCodegenTest {
 
