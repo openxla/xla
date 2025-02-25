@@ -807,7 +807,8 @@ absl::Status GpuCommandBuffer::Finalize() {
 
     uint64_t end_nanos = tsl::Env::Default()->NowNanos();
 
-    VLOG(5) << "Instantiated executable graph #" << NotifyExecCreated()
+    auto exec_num = NotifyExecCreated();
+    VLOG(5) << "Instantiated executable graph #" << exec_num
             << " in " << (end_nanos - start_nanos) / 1000 << " μs"
             << "; execution_scopes: " << execution_scopes_.size()
             << "; nodes: " << num_nodes
