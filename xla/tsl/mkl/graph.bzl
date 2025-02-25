@@ -27,5 +27,7 @@ def onednn_graph_cc_test(
         srcs = if_graph_api(srcs),
         deps = if_graph_api(deps) + ["@com_google_googletest//:gtest_main"],
         shuffle_tests = shuffle_tests,
+        # If not building with Graph API, we don't have any tests linked.
+        fail_if_no_tests_linked = False,
         **kwargs
     )

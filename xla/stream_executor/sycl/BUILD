@@ -52,6 +52,8 @@ cc_library(
 xla_cc_test(
     name = "sycl_platform_test",
     srcs = if_sycl_is_configured(["sycl_platform_test.cc"]),
+    # If not building with SYCL, we don't have any tests linked.
+    fail_if_no_tests_linked = False,
     deps = if_sycl_is_configured([
         ":sycl_platform",
         "@tsl//tsl/platform:statusor",
