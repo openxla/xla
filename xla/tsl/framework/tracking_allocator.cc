@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <optional>
+
 #include "xla/tsl/framework/tracking_allocator.h"
 
 #include "xla/tsl/platform/env.h"
@@ -152,7 +154,7 @@ int64_t TrackingAllocator::AllocationId(const void* ptr) const {
   }
 }
 
-absl::optional<AllocatorStats> TrackingAllocator::GetStats() {
+std::optional<AllocatorStats> TrackingAllocator::GetStats() {
   return allocator_->GetStats();
 }
 
