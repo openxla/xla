@@ -218,9 +218,10 @@ class NvshmemCollectiveDoneThunk : public Thunk {
 
 //===----------------------------------------------------------------------===//
 
-absl::Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op);
+absl::Status IsValidNvshmemOperand(mlir::Value operand,
+                                   Thunk::Kind reduction_op);
 
-absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op);
+absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op);
 
 template <typename NvshmemThunkType, typename OpT>
 absl::Status AddNvshmemOpDescription(absl::Status status, OpT op,
@@ -255,16 +256,11 @@ absl::Status AddNvshmemOpDescription(absl::Status status, OpT op,
 
 //===----------------------------------------------------------------------===//
 
-absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
+absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
     AsyncStreamKind stream_kind);
-
-absl::StatusOr<size_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode);
 
 // Returns a nccl comm and a flag indicating if it's a local communicator.
 absl::StatusOr<CommunicatorHandle> GetNvshmemComm(

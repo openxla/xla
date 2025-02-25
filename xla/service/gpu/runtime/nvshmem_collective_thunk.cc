@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
@@ -211,7 +212,7 @@ NvshmemCollectiveThunk::NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info,
       async_events_(is_sync ? nullptr
                             : new NcclCollectiveThunk::AsyncEvents()) {}
 
-absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
+absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
@@ -239,9 +240,10 @@ absl::StatusOr<CommunicatorHandle> GetNvshmemComm(
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
     AsyncStreamKind stream_kind) {
-  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                      GetGpuCliqueKey(collectives, params, replica_groups,
-                                      group_mode, stream_id, stream_kind));
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuNvshmemCliqueKey(collectives, params, replica_groups, group_mode,
+                             stream_id, stream_kind));
 
   std::optional<RankId> rank = clique_key.rank(params.global_device_id);
   TF_ASSIGN_OR_RETURN(bool is_local,
@@ -284,9 +286,9 @@ absl::Status NvshmemCollectiveThunk::Prepare(
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetGpuCliqueKey(collectives, *params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      nvshmem_stream_id(), GetAsyncStreamKind()));
+      GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
+                             config().replica_groups, config().group_mode,
+                             nvshmem_stream_id(), GetAsyncStreamKind()));
   TF_ASSIGN_OR_RETURN(
       size_t num_local_participants,
       GetNumLocalParticipants(*params.collective_params,
@@ -364,9 +366,9 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
                         GetGpuCollectives(params));
     TF_ASSIGN_OR_RETURN(
         GpuCliqueKey clique_key,
-        GetGpuCliqueKey(collectives, *params.collective_params,
-                        config().replica_groups, config().group_mode, stream_id,
-                        stream_kind));
+        GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
+                               config().replica_groups, config().group_mode,
+                               stream_id, stream_kind));
 
     TF_ASSIGN_OR_RETURN(
         size_t num_local_participants,
@@ -423,7 +425,7 @@ absl::Status NvshmemCollectiveDoneThunk::ExecuteOnStream(
   return params.stream->WaitFor(event);
 }
 
-absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
+absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op) {
   if (!LayoutUtil::IsDenseArray(shape)) {
     return absl::AbortedError(
         absl::StrFormat("input is not a dense array: %s",
@@ -435,29 +437,6 @@ absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }
   return absl::OkStatus();
-}
-
-absl::StatusOr<size_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode) {
-  TF_ASSIGN_OR_RETURN(
-      std::vector<GlobalDeviceId> participants,
-      GetParticipatingDevices(params.global_device_id, *params.device_assn,
-                              replica_groups, group_mode));
-  if (!params.global_device_id_map) {
-    return participants.size();
-  }
-
-  std::vector<GlobalDeviceId> local_devices;
-  local_devices.reserve(params.global_device_id_map->size());
-  for (const auto& entry : *params.global_device_id_map) {
-    local_devices.push_back(entry.second);
-  }
-
-  return absl::c_count_if(participants, [&](const GlobalDeviceId& device_id) {
-    return absl::c_linear_search(local_devices, device_id);
-  });
 }
 
 }  // namespace gpu

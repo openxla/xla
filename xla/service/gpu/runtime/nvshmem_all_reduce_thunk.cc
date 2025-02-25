@@ -60,10 +60,10 @@ absl::Status RunNvshmemAllReduce(GpuCollectives* collectives,
 
 namespace impl {
 
-absl::Status CheckImplementableInst(const HloInstruction* inst,
-                                    Thunk::Kind reduction_op) {
+absl::Status CheckNvshmemImplementableInst(const HloInstruction* inst,
+                                           Thunk::Kind reduction_op) {
   for (HloInstruction* operand : inst->operands()) {
-    TF_RETURN_IF_ERROR(IsValidOperand(operand->shape(), reduction_op));
+    TF_RETURN_IF_ERROR(IsValidNvshmemOperand(operand->shape(), reduction_op));
   }
 
   if (!MatchReductionComputation(inst->called_computations().front())
@@ -115,8 +115,8 @@ absl::Status NvshmemAllReduceStartThunk::CheckImplementable(
     const HloAllReduceInstruction* inst, int64_t replica_count,
     int64_t partition_count) {
   return AddNvshmemOpDescription<NvshmemAllReduceStartThunk>(
-      impl::CheckImplementableInst(inst, Thunk::kNvshmemAllReduceStart), inst,
-      replica_count, partition_count);
+      impl::CheckNvshmemImplementableInst(inst, Thunk::kNvshmemAllReduceStart),
+      inst, replica_count, partition_count);
 }
 
 CollectiveOpGroupMode NvshmemAllReduceStartThunk::GetGroupMode(
