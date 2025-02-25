@@ -93,7 +93,6 @@ CUgraphConditionalHandle ToCudaGraphHandle(GraphConditionalHandle handle) {
 std::vector<CUgraphNode> ToCudaGraphHandles(
     absl::Span<const GraphNodeHandle> opaque_handles) {
   std::vector<CUgraphNode> handles;
-  handles.reserve(opaque_handles.size());
   for (const GraphNodeHandle opaque_handle : opaque_handles) {
     handles.push_back(ToCudaGraphHandle(opaque_handle));
   }
@@ -153,13 +152,17 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateLaunchNode(
         "Trying to create launch node in a finalized command buffer");
   }
 
+  VLOG(2) << "CreateLaunchNode dependencies size: " << dependencies.size();
+
   // If arguments are already packed we can just launch the kernel.
   if (auto* packed = DynCast<KernelArgsPackedArrayBase>(&args)) {
+    VLOG(2) << "CreateLaunchNode packed";
     return CreateKernelNode(dependencies, threads, blocks, kernel, *packed);
   }
 
   // For device memory array we rely on a custom kernel arguments packing.
   if (auto* device_mem = DynCast<KernelArgsDeviceMemoryArray>(&args)) {
+    VLOG(2) << "CreateLaunchNode device_mem";
     auto& pack = kernel.args_packing();
     if (!pack) {
       return absl::InternalError(
@@ -547,7 +550,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
     const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
-
+  VLOG(2) << "Dependecy set size: " << dependencies.size();
   VLOG(2) << "Add kernel node to a graph " << graph_
           << "; dependencies: " << GraphNodeHandlesToString(dependencies)
           << "; kernel: " << kernel.name() << "; gdx: " << blocks.x
@@ -646,6 +649,10 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateEmptyNode(
 
   VLOG(2) << "Add empty node to a graph " << graph_;
 
+  VLOG(2) << "Add empty node to a graph " << graph_
+          << " with dependencies: " << GraphNodeHandlesToString(dependencies);
+
+  VLOG(2) << "Add empty node to a graph after" << graph_;
   CUgraphNode barrier_handle = nullptr;
   std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
   TF_RETURN_IF_ERROR(cuda::ToStatus(

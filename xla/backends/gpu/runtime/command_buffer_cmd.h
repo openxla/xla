@@ -126,12 +126,14 @@ class CommandBufferCmd {
   using DependencySet = absl::flat_hash_set<const CommandBufferCmd*>;
 
   static std::string DependencySetToString(const DependencySet& set) {
-    return absl::StrCat("DependencySet: {",
-                        absl::StrJoin(set, ", ",
-                                      [](std::string* out, const void* ptr) {
-                                        absl::StrAppendFormat(out, "%p", ptr);
-                                      }),
-                        "}");
+    std::string results;
+    std::vector<std::string> strs;
+    for (const auto& cmd : set) {
+      strs.push_back(absl::StrFormat("%p", static_cast<const void*>(cmd)));
+    }
+    absl::StrAppend(&results, "DependencySet: {", absl::StrJoin(strs, ", "),
+                    "}");
+    return results;
   }
 
   explicit CommandBufferCmd(CommandBufferCmdType cmd_type)
@@ -242,8 +244,12 @@ class CommandBufferCmd {
   GraphNodeHandles ToDependentNodes() const {
     GraphNodeHandles nodes;
     for (const CommandBufferCmd* cmd : dependencies_) {
-      nodes.insert(nodes.end(), cmd->tail_nodes().begin(),
-                   cmd->tail_nodes().end());
+      for (const auto& node : cmd->tail_nodes()) {
+        CHECK(node != nullptr)
+            << "Null node found in tail_nodes() for cmd: " << cmd->ToString();
+      }
+      auto tail_nodes = cmd->tail_nodes();
+      nodes.insert(nodes.end(), tail_nodes.begin(), tail_nodes.end());
     }
     return nodes;
   }
@@ -363,6 +369,8 @@ class CommandBufferCmdSequence {
     CHECK_LT(idx, commands_.size());
     return commands_.at(idx).get();
   }
+
+  std::string ToString() const;
 
  private:
   SynchronizationMode synchronization_mode_;
@@ -1450,7 +1458,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
   DynamicSliceFusionCmd(
       std::unique_ptr<CommandBufferCmdSequence> embedded_commands,
       std::vector<std::optional<BufferAllocation::Slice>> arguments,
-      std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_,
+      std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
       std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>
           offsets,
       std::vector<std::optional<Shape>> orig_shapes,
@@ -1478,23 +1486,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
     return GraphNodeHandles{node_};
   }
 
-  std::unique_ptr<CommandBufferCmd> Clone() const override {
-    auto arguments_copy = arguments_;
-    std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_copy;
-    for (auto& fake_allocation : fake_allocations_) {
-      fake_allocations_copy.push_back(
-          std::make_unique<BufferAllocation>(*fake_allocation));
-    }
-    auto offsets_copy = offsets_;
-    auto orig_shapes_copy = orig_shapes_;
-    auto sliced_shapes_copy = sliced_shapes_;
-    auto offset_byte_sizes_copy = offset_byte_sizes_;
-    return std::make_unique<DynamicSliceFusionCmd>(
-        embedded_commands_->Clone(), std::move(arguments_copy),
-        std::move(fake_allocations_copy), std::move(offsets_copy),
-        std::move(orig_shapes_copy), std::move(sliced_shapes_copy),
-        std::move(offset_byte_sizes_copy));
-  }
+  std::unique_ptr<CommandBufferCmd> Clone() const override;
 
  private:
   std::unique_ptr<CommandBufferCmdSequence> embedded_commands_;

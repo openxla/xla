@@ -65,14 +65,15 @@ class CommandBufferThunk : public Thunk {
         std::unique_ptr<se::CommandBuffer> command_buffer,
         std::unique_ptr<CommandBufferCmdSequence> commands);
 
+    // se::CommandBuffer is not thread safe, and we guard it with a mutex to
+    // guarantee that we do not mutate it concurrently.
+    absl::Mutex mutex;
+
     // Returns true if `commands` cmd sequence has to be recorded into
     // `command_buffer` to update it (see `recorded_allocs` below).
     bool ShouldUpdateCommandBuffer(const Thunk::ExecuteParams& params)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
-    // se::CommandBuffer is not thread safe, and we guard it with a mutex to
-    // guarantee that we do not mutate it concurrently.
-    absl::Mutex mutex;
     std::unique_ptr<se::CommandBuffer> command_buffer ABSL_GUARDED_BY(mutex);
 
     // We now save the lowered command buffer nodes in CommandBufferCmd object,
@@ -86,6 +87,10 @@ class CommandBufferThunk : public Thunk {
     absl::Status Record(const Thunk::ExecuteParams& params,
                         const CommandBufferCmd::RecordParams& record_params) {
       return commands->Record(params, record_params, command_buffer.get());
+    }
+
+    absl::Status Submit(se::Stream* stream) {
+      return command_buffer->Submit(stream);
     }
 
     bool created() const { return commands->created(); }

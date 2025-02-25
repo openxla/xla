@@ -67,7 +67,6 @@ class CommandBuffer {
   // GraphNodeHandle defined below.
   struct GraphNodeHandleOpaque;
   struct GraphConditionalHandleOpaque;
-  struct GraphConditionalNodeHandleOpaque;
 
   using GraphNodeHandle = GraphNodeHandleOpaque*;
   using GraphNodeHandles = std::vector<GraphNodeHandle>;

@@ -168,7 +168,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // If command buffer in any other state we check it is has to be updated, i.e.
   // if captured pointers changed or command buffer has commands that require
   // update on each call.
-  if (!cmd_buffer->commands->created() ||
+  if (!cmd_buffer->created() ||
       (params.requires_exclusive_lock_on_gpu &&
        cmd_buffer->ShouldUpdateCommandBuffer(execute_params))) {
     VLOG(3) << "Initialize/Update command buffer on device #"
@@ -261,7 +261,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
                           {"num_executions", cmd_buffer->num_executions}});
   });
 
-  return cmd_buffer->command_buffer->Submit(params.stream);
+  return cmd_buffer->Submit(params.stream);
 }
 
 absl::StatusOr<std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>>

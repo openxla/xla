@@ -144,6 +144,19 @@ CommandBufferCmdSequence::CommandBufferCmdSequence(
     : synchronization_mode_(synchronization_mode) {}
 
 void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
+  if (cmd->IsBarrier() && commands_.back()->IsBarrier()) {
+    VLOG(2) << "Skipping barrier command as last command is barrier ";
+    return;
+  }
+
+  if (synchronization_mode_ == SynchronizationMode::kSerialize) {
+    if (!commands_.empty()) {
+      cmd->add_dependency(commands_.back().get());
+    }
+    commands_.push_back(std::move(cmd));
+    return;
+  }
+
   for (const BufferUse& buffer : cmd->buffers()) {
     buffers_.insert(buffer);
     allocs_indices_.insert(buffer.slice().index());
@@ -188,25 +201,13 @@ void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
       }
     }
   }
-
-  bool requires_barrier = false;
-  // Always add barriers between commands if we want to serialize execution.
-  if (synchronization_mode_ == SynchronizationMode::kSerialize &&
-      !cmd->IsBarrier()) {
-    requires_barrier = true;
-  }
+  commands_.push_back(std::move(cmd));
 
   // If the first recorded command is implemented as a nested command buffer we
   // force a barrier before recording the next command as a workaround for CUDA
   // graph bug, where child CUDA graph must be a single CUDA graph root node.
   if (commands_.size() == 1 && commands_.front()->IsNestedCommandBuffer()) {
-    requires_barrier = true;
-  }
-
-  VLOG(2) << "Append command " << cmd->ToString();
-  commands_.push_back(std::move(cmd));
-  if (requires_barrier) {
-    Append(std::make_unique<BarrierCmd>());
+    commands_.push_back(std::make_unique<BarrierCmd>());
   }
 }
 
@@ -232,28 +233,9 @@ std::unique_ptr<CommandBufferCmdSequence> CommandBufferCmdSequence::Clone()
     const {
   auto cloned_sequence =
       std::make_unique<CommandBufferCmdSequence>(synchronization_mode_);
-
-  absl::flat_hash_map<const CommandBufferCmd*, int64_t> cmd_to_index;
-  absl::flat_hash_map<int64_t, absl::flat_hash_set<int64_t>> cmd_idx_to_deps;
-
-  int64_t idx = 0;
-  for (const auto& command : commands_) {
-    cmd_to_index[command.get()] = idx;
-    for (const auto& dep : command->dependencies()) {
-      CHECK(cmd_idx_to_deps.contains(idx));
-      cmd_idx_to_deps[idx].insert(cmd_to_index[dep]);
-    }
-    idx++;
-  }
-
-  idx = 0;
   for (const auto& command : commands_) {
     auto cloned_cmd = command->Clone();
-    for (const auto& dep : cmd_idx_to_deps[idx]) {
-      cloned_cmd->add_dependency(cloned_sequence->get_command(dep));
-    }
     cloned_sequence->Append(std::move(cloned_cmd));
-    idx++;
   }
   return cloned_sequence;
 }
@@ -262,7 +244,7 @@ absl::Status CommandBufferCmdSequence::Record(
     const Thunk::ExecuteParams& execute_params,
     const CommandBufferCmd::RecordParams& record_params,
     se::CommandBuffer* command_buffer) {
-  VLOG(3) << "Record " << commands_.size() << " commands into command buffer.";
+  VLOG(3) << "Record CommandSequence: " << ToString();
   uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
   for (const std::unique_ptr<CommandBufferCmd>& command : commands_) {
@@ -291,6 +273,14 @@ const absl::flat_hash_set<BufferUse>& CommandBufferCmdSequence::buffers()
 const absl::flat_hash_set<BufferAllocation::Index>&
 CommandBufferCmdSequence::allocs_indices() const {
   return allocs_indices_;
+}
+
+std::string CommandBufferCmdSequence::ToString() const {
+  std::string result;
+  for (const auto& command : commands_) {
+    absl::StrAppend(&result, command->ToString(), "\n");
+  }
+  return result;
 }
 
 //===----------------------------------------------------------------------===//
@@ -566,7 +556,8 @@ absl::Status LaunchCmd::Record(const Thunk::ExecuteParams& execute_params,
                                const RecordParams& record_params,
                                se::CommandBuffer* command_buffer, bool create) {
   VLOG(5) << "LaunchCmd: kernel=" << kernel_name_
-          << "; shmem_bytes=" << shmem_bytes_;
+          << "; shmem_bytes=" << shmem_bytes_
+          << "; dependencies=" << dependencies().size();
 
   if (kernel_ == nullptr) {
     return absl::InternalError(absl::StrCat(
@@ -2144,10 +2135,10 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
       embedded_commands_(std::move(embedded_commands)),
       arguments_(std::move(arguments)),
       fake_allocations_(std::move(fake_allocations)),
-      offsets_(std::move(offsets)),
-      orig_shapes_(std::move(orig_shapes)),
-      sliced_shapes_(std::move(sliced_shapes)),
-      offset_byte_sizes_(std::move(offset_byte_sizes)) {
+      offsets_(offsets),
+      orig_shapes_(orig_shapes),
+      sliced_shapes_(sliced_shapes),
+      offset_byte_sizes_(offset_byte_sizes) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offset, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments_, offsets_, orig_shapes_, sliced_shapes_,
@@ -2361,6 +2352,18 @@ absl::Status DynamicSliceFusionCmd::Record(
 
   return embedded_commands_->Record(new_params, record_params,
                                     child_command_buffer_.get());
+}
+
+std::unique_ptr<CommandBufferCmd> DynamicSliceFusionCmd::Clone() const {
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_clone;
+  for (auto& fake_allocation : fake_allocations_) {
+    fake_allocations_clone.push_back(
+        std::make_unique<BufferAllocation>(*fake_allocation));
+  }
+  return std::make_unique<DynamicSliceFusionCmd>(
+      embedded_commands_->Clone(), arguments_,
+      std::move(fake_allocations_clone), offsets_, orig_shapes_, sliced_shapes_,
+      offset_byte_sizes_);
 }
 
 CommandBufferCmd::BufferUseVector DynamicSliceFusionCmd::buffers() {
