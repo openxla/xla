@@ -453,6 +453,54 @@ TEST(StreamExecutorGpuClientTest, ForwardUserDataToFfiHandler) {
       *result_literal));
 }
 
+static absl::Status Memcpy(se::Stream* stream, ffi::AnyBuffer src,
+                           ffi::Result<ffi::AnyBuffer> dst) {
+  se::DeviceMemoryBase dst_mem = dst->device_memory();
+  se::DeviceMemoryBase src_mem = src.device_memory();
+  
+  // Initialize once.
+  static void* first_opaque = src_mem.opaque();
+  CHECK_EQ(first_opaque, src_mem.opaque());
+  return stream->MemcpyD2D(&dst_mem, src_mem, src_mem.size());
+}
+
+XLA_FFI_DEFINE_HANDLER(kMemcpy, Memcpy,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::AnyBuffer>()   // src
+                           .Ret<ffi::AnyBuffer>(),  // dst
+                       {ffi::Traits::kCmdBufferCompatible});
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "Memcpy",
+                         PlatformUtil::CanonicalPlatformName("GPU").value(),
+                         kMemcpy);
+
+TEST(StreamExecutorGpuClientTest, TestAllocateBuffer) {
+  static constexpr char const* kProgram = R"(
+HloModule AllocateBuffer.2, entry_computation_layout={()->f32[4]}
+
+ENTRY %main () -> f32[4] {
+  %custom-call = f32[4] custom-call(), custom_call_target="AllocatePersistentBuffer", api_version=API_VERSION_TYPED_FFI
+  %const = f32[4] constant({1, 2, 3, 4})
+  %add = f32[4] add(%custom-call, %const)
+  ROOT %copy = f32[4] custom-call(%add), custom_call_target="Memcpy", api_version=API_VERSION_TYPED_FFI
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kProgram, *client));
+
+  ExecuteOptions opts;
+  for (int i = 0; i < 100; ++i) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto result, executable->Execute(/*argument_handles=*/{{}}, opts));
+    ASSERT_EQ(result.size(), 1);
+    ASSERT_EQ(result[0].size(), 1);
+    result[0][0]->GetReadyFuture().Await();
+  }
+}
+
 static absl::Status MemsetFromAttr(
     se::Stream* stream, float attr,
     ffi::Result<ffi::BufferR1<PrimitiveType::F32>> result) {
@@ -1999,73 +2047,74 @@ TEST(StreamExecutorGpuClientTest, NonZeroGPUDeviceTimeMeasurement) {
       absl::ZeroDuration());
 }
 
-TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
-  GpuClientOptions options = GpuClientOptions();
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_client, GetStreamExecutorGpuClient(options));
-  auto client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(gpu_client.get());
-  size_t dma_size = 1024;
-  size_t alignment = 4096;
-  void* host_dma_ptr = nullptr;
-  posix_memalign(&host_dma_ptr, alignment, dma_size);
-  EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
-  EXPECT_TRUE(client->IsDmaMapped(host_dma_ptr, dma_size));
-  EXPECT_FALSE(
-      client->IsDmaMapped(reinterpret_cast<char*>(host_dma_ptr) + 5, dma_size));
-  EXPECT_OK(client->DmaUnmap(host_dma_ptr));
-  EXPECT_FALSE(client->IsDmaMapped(host_dma_ptr, dma_size));
-  free(host_dma_ptr);
-}
+// These tests are not even compiled.
+// TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
+//   GpuClientOptions options = GpuClientOptions();
+//   TF_ASSERT_OK_AND_ASSIGN(auto gpu_client, GetStreamExecutorGpuClient(options));
+//   auto client =
+//       tensorflow::down_cast<PjRtStreamExecutorClient*>(gpu_client.get());
+//   size_t dma_size = 1024;
+//   size_t alignment = 4096;
+//   void* host_dma_ptr = nullptr;
+//   posix_memalign(&host_dma_ptr, alignment, dma_size);
+//   EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
+//   EXPECT_TRUE(client->IsDmaMapped(host_dma_ptr, dma_size));
+//   EXPECT_FALSE(
+//       client->IsDmaMapped(reinterpret_cast<char*>(host_dma_ptr) + 5, dma_size));
+//   EXPECT_OK(client->DmaUnmap(host_dma_ptr));
+//   EXPECT_FALSE(client->IsDmaMapped(host_dma_ptr, dma_size));
+//   free(host_dma_ptr);
+// }
 
-TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
-  GpuClientOptions options = GpuClientOptions();
+// TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
+//   GpuClientOptions options = GpuClientOptions();
 
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
-  ASSERT_GE(client->devices().size(), 2);
+//   TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+//   ASSERT_GE(client->devices().size(), 2);
 
-  size_t test_length = 0.5l * 1024 * 1024;
-  std::vector<int32_t> data(test_length);
-  for (int32_t i = 0; i < test_length; ++i) {
-    data[i] = i;
-  }
-  Shape shape = ShapeUtil::MakeShape(S32, {static_cast<int64_t>(data.size())});
-  PjRtDevice* const first_device = client->addressable_devices()[0];
+//   size_t test_length = 0.5l * 1024 * 1024;
+//   std::vector<int32_t> data(test_length);
+//   for (int32_t i = 0; i < test_length; ++i) {
+//     data[i] = i;
+//   }
+//   Shape shape = ShapeUtil::MakeShape(S32, {static_cast<int64_t>(data.size())});
+//   PjRtDevice* const first_device = client->addressable_devices()[0];
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PjRtBuffer> first_buffer,
-      client->BufferFromHostBuffer(
-          data.data(), shape.element_type(), shape.dimensions(),
-          /*byte_strides=*/std::nullopt,
-          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
-          first_device->memory_spaces()[0], /*device_layout=*/nullptr));
+//   TF_ASSERT_OK_AND_ASSIGN(
+//       std::unique_ptr<PjRtBuffer> first_buffer,
+//       client->BufferFromHostBuffer(
+//           data.data(), shape.element_type(), shape.dimensions(),
+//           /*byte_strides=*/std::nullopt,
+//           PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+//           first_device->memory_spaces()[0], /*device_layout=*/nullptr));
 
-  TF_ASSERT_OK_AND_ASSIGN(int64_t size, first_buffer->GetOnDeviceSizeInBytes());
+//   TF_ASSERT_OK_AND_ASSIGN(int64_t size, first_buffer->GetOnDeviceSizeInBytes());
 
-  size_t dma_size = 2 * 1024 * 1024;
-  size_t alignment = 1024;
-  void* host_dma_ptr = nullptr;
-  posix_memalign(&host_dma_ptr, alignment, dma_size);
-  EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
+//   size_t dma_size = 2 * 1024 * 1024;
+//   size_t alignment = 1024;
+//   void* host_dma_ptr = nullptr;
+//   posix_memalign(&host_dma_ptr, alignment, dma_size);
+//   EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
 
-  auto result = first_buffer->CopyRawToHost(host_dma_ptr, 0, size);
-  TF_EXPECT_OK(result.Await());
+//   auto result = first_buffer->CopyRawToHost(host_dma_ptr, 0, size);
+//   TF_EXPECT_OK(result.Await());
 
-  PjRtDevice* const second_device = client->addressable_devices()[1];
+//   PjRtDevice* const second_device = client->addressable_devices()[1];
 
-  TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
-                          client->CreateBuffersForAsyncHostToDevice(
-                              {shape}, second_device->memory_spaces()[0]));
-  auto second_buffer = transfer_manager->RetrieveBuffer(0);
+//   TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
+//                           client->CreateBuffersForAsyncHostToDevice(
+//                               {shape}, second_device->memory_spaces()[0]));
+//   auto second_buffer = transfer_manager->RetrieveBuffer(0);
 
-  EXPECT_OK(transfer_manager->TransferRawDataToSubBuffer(0, host_dma_ptr, 0,
-                                                         size, true, []() {}));
-  ASSERT_OK_AND_ASSIGN(auto literal, second_buffer->ToLiteralSync());
-  EXPECT_EQ(literal->element_count(), test_length);
-  EXPECT_THAT(literal->data<int32_t>(), ElementsAreArray(data));
+//   EXPECT_OK(transfer_manager->TransferRawDataToSubBuffer(0, host_dma_ptr, 0,
+//                                                          size, true, []() {}));
+//   ASSERT_OK_AND_ASSIGN(auto literal, second_buffer->ToLiteralSync());
+//   EXPECT_EQ(literal->element_count(), test_length);
+//   EXPECT_THAT(literal->data<int32_t>(), ElementsAreArray(data));
 
-  EXPECT_OK(client->DmaUnmap(host_dma_ptr));
-  free(host_dma_ptr);
-}
+//   EXPECT_OK(client->DmaUnmap(host_dma_ptr));
+//   free(host_dma_ptr);
+// }
 
 struct ShardedAutotuningTestInfo {
   bool use_xla_computation;

@@ -999,6 +999,16 @@ GetStreamExecutorGpuDeviceAllocator(
   }
 
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
+  // Add memory allocator to allocate memory buffers with persistent temp
+  // memory space color.
+  for (const auto& ordinal_and_device : addressable_devices) {
+    TF_ASSIGN_OR_RETURN(auto async_allocator,
+                        CreateCudaAsyncAllocator(*(ordinal_and_device.second),
+                                                 1.0, false, true, true, true));
+    allocators.emplace_back(std::move(async_allocator),
+                            ordinal_and_device.second->compute_stream(),
+                            /*memory_space=*/gpu::kTempBufferMemorySpaceColor);
+  }
   const auto& debug_options = xla::GetDebugOptionsFromFlags();
   if (debug_options.xla_gpu_temp_buffer_use_separate_color()) {
     // Add memory allocator to allocate memory buffers with persistent temp
