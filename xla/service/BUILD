@@ -42,6 +42,9 @@ package_group(
     includes = [
         "//xla:friends",
     ],
+    packages = [
+        "//third_party/xprof/...",
+    ],
 )
 
 tf_proto_library(
