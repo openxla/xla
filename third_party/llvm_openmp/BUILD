@@ -2,12 +2,12 @@
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
-    "@tsl//third_party/llvm_openmp:cmake_vars.bzl",
+    "@xla//third_party/llvm_openmp:cmake_vars.bzl",
     "cmake_var_string",
     "expand_cmake_vars",
 )
 load(
-    "@tsl//third_party/llvm_openmp:openmp.bzl",
+    "@xla//third_party/llvm_openmp:openmp.bzl",
     "dict_add",
     "libiomp5_cc_binary",
 )
