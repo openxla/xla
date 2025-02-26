@@ -157,9 +157,11 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
   };
   for (SymbolEntry se : symbols) {
     *se.functor = dlsym(libhandle, se.name);
-    const char* dlsym_error = dlerror();
-    if (dlsym_error) {
-      VLOG(0) << "Error: " << dlsym_error;
+    if (se.functor == nullptr) {
+      const char* dlsym_error = dlerror();
+      if (dlsym_error) {
+        VLOG(0) << "Error: " << dlsym_error;
+      }
     }
   }
   nvmlReturn_t init_result = xla_nvmlInit();
