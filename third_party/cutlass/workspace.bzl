@@ -12,4 +12,7 @@ def repo():
         strip_prefix = "cutlass-{commit}".format(commit = CUTLASS_COMMIT),
         urls = tf_mirror_urls("https://github.com/chsigg/cutlass/archive/{commit}.tar.gz".format(commit = CUTLASS_COMMIT)),
         build_file = "//third_party/cutlass:cutlass.BUILD",
+        patch_file = [
+            "//third_party/cutlass:set_slice3x3-set_slice_3x3-1784.patch",
+        ],
     )
