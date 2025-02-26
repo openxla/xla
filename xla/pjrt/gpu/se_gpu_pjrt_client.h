@@ -171,18 +171,9 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options);
 
-// Populate the fabric info of a node to kv_store.
-void PopulateFabricInfo(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                        const int node_id,
-                        absl::Span<PjRtDevice* const> addressable_devices);
-
-// Get the fabric info of all nodes, returning a hashmap where keys are
-// node_ids, values are vectors of device fabric infos. The i'th element in the
-// vector corresponds to device ordinal i, in the format of
-// "clusterUuid/cliqueId".
-absl::StatusOr<absl::flat_hash_map<uint64_t, std::vector<std::string>>>
-GetAllFabricInfos(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                  const int num_nodes);
+// Get the fabric info of a local device ordinal in the format of
+// "clusterUuid/cliqueId". Empty on SM90 or lower.
+std::string GetDeviceFabricInfo(const int device_ordinal);
 
 }  // namespace xla
 

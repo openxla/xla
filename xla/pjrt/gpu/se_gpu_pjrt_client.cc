@@ -1077,6 +1077,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_compute_capability(
         MakeComputeCapabilityString(desc.get()));
     device_proto->set_core_count(desc->core_count());
+    device_proto->set_fabric_uuid(
+        GetDeviceFabricInfo(ordinal_and_device.first));
   }
 
   GlobalTopologyProto global_topology;
@@ -1330,10 +1332,11 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
   return devices;
 }
 
-namespace {
-// Get the fabric info of a local device ordinal in the formate of
-// "clusterUuid/cliqueId".
+// Get the fabric info of a local device ordinal in the format of
+// "clusterUuid/cliqueId". Empty on SM90 or lower.
 std::string GetDeviceFabricInfo(const int device_ordinal) {
+  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
+
   char pciBusId[] = "00000000:00:00.0";
   cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_ordinal);
   nvmlDevice_t device;
@@ -1366,86 +1369,6 @@ std::string GetDeviceFabricInfo(const int device_ordinal) {
       fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
       fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
   return absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId));
-}
-
-// Construct a string containing all device fabric infos of a node. Device
-// fabric infos are seperated by "#". The i'th fabric info corresponds to device
-// ordinal i.
-std::string ConstructNodeFabricInfo(
-    std::vector<std::string>& device_fabric_infos) {
-  std::string device_cliques = device_fabric_infos.at(0);
-  for (int device_id = 1; device_id < device_fabric_infos.size(); ++device_id) {
-    absl::StrAppend(&device_cliques, "#", device_fabric_infos.at(device_id));
-  }
-  return device_cliques;
-}
-
-// Reverse function of ConstructNodeFabricInfo. Given a string format of node
-// fabric info, parse it to a vector of strings where the i'th element is the
-// fabric info of device ordinal i.
-std::vector<std::string> ParseNodeFabricInfo(
-    absl::string_view node_fabric_info) {
-  return absl::StrSplit(node_fabric_info, "#");
-}
-}  // namespace
-
-void PopulateFabricInfo(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                        const int node_id,
-                        absl::Span<PjRtDevice* const> addressable_devices) {
-  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
-
-  std::vector<std::string> device_fabric_infos(addressable_devices.size());
-  for (const PjRtDevice* device : addressable_devices) {
-    LocalDeviceState* local_device_state =
-        tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
-            ->local_device_state();
-    if (local_device_state != nullptr) {
-      se::StreamExecutor* executor = local_device_state->executor();
-      int device_ordinal = executor->device_ordinal();
-      device_fabric_infos.at(device_ordinal) =
-          GetDeviceFabricInfo(device_ordinal);
-    }
-  }
-
-  TF_CHECK_OK(
-      kv_store->Set(absl::StrCat("fabric_info/", std::to_string(node_id)),
-                    ConstructNodeFabricInfo(device_fabric_infos)));
-}
-
-absl::StatusOr<absl::flat_hash_map<uint64_t, std::vector<std::string>>>
-GetAllFabricInfos(std::shared_ptr<KeyValueStoreInterface> kv_store,
-                  const int num_nodes) {
-  std::vector<absl::StatusOr<std::string>> fabric_info_strs(num_nodes);
-  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "GetAllFabricInfo",
-                                      DefaultThreadPoolSize());
-
-  absl::BlockingCounter blocking_counter(num_nodes);
-  absl::Mutex mu;
-  for (int node_id = 0; node_id < num_nodes; node_id++) {
-    thread_pool.Schedule([&, node_id] {
-      absl::StatusOr<std::string> local_topology_str =
-          kv_store->Get(absl::StrCat("fabric_info/", std::to_string(node_id)),
-                        absl::Seconds(10));
-      {
-        absl::MutexLock lock(&mu);
-        fabric_info_strs[node_id] = local_topology_str;
-      }
-      blocking_counter.DecrementCount();
-    });
-  }
-  blocking_counter.Wait();
-
-  absl::flat_hash_map<uint64_t, std::vector<std::string>> fabric_info;
-  for (int node_id = 0; node_id < num_nodes; ++node_id) {
-    const absl::StatusOr<std::string>& str = fabric_info_strs.at(node_id);
-    if (str.ok()) {
-      fabric_info[node_id] = ParseNodeFabricInfo(*str);
-    } else {
-      return absl::InternalError(absl::StrCat(
-          "Getting fabric info failed: ", str.status().message(), "\n\n"));
-    }
-  }
-  return fabric_info;
 }
 
 }  // namespace xla

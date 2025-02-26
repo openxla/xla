@@ -70,7 +70,13 @@ message DeviceProto {
   string device_kind = 8;
   string to_string = 9;
   string debug_string = 10;
-  map<string, DeviceAttributeProto> attributes = 11;
+
+  // fabric_uuid uniquely identifies a MNNVL domain. Only meaningful
+  // for SM100 and onwards.
+  // fabric_uuid is constructed in the formate of "clusterUuid/cliqueId".
+  string fabric_uuid = 11;
+
+  map<string, DeviceAttributeProto> attributes = 12;
 }
 
 message LocalTopologyProto {
