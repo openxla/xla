@@ -3424,11 +3424,17 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:util",
+        "//xla/ffi:attribute_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/service/gpu:gpu_memory_space_assignment",
+        "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

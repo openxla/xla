@@ -1609,7 +1609,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<ScatterSimplifier>();
 
   pipeline.AddPass<HostOffloader>();
-  pipeline.AddPass<PostLayoutCustomCallRewriter>();
 
   TF_RETURN_IF_ERROR(
       AddConvAndGemmAutotuningPasses(&pipeline, gpu_version, options,
@@ -1651,6 +1650,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                                                      gpu_version);
   }
 
+  pipeline.AddPass<PostLayoutCustomCallRewriter>();
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
 
   pipeline.AddPass<HostMemoryTransferAsyncifier>(

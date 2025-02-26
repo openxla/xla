@@ -24,10 +24,14 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+inline constexpr absl::string_view kAnnotateMemorySpace = "AnnotateMemorySpace";
+
 // Rewrite custom calls after running layout assignment and normalization.
 class PostLayoutCustomCallRewriter : public HloModulePass {
  public:
-  absl::string_view name() const override { return "post-layout-custom-call-rewriter"; }
+  absl::string_view name() const override {
+    return "post-layout-custom-call-rewriter";
+  }
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(

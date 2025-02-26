@@ -475,15 +475,20 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "Memcpy",
                          PlatformUtil::CanonicalPlatformName("GPU").value(),
                          kMemcpy);
 
-TEST(StreamExecutorGpuClientTest, TestAllocateBuffer) {
+TEST(StreamExecutorGpuClientTest, TestAnnotateMemorySpace) {
   static constexpr char const* kProgram = R"(
 HloModule AllocateBuffer.2, entry_computation_layout={()->f32[4]}
 
 ENTRY %main () -> f32[4] {
-  %custom-call = f32[4] custom-call(), custom_call_target="AllocatePersistentBuffer", api_version=API_VERSION_TYPED_FFI
-  %const = f32[4] constant({1, 2, 3, 4})
-  %add = f32[4] add(%custom-call, %const)
-  ROOT %copy = f32[4] custom-call(%add), custom_call_target="Memcpy", api_version=API_VERSION_TYPED_FFI
+  %const = f32[] constant(0.0)
+  %broadcast = f32[4] broadcast(%const), dimensions={}
+  %custom-call = f32[4] custom-call(%broadcast), custom_call_target="AnnotateMemorySpace",
+      backend_config={"memory_space" = "persistent_temp"},
+      api_version=API_VERSION_TYPED_FFI
+  %const1 = f32[4] constant({1.0, 2.0, 3.0, 4.0})
+  %add = f32[4] add(%custom-call, %const1)
+  ROOT %copy = f32[4] custom-call(%add), custom_call_target="Memcpy",
+      api_version=API_VERSION_TYPED_FFI
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto client,
