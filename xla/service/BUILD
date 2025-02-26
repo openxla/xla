@@ -4778,7 +4778,6 @@ cc_library(
     deps = [
         ":computation_layout",
         ":computation_placer_hdr",
-        ":executable",
         ":hlo_module_util",
         ":hlo_runner_interface",
         "//xla:literal",
@@ -4809,7 +4808,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
