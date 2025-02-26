@@ -2172,7 +2172,7 @@ TEST_F(DynamicSliceFusionRewriterTest,
 }
 
 TEST_F(DynamicSliceFusionRewriterTest,
-       ReduceScatterDynamicSliceMultipleBuffers) {
+       ReduceScatterDynamicSliceAndDUSMultipleBuffersGetsFused) {
   const char* hlo = R"(
     HloModule test, replica_count=2
     add {
