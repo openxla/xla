@@ -285,6 +285,21 @@ static absl::Status EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
   return absl::OkStatus();
 }
 
+// TODO: clean up this function to only return the CP we want to decompose.
+void RemoveAllButOne(std::vector<HloCollectivePermuteInstruction*>& cps) {
+  // This is a heuristic that chooses the collective permute with the highest
+  // number of source-target pairs.
+  int cp_index = 0;
+  int max_num_pairs = 0;
+  for (int i = 0; i < cps.size(); ++i) {
+    if (cps[i]->source_target_pairs().size() > max_num_pairs) {
+      max_num_pairs = cps[i]->source_target_pairs().size();
+      cp_index = i;
+    }
+  }
+  cps = {cps[cp_index]};
+}
+
 absl::StatusOr<bool> CollectivePermuteDecomposer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -363,6 +378,12 @@ absl::StatusOr<bool> CollectivePermuteDecomposer::Run(
         cp1_to_pipeline = optional_pair.value().second;
       }
     }  // for MakeInstructionPostOrder
+
+    if (cps_to_decompose.size() > 1 &&
+        pipeline_parallelism_opt_level_ !=
+            DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE) {
+      RemoveAllButOne(cps_to_decompose);
+    }
 
     // Find all collectives conflicting with the collective permutes that we
     // want to decompose. We need this information to achieve two things:

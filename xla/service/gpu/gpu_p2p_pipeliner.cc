@@ -310,8 +310,16 @@ static absl::Status PostProcessRotatedSendRecvOps(
          FindAllConflictingCollectives(parent, {rotated_instr})) {
       if (rotated_send_recvs_set.contains(conflicting_collective)) continue;
       num_conflicting_collectives++;
-      TF_RETURN_IF_ERROR(
-          conflicting_collective->AddControlDependencyTo(rotated_instr));
+      HloInstruction* new_control_dependency;
+      for (HloInstruction* user : rotated_instr->users()) {
+        if (user->opcode() == HloOpcode::kRecvDone ||
+            user->opcode() == HloOpcode::kSendDone) {
+          new_control_dependency = user;
+          break;
+        }
+      }
+      TF_RETURN_IF_ERROR(conflicting_collective->AddControlDependencyTo(
+          new_control_dependency));
       VLOG(5) << "Adding control dependency from "
               << conflicting_collective->ToShortString() << " to "
               << rotated_instr->ToShortString();
