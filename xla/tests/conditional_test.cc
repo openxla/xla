@@ -162,6 +162,55 @@ class ConditionalOpTest : public ClientLibraryTestBase {
     return CreateTupleSubComputation("SubR1", tuple_2_r1s2f32_);
   }
 
+  // std::vector<ExecutionOptions> CreateExecutionOptions() {
+  //   std::vector<ExecutionOptions> exec_options;
+  //   auto option = CreateDefaultExecutionOptions();
+  //   option.mutable_debug_options()->add_xla_gpu_enable_command_buffer(
+  //       DebugOptions::CONDITIONAL);
+  //   option.mutable_debug_options()->add_xla_gpu_enable_command_buffer(
+  //       DebugOptions::WHILE);
+  //   option.mutable_debug_options()->set_xla_gpu_graph_min_graph_size(1);
+  //   exec_options.push_back(option);
+  //   exec_options.push_back(CreateDefaultExecutionOptions());
+  //   return exec_options;
+  // }
+
+  template <typename NativeT>
+  void ComputeAndCompareR1WithExecOptions(
+      XlaBuilder* builder, absl::Span<const NativeT> expected,
+      absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+    execution_options_.mutable_debug_options()
+        ->set_xla_gpu_graph_min_graph_size(1);
+    ComputeAndCompareR1<NativeT>(builder, expected, arguments, error);
+  }
+
+  template <typename NativeT>
+  void ComputeAndCompareR1WithExecOptions0(
+      XlaBuilder* builder, absl::Span<const NativeT> expected,
+      absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+    execution_options_.mutable_debug_options()
+        ->set_xla_gpu_graph_min_graph_size(1);
+    ComputeAndCompareR1<NativeT>(builder, expected, arguments, error);
+    execution_options_.stream()->BlockHostUntilDone();
+  }
+
+  // template <typename NativeT>
+  // void ComputeAndCompareR1WithExecOptions1(
+  //     XlaBuilder* builder, absl::Span<const NativeT> expected,
+  //     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+  //   execution_options_.mutable_debug_options()
+  //       ->clear_xla_gpu_enable_command_buffer();
+  //   ComputeAndCompareR1<NativeT>(builder, expected, arguments, error);
+  // }
+
   Shape r0f32_ = ShapeUtil::MakeShape(F32, {});
   Shape r1s2f32_ = ShapeUtil::MakeShape(F32, {2});
   Shape tuple_2_r0f32_ = ShapeUtil::MakeTupleShape(
@@ -170,6 +219,7 @@ class ConditionalOpTest : public ClientLibraryTestBase {
       {ShapeUtil::MakeShape(F32, {2}), ShapeUtil::MakeShape(F32, {2})});
   Shape empty_tuple_ = ShapeUtil::MakeTupleShape({});
   ErrorSpec error_spec_{0.001};
+  // std::vector<ExecutionOptions> exec_options_ = CreateExecutionOptions();
 };
 
 // Test fixture to run indexed conditional (switch/case) tests with varying
@@ -403,8 +453,10 @@ XLA_TEST_F(ConditionalOpTest, Parameters2ArrayTrueBranch) {
   Conditional(pred, operands, CreateR1TupleAddComputation(), operands,
               CreateR1TupleSubComputation());
 
-  ComputeAndCompareR1<float>(&builder, {34.0f, 67.0f}, {pred_arg.get()},
-                             error_spec_);
+  ComputeAndCompareR1WithExecOptions0<float>(&builder, {34.0f, 67.0f},
+                                             {pred_arg.get()}, error_spec_);
+  // ComputeAndCompareR1WithExecOptions1<float>(&builder, {34.0f, 67.0f},
+  //                                            {pred_arg.get()}, error_spec_);
 }
 
 // Test branch computations that take in 2 array parameters.
@@ -438,7 +490,7 @@ XLA_TEST_P(CaseOpTest, Parameters2Array) {
                 std::vector<XlaOp>(num_branches, operands));
     auto modified_bi = static_cast<float>(
         (bi < 0 || bi >= num_branches) ? num_branches - 1 : bi);
-    ComputeAndCompareR1<float>(
+    ComputeAndCompareR1WithExecOptions<float>(
         &builder, {24.0f * modified_bi + 10, 56.0f * modified_bi + 11},
         {branch_index_arg.get()}, error_spec_);
   }
@@ -459,8 +511,8 @@ XLA_TEST_F(ConditionalOpTest, Parameters2ArrayFalseBranch) {
   Conditional(pred, operands, CreateR1TupleAddComputation(), operands,
               CreateR1TupleSubComputation());
 
-  ComputeAndCompareR1<float>(&builder, {14.0f, 45.0f}, {pred_arg.get()},
-                             error_spec_);
+  ComputeAndCompareR1WithExecOptions<float>(&builder, {14.0f, 45.0f},
+                                            {pred_arg.get()}, error_spec_);
 }
 
 // Test true and false computations that return a tuple of scalars.
@@ -622,7 +674,7 @@ XLA_TEST_F(ConditionalOpTest, ArrayOperandsFromExternalParams) {
   Conditional(pred, operand1, CreateR1CeilComputation(), operand2,
               CreateR1FloorComputation());
 
-  ComputeAndCompareR1<float>(
+  ComputeAndCompareR1WithExecOptions<float>(
       &builder, {10.0f, 11.0f},
       {pred_arg.get(), operand1_param.get(), operand2_param.get()},
       error_spec_);

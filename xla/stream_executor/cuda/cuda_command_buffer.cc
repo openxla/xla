@@ -774,10 +774,11 @@ absl::Status CudaCommandBuffer::Finalize() {
     TF_RETURN_IF_ERROR(instantiated);
 
     uint64_t end_nanos = tsl::Env::Default()->NowNanos();
-
-    VLOG(5) << "Instantiated executable graph #" << NotifyExecCreated()
-            << " in " << (end_nanos - start_nanos) / 1000 << " μs"
-            << "; nodes: " << num_nodes
+    TF_ASSIGN_OR_RETURN(auto node_count, GetNodeCount());
+    auto exec_num = NotifyExecCreated();
+    VLOG(5) << "Instantiated executable graph #" << exec_num << " in "
+            << (end_nanos - start_nanos) / 1000 << " μs"
+            << "; nodes: " << node_count
             << "; conditionals: " << num_cond_cmd_buffers
             << "; alive executable graphs: " << AliveExecs();
   } else {
@@ -903,9 +904,9 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
 
 CudaCommandBuffer::~CudaCommandBuffer() {
   if (exec_ != nullptr && mode() == Mode::kPrimary) {
+    auto exec_num = NotifyExecDestroyed();
     VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
-            << "(remaining alive executable graphs: " << NotifyExecDestroyed()
-            << ")";
+            << "(remaining alive executable graphs: " << exec_num << ")";
     if (auto status = cuda::ToStatus(cuGraphExecDestroy(exec_),
                                      "Failed to destroy CUDA executable graph");
         !status.ok()) {
