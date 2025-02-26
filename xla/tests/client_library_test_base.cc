@@ -188,7 +188,7 @@ void ClientLibraryTestBase::ComputeAndCompareLiteral(
       builder, expected, arguments, std::nullopt, shape_with_layout));
 }
 
-absl::Status absl::Status
+absl::Status
 ClientLibraryTestBase::ComputeAndCompareLiteralWithAllOutputLayouts(
     const xla::XlaComputation& computation, const Literal& expected,
     absl::Span<GlobalData* const> arguments,
