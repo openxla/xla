@@ -23,15 +23,25 @@ with many other useful artifacts.
 
 The tool `run_hlo_module` operates on pre-optimization HLO, and by default
 bundles compilation, running and comparison with the reference interpreter
-implementation. For example, the usual invocation to run an input file
-`computation.hlo` on an NVIDIA GPU and to check it for correctness is:
+implementation. The tool can be used as follows:
 
-```
-$ run_hlo_module --platform=CUDA --reference_platform=Interpreter computation.hlo
+```bash
+$ run_hlo_module \
+    --input_format=[hlo|mhlo|pb|pbtxt|stablehlo] \
+    --platform=[CPU|CUDA|Interpreter] \
+    --reference_platform=[CPU|CUDA|Interpreter] \
+    path/to/[hlo|mhlo|pb|pbtxt|stablehlo]_module
 ```
 
-The `--input_format` flag can be used to specify the input type. For example, to
-run a StableHLO module specify `--input_format=stablehlo`.
+A typical usage employs the following flags:
+
+  * `--input_format=<string>` - The format (hlo, mhlo, pb, pbtxt, or
+stablehlo) of the input file.
+  * `--platform=<string>` - The test platform that the input module will be
+executed on (gpu, cpu, etc).
+  * `--reference_platform=<string>` - The reference platform to execute the
+input module on. The result will be compared against the result from the
+test platform. Omitting the flag disables execution on a reference platform.
 
 As with all the tools, `--help` can be used to obtain the full list of options.
 
