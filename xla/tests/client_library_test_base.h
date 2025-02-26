@@ -169,7 +169,7 @@ class ClientLibraryTestBase : public ::testing::Test {
 
   void ComputeAndCompareLiteral(XlaBuilder* builder, const Literal& expected,
                                 absl::Span<GlobalData* const> arguments,
-                                const Shape* shape_with_layout = nullptr);
+                                const Shape* shape_with_layout);
 
   // Build and run the computation and return the result as a literal.
   // shape_with_layout indicates the result layout to request when calling
