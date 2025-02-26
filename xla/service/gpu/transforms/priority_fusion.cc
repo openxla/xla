@@ -77,6 +77,10 @@ namespace gpu {
 
 namespace {
 
+bool IsTritonSnippet(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kCustomCall && instr.custom_call_target() == "triton::snippet";
+}
+
 bool IsFusible(const HloInstruction& instr) {
   // Side-effecting operations are not fusible.
   if (!instr.IsFusible()) {
@@ -93,6 +97,8 @@ bool IsFusible(const HloInstruction& instr) {
     case HloOpcode::kFusion:
       return IsGenericTritonFusion(instr) ||
              instr.fusion_kind() != HloInstruction::FusionKind::kCustom;
+    case HloOpcode::kCustomCall:
+      return IsTritonSnippet(instr);
     case HloOpcode::kCopy:
     case HloOpcode::kIota:
     case HloOpcode::kConstant:
@@ -479,6 +485,7 @@ class PriorityFusionQueue {
     if (HloPredicateIsOp<HloOpcode::kBitcast>(producer)) {
       return absl::InfiniteDuration();
     }
+
     // We always fuse constants, but the cost model doesn't handle them very
     // well: fusing constants changes costs significantly. Also, there's no
     // point recomputing priorities. Therefore, we fuse all of them at the end.
@@ -537,11 +544,16 @@ class PriorityFusionQueue {
       step->set_us_fused(absl::ToDoubleMicroseconds(run_times.time_fused));
       step->set_us_unfused(absl::ToDoubleMicroseconds(run_times.time_unfused));
     }
+
+    // TODO consider boosting triton snippet if they don't get fused.
+    // if (IsTritonSnippet(producer)) {
+    //   return absl::InfiniteDuration();
+    // }
     return current_priority + run_times.time_unfused - run_times.time_fused;
   }
 
   FusionDecision IsTritonSupported(const HloInstruction& instruction) {
-    if (IsGenericTritonFusion(instruction)) {
+    if (IsGenericTritonFusion(instruction) || IsTritonSnippet(instruction)) {
       return FusionDecision::Allow();
     }
 

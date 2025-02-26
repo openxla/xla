@@ -70,6 +70,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Parser/Parser.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
@@ -596,6 +597,45 @@ absl::StatusOr<ScalarOrTensor> EmitTiledBitcast(
                                normalized_reshape)};
 }
 
+
+absl::StatusOr<Value> EmitCustomCall(
+    EmitterLocOpBuilder& b,
+    mlir::triton::FuncOp fn,
+    const HloInstruction* hlo,
+    ValueRange inputs
+  ) {
+
+  auto embedded_mlir = hlo->raw_backend_config_string();
+  mlir::ParserConfig cfg(fn.getContext());
+  auto loaded_module = mlir::parseSourceString<mlir::ModuleOp>(llvm::StringRef(embedded_mlir), cfg, "embedded.ttir");
+  if (!loaded_module) {
+    return absl::InvalidArgumentError("Cannot parse embedded triton snippet.");
+  }
+
+  // Extract the only function from the parsed module
+  auto imported_funcs = loaded_module->getOps<mlir::func::FuncOp>();
+  if (imported_funcs.empty()) {
+      return absl::InvalidArgumentError("No func in embedded triton snippet");
+  }
+  mlir::func::FuncOp imported = *imported_funcs.begin();
+
+  mlir::func::FuncOp callee;
+  mlir::SymbolTable symbolTable(fn->getParentOp());
+  if (symbolTable.lookup(imported.getSymName())) {
+    callee = mlir::dyn_cast<mlir::func::FuncOp>(symbolTable.lookup(imported.getSymName()));
+  } else {
+    // Clone the function into the target module
+    // We set the visibility to private to ensure that the symbol-dce pass will reliably remove it.
+    callee = imported.clone();
+    callee.setVisibility(mlir::SymbolTable::Visibility::Private);
+    fn->getBlock()->push_back(callee);
+  }
+
+  auto call_op = b.create<mlir::func::CallOp>(callee, inputs);
+  return call_op.getResult(0);
+}
+
+
 absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
@@ -678,6 +718,17 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
   if (hlo->opcode() == HloOpcode::kBitcast) {
     return EmitTiledBitcast(b, tiled_hlo,
                             values[tiled_hlo.operand(0)].UnwrapUnsafe());
+  }
+
+  if (hlo->opcode() == HloOpcode::kCustomCall && hlo->custom_call_target() == "triton::snippet") {
+    std::vector<mlir::Value> operands;
+    operands.reserve(hlo->operands().size());
+
+    for (const TiledHloInstruction* operand : tiled_hlo.operands()) {
+      operands.push_back(values[operand].UnwrapUnsafe());
+    }
+    TF_ASSIGN_OR_RETURN(mlir::Value result, EmitCustomCall(b, fn, hlo, operands));
+    return ScalarOrTensor(result);
   }
 
   if (hlo->opcode() == HloOpcode::kTranspose) {
@@ -1014,7 +1065,8 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 
 void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
   mlir_context
-      .loadDialect<ttir::TritonDialect, ttir::gpu::TritonGPUDialect,
+      .loadDialect<mlir::func::FuncDialect,
+                   ttir::TritonDialect, ttir::gpu::TritonGPUDialect,
                    mlir::arith::ArithDialect, mlir::affine::AffineDialect,
                    mlir::LLVM::LLVMDialect, xla::XlaDialect,
                    xla::gpu::XlaGpuDialect, ttir::xla::XlaTritonDialect>();
@@ -1164,6 +1216,9 @@ absl::StatusOr<TritonModule> CreateTritonModule(
   }
 
   mlir::PassManager pm(&mlir_context);
+  // Inline all function calls, then remove the functions.
+  pm.addPass(mlir::createInlinerPass());
+  pm.addPass(mlir::createSymbolDCEPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   if (mlir::failed(pm.run(triton_module.get()))) {

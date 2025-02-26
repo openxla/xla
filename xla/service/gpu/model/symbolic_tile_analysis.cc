@@ -382,6 +382,22 @@ void SortTiledHloInstructionsInPostOrder(
       continue;
     }
 
+    auto instr = tiled_hlo_instruction->hlo();
+    if (instr->opcode() == HloOpcode::kCustomCall && instr->custom_call_target() == "triton::snippet") {
+      for (auto operand : instruction_adaptor.GetOperands()) {
+        auto [operand_tiled_hlo, inserted] = tiled_hlo_instructions_set.Insert(
+            std::make_unique<SymbolicTiledHloInstruction>(
+                &operand.instruction(), CreateIdentityMap(operand.shape(), ctx)));
+
+        tiled_hlo_instruction->AppendOperand(operand_tiled_hlo);
+
+        if (inserted) {
+          worklist.push_back(operand_tiled_hlo);
+        }
+      }
+      continue;
+    }
+
     HloInstructionIndexing operands_indexing =
         ComputeOutputToInputIndexing(tiled_hlo_instruction->hlo(),
                                      /*output_id=*/0, ctx);

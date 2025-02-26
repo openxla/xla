@@ -172,12 +172,17 @@ HloFusionAnalysis HloFusionAnalysis::Create(
 HloFusionAnalysis HloFusionAnalysis::Create(
     const HloInstruction& instruction,
     const se::DeviceDescription& device_info) {
-  absl::StatusOr<GpuBackendConfig> gpu_backend_config =
-      instruction.backend_config<GpuBackendConfig>();
 
-  FusionBackendConfig fusion_backend_config =
-      gpu_backend_config.ok() ? gpu_backend_config->fusion_backend_config()
-                              : FusionBackendConfig::default_instance();
+  FusionBackendConfig fusion_backend_config = FusionBackendConfig::default_instance();
+
+  if (instruction.opcode() == HloOpcode::kCustomCall && instruction.custom_call_target() == "triton::snippet") {
+    fusion_backend_config.set_kind(std::string(kTritonFusionKind));
+  } else {
+    absl::StatusOr<GpuBackendConfig> gpu_backend_config = instruction.backend_config<GpuBackendConfig>();
+    if (gpu_backend_config.ok()){
+      fusion_backend_config = gpu_backend_config->fusion_backend_config();
+    }
+  }
   return Create(std::move(fusion_backend_config),
                 HloFusionAdaptor::ForInstruction(&instruction), &device_info);
 }
@@ -186,19 +191,26 @@ HloFusionAnalysis HloFusionAnalysis::Create(
 HloFusionAnalysis HloFusionAnalysis::Create(
     const HloInstruction& producer, const HloInstruction& consumer,
     const se::DeviceDescription& device_info) {
-  absl::StatusOr<GpuBackendConfig> gpu_backend_config;
+  FusionBackendConfig fusion_backend_config;
+  if (
+    (producer.opcode() == HloOpcode::kCustomCall && producer.custom_call_target() == "triton::snippet")
+    || (consumer.opcode() == HloOpcode::kCustomCall && consumer.custom_call_target() == "triton::snippet")
+  ) {
+    fusion_backend_config = FusionBackendConfig::default_instance();
+    fusion_backend_config.set_kind(std::string(kTritonFusionKind));
+  } else {
+    absl::StatusOr<GpuBackendConfig> gpu_backend_config;
+    if (consumer.has_backend_config()) {
+      gpu_backend_config = consumer.backend_config<GpuBackendConfig>();
+    }
 
-  if (consumer.has_backend_config()) {
-    gpu_backend_config = consumer.backend_config<GpuBackendConfig>();
+    if (!gpu_backend_config.ok() && producer.has_backend_config()) {
+      gpu_backend_config = producer.backend_config<GpuBackendConfig>();
+    }
+
+    fusion_backend_config = gpu_backend_config.ok() ? gpu_backend_config->fusion_backend_config()
+                                : FusionBackendConfig::default_instance();
   }
-
-  if (!gpu_backend_config.ok() && producer.has_backend_config()) {
-    gpu_backend_config = producer.backend_config<GpuBackendConfig>();
-  }
-
-  FusionBackendConfig fusion_backend_config =
-      gpu_backend_config.ok() ? gpu_backend_config->fusion_backend_config()
-                              : FusionBackendConfig::default_instance();
 
   return HloFusionAnalysis::Create(
       std::move(fusion_backend_config),
