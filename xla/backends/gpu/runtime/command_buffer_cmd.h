@@ -121,7 +121,6 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 class CommandBufferCmd {
  public:
   using GraphNodeHandle = se::CommandBuffer::GraphNodeHandle;
-  using GraphNodeHandles = se::CommandBuffer::GraphNodeHandles;
   using GraphConditionalHandle = se::CommandBuffer::GraphConditionalHandle;
   using DependencySet = absl::flat_hash_set<const CommandBufferCmd*>;
 
@@ -234,22 +233,22 @@ class CommandBufferCmd {
   // launch node (to set the initial value of the loop variable) followed by a
   // condition node. Tail nodes are the nodes that no other nodes for current
   // command depends on.
-  virtual GraphNodeHandles tail_nodes() const = 0;
+  virtual std::vector<GraphNodeHandle> leaf_nodes() const = 0;
 
   DependencySet dependencies() const { return dependencies_; }
   void add_dependency(const CommandBufferCmd* cmd) {
     dependencies_.insert(cmd);
   }
 
-  GraphNodeHandles ToDependentNodes() const {
-    GraphNodeHandles nodes;
+  std::vector<GraphNodeHandle> ToDependentNodes() const {
+    std::vector<GraphNodeHandle> nodes;
     for (const CommandBufferCmd* cmd : dependencies_) {
-      for (const auto& node : cmd->tail_nodes()) {
+      for (const auto& node : cmd->leaf_nodes()) {
         CHECK(node != nullptr)
-            << "Null node found in tail_nodes() for cmd: " << cmd->ToString();
+            << "Null node found in leaf_nodes() for cmd: " << cmd->ToString();
       }
-      auto tail_nodes = cmd->tail_nodes();
-      nodes.insert(nodes.end(), tail_nodes.begin(), tail_nodes.end());
+      auto leaf_nodes = cmd->leaf_nodes();
+      nodes.insert(nodes.end(), leaf_nodes.begin(), leaf_nodes.end());
     }
     return nodes;
   }
@@ -443,8 +442,8 @@ class TracedCommandBufferCmd : public CommandBufferCmd {
       const RecordParams& record_params, se::CommandBuffer* command_buffer,
       bool create, absl::FunctionRef<absl::Status(se::Stream*)> trace);
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
  private:
@@ -472,8 +471,8 @@ class ComputationIdCmd : public CommandBufferCmd {
     return std::make_unique<ComputationIdCmd>(dest_, kind_);
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   BufferUseVector buffers() override;
@@ -511,8 +510,8 @@ class ChildCmd : public CommandBufferCmd {
     return std::make_unique<ChildCmd>(child_cmds_->Clone());
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   BufferUseVector buffers() override;
@@ -548,8 +547,8 @@ class LaunchCmd : public CommandBufferCmd {
                                        shmem_bytes_);
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   BufferUseVector buffers() override;
@@ -589,8 +588,8 @@ class CustomKernelLaunchCmd : public CommandBufferCmd {
                                                    custom_kernel_);
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   BufferUseVector buffers() override;
@@ -616,8 +615,8 @@ class MemcpyDeviceToDeviceCmd : public CommandBufferCmd {
                       const RecordParams& record_params,
                       se::CommandBuffer* command_buffer, bool create);
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -646,8 +645,8 @@ class MemzeroCmd : public CommandBufferCmd {
                       se::CommandBuffer* command_buffer, bool create);
 
   BufferUseVector buffers() override;
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -672,8 +671,8 @@ class Memset32Cmd : public CommandBufferCmd {
                       se::CommandBuffer* command_buffer, bool create);
 
   BufferUseVector buffers() override;
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -708,8 +707,8 @@ class IfCmd : public CommandBufferCmd {
     return std::make_unique<IfCmd>(pred_, then_commands_->Clone());
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{then_cond_node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{then_cond_node_};
   }
 
   bool force_update() override;
@@ -748,8 +747,8 @@ class IfElseCmd : public CommandBufferCmd {
                                        else_commands_->Clone());
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{then_cond_node_, else_cond_node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{then_cond_node_, else_cond_node_};
   }
 
   bool force_update() override;
@@ -804,7 +803,9 @@ class CaseCmd : public CommandBufferCmd {
                                      std::move(cloned_branches_commands));
   }
 
-  GraphNodeHandles tail_nodes() const override { return cond_nodes_; }
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return cond_nodes_;
+  }
 
   bool force_update() override;
 
@@ -816,8 +817,8 @@ class CaseCmd : public CommandBufferCmd {
   std::vector<std::unique_ptr<CommandBufferCmdSequence>> branches_commands_;
 
   std::vector<GraphConditionalHandle> case_branch_handles_;
-  GraphNodeHandles set_case_handle_kernel_nodes_;
-  GraphNodeHandles cond_nodes_;
+  std::vector<GraphNodeHandle> set_case_handle_kernel_nodes_;
+  std::vector<GraphNodeHandle> cond_nodes_;
   std::vector<std::unique_ptr<se::CommandBuffer>> branch_command_buffers_;
 };
 
@@ -837,8 +838,8 @@ class LaunchSetForConditionKernelCmd : public CommandBufferCmd {
                       const RecordParams& record_params,
                       se::CommandBuffer* command_buffer, bool create);
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
   BufferUseVector buffers() override;
 
@@ -879,8 +880,8 @@ class ForCmd : public CommandBufferCmd {
                                     body_commands_->Clone());
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{cond_node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{cond_node_};
   }
   bool force_update() override;
   BufferUseVector buffers() override;
@@ -920,8 +921,8 @@ class LaunchSetWhileConditionKernelCmd : public CommandBufferCmd {
                       se::CommandBuffer* command_buffer, bool create);
 
   BufferUseVector buffers() override;
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -971,8 +972,8 @@ class WhileCmd : public CommandBufferCmd {
                                       body_commands_->Clone());
   }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{cond_node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{cond_node_};
   }
   bool force_update() override;
 
@@ -1181,8 +1182,8 @@ class CustomCallCmd : public CommandBufferCmd {
 
   BufferUseVector buffers() override;
   bool IsNestedCommandBuffer() const final { return true; }
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -1233,8 +1234,8 @@ class BarrierCmd : public CommandBufferCmd {
                       se::CommandBuffer* command_buffer, bool create) override;
 
   BufferUseVector buffers() override;
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -1259,8 +1260,8 @@ class EmptyCmd : public CommandBufferCmd {
                       se::CommandBuffer* command_buffer, bool create) override;
 
   BufferUseVector buffers() override;
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override {
@@ -1294,8 +1295,8 @@ class CollectiveCmd : public CommandBufferCmd {
 
   virtual AsyncStreamKind GetAsyncStreamKind() = 0;
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   CollectiveStreamId nccl_stream_id() {
@@ -1482,8 +1483,8 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
 
   bool IsNestedCommandBuffer() const final { return true; }
 
-  GraphNodeHandles tail_nodes() const override {
-    return GraphNodeHandles{node_};
+  std::vector<GraphNodeHandle> leaf_nodes() const override {
+    return std::vector<GraphNodeHandle>{node_};
   }
 
   std::unique_ptr<CommandBufferCmd> Clone() const override;

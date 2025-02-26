@@ -73,7 +73,6 @@ CUdeviceptr AsDevicePtr(const DeviceMemoryBase& mem) {
 }
 
 using GraphNodeHandle = CommandBuffer::GraphNodeHandle;
-using GraphNodeHandles = CommandBuffer::GraphNodeHandles;
 using GraphConditionalHandle = CommandBuffer::GraphConditionalHandle;
 
 // Converts a platform independent GraphNodeHandle into a CUDA specific
@@ -88,8 +87,8 @@ CUgraphConditionalHandle ToCudaGraphHandle(GraphConditionalHandle handle) {
   return absl::bit_cast<CUgraphConditionalHandle>(handle);
 }
 
-// Converts a list of platform independent GraphNodeHandles into a list of
-// CUDA specific CUgraphNode.
+// Converts a list of platform independent std::vector<GraphNodeHandle> into a
+// list of CUDA specific CUgraphNode.
 std::vector<CUgraphNode> ToCudaGraphHandles(
     absl::Span<const GraphNodeHandle> opaque_handles) {
   std::vector<CUgraphNode> handles;
@@ -145,7 +144,7 @@ absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateLaunchNode(
-    GraphNodeHandles dependencies, const ThreadDim& threads,
+    std::vector<GraphNodeHandle> dependencies, const ThreadDim& threads,
     const BlockDim& blocks, const Kernel& kernel, const KernelArgs& args) {
   if (finalized_) {
     return absl::InternalError(
@@ -208,7 +207,8 @@ absl::Status CudaCommandBuffer::UpdateLaunchNode(GraphNodeHandle node,
 
 absl::StatusOr<GraphNodeHandle>
 CudaCommandBuffer::CreateSetIfElseConditionKernelNode(
-    GraphNodeHandles dependencies, GraphConditionalHandle then_conditional,
+    std::vector<GraphNodeHandle> dependencies,
+    GraphConditionalHandle then_conditional,
     GraphConditionalHandle else_conditional, DeviceMemory<bool> predicate) {
   if (!set_if_else_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec,
@@ -236,8 +236,8 @@ absl::Status CudaCommandBuffer::UpdateSetIfElseConditionKernelNode(
 
 absl::StatusOr<GraphNodeHandle>
 CudaCommandBuffer::CreateSetIfConditionKernelNode(
-    GraphNodeHandles dependencies, GraphConditionalHandle then_conditional,
-    DeviceMemory<bool> predicate) {
+    std::vector<GraphNodeHandle> dependencies,
+    GraphConditionalHandle then_conditional, DeviceMemory<bool> predicate) {
   if (!set_if_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetIfConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
@@ -260,7 +260,7 @@ absl::Status CudaCommandBuffer::UpdateSetIfConditionKernelNode(
 
 absl::StatusOr<GraphNodeHandle>
 CudaCommandBuffer::CreateSetForConditionKernelNode(
-    GraphNodeHandles dependencies, GraphConditionalHandle condition,
+    std::vector<GraphNodeHandle> dependencies, GraphConditionalHandle condition,
     DeviceMemory<int32_t> loop_counter, int32_t iterations) {
   if (!set_for_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetForConditionKernelLoaderSpec());
@@ -285,7 +285,7 @@ absl::Status CudaCommandBuffer::UpdateSetForConditionKernelNode(
 
 absl::StatusOr<GraphNodeHandle>
 CudaCommandBuffer::CreateSetWhileConditionKernelNode(
-    GraphNodeHandles dependencies, GraphConditionalHandle condition,
+    std::vector<GraphNodeHandle> dependencies, GraphConditionalHandle condition,
     DeviceMemory<bool> predicate) {
   if (!set_while_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec,
@@ -311,13 +311,13 @@ absl::Status CudaCommandBuffer::UpdateSetWhileConditionKernelNode(
 
 absl::StatusOr<GraphNodeHandle>
 CudaCommandBuffer::CreateSetCaseConditionKernelNode(
-    GraphNodeHandles dependencies, GraphConditionalHandle condition0,
-    GraphConditionalHandle condition1, GraphConditionalHandle condition2,
-    GraphConditionalHandle condition3, GraphConditionalHandle condition4,
-    GraphConditionalHandle condition5, GraphConditionalHandle condition6,
-    GraphConditionalHandle condition7, DeviceMemory<uint8_t> index,
-    bool index_is_bool, int32_t batch_offset, int32_t num_branches,
-    bool enable_conditional_default) {
+    std::vector<GraphNodeHandle> dependencies,
+    GraphConditionalHandle condition0, GraphConditionalHandle condition1,
+    GraphConditionalHandle condition2, GraphConditionalHandle condition3,
+    GraphConditionalHandle condition4, GraphConditionalHandle condition5,
+    GraphConditionalHandle condition6, GraphConditionalHandle condition7,
+    DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
+    int32_t num_branches, bool enable_conditional_default) {
   if (!set_case_condition_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetCaseConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
@@ -364,9 +364,9 @@ CudaCommandBuffer::GetNoOpKernel() {
 }
 
 absl::StatusOr<CommandBuffer::ConditionalNodeResult>
-CudaCommandBuffer::CreateConditionalNode(GraphNodeHandles dependencies,
-                                         GraphConditionalHandle conditional,
-                                         CommandBuffer::ConditionType type) {
+CudaCommandBuffer::CreateConditionalNode(
+    std::vector<GraphNodeHandle> dependencies,
+    GraphConditionalHandle conditional, CommandBuffer::ConditionType type) {
 #if CUDA_VERSION >= 12030
   // Add conditional node to a graph.
   VLOG(2) << "Add conditional node to a graph " << graph_
@@ -411,7 +411,7 @@ CudaCommandBuffer::CreateConditionalNode(GraphNodeHandles dependencies,
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemsetNode(
-    GraphNodeHandles dependencies, DeviceMemoryBase destination,
+    std::vector<GraphNodeHandle> dependencies, DeviceMemoryBase destination,
     BitPattern bit_pattern, size_t num_elements) {
   VLOG(2) << "Add memset node to a graph " << graph_
           << "; dst: " << destination.opaque()
@@ -464,7 +464,7 @@ absl::Status CudaCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMemcpyD2DNode(
-    GraphNodeHandles dependencies, DeviceMemoryBase destination,
+    std::vector<GraphNodeHandle> dependencies, DeviceMemoryBase destination,
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph_
           << "; dependencies: " << GraphNodeHandlesToString(dependencies)
@@ -514,7 +514,7 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
-    GraphNodeHandles dependencies, const CommandBuffer& nested) {
+    std::vector<GraphNodeHandle> dependencies, const CommandBuffer& nested) {
   CUgraph child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
@@ -546,7 +546,7 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
-    GraphNodeHandles dependencies, const ThreadDim& threads,
+    std::vector<GraphNodeHandle> dependencies, const ThreadDim& threads,
     const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
@@ -636,7 +636,7 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateEmptyNode(
-    GraphNodeHandles dependencies) {
+    std::vector<GraphNodeHandle> dependencies) {
   if (stream_executor_->GetDeviceDescription().driver_version() <
       SemanticVersion(12, 4, 0)) {
     // Instead of empty nodes we create no-op kernel nodes as barriers because
@@ -737,7 +737,7 @@ absl::Status CudaCommandBuffer::Finalize() {
   TF_RETURN_IF_ERROR(PrepareFinalization());
 
   // Maybe dump created CUDA graph to a dot file for debugging.
-  if VLOG_IS_ON (10) {
+  if (VLOG_IS_ON(10) && mode() == Mode::kPrimary) {
     std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
     TF_RETURN_IF_ERROR(WriteGraphToDotFile(path));
     if (VLOG_IS_ON(100)) {
@@ -841,8 +841,9 @@ absl::Status CudaCommandBuffer::PrepareFinalization() {
 
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
   TF_ASSIGN_OR_RETURN(
-      auto node, CreateLaunchNode(GraphNodeHandles{}, ThreadDim(), BlockDim(),
-                                  **noop, KernelArgsPackedArray<0>()));
+      auto node,
+      CreateLaunchNode(std::vector<GraphNodeHandle>{}, ThreadDim(), BlockDim(),
+                       **noop, KernelArgsPackedArray<0>()));
   return absl::OkStatus();
 }
 

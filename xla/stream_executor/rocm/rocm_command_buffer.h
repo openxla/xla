@@ -49,13 +49,14 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   //===--------------------------------------------------------------------===//
 
   absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
-      GraphNodeHandles dependencies) override;
+      std::vector<GraphNodeHandle> dependencies) override;
 
   // Adds a kernel launch command that depends on the commands in
   // deps.
   absl::StatusOr<GraphNodeHandle> CreateLaunchNode(
-      GraphNodeHandles deps, const ThreadDim& threads, const BlockDim& blocks,
-      const Kernel& kernel, const KernelArgs& args) override {
+      std::vector<GraphNodeHandle> deps, const ThreadDim& threads,
+      const BlockDim& blocks, const Kernel& kernel,
+      const KernelArgs& args) override {
     return absl::UnimplementedError("CreateLaunchNode");
   }
 
@@ -66,17 +67,16 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   }
 
   absl::StatusOr<GraphNodeHandle> CreateChildNode(
-      GraphNodeHandles deps, const CommandBuffer& child) override;
+      std::vector<GraphNodeHandle> deps, const CommandBuffer& child) override;
 
   absl::Status UpdateChildNode(GraphNodeHandle node,
                                const CommandBuffer& child) override;
 
   // Adds a device-to-device memory copy that depends on the commands in
   // deps.
-  absl::StatusOr<GraphNodeHandle> CreateMemcpyD2DNode(GraphNodeHandles deps,
-                                                      DeviceMemoryBase dst,
-                                                      DeviceMemoryBase src,
-                                                      uint64_t size) override;
+  absl::StatusOr<GraphNodeHandle> CreateMemcpyD2DNode(
+      std::vector<GraphNodeHandle> deps, DeviceMemoryBase dst,
+      DeviceMemoryBase src, uint64_t size) override;
 
   absl::Status UpdateMemcpyD2DNode(GraphNodeHandle node, DeviceMemoryBase dst,
                                    DeviceMemoryBase src,
@@ -84,8 +84,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
 
   // Adds a memset command that depends on the commands in deps.
   absl::StatusOr<GraphNodeHandle> CreateMemsetNode(
-      GraphNodeHandles deps, DeviceMemoryBase dst, BitPattern bit_pattern,
-      size_t num_elements) override;
+      std::vector<GraphNodeHandle> deps, DeviceMemoryBase dst,
+      BitPattern bit_pattern, size_t num_elements) override;
 
   absl::Status UpdateMemsetNode(GraphNodeHandle node, DeviceMemoryBase dst,
                                 BitPattern bit_pattern,
@@ -100,13 +100,14 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   // Adds a new conditional node to the graph and creates a
   // corresponding nested command buffer.
   absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle conditional,
-      ConditionType type) override {
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle conditional, ConditionType type) override {
     return absl::UnimplementedError("CreateConditionalNode");
   }
 
   absl::StatusOr<GraphNodeHandle> CreateSetIfElseConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle then_condition,
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle then_condition,
       GraphConditionalHandle else_condition,
       DeviceMemory<bool> predicate) override {
     return absl::UnimplementedError("CreateSetIfElseConditionKernelNode");
@@ -120,7 +121,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   }
 
   absl::StatusOr<GraphNodeHandle> CreateSetIfConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle then_condition,
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle then_condition,
       DeviceMemory<bool> predicate) override {
     return absl::UnimplementedError("CreateSetIfConditionKernelNode");
   }
@@ -132,8 +134,9 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   }
 
   absl::StatusOr<GraphNodeHandle> CreateSetForConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle condition,
-      DeviceMemory<int32_t> loop_counter, int32_t iterations) override {
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle condition, DeviceMemory<int32_t> loop_counter,
+      int32_t iterations) override {
     return absl::UnimplementedError("CreateSetForConditionKernelNode");
   }
 
@@ -144,8 +147,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   }
 
   absl::StatusOr<GraphNodeHandle> CreateSetWhileConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle condition,
-      DeviceMemory<bool> predicate) override {
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle condition, DeviceMemory<bool> predicate) override {
     return absl::UnimplementedError("CreateSetWhileConditionKernelNode");
   }
 
@@ -156,7 +159,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   }
 
   absl::StatusOr<GraphNodeHandle> CreateSetCaseConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle handle0,
+      std::vector<GraphNodeHandle> dependencies, GraphConditionalHandle handle0,
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
@@ -197,10 +200,10 @@ class RocmCommandBuffer : public GpuCommandBuffer {
         is_owned_graph_(is_owned_graph),
         parent_(parent) {}
 
-  // Converts a list of platform independent GraphNodeHandles into a list of
-  // Rocm specific hipGraphNode_t.
+  // Converts a list of platform independent std::vector<GraphNodeHandle> into a
+  // list of Rocm specific hipGraphNode_t.
   absl::StatusOr<std::vector<hipGraphNode_t>> ToHipGraphHandles(
-      GraphNodeHandles dependencies);
+      std::vector<GraphNodeHandle> dependencies);
 
   CUgraphExec GetPrimaryExec() const {
     if (mode() == Mode::kPrimary) {
@@ -212,7 +215,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   absl::Status PrepareFinalization() override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      GraphNodeHandles dependencies, const ThreadDim& threads,
+      std::vector<GraphNodeHandle> dependencies, const ThreadDim& threads,
       const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args);
 

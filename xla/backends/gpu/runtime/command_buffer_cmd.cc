@@ -207,7 +207,8 @@ void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
   // force a barrier before recording the next command as a workaround for CUDA
   // graph bug, where child CUDA graph must be a single CUDA graph root node.
   if (commands_.size() == 1 && commands_.front()->IsNestedCommandBuffer()) {
-    commands_.push_back(std::make_unique<BarrierCmd>());
+    commands_.push_back(std::make_unique<EmptyCmd>(
+        CommandBufferCmd::DependencySet{commands_.back().get()}));
   }
 }
 
@@ -234,8 +235,7 @@ std::unique_ptr<CommandBufferCmdSequence> CommandBufferCmdSequence::Clone()
   auto cloned_sequence =
       std::make_unique<CommandBufferCmdSequence>(synchronization_mode_);
   for (const auto& command : commands_) {
-    auto cloned_cmd = command->Clone();
-    cloned_sequence->Append(std::move(cloned_cmd));
+    cloned_sequence->Append(command->Clone());
   }
   return cloned_sequence;
 }
@@ -717,9 +717,6 @@ absl::Status MemcpyDeviceToDeviceCmd::Record(
     if (create) {
       TF_ASSIGN_OR_RETURN(node_,
                           command_buffer->CreateEmptyNode(ToDependentNodes()));
-    } else {
-      // No update operation for empty node
-      return absl::OkStatus();
     }
   } else {
     if (create) {
@@ -856,8 +853,8 @@ absl::Status IfCmd::Record(const Thunk::ExecuteParams& execute_params,
     TF_ASSIGN_OR_RETURN(
         auto cond_node_result,
         command_buffer->CreateConditionalNode(
-            GraphNodeHandles{set_cond_handle_kernel_node_}, then_cond_handle_,
-            se::CommandBuffer::ConditionType::kIf));
+            std::vector<GraphNodeHandle>{set_cond_handle_kernel_node_},
+            then_cond_handle_, se::CommandBuffer::ConditionType::kIf));
     then_command_buffer_ = std::move(cond_node_result.command_buffer);
     then_cond_node_ = cond_node_result.node_handle;
   } else {
@@ -919,13 +916,13 @@ absl::Status IfElseCmd::Record(const Thunk::ExecuteParams& execute_params,
     TF_ASSIGN_OR_RETURN(
         auto then_cond_node_result,
         command_buffer->CreateConditionalNode(
-            GraphNodeHandles{set_cond_handle_kernel_node_}, then_cond_handle_,
-            se::CommandBuffer::ConditionType::kIf));
+            std::vector<GraphNodeHandle>{set_cond_handle_kernel_node_},
+            then_cond_handle_, se::CommandBuffer::ConditionType::kIf));
     TF_ASSIGN_OR_RETURN(
         auto else_cond_node_result,
         command_buffer->CreateConditionalNode(
-            GraphNodeHandles{set_cond_handle_kernel_node_}, else_cond_handle_,
-            se::CommandBuffer::ConditionType::kIf));
+            std::vector<GraphNodeHandle>{set_cond_handle_kernel_node_},
+            else_cond_handle_, se::CommandBuffer::ConditionType::kIf));
     then_command_buffer_ = std::move(then_cond_node_result.command_buffer);
     else_command_buffer_ = std::move(else_cond_node_result.command_buffer);
     then_cond_node_ = then_cond_node_result.node_handle;
@@ -965,7 +962,13 @@ CaseCmd::CaseCmd(
     : CommandBufferCmd(CommandBufferCmdType::kCaseCmd),
       index_(index),
       index_is_bool_(index_is_bool),
-      branches_commands_(std::move(branches_commands)) {}
+      branches_commands_(std::move(branches_commands)) {
+  if (VLOG_IS_ON(5)) {
+    for (int i = 0; i < branches_commands_.size(); ++i) {
+      VLOG(5) << "Branch " << i << ": " << branches_commands_[i]->ToString();
+    }
+  }
+}
 
 absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
                              const RecordParams& record_params,
@@ -1013,7 +1016,7 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
       TF_ASSIGN_OR_RETURN(
           auto case_branch_node_result,
           command_buffer->CreateConditionalNode(
-              GraphNodeHandles{set_case_handle_kernel_nodes_},
+              std::vector<GraphNodeHandle>{set_case_handle_kernel_nodes_},
               case_branch_handles_[i], se::CommandBuffer::ConditionType::kIf));
       branch_command_buffers_.emplace_back(
           std::move(case_branch_node_result.command_buffer));
@@ -1141,12 +1144,13 @@ absl::Status ForCmd::Record(const Thunk::ExecuteParams& execute_params,
     TF_ASSIGN_OR_RETURN(
         set_cond_handle_node_,
         command_buffer->CreateSetForConditionKernelNode(
-            GraphNodeHandles{initialize_counter_node_}, cond_handle_,
-            se::DeviceMemory<int32_t>(loop_counter), num_iterations_));
+            std::vector<GraphNodeHandle>{initialize_counter_node_},
+            cond_handle_, se::DeviceMemory<int32_t>(loop_counter),
+            num_iterations_));
     TF_ASSIGN_OR_RETURN(
         auto cond_node_result,
         command_buffer->CreateConditionalNode(
-            GraphNodeHandles{set_cond_handle_node_}, cond_handle_,
+            std::vector<GraphNodeHandle>{set_cond_handle_node_}, cond_handle_,
             se::CommandBuffer::ConditionType::kWhile));
     body_command_buffer_ = std::move(cond_node_result.command_buffer);
     body_and_predict_commands_.Append(
@@ -1249,8 +1253,8 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params,
     TF_ASSIGN_OR_RETURN(
         auto cond_node_results,
         command_buffer->CreateConditionalNode(
-            GraphNodeHandles{initialize_while_handle_node_}, cond_handle_,
-            se::CommandBuffer::ConditionType::kWhile));
+            std::vector<GraphNodeHandle>{initialize_while_handle_node_},
+            cond_handle_, se::CommandBuffer::ConditionType::kWhile));
     loop_command_buffer_ = std::move(cond_node_results.command_buffer);
   }
   TF_RETURN_IF_ERROR(initialize_commands_.Record(

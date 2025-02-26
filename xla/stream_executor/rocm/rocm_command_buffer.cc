@@ -80,10 +80,11 @@ GraphNodeHandle FromHipGraphHandle(hipGraphNode_t handle) {
 }
 }  // namespace
 
-// Converts a list of platform independent GraphNodeHandles into a list of
-// Rocm specific hipGraphNode_t.
+// Converts a list of platform independent std::vector<GraphNodeHandle> into a
+// list of Rocm specific hipGraphNode_t.
 absl::StatusOr<std::vector<hipGraphNode_t>>
-RocmCommandBuffer::ToHipGraphHandles(GraphNodeHandles dependencies) const {
+RocmCommandBuffer::ToHipGraphHandles(
+    std::vector<GraphNodeHandle> dependencies) const {
   std::vector<hipGraphNode_t> deps;
   deps.reserve(dependencies.size());
   std::transform(

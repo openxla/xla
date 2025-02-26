@@ -142,12 +142,25 @@ static absl::StatusOr<Command> Convert(
     CommandBufferCmdSequence::SynchronizationMode synchronization_mode) {
   std::vector<std::unique_ptr<CommandBufferCmdSequence>> branch_cmds;
   branch_cmds.reserve(thunk.branch_thunks().size());
-  for (auto& branch_thunk : thunk.branch_thunks()) {
-    TF_ASSIGN_OR_RETURN(
-        CommandBufferCmdSequence cmds,
-        ConvertToCommands(branch_thunk->thunks(), synchronization_mode));
-    branch_cmds.emplace_back(
-        std::make_unique<CommandBufferCmdSequence>(std::move(cmds)));
+  if (thunk.branch_index_is_bool()) {
+    // For boolean predicates, we need to convert the branches in reverse order
+    // because the first branch is the "false" branch and the second is "true"
+    for (auto it = thunk.branch_thunks().rbegin(); 
+         it != thunk.branch_thunks().rend(); ++it) {
+      TF_ASSIGN_OR_RETURN(
+          CommandBufferCmdSequence cmds,
+          ConvertToCommands((*it)->thunks(), synchronization_mode));
+      branch_cmds.emplace_back(
+          std::make_unique<CommandBufferCmdSequence>(std::move(cmds)));
+    }
+  } else {
+    for (auto& branch_thunk : thunk.branch_thunks()) {
+      TF_ASSIGN_OR_RETURN(
+          CommandBufferCmdSequence cmds,
+          ConvertToCommands(branch_thunk->thunks(), synchronization_mode));
+      branch_cmds.emplace_back(
+          std::make_unique<CommandBufferCmdSequence>(std::move(cmds)));
+    }
   }
   return std::make_unique<CaseCmd>(thunk.branch_index_buffer(),
                                    thunk.branch_index_is_bool(),

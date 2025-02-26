@@ -162,23 +162,11 @@ class ConditionalOpTest : public ClientLibraryTestBase {
     return CreateTupleSubComputation("SubR1", tuple_2_r1s2f32_);
   }
 
-  // std::vector<ExecutionOptions> CreateExecutionOptions() {
-  //   std::vector<ExecutionOptions> exec_options;
-  //   auto option = CreateDefaultExecutionOptions();
-  //   option.mutable_debug_options()->add_xla_gpu_enable_command_buffer(
-  //       DebugOptions::CONDITIONAL);
-  //   option.mutable_debug_options()->add_xla_gpu_enable_command_buffer(
-  //       DebugOptions::WHILE);
-  //   option.mutable_debug_options()->set_xla_gpu_graph_min_graph_size(1);
-  //   exec_options.push_back(option);
-  //   exec_options.push_back(CreateDefaultExecutionOptions());
-  //   return exec_options;
-  // }
-
   template <typename NativeT>
-  void ComputeAndCompareR1WithExecOptions(
-      XlaBuilder* builder, absl::Span<const NativeT> expected,
-      absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+  void ComputeAndCompareR1WithCmdBuffer(XlaBuilder* builder,
+                                        absl::Span<const NativeT> expected,
+                                        absl::Span<GlobalData* const> arguments,
+                                        ErrorSpec error) {
     execution_options_.mutable_debug_options()
         ->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
     execution_options_.mutable_debug_options()
@@ -189,8 +177,20 @@ class ConditionalOpTest : public ClientLibraryTestBase {
   }
 
   template <typename NativeT>
-  void ComputeAndCompareR1WithExecOptions0(
-      XlaBuilder* builder, absl::Span<const NativeT> expected,
+  void ComputeAndCompareR0WithCmdBuffer(XlaBuilder* builder, NativeT expected,
+                                        absl::Span<GlobalData* const> arguments,
+                                        ErrorSpec error) {
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+    execution_options_.mutable_debug_options()
+        ->add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+    execution_options_.mutable_debug_options()
+        ->set_xla_gpu_graph_min_graph_size(1);
+    ComputeAndCompareR0<NativeT>(builder, expected, arguments, error);
+  }
+
+  void ComputeAndCompareTupleWithCmdBuffer(
+      XlaBuilder* builder, const Literal& expected,
       absl::Span<GlobalData* const> arguments, ErrorSpec error) {
     execution_options_.mutable_debug_options()
         ->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
@@ -198,18 +198,8 @@ class ConditionalOpTest : public ClientLibraryTestBase {
         ->add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
     execution_options_.mutable_debug_options()
         ->set_xla_gpu_graph_min_graph_size(1);
-    ComputeAndCompareR1<NativeT>(builder, expected, arguments, error);
-    execution_options_.stream()->BlockHostUntilDone();
+    ComputeAndCompareTuple(builder, expected, arguments, error);
   }
-
-  // template <typename NativeT>
-  // void ComputeAndCompareR1WithExecOptions1(
-  //     XlaBuilder* builder, absl::Span<const NativeT> expected,
-  //     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
-  //   execution_options_.mutable_debug_options()
-  //       ->clear_xla_gpu_enable_command_buffer();
-  //   ComputeAndCompareR1<NativeT>(builder, expected, arguments, error);
-  // }
 
   Shape r0f32_ = ShapeUtil::MakeShape(F32, {});
   Shape r1s2f32_ = ShapeUtil::MakeShape(F32, {2});
@@ -219,7 +209,6 @@ class ConditionalOpTest : public ClientLibraryTestBase {
       {ShapeUtil::MakeShape(F32, {2}), ShapeUtil::MakeShape(F32, {2})});
   Shape empty_tuple_ = ShapeUtil::MakeTupleShape({});
   ErrorSpec error_spec_{0.001};
-  // std::vector<ExecutionOptions> exec_options_ = CreateExecutionOptions();
 };
 
 // Test fixture to run indexed conditional (switch/case) tests with varying
@@ -237,7 +226,8 @@ XLA_TEST_F(ConditionalOpTest, Parameters0) {
   auto false_computation = CreateR0ConstantComputation(12.0f);
   Conditional(pred, operands, true_computation, operands, false_computation);
 
-  ComputeAndCompareR0<float>(&builder, 56.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 56.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test branch computations that do not take any parameters.
@@ -265,8 +255,8 @@ XLA_TEST_P(CaseOpTest, Parameters0) {
     float expected = 10 * static_cast<float>((bi < 0 || bi >= num_branches)
                                                  ? num_branches - 1
                                                  : bi);
-    ComputeAndCompareR0<float>(&builder, expected, {branch_index_arg.get()},
-                               error_spec_);
+    ComputeAndCompareR0WithCmdBuffer<float>(
+        &builder, expected, {branch_index_arg.get()}, error_spec_);
   }
 }
 
@@ -280,7 +270,9 @@ XLA_TEST_F(ConditionalOpTest, Parameters1) {
   auto identity = CreateR0IdentityComputation();
   Conditional(pred, operand1, identity, operand2, identity);
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
+  // ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
 }
 
 // Test branch computations that take in 1 parameter.
@@ -317,8 +309,8 @@ XLA_TEST_P(CaseOpTest, Parameters1) {
     float expected = (bi < 0 || bi >= num_branches)
                          ? expecteds[num_branches - 1]
                          : expecteds[bi];
-    ComputeAndCompareR0<float>(&builder, expected, {branch_index_arg.get()},
-                               error_spec_);
+    ComputeAndCompareR0WithCmdBuffer<float>(
+        &builder, expected, {branch_index_arg.get()}, error_spec_);
   }
 }
 
@@ -333,7 +325,8 @@ XLA_TEST_F(ConditionalOpTest, DiffComputationsDiffArgs) {
   Conditional(pred, operand1, CreateR0CeilComputation(), operand2,
               CreateR0FloorComputation());
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test conditional with two different computations in the true and false cases
@@ -346,7 +339,8 @@ XLA_TEST_F(ConditionalOpTest, DiffComputationsSameArg) {
   Conditional(pred, operand, CreateR0CeilComputation(), operand,
               CreateR0FloorComputation());
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test conditional with the same computation in the true and false cases but
@@ -360,7 +354,8 @@ XLA_TEST_F(ConditionalOpTest, SameComputationDiffArgs) {
   auto floor = CreateR0FloorComputation();
   Conditional(pred, operand1, floor, operand2, floor);
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test conditional with the same computation in the true and false cases that
@@ -373,7 +368,8 @@ XLA_TEST_F(ConditionalOpTest, SameComputationSameArg) {
   auto floor = CreateR0FloorComputation();
   Conditional(pred, operand, floor, operand, floor);
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test conditional with different instances of the same computation in the true
@@ -387,7 +383,8 @@ XLA_TEST_F(ConditionalOpTest, SameComputationDiffInstances) {
   Conditional(pred, operand1, CreateR0FloorComputation(), operand2,
               CreateR0FloorComputation());
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test the case when a call invokes a computation that contains a conditional.
@@ -408,7 +405,8 @@ XLA_TEST_F(ConditionalOpTest, ConditionalWithCall) {
   auto operand2 = ConstantR0<float>(&builder, 12.6f);
   Call(&builder, inner_builder_result, {pred, operand1, operand2});
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test true and false computations that take in 2 parameters and predicate is
@@ -423,7 +421,8 @@ XLA_TEST_F(ConditionalOpTest, Parameters2TrueBranch) {
   Conditional(pred, operands, CreateR0TupleAddComputation(), operands,
               CreateR0TupleSubComputation());
 
-  ComputeAndCompareR0<float>(&builder, 68.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 68.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test true and false computations that take in 2 parameters and predicate is
@@ -438,7 +437,8 @@ XLA_TEST_F(ConditionalOpTest, Parameters2FalseBranch) {
   Conditional(pred, operands, CreateR0TupleAddComputation(), operands,
               CreateR0TupleSubComputation());
 
-  ComputeAndCompareR0<float>(&builder, 44.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 44.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test true and false computations that take in 2 array parameters and
@@ -453,9 +453,9 @@ XLA_TEST_F(ConditionalOpTest, Parameters2ArrayTrueBranch) {
   Conditional(pred, operands, CreateR1TupleAddComputation(), operands,
               CreateR1TupleSubComputation());
 
-  ComputeAndCompareR1WithExecOptions0<float>(&builder, {34.0f, 67.0f},
-                                             {pred_arg.get()}, error_spec_);
-  // ComputeAndCompareR1WithExecOptions1<float>(&builder, {34.0f, 67.0f},
+  ComputeAndCompareR1WithCmdBuffer<float>(&builder, {34.0f, 67.0f},
+                                          {pred_arg.get()}, error_spec_);
+  // ComputeAndCompareR1WithCmdBuffer1<float>(&builder, {34.0f, 67.0f},
   //                                            {pred_arg.get()}, error_spec_);
 }
 
@@ -490,7 +490,7 @@ XLA_TEST_P(CaseOpTest, Parameters2Array) {
                 std::vector<XlaOp>(num_branches, operands));
     auto modified_bi = static_cast<float>(
         (bi < 0 || bi >= num_branches) ? num_branches - 1 : bi);
-    ComputeAndCompareR1WithExecOptions<float>(
+    ComputeAndCompareR1WithCmdBuffer<float>(
         &builder, {24.0f * modified_bi + 10, 56.0f * modified_bi + 11},
         {branch_index_arg.get()}, error_spec_);
   }
@@ -511,8 +511,8 @@ XLA_TEST_F(ConditionalOpTest, Parameters2ArrayFalseBranch) {
   Conditional(pred, operands, CreateR1TupleAddComputation(), operands,
               CreateR1TupleSubComputation());
 
-  ComputeAndCompareR1WithExecOptions<float>(&builder, {14.0f, 45.0f},
-                                            {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR1WithCmdBuffer<float>(&builder, {14.0f, 45.0f},
+                                          {pred_arg.get()}, error_spec_);
 }
 
 // Test true and false computations that return a tuple of scalars.
@@ -525,7 +525,7 @@ XLA_TEST_F(ConditionalOpTest, ReturnTupleOfScalars) {
   Conditional(pred, operands, CreateR0TupleCeilComputation(), operands,
               CreateR0TupleFloorComputation());
 
-  ComputeAndCompareTuple(
+  ComputeAndCompareTupleWithCmdBuffer(
       &builder,
       LiteralUtil::MakeTupleFromSlices({LiteralUtil::CreateR0<float>(12.0f),
                                         LiteralUtil::CreateR0<float>(25.0f)}),
@@ -543,11 +543,12 @@ XLA_TEST_F(ConditionalOpTest, ReturnTupleOfArrays) {
   Conditional(pred, operands, CreateR1TupleCeilComputation(), operands,
               CreateR1TupleFloorComputation());
 
-  ComputeAndCompareTuple(&builder,
-                         LiteralUtil::MakeTupleFromSlices(
-                             {LiteralUtil::CreateR1<float>({13.0f, 16.0f}),
-                              LiteralUtil::CreateR1<float>({26.0f, 30.0f})}),
-                         {pred_arg.get()}, error_spec_);
+  ComputeAndCompareTupleWithCmdBuffer(
+      &builder,
+      LiteralUtil::MakeTupleFromSlices(
+          {LiteralUtil::CreateR1<float>({13.0f, 16.0f}),
+           LiteralUtil::CreateR1<float>({26.0f, 30.0f})}),
+      {pred_arg.get()}, error_spec_);
 }
 
 // Test true and false computations that return a tuple of a predicate, a
@@ -582,12 +583,13 @@ XLA_TEST_F(ConditionalOpTest, ReturnTupleofPredicateScalarArray) {
   Conditional(pred, operands, std::move(true_builder_result).value(), operands,
               std::move(false_builder_result).value());
 
-  ComputeAndCompareTuple(&builder,
-                         LiteralUtil::MakeTupleFromSlices(
-                             {LiteralUtil::CreateR0<bool>(true),
-                              LiteralUtil::CreateR0<float>(12.2f),
-                              LiteralUtil::CreateR1<float>({12.8f, 14.6f})}),
-                         {pred_arg.get()}, error_spec_);
+  ComputeAndCompareTupleWithCmdBuffer(
+      &builder,
+      LiteralUtil::MakeTupleFromSlices(
+          {LiteralUtil::CreateR0<bool>(true),
+           LiteralUtil::CreateR0<float>(12.2f),
+           LiteralUtil::CreateR1<float>({12.8f, 14.6f})}),
+      {pred_arg.get()}, error_spec_);
 }
 
 // Test true and false computations that return a nested tuple.
@@ -627,7 +629,7 @@ XLA_TEST_F(ConditionalOpTest, ReturnNestedTuple) {
   Conditional(pred, operands, std::move(true_builder_result).value(), operands,
               std::move(false_builder_result).value());
 
-  ComputeAndCompareTuple(
+  ComputeAndCompareTupleWithCmdBuffer(
       &builder,
       LiteralUtil::MakeTupleFromSlices(
           {LiteralUtil::MakeTupleFromSlices(
@@ -654,7 +656,7 @@ XLA_TEST_F(ConditionalOpTest, ScalarOperandsFromExternalParams) {
   Conditional(pred, operand1, CreateR0CeilComputation(), operand2,
               CreateR0FloorComputation());
 
-  ComputeAndCompareR0<float>(
+  ComputeAndCompareR0WithCmdBuffer<float>(
       &builder, 57.0f,
       {pred_arg.get(), operand1_param.get(), operand2_param.get()},
       error_spec_);
@@ -674,7 +676,7 @@ XLA_TEST_F(ConditionalOpTest, ArrayOperandsFromExternalParams) {
   Conditional(pred, operand1, CreateR1CeilComputation(), operand2,
               CreateR1FloorComputation());
 
-  ComputeAndCompareR1WithExecOptions<float>(
+  ComputeAndCompareR1WithCmdBuffer<float>(
       &builder, {10.0f, 11.0f},
       {pred_arg.get(), operand1_param.get(), operand2_param.get()},
       error_spec_);
@@ -707,8 +709,8 @@ XLA_TEST_F(ConditionalOpTest, NestedConditionals) {
   Conditional(pred1, tuple_operand, std::move(inner_builder_result).value(),
               operand3, CreateR0IdentityComputation());
 
-  ComputeAndCompareR0<float>(&builder, 12.0f,
-                             {pred1_arg.get(), pred2_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(
+      &builder, 12.0f, {pred1_arg.get(), pred2_arg.get()}, error_spec_);
 }
 
 XLA_TEST_F(ConditionalOpTest, ConditionalInNestedComputation) {
@@ -734,7 +736,8 @@ XLA_TEST_F(ConditionalOpTest, ConditionalInNestedComputation) {
   auto tuple_operand = Tuple(&builder, {pred, operand1, operand2});
   Call(&builder, std::move(inner_builder_result).value(), {tuple_operand});
 
-  ComputeAndCompareR0<float>(&builder, 12.0f, {pred_arg.get()}, error_spec_);
+  ComputeAndCompareR0WithCmdBuffer<float>(&builder, 12.0f, {pred_arg.get()},
+                                          error_spec_);
 }
 
 // Test a mismatch in the shape of the true operand and true computation.
@@ -804,7 +807,7 @@ XLA_TEST_F(ConditionalOpTest, SwappedInputsInSequentialConditionals) {
           ->clear_xla_gpu_enable_command_buffer();
     }
 
-    ComputeAndCompareTuple(
+    ComputeAndCompareTupleWithCmdBuffer(
         &builder,
         LiteralUtil::MakeTupleFromSlices(
             {LiteralUtil::CreateR0<float>(a), LiteralUtil::CreateR0<float>(b)}),

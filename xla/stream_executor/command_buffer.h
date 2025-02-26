@@ -56,11 +56,11 @@ class Stream;
 class CommandBuffer {
  public:
   // A graph node handle is an opaque handle that identifies a graph node in the
-  // graph associated with a command buffer. GraphNodeHandles are created by
-  // node factory functions and can be referenced in node update functions.
-  // The handle has the same properties as a pointer (can be constructed from a
-  // nullptr, trivial copyable, POD, etc.), that's why we use a pointer to
-  // define it.
+  // graph associated with a command buffer. std::vector<GraphNodeHandle> are
+  // created by node factory functions and can be referenced in node update
+  // functions. The handle has the same properties as a pointer (can be
+  // constructed from a nullptr, trivial copyable, POD, etc.), that's why we use
+  // a pointer to define it.
 
   // GraphNodeHandleOpaque is an opaque type that won't be ODR used, hence
   // doesn't need to fully defined. It's an implementation detail of the
@@ -69,16 +69,16 @@ class CommandBuffer {
   struct GraphConditionalHandleOpaque;
 
   using GraphNodeHandle = GraphNodeHandleOpaque*;
-  using GraphNodeHandles = std::vector<GraphNodeHandle>;
-  static std::string GraphNodeHandlesToString(const GraphNodeHandles& handles) {
+  static std::string GraphNodeHandlesToString(
+      absl::Span<const GraphNodeHandle> handles) {
     std::vector<std::string> elements;
     elements.reserve(handles.size());
     for (const auto& handle : handles) {
       elements.push_back(
           absl::StrCat("0x", absl::Hex(reinterpret_cast<uintptr_t>(handle))));
     }
-    return absl::StrCat("GraphNodeHandles: [", absl::StrJoin(elements, ", "),
-                        "]");
+    return absl::StrCat("std::vector<GraphNodeHandle>: [",
+                        absl::StrJoin(elements, ", "), "]");
   }
 
   // A graph conditional handle is an opaque handle that is tied to a nested
@@ -128,13 +128,13 @@ class CommandBuffer {
 
   // Adds an execution barrier that depends on the commands in deps.
   virtual absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
-      GraphNodeHandles deps) = 0;
+      std::vector<GraphNodeHandle> deps) = 0;
 
   // Adds a kernel launch command that depends on the commands in
   // deps.
   virtual absl::StatusOr<GraphNodeHandle> CreateLaunchNode(
-      GraphNodeHandles deps, const ThreadDim& threads, const BlockDim& blocks,
-      const Kernel& kernel, const KernelArgs& args) = 0;
+      std::vector<GraphNodeHandle> deps, const ThreadDim& threads,
+      const BlockDim& blocks, const Kernel& kernel, const KernelArgs& args) = 0;
 
   virtual absl::Status UpdateLaunchNode(GraphNodeHandle node,
                                         const ThreadDim& threads,
@@ -146,8 +146,9 @@ class CommandBuffer {
   // arguments is different do disambiguate from the regular launch API.
   template <typename... Params, typename... Args>
   absl::StatusOr<GraphNodeHandle> CreateTypedLaunchNode(
-      GraphNodeHandles deps, const ThreadDim& threads, const BlockDim& blocks,
-      const TypedKernel<Params...>& kernel, Args... args);
+      std::vector<GraphNodeHandle> deps, const ThreadDim& threads,
+      const BlockDim& blocks, const TypedKernel<Params...>& kernel,
+      Args... args);
 
   template <typename... Params, typename... Args>
   absl::Status UpdateTypedLaunchNode(GraphNodeHandle node,
@@ -157,7 +158,7 @@ class CommandBuffer {
                                      Args... args);
 
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
-      GraphNodeHandles deps, const CommandBuffer& child) = 0;
+      std::vector<GraphNodeHandle> deps, const CommandBuffer& child) = 0;
 
   virtual absl::Status UpdateChildNode(GraphNodeHandle node,
                                        const CommandBuffer& child) = 0;
@@ -165,8 +166,8 @@ class CommandBuffer {
   // Adds a device-to-device memory copy that depends on the commands in
   // deps.
   virtual absl::StatusOr<GraphNodeHandle> CreateMemcpyD2DNode(
-      GraphNodeHandles deps, DeviceMemoryBase dst, DeviceMemoryBase src,
-      uint64_t size) = 0;
+      std::vector<GraphNodeHandle> deps, DeviceMemoryBase dst,
+      DeviceMemoryBase src, uint64_t size) = 0;
 
   virtual absl::Status UpdateMemcpyD2DNode(GraphNodeHandle node,
                                            DeviceMemoryBase dst,
@@ -175,8 +176,8 @@ class CommandBuffer {
 
   // Adds a memset command that depends on the commands in deps.
   virtual absl::StatusOr<GraphNodeHandle> CreateMemsetNode(
-      GraphNodeHandles deps, DeviceMemoryBase dst, BitPattern bit_pattern,
-      size_t num_elements) = 0;
+      std::vector<GraphNodeHandle> deps, DeviceMemoryBase dst,
+      BitPattern bit_pattern, size_t num_elements) = 0;
 
   virtual absl::Status UpdateMemsetNode(GraphNodeHandle node,
                                         DeviceMemoryBase dst,
@@ -194,11 +195,12 @@ class CommandBuffer {
   // Adds a new conditional node to the graph and creates a
   // corresponding nested command buffer.
   virtual absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle conditional,
-      ConditionType type) = 0;
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle conditional, ConditionType type) = 0;
 
   virtual absl::StatusOr<GraphNodeHandle> CreateSetIfElseConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle then_condition,
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle then_condition,
       GraphConditionalHandle else_condition, DeviceMemory<bool> predicate) = 0;
 
   virtual absl::Status UpdateSetIfElseConditionKernelNode(
@@ -206,31 +208,32 @@ class CommandBuffer {
       GraphConditionalHandle else_condition, DeviceMemory<bool> predicate) = 0;
 
   virtual absl::StatusOr<GraphNodeHandle> CreateSetIfConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle then_condition,
-      DeviceMemory<bool> predicate) = 0;
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle then_condition, DeviceMemory<bool> predicate) = 0;
 
   virtual absl::Status UpdateSetIfConditionKernelNode(
       GraphNodeHandle node, GraphConditionalHandle then_condition,
       DeviceMemory<bool> predicate) = 0;
 
   virtual absl::StatusOr<GraphNodeHandle> CreateSetForConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle condition,
-      DeviceMemory<int32_t> loop_counter, int32_t iterations) = 0;
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle condition, DeviceMemory<int32_t> loop_counter,
+      int32_t iterations) = 0;
 
   virtual absl::Status UpdateSetForConditionKernelNode(
       GraphNodeHandle node, GraphConditionalHandle condition,
       DeviceMemory<int32_t> loop_counter, int32_t iterations) = 0;
 
   virtual absl::StatusOr<GraphNodeHandle> CreateSetWhileConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle condition,
-      DeviceMemory<bool> predicate) = 0;
+      std::vector<GraphNodeHandle> dependencies,
+      GraphConditionalHandle condition, DeviceMemory<bool> predicate) = 0;
 
   virtual absl::Status UpdateSetWhileConditionKernelNode(
       GraphNodeHandle node, GraphConditionalHandle condition,
       DeviceMemory<bool> predicate) = 0;
 
   virtual absl::StatusOr<GraphNodeHandle> CreateSetCaseConditionKernelNode(
-      GraphNodeHandles dependencies, GraphConditionalHandle handle0,
+      std::vector<GraphNodeHandle> dependencies, GraphConditionalHandle handle0,
       GraphConditionalHandle handle1, GraphConditionalHandle handle2,
       GraphConditionalHandle handle3, GraphConditionalHandle handle4,
       GraphConditionalHandle handle5, GraphConditionalHandle handle6,
@@ -291,11 +294,10 @@ class CommandBuffer {
 
 template <typename... Params, typename... Args>
 inline absl::StatusOr<CommandBuffer::GraphNodeHandle>
-CommandBuffer::CreateTypedLaunchNode(CommandBuffer::GraphNodeHandles deps,
-                                     const ThreadDim& threads,
-                                     const BlockDim& blocks,
-                                     const TypedKernel<Params...>& kernel,
-                                     Args... args) {
+CommandBuffer::CreateTypedLaunchNode(
+    std::vector<CommandBuffer::GraphNodeHandle> deps, const ThreadDim& threads,
+    const BlockDim& blocks, const TypedKernel<Params...>& kernel,
+    Args... args) {
   auto kernel_args = PackKernelArgs(kernel, args...);
   return CreateLaunchNode(deps, threads, blocks, *kernel, *kernel_args);
 }
