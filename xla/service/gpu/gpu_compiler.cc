@@ -1794,7 +1794,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
                             autotune_results);
   }
 
-  LOG(ERROR) << "HLO module: " << module->ToString();
   return std::move(module);
 }
 
