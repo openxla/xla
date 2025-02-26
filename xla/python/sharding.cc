@@ -39,8 +39,8 @@ limitations under the License.
 #include "xla/python/py_device_list.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace jax {
 
@@ -218,7 +218,7 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
 
 SingleDeviceSharding::SingleDeviceSharding(
     xla::nb_class_ptr<xla::PyClient> client,
-    tsl::RCReference<xla::ifrt::DeviceList> device_list, nb::object memory_kind)
+    xla::ifrt::DeviceListRef device_list, nb::object memory_kind)
     : Sharding(/*num_devices=*/1),
       device_(client->GetPyDevice(device_list->devices().front())),
       memory_kind_(std::move(memory_kind)),

@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/fingerprint.h"
 
@@ -435,6 +436,19 @@ void HloModule::Print(Printer* printer, const HloPrintOptions& options) const {
   }
 }
 
+std::string HloModule::ToString() const {
+  const DebugOptions& db_options = config().debug_options();
+  HloPrintOptions print_options = db_options.xla_dump_hlo_as_long_text()
+                                      ? HloPrintOptions::Default()
+                                      : HloPrintOptions::ShortParsable();
+  print_options.set_print_large_constants(
+      db_options.xla_dump_large_constants());
+  print_options.set_print_metadata(!db_options.xla_dump_disable_metadata());
+  print_options.set_syntax_sugar_async_ops(
+      db_options.xla_syntax_sugar_async_ops());
+  return ToString(print_options);
+}
+
 std::string HloModule::ToString(const HloPrintOptions& options) const {
   StringPrinter printer;
   Print(&printer, options);
@@ -555,7 +569,8 @@ absl::Status HloModule::CheckUniqueNamesAndIdsForComputationsAndInstructions()
 /* static */
 absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
     const HloModuleProto& proto, const HloModuleConfig& module_config,
-    bool prohibit_empty_literal) {
+    bool prohibit_empty_literal,
+    std::unique_ptr<CompilationEnvironments> comp_envs) {
   VLOG(2) << "CreateFromProto()";
   XLA_VLOG_LINES(3, proto.DebugString());
 
@@ -608,7 +623,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   }
   TF_RET_CHECK(entry != nullptr);
 
-  auto module = std::make_unique<HloModule>(proto.name(), module_config);
+  auto module = comp_envs
+                    ? std::make_unique<HloModule>(proto.name(), module_config,
+                                                  std::move(comp_envs))
+                    : std::make_unique<HloModule>(proto.name(), module_config);
 
   // Sort the computations in the proto id's order.
   absl::c_sort(computations, [&](const std::unique_ptr<HloComputation>& a,
@@ -722,6 +740,10 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
         execution_options->exec_time_optimization_effort());
     module_config.set_memory_fitting_effort(
         execution_options->memory_fitting_effort());
+    module_config.set_optimization_level(
+        execution_options->optimization_level());
+    module_config.set_memory_fitting_level(
+        execution_options->memory_fitting_level());
     module_config.set_deduplicate_hlo(execution_options->deduplicate_hlo());
     if (!execution_options->allow_spmd_sharding_propagation_to_parameters()
              .empty()) {
@@ -798,12 +820,14 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProtoWithConfig(
-    const HloModuleProtoWithConfig& proto, bool prohibit_empty_literal) {
+    const HloModuleProtoWithConfig& proto, bool prohibit_empty_literal,
+    std::unique_ptr<CompilationEnvironments> comp_envs) {
   const auto& hlo_module_proto = proto.hlo_module();
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModuleConfig> config_ptr,
                       HloModuleConfig::CreateFromProto(proto.config()));
   return HloModule::CreateFromProto(hlo_module_proto, *config_ptr,
-                                    prohibit_empty_literal);
+                                    prohibit_empty_literal,
+                                    std::move(comp_envs));
 }
 
 namespace {

@@ -25,13 +25,13 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -66,15 +67,16 @@ limitations under the License.
 #include "xla/python/pytree.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/python/sharding.h"
+#include "xla/python/to_ifrt_sharding.h"
 #include "xla/python/traceback.h"
 #include "xla/python/types.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace jax {
@@ -114,7 +116,7 @@ struct ShardArgResult {
   nb::object owning_sda;
 };
 
-// Shars a single argument over devices.
+// Shards a single argument over devices.
 //
 // We currently only support fully in C++, C++ Array. For all
 // other usages, we call a Python function returning C++ Array
@@ -152,19 +154,18 @@ absl::StatusOr<ShardArgResult> ShardArg(
           return xla::InvalidArgument("Array has been deleted.");
         }
         if (result.ifrt_array->sharding().devices()->devices() != devices) {
-          xla::ifrt::BasicDeviceList::Devices ifrt_devices;
+          absl::InlinedVector<xla::ifrt::Device*, 1> ifrt_devices;
           ifrt_devices.reserve(devices.size());
           ifrt_devices.insert(ifrt_devices.end(), devices.begin(),
                               devices.end());
           // pmap does not support memory_kind for now.
           auto* ifrt_client = result.ifrt_array->client();
-          TF_ASSIGN_OR_RETURN(
-              auto copied_ifrt_arrays,
-              ifrt_client->CopyArrays(
-                  absl::MakeSpan(&result.ifrt_array, 1),
-                  xla::ifrt::BasicDeviceList::Create(std::move(ifrt_devices)),
-                  xla::ifrt::MemoryKind(),
-                  xla::ifrt::ArrayCopySemantics::kReuseInput));
+          TF_ASSIGN_OR_RETURN(auto copied_ifrt_arrays,
+                              ifrt_client->CopyArrays(
+                                  absl::MakeSpan(&result.ifrt_array, 1),
+                                  ifrt_client->MakeDeviceList(ifrt_devices),
+                                  xla::ifrt::MemoryKind(),
+                                  xla::ifrt::ArrayCopySemantics::kReuseInput));
           result.ifrt_array = std::move(copied_ifrt_arrays.front());
         }
         return result;
@@ -186,7 +187,7 @@ absl::StatusOr<ShardArgResult> ShardArg(
 
     std::vector<tsl::RCReference<xla::ifrt::Array>> per_device_arrays;
     per_device_arrays.reserve(n_devices);
-    xla::ifrt::BasicDeviceList::Devices devices;
+    absl::InlinedVector<xla::ifrt::Device*, 1> devices;
     devices.reserve(n_devices);
     // TODO(hyeontaek): The created array will never be disassembled. We should
     // omit collecting shapes and make the OpaqueSharding non-disassemblable?
@@ -233,23 +234,25 @@ absl::StatusOr<ShardArgResult> ShardArg(
       }
     }
 
+    if (per_device_arrays.empty()) {
+      return xla::InvalidArgument("Per-device arrays must not be empty.");
+    }
     // TODO(hyeontaek): The logical shape here is inaccurate. We
     // may want to avoid creating a new Array or specialize Array
     // to disallow access to the logical shape.
     xla::ifrt::Shape shape = per_device_arrays.front()->shape();
-    // pmap does not support memory_kind for now.
-    auto ifrt_sharding = xla::ifrt::ConcreteSharding::Create(
-        xla::ifrt::BasicDeviceList::Create(std::move(devices)),
-        xla::ifrt::MemoryKind(),
-        /*shape=*/shape,
-        /*shard_shapes=*/std::move(shapes));
-    TF_ASSIGN_OR_RETURN(result.ifrt_array,
-                        per_device_arrays.front()
-                            ->client()
-                            ->AssembleArrayFromSingleDeviceArrays(
-                                std::move(shape), std::move(ifrt_sharding),
-                                absl::MakeSpan(per_device_arrays),
-                                xla::ifrt::ArrayCopySemantics::kReuseInput));
+    TF_ASSIGN_OR_RETURN(
+        auto ifrt_sharding,
+        xla::GetIfrtConcreteSharding(input_spec.array_sharding, shape, shapes));
+    TF_ASSIGN_OR_RETURN(
+        result.ifrt_array,
+        per_device_arrays.front()
+            ->client()
+            ->AssembleArrayFromSingleDeviceArrays(
+                std::move(shape), std::move(ifrt_sharding),
+                absl::MakeSpan(per_device_arrays),
+                xla::ifrt::ArrayCopySemantics::kReuseInput,
+                xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
     return result;
   }
   tsl::profiler::TraceMe traceme("pmap_lib_shard_arg_python_fallback");
@@ -664,6 +667,9 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     }
   }
 
+  xla::ifrt::ExecuteOptions execute_options = cache_entry.executable->options();
+  execute_options.launch_id = cache_entry.executable->GetNextLaunchId();
+
   // A vector of [num_outputs].
   std::vector<tsl::RCReference<xla::ifrt::Array>> output_arrays;
   {
@@ -671,7 +677,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     auto ifrt_executable = cache_entry.executable->ifrt_executable();
     TF_ASSIGN_OR_RETURN(
         auto result, ifrt_executable->Execute(absl::MakeSpan(num_args_arrays),
-                                              cache_entry.executable->options(),
+                                              execute_options,
                                               /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
   }

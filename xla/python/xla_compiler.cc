@@ -83,13 +83,13 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace nanobind {
 namespace detail {
@@ -1372,12 +1372,34 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                        : std::nullopt;
           },
           &ExecutableBuildOptions::set_device_assignment)
+      .def("compilation_environments_from_serialized_proto",
+           [](ExecutableBuildOptions& options,
+              const nb::bytes& serialized_proto) {
+             xla::CompilationEnvironmentsProto env_proto;
+             env_proto.ParseFromArray(serialized_proto.c_str(),
+                                      serialized_proto.size());
+             auto comp_envs = xla::ValueOrThrow(
+                 xla::CompilationEnvironments::CreateFromProto(env_proto));
+             *options.mutable_comp_envs() = std::move(*comp_envs);
+           })
       .def_prop_rw("exec_time_optimization_effort",
                    &ExecutableBuildOptions::exec_time_optimization_effort,
                    &ExecutableBuildOptions::set_exec_time_optimization_effort)
       .def_prop_rw("memory_fitting_effort",
                    &ExecutableBuildOptions::memory_fitting_effort,
                    &ExecutableBuildOptions::set_memory_fitting_effort)
+      .def_prop_rw(
+          "optimization_level", &ExecutableBuildOptions::optimization_level,
+          [](ExecutableBuildOptions& options, int value) {
+            options.set_optimization_level(
+                static_cast<xla::ExecutionOptions::EffortLevel>(value));
+          })
+      .def_prop_rw(
+          "memory_fitting_level", &ExecutableBuildOptions::memory_fitting_level,
+          [](ExecutableBuildOptions& options, int value) {
+            options.set_memory_fitting_level(
+                static_cast<xla::ExecutionOptions::EffortLevel>(value));
+          })
       .def_prop_rw("use_spmd_partitioning",
                    &ExecutableBuildOptions::use_spmd_partitioning,
                    &ExecutableBuildOptions::set_use_spmd_partitioning)
@@ -1523,6 +1545,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("is_manual", &xla::HloSharding::IsManual)
       .def("is_unknown", &xla::HloSharding::IsUnknown)
       .def("is_tiled", &xla::HloSharding::IsTiled)
+      .def("is_maximal", &xla::HloSharding::IsTileMaximal)
       .def("tile", [](const xla::HloSharding& self,
                       xla::Shape shape) { return self.TileShape(shape); })
       // tile_assignment.array() is computed using an internal cache,

@@ -535,7 +535,7 @@ TEST_F(GpuCompilerTestWithAutotuneDb,
                 .cuda_compute_capability();
   if (!cc.IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
-                 << "and Hopper GPUs";
+                 << "and later GPUs";
   }
   const absl::string_view hlo_string = R"(
 HloModule test
@@ -1037,6 +1037,8 @@ ENTRY e {
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
         aot_result->LoadExecutable(compiler, aot_options.executor()));
+    std::unique_ptr<OpaqueExecutable> wrapped_executable =
+        test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
     const xla::Literal literal_input =
         xla::LiteralUtil::CreateR0<int32_t>(input);
@@ -1044,8 +1046,8 @@ ENTRY e {
         xla::LiteralUtil::CreateR0<int32_t>(expected_result);
 
     TF_ASSERT_OK_AND_ASSIGN(Literal result,
-                            GetHloRunner().value()->ExecuteWithExecutable(
-                                executable.get(), {&literal_input}));
+                            test_runner_as_hlo_runner().ExecuteWithExecutable(
+                                wrapped_executable.get(), {&literal_input}));
 
     EXPECT_TRUE(LiteralTestUtil::Equal(result, literal_expected_result));
   };
@@ -1786,6 +1788,72 @@ tmp_9 = f64[1,2]{1,0} reshape(tmp_8)
 tmp_10 = f64[3,2]{1,0} dot(tmp_4, tmp_9), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 ROOT tmp_11 = f64[3,2]{1,0} reshape(tmp_10)
 })");
+}
+
+TEST_F(GpuCompilerTest,
+       DynamicSliceFusionWithCollectiveShouldWrapInAsyncAndTestE2E) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      destination = s32[2,2,32] parameter(0)
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      c4 = s32[] constant(4)
+      source = s32[8,32] parameter(1)
+      a = s32[1024,1024] parameter(2)
+      b = s32[1024,1024] parameter(3)
+      slice = s32[4,32] slice(source), slice={[4:8], [0:32]}
+      rs = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      reshape = s32[1,2,32] reshape(rs)
+      dus = s32[2,2,32] dynamic-update-slice(destination, reshape, c1, c0, c0)
+      dot = s32[1024,1024] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT tuple = tuple(dus,dot)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  std::unique_ptr<HloModule> m_ref = m->Clone();
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> wrapped_exec,
+      CreateExecutable(m->Clone(), /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          test_runner_as_hlo_runner().ExecutableFromWrapped(
+                              std::move(wrapped_exec)));
+  const char* kExpected = R"(
+    // CHECK:      dynamic-slice-fusion{{.+}} {
+    // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
+    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]), 
+    // CHECK-SAME{LITERAL}:              replica_groups={{0,1}}, dimensions={0}
+    // CHECK:        %[[bitcast:.+]] = {{.+}} bitcast(%[[rs]])
+    // CHECK:        ROOT {{.+}} = {{.+}} dynamic-update-slice({{.+}}, %[[bitcast]], {{.+}})
+    // CHECK:      ENTRY
+    // CHECK:        %[[fusion_start:.+]] = {{.+}} fusion-start({{.+}}), kind=kCustom, {{.+}}"name":"dynamic_address_computation"
+    // CHECK-NEXT:   %[[wrapped_dot:.+]] = {{.+}} fusion({{.+}}), kind=kLoop
+    // CHECK-NEXT:   %[[fusion_done:.+]] = {{.+}} fusion-done(%[[fusion_start]]), {{.+}}"name":"dynamic_address_computation"
+    // CHECK:        ROOT {{.+}} = {{.+}} tuple(%[[fusion_done]], %[[wrapped_dot]])
+  )";
+  EXPECT_THAT(
+      RunFileCheck(exec->module().ToString(HloPrintOptions{}
+                                               .set_print_operand_shape(false)
+                                               .set_print_metadata(false)),
+                   kExpected),
+      ::tsl::testing::IsOkAndHolds(true));
+
+  if (test_runner().device_count() < 2) {
+    GTEST_SKIP() << "Skipping test as it requires at least 2 devices.";
+  }
+  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
+                                                /*run_hlo_passes=*/true,
+                                                /*use_threads=*/true,
+                                                std::nullopt));
 }
 
 }  // namespace

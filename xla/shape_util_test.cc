@@ -33,12 +33,12 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/shape.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/test_benchmark.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {
@@ -1508,6 +1508,22 @@ TEST(AlignmentTest,
   auto aligned_shape = ShapeUtil::AlignLayouts(
       input, ShapeUtil::MakeShape(xla::F32, {4, 3, 2, 5, 77}));
   EXPECT_FALSE(aligned_shape);
+}
+
+TEST(ShapeUtilTest, FlattenTupleShape) {
+  Shape shape = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeShape(F32, {2, 3}),
+       ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {4, 5}),
+                                  ShapeUtil::MakeTupleShape({}),
+                                  ShapeUtil::MakeShape(F32, {6, 7})}),
+       ShapeUtil::MakeShape(F32, {8, 9})});
+  std::vector<const Shape*> flattened_shapes =
+      ShapeUtil::FlattenTupleShape(shape);
+  EXPECT_EQ(flattened_shapes.size(), 4);
+  EXPECT_EQ(flattened_shapes[0]->ToString(), "f32[2,3]");
+  EXPECT_EQ(flattened_shapes[1]->ToString(), "f32[4,5]");
+  EXPECT_EQ(flattened_shapes[2]->ToString(), "f32[6,7]");
+  EXPECT_EQ(flattened_shapes[3]->ToString(), "f32[8,9]");
 }
 
 void BM_MakeShape(::testing::benchmark::State& state) {

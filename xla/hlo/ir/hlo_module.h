@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 
@@ -404,9 +405,9 @@ class HloModule {
 
   // Return a string representation of the module.
   //
-  // (We express the default options using an overload rather than a default
-  // param because gdb ignores default params, but does resolve overloads.)
-  std::string ToString() const { return ToString(HloPrintOptions::Default()); }
+  // By default, we take the default print options but adjust them based on
+  // debug options flags.
+  std::string ToString() const;
   std::string ToString(const HloPrintOptions& options) const;
 
   // Returns a Cord representation of the module.
@@ -420,13 +421,14 @@ class HloModule {
   HloModuleProto ToProto() const;
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProto(
       const HloModuleProto& proto, const HloModuleConfig& module_config,
-      bool prohibit_empty_literal = true);
+      bool prohibit_empty_literal = true,
+      std::unique_ptr<CompilationEnvironments> comp_envs = nullptr);
 
   // Convert an HloModule to or from a proto that includes module configuration
   HloModuleProtoWithConfig ToProtoWithConfig() const;
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProtoWithConfig(
-      const HloModuleProtoWithConfig& proto,
-      bool prohibit_empty_literal = true);
+      const HloModuleProtoWithConfig& proto, bool prohibit_empty_literal = true,
+      std::unique_ptr<CompilationEnvironments> comp_envs = nullptr);
 
   // Creates and returns an HloModuleConfig with an appropriate program shape
   // for the HLO module in the given proto.

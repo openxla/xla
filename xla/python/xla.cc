@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/py_client.h"
 #include "xla/python/py_program.h"
+#include "xla/python/sdy.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
@@ -122,8 +123,8 @@ limitations under the License.
 #include "xla/python/weakref_lru_cache.h"
 #include "xla/python/xla_compiler.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/status.h"
 
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 
@@ -450,7 +451,7 @@ NB_MODULE(xla_extension, m) {
                 "get_topology_for_devices requires >= 1 devices.");
           }
           auto client = py_devices[0]->client();
-          ifrt::BasicDeviceList::Devices ifrt_devices;
+          absl::InlinedVector<ifrt::Device*, 1> ifrt_devices;
           ifrt_devices.reserve(py_devices.size());
           for (const auto& py_device : py_devices) {
             if (py_device->client().get() != client.get()) {
@@ -460,8 +461,8 @@ NB_MODULE(xla_extension, m) {
             }
             ifrt_devices.push_back(py_device->device());
           }
-          tsl::RCReference<ifrt::DeviceList> device_list =
-              ifrt::BasicDeviceList::Create(std::move(ifrt_devices));
+          ifrt::DeviceListRef device_list =
+              client->ifrt_client()->MakeDeviceList(ifrt_devices);
           return xla::ValueOrThrow(
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
@@ -599,6 +600,7 @@ NB_MODULE(xla_extension, m) {
   jax::BuildPjitSubmodule(m);
   BuildTracebackSubmodule(m);
   BuildMlirSubmodule(m);
+  BuildSdySubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
@@ -701,6 +703,14 @@ NB_MODULE(xla_extension, m) {
           },
           nb::arg("barrier_id"), nb::arg("timeout_in_ms"),
           nb::arg("process_ids") = std::nullopt)
+      .def(
+          "get_live_nodes",
+          [](DistributedRuntimeClient& client,
+             std::vector<int32_t> process_ids) {
+            nb::gil_scoped_release gil_release;
+            return xla::ValueOrThrow(client.GetLiveNodes(process_ids));
+          },
+          nb::arg("process_ids"))
       // The key must be a string, but the value can either be a Python string
       // or bytes object.
       // With Python string values, use `key_value_set()` and

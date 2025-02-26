@@ -27,6 +27,7 @@
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -174,10 +175,15 @@ TEST_F(LoadedExecutableTest, Metadata) {
 // TODO(b/315809436): Test needs rewrite because protobuf matchers are not OSS
 #if defined(PLATFORM_GOOGLE)
 TEST_F(LoadedExecutableTest, Execute) {
-  MockDevice device;
-  ON_CALL(device, Id()).WillByDefault(Return(DeviceId(1)));
-
   MockClient client;
+  ON_CALL(client, MakeDeviceList(_))
+      .WillByDefault([](absl::Span<xla::ifrt::Device* const> devices) {
+        return xla::ifrt::BasicDeviceList::Create(devices);
+      });
+
+  MockDevice device;
+  ON_CALL(device, client()).WillByDefault(Return(&client));
+  ON_CALL(device, Id()).WillByDefault(Return(DeviceId(1)));
   ON_CALL(client, LookupDevice(DeviceId(1))).WillByDefault(Return(&device));
 
   LoadedExecutable executable(
@@ -243,7 +249,7 @@ TEST_F(LoadedExecutableTest, Execute) {
                                                           })pb")))))
       .WillOnce(MockClientSessionReturnResponse(check_future_response));
 
-  tsl::RCReference<DeviceList> devices = BasicDeviceList::Create({&device});
+  DeviceListRef devices = BasicDeviceList::Create({&device});
 
   std::vector<tsl::RCReference<xla::ifrt::Array>> args;
   for (const uint64_t handle : {1000, 1001}) {

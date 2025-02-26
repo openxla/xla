@@ -764,6 +764,7 @@ tsl_cc_test(
     srcs = [
         "stacktrace_handler_test.cc",
     ],
+    linkstatic = False,  # In the OSS build, static linking affects the stacktrace.
     tags = ["no_windows"],
     deps = [
         ":stacktrace",
@@ -884,9 +885,9 @@ cc_library(
     hdrs = ["ml_dtypes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@ml_dtypes//:float8",
-        "@ml_dtypes//:intn",
-        "@ml_dtypes//:mxfloat",
+        "@ml_dtypes_py//ml_dtypes:float8",
+        "@ml_dtypes_py//ml_dtypes:intn",
+        "@ml_dtypes_py//ml_dtypes:mxfloat",
     ],
 )
 
@@ -998,6 +999,7 @@ tsl_cc_test(
     srcs = [
         "stacktrace_test.cc",
     ],
+    linkstatic = False,  # In the OSS build, static linking affects the stacktrace.
     tags = ["no_windows"],
     deps = [
         ":stacktrace",

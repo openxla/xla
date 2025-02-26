@@ -79,6 +79,7 @@ cc_library(
         "//xla:util",
         "//xla:window_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/parser:hlo_lexer",
         "//xla/service:compilation_environments",
         "//xla/service:computation_layout",
@@ -126,7 +127,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:test_main",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -176,6 +177,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
         "//xla/service:hlo_module_config",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
@@ -214,7 +216,7 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -256,7 +258,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_query",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -322,6 +324,20 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:test_main",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_casting_utils_test",
+    srcs = ["hlo_casting_utils_test.cc"],
+    deps = [
+        ":hlo",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:test_main",
+        "@com_google_benchmark//:benchmark",
+        "@com_google_googletest//:gtest",
     ],
 )

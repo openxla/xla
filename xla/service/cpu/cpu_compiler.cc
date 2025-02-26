@@ -32,6 +32,7 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -87,6 +88,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
+#include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/indexed_array_analysis.h"
@@ -138,7 +140,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
-#include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
 #include "xla/literal.h"
 #include "xla/literal_pool.h"
 #include "xla/map_util.h"
@@ -248,8 +249,14 @@ static tsl::thread::ThreadPool* GetCompilationThreadPool() {
   // so much CPU-bound work. Based on profiling a few examples, 32 threads seems
   // to be enough to achieve maximum parallel compilation speedup.
   static constexpr int kMaxCompilationThreads = 32;
+
+  // On Mac OS the default stack size is 512KiB, this is too small for compiling
+  // reasonably sized programs
+  tsl::ThreadOptions thread_options;
+  thread_options.stack_size = 4 * 1024 * 1024;  // 4 MB
+
   static auto* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), "xla-cpu-llvm-codegen",
+      tsl::Env::Default(), thread_options, "xla-cpu-llvm-codegen",
       std::min(kMaxCompilationThreads, tsl::port::MaxParallelism()));
   return thread_pool;
 }
@@ -656,8 +663,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   dynamic_padder_options.shape_check_mode =
       DynamicDimensionInference::ShapeCheckMode::kIgnore;
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
-  pipeline.AddPass<SelectAndScatterExpander>();
-  pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+
   pipeline.AddPass<ConvCanonicalization>(target_machine_features);
 
   // Run fp16 dots/convs in fp32 and then downcast the result to fp16.
@@ -674,8 +680,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   // Run the following passes to a fixed point.
-  [&pipeline =
-       pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification")] {
+  [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),
+   module] {
     AddHloVerifier(&pipeline, HloVerifierOpts{},
                    /*debug_only=*/true);
 
@@ -708,9 +714,16 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<ReshapeMover>();
-    pipeline.AddPass<HloConstantFolding>();
+    pipeline.AddPass<HloConstantFolding>(
+        options::FoldAllConstants(module->config())
+            ? HloConstantFolding::Level::kAgressive
+            : HloConstantFolding::Level::kDefault);
     pipeline.AddPass<ConditionalSimplifier>();
   }();
+
+  pipeline.AddPass<SelectAndScatterExpander>();
+  pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+
   pipeline.AddPass<BitcastDtypesExpander>();
 
   pipeline.AddPass<TopkRewriter>([](const HloSortInstruction* sort, int64_t) {
@@ -803,6 +816,13 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     }
   }
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+
+  if (module->config()
+          .debug_options()
+          .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+      DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED) {
+    pipeline.AddPass<XnnGraphFusion>();
+  }
 
   // Add a fusion pass now that layout assignment is done.
   pipeline.AddPass<CpuInstructionFusion>();
@@ -1354,7 +1374,7 @@ CpuCompiler::CompileCpuExecutable(std::unique_ptr<HloModule> module) {
       /*disable_expensive_passes=*/
       debug_options.xla_llvm_disable_expensive_passes(),
       /*slp_vectorizer_disabled=*/options::SlpVectorizerDisabled(config),
-      /*enable_loop_unrolling=*/options::EnableLoopUnrolling(config),
+      /*disable_loop_unrolling=*/options::DisableLoopUnrolling(config),
   };
 
   // Compiler hooks to intercept compiled LLVM IR modules.
@@ -1828,6 +1848,19 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     VLOG(1) << "Compiling ahead-of-time: " << module->name();
 
     if (!module->has_schedule()) {
+      const bool is_thunk_runtime =
+          module->config().debug_options().xla_cpu_use_thunk_runtime();
+      // AOT compilation is incompatible with thunks; temporarily disable them.
+      if (is_thunk_runtime) {
+        module->mutable_config()
+            .mutable_debug_options()
+            .set_xla_cpu_use_thunk_runtime(false);
+      }
+      absl::Cleanup restore_thunk_runtime_value = [&] {
+        module->mutable_config()
+            .mutable_debug_options()
+            .set_xla_cpu_use_thunk_runtime(is_thunk_runtime);
+      };
       TF_RETURN_IF_ERROR(RunHloPasses(module, /*is_aot_compile=*/true,
                                       target_machine.get(),
                                       /*dummy*/ CompileOptions{}));
@@ -1956,8 +1989,8 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
           module->config().debug_options().xla_llvm_disable_expensive_passes(),
           /*disable_slp_vectorizer=*/
           options::SlpVectorizerDisabled(module->config()),
-          /*enable_loop_unrolling=*/
-          options::EnableLoopUnrolling(module->config()),
+          /*disable_loop_unrolling=*/
+          options::DisableLoopUnrolling(module->config()),
           /*dfsan_enabled=*/aot_options.sanitize_dataflow(),
           /*dfsan_abilists_enabled=*/aot_options.sanitize_abilists_dataflow()};
 

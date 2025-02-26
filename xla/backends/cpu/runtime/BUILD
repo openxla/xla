@@ -30,8 +30,8 @@ filegroup(
 filegroup(
     name = "runtime_hdrs",
     srcs = [
-        "concurrency.h",
         "convolution_thunk_internal.h",
+        "work_queue.h",
     ],
     visibility = internal_visibility([":friends"]),
 )
@@ -132,6 +132,7 @@ cc_library(
         ":kernel_c_api",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -149,6 +150,7 @@ cc_library(
 xla_cc_test(
     name = "object_pool_test",
     srcs = ["object_pool_test.cc"],
+    shuffle_tests = False,
     deps = [
         ":object_pool",
         "//xla/tsl/platform:env",
@@ -411,28 +413,6 @@ cc_library(
 )
 
 cc_library(
-    name = "concurrency",
-    hdrs = ["concurrency.h"],
-    deps = [
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-xla_cc_test(
-    name = "concurrency_test",
-    srcs = ["concurrency_test.cc"],
-    deps = [
-        ":concurrency",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-cc_library(
     name = "convolution_lib",
     srcs = ["convolution_lib.cc"],
     hdrs = ["convolution_lib.h"],
@@ -440,6 +420,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -462,7 +443,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = internal_visibility([":friends"]),
     deps = [
-        ":concurrency",
+        ":work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
@@ -731,6 +712,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
@@ -843,10 +825,12 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:test_main",
     ],
@@ -884,6 +868,7 @@ xla_cc_test(
         ":resource_use",
         ":thunk",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
@@ -966,6 +951,7 @@ xla_cc_test(
         ":resource_use",
         ":thunk",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
@@ -1024,6 +1010,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal_util",
         "//xla/service:buffer_assignment",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
@@ -1091,6 +1078,7 @@ cc_library(
         ":thunk",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
@@ -1269,6 +1257,7 @@ cc_library(
         "//xla:util",
         "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:launch_dim",
@@ -1357,20 +1346,23 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:window_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
-        "//xla/hlo/parser:hlo_parser",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
+        "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:casts",
     ],
 )

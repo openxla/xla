@@ -58,42 +58,36 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tools/hlo_control_flow_flattening.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/file_system_helper.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/fixed_option_set_flag.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 
 namespace {
-// Creates an HloModule from the given proto.
-absl::StatusOr<std::unique_ptr<HloModule>> HloTextToModule(
-    absl::string_view hlo_text) {
-  return ParseAndReturnUnverifiedModule(hlo_text);
-}
 
-// Creates an HloModule from the given proto.
-absl::StatusOr<std::unique_ptr<HloModule>> HloProtoToModule(
-    const HloModuleProto& proto) {
-  TF_ASSIGN_OR_RETURN(
-      HloModuleConfig config,
-      HloModule::CreateModuleConfigFromProto(proto, DebugOptions()));
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                      HloModule::CreateFromProto(proto, config));
-  return std::move(module);
-}
+using HloModuleAndArguments = ::xla::FunctionalHloRunner::HloModuleAndArguments;
 
 template <typename ElementType>
 void PopulateWithSameValue(Literal* literal, ElementType val) {
@@ -136,172 +130,157 @@ absl::StatusOr<Literal> MakeFakeLiteralWithSameValue(const Shape& shape,
                          ShapeUtil::HumanString(shape));
 }
 
+const FixedOptionSetFlagParser<InputFormat>& GetInputFormatParser() {
+  static const auto& parser = GetFixedOptionSetFlagParser<InputFormat>(
+      {{"text", InputFormat::kText},
+       {"proto_text", InputFormat::kProtoText},
+       {"proto_binary", InputFormat::kProtoBinary},
+       {"snapshot_proto_binary", InputFormat::kSnapshotProtoBinary},
+       {"input_snapshot_proto_binary",
+        InputFormat::kUnoptimizedSnapshotProtoBinary},
+       {"input_snapshot_proto_text",
+        InputFormat::kUnoptimizedSnapshotProtoText}});
+  return parser;
+}
+
+const FixedOptionSetFlagParser<OutputFormat>& GetOutputFormatParser() {
+  static const auto& parser = GetFixedOptionSetFlagParser<OutputFormat>(
+      {{"text", OutputFormat::kText},
+       {"proto_binary", OutputFormat::kProtoBinary},
+       {"proto_text", OutputFormat::kProtoText}});
+  return parser;
+}
+
+const FixedOptionSetFlagParser<FunctionalHloRunner::ModuleArgumentMode>&
+GetModuleArgumentModeParser() {
+  using ModuleArgumentMode = FunctionalHloRunner::ModuleArgumentMode;
+  static const auto& parser = GetFixedOptionSetFlagParser<ModuleArgumentMode>(
+      {{"use_device_id_as_input", ModuleArgumentMode::kUseDeviceIdAsInput},
+       {"use_random_inputs", ModuleArgumentMode::kUseRandomInputs},
+       {"use_shared_random_inputs", ModuleArgumentMode::kUseSharedRandomInputs},
+       {"use_zeros_as_input", ModuleArgumentMode::kUseZerosAsInput},
+       {"uninitialized", ModuleArgumentMode::kUninitialized}});
+  return parser;
+}
+
+const FixedOptionSetFlagParser<FunctionalHloRunner::ModuleOutputMode>&
+GetModuleOutputModeParser() {
+  using ModuleOutputMode = FunctionalHloRunner::ModuleOutputMode;
+  static const auto& parser = GetFixedOptionSetFlagParser<ModuleOutputMode>(
+      {{"return_outputs", ModuleOutputMode::kReturnOutputs},
+       {"not_return_outputs", ModuleOutputMode::kNotReturnOutputs},
+       {"return_device_0_outputs", ModuleOutputMode::kReturnDevice0Outputs}});
+  return parser;
+}
+
+absl::StatusOr<HloModuleAndArguments> ReadModuleFromSnapshotBinaryProtoFile(
+    absl::string_view hlo_file) {
+  HloSnapshot proto;
+  HloModuleAndArguments hlo_module_and_arguments;
+  TF_RETURN_IF_ERROR(
+      tsl::ReadBinaryProto(tsl::Env::Default(), std::string(hlo_file), &proto));
+  hlo_module_and_arguments.arguments.emplace_back();
+  hlo_module_and_arguments.arguments.front().resize(proto.arguments_size());
+  for (int i = 0; i < proto.arguments_size(); i++) {
+    TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.arguments.front()[i],
+                        Literal::CreateFromProto(proto.arguments()[i]));
+  }
+  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
+                      CreateModuleFromProto(proto.hlo().hlo_module()));
+  return hlo_module_and_arguments;
+}
+
+absl::StatusOr<HloModuleAndArguments>
+ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(absl::string_view hlo_file) {
+  HloModuleAndArguments hlo_module_and_arguments;
+  tsl::Env* env = tsl::Env::Default();
+
+  std::unique_ptr<tsl::RandomAccessFile> file;
+  TF_RETURN_IF_ERROR(env->NewRandomAccessFile(std::string(hlo_file), &file));
+
+  tsl::RandomAccessFileCopyingInputStream input_stream(file.get());
+  tsl::protobuf::io::CopyingInputStreamAdaptor adaptor(&input_stream);
+
+  TF_ASSIGN_OR_RETURN(HloUnoptimizedSnapshot proto,
+                      DeserializeHloUnoptimizedSnapshot(&adaptor));
+
+  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
+                      CreateModuleFromProto(proto.hlo_module()));
+
+  for (const auto& arguments : proto.partitions()) {
+    hlo_module_and_arguments.arguments.emplace_back();
+    hlo_module_and_arguments.arguments.back().reserve(
+        arguments.arguments_size());
+    for (const auto& argument : arguments.arguments()) {
+      TF_ASSIGN_OR_RETURN(
+          hlo_module_and_arguments.arguments.back().emplace_back(),
+          Literal::CreateFromProto(argument));
+    }
+  }
+  return hlo_module_and_arguments;
+}
+
+absl::StatusOr<HloModuleAndArguments>
+ReadModuleFromUnoptimizedSnapshotTextProtoFile(absl::string_view hlo_file) {
+  HloUnoptimizedSnapshot proto;
+  HloModuleAndArguments hlo_module_and_arguments;
+  TF_RETURN_IF_ERROR(
+      tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file), &proto));
+  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
+                      CreateModuleFromProto(proto.hlo_module()));
+
+  for (const auto& arguments : proto.partitions()) {
+    hlo_module_and_arguments.arguments.emplace_back();
+    hlo_module_and_arguments.arguments.back().reserve(
+        arguments.arguments_size());
+    for (const auto& argument : arguments.arguments()) {
+      TF_ASSIGN_OR_RETURN(
+          hlo_module_and_arguments.arguments.back().emplace_back(),
+          Literal::CreateFromProto(argument));
+    }
+  }
+  return hlo_module_and_arguments;
+}
+
 }  // namespace
 
 bool AbslParseFlag(absl::string_view text, InputFormat* input_format,
                    std::string* error) {
-  if (text == "text") {
-    *input_format = InputFormat::kText;
-    return true;
-  }
-  if (text == "proto_text") {
-    *input_format = InputFormat::kProtoText;
-    return true;
-  }
-  if (text == "proto_binary") {
-    *input_format = InputFormat::kProtoBinary;
-    return true;
-  }
-  if (text == "snapshot_proto_binary") {
-    *input_format = InputFormat::kSnapshotProtoBinary;
-    return true;
-  }
-  if (text == "input_snapshot_proto_binary") {
-    *input_format = InputFormat::kUnoptimizedSnapshotProtoBinary;
-    return true;
-  }
-
-  if (text == "input_snapshot_proto_text") {
-    *input_format = InputFormat::kUnoptimizedSnapshotProtoText;
-    return true;
-  }
-
-  *error = "unknown value for enumeration";
-  return false;
+  return GetInputFormatParser().Parse(text, input_format, error);
 }
 
 std::string AbslUnparseFlag(InputFormat input_format) {
-  switch (input_format) {
-    case InputFormat::kText:
-      return "text";
-    case InputFormat::kProtoText:
-      return "proto_text";
-    case InputFormat::kProtoBinary:
-      return "proto_binary";
-    case InputFormat::kSnapshotProtoBinary:
-      return "snapshot_proto_binary";
-    case InputFormat::kUnoptimizedSnapshotProtoBinary:
-      return "input_snapshot_proto_binary";
-    case InputFormat::kUnoptimizedSnapshotProtoText:
-      return "input_snapshot_proto_text";
-    default:
-      return absl::StrCat(input_format);
-  }
+  return GetInputFormatParser().Unparse(input_format);
 }
 
 bool AbslParseFlag(absl::string_view text, OutputFormat* output_format,
                    std::string* error) {
-  if (text == "text") {
-    *output_format = OutputFormat::kText;
-    return true;
-  }
-  if (text == "proto_binary") {
-    *output_format = OutputFormat::kProtoBinary;
-    return true;
-  }
-  if (text == "proto_text") {
-    *output_format = OutputFormat::kProtoText;
-    return true;
-  }
-  *error = "unknown value for enumeration";
-  return false;
+  return GetOutputFormatParser().Parse(text, output_format, error);
 }
 
 std::string AbslUnparseFlag(OutputFormat output_format) {
-  switch (output_format) {
-    case OutputFormat::kText:
-      return "text";
-    case OutputFormat::kProtoBinary:
-      return "proto_binary";
-    case OutputFormat::kProtoText:
-      return "proto_text";
-    default:
-      return absl::StrCat(output_format);
-  }
+  return GetOutputFormatParser().Unparse(output_format);
 }
 
 bool AbslParseFlag(absl::string_view text,
                    FunctionalHloRunner::ModuleArgumentMode* argument_mode,
                    std::string* error) {
-  if (text == "use_device_id_as_input") {
-    *argument_mode =
-        FunctionalHloRunner::ModuleArgumentMode::kUseDeviceIdAsInput;
-    return true;
-  }
-  if (text == "use_random_inputs") {
-    *argument_mode = FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
-    return true;
-  }
-  if (text == "use_shared_random_inputs") {
-    *argument_mode =
-        FunctionalHloRunner::ModuleArgumentMode::kUseSharedRandomInputs;
-    return true;
-  }
-  if (text == "use_zeros_as_input") {
-    *argument_mode = FunctionalHloRunner::ModuleArgumentMode::kUseZerosAsInput;
-    return true;
-  }
-  if (text == "uninitialized") {
-    *argument_mode = FunctionalHloRunner::ModuleArgumentMode::kUninitialized;
-    return true;
-  }
-  *error =
-      "Unrecognized module argument mode specified. Expect "
-      "\"use_device_id_as_input\", \"use_random_inputs\", or "
-      "\"use_shared_random_inputs\".";
-  return false;
+  return GetModuleArgumentModeParser().Parse(text, argument_mode, error);
 }
 
 std::string AbslUnparseFlag(
     FunctionalHloRunner::ModuleArgumentMode argument_mode) {
-  switch (argument_mode) {
-    case FunctionalHloRunner::ModuleArgumentMode::kUseDeviceIdAsInput:
-      return "use_device_id_as_input";
-    case FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs:
-      return "use_random_inputs";
-    case FunctionalHloRunner::ModuleArgumentMode::kUseSharedRandomInputs:
-      return "use_shared_random_inputs";
-    case FunctionalHloRunner::ModuleArgumentMode::kUseZerosAsInput:
-      return "use_zeros_as_input";
-    case FunctionalHloRunner::ModuleArgumentMode::kUninitialized:
-      return "uninitialized";
-    default:
-      LOG(FATAL) << "Unexpected argument mode.";
-  }
+  return GetModuleArgumentModeParser().Unparse(argument_mode);
 }
 
 bool AbslParseFlag(absl::string_view text,
                    FunctionalHloRunner::ModuleOutputMode* output_mode,
                    std::string* error) {
-  if (text == "return_outputs") {
-    *output_mode = FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
-    return true;
-  }
-  if (text == "not_return_outputs") {
-    *output_mode = FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
-    return true;
-  }
-  if (text == "return_device_0_outputs") {
-    *output_mode = FunctionalHloRunner::ModuleOutputMode::kReturnDevice0Outputs;
-    return true;
-  }
-  *error =
-      "Unrecognized module output mode specified. Expect \"return_outputs\", "
-      "\"not_return_outputs\", or \"return_device_0_outputs\".";
-  return false;
+  return GetModuleOutputModeParser().Parse(text, output_mode, error);
 }
 
 std::string AbslUnparseFlag(FunctionalHloRunner::ModuleOutputMode output_mode) {
-  switch (output_mode) {
-    case FunctionalHloRunner::ModuleOutputMode::kReturnOutputs:
-      return "return_outputs";
-    case FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs:
-      return "not_return_outputs";
-    case FunctionalHloRunner::ModuleOutputMode::kReturnDevice0Outputs:
-      return "return_device_0_outputs";
-    default:
-      LOG(FATAL) << "Unexpected output mode.";
-  }
+  return GetModuleOutputModeParser().Unparse(output_mode);
 }
 
 void AddShardingAnnotationsToSpmdPartitionedModule(HloModule* hlo_module) {
@@ -375,11 +354,11 @@ absl::StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
     // from parsed XLA_FLAGS env (already populated in debug_options).
     if (!raw_options.xla_dump_to.empty()) {
       debug_options.set_xla_dump_to(raw_options.xla_dump_to);
+      debug_options.set_xla_dump_hlo_as_text(raw_options.xla_text_dump_mode ==
+                                             XlaTextDumpMode::kDumpAsText);
+      debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
+                                              XlaProtoDumpMode::kDumpAsProto);
     }
-    debug_options.set_xla_dump_hlo_as_text(raw_options.xla_text_dump_mode ==
-                                           XlaTextDumpMode::kDumpAsText);
-    debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
-                                            XlaProtoDumpMode::kDumpAsProto);
   }
   switch (raw_options.hlo_passes_mode) {
     case HloPassesMode::kRunXLABackendOnly:
@@ -498,7 +477,8 @@ absl::Status FunctionalHloRunner::DumpOutput(
           if (!write_status.ok()) {
             return write_status;
           }
-        } break;
+          break;
+        }
         case OutputFormat::kProtoBinary: {
           CHECK_EQ(suffix, std::string("pb"));
           TF_RETURN_IF_ERROR(
@@ -524,27 +504,34 @@ absl::Span<PjRtDevice* const> FunctionalHloRunner::GetLocalDevices(
   return client.addressable_devices();
 }
 
-absl::StatusOr<FunctionalHloRunner::HloModuleAndArguments>
+absl::StatusOr<HloModuleAndArguments>
 FunctionalHloRunner::LoadHloModuleAndArguments(absl::string_view hlo_file,
                                                InputFormat input_format) {
   HloModuleAndArguments hlo_module_and_arguments;
   switch (input_format) {
     case InputFormat::kText: {
-      TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                          ReadModuleFromHloTextFile(hlo_file));
-    } break;
+      TF_ASSIGN_OR_RETURN(
+          hlo_module_and_arguments.hlo_module,
+          ReadModuleFromHloTextFile(
+              hlo_file, DebugOptions::default_instance(),
+              HloParserOptions().set_keep_module_auto_layouts(true)));
+      break;
+    }
     case InputFormat::kProtoText: {
       TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
                           ReadModuleFromTextProtoFile(hlo_file));
-    } break;
+      break;
+    }
     case InputFormat::kProtoBinary: {
       TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
                           ReadModuleFromBinaryProtoFile(hlo_file));
-    } break;
+      break;
+    }
     case InputFormat::kSnapshotProtoBinary: {
       TF_ASSIGN_OR_RETURN(hlo_module_and_arguments,
                           ReadModuleFromSnapshotBinaryProtoFile(hlo_file));
-    } break;
+      break;
+    }
     case InputFormat::kUnoptimizedSnapshotProtoBinary: {
       TF_ASSIGN_OR_RETURN(
           hlo_module_and_arguments,
@@ -655,9 +642,8 @@ absl::Status FunctionalHloRunner::LoadAndCompile(
     compile_options.executable_build_options.set_device_assignment(assignment);
   }
 
-  TF_ASSIGN_OR_RETURN(
-      FunctionalHloRunner::HloModuleAndArguments hlo_module_and_arguments,
-      FunctionalHloRunner::LoadHloModuleAndArguments(hlo_file, input_format));
+  TF_ASSIGN_OR_RETURN(HloModuleAndArguments hlo_module_and_arguments,
+                      LoadHloModuleAndArguments(hlo_file, input_format));
 
   TF_RETURN_IF_ERROR(FunctionalHloRunner::Compile(
                          client, hlo_module_and_arguments.hlo_module.get(),
@@ -665,105 +651,6 @@ absl::Status FunctionalHloRunner::LoadAndCompile(
                          .status());
 
   return absl::OkStatus();
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromHloTextFile(absl::string_view hlo_file) {
-  std::string hlo_string;
-  TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
-                                           std::string(hlo_file), &hlo_string));
-  return ParseAndReturnUnverifiedModule(
-      hlo_string, {}, HloParserOptions().set_keep_module_auto_layouts(true));
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromBinaryProtoFile(absl::string_view hlo_file) {
-  HloProto proto;
-  TF_RETURN_IF_ERROR(
-      tsl::ReadBinaryProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  return HloProtoToModule(proto.hlo_module());
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromTextProtoFile(absl::string_view hlo_file) {
-  HloProto proto;
-  TF_RETURN_IF_ERROR(
-      tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  return HloProtoToModule(proto.hlo_module());
-}
-
-absl::StatusOr<FunctionalHloRunner::HloModuleAndArguments>
-FunctionalHloRunner::ReadModuleFromSnapshotBinaryProtoFile(
-    absl::string_view hlo_file) {
-  HloSnapshot proto;
-  HloModuleAndArguments hlo_module_and_arguments;
-  TF_RETURN_IF_ERROR(
-      tsl::ReadBinaryProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  hlo_module_and_arguments.arguments.emplace_back();
-  hlo_module_and_arguments.arguments.front().resize(proto.arguments_size());
-  for (int i = 0; i < proto.arguments_size(); i++) {
-    TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.arguments.front()[i],
-                        Literal::CreateFromProto(proto.arguments()[i]));
-  }
-  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                      HloProtoToModule(proto.hlo().hlo_module()));
-  return hlo_module_and_arguments;
-}
-
-absl::StatusOr<FunctionalHloRunner::HloModuleAndArguments>
-FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(
-    absl::string_view hlo_file) {
-  HloUnoptimizedSnapshot proto;
-  HloModuleAndArguments hlo_module_and_arguments;
-  TF_RETURN_IF_ERROR(
-      tsl::ReadBinaryProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                      HloProtoToModule(proto.hlo_module()));
-
-  for (const auto& arguments : proto.partitions()) {
-    hlo_module_and_arguments.arguments.emplace_back();
-    hlo_module_and_arguments.arguments.back().reserve(
-        arguments.arguments_size());
-    for (const auto& argument : arguments.arguments()) {
-      TF_ASSIGN_OR_RETURN(
-          hlo_module_and_arguments.arguments.back().emplace_back(),
-          Literal::CreateFromProto(argument));
-    }
-  }
-  return hlo_module_and_arguments;
-}
-
-absl::StatusOr<FunctionalHloRunner::HloModuleAndArguments>
-FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
-    absl::string_view hlo_file) {
-  HloUnoptimizedSnapshot proto;
-  HloModuleAndArguments hlo_module_and_arguments;
-  TF_RETURN_IF_ERROR(
-      tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                      HloProtoToModule(proto.hlo_module()));
-
-  for (const auto& arguments : proto.partitions()) {
-    hlo_module_and_arguments.arguments.emplace_back();
-    hlo_module_and_arguments.arguments.back().reserve(
-        arguments.arguments_size());
-    for (const auto& argument : arguments.arguments()) {
-      TF_ASSIGN_OR_RETURN(
-          hlo_module_and_arguments.arguments.back().emplace_back(),
-          Literal::CreateFromProto(argument));
-    }
-  }
-  return hlo_module_and_arguments;
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromString(absl::string_view hlo_text) {
-  return HloTextToModule(hlo_text);
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromProto(const HloModuleProto& proto) {
-  return HloProtoToModule(proto);
 }
 
 absl::StatusOr<FunctionalHloRunner::PerDeviceLiteralVecType>

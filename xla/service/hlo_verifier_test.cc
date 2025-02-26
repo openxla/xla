@@ -225,7 +225,10 @@ TEST_F(HloVerifierTest, CheckCallThreadMismatch) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
 
-  auto status = verifier().Run(module.get()).status();
+  auto status =
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
+          .Run(module.get())
+          .status();
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("mycall top_apply computation execution thread does "
@@ -2263,8 +2266,14 @@ TEST_F(HloVerifierTest, FusionNestedComputationThreadVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
+
+  auto status =
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
+          .Run(module.get())
+          .status();
+  ASSERT_FALSE(status.ok());
   EXPECT_THAT(
-      verifier().Run(module.get()).status().message(),
+      status.message(),
       HasSubstr("crs0 top_apply computation execution thread does not match "
                 "(parallel_thread vs main)"));
 }
@@ -2316,8 +2325,7 @@ TEST_F(HloVerifierTest, ChannelVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
-  EXPECT_THAT(verifier().Run(module.get()).status().message(),
-              HasSubstr("used for different types of channel instructions"));
+  TF_ASSERT_OK(verifier().Run(module.get()));
 }
 
 TEST_F(HloVerifierTest, ChannelVerifierPartiallyPipelinedAsyncRecv) {
@@ -2518,8 +2526,7 @@ TEST_F(HloVerifierTest, CollectiveChannelVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
-  EXPECT_THAT(verifier().Run(module.get()).status().message(),
-              HasSubstr("used for different types of channel instructions"));
+  TF_ASSERT_OK(verifier().Run(module.get()));
 }
 
 TEST_F(HloVerifierTestLayoutSensitive, CollectivePermuteStartAndDone) {
@@ -3003,8 +3010,7 @@ TEST_F(HloVerifierTest, VerifyCustomCallThread) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
   auto status =
-      HloVerifier{
-          HloVerifierOpts{}.VerifyCustomCallNestedComputationThreadName()}
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
           .Run(module.get())
           .status();
   ASSERT_FALSE(status.ok());
@@ -3631,6 +3637,22 @@ ENTRY entry_computation {
   b = f32[5,7] parameter(1)
   c = u32[3] parameter(2)
   ROOT dot = f32[3,11,7] ragged-dot(a, b, c), lhs_contracting_dims={1}, rhs_contracting_dims={0}, lhs_ragged_dims={1}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kRaggedDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok()) << status;
+}
+
+TEST_F(HloVerifierTest, BatchedRaggedDotNonContracting) {
+  static const char* const kRaggedDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  a = f32[19,11,5] parameter(0)
+  b = f32[3,19,5,7] parameter(1)
+  c = u32[19,3] parameter(2)
+  ROOT dot = f32[19,11,7] ragged-dot(a, b, c), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={1}, rhs_contracting_dims={2}, lhs_ragged_dims={1}, rhs_group_dims={0}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kRaggedDotHloString));

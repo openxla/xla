@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -48,17 +49,16 @@ namespace jax {
 namespace nb = ::nanobind;
 
 PyDeviceList::PyDeviceList(xla::nb_class_ptr<xla::PyClient> py_client,
-                           tsl::RCReference<xla::ifrt::DeviceList> device_list)
+                           xla::ifrt::DeviceListRef device_list)
     : py_client_(std::move(py_client)), device_list_(std::move(device_list)) {}
 
 PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
     : device_list_(py_device_assignment) {
   // Attempt to convert to Python devices into `ifrt::DeviceList`.
   if (py_device_assignment.size() == 0) {
-    device_list_ = xla::ifrt::BasicDeviceList::Create({});
     return;
   }
-  xla::ifrt::BasicDeviceList::Devices devices;
+  absl::InlinedVector<xla::ifrt::Device*, 1> devices;
   devices.reserve(py_device_assignment.size());
   for (nb::handle obj : py_device_assignment) {
     if (!nb::isinstance<xla::PyDevice>(obj.ptr())) {
@@ -75,7 +75,7 @@ PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
     }
     devices.push_back(py_device->device());
   }
-  device_list_ = xla::ifrt::BasicDeviceList::Create(std::move(devices));
+  device_list_ = py_client_->ifrt_client()->MakeDeviceList(devices);
 }
 
 PyDeviceList::~PyDeviceList() {
@@ -85,8 +85,8 @@ PyDeviceList::~PyDeviceList() {
   }
 }
 
-absl::StatusOr<tsl::RCReference<xla::ifrt::DeviceList>>
-PyDeviceList::ifrt_device_list() const {
+absl::StatusOr<xla::ifrt::DeviceListRef> PyDeviceList::ifrt_device_list()
+    const {
   switch (device_list_.index()) {
     case 0:
       return std::get<0>(device_list_);
@@ -162,8 +162,7 @@ int PyDeviceList::Len() const {
 nb::object PyDeviceList::GetItem(int index) {
   switch (device_list_.index()) {
     case 0: {
-      const tsl::RCReference<xla::ifrt::DeviceList>& device_list =
-          std::get<0>(device_list_);
+      const xla::ifrt::DeviceListRef& device_list = std::get<0>(device_list_);
       if (index < -device_list->size() || index >= device_list->size()) {
         throw nb::index_error();
       } else if (index < 0) {
@@ -181,8 +180,7 @@ nb::object PyDeviceList::GetItem(int index) {
 nb::object PyDeviceList::GetSlice(nb::slice slice) {
   switch (device_list_.index()) {
     case 0: {
-      const tsl::RCReference<xla::ifrt::DeviceList>& device_list =
-          std::get<0>(device_list_);
+      const xla::ifrt::DeviceListRef& device_list = std::get<0>(device_list_);
       const absl::Span<xla::ifrt::Device* const> devices =
           device_list->devices();
       Py_ssize_t start, stop, step, slicelength;
@@ -208,8 +206,7 @@ nb::object PyDeviceList::GetSlice(nb::slice slice) {
 nb::tuple PyDeviceList::AsTuple() const {
   switch (device_list_.index()) {
     case 0: {
-      const tsl::RCReference<xla::ifrt::DeviceList>& device_list =
-          std::get<0>(device_list_);
+      const xla::ifrt::DeviceListRef& device_list = std::get<0>(device_list_);
       nb::tuple out = nb::steal<nb::tuple>(PyTuple_New(device_list->size()));
       int i = 0;
       for (xla::ifrt::Device* device : device_list->devices()) {
@@ -303,7 +300,7 @@ bool PyDeviceList::IsFullyAddressable() {
   if (!self->addressable_device_list_.has_value()) {
     switch (self->device_list_.index()) {
       case 0: {
-        xla::ifrt::BasicDeviceList::Devices addressable_devices;
+        absl::InlinedVector<xla::ifrt::Device*, 1> addressable_devices;
         const int process_index =
             self->py_client_ ? self->py_client_->process_index() : 0;
         for (xla::ifrt::Device* device :
@@ -313,8 +310,8 @@ bool PyDeviceList::IsFullyAddressable() {
           }
         }
         self->addressable_device_list_ = xla::make_nb_class<PyDeviceList>(
-            self->py_client_,
-            xla::ifrt::BasicDeviceList::Create(std::move(addressable_devices)));
+            self->py_client_, self->py_client_->ifrt_client()->MakeDeviceList(
+                                  addressable_devices));
         break;
       }
       case 1: {

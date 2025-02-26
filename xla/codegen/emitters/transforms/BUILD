@@ -1,4 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,6 +31,7 @@ cc_library(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
+    compatible_with = get_compatible_with_portable(),
     tbl_outs = [
         (
             [
@@ -77,6 +80,7 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",

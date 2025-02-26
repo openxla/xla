@@ -57,7 +57,6 @@ cc_library(
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:optional",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:blocking_counter",

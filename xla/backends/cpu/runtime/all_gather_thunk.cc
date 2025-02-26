@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
 
@@ -49,13 +48,12 @@ absl::StatusOr<std::unique_ptr<AllGatherThunk>> AllGatherThunk::Create(
 
 AllGatherThunk::AllGatherThunk(Info info, OpParams op_params,
                                OpBuffers op_buffers, OpResources op_resources)
-    : CollectiveThunk(Kind::kAllGather, std::move(info), std::move(op_params),
-                      std::move(op_buffers), std::move(op_resources)) {}
+    : CollectiveThunk(CollectiveKind::kAllGather, std::move(info),
+                      std::move(op_params), std::move(op_buffers),
+                      std::move(op_resources)) {}
 
 tsl::AsyncValueRef<AllGatherThunk::ExecuteEvent> AllGatherThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   TF_ASSIGN_OR_RETURN(OpDeviceMemory data, GetOpDeviceMemory(params));
 
   VLOG(3) << absl::StreamFormat(

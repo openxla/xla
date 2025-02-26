@@ -44,10 +44,10 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/macros.h"
 
 namespace xla {
 
@@ -1050,6 +1050,11 @@ class ShapeUtil {
   // a single byte. If 'pack_subbyte_types' is false, sets the element size to 0
   // for all types.
   static void UpdateElementSizeInBits(Shape* s, bool pack_subbyte_types);
+
+  // Recursively flattens a tuple shape into a vector of subshapes.
+  static void FlattenTupleShape(const Shape& shape,
+                                std::vector<const Shape*>& flattened);
+  static std::vector<const Shape*> FlattenTupleShape(const Shape& shape);
 
  private:
   // Fills *shape ignoring dynamic dimensions. Returns true on success.

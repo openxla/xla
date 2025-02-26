@@ -40,8 +40,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
@@ -406,28 +404,8 @@ class FunctionalHloRunner {
       const RunningOptions& running_options,
       std::minstd_rand0* engine = nullptr);
 
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromHloTextFile(
-      absl::string_view hlo_file);
-  static absl::StatusOr<std::unique_ptr<HloModule>>
-  ReadModuleFromBinaryProtoFile(absl::string_view hlo_file);
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromTextProtoFile(
-      absl::string_view hlo_file);
-
-  static absl::StatusOr<HloModuleAndArguments>
-  ReadModuleFromSnapshotBinaryProtoFile(absl::string_view hlo_file);
-  static absl::StatusOr<HloModuleAndArguments>
-  ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(absl::string_view hlo_file);
-  static absl::StatusOr<HloModuleAndArguments>
-  ReadModuleFromUnoptimizedSnapshotTextProtoFile(absl::string_view hlo_file);
-
   static absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
       absl::string_view hlo_file, InputFormat input_format);
-
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromString(
-      absl::string_view hlo_text);
-
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromProto(
-      const HloModuleProto& proto);
 
   // This would ideally be private, but we need it for the implementation of
   // MultihostHloRunner.

@@ -182,10 +182,15 @@ class PjRtClient final
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics array_copy_semantics,
       SingleDeviceShardSemantics single_device_shard_semantics) override;
+  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
+      DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,
-      std::optional<tsl::RCReference<DeviceList>> devices,
+      std::optional<DeviceListRef> devices,
       std::optional<MemoryKind> memory_kind,
       ArrayCopySemantics semantics) override;
 
@@ -251,13 +256,16 @@ class PjRtClient final
   absl::StatusOr<Device*> LookupAddressableDevice(
       int local_hardware_id) const override;
 
+  DeviceListRef MakeDeviceList(
+      absl::Span<Device* const> devices) const override;
+
   Compiler* GetDefaultCompiler() override {
     DCHECK(this);
     return &default_compiler_;
   }
 
   absl::StatusOr<std::shared_ptr<Topology>> GetTopologyForDevices(
-      const tsl::RCReference<DeviceList>& devices) const override;
+      const DeviceListRef& devices) const override;
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultLayout(
       DType dtype, absl::Span<const int64_t> dims, Device* device,

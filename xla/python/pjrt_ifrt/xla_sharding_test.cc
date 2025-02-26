@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/device_test_util.h"
 #include "xla/python/ifrt/index.h"
@@ -52,9 +53,8 @@ class HloShardingTest : public test_util::DeviceTest {};
 
 TEST_P(HloShardingTest, CreateWithBadDeviceList) {
   auto xla_hlo_sharding = xla::HloSharding::Replicate();
-  EXPECT_DEATH(HloSharding::Create(tsl::RCReference<DeviceList>(), MemoryKind(),
-                                   xla_hlo_sharding),
-               "");
+  EXPECT_DEATH(
+      HloSharding::Create(DeviceListRef(), MemoryKind(), xla_hlo_sharding), "");
 
   EXPECT_DEATH(HloSharding::Create(BasicDeviceList::Create({}), MemoryKind(),
                                    xla_hlo_sharding),

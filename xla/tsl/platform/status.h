@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/stack_frame.h"
@@ -218,7 +217,7 @@ inline ::tsl::string* TfCheckOpHelper(absl::Status v, const char* msg) {
 #define TF_DCHECK_OK(val) TF_CHECK_OK(val)
 #else
 #define TF_DCHECK_OK(val) \
-  while (false && (::tsl::OkStatus() == (val))) LOG(FATAL)
+  while (false && (absl::OkStatus() == (val))) LOG(FATAL)
 #endif
 
 }  // namespace tsl

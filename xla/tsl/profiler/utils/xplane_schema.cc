@@ -21,7 +21,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/profiler/utils/tf_op_utils.h"
 
@@ -287,6 +286,8 @@ const StatTypeMap& GetStatTypeMap() {
        {"bytes_transferred", kBytesTransferred},
        {"queue", kDmaQueue},
        {"dcn_collective_info", kDcnCollectiveInfo},
+       {"all_reduce_id", kAllReduceId},
+       {"all_reduce_unique_id", kAllReduceUniqueId},
        // Performance counter related.
        {"Raw Value", kRawValue},
        {"Scaled Value", kScaledValue},

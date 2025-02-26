@@ -46,6 +46,7 @@ limitations under the License.
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CodeGen.h"
+#include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -280,7 +281,9 @@ auto KernelApiIrBuilder::Options::FromHloModuleConfig(
     const HloModuleConfig& config) -> Options {
   return KernelApiIrBuilder::Options{
       config.debug_options().xla_llvm_enable_invariant_load_metadata(),
-      config.debug_options().xla_cpu_prefer_vector_width()};
+      config.debug_options().xla_cpu_prefer_vector_width(),
+      config.debug_options()
+          .xla_cpu_generate_unique_c_style_kernel_entry_points()};
 }
 
 KernelApiIrBuilder::KernelApiIrBuilder(llvm::LLVMContext& context,
@@ -302,8 +305,16 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
   TF_ASSIGN_OR_RETURN(std::vector<KernelParameter> results,
                       GetKernelResultsParameters(instr, buffer_assignment));
 
-  return EmitKernelPrototype(module, absl::StrCat(instr->name(), suffix),
-                             arguments, results);
+  std::string name;
+  if (options_.generate_unique_c_style_kernel_entry_points) {
+    TF_ASSIGN_OR_RETURN(
+        name, ConvertToCName(absl::StrCat(instr->GetModule()->name(), "_",
+                                          instr->name(), suffix)));
+  } else {
+    name = absl::StrCat(instr->name(), suffix);
+  }
+
+  return EmitKernelPrototype(module, name, arguments, results);
 }
 
 auto KernelApiIrBuilder::EmitKernelPrototype(
@@ -393,12 +404,14 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
   b.CreateRet(
       llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)));
 
-  absl::InlinedVector<BufferUse, 8> buffer_uses;
+  absl::InlinedVector<BufferAllocation::Slice, 8> argument_buffers;
   for (const KernelParameter& argument : arguments) {
-    buffer_uses.push_back(BufferUse::Read(argument.slice));
+    argument_buffers.push_back(argument.slice);
   }
+
+  absl::InlinedVector<BufferAllocation::Slice, 8> result_buffers;
   for (const KernelParameter& result : results) {
-    buffer_uses.push_back(BufferUse::Write(result.slice));
+    result_buffers.push_back(result.slice);
   }
 
   return KernelPrototype{function,
@@ -408,7 +421,8 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
                          std::move(ir_arguments),
                          std::move(ir_results),
                          std::move(invariant_arguments),
-                         std::move(buffer_uses)};
+                         std::move(argument_buffers),
+                         std::move(result_buffers)};
 }
 
 std::unique_ptr<llvm::Module> KernelApiIrBuilder::CreateModule(

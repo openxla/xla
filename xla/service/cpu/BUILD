@@ -15,10 +15,7 @@ load(
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
-load(
-    "//xla/tsl/mkl:build_defs.bzl",
-    "mkl_deps",
-)
+load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api", "mkl_deps")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
@@ -246,6 +243,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_proto_cc_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes",
+        "//xla/backends/cpu/transforms:xnn_graph_fusion",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/analysis:indexed_array_analysis",
         "//xla/hlo/ir:hlo",
@@ -291,11 +289,8 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:tree_reduction_rewriter",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/transforms/simplifiers:zero_sized_hlo_elimination",
-        "//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
-        "//xla/mlir_hlo:mhlo_passes",
         "//xla/mlir_hlo:transforms_passes",
         "//xla/service:all_reduce_promotion",
         "//xla/service:all_to_all_decomposer",
@@ -354,6 +349,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
@@ -467,7 +463,7 @@ xla_test(
         "//xla/tsl/lib/monitoring:collected_metrics",
         "//xla/tsl/lib/monitoring:collection_registry",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -659,6 +655,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:kernel_api_ir_builder",
+        "//xla/backends/cpu/codegen:symbol_name_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
@@ -849,6 +846,7 @@ cc_library(
     name = "thunk_emitter",
     srcs = ["thunk_emitter.cc"],
     hdrs = ["thunk_emitter.h"],
+    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
     deps = [
         ":backend_config_proto_cc",
         ":dot_op_emitter",
@@ -860,10 +858,12 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu:onednn_emitter",
+        "//xla/backends/cpu:onednn_fusion",
         "//xla/backends/cpu:xnn_emitter",
         "//xla/backends/cpu:xnn_fusion",
-        "//xla/backends/cpu/codegen:dot_kernel_emitter",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/codegen/dot:dot_kernel_emitter",
         "//xla/backends/cpu/codegen/elemental:concatenate_kernel_emitter",
         "//xla/backends/cpu/codegen/elemental:elemental_kernel_emitter",
         "//xla/backends/cpu/runtime:all_gather_thunk",
@@ -889,6 +889,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:topk_thunk",
         "//xla/backends/cpu/runtime:while_thunk",
+        "//xla/backends/cpu/runtime/onednn:onednn_fusion_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
         "//xla/codegen:kernel_definition",
@@ -1438,6 +1439,7 @@ cc_library(
     srcs = ["cpu_instruction_fusion.cc"],
     hdrs = ["cpu_instruction_fusion.h"],
     deps = [
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:fusion_node_indexing_evaluation",
         "//xla/service:instruction_fusion",

@@ -50,10 +50,10 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.xla_extension_version.
-_version = 309
+_version = 317
 
 # Version number for MLIR:Python components.
-mlir_api_version = 57
+mlir_api_version = 58
 
 xla_platform_names = {
     'cpu': 'Host',
@@ -721,6 +721,9 @@ def register_custom_type_id_handler(
 register_custom_call_partitioner = _xla.register_custom_call_partitioner
 encode_inspect_sharding_callback = _xla.encode_inspect_sharding_callback
 hlo_sharding_util = _xla.hlo_sharding_util
+register_custom_call_as_batch_partitionable = (
+    _xla.register_custom_call_as_batch_partitionable
+)
 
 
 class PaddingConfigDimension:

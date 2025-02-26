@@ -2316,6 +2316,7 @@ void HloInstruction::SetupDerivedInstruction(
   }
   derived_instruction->set_metadata(*metadata_);
   if (has_rare()) {
+    derived_instruction->set_result_accuracy(result_accuracy());
     derived_instruction->set_frontend_attributes(frontend_attributes());
     derived_instruction->set_statistics_viz(statistics_viz());
   } else if (derived_instruction->has_rare()) {
@@ -2996,6 +2997,9 @@ bool HloInstruction::IdenticalInternal(
     return false;
   }
   if (operands().size() != other.operands().size()) {
+    return false;
+  }
+  if (!equal_result_accuracy(&other)) {
     return false;
   }
 
@@ -4306,6 +4310,10 @@ HloInstructionProto HloInstruction::ToProto() const {
 
   if (original_value_) {
     *proto.mutable_original_value() = OriginalValueToProto(*original_value_);
+  }
+
+  if (has_result_accuracy()) {
+    *proto.mutable_result_accuracy() = result_accuracy();
   }
 
   return proto;

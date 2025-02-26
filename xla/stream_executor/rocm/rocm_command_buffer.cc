@@ -122,7 +122,7 @@ absl::Status RocmCommandBuffer::LaunchSetIfElseConditionKernel(
 
 absl::Status RocmCommandBuffer::LaunchSetCaseConditionKernel(
     ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-    DeviceMemory<int32_t> index, int32_t batch_offset,
+    DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
     bool enable_conditional_default) {
   return absl::UnimplementedError("Conditionals are not supported on ROCM.");
 }
@@ -468,9 +468,9 @@ std::unique_ptr<ScopedUpdateMode> RocmCommandBuffer::ActivateUpdateMode(
 
 RocmCommandBuffer::~RocmCommandBuffer() {
   if (exec_ != nullptr && is_owned_graph_exec_) {
+    auto exec_num = NotifyExecDestroyed();
     VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
-            << "(remaining alive executable graphs: " << NotifyExecDestroyed()
-            << ")";
+            << "(remaining alive executable graphs: " << exec_num << ")";
     if (auto status = ToStatus(hipGraphExecDestroy(exec_),
                                "Failed to destroy HIP executable graph");
         !status.ok()) {
