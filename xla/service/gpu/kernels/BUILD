@@ -368,7 +368,7 @@ cuda_library(
     tags = ["cuda-only"],
     deps = [
         ":cutlass_gemm",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
     ],
 )
 
@@ -377,7 +377,7 @@ cuda_library(
     tags = ["cuda-only"],
     # TODO(ezhulenev): Update to regular hdrs after fixing CUTLASS headers.
     textual_hdrs = ["cutlass_gemm_epilogue.cu.h"],
-    deps = ["@cutlass_archive//:cutlass"],
+    deps = ["@cutlass//:cutlass"],
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -421,7 +421,7 @@ cuda_library(
     tags = ["cuda-only"],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -436,7 +436,7 @@ cuda_library(
     tags = ["cuda-only"],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -454,7 +454,7 @@ cuda_library(
     tags = ["cuda-only"],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -472,7 +472,7 @@ cuda_library(
     tags = ["cuda-only"],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -487,7 +487,7 @@ cuda_library(
     ],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )

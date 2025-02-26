@@ -7,7 +7,7 @@ def repo():
     CUTLASS_SHA256 = "84cf3fcc47c440a8dde016eb458f8d6b93b3335d9c3a7a16f388333823f1eae0"
 
     tf_http_archive(
-        name = "cutlass_archive",
+        name = "cutlass",
         sha256 = CUTLASS_SHA256,
         strip_prefix = "cutlass-{commit}".format(commit = CUTLASS_COMMIT),
         urls = tf_mirror_urls("https://github.com/chsigg/cutlass/archive/{commit}.tar.gz".format(commit = CUTLASS_COMMIT)),
