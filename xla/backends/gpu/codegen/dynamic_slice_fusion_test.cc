@@ -3632,7 +3632,8 @@ TEST_F(DynamicSliceFusionTest, MultipleOffsetsAsFunctionOfInductionVariable) {
       /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
 }
 
-TEST_F(DynamicSliceFusionTest, ReduceScatterDynamicSliceMultipleBuffers) {
+TEST_F(DynamicSliceFusionTest,
+       ReduceScatterDynamicSliceMultipleBuffersShouldFuseAndExecuteCorrectly) {
   const char* hlo = R"(
     HloModule test, replica_count=2
     add {
@@ -3697,10 +3698,9 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDynamicSliceMultipleBuffers) {
       GetDynamicSliceFusions(*m);
   ASSERT_EQ(unfused_dynamic_slice_fusions.size(), 0);
 
-  ErrorSpec error_spec = ErrorSpec(1e-6, 1e-6);
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
       std::move(m_fused), std::move(m),
-      /*run_hlo_passes=*/false, /*use_threads=*/true, error_spec));
+      /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
 }
 
 }  // namespace
