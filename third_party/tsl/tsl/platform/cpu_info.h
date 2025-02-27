@@ -138,6 +138,8 @@ enum CPUFeature {
   AMX_FP16 = 45,        // Float16 tile matrix multiplication
   AVX_NE_CONVERT = 46,  // Instructions for faster bfloat16, float16 convert.
   AVX_VNNI_INT8 = 47,   // VNNI instructions for combinations of u8, s8 dtypes.
+
+  AARCH64_BF16 = 48,  // BF16 on AArch64 systems
 };
 
 enum Aarch64CPU {
