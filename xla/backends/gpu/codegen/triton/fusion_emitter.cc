@@ -1358,7 +1358,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
 
     // Integrate LLVM matmul kernel into XLA's LLVM module.
-    ll_triton_module->eraseNamedMDNode(
+    ll_triton_module->eraseNamedMetadata(
         ll_triton_module->getNamedMetadata("nvvm.annotations"));
     ll_triton_module->setDataLayout(llvm_module->getDataLayout());
     ll_triton_module->setTargetTriple(llvm_module->getTargetTriple());
