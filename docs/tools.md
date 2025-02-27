@@ -50,6 +50,13 @@ $ hlo_runner_main /dump/*before_optimizations*
 
 ## Running passes/stages of HLO compilation: `hlo-opt`
 
+Note: There are two hlo-opt binaries.\
+[xla/tools:hlo-opt](https://github.com/openxla/xla/blob/5bf1e6420d250dce5eb840889096bdf8aad6f432/xla/tools/BUILD#L191): **Platform-specific** `hlo-opt` builds all CPU, GPU and
+platform-independent parts. \
+[xla/hlo/tools:hlo-opt](https://github.com/openxla/xla/blob/5bf1e6420d250dce5eb840889096bdf8aad6f432/xla/hlo/tools/BUILD#L160): **Platform-independent** `hlo-opt`. Light-weight version, builds only
+platforms-independent part of the tool. Useful for working with
+platform-independent passes from [hlo/transforms/](https://github.com/openxla/xla/tree/5bf1e6420d250dce5eb840889096bdf8aad6f432/xla/hlo/transforms) or converting HLO from one format to another.
+
 When debugging or understanding the workings of the compiler, it is often useful
 to get the expansion for a particular hardware at a particular point in the
 pipeline (be it HLO, optimized HLO, TritonIR or LLVM), for a given (Stable) HLO
@@ -76,7 +83,7 @@ $ hlo-opt myinput.hlo --platform=CUDA --stage=llvm
 
 which would print the dump to stdout (or to a given file if `-o` was specified).
 
-### Deviceless Usage
+### Deviceless Compilation
 
 Access to a GPU is not needed for most of the compilation, and by specifying a
 GPU spec on the command line we can get e.g. PTX output without access to an
@@ -152,11 +159,85 @@ results {
 The autotuning database can be serialized using
 `XLA_FLAGS=--xla_gpu_dump_autotune_results_t=<myfile.pbtxt>`
 
-### Running a Single Compiler Pass
-
-The flags from `XLA_FLAGS` are also supported, so the tool can be used to test
-running a single pass:
+### Run Single or Multiple Passes
+The `hlo-opt` tool allows execution of an individual passes
+independent of the full compilation pipeline. This isolation helps to quickly
+run passes on input hlo module and pinpoint the root cause of failures.
 
 ```
-$ hlo-opt --platform=CUDA --stage=hlo --passes=algebraic_simplifer input.hlo
+$ hlo-opt --passes=reduce-window-rewriter,topk-rewriter input.hlo
+```
+
+Note: `--platform` option is not required.
+
+`hlo-opt` tool also supports [`DebugOptions XLA_FLAGS`](https://github.com/openxla/xla/blob/5bf1e6420d250dce5eb840889096bdf8aad6f432/xla/xla.proto#L40-L1197).
+
+```
+$ hlo-opt --passes=reduce-window-rewriter,topk-rewriter
+--xla_reduce_window_rewrite_base_length=128 input.hlo
+```
+
+Use`--list-passes` option to get the pass name string.
+
+```
+$ hlo-opt --list-passes
+```
+
+### Assist New HLO Pass Development
+If you are writing a new hlo pass, `hlo-opt` tool provides an easier way to
+validate your pass functionality and write unit tests.
+
+1. First, write your pass.
+1. Register the new pass to the `hlo-opt` tool pass registry.
+
+    ```
+    RegisterPass<FooPass>(FooPassInputOptions)
+    ```
+
+    Based on the pass type, choose one of the following locations for
+    registration:\
+    [`opt_lib.cc`](https://github.com/openxla/xla/blob/5d015a2ddfcf4f40934a33891dc63471704f221d/xla/hlo/tools/hlo_opt/opt_lib.cc) Hardware-independent passes.\
+    [`cpu_opt.cc`](https://github.com/openxla/xla/blob/5d015a2ddfcf4f40934a33891dc63471704f221d/xla/tools/hlo_opt/cpu_opt.cc) CPU specific passes.\
+    [`gpu_opt.cc`](https://github.com/openxla/xla/blob/5d015a2ddfcf4f40934a33891dc63471704f221d/xla/tools/hlo_opt/gpu_opt.cc) GPU specific passes.\
+    [`compiled_opt.cc`](https://github.com/openxla/xla/blob/5d015a2ddfcf4f40934a33891dc63471704f221d/xla/tools/hlo_opt/compiled_opt_lib.cc) Passes common to CPU, GPU, XPU.\
+    Don't forget to add build dependency.
+
+    Include pass registration as part of your PR so that the pass will be
+    available to use for all `hlo-opt` users.
+
+1. Rebuild the `hlo-opt` tool, validate successful pass registration using
+   `--list-passes` option and then use `--passes` option to run the pass.
+
+    ```
+    $ hlo-opt --passes=foo-pass input.hlo
+    ```
+
+1. Writing unit tests for the pass? refer https://openxla.org/xla/test_hlo_passes for more details.
+
+### HLO Format Conversions
+
+#### Convert `HLO Text` -> `HLO Proto`
+
+```
+$ hlo-opt --emit-proto input.hlo
+```
+
+#### Convert `HLO Proto` or `HLO Proto Binary` -> `HLO Text`
+
+```
+$ hlo-opt input.pbtxt or input.pb
+```
+
+### Miscellaneous Uses
+
+#### Pass Runtime Measurement
+For large models, full compilation runs can take upto few minutes, making it
+challenging to detect subtle performance regressions. In contrast, [individual
+pass runs](#run-single-or-multiple-passes) using `hlo-opt` allow for precise
+performance measurement and the easy detection of even small increases in
+execution time caused by new code changes.
+
+```
+$ time hlo-opt --passes=reduce-window-rewriter,topk-rewriter
+--xla_reduce_window_rewrite_base_length=128 input.hlo
 ```
