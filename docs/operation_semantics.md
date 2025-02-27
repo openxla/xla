@@ -2241,30 +2241,24 @@ and the [`Collapse`](#collapse) operation.
 
 Reshapes the dimensions of an array into a new configuration.
 
-<b> `Reshape(operand, new_sizes)` </b>
-<b> `Reshape(operand, dimensions, new_sizes)` </b>
+<b> `Reshape(operand, dimensions)` </b>
 
 Arguments    | Type           | Semantics
 ------------ | -------------- | ---------------------------------------
 `operand`    | `XlaOp`        | array of type T
-`dimensions` | `int64` vector | order in which dimensions are collapsed
-`new_sizes`  | `int64` vector | vector of sizes of new dimensions
+`dimensions` | `int64` vector | vector of sizes of new dimensions
 
 Conceptually, reshape first flattens an array into a one-dimensional vector of
 data values, and then refines this vector into a new shape. The input arguments
 are an arbitrary array of type T, a compile-time-constant vector of dimension
 indices, and a compile-time-constant vector of dimension sizes for the result.
-The values in the `dimension` vector, if given, must be a permutation of all of
-T's dimensions; the default if not given is `{0, ..., rank - 1}`. The order of
-the dimensions in `dimensions` is from slowest-varying dimension (most major) to
-fastest-varying dimension (most minor) in the loop nest which collapses the
-input array into a single dimension. The `new_sizes` vector determines the size
-of the output array. The value at index 0 in `new_sizes` is the size of
-dimension 0, the value at index 1 is the size of dimension 1, and so on. The
-product of the `new_size` dimensions must equal the product of the operand's
-dimension sizes. When refining the collapsed array into the multidimensional
-array defined by `new_sizes`, the dimensions in `new_sizes` are ordered from
-slowest varying (most major) and to fastest varying (most minor).
+The `dimensions` vector determines the size of the output array. The value at
+index 0 in `dimensions` is the size of dimension 0, the value at index 1 is the
+size of dimension 1, and so on. The product of the `dimensions` dimensions must
+equal the product of the operand's dimension sizes. When refining the collapsed
+array into the multidimensional array defined by `dimensions`, the dimensions
+in `dimensions` are ordered from slowest varying (most major) and to fastest
+varying (most minor).
 
 For example, let v be an array of 24 elements:
 
@@ -2274,44 +2268,23 @@ let v = f32[4x2x3] {{{10, 11, 12}, {15, 16, 17}},
                     {{30, 31, 32}, {35, 36, 37}},
                     {{40, 41, 42}, {45, 46, 47}}};
 
-In-order collapse:
-let v012_24 = Reshape(v, {0,1,2}, {24});
+let v012_24 = Reshape(v, {24});
 then v012_24 == f32[24] {10, 11, 12, 15, 16, 17, 20, 21, 22, 25, 26, 27,
                          30, 31, 32, 35, 36, 37, 40, 41, 42, 45, 46, 47};
 
-let v012_83 = Reshape(v, {0,1,2}, {8,3});
+let v012_83 = Reshape(v, {8,3});
 then v012_83 == f32[8x3] {{10, 11, 12}, {15, 16, 17},
                           {20, 21, 22}, {25, 26, 27},
                           {30, 31, 32}, {35, 36, 37},
                           {40, 41, 42}, {45, 46, 47}};
-
-Out-of-order collapse:
-let v021_24 = Reshape(v, {1,2,0}, {24});
-then v012_24 == f32[24]  {10, 20, 30, 40, 11, 21, 31, 41, 12, 22, 32, 42,
-                          15, 25, 35, 45, 16, 26, 36, 46, 17, 27, 37, 47};
-
-let v021_83 = Reshape(v, {1,2,0}, {8,3});
-then v021_83 == f32[8x3] {{10, 20, 30}, {40, 11, 21},
-                          {31, 41, 12}, {22, 32, 42},
-                          {15, 25, 35}, {45, 16, 26},
-                          {36, 46, 17}, {27, 37, 47}};
-
-
-let v021_262 = Reshape(v, {1,2,0}, {2,6,2});
-then v021_262 == f32[2x6x2] {{{10, 20}, {30, 40},
-                              {11, 21}, {31, 41},
-                              {12, 22}, {32, 42}},
-                             {{15, 25}, {35, 45},
-                              {16, 26}, {36, 46},
-                              {17, 27}, {37, 47}}};
 ```
 
 As a special case, reshape can transform a single-element array to a scalar and
 vice versa. For example,
 
 ```cpp
-Reshape(f32[1x1] {{5}}, {0,1}, {}) == 5;
-Reshape(5, {}, {1,1}) == f32[1x1] {{5}};
+Reshape(f32[1x1] {{5}}, {}) == 5;
+Reshape(5, {1,1}) == f32[1x1] {{5}};
 ```
 
 ## Rev (reverse)
