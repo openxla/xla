@@ -77,6 +77,7 @@ def xla_cc_test(
         linkstatic = True,
         args = None,
         shuffle_tests = True,
+        fail_if_no_tests_linked = True,
         **kwargs):
     """A wrapper around cc_test that adds XLA-specific dependencies.
 
@@ -92,8 +93,11 @@ def xla_cc_test(
       linkstatic: Whether to link statically.
       args: The arguments to pass to the test.
       shuffle_tests: Whether to shuffle the test cases.
+      fail_if_no_tests_linked: Whether to fail if no tests are linked. Currently unused.
       **kwargs: Other arguments to pass to the test.
     """
+
+    _ = fail_if_no_tests_linked  # buildifier: disable=unused-variable
 
     if args == None:
         args = []
