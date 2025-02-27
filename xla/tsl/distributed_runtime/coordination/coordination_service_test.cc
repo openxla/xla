@@ -121,6 +121,7 @@ class TestCoordinationClient : public CoordinationClient {
   UNIMPLEMENTED(ResetTask);
   UNIMPLEMENTED(ReportErrorToService);
   UNIMPLEMENTED(GetTaskState);
+  UNIMPLEMENTED(GetJobState);
   UNIMPLEMENTED(InsertKeyValue);
   UNIMPLEMENTED(TryGetKeyValue);
   UNIMPLEMENTED(GetKeyValueDir);
