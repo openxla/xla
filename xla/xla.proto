@@ -516,6 +516,9 @@ message DebugOptions {
   // Specifies the behavior of per kernel autotuning cache.
   AutotuneCacheMode xla_gpu_experimental_autotune_cache_mode = 324;
 
+  // Specifies the distance threshold in ScheduleAwareCollectiveOpsCSE
+  int64 xla_gpu_experimental_collective_cse_distance_threshold = 372;
+
   // Experimentally disables binary libraries in GPU compiler passes.
   bool xla_gpu_experimental_disable_binary_libraries = 329;
 
