@@ -750,6 +750,52 @@ void BuildOpsSubmodule(nb::module_& m) {
           nb::arg("operand"), nb::arg("result_accuracy"));
   ops.def("Exp", static_cast<XlaOp (*)(XlaOp)>(&Exp), nb::arg("operand"));
 
+  ops.def("Cbrt", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Cbrt),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Cbrt", static_cast<XlaOp (*)(XlaOp)>(&Cbrt), nb::arg("operand"));
+
+  ops.def("Cos", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Cos),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Cos", static_cast<XlaOp (*)(XlaOp)>(&Cos), nb::arg("operand"));
+
+  ops.def("Erf", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Erf),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Erf", static_cast<XlaOp (*)(XlaOp)>(&Erf), nb::arg("operand"));
+
+  ops.def("Exp", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Exp),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Exp", static_cast<XlaOp (*)(XlaOp)>(&Exp), nb::arg("operand"));
+
+  ops.def("Expm1", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Expm1),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Expm1", static_cast<XlaOp (*)(XlaOp)>(&Expm1), nb::arg("operand"));
+
+  ops.def("Log", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Log),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Log", static_cast<XlaOp (*)(XlaOp)>(&Log), nb::arg("operand"));
+
+  ops.def("Logistic",
+          static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Logistic),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Logistic", static_cast<XlaOp (*)(XlaOp)>(&Logistic),
+          nb::arg("operand"));
+
+  ops.def("Rsqrt", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Rsqrt),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Rsqrt", static_cast<XlaOp (*)(XlaOp)>(&Rsqrt), nb::arg("operand"));
+
+  ops.def("Sin", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Sin),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Sin", static_cast<XlaOp (*)(XlaOp)>(&Sin), nb::arg("operand"));
+
+  ops.def("Sqrt", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Sqrt),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Sqrt", static_cast<XlaOp (*)(XlaOp)>(&Sqrt), nb::arg("operand"));
+
+  ops.def("Tanh", static_cast<XlaOp (*)(XlaOp, const ResultAccuracy&)>(&Tanh),
+          nb::arg("operand"), nb::arg("result_accuracy"));
+  ops.def("Tanh", static_cast<XlaOp (*)(XlaOp)>(&Tanh), nb::arg("operand"));
+
 #define BINARY_OP(op)                                                  \
   ops.def(                                                             \
       #op,                                                             \
@@ -787,26 +833,15 @@ void BuildOpsSubmodule(nb::module_& m) {
   UNARY_OP(PopulationCount);
   UNARY_OP(Clz);
   UNARY_OP(Abs);
-  UNARY_OP(Expm1);
   UNARY_OP(Floor);
   UNARY_OP(Ceil);
   UNARY_OP(Round);
-  UNARY_OP(Log);
-  UNARY_OP(Log1p);
   UNARY_OP(Sign);
-  UNARY_OP(Cos);
-  UNARY_OP(Sin);
-  UNARY_OP(Tan);
-  UNARY_OP(Tanh);
   UNARY_OP(IsFinite);
   UNARY_OP(Neg);
-  UNARY_OP(Sqrt);
-  UNARY_OP(Rsqrt);
-  UNARY_OP(Cbrt);
   UNARY_OP(Square);
   UNARY_OP(Reciprocal);
   UNARY_OP(Erfc);
-  UNARY_OP(Erf);
   UNARY_OP(ErfInv);
   UNARY_OP(Lgamma);
   UNARY_OP(Digamma);
@@ -815,7 +850,6 @@ void BuildOpsSubmodule(nb::module_& m) {
   UNARY_OP(Acos);
   UNARY_OP(Asin);
   UNARY_OP(Atan);
-  UNARY_OP(Tan);
   UNARY_OP(Acosh);
   UNARY_OP(Asinh);
   UNARY_OP(Atanh);
