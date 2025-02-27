@@ -21,21 +21,28 @@ limitations under the License.
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <iterator>
 #include <utility>
 #include <vector>
-
-#define EIGEN_USE_THREADS
 
 #include "absl/base/dynamic_annotations.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "dnnl.hpp"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/util/onednn_threadpool.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/platform/logging.h"
+
+#define EIGEN_USE_THREADS
 
 namespace xla {
 namespace cpu {
@@ -45,6 +52,53 @@ using dnnl::convolution_forward;
 using dnnl::memory;
 using dnnl::prop_kind;
 using dnnl::stream;
+
+memory::dims GetPrimitiveParameter(
+    const tsl::protobuf::RepeatedField<uint64_t> field, int offset) {
+  memory::dims param_field(field.begin(), field.end());
+  // Subtract the offset so that values are interpreted accurately
+  for (int64_t& n : param_field) n -= offset;
+  return param_field;
+}
+
+std::vector<int> PopulateSpatialDimIndeces(
+    const tsl::protobuf::RepeatedField<uint64_t> spatial_dims,
+    std::vector<int> perm_axes, int index) {
+  std::vector<int64_t> dim_axes(spatial_dims.begin(), spatial_dims.end());
+  for (int64_t& n : dim_axes) perm_axes[--n] = index++;
+  return perm_axes;
+}
+
+std::vector<int> ComputeInputPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->input().data().batch_dim()] = index++;
+  perm_axes[conv_config->input().data().feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(conv_config->input().data().spatial_dims(),
+                                   perm_axes, index);
+}
+
+std::vector<int> ComputeKernelPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->kernel().filter().output_feature_dim()] = index++;
+  perm_axes[conv_config->kernel().filter().input_feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(
+      conv_config->kernel().filter().spatial_dims(), perm_axes, index);
+}
+
+std::vector<int> ComputeOutputPermutations(
+    const OneDnnConvolutionConfig* conv_config) {
+  std::vector<int> perm_axes(conv_config->dims());
+  int index = 0;
+  perm_axes[conv_config->output().data().batch_dim()] = index++;
+  perm_axes[conv_config->output().data().feature_dim()] = index++;
+  return PopulateSpatialDimIndeces(conv_config->output().data().spatial_dims(),
+                                   perm_axes, index);
+}
+
 }  // namespace
 
 dnnl::memory ReorderMemory(const dnnl::engine& engine,
@@ -70,8 +124,101 @@ GetKernelConfig<kOnednnConvConfig>(
   return (*backend_config)->mutable_onednn_conv_config();
 }
 
+template <>
+std::unique_ptr<dnnl::convolution_forward::primitive_desc>
+CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
+    HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kCustomCall) {
+    return nullptr;
+  }
+  xla::HloCustomCallInstruction* custom_call =
+      Cast<xla::HloCustomCallInstruction>(instr);
+  absl::StatusOr<BackendConfig> backend_config =
+      custom_call->backend_config<BackendConfig>();
+  if (!backend_config.ok()) {
+    return nullptr;
+  }
+  auto& conv_config = backend_config.value().onednn_conv_config();
+  absl::InlinedVector<HloInstruction*, 2> operands = custom_call->operands();
+  Shape input_shape = operands[0]->shape();
+  Shape weight_shape = operands[1]->shape();
+  Shape output_shape = custom_call->shape().IsTuple()
+                           ? custom_call->shape().tuple_shapes(0)
+                           : custom_call->shape();
+
+  std::vector<Shape> fused_shapes;
+  for (int i = 2; i < operands.size(); ++i) {
+    fused_shapes.push_back(operands[i]->shape());
+  }
+
+  memory::desc input_md = ShapeToMemDesc(input_shape);
+  memory::desc weights_md = ShapeToMemDesc(weight_shape);
+  memory::desc output_md = ShapeToMemDesc(output_shape);
+
+  memory::dims strides =
+      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims pad_left =
+      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+  memory::dims pad_right =
+      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+  memory::dims rhs_dilations =
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
+
+  uint64_t groups = conv_config.feature_groups();
+
+  memory::desc new_inp_md =
+      input_md.permute_axes(ComputeInputPermutations(&conv_config));
+  memory::desc new_ker_md =
+      weights_md.permute_axes(ComputeKernelPermutations(&conv_config));
+  memory::desc new_out_md =
+      output_md.permute_axes(ComputeOutputPermutations(&conv_config));
+
+  if (groups > 1) {
+    memory::dims corr_dims = new_ker_md.get_dims();
+    corr_dims.insert(corr_dims.begin(), 1, groups);
+    corr_dims[1] = corr_dims[1] / groups;
+    new_ker_md = new_ker_md.reshape(corr_dims);
+  }
+
+  std::vector<memory::desc> fused_mds;
+  for (const Shape& shape : fused_shapes) {
+    fused_mds.push_back(ShapeToMemDesc(shape));
+  }
+
+  memory::desc bias_md = memory::desc();
+
+  dnnl::post_ops post_ops =
+      PopulateOneDnnPostOps(dnnl::engine(dnnl::engine::kind::cpu, 0), fused_mds,
+                            &conv_config.fusions(), nullptr, &bias_md);
+
+  memory::desc any_ker_md =
+      memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
+                   dnnl::memory::format_tag::any);
+  memory::desc any_inp_md =
+      memory::desc(new_inp_md.get_dims(), new_inp_md.get_data_type(),
+                   GetFormatTag(new_inp_md.get_ndims()));
+  memory::desc any_res_md =
+      memory::desc(new_out_md.get_dims(), new_out_md.get_data_type(),
+                   GetFormatTag(new_out_md.get_ndims()));
+
+  dnnl::primitive_attr attrs;
+
+  if (conv_config.optimization_config().user_scratchpad()) {
+    attrs.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+  }
+
+  if (post_ops.len() > 0) {
+    attrs.set_post_ops(post_ops);
+  }
+
+  return std::make_unique<convolution_forward::primitive_desc>(
+      dnnl::engine(dnnl::engine::kind::cpu, 0), prop_kind::forward_inference,
+      algorithm::convolution_direct, any_inp_md, any_ker_md, bias_md,
+      any_res_md, strides, rhs_dilations, pad_left, pad_right, attrs);
+}
+
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
-    void* result, void** args) {
+    void* result, void* scratch, void** args) {
   // args[0]: ptr to nargs
   // args[1]: ptr to ExecutableRunOptions
   // args[2]: ptr to OneDnnConvolutionConfig
@@ -215,6 +362,11 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   XLA_LIGHTWEIGHT_CHECK(num_args == arg_indx);
 
   dnnl::primitive_attr attrs;
+
+  if (conv_config.optimization_config().user_scratchpad()) {
+    attrs.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+  }
+
   if (post_ops.len() > 0) {
     attrs.set_post_ops(post_ops);
   }
@@ -245,6 +397,15 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   std::unordered_map<int, memory> conv_args{{DNNL_ARG_SRC, new_inp_mem},
                                             {DNNL_ARG_WEIGHTS, new_ker_mem},
                                             {DNNL_ARG_DST, new_res_mem}};
+
+  if (conv_config.optimization_config().user_scratchpad()) {
+    XLA_LIGHTWEIGHT_CHECK(scratch != nullptr);
+    MemrefInfo scratch_minfo(scratch);
+    memory::desc scratchpad_md = conv_pd->scratchpad_desc();
+    memory scratch_mem =
+        memory(scratchpad_md, cpu_engine, scratch_minfo.Data());
+    conv_args.insert({DNNL_ARG_SCRATCHPAD, scratch_mem});
+  }
 
   conv_args.insert(postop_args.begin(), postop_args.end());
   conv_prim.execute(onednn_stream, conv_args);
