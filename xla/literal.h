@@ -195,10 +195,21 @@ class LiteralBase {
   template <typename NativeT>
   NativeT Get(absl::Span<const int64_t> multi_index,
               const ShapeIndex& shape_index) const;
+
   // Overloads of Get for array literals. CHECKs if the literal is not
   // array-shaped and dense.
   template <typename NativeT>
   NativeT Get(absl::Span<const int64_t> multi_index) const;
+
+  // Gets an element in the literal at the given linear index. Linear index is
+  // CHECKed against the literal size.
+  template <typename NativeT>
+  NativeT GetLinear(int64_t linear_index, const ShapeIndex& shape_index) const;
+
+  // Overloads of GetLinear for array literals. CHECKs if the literal is
+  // not array-shaped and dense.
+  template <typename NativeT>
+  NativeT GetLinear(int64_t linear_index) const;
 
   // Get the dynamic size on dim_index in the literal at the given shape_index.
   DynamicSizeType GetDynamicSize(int64_t dim_index,
@@ -826,6 +837,14 @@ class LiteralBase {
     template <typename NativeT>
     void Set(absl::Span<const int64_t> index, NativeT value);
 
+    // Gets or sets an element in the array at the given linear index. The
+    // linear index is CHECKed against the total number of elements in the
+    // array. This piece must be array-shaped.
+    template <typename NativeT>
+    NativeT GetLinear(int64_t linear_index) const;
+    template <typename NativeT>
+    void SetLinear(int64_t linear_index, NativeT value);
+
     DynamicSizeType GetDynamicSize(int64_t dim_index) const;
     void SetDynamicSize(int64_t dim_index, DynamicSizeType size);
     void AllocateBuffers();
@@ -1275,23 +1294,31 @@ class MutableLiteralBase : public LiteralBase {
   template <typename NativeT>
   void PopulateR4FromArray4D(const Array4D<NativeT>& values);
 
+  // Type alias for static type checking Populate generator type.
+  template <typename NativeT, typename Generator>
+  using IsGenerator = std::enable_if_t<std::is_convertible_v<
+      NativeT, std::invoke_result_t<Generator, absl::Span<const int64_t>>>>;
+
+  // Type alias for static type checking PopulateParallel generator type.
+  template <typename NativeT, typename Generator>
+  using IsParallelGenerator = std::enable_if_t<std::is_convertible_v<
+      NativeT,
+      std::invoke_result_t<Generator, absl::Span<const int64_t>, int>>>;
+
   // Populates literal values by calling the generator function for every cell
   // in this literal object.
   //
-  // generator must be a callable of the type
-  // NativeT(absl::Span<const int64_t> indexes) or compatible.
-  //
   // This literal must have a dense layout.
-  template <typename NativeT>
-  absl::Status Populate(
-      absl::FunctionRef<NativeT(absl::Span<const int64_t>)> generator);
+  template <typename NativeT, typename Generator,
+            IsGenerator<NativeT, Generator>* = nullptr>
+  absl::Status Populate(Generator&& generator);
 
   // A parallel version of Populate(). This can be used if the generator is
   // thread-safe and the values for the shape's different elements are
   // independent.
-  template <typename NativeT>
-  absl::Status PopulateParallel(
-      absl::FunctionRef<NativeT(absl::Span<const int64_t>, int)> generator);
+  template <typename NativeT, typename Generator,
+            IsParallelGenerator<NativeT, Generator>* = nullptr>
+  absl::Status PopulateParallel(Generator&& generator);
 
   // Similar to Populate() but takes a populator function that allows caller
   // specify how to write to the destination buffer rather than a generator that
@@ -1308,6 +1335,34 @@ class MutableLiteralBase : public LiteralBase {
   // independent.
   absl::Status PopulateInplaceParallel(
       absl::FunctionRef<void(void*, absl::Span<const int64_t>, int)> populator);
+
+  // Type alias for static type checking PopulateLinear generator type.
+  template <typename NativeT, typename Generator>
+  using IsLinearGenerator = std::enable_if_t<
+      std::is_convertible_v<NativeT, std::invoke_result_t<Generator, int64_t>>>;
+
+  // Type alias for static type checking PopulateLinearParallel generator type.
+  template <typename NativeT, typename Generator>
+  using IsLinearParallelGenerator = std::enable_if_t<std::is_convertible_v<
+      NativeT, std::invoke_result_t<Generator, int64_t, int>>>;
+
+  // Overload of Populate() that takes a linear index generator.
+  template <typename NativeT, typename Generator,
+            IsLinearGenerator<NativeT, Generator>* = nullptr>
+  absl::Status PopulateLinear(Generator&& generator);
+
+  // Overload of PopulateParallel() that takes a linear index generator.
+  template <typename NativeT, typename Generator,
+            IsLinearParallelGenerator<NativeT, Generator>* = nullptr>
+  absl::Status PopulateLinearParallel(Generator&& generator);
+
+  // Overload of PopulateInplace() that takes a linear index generator.
+  absl::Status PopulateLinearInplace(
+      absl::FunctionRef<void(void*, int64_t)> populator);
+
+  // Overload of PopulateInplaceParallel() that takes a linear index generator.
+  absl::Status PopulateLinearInplaceParallel(
+      absl::FunctionRef<void(void*, int64_t, int)> populator);
 
   // Fills this literal with the given value.
   template <typename NativeT>
@@ -1347,16 +1402,23 @@ class MutableLiteralBase : public LiteralBase {
   // The parent class borrows this shape.
   MaybeOwningShapePtr shape_;
 
-  // Implementation details shared between Populate() and PopulateParallel()
-  //  template <typename NativeT, typename FnType>
-  //  absl::Status PopulateInternal(const FnType& generator, bool parallel);
-  template <typename NativeT>
-  absl::Status PopulateInternal(
-      absl::FunctionRef<NativeT(absl::Span<const int64_t>, int)> generator,
-      bool parallel);
+  // We do not add static type checking for internal generators as these
+  // functions are not part of the public API and we construct generators from
+  // already type checked generators passed by the user.
+
+  // Implementation details shared between Populate() and PopulateParallel().
+  template <typename NativeT, typename Generator>
+  absl::Status PopulateInternal(Generator&& generator, bool parallel);
   void PopulateInplaceInternal(
       absl::FunctionRef<void(void*, absl::Span<const int64_t>, int)> populator,
       bool parallel);
+
+  // Implementation details shared between PopulateLinear() and
+  // PopulateLinearParallel().
+  template <typename NativeT, typename Generator>
+  absl::Status PopulateLinearInternal(Generator&& generator, bool parallel);
+  void PopulateLinearInplaceInternal(
+      absl::FunctionRef<void(void*, int64_t, int)> populator, bool parallel);
 
   friend class LiteralBase;
   friend class MutableBorrowingLiteral;
@@ -1690,8 +1752,8 @@ template <typename NativeT>
 NativeT LiteralBase::Piece::Get(absl::Span<const int64_t> multi_index) const {
   DCHECK(LayoutUtil::IsDenseArray(subshape()))
       << __func__ << " is only supported for dense arrays: " << subshape();
-  return data<NativeT>()[IndexUtil::MultidimensionalIndexToLinearIndex(
-      subshape(), multi_index)];
+  return GetLinear<NativeT>(
+      IndexUtil::MultidimensionalIndexToLinearIndex(subshape(), multi_index));
 }
 
 template <typename NativeT>
@@ -1699,8 +1761,25 @@ void LiteralBase::Piece::Set(absl::Span<const int64_t> multi_index,
                              NativeT value) {
   DCHECK(LayoutUtil::IsDenseArray(subshape()))
       << __func__ << " is only supported for dense arrays: " << subshape();
-  data<NativeT>()[IndexUtil::MultidimensionalIndexToLinearIndex(
-      subshape(), multi_index)] = value;
+  return SetLinear<NativeT>(
+      IndexUtil::MultidimensionalIndexToLinearIndex(subshape(), multi_index),
+      value);
+}
+
+template <typename NativeT>
+NativeT LiteralBase::Piece::GetLinear(int64_t linear_index) const {
+  DCHECK(LayoutUtil::IsDenseArray(subshape()))
+      << __func__ << " is only supported for dense arrays: " << subshape();
+  DCHECK_LT(linear_index, element_count()) << "linear_index out of bounds";
+  return data<NativeT>().data()[linear_index];
+}
+
+template <typename NativeT>
+void LiteralBase::Piece::SetLinear(int64_t linear_index, NativeT value) {
+  DCHECK(LayoutUtil::IsDenseArray(subshape()))
+      << __func__ << " is only supported for dense arrays: " << subshape();
+  DCHECK_LT(linear_index, element_count()) << "linear_index out of bounds";
+  data<NativeT>().data()[linear_index] = value;
 }
 
 template <typename NativeT>
@@ -1723,6 +1802,17 @@ inline NativeT LiteralBase::Get(absl::Span<const int64_t> multi_index,
 template <typename NativeT>
 inline NativeT LiteralBase::Get(absl::Span<const int64_t> multi_index) const {
   return root_piece().Get<NativeT>(multi_index);
+}
+
+template <typename NativeT>
+inline NativeT LiteralBase::GetLinear(int64_t linear_index,
+                                      const ShapeIndex& shape_index) const {
+  return piece(shape_index).GetLinear<NativeT>(linear_index);
+}
+
+template <typename NativeT>
+inline NativeT LiteralBase::GetLinear(int64_t linear_index) const {
+  return root_piece().GetLinear<NativeT>(linear_index);
 }
 
 template <typename NativeT>
@@ -1901,10 +1991,9 @@ void MutableLiteralBase::PopulateR4FromArray4D(const Array4D<NativeT>& values) {
   PopulateFromArray(values);
 }
 
-template <typename NativeT>
+template <typename NativeT, typename Generator>
 TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateInternal(
-    absl::FunctionRef<NativeT(absl::Span<const int64_t>, int)> generator,
-    bool parallel) {
+    Generator&& generator, bool parallel) {
   const Shape& this_shape = shape();
   DCHECK(LayoutUtil::IsDenseArray(this_shape));
   TF_RET_CHECK(this_shape.element_type() ==
@@ -1922,9 +2011,10 @@ TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateInternal(
   return absl::OkStatus();
 }
 
-template <typename NativeT>
+template <typename NativeT, typename Generator,
+          MutableLiteralBase::IsGenerator<NativeT, Generator>*>
 TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::Populate(
-    absl::FunctionRef<NativeT(absl::Span<const int64_t>)> generator) {
+    Generator&& generator) {
   TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
       << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateInternal<NativeT>(
@@ -1933,13 +2023,57 @@ TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::Populate(
       },
       /*parallel=*/false);
 }
-template <typename NativeT>
+template <typename NativeT, typename Generator,
+          MutableLiteralBase::IsParallelGenerator<NativeT, Generator>*>
 TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateParallel(
-    absl::FunctionRef<NativeT(absl::Span<const int64_t>, int)> generator) {
+    Generator&& generator) {
   TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
       << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateInternal<NativeT>(generator,
                                    /*parallel=*/data<NativeT>().size() > 32);
+}
+
+template <typename NativeT, typename Generator>
+TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateLinearInternal(
+    Generator&& generator, bool parallel) {
+  const Shape& this_shape = shape();
+  DCHECK(LayoutUtil::IsDenseArray(this_shape));
+  TF_RET_CHECK(this_shape.element_type() ==
+               primitive_util::NativeToPrimitiveType<NativeT>())
+      << "Failing to populate literal with element type "
+      << primitive_util::LowercasePrimitiveTypeName(this_shape.element_type())
+      << " using data of type "
+      << primitive_util::LowercasePrimitiveTypeName(
+             primitive_util::NativeToPrimitiveType<NativeT>());
+  PopulateLinearInplaceInternal(
+      [&](void* dest, int64_t linear_index, int thread_id) {
+        *static_cast<NativeT*>(dest) = generator(linear_index, thread_id);
+      },
+      parallel);
+  return absl::OkStatus();
+}
+
+template <typename NativeT, typename Generator,
+          MutableLiteralBase::IsLinearGenerator<NativeT, Generator>*>
+TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateLinear(
+    Generator&& generator) {
+  TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
+      << __func__ << " is only supported for dense arrays: " << shape();
+  return PopulateLinearInternal<NativeT>(
+      [&](int64_t linear_index, int /*thread_id*/) {
+        return generator(linear_index);
+      },
+      /*parallel=*/false);
+}
+template <typename NativeT, typename Generator,
+          MutableLiteralBase::IsLinearParallelGenerator<NativeT, Generator>*>
+TF_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::PopulateLinearParallel(
+    Generator&& generator) {
+  TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
+      << __func__ << " is only supported for dense arrays: " << shape();
+  return PopulateLinearInternal<NativeT>(
+      generator,
+      /*parallel=*/data<NativeT>().size() > 32);
 }
 
 template <typename NativeT>
