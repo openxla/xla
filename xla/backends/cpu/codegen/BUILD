@@ -1,5 +1,6 @@
 load("//xla:strict.default.bzl", "py_strict_test")
 load("//xla:xla.bzl", "xla_cc_test", "xla_internal")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch64_available",
@@ -11,7 +12,7 @@ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla/backends/cpu:xla_backend_cpu_internal_access"],
+    default_visibility = internal_visibility(["//xla/backends/cpu:xla_backend_cpu_internal_access"]),
     licenses = ["notice"],
 )
 
@@ -58,16 +59,18 @@ cc_library(
     srcs = ["ir_compiler.cc"],
     hdrs = ["ir_compiler.h"],
     deps = [
+        ":cpu_features",
         ":polynomial_approximations",
-        "//xla:debug_options_flags",
         "//xla:util",
         "//xla/service:hlo_module_config",
         "//xla/service/cpu:cpu_options",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -75,6 +78,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:Instrumentation",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Object",
@@ -83,6 +87,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -141,10 +146,14 @@ xla_cc_test(
     name = "jit_compiler_test",
     srcs = ["jit_compiler_test.cc"],
     deps = [
+        ":ir_compiler",
         ":jit_compiler",
         "//xla:util",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -156,10 +165,6 @@ xla_cc_test(
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
