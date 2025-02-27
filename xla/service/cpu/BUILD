@@ -196,12 +196,24 @@ cc_library(
 )
 
 cc_library(
+    name = "constant_allocation_util",
+    srcs = ["constant_allocation_util.cc"],
+    hdrs = ["constant_allocation_util.h"],
+    deps = [
+        ":cpu_executable",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
     copts = tsl_copts(),
     deps = [
         ":buffer_info_util",
+        ":constant_allocation_util",
         ":conv_canonicalization",
         ":cpu_executable",
         ":cpu_float_support",
