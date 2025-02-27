@@ -2305,6 +2305,8 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
     if ((device_assignment_->replica_count() > 1 ||
          device_assignment_->computation_count() > 1) &&
         IsAllZeros(*device_assignment_)) {
+      // or allow_compile_only_without_run
+      //
       // This code path should only be triggered when we intentionally compile
       // an HLO without having enough devices to actually run it. See the
       // "--run=false" option in
@@ -3454,10 +3456,17 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
         addressable_devices.push_back(device);
       }
     }
+
     if (addressable_devices.empty()) {
-      return InvalidArgument(
-          "Device assignment (%s) does not have any local devices.",
-          device_assignment->ToString());
+      device_assignment->Fill(0);
+      TF_ASSIGN_OR_RETURN(PjRtDevice * device,
+                          LookupAddressableDevice(PjRtLocalDeviceId(0)));
+      addressable_devices.push_back(device);
+      PjRtLoadedExecutable::LogicalDeviceIds logica_device_ids;
+      logica_device_ids.replica = 0;
+      logica_device_ids.partition = 0;
+      addressable_device_logical_ids.push_back(logica_device_ids);
+      this_process_index = process_index();
     }
 
     if (build_options.device_ordinal() < 0) {
@@ -3486,6 +3495,11 @@ PjRtStreamExecutorClient::CompileInternal(
   auto input_options = options;
 
   TF_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
+
+  // options.executable_build_options.clear_device_assignment();
+  // all assigned to device 0 (or maybe another available device)
+  // triggers this path http://shortn/_DaeB6C8pSc
+  // options.executable_build_options.device_assignment().Fill(0);
 
   TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&options));
   std::shared_ptr<DeviceAssignment>& device_assignment =
@@ -3641,14 +3655,16 @@ absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
   }
   ExecutableAndOptionsProto proto;
   *proto.mutable_serialized_executable() = std::move(serialized);
+  // don't serialize the option allow_compile_without_run
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       se_executable->compile_options_.ToProto());
   return proto.SerializeAsString();
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::DeserializeExecutable(
-    absl::string_view serialized, std::optional<CompileOptions> options) {
+PjRtStreamExecutorClient::LoadSerializedExecutable(
+    absl::string_view serialized, std::optional<CompileOptions> options,
+    const LoadOptions& load_options) {
   ExecutableAndOptionsProto proto;
   if (serialized.size() > std::numeric_limits<int>::max()) {
     return Internal(
@@ -3704,10 +3720,9 @@ PjRtStreamExecutorClient::DeserializeExecutable(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::LoadSerializedExecutable(
-    absl::string_view serialized, std::optional<CompileOptions> options,
-    const LoadOptions& load_options) {
-  return DeserializeExecutable(serialized, options);
+PjRtStreamExecutorClient::DeserializeExecutable(
+    absl::string_view serialized, std::optional<CompileOptions> options) {
+  return LoadSerializedExecutable(serialized, options, LoadOptions());
 }
 
 bool PjRtStreamExecutorClient::IsDmaMapped(const void* data_start,
