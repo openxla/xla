@@ -218,6 +218,9 @@ class GpuCompiler : public LLVMCompiler {
   absl::Status RunCollectiveScheduleLinearizerPasses(
       HloModule* hlo_module, se::StreamExecutor* stream_exec);
 
+  absl::Status RunCopyInsertionAndFusionPipeline(HloModule&,
+                                                 const se::DeviceDescription&);
+
   // During compilation with device, stream_exec != null and autotune_results
   // == null. During deviceless AOT compilation, stream_exec == null and
   // autotune_results != null.
