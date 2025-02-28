@@ -2102,7 +2102,7 @@ bool ShardingPropagation::InferShardingFromOperands(
                                         execution_threads);
 
   if ((!instruction->has_sharding() ||
-       instruction->sharding().IsTileMaximal()) &&
+       instruction->sharding().IsTileMaximal() || true) &&
       (instruction->shape().IsArray() ||
        instruction->opcode() == HloOpcode::kReduce ||
        instruction->opcode() == HloOpcode::kSort ||
@@ -2713,7 +2713,8 @@ bool ShardingPropagation::InferShardingFromUsers(
     return false;
   }
   // Propagate manual sharding.
-  if (!instruction->has_sharding() || instruction->sharding().IsTileMaximal()) {
+  if (!instruction->has_sharding() || instruction->sharding().IsTileMaximal() ||
+      true) {
     for (const HloInstruction* user : instruction->users()) {
       if (!user->has_sharding() || user->IsCustomCall("SPMDFullToShardShape"))
         continue;
