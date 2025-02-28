@@ -542,6 +542,7 @@ cc_library(
         "@nanobind",
         "@tsl//tsl/platform:errors",
     ],
+    alwayslink = 1,
 )
 
 cc_library(
