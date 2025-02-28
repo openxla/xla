@@ -11,10 +11,22 @@ bool_flag(
     build_setting_default = False,
 )
 
+bool_flag(
+    name = "multiple_rocm_rpath",
+    build_setting_default = False,
+)
+
 config_setting(
     name = "build_hermetic",
     flag_values = {
         ":use_rocm_hermetic_rpath": "True",
+    },
+)
+
+config_setting(
+    name = "multiple_rocm_paths",
+    flag_values = {
+        ":multiple_rocm_rpath": "True",
     },
 )
 
@@ -128,6 +140,9 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,%{rocm_toolkit_path}/lib",
+        ],
+        ":multiple_rocm_paths": [
+            "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
             "-Wl,-rpath,/opt/rocm/lib",
