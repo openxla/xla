@@ -16,6 +16,7 @@ limitations under the License.
 #include <stdbool.h>
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -137,12 +138,6 @@ void ComputeBoundaryChecks(std::vector<int32_t>& boundary_checks,
 }
 
 struct RewriteFuncOp : mlir::OpRewritePattern<func::FuncOp> {
-  RewriteFuncOp(mlir::MLIRContext* context,
-                const stream_executor::DeviceDescription* device_description,
-                bool tma_enabled)
-      : OpRewritePattern(context),
-        device_description(device_description),
-        tma_enabled(tma_enabled) {}
   using OpRewritePattern::OpRewritePattern;
 
   // Rewrite tensors<> to !tt.ptr<tensor>
@@ -183,6 +178,14 @@ struct RewriteFuncOp : mlir::OpRewritePattern<func::FuncOp> {
         op.getContext(), new_operand_types, /*result_types=*/{});
     auto new_func = rewriter.create<triton::FuncOp>(op.getLoc(), op.getName(),
                                                     new_function_type);
+    // Transfer the argument attributes from the old function to the new one.
+    if (op.getArgAttrs().has_value()) {
+      auto oldArgAttrsArray = op.getArgAttrs().value();
+      for (int i = 0; i < oldArgAttrsArray.size(); ++i) {
+        new_func.setArgAttrs(
+            i, mlir::cast<mlir::DictionaryAttr>(oldArgAttrsArray[i]));
+      }
+    }
 
     rewriter.inlineRegionBefore(op.getRegion(), new_func.getFunctionBody(),
                                 new_func.end());
@@ -195,9 +198,6 @@ struct RewriteFuncOp : mlir::OpRewritePattern<func::FuncOp> {
 
     return mlir::success();
   }
-
-  const stream_executor::DeviceDescription* device_description;
-  const bool tma_enabled;
 };
 
 struct RewriteTile : mlir::OpRewritePattern<TileOp> {
@@ -215,17 +215,44 @@ struct RewriteTile : mlir::OpRewritePattern<TileOp> {
       TileOp op, mlir::PatternRewriter& rewriter) const override {
     ::xla::EmitterLocOpBuilder builder(op.getLoc(), rewriter);
 
-    // tensor -> !tt.ptr<>
-    auto cast_to_tensor_ptr_type =
-        builder
-            .create<mlir::UnrealizedConversionCastOp>(
-                GetTensorPtrType(builder,
-                                 op.getTensor().getType().getElementType()),
-                op.getTensor())
-            .getResult(0);
-
     if (CanUseTMA(tma_enabled, *device_description,
                   op.getTiledTensor().getType())) {
+      // Add TMA attributes to the equivalent argument in the function.
+      if (auto block_arg = mlir::dyn_cast<BlockArgument>(op.getTensor())) {
+        mlir::Operation* parent_op = block_arg.getOwner()->getParentOp();
+        if (auto func_op = mlir::dyn_cast<func::FuncOp>(parent_op)) {
+          // TODO(manany): Revisit. This needs to be part of the eligibility
+          // check inside CanUseTMA itself. Should we enforce TileOp to be
+          // rewritten first and then have the other patterns check a flag?
+          if (std::distance(block_arg.getUsers().begin(),
+                            block_arg.getUsers().end()) == 1) {
+            func_op.setArgAttr(block_arg.getArgNumber(), "tt.nv_tma_desc",
+                               builder.getI32IntegerAttr(1));
+            // TODO(manany): We need to prefix the attribute name with "tt",
+            // otherwise tt.func will complain that it has an attribute that
+            // is not part of the dialect. Is there a better way to do this?
+            func_op.setArgAttr(
+                block_arg.getArgNumber(), "tt.tma_descriptor",
+                builder.getAttr<TmaDescriptorAttr>(
+                    op.getTiledTensor().getType().getOriginalShape(),
+                    op.getTiledTensor().getType().getTileShape(),
+                    op.getTiledTensor()
+                            .getType()
+                            .getElementType()
+                            .getIntOrFloatBitWidth() /
+                        8));
+          }
+        }
+      }
+      // tensor -> !tt.ptr<>
+      auto cast_to_tensor_ptr_type =
+          builder
+              .create<mlir::UnrealizedConversionCastOp>(
+                  GetTensorPtrType(builder,
+                                   op.getTensor().getType().getElementType()),
+                  op.getTensor())
+              .getResult(0);
+
       auto reinterpret_tensor_desc =
           xg::EmitTmaDescriptor(builder, cast_to_tensor_ptr_type,
                                 op.getTiledTensor().getType().getTileType());
@@ -238,12 +265,22 @@ struct RewriteTile : mlir::OpRewritePattern<TileOp> {
               reinterpret_tensor_desc);
 
       rewriter.replaceOp(op, cast_desc_ptr_to_tiled_tensor_ptr_type);
+
       return mlir::success();
     }
 
     // Order is 0, 1, ..., rank - 1.
     std::vector<int32_t> dim_order(op.getSizes().size());
     std::iota(dim_order.begin(), dim_order.end(), 0);
+
+    // tensor -> !tt.ptr<>
+    auto cast_to_tensor_ptr_type =
+        builder
+            .create<mlir::UnrealizedConversionCastOp>(
+                GetTensorPtrType(builder,
+                                 op.getTensor().getType().getElementType()),
+                op.getTensor())
+            .getResult(0);
 
     auto tensor_ptr =
         builder
@@ -473,10 +510,11 @@ struct TritonXLAExtractInsertToTritonPass
     mlir::MLIRContext* mlir_context = &getContext();
     mlir::RewritePatternSet patterns(mlir_context);
     // clang-format off
-    patterns.add<RewriteScalarExtract, RewriteScalarInsert>(mlir_context);
+    patterns.add<RewriteFuncOp,
+                 RewriteScalarExtract,
+                 RewriteScalarInsert>(mlir_context);
     patterns.add<
         RewriteExtract,
-        RewriteFuncOp,
         RewriteInsert,
         RewriteTile
     >(mlir_context, &device_description, tma_enabled);
