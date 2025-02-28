@@ -58,6 +58,7 @@ cc_library(
         ":collective_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
+        ":gpublas_lt_matmul_thunk",
         ":thunk",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
@@ -630,6 +631,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu/autotuning:autotuner_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_blas_lt",
@@ -641,6 +643,27 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ],
 )
+
+xla_test(
+    name = "gpublas_lt_matmul_thunk_test",
+    srcs = ["gpublas_lt_matmul_thunk_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpublas_lt_matmul_thunk",
+         "//xla/tests:hlo_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/hlo/testlib:test",
+        "//xla/hlo/testlib:test_helpers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 
 cc_library(
     name = "infeed_thunk",
