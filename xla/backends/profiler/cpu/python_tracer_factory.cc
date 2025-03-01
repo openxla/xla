@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <memory>
+#include <string>
+#include <stdlib.h>
 
 #include "xla/backends/profiler/cpu/python_tracer.h"
 #include "tsl/profiler/lib/profiler_factory.h"
@@ -28,6 +30,14 @@ std::unique_ptr<tsl::profiler::ProfilerInterface> CreatePythonTracer(
   PythonTracerOptions options;
   options.enable_trace_python_function = profile_options.python_tracer_level();
   options.enable_python_traceme = profile_options.host_tracer_level();
+
+  char* min_entry_duration_ns = getenv("XLA_PYTHON_TRACER_MIN_EVENT_DURATION_NS");
+  if (min_entry_duration_ns != nullptr) {
+    options.min_entry_duration_ns = std::stoull(min_entry_duration_ns, nullptr, 10);
+  } else {
+    options.min_entry_duration_ns = 0;
+  }
+
   return CreatePythonTracer(options);
 }
 
