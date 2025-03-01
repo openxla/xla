@@ -91,6 +91,8 @@ struct CompileOptions {
   // compiled for one device doesn't run on another.
   bool compile_portable_executable = false;
 
+  bool compile_without_run = false;
+
   // XLA compilation profile version.
   int64_t profile_version = 0;
 
@@ -146,6 +148,8 @@ struct LoadOptions {
   // multi_slice_config to associate with the executable during load of a multi
   // slice operation.
   const MultiSliceConfig* multi_slice_config = nullptr;
+
+  bool load_without_run = false;
 };
 
 class ExecuteContext {
