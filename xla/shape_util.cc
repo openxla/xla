@@ -1932,7 +1932,7 @@ ShapeUtil::DecomposeBitcastToTrt(const Shape& input_shape,
 namespace {
 
 struct ParallelState {
-  explicit ParallelState(int64_t task_count) : counter(task_count) {
+  explicit ParallelState(int64_t task_count) {
     // If this method is changed, please remember to change
     // GetForEachIndexParallelThreadCount() as well.
     static auto* global_pool = new tsl::thread::ThreadPool(
@@ -1940,13 +1940,10 @@ struct ParallelState {
     pool = global_pool;
   }
   ~ParallelState() = default;
-  void Wait() { counter.Wait(); }
-  void TaskComplete() { counter.DecrementCount(); }
 
   absl::Mutex mu;
   tsl::thread::ThreadPool* pool;
   absl::Status status;  // Guarded by mu
-  absl::BlockingCounter counter;
 };
 
 }  // anonymous namespace
@@ -1999,7 +1996,8 @@ struct ParallelState {
   ShapePartitionIterator iterator(work_shape, partition_counts);
   ParallelState pstate(partition_count);
 
-  for (size_t i = 0; i < partition_count; ++i) {
+  // Process a single partition using bounds defined by the partition iterator.
+  auto process_partition = [&](size_t i) {
     auto partition = iterator.GetPartition(i);
 
     // Adjust base and count for the `i`-th partition.
@@ -2018,31 +2016,32 @@ struct ParallelState {
                                       partition_size * incr[dim]);
     }
 
-    pstate.pool->Schedule([&, base = std::move(partition_base),
-                           count = std::move(partition_count)] {
-      ForEachState s(shape, base, count, incr);
-      const int thread_id = pstate.pool->CurrentThreadId();
+    ForEachState s(shape, partition_base, partition_count, incr);
+    const int thread_id = pstate.pool->CurrentThreadId();
 
-      // Allows handling R0 arrays, such that the visitor function will be
-      // called once with the proper empty indexes.
-      int64_t n = -1;
-      while (n < s.rank) {
-        absl::StatusOr<bool> result = visitor_function(s.indexes, thread_id);
-        if (!result.ok()) {
-          absl::MutexLock lock(&pstate.mu);
-          if (pstate.status.ok()) {
-            pstate.status = result.status();
-          }
+    // Allows handling R0 arrays, such that the visitor function will be
+    // called once with the proper empty indexes.
+    int64_t n = -1;
+    while (n < s.rank) {
+      absl::StatusOr<bool> result = visitor_function(s.indexes, thread_id);
+      if (!result.ok()) {
+        absl::MutexLock lock(&pstate.mu);
+        if (pstate.status.ok()) {
+          pstate.status = result.status();
         }
-        // Increments dimensions in minor to major order.
-        n = s.IncrementDim();
       }
+      // Increments dimensions in minor to major order.
+      n = s.IncrementDim();
+    }
+  };
 
-      pstate.TaskComplete();
-    });
-  }
-
-  pstate.Wait();
+  // Launch parallel for loop to process all partitions.
+  pstate.pool->ParallelFor(partition_count, /*cost_per_unit=*/1000000,
+                           [&](int64_t p_begin, int64_t p_end) {
+                             for (size_t i = p_begin; i < p_end; ++i) {
+                               process_partition(i);
+                             }
+                           });
   return pstate.status;
 }
 
