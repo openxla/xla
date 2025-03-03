@@ -293,7 +293,7 @@ cc_library(
         "//xla/hlo/parser:hlo_parser",
         "//xla/service/graphcycles",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
@@ -462,6 +462,7 @@ cc_library(
         ":call_graph",
         ":collective_ops_utils",
         ":constant_value",
+        ":scheduling_annotations_util",
         ":value_range",
         "//xla:comparison_util",
         "//xla:literal",
@@ -502,6 +503,7 @@ xla_cc_test(
         ":hlo_module_config",
         ":hlo_verifier",
         ":host_memory_offload_annotations_hdr",
+        ":scheduling_annotations_util",
         "//xla:literal_util",
         "//xla:test_helpers",
         "//xla:util",
@@ -2624,6 +2626,42 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "all_gather_simplifier",
+    srcs = ["all_gather_simplifier.cc"],
+    hdrs = ["all_gather_simplifier.h"],
+    deps = [
+        ":collective_opt_utils",
+        ":hlo_module_config",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "all_gather_simplifier_test",
+    srcs = ["all_gather_simplifier_test.cc"],
+    deps = [
+        ":all_gather_simplifier",
+        ":pattern_matcher",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:pattern_matcher_gmock",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "reduce_scatter_decomposer",
     srcs = ["reduce_scatter_decomposer.cc"],
     hdrs = ["reduce_scatter_decomposer.h"],
@@ -4267,6 +4305,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
@@ -4775,7 +4814,6 @@ cc_library(
     deps = [
         ":computation_layout",
         ":computation_placer_hdr",
-        ":executable",
         ":hlo_module_util",
         ":hlo_runner_interface",
         "//xla:literal",
@@ -4806,7 +4844,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
     ],
 )
 

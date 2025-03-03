@@ -810,24 +810,66 @@ def tf_protobuf_deps():
 def tsl_protobuf_deps():
     return if_tsl_link_protobuf([clean_dep("@com_google_protobuf//:protobuf")], [clean_dep("@com_google_protobuf//:protobuf_headers")])
 
-# When tsl_protobuf_header_only is true, we need to add the protobuf library
-# back into our binaries explicitly.
-def tsl_cc_test(
+def strict_cc_test(
         name,
         linkstatic = True,
-        deps = [],
+        shuffle_tests = True,
+        args = None,
+        fail_if_no_test_linked = True,
         **kwargs):
-    """A wrapper around cc_test that adds protobuf deps if needed.
+    """A drop-in replacement for cc_test that enforces some good practices by default.
 
-    It also defaults to linkstatic = True, which is a good practice for catching duplicate
-    symbols at link time (e.g. linking in two main() functions).
+    This should be lightweight and not add any dependencies by itself.
 
-    Use tsl_cc_test instead of cc_test in all .../tsl/... directories.
+    Args:
+      name: The name of the test.
+      linkstatic: Whether to link statically.
+      shuffle_tests: Whether to shuffle the test cases.
+      args: The arguments to pass to the test.
+      fail_if_no_test_linked: Whether to fail if no tests are linked. Unimplemented in OSS as
+          --gtest_fail_if_no_test_linked is not available in the OSS build as of 2025-02-27.
+      **kwargs: Other arguments to pass to the test.
     """
+
+    _ = fail_if_no_test_linked  # buildifier: disable=unused-variable
+
+    if args == None:
+        args = []
+
+    if shuffle_tests:
+        # Shuffle tests to avoid test ordering dependencies.
+        args = args + ["--gtest_shuffle"]
 
     native.cc_test(
         name = name,
         linkstatic = linkstatic,
+        args = args,
+        **kwargs
+    )
+
+# When tsl_protobuf_header_only is true, we need to add the protobuf library
+# back into our binaries explicitly.
+def tsl_cc_test(
+        name,
+        deps = [],
+        **kwargs):
+    """A wrapper around strict_cc_test that adds protobuf deps if needed.
+
+    It also defaults to linkstatic = True, which is a good practice for catching duplicate
+    symbols at link time (e.g. linking in two main() functions).
+
+    By default, it also shuffles the tests to avoid test ordering dependencies.
+
+    Use tsl_cc_test instead of cc_test in all .../tsl/... directories.
+
+    Args:
+      name: The name of the test.
+      deps: The dependencies of the test.
+      **kwargs: Other arguments to pass to the test.
+    """
+
+    strict_cc_test(
+        name = name,
         deps = deps + if_tsl_link_protobuf(
             [],
             [

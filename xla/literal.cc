@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/core/bitmap.h"
+#include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/status.h"
@@ -199,16 +200,10 @@ LiteralBase::~LiteralBase() = default;
 const Shape& LiteralBase::shape() const { return root_piece().subshape(); }
 
 const char* LiteralBase::Piece::buffer() const {
-  // std::visit is avoided here due to its code size issues.
-  if (auto* r = std::get_if<DenseRep>(&rep_)) {
-    return r->data;
+  if (storage_.Isa<TupleRep>() || storage_.Isa<Uninitialized>()) {
+    DCHECK_EQ(storage_.data(), nullptr) << "Unexpected data pointer";
   }
-  if (auto* r = std::get_if<DenseInlinedRep>(&rep_)) {
-    return r->data;
-  }
-  DCHECK(std::holds_alternative<TupleRep>(rep_) ||
-         std::holds_alternative<Uninitialized>(rep_));
-  return nullptr;
+  return storage_.data();
 }
 
 const LiteralBase::Piece& LiteralBase::piece(
@@ -627,20 +622,18 @@ void LiteralBase::Piece::AllocateBuffers() {
   const int64_t bytes = total_bytes_dense();
   if (bytes > kMaxInlinedBytes) {
     CHECK_EQ(buffer(), nullptr);
-    rep_.emplace<DenseRep>();
-    char* buffer =
-        static_cast<char*>(tsl::port::AlignedMalloc(bytes, kMinimumAlignment));
-    CHECK(buffer != nullptr) << "Failed to allocate buffer for Literal";
-    set_buffer(buffer);
+    storage_.Emplace<DenseRep>(
+        static_cast<char*>(tsl::port::AlignedMalloc(bytes, kMinimumAlignment)));
+    CHECK_NE(buffer(), nullptr) << "Failed to allocate buffer for Literal";
   } else {
-    rep_.emplace<DenseInlinedRep>();
+    storage_.Emplace<DenseInlinedRep>();
   }
 }
 
 void LiteralBase::Piece::DeallocateBuffers() {
-  if (auto* array_rep = GetDenseRep()) {
+  if (auto* array_rep = storage_.GetDenseRep()) {
     tsl::port::AlignedFree(array_rep->data);
-    rep_.emplace<Uninitialized>();
+    storage_.Emplace<Uninitialized>();
   }
 }
 
@@ -933,25 +926,67 @@ void MutableLiteralBase::PopulateInplaceInternal(
   }
 }
 
-absl::Status MutableLiteralBase::PopulateInplace(
-    absl::FunctionRef<void(void*, absl::Span<const int64_t>)> populator) {
-  TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
-      << __func__ << " is only supported for dense arrays: " << shape();
-  PopulateInplaceInternal(
-      [&](void* dest, absl::Span<const int64_t> indexes, int /*thread_id*/) {
-        return populator(dest, indexes);
-      },
-      /*parallel=*/false);
-  return absl::OkStatus();
-}
+void MutableLiteralBase::PopulateLinearInplaceInternal(
+    absl::FunctionRef<void(void*, int64_t, int)> populator, bool parallel) {
+  const Shape& this_shape = shape();
+  const int64_t rank = this_shape.rank();
+  DCHECK(LayoutUtil::IsDenseArray(this_shape));
+  char* const dest_base = static_cast<char*>(untyped_data());
 
-absl::Status MutableLiteralBase::PopulateInplaceParallel(
-    absl::FunctionRef<void(void*, absl::Span<const int64_t>, int)> populator) {
-  TF_RET_CHECK(LayoutUtil::IsDenseArray(shape()))
-      << __func__ << " is only supported for dense arrays: " << shape();
-  PopulateInplaceInternal(populator,
-                          /*parallel=*/element_count() > 32);
-  return absl::OkStatus();
+  const int64_t num_elements = ShapeUtil::ElementsIn(shape());
+  if (num_elements == 0) return;
+
+  if (rank > 0) {
+    // Compute initialization function partitioning.
+    const int64_t partition_size = tsl::MathUtil::CeilOfRatio<int64_t>(
+        num_elements, ShapeUtil::GetForEachIndexParallelThreadCount());
+    const int64_t num_partitions =
+        tsl::MathUtil::CeilOfRatio<int64_t>(num_elements, partition_size);
+
+    const int64_t primitive_size =
+        ShapeUtil::ByteSizeOfPrimitiveType(shape().element_type());
+
+    auto init_function = [&](absl::Span<const int64_t> partition_index,
+                             int thread_id) -> absl::StatusOr<bool> {
+      DCHECK_EQ(partition_index.size(), 1);
+
+      // Initialize data using linear index in the [start, end) range.
+      int64_t start = partition_index[0] * partition_size;
+      int64_t end = std::min(start + partition_size, num_elements);
+
+      char* dest_ptr = dest_base + start * primitive_size;
+      char* const dest_end = dest_base + end * primitive_size;
+
+      int64_t linear_index = start;
+      while (dest_ptr < dest_end) {
+        populator(dest_ptr, linear_index, thread_id);
+        dest_ptr += primitive_size;
+        linear_index++;
+      }
+
+      return true;
+    };
+
+    // We create a fake shape of the work, so we can rely on the existing
+    // `ForEachIndexParallel` implementation.
+    Shape work_shape =
+        ShapeUtil::MakeShape(shape().element_type(), {num_partitions});
+
+    if (parallel) {
+      ShapeUtil::ForEachIndexParallel(work_shape, init_function);
+    } else {
+      ShapeUtil::ForEachIndex(
+          work_shape,
+          [&](absl::Span<const int64_t> indexes) -> absl::StatusOr<bool> {
+            auto result_ignored = init_function(indexes, /*thread_id=*/-1);
+            return true;
+          });
+    }
+
+  } else {
+    // For scalars.
+    populator(dest_base, 0, /*thread_id=*/-1);
+  }
 }
 
 Literal LiteralBase::Relayout(const Layout& new_layout,

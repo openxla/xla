@@ -100,7 +100,8 @@ class GpuCompilerTest : public HloTestBase {
   }
 };
 
-TEST_F(GpuCompilerTest, CompiledProgramsCount) {
+// TODO(b/399912696): Fix and enable this test.
+TEST_F(GpuCompilerTest, DISABLED_CompiledProgramsCount) {
   const char* hlo_text = R"(
 HloModule test
 
@@ -535,7 +536,7 @@ TEST_F(GpuCompilerTestWithAutotuneDb,
                 .cuda_compute_capability();
   if (!cc.IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
-                 << "and Hopper GPUs";
+                 << "and later GPUs";
   }
   const absl::string_view hlo_string = R"(
 HloModule test

@@ -16,6 +16,16 @@ name: CI
 permissions:
   contents: read
 on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
   pull_request:
   push:
     branches:
@@ -75,7 +85,7 @@ jobs:
             repo: "tensorflow/tensorflow",
           },
           {
-            pool: "linux-x86-g2-48-l4-4gpu",
+            pool: "linux-x86-g2-16-l4-1gpu",
             container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest",
             kokoro_job_name: "tensorflow-linux-x86-gpu-t4",
             pretty_name: "TensorFlow Linux x86 GPU T4",
@@ -100,6 +110,10 @@ jobs:
         with:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
+      - name: "Wait For Connection"
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Run build.py"
         working-directory: ${{ matrix.job_info.repo }}
         env:

@@ -25,6 +25,7 @@ load("@tsl//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("@tsl//third_party/implib_so:workspace.bzl", implib_so = "repo")
 load("@tsl//third_party/llvm:setup.bzl", "llvm_setup")
 load("@tsl//third_party/nasm:workspace.bzl", nasm = "repo")
+load("@tsl//third_party/nvshmem:workspace.bzl", nvshmem = "repo")
 load("@tsl//third_party/py:python_configure.bzl", "python_configure")
 load("@tsl//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
 load("@tsl//third_party/pybind11_abseil:workspace.bzl", pybind11_abseil = "repo")
@@ -52,6 +53,7 @@ def _initialize_third_party():
     implib_so()
     ml_dtypes()
     nasm()
+    nvshmem()
     pybind11_abseil()
     pybind11_bazel()
     tensorrt()
@@ -128,9 +130,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "pthreadpool",
-        sha256 = "cb668c32d6e05099492cc7ea19168e2dad0d1dcc4cbaa0e34fd4b38d39f0e03e",
-        strip_prefix = "pthreadpool-f94ab76fe99754960035d520dce28e15b647e8cf",
-        urls = tf_mirror_urls("https://github.com/Maratyszcza/pthreadpool/archive/f94ab76fe99754960035d520dce28e15b647e8cf.zip"),
+        sha256 = "215724985c4845cdcadcb5f26a2a8777943927bb5a172a00e7716fe16a6f3c1b",
+        strip_prefix = "pthreadpool-b1aee199d54003fb557076a201bcac3398af580b",
+        urls = tf_mirror_urls("https://github.com/google/pthreadpool/archive/b1aee199d54003fb557076a201bcac3398af580b.zip"),
     )
 
     tf_http_archive(

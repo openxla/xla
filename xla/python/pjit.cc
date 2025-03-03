@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/python/sharding.h"
 #include "xla/python/traceback.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -554,7 +555,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
   if (!copy_groups.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
-    tsl::RCReference<xla::ifrt::DeviceList> ifrt_devices =
+    xla::ifrt::DeviceListRef ifrt_devices =
         ifrt_client->MakeDeviceList({addressable_devices[0]});
     for (auto& [key, group] : copy_groups) {
       TF_ASSIGN_OR_RETURN(
@@ -748,6 +749,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   xla::ifrt::ExecuteOptions execute_options =
       cache_entry->executable->options();
   execute_options.launch_id = cache_entry->executable->GetNextLaunchId();
+  execute_options.execution_stream_id =
+      tsl::Env::Default()->GetCurrentThreadId();
 
   // A vector of [num_outputs].
   std::vector<tsl::RCReference<xla::ifrt::Array>> output_arrays;

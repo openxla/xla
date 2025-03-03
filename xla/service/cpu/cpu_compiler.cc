@@ -32,6 +32,7 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -83,6 +84,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 #include "xla/backends/cpu/codegen/object_loader.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
@@ -226,7 +228,7 @@ limitations under the License.
 #include "llvm/TargetParser/X86TargetParser.h"
 #endif
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
 #include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
 #include "xla/service/cpu/cpu_float_support.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
@@ -559,7 +561,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<DotDecomposer>();
 
   // Rewrite to custom calls with target as oneDNN library calls.
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
   // AOT compiled code runs in single thread.
   bool is_thunk_runtime =
       module->config().debug_options().xla_cpu_use_thunk_runtime();
@@ -571,7 +573,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // but in future plan to rename oneDNNrewriter to specific to onednn matmul
     pipeline.AddPass<OneDnnOpsRewriter>();
   }
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL
 
   // Promote BF16 all-reduce to F32.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
@@ -581,7 +583,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // backend can support BF16/F8 operations without directly implementing a
   // BF16/F8 lowering for most ops.
   FloatSupport bf16_support(BF16);
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
   CpuFloatSupport onednn_bf16_support(BF16);
   if (!is_aot_compile && !is_thunk_runtime) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
@@ -662,8 +664,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   dynamic_padder_options.shape_check_mode =
       DynamicDimensionInference::ShapeCheckMode::kIgnore;
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
-  pipeline.AddPass<SelectAndScatterExpander>();
-  pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+
   pipeline.AddPass<ConvCanonicalization>(target_machine_features);
 
   // Run fp16 dots/convs in fp32 and then downcast the result to fp16.
@@ -680,8 +681,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   // Run the following passes to a fixed point.
-  [&pipeline =
-       pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification")] {
+  [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),
+   module] {
     AddHloVerifier(&pipeline, HloVerifierOpts{},
                    /*debug_only=*/true);
 
@@ -714,9 +715,16 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<ReshapeMover>();
-    pipeline.AddPass<HloConstantFolding>();
+    pipeline.AddPass<HloConstantFolding>(
+        options::FoldAllConstants(module->config())
+            ? HloConstantFolding::Level::kAgressive
+            : HloConstantFolding::Level::kDefault);
     pipeline.AddPass<ConditionalSimplifier>();
   }();
+
+  pipeline.AddPass<SelectAndScatterExpander>();
+  pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+
   pipeline.AddPass<BitcastDtypesExpander>();
 
   pipeline.AddPass<TopkRewriter>([](const HloSortInstruction* sort, int64_t) {
@@ -787,7 +795,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
           ? module->config().intra_op_parallelism_threads()
           : tsl::port::NumSchedulableCPUs();
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
   auto& debug_options = module->config().debug_options();
   bool is_thunk_runtime = debug_options.xla_cpu_use_thunk_runtime();
 
@@ -808,7 +816,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
       pipeline.AddPass<SimplifyFPConversions>();
     }
   }
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL
 
   if (module->config()
           .debug_options()
@@ -1008,6 +1016,26 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 
 namespace {
 
+static void DumpModuleToFile(const llvm::Module& llvm_module,
+                             const llvm::object::ObjectFile& obj_file,
+                             const HloModule& hlo_module) {
+  absl::string_view id = llvm_module.getModuleIdentifier();
+  size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
+  auto get_file_suffix = [&]() {
+    std::vector<absl::string_view> parts = {"obj-file"};
+    parts.reserve(3);
+    absl::string_view middle_name = id.substr(pos);
+    if (!middle_name.empty()) {
+      parts.push_back(middle_name);
+    }
+    parts.push_back("o");
+    return absl::StrJoin(parts, ".");
+  };
+  DumpToFileInDir(
+      hlo_module, /*file_prefix=*/"", get_file_suffix(),
+      absl::string_view(obj_file.getData().data(), obj_file.getData().size()));
+}
+
 // Post-compilation callback functor for use by SimpleOrcJIT.
 //
 // Dumps machine code if dumping is enabled for the module.
@@ -1019,13 +1047,7 @@ CreateOrcJITPostCompilationHook(const HloModule* hlo_module,
     if (obj_files) obj_files->push_back(obj_file.getData().str());
 
     if (DumpingEnabledForHloModule(*hlo_module)) {
-      std::string_view id = llvm_module.getModuleIdentifier();
-      size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
-      DumpToFileInDir(
-          *hlo_module, /*file_prefix=*/"",
-          /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
-          absl::string_view(obj_file.getData().data(),
-                            obj_file.getData().size()));
+      DumpModuleToFile(llvm_module, obj_file, *hlo_module);
     }
   };
 }
@@ -1093,87 +1115,6 @@ std::vector<ComputationToEmit> SubcomputationEmissionOrder(
 }
 
 }  // namespace
-
-static absl::StatusOr<CpuExecutable::ConstantAllocation>
-LiteralToConstantAllocation(BufferAllocation::Index index,
-                            const Literal& literal) {
-  // TODO(ezhulenev): This code is almost identical to code in XLA:GPU, we
-  // should standardize it. See `xla/service/gpu/ir_emission_utils.cc`.
-  PrimitiveType element_type = literal.shape().element_type();
-  if (!primitive_util::IsArrayType(element_type)) {
-    return absl::InternalError(
-        "Only array literals can be converted to constant allocations");
-  }
-
-  int64_t size_bytes = literal.size_bytes();
-  const void* untyped_data = literal.untyped_data();
-
-  // Pack sub-byte types into an XLA storage format.
-  if (primitive_util::IsSubByteNonPredType(element_type)) {
-    int bit_width = primitive_util::BitWidth(element_type);
-    int packed_size_bytes = CeilOfRatio<int64_t>(size_bytes, 8 / bit_width);
-
-    // Use Literal as a storage for packed data as it allocates underlying
-    // buffer with correct alignment. Keep it allocated on heap to avoid
-    // capturing stack address that will be invalidated by a move below.
-    auto packed = std::make_unique<Literal>(
-        ShapeUtil::MakeShape(U8, {packed_size_bytes}));
-
-    PackIntN(
-        bit_width,
-        absl::MakeSpan(reinterpret_cast<const char*>(untyped_data), size_bytes),
-        absl::MakeSpan(reinterpret_cast<char*>(packed->untyped_data()),
-                       packed->size_bytes()));
-
-    return CpuExecutable::ConstantAllocation{index, std::move(packed)};
-  }
-
-  // Create a constant allocation from the literal's untyped data.
-  return CpuExecutable::ConstantAllocation{
-      index, absl::Span<const uint8_t>(
-                 reinterpret_cast<const uint8_t*>(untyped_data), size_bytes)};
-}
-
-// Creates a vector of constant allocations from the given buffer assignment.
-static absl::StatusOr<std::vector<CpuExecutable::ConstantAllocation>>
-CreateConstantAllocations(const BufferAssignment& assignment) {
-  std::vector<CpuExecutable::ConstantAllocation> constants;
-
-  for (const BufferAllocation& allocation : assignment.Allocations()) {
-    if (!allocation.is_constant()) {
-      continue;
-    }
-
-    // Find the constant instruction defining the value for allocation.
-    HloInstruction* const_instr = nullptr;
-    for (const auto& [value, _] : allocation.assigned_buffers()) {
-      // Multiple aliasing instructions can share the allocation, we need to
-      // find the original constant instruction that defines the value.
-      if (value->instruction()->opcode() == HloOpcode::kConstant) {
-        if (const_instr != nullptr) {
-          return absl::InternalError(
-              absl::StrCat("Multiple constant instructions define buffer ",
-                           allocation.ToString()));
-        }
-        const_instr = value->instruction();
-      }
-    }
-    if (const_instr == nullptr) {
-      return absl::InternalError(
-          absl::StrCat("Could not find constant instruction defining buffer ",
-                       allocation.ToString()));
-    }
-
-    VLOG(3) << "Create constant allocation for index " << allocation.index()
-            << " from constant literal " << const_instr->name()
-            << "; shape=" << const_instr->literal().shape();
-    TF_ASSIGN_OR_RETURN(constants.emplace_back(),
-                        LiteralToConstantAllocation(allocation.index(),
-                                                    const_instr->literal()));
-  }
-
-  return constants;
-}
 
 // Removes unused globals and function declarations from the LLVM module.
 //
@@ -1613,9 +1554,8 @@ CpuCompiler::CompileCpuExecutable(std::unique_ptr<HloModule> module) {
                         std::move(jit_compiler).Compile(compiled_symbols));
 
     // Create constant allocations from the buffer assignment.
-    TF_ASSIGN_OR_RETURN(
-        std::vector<CpuExecutable::ConstantAllocation> constants,
-        CreateConstantAllocations(*assignment));
+    TF_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
+                        CreateConstantAllocations(*assignment));
 
     TF_ASSIGN_OR_RETURN(
         auto cpu_executable,
@@ -1841,6 +1781,19 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     VLOG(1) << "Compiling ahead-of-time: " << module->name();
 
     if (!module->has_schedule()) {
+      const bool is_thunk_runtime =
+          module->config().debug_options().xla_cpu_use_thunk_runtime();
+      // AOT compilation is incompatible with thunks; temporarily disable them.
+      if (is_thunk_runtime) {
+        module->mutable_config()
+            .mutable_debug_options()
+            .set_xla_cpu_use_thunk_runtime(false);
+      }
+      absl::Cleanup restore_thunk_runtime_value = [&] {
+        module->mutable_config()
+            .mutable_debug_options()
+            .set_xla_cpu_use_thunk_runtime(is_thunk_runtime);
+      };
       TF_RETURN_IF_ERROR(RunHloPasses(module, /*is_aot_compile=*/true,
                                       target_machine.get(),
                                       /*dummy*/ CompileOptions{}));
@@ -1951,13 +1904,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
         if (!DumpingEnabledForHloModule(*module)) {
           return;
         }
-        std::string_view id = llvm_module.getModuleIdentifier();
-        size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
-        DumpToFileInDir(
-            *module, /*file_prefix=*/"",
-            /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
-            absl::string_view(obj_file.getData().data(),
-                              obj_file.getData().size()));
+        DumpModuleToFile(llvm_module, obj_file, *module);
       };
 
       IrCompiler::Options ir_compiler_options = {
@@ -2201,9 +2148,8 @@ CpuExecutableAotCompilationResult::LoadExecutable(
                         std::move(object_loader).Load(compiled_symbols));
 
     // Create constant allocations from the buffer assignment.
-    TF_ASSIGN_OR_RETURN(
-        std::vector<CpuExecutable::ConstantAllocation> constants,
-        CreateConstantAllocations(*buffer_assignment));
+    TF_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
+                        CreateConstantAllocations(*buffer_assignment));
 
     TF_ASSIGN_OR_RETURN(
         cpu_executable,

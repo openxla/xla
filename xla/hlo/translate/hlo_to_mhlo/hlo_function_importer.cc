@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/types/optional.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -456,7 +455,15 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
       ++arg_index;
     }
   }
-  if (computation.root_instruction()->has_sharding()) {
+  // TODO(b/260756663): Token sharding is unverified, legacy users provide
+  // multiple sharding values for a single token output.
+  bool is_token = computation.root_instruction()->shape().IsToken();
+  if (is_token && computation.root_instruction()->has_sharding()) {
+    function.setResultAttr(
+        0, kShardingAttr,
+        ConvertSharding(computation.root_instruction()->sharding(), builder_));
+  }
+  if (!is_token && computation.root_instruction()->has_sharding()) {
     ArrayRef<HloSharding> ret_shardings =
         computation.root_instruction()->sharding();
     if (flatten_computation_args_result_) {

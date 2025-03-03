@@ -1907,7 +1907,8 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
     auto thunk = std::make_unique<NcclCollectivePermuteStartThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
         partition_count, buffers,
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        GetStreamKindForP2P(instr));
     GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
     AddThunkToThunkSequence(std::move(thunk));
   }
@@ -2008,7 +2009,8 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
   } else {
     // For other operations simply zip operands with results.
     for (int64_t i = 0; i < operand_count; i++) {
-      ShapeIndex idx = operand_count > 1 ? ShapeIndex({i}) : ShapeIndex({});
+      ShapeIndex idx =
+          inst->shape().IsTuple() ? ShapeIndex({i}) : ShapeIndex({});
       const Shape& src_shape = inst->operand(i)->shape();
       const Shape& dst_shape = ShapeUtil::GetSubshape(inst->shape(), idx);
       TF_ASSIGN_OR_RETURN(auto src, GetAllocationSliceForHlo(inst->operand(i)));
@@ -2175,8 +2177,7 @@ absl::Status IrEmitterUnnested::EmitNcclGroupStartThunk(
         !stream_kind.has_value()) {
       // We only need to modify the stream kind once, since all send/recv
       // instructions in a group should have the same stream kind.
-      stream_kind = GetStreamKindForSendRecv(
-          Cast<HloSendRecvInstruction>(nested_instruction));
+      stream_kind = GetStreamKindForP2P(nested_instruction);
     }
   }
   auto thunk = std::make_unique<NcclGroupThunk>(
@@ -2210,7 +2211,7 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
 
   AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
   if (is_send_recv) {
-    stream_kind = GetStreamKindForSendRecv(Cast<HloSendRecvInstruction>(start));
+    stream_kind = GetStreamKindForP2P(start);
   }
   AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
       kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),

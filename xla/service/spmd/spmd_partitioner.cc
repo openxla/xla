@@ -2752,6 +2752,33 @@ absl::Status SpmdPartitioningVisitor::Postprocess(HloInstruction* hlo) {
 }
 
 absl::Status SpmdPartitioningVisitor::HandleElementwise(HloInstruction* hlo) {
+  bool multi_operand_same_sharding =
+      hlo->operand_count() > 1 &&
+      std::all_of(hlo->operands().begin() + 1, hlo->operands().end(),
+                  [&](const HloInstruction* operand) {
+                    return operand->sharding() == hlo->operand(0)->sharding();
+                  });
+  if (multi_operand_same_sharding) {
+    // Do the element-wise operation. Then reshard the result to the specified
+    // sharding.
+    std::vector<HloInstruction*> original_operands;
+    for (HloInstruction* operand : hlo->operands()) {
+      original_operands.push_back(GetPartitionedHlo(operand).hlo());
+    }
+
+    HloInstruction* result_with_operand_sharding =
+        b_.AddInstruction(hlo->CloneWithNewOperands(
+            MakePartitionedShape(hlo->shape(), hlo->operand(0)->sharding()),
+            original_operands));
+    result_with_operand_sharding->set_sharding(hlo->operand(0)->sharding());
+    SetPartitionedHlo(hlo, PartitionedHlo(result_with_operand_sharding,
+                                          hlo->shape(), MakePartitioningState())
+                               .Reshard(hlo->sharding()));
+    return absl::OkStatus();
+  }
+
+  // Reshard the operands to the result's sharding. Then do the element-wise
+  // operation.
   std::vector<HloInstruction*> new_operands;
   for (HloInstruction* operand : hlo->operands()) {
     new_operands.push_back(
@@ -2779,11 +2806,22 @@ absl::Status SpmdPartitioningVisitor::HandleElementwiseWithDimsToReplicate(
     return DefaultAction(hlo);
   }
 
-  // 1. Replicate the final sharding along `dims_to_replicate` to get
-  // temp_sharding.
-  const HloSharding temp_sharding =
-      hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
-          sharding, dims_to_replicate);
+  // 1. Obtain the temp_sharding by moving or replicating the sharding tiles.
+  HloSharding temp_sharding = sharding;
+  std::function<bool(int64_t)> not_in_dims_to_replicate = [&](int64_t dim) {
+    return !absl::c_linear_search(dims_to_replicate, dim);
+  };
+  for (int64_t dim : dims_to_replicate) {
+    if (std::optional<int64_t> target_dim =
+            hlo_sharding_util::GetFirstTargetDimToMoveShardingTiles(
+                hlo->shape(), temp_sharding, dim, not_in_dims_to_replicate)) {
+      temp_sharding = hlo_sharding_util::MoveAndMergeShardingTiles(
+          temp_sharding, dim, *target_dim);
+    } else {
+      temp_sharding = hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+          temp_sharding, {dim});
+    }
+  }
 
   // 2. Reshard the operands to temp_sharding.
   std::vector<HloInstruction*> new_operands;
@@ -2823,32 +2861,54 @@ absl::Status SpmdPartitioningVisitor::HandleConcatenate(HloInstruction* hlo) {
                                               {hlo->concatenate_dimension()});
 }
 
-absl::Status SpmdPartitioningVisitor::HandleSlice(HloInstruction* hlo) {
-  const HloSharding& sharding = hlo->sharding();
+absl::StatusOr<HloInstruction*> HandleSliceHelper(
+    HloInstruction* hlo, const PartitionedHlo& poperand,
+    const HloSharding& sharding, SpmdBuilder* b) {
   if (sharding.IsTileMaximal()) {
-    return DefaultAction(hlo);
+    return nullptr;
   }
 
-  auto operand = GetPartitionedHlo(hlo->operand(0)).Reshard(sharding);
-  auto reshard_operand =
-      ReshardDataForSlicing(hlo->slice_strides(), hlo->slice_starts(),
-                            hlo->slice_limits(), operand, sharding, &b_);
+  auto reshard_operand = ReshardDataForSlicing(
+      hlo->slice_strides(), hlo->slice_starts(), hlo->slice_limits(),
+      poperand.Reshard(sharding), sharding, b);
   if (!reshard_operand.has_value()) {
-    return DefaultAction(hlo);
+    return nullptr;
   }
   TF_RET_CHECK(!reshard_operand->dynamic_slice_index_on_output.has_value());
+
   HloInstruction* final_operand = SliceDataFromWindowReshard(
-      *reshard_operand, hlo->slice_strides(), hlo->shape(), sharding, &b_);
+      *reshard_operand, hlo->slice_strides(), hlo->shape(), sharding, b);
+  final_operand->set_sharding(sharding);
+  final_operand = PartitionedHlo(final_operand, hlo->shape(), poperand.state())
+                      .Reshard(hlo->sharding())
+                      .hlo();
 
-  SetPartitionedHlo(hlo, [&] {
-    if (final_operand != reshard_operand->sharded_input) {
-      return final_operand;
-    }
-    // Create a copy so that it will not share the resharding cache.
-    return b_.AddInstruction(HloInstruction::CreateUnary(
-        final_operand->shape(), HloOpcode::kCopy, final_operand));
-  });
+  if (final_operand != reshard_operand->sharded_input) {
+    return final_operand;
+  }
+  // Create a copy so that it will not share the resharding cache.
+  return b->AddInstruction(HloInstruction::CreateUnary(
+      final_operand->shape(), HloOpcode::kCopy, final_operand));
+}
 
+absl::Status SpmdPartitioningVisitor::HandleSlice(HloInstruction* hlo) {
+  const HloSharding& operand_sharding = hlo->operand(0)->sharding();
+  const HloSharding& result_sharding = hlo->sharding();
+  const PartitionedHlo& poperand = GetPartitionedHlo(hlo->operand(0));
+  HloInstruction* final_operand = nullptr;
+  if (operand_sharding.NumTiles() > result_sharding.NumTiles()) {
+    TF_ASSIGN_OR_RETURN(
+        final_operand, HandleSliceHelper(hlo, poperand, operand_sharding, &b_));
+  }
+  if (final_operand == nullptr) {
+    TF_ASSIGN_OR_RETURN(final_operand,
+                        HandleSliceHelper(hlo, poperand, result_sharding, &b_));
+  }
+  if (final_operand == nullptr) {
+    return DefaultAction(hlo);
+  }
+
+  SetPartitionedHlo(hlo, [&] { return final_operand; });
   return absl::OkStatus();
 }
 

@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/translate/hlo_to_mhlo/translate.h"
 #include "xla/hlo/translate/stablehlo.h"
@@ -135,9 +136,9 @@ const FixedOptionSetFlagParser<InputFormat>& GetInputFormatParser() {
        {"proto_text", InputFormat::kProtoText},
        {"proto_binary", InputFormat::kProtoBinary},
        {"snapshot_proto_binary", InputFormat::kSnapshotProtoBinary},
-       {"input_snapshot_proto_binary",
+       {"unoptimized_snapshot_proto_binary",
         InputFormat::kUnoptimizedSnapshotProtoBinary},
-       {"input_snapshot_proto_text",
+       {"unoptimized_snapshot_proto_text",
         InputFormat::kUnoptimizedSnapshotProtoText}});
   return parser;
 }
@@ -353,11 +354,11 @@ absl::StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
     // from parsed XLA_FLAGS env (already populated in debug_options).
     if (!raw_options.xla_dump_to.empty()) {
       debug_options.set_xla_dump_to(raw_options.xla_dump_to);
+      debug_options.set_xla_dump_hlo_as_text(raw_options.xla_text_dump_mode ==
+                                             XlaTextDumpMode::kDumpAsText);
+      debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
+                                              XlaProtoDumpMode::kDumpAsProto);
     }
-    debug_options.set_xla_dump_hlo_as_text(raw_options.xla_text_dump_mode ==
-                                           XlaTextDumpMode::kDumpAsText);
-    debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
-                                            XlaProtoDumpMode::kDumpAsProto);
   }
   switch (raw_options.hlo_passes_mode) {
     case HloPassesMode::kRunXLABackendOnly:
@@ -509,8 +510,11 @@ FunctionalHloRunner::LoadHloModuleAndArguments(absl::string_view hlo_file,
   HloModuleAndArguments hlo_module_and_arguments;
   switch (input_format) {
     case InputFormat::kText: {
-      TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                          ReadModuleFromHloTextFile(hlo_file));
+      TF_ASSIGN_OR_RETURN(
+          hlo_module_and_arguments.hlo_module,
+          ReadModuleFromHloTextFile(
+              hlo_file, DebugOptions::default_instance(),
+              HloParserOptions().set_keep_module_auto_layouts(true)));
       break;
     }
     case InputFormat::kProtoText: {

@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
@@ -499,6 +500,19 @@ absl::Status RunShardedHloWithClient(xla::PjRtClient& client) {
       InputFormat::kText);
 }
 
+TEST_F(FunctionalHloRunnerTest, PreservesAutoLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      HloModuleAndArguments hlo_module_and_arguments,
+      FunctionalHloRunner::LoadHloModuleAndArguments(
+          GetHloPath("single_gemm_fusion.hlo"), InputFormat::kText));
+  const ComputationLayout& layout =
+      hlo_module_and_arguments.hlo_module->config().entry_computation_layout();
+  EXPECT_EQ(layout.parameter_count(), 2);
+  EXPECT_FALSE(layout.parameter_layouts()[0].AnyLayoutIsSet());
+  EXPECT_TRUE(layout.parameter_layouts()[1].AnyLayoutIsSet());
+  EXPECT_FALSE(layout.result_layout().AnyLayoutIsSet());
+}
+
 TEST_F(FunctionalHloRunnerTest, CanRunWithMockCollectives) {
   if (IsTestingCpu()) {
     GTEST_SKIP() << "GPU-only test";
@@ -670,6 +684,30 @@ TEST(FunctionalHloRunnerTest, TestHloUnoptimizedSnapshotDeSerialization) {
 
   EXPECT_EQ(snapshot.SerializeAsString(),
             maybe_deserialized_snapshot->SerializeAsString());
+}
+
+TEST(FunctionalHloRunnerTest, TestDebugOptionsAreNotOverwrittenByRawOptions) {
+  // If xla_dump_to is set in the raw options, then the debug options are
+  // overridden in `CreateCompileOptions` and we lose the dumping debug options.
+  // This test checks that we don't overwrite if we don't set xla_dump_to in the
+  // raw options.
+  xla::DebugOptions debug_options;
+  debug_options.set_xla_dump_hlo_as_text(true);
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.execution_options = ExecutionOptions();
+  *raw_compile_options.execution_options->mutable_debug_options() =
+      debug_options;
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      CompileOptions compile_options,
+      FunctionalHloRunner::CreateCompileOptions(*client, raw_compile_options,
+                                                /*task_id=*/0, /*num_nodes=*/1,
+                                                /*kv_store=*/nullptr));
+  EXPECT_TRUE(compile_options.executable_build_options.debug_options()
+                  .xla_dump_hlo_as_text());
 }
 
 }  // namespace
