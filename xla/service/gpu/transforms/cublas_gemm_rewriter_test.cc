@@ -3334,6 +3334,29 @@ ENTRY test {
 )");
 }
 
+TEST_F(CublasLtGemmRewriteTest, CublasLtFullyContractingRhsWithBias) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test {
+  param_0 = bf16[10240,1024]{1,0} parameter(0)
+  param_1 = bf16[1024,1]{1,0} parameter(1)
+  dot = bf16[10240,1]{1,0} dot(param_0, param_1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  transpose = bf16[10240,1]{1,0} transpose(dot), dimensions={0,1}
+  param_2 = bf16[1]{0} parameter(2)
+  reshape = bf16[1]{0} reshape(param_2)
+  broadcast = bf16[10240,1]{1,0} broadcast(reshape), dimensions={1}
+  ROOT out = bf16[10240,1]{1,0} add(transpose, broadcast)
+}
+)";
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK: [[P_2:%[^ ]+]] = bf16[1]{0} parameter(2)
+; CHECK: [[BIAS:%[^ ]+]] = bf16[10240]{0} {{.+}}([[P_2]])
+; CHECK: custom-call({{.+}}, {{.+}}, [[BIAS]]), custom_call_target="__cublas$lt$matmul"
+)");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
