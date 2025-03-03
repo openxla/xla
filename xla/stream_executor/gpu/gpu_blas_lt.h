@@ -128,10 +128,14 @@ struct BlasLt {
     kReLU = 2,                      // Apply point-wise ReLU function
     kBias = 4,                      // Add broadcasted bias vector
     kBiasThenReLU = kBias | kReLU,  // Apply bias and then ReLU transform
-    kGELU = 32,                // Apply GELU point-wise transform to the results
-    kGELUWithAux = 32 | 1024,  // Apply GELU with auxiliary output.
-    kBiasThenGELU = kBias | kGELU,  // Apply bias and then approximate GELU.
+    kGELU = 32,   // Apply GELU point-wise transform to the results
+    kSwish = 64,  // Apply swish point-wise transform to the results
+    kSwishWithAux = kSwish | 1024,    // Apply swish with auxiliary output
+    kGELUWithAux = 32 | 1024,         // Apply GELU with auxiliary output.
+    kBiasThenGELU = kBias | kGELU,    // Apply bias and then approximate GELU.
+    kBiasThenSwish = kBias | kSwish,  // Apply bias and then approximate Swish.
     kBiasThenGELUWithAux = kBiasThenGELU | 1024,
+    kBiasThenSwishWithAux = kBiasThenSwish | 1024,
   };
 
   // Describes the location of pointers for the scaling factors alpha and beta.
