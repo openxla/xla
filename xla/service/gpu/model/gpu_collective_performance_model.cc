@@ -149,12 +149,15 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
       {(void**)&xla_nvmlInit, "nvmlInit_v2"},
       {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
       {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
-      {(void**)&xla_nvmlDeviceGetHandleByPciBusId_v2,
-       "nvmlDeviceGetHandleByPciBusId_v2"},
-      {(void**)&xla_nvmlDeviceGetGpuFabricInfoV, "nvmlDeviceGetGpuFabricInfoV"},
       {(void**)&xla_nvmlDeviceGetNvLinkCapability,
        "nvmlDeviceGetNvLinkCapability"},
   };
+#if CUDA_VERSION >= 12040
+  symbols.push_back({(void**)&xla_nvmlDeviceGetHandleByPciBusId_v2,
+                     "nvmlDeviceGetHandleByPciBusId_v2"});
+  symbols.push_back({(void**)&xla_nvmlDeviceGetGpuFabricInfoV,
+                     "nvmlDeviceGetGpuFabricInfoV"});
+#endif  // CUDA_VERSION >= 12040
   for (SymbolEntry se : symbols) {
     *se.functor = dlsym(libhandle, se.name);
     if (se.functor == nullptr) {
