@@ -46,6 +46,8 @@ struct GpuClientOptions {
   bool enable_mock_nccl = false;
 
   std::optional<std::string> mock_gpu_topology;
+
+  std::optional<std::string> override_boot_id;
 };
 
 }  //  namespace xla
