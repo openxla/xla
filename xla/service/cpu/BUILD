@@ -231,6 +231,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:constant_allocation",
         "//xla/backends/cpu/codegen:compiled_function_library",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/backends/cpu/codegen:execution_engine",
@@ -586,6 +587,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu:constant_allocation",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thread_pool_task_runner",
@@ -649,7 +651,6 @@ cc_library(
         ":elemental_ir_emitter",
         ":ir_emitter",
         ":parallel_loop_emitter",
-        ":shape_partition",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -810,7 +811,6 @@ cc_library(
     deps = [
         ":cpu_runtime",
         ":ir_emission_utils",
-        ":shape_partition",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
@@ -1569,39 +1569,13 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "shape_partition",
-    srcs = ["shape_partition.cc"],
-    hdrs = ["shape_partition.h"],
-    deps = [
-        "//xla:shape_util",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
-xla_cc_test(
-    name = "shape_partition_test",
-    srcs = ["shape_partition_test.cc"],
-    deps = [
-        ":shape_partition",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_googletest//:gtest",
-    ],
-)
-
-cc_library(
     name = "parallel_task_assignment",
     srcs = ["parallel_task_assignment.cc"],
     hdrs = ["parallel_task_assignment.h"],
     deps = [
         ":backend_config_proto_cc",
         ":ir_emission_utils",
-        ":shape_partition",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",

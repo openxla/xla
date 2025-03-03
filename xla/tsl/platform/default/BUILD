@@ -109,6 +109,7 @@ cc_library(
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
+        "@nvshmem//:nvshmem_config",
         "@local_config_nccl//:nccl_config",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_config",
@@ -570,6 +571,17 @@ bzl_library(
     srcs = ["build_config_root.bzl"],
     # copybara:uncomment parse_tests = False,
     deps = ["@tsl//third_party/py/rules_pywrap:pywrap_bzl"],
+)
+
+bzl_library(
+    name = "build_config_bzl",
+    srcs = ["build_config.bzl"],
+    # copybara:uncomment parse_tests = False,
+    deps = [
+        ":build_config_root_bzl",
+        "//xla/tsl:tsl_bzl",
+        "@tsl//third_party/py/rules_pywrap:pywrap_bzl",
+    ],
 )
 
 # Export source files needed for mobile builds, which do not use granular targets.

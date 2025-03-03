@@ -27,7 +27,6 @@
 #     cuda_clang    Build with CUDA Clang support.
 #     rocm:         Build with AMD GPU support (rocm)
 #     mkl:          Enable full mkl support.
-#     nogcp:        Disable GCS support.
 #     nonccl:       Disable nccl support.
 #
 #
@@ -108,6 +107,12 @@ test --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
 # Sets the default Apple platform to macOS.
 build:macos --apple_platform_type=macos
+
+# Use cc toolchains from apple_support for Apple builds.
+# https://github.com/bazelbuild/apple_support/tree/master?tab=readme-ov-file#bazel-6-setup
+build:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
 
 # gRPC on MacOS requires this #define
 build:macos --copt=-DGRPC_BAZEL_BUILD
@@ -236,7 +241,6 @@ build:sycl --define=tensorflow_mkldnn_contraction_kernel=0
 build:sycl --repo_env TF_NEED_SYCL=1
 
 # Options to disable default on features
-build:nogcp --define=no_gcp_support=true
 build:nonccl --define=no_nccl_support=true
 
 # Don't trigger --config=<host platform> when cross-compiling.
@@ -244,22 +248,6 @@ build:linux --host_copt=-w
 build:macos --copt=-w
 build:windows --copt=/W0
 build:windows --host_copt=/W0
-
-# Suppress most C++ compiler warnings to reduce log size but allow
-# for specific warnings to still be present.
-build:linux --copt="-Wno-all"
-build:linux --copt="-Wno-extra"
-build:linux --copt="-Wno-deprecated"
-build:linux --copt="-Wno-deprecated-declarations"
-build:linux --copt="-Wno-ignored-attributes"
-build:linux --copt="-Wno-array-bounds"
-
-# Add unused-result as an error on Linux.
-build:linux --copt="-Wunused-result"
-build:linux --copt="-Werror=unused-result"
-# Add switch as an error on Linux.
-build:linux --copt="-Wswitch"
-build:linux --copt="-Werror=switch"
 
 # Linux ARM64 specific options
 build:linux_arm64 --copt="-mtune=generic" --copt="-march=armv8-a" --copt="-O3"
@@ -462,6 +450,8 @@ build:rbe_win_base --remote_instance_name=projects/tensorflow-testing/instances/
 build:rbe_win_base --remote_download_minimal
 build:rbe_win_base --enable_runfiles
 build:rbe_win_base --nobuild_python_zip
+# Don't build the runfile links in the RBE build which is expensive on Windows.
+build:rbe_win_base --nobuild_runfile_links
 build:rbe_win_base --define=override_eigen_strong_inline=true
 
 build:rbe_windows_x86_cpu_2022 --config=rbe_win_base --config=windows_x86_cpu_2022
