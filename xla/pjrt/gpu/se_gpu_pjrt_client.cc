@@ -1076,8 +1076,10 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_compute_capability(
         MakeComputeCapabilityString(desc.get()));
     device_proto->set_core_count(desc->core_count());
+#if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
     device_proto->set_fabric_uuid(
         GetDeviceFabricInfo(ordinal_and_device.first));
+#endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
   }
 
   GlobalTopologyProto global_topology;
@@ -1334,6 +1336,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 // Get the fabric info of a local device ordinal in the format of
 // "clusterUuid/cliqueId". Empty on SM90 or lower.
 std::string GetDeviceFabricInfo(const int device_ordinal) {
+#if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
   CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
 
   char pciBusId[] = "00000000:00:00.0";
@@ -1368,6 +1371,10 @@ std::string GetDeviceFabricInfo(const int device_ordinal) {
       fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
       fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
   return absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId));
+#else   // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
+  VLOG(2) << "NVL is not supported";
+  return "NOT_SUPPORTED";
+#endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
 }
 
 }  // namespace xla
