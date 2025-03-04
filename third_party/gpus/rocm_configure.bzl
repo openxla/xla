@@ -222,10 +222,21 @@ def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
 
     resource_dir_rel = relative_to(repository_ctx, str(rocm_path.realpath), resource_dir_abs, bash_bin)
 
-    resource_dir = str(rocm_path.get_child(resource_dir_rel))
+    # ROCm moves its llvm directory to be under lib sometimes. Add an alternate resource directory
+    # path that includes lib/ if it wasn't in the path returned from clang and removes lib/ if it
+    # was in the path returned from clang.
+    paths = []
+    if resource_dir_rel.startswith("lib/"):
+        paths.append(str(rocm_path.realpath) + resource_dir_rel[3:])
+    else:
+        paths.append(str(rocm_path.realpath) + "/lib/" + resource_dir_rel)
 
-    inc_dirs.append(resource_dir + "/include")
-    inc_dirs.append(resource_dir + "/share")
+    paths.append(str(rocm_path.realpath) + resource_dir_rel)
+    paths.append(str(rocm_path.get_child(resource_dir_rel)))
+
+    for path in paths:
+        inc_dirs.append(path + "/include")
+        inc_dirs.append(path + "/share")
 
     return inc_dirs
 
