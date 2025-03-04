@@ -1358,7 +1358,7 @@ std::string GetDeviceFabricInfo(const int device_ordinal) {
     return "NOT_SUPPORTED";
   }
 
-  char uuid_str[36];
+  char uuid_str[72];
   sprintf(
       (char*)uuid_str,
       "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
