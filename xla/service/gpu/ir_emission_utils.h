@@ -272,6 +272,22 @@ absl::StatusOr<std::string> FingerprintWithBackendConfig(
                       ", backend_config_fingerprint=", fingerprint);
 }
 
+struct InductionVariableFunctionalDependency {
+  // The value that is derived from the induction variable. This is guaranteed
+  // to have no other transitive dependencies (except constants).
+  const HloInstruction* derived_value;
+
+  // The loop and its induction variable that the value depends on.
+  const HloInstruction* loop;
+  const HloInstruction* induction_var;
+};
+
+// Checks if `parameter`'s value is a pure function of a while loop's induction
+// variable.
+std::optional<InductionVariableFunctionalDependency>
+ResolveFunctionalDependencyOnInductionVariable(
+    absl::Span<const HloInstruction* const> call_stack, const HloInstruction* parameter);
+
 }  // namespace gpu
 }  // namespace xla
 
