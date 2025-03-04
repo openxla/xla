@@ -59,7 +59,10 @@ Shape::Shape(const PrimitiveType element_type,
                           dynamic_dimensions.end()) {
   CHECK(primitive_util::IsArrayType(element_type_))
       << "Invalid element type for array shape: " << element_type_;
-  if (!dynamic_dimensions.empty()) {
+  if (dynamic_dimensions_.empty()) {
+    // Assume all dimensions are static.
+    dynamic_dimensions_.resize(dimensions_.size(), false);
+  } else {
     CHECK_EQ(dimensions_.size(), dynamic_dimensions_.size())
         << "If dynamic_dimensions is provided, it must have the same size as "
            "dimensions.";
@@ -107,6 +110,11 @@ Shape::Shape(const ShapeProto& shape_proto) {
       *mutable_layout() = Layout::CreateFromProto(shape_proto.layout());
     }
   }
+  if (shape_proto.buffer_id() >= 0) {
+    buffer_id_ = shape_proto.buffer_id();
+  } else {
+    buffer_id_ = -1;
+  }
 }
 
 void Shape::SetProto(ShapeProto& proto) const {
@@ -126,6 +134,7 @@ void Shape::SetProto(ShapeProto& proto) const {
   if (has_layout()) {
     layout().SetProto(*proto.mutable_layout());
   }
+  proto.set_buffer_id(buffer_id_);
 }
 
 ShapeProto Shape::ToProto() const {
@@ -310,6 +319,15 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
       }
     }
   }
+
+  if (!ignore_buffer_id_) {
+    if (lhs.buffer_id() != rhs.buffer_id()) {
+      VLOG(3) << "CompareShapes: lhs and rhs have different buffer ids.";
+      return false;
+    }
+    return true;
+  }
+
   return true;
 }
 

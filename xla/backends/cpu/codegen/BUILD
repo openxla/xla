@@ -1,5 +1,5 @@
-load("//xla:strict.default.bzl", "py_strict_test")
-load("//xla:xla.bzl", "xla_cc_test", "xla_internal")
+load("//xla:py_strict.bzl", "py_strict_test")
+load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch64_available",
@@ -60,7 +60,6 @@ cc_library(
     deps = [
         ":cpu_features",
         ":polynomial_approximations",
-        "//xla:debug_options_flags",
         "//xla:util",
         "//xla/service:hlo_module_config",
         "//xla/service/cpu:cpu_options",
@@ -70,6 +69,7 @@ cc_library(
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
