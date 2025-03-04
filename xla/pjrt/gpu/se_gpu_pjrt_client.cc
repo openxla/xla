@@ -1347,8 +1347,8 @@ std::string GetDeviceFabricInfo(const int device_ordinal) {
   CHECK_EQ(get_bus_id_status, NVML_SUCCESS);
 
   nvmlGpuFabricInfoV_t fabricInfo = {
-      .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED,
-      .version = nvmlGpuFabricInfo_v2};
+      .version = nvmlGpuFabricInfo_v2,
+      .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED};
   auto get_fabric_info_status =
       xla_nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
   CHECK_EQ(get_fabric_info_status, NVML_SUCCESS);
