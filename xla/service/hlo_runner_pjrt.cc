@@ -405,10 +405,28 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
 
   TF_ASSIGN_OR_RETURN(auto pjrt_executable,
                       CreateExecutable(module.get(), compile_options));
+  // auto z = module->ToProto();
+  // VLOG(0) << "Creating exec" << module.get();
+  // XlaComputation computation(z);
+  // VLOG(0) << module.get();
+
+  // VLOG(0) << "Creating exec: " << pjrt_client_.get();
+  // auto ss = 
+  //       pjrt_client_->Compile(computation, std::move(compile_options));
+  // VLOG(0) << "Creating exec!";
+  // auto pjrt_executable = std::move(ss.value());
+  // VLOG(0) << "Creating exec: " << pjrt_executable.get();
+
+  TF_ASSIGN_OR_RETURN(auto mods, pjrt_executable->GetHloModules());
+  if (mods.empty()) {
+    return absl::InternalError("No modules available in executable!");
+  }
+  // VLOG(0) << "Creating exec: " << mods.size();
+  // auto zz = std::move(mods[0]);
+  // VLOG(0) << "Creating exec: " << zz.get();
 
   auto executable = std::make_unique<PjRtWrappedExecutable>(
-      std::shared_ptr<HloModule>(
-          std::move(pjrt_executable->GetHloModules().value()[0])),
+      std::shared_ptr<HloModule>(std::move(mods[0])),
       pjrt_executable.release());
 
   return executable;

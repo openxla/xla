@@ -182,6 +182,20 @@ xla_test(
 )
 
 xla_test(
+    name = "gpu_hlo_runner_test",
+    srcs = ["gpu_hlo_runner_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpu_codegen_test",
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
     name = "gpu_too_many_blocks_test",
     srcs = [
         "gpu_too_many_blocks_test.cc",
