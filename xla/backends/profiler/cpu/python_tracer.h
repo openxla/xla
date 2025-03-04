@@ -15,9 +15,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
 #define XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/platform/types.h"
 
 namespace xla {
 namespace profiler {
@@ -32,6 +34,8 @@ struct PythonTracerOptions {
 
   // Whether profiling stops within an atexit handler.
   bool end_to_end_mode = false;
+
+  uint64_t min_entry_duration_ns = 0;
 };
 
 std::unique_ptr<tsl::profiler::ProfilerInterface> CreatePythonTracer(
