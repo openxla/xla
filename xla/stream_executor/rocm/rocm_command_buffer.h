@@ -202,12 +202,6 @@ class RocmCommandBuffer : public CommandBuffer {
                     bool is_owned_graph)
       : CommandBuffer(mode), graph_(graph), is_owned_graph_(is_owned_graph) {}
 
-  // Converts a list of platform independent
-  // std::vector<CommandBufferNodeHandle> into a list of Rocm specific
-  // hipGraphNode_t.
-  absl::StatusOr<std::vector<hipGraphNode_t>> ToHipGraphHandles(
-      std::vector<CommandBufferNodeHandle> dependencies);
-
   absl::Status PrepareFinalization();
 
   absl::StatusOr<CommandBufferNodeHandle> CreateKernelNode(
