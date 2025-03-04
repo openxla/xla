@@ -1241,14 +1241,22 @@ absl::Status RunAsyncDotPasses(HloModule* hlo_module) {
   return pipeline.Run(hlo_module).status();
 }
 
-absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
-                                         se::Platform::Id platform_id) {
-  if (hlo_module->config()
-          .debug_options()
-          .xla_gpu_enable_dynamic_slice_fusion()) {
+absl::Status RunDynamicSliceFusionPasses(
+    HloModule* hlo_module, se::Platform::Id platform_id,
+    const se::DeviceDescription& device_description, int64_t pointer_size) {
+  const DebugOptions& opts = hlo_module->config().debug_options();
+  if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
     HloPassPipeline pipeline("dynamic-slice");
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         se::PlatformManager::PlatformWithId(platform_id));
+    pipeline.AddPass<GpuReduceScatterCombiner>(
+        device_description, /*default_combine_threshold_in_bytes=*/
+        kDefaultReduceScatterCombineThreshold,
+        /*combine_threshold_in_bytes=*/
+        opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
+        /*combine_threshold_count=*/256,
+        /*combine_by_dim=*/opts.xla_gpu_enable_reduce_scatter_combine_by_dim(),
+        /*pointer_size=*/pointer_size);
     pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
     pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
       if (!IsDynamicSliceFusion(instr)) {
@@ -1335,7 +1343,10 @@ absl::Status GpuCompiler::OptimizeHloModule(
       thread_pool.get_mutable()));
 
   // This is a "low effort, high impact" fusion that should be run first.
-  TF_RETURN_IF_ERROR(RunDynamicSliceFusionPasses(hlo_module, PlatformId()));
+  TF_RETURN_IF_ERROR(RunDynamicSliceFusionPasses(
+      hlo_module, /*platform_id=*/PlatformId(),
+      /*device_description=*/gpu_target_config.device_description,
+      /*pointer_size=*/pointer_size_));
 
   TF_RETURN_IF_ERROR(RunFusionPasses(hlo_module, gpu_target_config,
                                      thread_pool.get_mutable(),
