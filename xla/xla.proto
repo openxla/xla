@@ -1165,7 +1165,11 @@ message DebugOptions {
 
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
-  // Next id: 372
+
+    // Enabled GpuLayoutAssignment HLO pass
+  bool xla_enable_layout_assignment = 372;
+
+  // Next id: `373`
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

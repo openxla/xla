@@ -321,6 +321,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
   opts.set_xla_gpu_experimental_enable_sync_collective_combining(false);
   opts.set_xla_allow_get_default_platform(true);
+  opts.set_xla_enable_layout_assignment(true);
   return opts;
 }
 
@@ -2265,7 +2266,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_allow_get_default_platform),
       debug_options->xla_allow_get_default_platform(),
       "If false, GetDefaultPlatform will cause an error if called."));
-}  // NOLINT(readability/fn_size)1
+  flag_list->push_back(tsl::Flag(
+      "xla_enable_layout_assignment",
+      bool_setter_for(
+          &DebugOptions::set_xla_enable_layout_assignment),
+      debug_options->xla_enable_layout_assignment(),
+      "Enable GpuLayoutAssignment pass"));
+}  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
 // than once - its call done via call_once.
