@@ -113,6 +113,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/service/gpu/model/gpu_collective_performance_model.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -1075,6 +1076,10 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_compute_capability(
         MakeComputeCapabilityString(desc.get()));
     device_proto->set_core_count(desc->core_count());
+#if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
+    device_proto->set_fabric_uuid(
+        GetDeviceFabricInfo(ordinal_and_device.first));
+#endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
   }
 
   GlobalTopologyProto global_topology;
@@ -1326,6 +1331,50 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     devices.push_back(std::move(device));
   }
   return devices;
+}
+
+// Get the fabric info of a local device ordinal in the format of
+// "clusterUuid/cliqueId". Empty on SM90 or lower.
+std::string GetDeviceFabricInfo(const int device_ordinal) {
+#if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
+  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
+
+  char pciBusId[] = "00000000:00:00.0";
+  cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_ordinal);
+  nvmlDevice_t device;
+  auto get_bus_id_status =
+      xla_nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
+  CHECK_EQ(get_bus_id_status, NVML_SUCCESS);
+
+  nvmlGpuFabricInfoV_t fabricInfo = {
+      .version = nvmlGpuFabricInfo_v2,
+      .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED};
+  auto get_fabric_info_status =
+      xla_nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  CHECK_EQ(get_fabric_info_status, NVML_SUCCESS);
+
+  if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
+    VLOG(2) << "NVL is not supported";
+    return "NOT_SUPPORTED";
+  }
+
+  char uuid_str[72];
+  sprintf(
+      (char*)uuid_str,
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      fabricInfo.clusterUuid[0], fabricInfo.clusterUuid[1],
+      fabricInfo.clusterUuid[2], fabricInfo.clusterUuid[3],
+      fabricInfo.clusterUuid[4], fabricInfo.clusterUuid[5],
+      fabricInfo.clusterUuid[6], fabricInfo.clusterUuid[7],
+      fabricInfo.clusterUuid[8], fabricInfo.clusterUuid[9],
+      fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
+      fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
+      fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
+  return absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId));
+#else   // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
+  VLOG(2) << "NVL is not supported";
+  return "NOT_SUPPORTED";
+#endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
 }
 
 }  // namespace xla
