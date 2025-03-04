@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/variant_visitor.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -108,20 +107,18 @@ KernelArgsPacking CreateDefaultArgsPacking() {
 }
 
 // Some of the tests rely on CUDA 12.3+ features.
-bool IsAtLeastCuda12300OrRocm(const se::StreamExecutor* executor,
-    const se::SemanticVersion& rocm_ver = se::SemanticVersion{6, 2, 0}) {
-  
+bool IsAtLeastCuda12300(const se::StreamExecutor* executor) {
   const auto& device_description = executor->GetDeviceDescription();
-  return std::visit(VariantVisitor{
-      [&](const se::CudaComputeCapability& cc) {
-        return device_description.driver_version() >=
-                                            se::SemanticVersion(12, 3, 0);
-      },
-      [&](const se::RocmComputeCapability& cc) {
-        return device_description.runtime_version() >= rocm_ver;
-      }},
-      device_description.gpu_compute_capability()
-  );
+  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
+      &device_description.gpu_compute_capability());
+  if (cuda_cc != nullptr) {
+    if (device_description.driver_version() >=
+        stream_executor::SemanticVersion(12, 3, 0)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // Give a short aliases to execution threads.
@@ -607,7 +604,7 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 TEST(CommandBufferThunkTest, GemmCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor)) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph tracing is not supported";
   }
 
@@ -724,7 +721,7 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor, se::SemanticVersion(6, 5, 0))) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph tracing is not supported";
   }
 
@@ -880,7 +877,7 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
 TEST(CommandBufferThunkTest, CublasLtCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor)) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph tracing is not supported";
   }
 
@@ -1143,7 +1140,7 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 TEST(CommandBufferThunkTest, IfCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor, se::SemanticVersion(6, 5, 0))) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -1231,7 +1228,7 @@ TEST(CommandBufferThunkTest, IfCmd) {
 TEST(CommandBufferThunkTest, IfElseCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor, se::SemanticVersion(6, 5, 0))) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -1324,7 +1321,7 @@ TEST(CommandBufferThunkTest, IfElseCmd) {
 TEST(CommandBufferThunkTest, CaseCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor, se::SemanticVersion(6, 5, 0))) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -1413,7 +1410,7 @@ TEST(CommandBufferThunkTest, CaseCmd) {
 TEST(CommandBufferThunkTest, ForCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300OrRocm(executor, se::SemanticVersion(6, 5, 0))) {
+  if (!IsAtLeastCuda12300(executor)) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
