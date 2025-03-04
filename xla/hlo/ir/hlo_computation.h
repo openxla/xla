@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -958,6 +959,17 @@ class HloComputation {
   // Returns true iff this computation can be inlined as a single instruction.
   bool CanExpandIntoSingleInstruction() const;
 
+  struct UniqueIdComparator {
+    bool operator()(const HloComputation* a, const HloComputation* b) const {
+      return a->unique_id() < b->unique_id();
+    }
+  };
+
+  absl::btree_map<HloComputation*, int, UniqueIdComparator> const&
+  called_computations() const {
+    return called_computations_;
+  }
+
  private:
   explicit HloComputation(
       const std::string& name, int parameter_count,
@@ -1011,6 +1023,10 @@ class HloComputation {
 
   void SetInstruction(HloInstruction* instruction, InstructionType type);
 
+  void IncrementCalledComputationCount(HloComputation* computation);
+
+  void DecrementCalledComputationCount(HloComputation* computation);
+
   int64_t unique_id_;
   HloInstruction* root_instruction_;
 
@@ -1048,6 +1064,12 @@ class HloComputation {
   std::string execution_thread_ = HloInstruction::kMainExecutionThread;
 
   std::string name_;
+
+  // Map from called computations to a count of instructions that reference
+  // them.
+  friend class HloInstruction;
+  absl::btree_map<HloComputation*, int, UniqueIdComparator>
+      called_computations_;
 
   HloComputation(const HloComputation&) = delete;
   HloComputation& operator=(const HloComputation&) = delete;
