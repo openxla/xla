@@ -957,44 +957,28 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
   if (computations_.empty()) {
     return {};
   }
-  // First determine all root computations by building a set of non-root
-  // computations (computations which are called by an instruction in the
-  // module).
-  absl::flat_hash_set<HloComputation*> nonroot_computations;
-  nonroot_computations.reserve(computations_.size() - 1);
+
+  std::stack<std::pair<HloComputation*, bool>> stack;
   for (auto& computation : computations_) {
-    for (const HloInstructionInfo& inst :
-         computation->instructions_with_info()) {
-      if (HloInstruction::MightHaveCalledComputations(inst.opcode())) {
-        for (HloComputation* called_computation : inst->called_computations()) {
-          nonroot_computations.insert(called_computation);
-        }
+    stack.emplace(computation.get(), false);
+  }
+
+  absl::flat_hash_set<HloComputation*> visited;
+  std::vector<HloComputation*> post_order;
+  post_order.reserve(computations_.size());
+  while (!stack.empty()) {
+    auto [computation, after] = stack.top();
+    stack.pop();
+    if (after) {
+      post_order.push_back(computation);
+    } else if (visited.insert(computation).second) {
+      stack.emplace(computation, true);
+      for (auto [callee, count] : computation->called_computations()) {
+        stack.emplace(callee, false);
       }
     }
   }
 
-  // Keep track of computations which have already been added to the post
-  // order. This prevents duplication as an embedded computation may be called
-  // from two different root computations.
-  absl::flat_hash_set<HloComputation*> added_computations;
-  std::vector<HloComputation*> post_order;
-  added_computations.reserve(computations_.size());
-  post_order.reserve(computations_.size());
-  for (auto& computation : computations_) {
-    if (nonroot_computations.contains(computation.get())) {
-      continue;
-    }
-    for (HloComputation* embedded_computation :
-         computation->MakeEmbeddedComputationsList()) {
-      if (added_computations.insert(embedded_computation).second) {
-        post_order.push_back(embedded_computation);
-      }
-    }
-    // Root computations should only be encountered once.
-    CHECK(!added_computations.contains(computation.get()));
-    post_order.push_back(computation.get());
-    added_computations.insert(computation.get());
-  }
   if (post_order.size() != computations_.size()) {
     for (HloComputation* computation : post_order) {
       LOG(ERROR) << "Post Order: " << computation->name() << " ("
