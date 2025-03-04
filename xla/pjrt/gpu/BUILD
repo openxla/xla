@@ -158,7 +158,6 @@ xla_cc_test(
     srcs = ["se_gpu_pjrt_client_test.cc"],
     tags = [
         "gpu",
-        "no_oss",
         "noasan",
         "nomsan",
         "requires-gpu-nvidia:2",
