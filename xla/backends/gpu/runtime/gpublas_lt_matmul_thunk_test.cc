@@ -77,9 +77,10 @@ ENTRY test {
   ROOT abc = f32[101,400] subtract(mul_ab, dot_c)
 })";
 
+  auto exec = backend().default_stream_executor();
   EXPECT_TRUE(RunAndCompare(hlo_single_plan, ErrorSpec{1e-3, 1e-3}));
   // Assert that only one MatmulPlan cache entry was created.
-  EXPECT_TRUE(CublasLtMatmulThunk::MatmulPlanCacheSize(0) == 1);
+  EXPECT_TRUE(CublasLtMatmulThunk::MatmulPlanCacheSize(exec) == 1);
 
   absl::string_view hlo_two_plans =
       R"(
@@ -104,7 +105,7 @@ ENTRY test {
 
   EXPECT_TRUE(RunAndCompare(hlo_two_plans, ErrorSpec{1e-3, 1e-3}));
   // Assert that we have now 2 MatmulPlans (one more created for ReLu epilogue).
-  EXPECT_TRUE(CublasLtMatmulThunk::MatmulPlanCacheSize(0) == 2);
+  EXPECT_TRUE(CublasLtMatmulThunk::MatmulPlanCacheSize(exec) == 2);
 }
 
 } // namespace

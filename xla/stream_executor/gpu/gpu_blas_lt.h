@@ -155,6 +155,28 @@ struct BlasLt {
   };
 
   struct MatmulPlan {
+    
+    // This function is to be removed once TF interface is fixed,
+    // see tensorflow/core/kernels/matmul_util.cc
+    absl::Status ExecuteOnStream(
+        Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b,
+        DeviceMemoryBase c, DeviceMemoryBase d,
+        DeviceMemoryBase bias,  // may be null
+        DeviceMemoryBase aux,   // may be null
+        DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
+        DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
+        DeviceMemoryBase d_amax, const MatmulAlgorithm& algorithm,
+        ScratchAllocator& scratch_allocator,
+        blas::ProfileResult* profile_result = nullptr) const {
+
+      TF_RETURN_IF_ERROR(SetAlgorithm(algorithm));
+      return ExecuteOnStream(
+          stream, 
+          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
+                     d_amax, DeviceMemoryBase{}, &scratch_allocator},
+          profile_result);
+    }
+
     // API that uses scratch_allocator to allocate workspace.
     // This version is used by TF: see tensorflow/core/kernels/matmul_util.cc
     absl::Status ExecuteOnStream(

@@ -40,15 +40,12 @@ namespace gpu {
 
 struct MatmulPlanCache {
 
-  static MatmulPlanCache& i(size_t device_id) {
+  static MatmulPlanCache& GetCacheForExecutor(se::StreamExecutor *exec) {
     static absl::Mutex m(absl::kConstInit);
-    // Each GPU gets different cache instance
-    static std::vector< std::unique_ptr< MatmulPlanCache > > meta(16);
+    // Each stream executor gets a different cache instance
+    static absl::node_hash_map< se::StreamExecutor *, MatmulPlanCache > meta;
     absl::MutexLock lock(&m);
-    if (device_id >= meta.size()) meta.resize(device_id + 1);
-    auto& res = meta[device_id];
-    if (!res) res.reset(new MatmulPlanCache());
-    return *res;
+    return meta[exec];
   }
 
   template < class Func >
@@ -56,28 +53,29 @@ struct MatmulPlanCache {
           GetOrCreate(const std::string& key, Func&& create) {
     // each GPU has a different mutex => hence different GPU instances can
     // create matmul plans in parallel
-    absl::MutexLock lock(mutex_.get()); 
+    absl::MutexLock lock(&mutex_); 
     auto res = map_.emplace(key, se::gpu::BlasLt::MatmulPlanPtr{});
     // New entry inserted: always create a new matmul plan if key is empty, 
     // this is used by command_buffer_thunk test.
     if(res.second || key.empty()) { 
       VLOG(2) << "Creating a plan for: " << key;
-      TF_ASSIGN_OR_RETURN(res.first->second, create());
+      TF_ASSIGN_OR_RETURN(res.first->second, std::forward<Func>(create)());
       VLOG(2) << "Plan created: cache size: " << map_.size();
     } 
     return res.first->second.get();
   }
 
   size_t size() const {
+    absl::MutexLock lock(&mutex_); 
     return map_.size();
   }
 
+  MatmulPlanCache() = default;
+  
 private:
-  MatmulPlanCache() : mutex_(std::make_unique< absl::Mutex >()) { }
-
-private:
-  std::unique_ptr< absl::Mutex > mutex_;
-  absl::flat_hash_map<std::string, se::gpu::BlasLt::MatmulPlanPtr> map_;
+  mutable absl::Mutex mutex_;
+  absl::flat_hash_map<std::string, se::gpu::BlasLt::MatmulPlanPtr> map_
+          ABSL_GUARDED_BY(mutex_);
 };
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs) 
@@ -126,8 +124,9 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
   }
 }
 
-/* static */ size_t CublasLtMatmulThunk::MatmulPlanCacheSize(size_t device_id) {
-  return MatmulPlanCache::i(device_id).size();
+/* static */ size_t CublasLtMatmulThunk::MatmulPlanCacheSize(
+        se::StreamExecutor *exec) {
+  return MatmulPlanCache::GetCacheForExecutor(exec).size();
 }
 
 absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(se::Stream *stream, 
@@ -172,8 +171,8 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(se::Stream *stream,
       d_scale, d_amax, workspace);
 }
 
-auto CublasLtMatmulThunk::GetCachedMatmulPlan(
-    const ExecuteParams& params) -> absl::StatusOr<se::gpu::BlasLt::MatmulPlan *> {
+absl::StatusOr<se::gpu::BlasLt::MatmulPlan *> 
+        CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
 
   auto create = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr>  {
     VLOG(2) << this << ": Adding new MatmulPlan for stream: " << params.stream << 
@@ -195,7 +194,7 @@ auto CublasLtMatmulThunk::GetCachedMatmulPlan(
     TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[algorithm_idx_]));
     return std::move(plan);
   };
-  return MatmulPlanCache::i(params.stream->parent()->device_ordinal()).
+  return MatmulPlanCache::GetCacheForExecutor(params.stream->parent()).
             GetOrCreate(canonical_hlo_, create);
 }
 
