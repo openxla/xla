@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/runtime/nvshmem_all_reduce_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
 
 #include <cstdint>
 #include <optional>
@@ -23,20 +23,20 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/runtime/nvshmem_collective_thunk.h"
-#include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
-#include "xla/service/gpu/runtime/nvshmem_api.h"
 
 namespace xla {
 namespace gpu {
@@ -44,13 +44,13 @@ namespace gpu {
 absl::Status RunNvshmemAllReduce(GpuCollectives* collectives,
                                  ReductionKind reduction_kind,
                                  std::vector<DeviceBufferPair>& buffers,
-                                 se::Stream& stream, Communicator* comm) {
+                                 se::Stream& stream) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing nvshmem all-reduce from device ordinal: "
           << device_ordinal;
   for (DeviceBufferPair& buffer : buffers) {
-    TF_RETURN_IF_ERROR(xla::gpu::NvshmemApi::Default().DoAllreduce(
-        xla::gpu::NvshmemApi::TEAMSKIND::kNODE, buffer.element_type,
+    TF_RETURN_IF_ERROR(xla::gpu::NvshmemCollectives::Default()->DoAllreduce(
+        xla::gpu::NvshmemCollectives::TEAMSKIND::kNODE, buffer.element_type,
         buffer.destination_buffer, buffer.source_buffer, buffer.element_count,
         stream, reduction_kind));
   }
@@ -109,7 +109,7 @@ NvshmemAllReduceStartThunk::NvshmemAllReduceStartThunk(
     : NvshmemAllReduceReduceScatterThunkBase(
           Thunk::kNvshmemAllReduceStart, thunk_info,
           impl::GetNvshmemAllReduceConfigInst(inst), std::move(buffers),
-          IsSyncCollective(inst)) {}
+          IsGPUSyncCollective(*inst)) {}
 
 absl::Status NvshmemAllReduceStartThunk::CheckImplementable(
     const HloAllReduceInstruction* inst, int64_t replica_count,
@@ -125,16 +125,14 @@ CollectiveOpGroupMode NvshmemAllReduceStartThunk::GetGroupMode(
 }
 
 absl::Status NvshmemAllReduceStartThunk::RunNvshmemCollective(
-    const ExecuteParams& params, se::Stream& stream,
-    CommunicatorHandle comm_handle) {
+    const ExecuteParams& params, se::Stream& stream) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   return ::xla::gpu::RunNvshmemAllReduce(collectives, config_.reduction_kind,
-                                         device_buffers, stream,
-                                         comm_handle.comm);
+                                         device_buffers, stream);
 }
 
 }  // namespace gpu

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_
-#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_
+#ifndef XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_
+#define XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_
 
 #include <cstdint>
 #include <vector>
@@ -22,10 +22,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/stream_executor/stream.h"
 
 namespace xla {
@@ -80,33 +80,7 @@ class NvshmemAllReduceStartThunk
 
  protected:
   absl::Status RunNvshmemCollective(const ExecuteParams& params,
-                                    se::Stream& stream,
-                                    CommunicatorHandle comm_handle) override;
-};
-
-// -----------------------------------------------------------------------------
-// ReduceScatter thunk
-// -----------------------------------------------------------------------------
-class NvshmemReduceScatterStartThunk
-    : public NvshmemAllReduceReduceScatterThunkBase {
- public:
-  NvshmemReduceScatterStartThunk(ThunkInfo thunk_info,
-                                 const HloReduceScatterInstruction* inst,
-                                 std::vector<Buffer> buffers);
-
-  static const char* GetHloOpName() { return "reduce-scatter-start"; }
-
-  static absl::Status CheckImplementable(
-      const HloReduceScatterInstruction* inst, int64_t replica_count,
-      int64_t partition_count);
-
-  static CollectiveOpGroupMode GetGroupMode(
-      const HloReduceScatterInstruction* inst);
-
- protected:
-  absl::Status RunNvshmemCollective(const ExecuteParams& params,
-                                    se::Stream& stream,
-                                    CommunicatorHandle comm_handle) override;
+                                    se::Stream& stream) override;
 };
 
 // -----------------------------------------------------------------------------
@@ -114,9 +88,9 @@ class NvshmemReduceScatterStartThunk
 absl::Status RunNvshmemAllReduce(GpuCollectives* collectives,
                                  ReductionKind reduction_kind,
                                  std::vector<DeviceBufferPair>& buffers,
-                                 se::Stream& stream, Communicator* comm);
+                                 se::Stream& stream);
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_
+#endif  // XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_ALL_REDUCE_THUNK_H_

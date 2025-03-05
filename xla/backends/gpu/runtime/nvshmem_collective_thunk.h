@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
-#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
+#ifndef XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
+#define XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -43,7 +44,7 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/resource_requests.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
@@ -51,7 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
-#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
+#include "xla/backends/gpu/runtime/nccl_collective_thunk.h"
 
 namespace xla {
 namespace gpu {
@@ -133,7 +134,7 @@ class NvshmemCollectiveThunk : public Thunk {
       const Thunk::CollectiveExecuteParams& params);
 
   absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequests& resource_requests) override;
+                       ResourceRequestsInterface& resource_requests) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
 
@@ -158,8 +159,7 @@ class NvshmemCollectiveThunk : public Thunk {
 
  protected:
   virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,
-                                            se::Stream& stream,
-                                            CommunicatorHandle comm) = 0;
+                                            se::Stream& stream) = 0;
   virtual const NvshmemCollectiveConfig& config() const = 0;
   virtual AsyncStreamKind GetAsyncStreamKind() const {
     return AsyncStreamKind::kCollective;
@@ -187,7 +187,13 @@ class NvshmemCollectiveThunk : public Thunk {
   //
   // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
   // sure that all NCCL resources are allocated just once.
-  RendezvousSingleFlag first_call_rendezvous_flag_;
+  RendezvousFlag first_call_rendezvous_flag_;
+
+  // The nvshmem barrier needs to be called by the very first nvshmem collective
+  // of each iteration of running an executable to make sure the buffers are
+  // ready. We will call barrier in thunk init and set it back to false after
+  // execution.
+  bool barrier_called_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -283,4 +289,4 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
+#endif  // XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_

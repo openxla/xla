@@ -256,12 +256,10 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
           ? CollectiveColorer(options.xla_gpu_enable_nccl_user_buffers(),
                               options.xla_gpu_experimental_enable_nvshmem())
           : BufferAssigner::DefaultColorer();
-
   std::optional<BufferValue::Color> color =
       options.xla_gpu_temp_buffer_use_separate_color()
           ? std::optional<BufferValue::Color>(kTempBufferMemorySpaceColor)
           : std::nullopt;
-
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
       BufferAssigner::Run(

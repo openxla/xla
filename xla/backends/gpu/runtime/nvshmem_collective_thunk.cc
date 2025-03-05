@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/runtime/nvshmem_collective_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -36,6 +36,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/debug_options_flags.h"
@@ -46,8 +48,6 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
-#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory.h"
@@ -62,7 +62,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-static constexpr int64_t kCollectiveMemorySpaceColor = 1;
 static constexpr CollectiveStreamId kNoStreamId = CollectiveStreamId(0);
 
 bool IsTypeSupportedByNvshmem(PrimitiveType element_type,
@@ -233,27 +232,6 @@ absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
   return GpuCliqueKey(std::move(participants), kNoStreamId, stream_kind);
 }
 
-// Not needed
-absl::StatusOr<CommunicatorHandle> GetNvshmemComm(
-    GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
-    const Thunk::CollectiveCliques& collective_cliques,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
-    AsyncStreamKind stream_kind) {
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuNvshmemCliqueKey(collectives, params, replica_groups, group_mode,
-                             stream_id, stream_kind));
-
-  std::optional<RankId> rank = clique_key.rank(params.global_device_id);
-  TF_ASSIGN_OR_RETURN(bool is_local,
-                      collective_cliques.is_local_clique(clique_key));
-  TF_ASSIGN_OR_RETURN(Communicator * comm,
-                      collective_cliques.GetComm(std::move(clique_key), *rank));
-
-  return CommunicatorHandle(comm, is_local);
-}
-
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const Thunk::ExecuteParams& params,
     const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
@@ -282,7 +260,7 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 }
 
 absl::Status NvshmemCollectiveThunk::Prepare(
-    const PrepareParams& params, ResourceRequests& resource_requests) {
+    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
@@ -300,6 +278,11 @@ absl::Status NvshmemCollectiveThunk::Initialize(
     const InitializeParams& params) {
   if (async_events_) {
     TF_RETURN_IF_ERROR(async_events_->Initialize(params.executor));
+  }
+  if (!barrier_called_) {
+    TF_RETURN_IF_ERROR(xla::gpu::NvshmemCollectives::Default()->DoTeamBarrier(
+        xla::gpu::NvshmemCollectives::TEAMSKIND::kNODE, *params.stream));
+    barrier_called_ = true;
   }
   return absl::OkStatus();
 }
@@ -328,12 +311,6 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
                                 Thunk::KindToString(kind()));
   const CollectiveStreamId stream_id = nvshmem_stream_id();
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
-  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  TF_ASSIGN_OR_RETURN(
-      CommunicatorHandle comm_handle,
-      GetNvshmemComm(collectives, *params.collective_params,
-                     *params.collective_cliques, config().replica_groups,
-                     config().group_mode, stream_id, stream_kind));
   se::StreamExecutor* executor = params.stream->parent();
   int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
 
@@ -345,7 +322,7 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
 
-    TF_RETURN_IF_ERROR(RunNvshmemCollective(params, async_stream, comm_handle));
+    TF_RETURN_IF_ERROR(RunNvshmemCollective(params, async_stream));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
@@ -353,8 +330,7 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
 
   } else {
     // Launch collective operation on a main stream.
-    TF_RETURN_IF_ERROR(
-        RunNvshmemCollective(params, *params.stream, comm_handle));
+    TF_RETURN_IF_ERROR(RunNvshmemCollective(params, *params.stream));
   }
 
   // After a first execution of this instance of collective operation do a
@@ -389,12 +365,14 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
         "first call to collective operation %d; run_id=%d", config().op_id,
         params.collective_params->run_id.ToInt());
 
-    RendezvousSingle(first_call_rendezvous_flag_, rendezvous_name,
-                     rendezvous_key, num_local_participants,
-                     /*warn_stuck_timeout=*/absl::Seconds(20),
-                     /*terminate_timeout=*/absl::Seconds(40));
+    Rendezvous(first_call_rendezvous_flag_, rendezvous_name, rendezvous_key,
+               num_local_participants,
+               /*warn_stuck_timeout=*/absl::Seconds(20),
+               /*terminate_timeout=*/absl::Seconds(40));
   }
-
+  if (barrier_called_) {
+    barrier_called_ = false;
+  }
   return absl::OkStatus();
 }
 

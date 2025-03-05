@@ -33,12 +33,85 @@ limitations under the License.
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/numbers.h"
 
 namespace xla::gpu {
+
+#define CALL_NVSHMEM_COLL(coll, TYPENAME, TYPE, OP, team, source_ptr,     \
+                          dest_ptr, stream)                               \
+  do {                                                                    \
+    if (nvshmemx_##TYPENAME##_##OP##_##coll##_on_stream(                  \
+            team, (TYPE*)dest_ptr, (const TYPE*)source_ptr, num_elements, \
+            stream) != 0) {                                               \
+      return absl::InternalError("Nvshmem collective failed");            \
+    }                                                                     \
+  } while (0)
+
+#define NVSHMEM_BITWISE_REDUCTION_BITWISE_DATATYPE(                         \
+    coll, TYPENAME, TYPE, team, source_ptr, dest_ptr, num_elements, stream, \
+    reduction_kind)                                                         \
+  switch (reduction_kind) {                                                 \
+    case ReductionKind::SUM:                                                \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, sum, team, source_ptr,      \
+                        dest_ptr, stream);                                  \
+      break;                                                                \
+    case ReductionKind::MIN:                                                \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, min, team, source_ptr,      \
+                        dest_ptr, stream);                                  \
+      break;                                                                \
+    case ReductionKind::MAX:                                                \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, max, team, source_ptr,      \
+                        dest_ptr, stream);                                  \
+      break;                                                                \
+    case ReductionKind::PRODUCT:                                            \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, prod, team, source_ptr,     \
+                        dest_ptr, stream);                                  \
+      break;                                                                \
+    default:                                                                \
+      return absl::InternalError("Invalid NVSHMEM reduction kind.");        \
+  }
+
+#define NVSHMEM_REDUCTION_DATATYPE(coll, TYPENAME, TYPE, team, source_ptr, \
+                                   dest_ptr, num_elements, stream,         \
+                                   reduction_kind)                         \
+  switch (reduction_kind) {                                                \
+    case ReductionKind::SUM:                                               \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, sum, team, source_ptr,     \
+                        dest_ptr, stream);                                 \
+      break;                                                               \
+    case ReductionKind::MIN:                                               \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, min, team, source_ptr,     \
+                        dest_ptr, stream);                                 \
+      break;                                                               \
+    case ReductionKind::MAX:                                               \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, max, team, source_ptr,     \
+                        dest_ptr, stream);                                 \
+      break;                                                               \
+    case ReductionKind::PRODUCT:                                           \
+      CALL_NVSHMEM_COLL(reduce, TYPENAME, TYPE, prod, team, source_ptr,    \
+                        dest_ptr, stream);                                 \
+      break;                                                               \
+    default:                                                               \
+      return absl::InternalError("Invalid NVSHMEM reduction kind.");       \
+  }
+
+#define CALL_NVSHMEM_REDUCTION_DATATYPE(TYPENAME, TYPE, team, stream,          \
+                                        reduction_kind, dest_ptr, source_ptr,  \
+                                        num_elements)                          \
+  NVSHMEM_REDUCTION_DATATYPE(reduce, TYPENAME, TYPE, NVSHMEM_TEAM_WORLD,       \
+                             (TYPE*)source_ptr, (TYPE*)dest_ptr, num_elements, \
+                             stream, reduction_kind);
+#define CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(TYPENAME, TYPE, team, stream, \
+                                                reduction_kind, dest_ptr,     \
+                                                source_ptr, num_elements)     \
+  NVSHMEM_BITWISE_REDUCTION_BITWISE_DATATYPE(                                 \
+      reduce, TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, (TYPE*)source_ptr,          \
+      (TYPE*)dest_ptr, num_elements, stream, reduction_kind);
 
 NvshmemCollectives::~NvshmemCollectives() {
   if (initialized_) Finalize();
@@ -72,15 +145,22 @@ void NvshmemCollectives::SetEnvInfo(
   kv_store_ = kv_store;
 }
 
+bool NvshmemCollectives::IsInitialized() { return initialized_; }
+
 absl::Status NvshmemCollectives::InitializeOnce() {
+  if (initialized_) {
+    return absl::OkStatus();
+  }
+
   auto init_fn = [this]() -> absl::Status {
     if (process_id_ == -1) {
-      LOG(FATAL)
-          << "NvshmemCollectives::SetEnvInfo was not called before using "
-             "NVSHMEM API";
+      LOG(FATAL) << "NvshmemCollectives::SetEnvInfo was not called "
+                    "before using "
+                    "NVSHMEM API";
     }
     if (device_count_per_process_ != 1) {
-      LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
+      LOG(FATAL) << "NVSHMEM API is only supported with one device per "
+                    "process";
     }
     nvshmemx_init_attr_t nvshmem_init_attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
     nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
@@ -121,6 +201,13 @@ absl::Status NvshmemCollectives::InitializeOnce() {
     return absl::OkStatus();
   };
 
+  all_teams.resize((int64_t)NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND);
+  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kWORLD] =
+      NVSHMEM_TEAM_WORLD;
+  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kSHARED] =
+      NVSHMEM_TEAM_SHARED;
+  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kNODE] = NVSHMEMX_TEAM_NODE;
+
   static absl::once_flag once_flag;
   absl::Status status = absl::OkStatus();
   absl::call_once(once_flag, [&]() {
@@ -159,9 +246,89 @@ absl::Status NvshmemCollectives::Deallocate(void* buffer) {
   return absl::OkStatus();
 }
 
+absl::Status NvshmemCollectives::DoTeamBarrier(
+    NvshmemCollectives::TEAMSKIND team_kind, se::Stream& stream) {
+  nvshmemx_team_t& team = all_teams[(int64_t)team_kind];
+  auto gpu_stream = se::gpu::AsGpuStreamValue(&stream);
+
+  if (nvshmemx_barrier_on_stream(team, gpu_stream) != 0) {
+    return absl::InternalError("Nvshmem team barrier failed.");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status NvshmemCollectives::DoAllreduce(
+    NvshmemCollectives::TEAMSKIND team_kind, PrimitiveType type,
+    se::DeviceMemoryBase dest, se::DeviceMemoryBase source,
+    int64_t num_elements, se::Stream& stream, ReductionKind reduction_kind) {
+  // we only allow intra-node reduction with nvshmem for now.
+  CHECK(team_kind == NvshmemCollectives::TEAMSKIND::kNODE);
+  // nvshmemx_barrier_all_on_stream(stream);
+  auto gpu_stream = se::gpu::AsGpuStreamValue(&stream);
+  nvshmemx_team_t& team = all_teams[(int64_t)team_kind];
+
+  void* dest_ptr = dest.opaque();
+  void* source_ptr = source.opaque();
+
+  switch (type) {
+    case PrimitiveType::F64: {
+      CALL_NVSHMEM_REDUCTION_DATATYPE(double, double, team, gpu_stream,
+                                      reduction_kind, dest_ptr, source_ptr,
+                                      num_elements);
+      break;
+    }
+    case PrimitiveType::F16: {
+      CALL_NVSHMEM_REDUCTION_DATATYPE(half, __half, team, gpu_stream,
+                                      reduction_kind, dest_ptr, source_ptr,
+                                      num_elements);
+      break;
+    }
+    case PrimitiveType::F32: {
+      CALL_NVSHMEM_REDUCTION_DATATYPE(float, float, team, gpu_stream,
+                                      reduction_kind, dest_ptr, source_ptr,
+                                      num_elements);
+      break;
+    }
+    case PrimitiveType::BF16: {
+      CALL_NVSHMEM_REDUCTION_DATATYPE(bfloat16, __nv_bfloat16, team, gpu_stream,
+                                      reduction_kind, dest_ptr, source_ptr,
+                                      num_elements);
+      break;
+    }
+    case PrimitiveType::S32: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(int32, int32_t, team, gpu_stream,
+                                              reduction_kind, dest_ptr,
+                                              source_ptr, num_elements);
+      break;
+    }
+    case PrimitiveType::S64: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(int64, int64_t, team, gpu_stream,
+                                              reduction_kind, dest_ptr,
+                                              source_ptr, num_elements);
+      break;
+    }
+    case PrimitiveType::U32: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
+          uint32, uint32_t, team, gpu_stream, reduction_kind, dest_ptr,
+          source_ptr, num_elements);
+      break;
+    }
+    case PrimitiveType::U64: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
+          uint64, uint64_t, team, gpu_stream, reduction_kind, dest_ptr,
+          source_ptr, num_elements);
+      break;
+    }
+    default:
+      return absl::InternalError("Invalid Nvshmem reduction type.");
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace xla::gpu
 
-// NvshmemCollectives currently does not implement GpuCollectives, so it cannot
-// be used as a host-side collectives library. Therefore, set priority to -100.
+// NvshmemCollectives currently does not implement GpuCollectives, so it
+// cannot be used as a host-side collectives library. Therefore, set
+// priority to -100.
 XLA_COLLECTIVES_REGISTER("gpu", "nvshmem", -100,
                          std::make_unique<xla::gpu::NvshmemCollectives>());

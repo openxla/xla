@@ -201,46 +201,6 @@ cc_library(
 )
 
 #===-------------------------------------------------------------------------------------------===//
-# NVSHMEM Integration
-#===-------------------------------------------------------------------------------------------===//
-
-cc_library(
-    name = "nvshmem_api",
-    srcs = ["nvshmem_api.cc"],
-    hdrs = ["nvshmem_api.h"],
-    deps = [
-        "//xla:array",
-        "//xla:comparison_util",
-        "//xla:executable_run_options",
-        "//xla:xla_data_proto_cc",
-        "//xla:xla_proto_cc",
-        "//xla:autotune_results_proto_cc",
-        "//xla:autotuning_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:tile_assignment",
-        "//xla/service:collective_ops_utils",
-        "//xla/service:hlo_proto_cc",
-        "//xla/service:metrics_proto_cc",
-        "//xla/stream_executor:device_description_proto_cc",
-        "//xla/stream_executor/gpu:gpu_stream_header",
-        "//xla/tsl/protobuf:dnn_proto_cc",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:numbers",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
-        "@com_googlesource_code_re2//:re2",
-    ]+ if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-        "@nvshmem//:nvshmem",
-    ]),
-)
-
-#===-------------------------------------------------------------------------------------------===//
 # XLA Thunks Runtime
 #===-------------------------------------------------------------------------------------------===//
 
@@ -1660,15 +1620,15 @@ cc_library(
     hdrs = ["nvshmem_collective_thunk.h"],
     deps = [
         ":thunk",
-        ":nvshmem_api",
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/backends/gpu/collectives:gpu_clique_locking",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_collectives_plugin",
+        "//xla/backends/gpu/collectives:nvshmem_collectives",
+        "//xla/backends/gpu/runtime:nccl_collective_thunk",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/hlo/ir:hlo",
@@ -1680,7 +1640,8 @@ cc_library(
         "//xla/service:rendezvous",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu/runtime:nccl_collective_thunk",
+        "//xla/service/gpu:resource_requests",
+        "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:event",
@@ -1701,7 +1662,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
-        "@nvshmem//:nvshmem",
+      "@nvshmem//:nvshmem_lib",
     ]),
 )
 
@@ -1717,7 +1678,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/backends/gpu/collectives:gpu_clique_locking",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_collectives_plugin",
         "//xla/core/collectives:communicator",
@@ -1731,6 +1691,7 @@ cc_library(
         "//xla/service:rendezvous",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:event",
@@ -1751,6 +1712,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
-        "@nvshmem//:nvshmem",
+      "@nvshmem//:nvshmem_lib",
     ]),
 )
