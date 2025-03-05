@@ -283,10 +283,18 @@ struct InductionVariableFunctionalDependency {
 };
 
 // Checks if `parameter`'s value is a pure function of a while loop's induction
-// variable.
+// variable. This supports parameters that are inside call, async or fusion
+// instructions. The dependency can be through arbitrary non-side-effecting
+// instructions.
+// `call_stack` should contain the nested instructions that are ancestor of
+// `parameter`. For example, if it is a parameter of a fusion in a while loop,
+// it should contain the while loop as the first element and the fusion as the
+// second element.
+// Requires `while_loop_trip_count_annotator` to have been run on the loop.
 std::optional<InductionVariableFunctionalDependency>
 ResolveFunctionalDependencyOnInductionVariable(
-    absl::Span<const HloInstruction* const> call_stack, const HloInstruction* parameter);
+    absl::Span<const HloInstruction* const> call_stack,
+    const HloInstruction* parameter);
 
 }  // namespace gpu
 }  // namespace xla
