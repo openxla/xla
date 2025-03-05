@@ -1098,8 +1098,11 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
                 ->local_device_state();
         if (local_device_state != nullptr) {
           se::StreamExecutor* executor = local_device_state->executor();
-          CHECK_EQ(GetDeviceFabricInfo(executor->device_ordinal()),
-                   "00000000-0000-0000-0000-000000000000/0");
+          if (std::stoi(MakeComputeCapabilityString(
+                  &executor->GetDeviceDescription())) == 9) {
+            CHECK_EQ(GetDeviceFabricInfo(executor->device_ordinal()),
+                     "00000000-0000-0000-0000-000000000000/0");
+          }
         }
       }
     });

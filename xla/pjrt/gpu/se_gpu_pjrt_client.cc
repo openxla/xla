@@ -1073,12 +1073,14 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_local_device_ordinal(ordinal_and_device.first);
     device_proto->set_name(desc->name());
     device_proto->set_vendor(desc->device_vendor());
-    device_proto->set_compute_capability(
-        MakeComputeCapabilityString(desc.get()));
+    auto compute_capability = MakeComputeCapabilityString(desc.get());
+    device_proto->set_compute_capability(compute_capability);
     device_proto->set_core_count(desc->core_count());
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
-    device_proto->set_fabric_uuid(
-        GetDeviceFabricInfo(ordinal_and_device.first));
+    if (std::stoi(compute_capability) >= 9) {
+      device_proto->set_fabric_uuid(
+          GetDeviceFabricInfo(ordinal_and_device.first));
+    }
 #endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
   }
 
