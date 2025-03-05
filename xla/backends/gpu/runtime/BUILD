@@ -604,7 +604,8 @@ cc_library(
 cc_library(
     name = "gpublas_lt_matmul_thunk",
     srcs = ["gpublas_lt_matmul_thunk.cc"],
-    hdrs = ["gpublas_lt_matmul_thunk.h"],
+    hdrs = ["gpublas_lt_matmul_thunk.h",
+            "gpublas_lt_matmul_plan_cache.h"],
     deps = [
         ":thunk",
         "//xla:status_macros",

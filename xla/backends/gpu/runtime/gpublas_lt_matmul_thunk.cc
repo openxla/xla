@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/gpublas_lt_matmul_plan_cache.h"
 
 #include <cstdint>
 #include <optional>
@@ -37,46 +38,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-struct MatmulPlanCache {
-
-  static MatmulPlanCache& GetCacheForExecutor(se::StreamExecutor *exec) {
-    static absl::Mutex m(absl::kConstInit);
-    // Each stream executor gets a different cache instance
-    static absl::node_hash_map< se::StreamExecutor *, MatmulPlanCache > meta;
-    absl::MutexLock lock(&m);
-    return meta[exec];
-  }
-
-  template < class Func >
-  absl::StatusOr<se::gpu::BlasLt::MatmulPlan *> 
-          GetOrCreate(const std::string& key, Func&& create) {
-    // each GPU has a different mutex => hence different GPU instances can
-    // create matmul plans in parallel
-    absl::MutexLock lock(&mutex_); 
-    auto res = map_.emplace(key, se::gpu::BlasLt::MatmulPlanPtr{});
-    // New entry inserted: always create a new matmul plan if key is empty, 
-    // this is used by command_buffer_thunk test.
-    if(res.second || key.empty()) { 
-      VLOG(2) << "Creating a plan for: " << key;
-      TF_ASSIGN_OR_RETURN(res.first->second, std::forward<Func>(create)());
-      VLOG(2) << "Plan created: cache size: " << map_.size();
-    } 
-    return res.first->second.get();
-  }
-
-  size_t size() const {
-    absl::MutexLock lock(&mutex_); 
-    return map_.size();
-  }
-
-  MatmulPlanCache() = default;
-  
-private:
-  mutable absl::Mutex mutex_;
-  absl::flat_hash_map<std::string, se::gpu::BlasLt::MatmulPlanPtr> map_
-          ABSL_GUARDED_BY(mutex_);
-};
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs) 
     : Thunk(Kind::kCublasLtMatmul, {}),
