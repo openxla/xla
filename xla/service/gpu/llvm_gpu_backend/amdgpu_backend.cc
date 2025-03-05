@@ -290,6 +290,33 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     module->print(*ir_fs, nullptr);
     ir_fs->flush();
   }
+  // Locate lld.
+  std::string lld_path;
+  llvm::SmallVector<std::string, 3> lld_paths;
+
+  if (const char* llvm_path = std::getenv("LLVM_PATH")) {
+    lld_paths.push_back(tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin"));
+  }
+  lld_paths.push_back(tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin"));
+
+  // push LLD path from JAX plugin if set
+  auto jax_paths = getJaxPluginPaths();
+  if (!jax_paths.lld_path.empty()) {
+    lld_paths.push_back(jax_paths.lld_path);
+  }
+
+  auto lld_program = llvm::sys::findProgramByName(
+      "ld.lld", llvm::to_vector_of<llvm::StringRef>(lld_paths));
+  if (!lld_program) {
+    return xla::Internal("unable to find ld.lld in PATH: %s",
+                         lld_program.getError().message());
+  }
+  std::vector<llvm::StringRef> lld_args{
+      llvm_ir::AsStringRef("ld.lld"),    llvm_ir::AsStringRef("-flavor"),
+      llvm_ir::AsStringRef("gnu"),       llvm_ir::AsStringRef("-shared"),
+      llvm_ir::AsStringRef(isabin_path), llvm_ir::AsStringRef("-o"),
+      llvm_ir::AsStringRef(hsaco_path),
+  };
 
   static bool use_inprocess_lld = []() {
     bool inprocess_lld = false;
@@ -494,11 +521,12 @@ std::string GetROCDLDir(const DebugOptions& debug_options) {
     potential_rocdl_dirs.push_back(datadir);
   }
   potential_rocdl_dirs.push_back(tsl::RocdlRoot());
+  potential_rocdl_dirs.push_back(getJaxPluginPaths().bitcode_path);
 
   // Tries all potential ROCDL directories in the order they are inserted.
-  // Returns the first directory that exists in the file system.
+  // Returns the first directory that contains opencompute math libs bitcode file (ocml.bc)
   for (const std::string& potential_rocdl_dir : potential_rocdl_dirs) {
-    if (tsl::Env::Default()->IsDirectory(potential_rocdl_dir).ok()) {
+    if (tsl::Env::Default()->FileExists(tsl::io::JoinPath(potential_rocdl_dir, "ocml.bc")).ok()) {
       VLOG(2) << "Found ROCm-Device-Libs dir " << potential_rocdl_dir;
       return potential_rocdl_dir;
     }
