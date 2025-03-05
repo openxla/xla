@@ -2220,6 +2220,8 @@ TEST_F(DynamicSliceFusionRewriterTest,
     }
   )";
 
+  // Checking for 2 dynamic-slices, their uses in reduce-scatter and their
+  // update via dus inside the fusion.
   RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), R"(
     // CHECK: dynamic-slice-fusion
     // CHECK-DAG:   %[[ds1:.+]] = {{.+}} dynamic-slice({{.+}})
