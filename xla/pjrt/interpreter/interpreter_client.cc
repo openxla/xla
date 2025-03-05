@@ -481,8 +481,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> InterpreterClient::RunHloPasses(
       /*rewrite_training_op=*/true,
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
-  pipeline.AddPass<LayoutAssignment>(
+  const DebugOptions& opts = hlo_module->config().debug_options();
+  if(opts.xla_enable_layout_assignment()) {
+    pipeline.AddPass<LayoutAssignment>(
       hlo_module->mutable_entry_computation_layout());
+  }
 
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module.get()).status());
   return hlo_module;

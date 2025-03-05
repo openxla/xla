@@ -326,6 +326,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(false);
+  opts.set_xla_enable_layout_assignment(true);
   return opts;
 }
 
@@ -2248,6 +2249,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_pack_dot_operands_along_k_dimension),
       debug_options->xla_gpu_experimental_pack_dot_operands_along_k_dimension(),
       "For sub-byte dot operands, layout them along contracting dimensions."));
+  flag_list->push_back(tsl::Flag(
+      "xla_enable_layout_assignment",
+      bool_setter_for(
+          &DebugOptions::set_xla_enable_layout_assignment),
+      debug_options->xla_enable_layout_assignment(),
+      "Enable GpuLayoutAssignment pass"));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
