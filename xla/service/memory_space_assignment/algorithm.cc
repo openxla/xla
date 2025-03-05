@@ -2242,16 +2242,14 @@ MsaAlgorithm::GetInefficientAllocationSites(
         if (!allocation->is_copy_like_allocation()) {
           const HloPosition& defining_position =
               allocation->defining_position();
-          int64_t accessed =
-              options_.cost_analysis->base_costs().OutputBytesAccessed(
-                  *defining_position.instruction, defining_position.index);
+          int64_t accessed = options_.cost_analysis->OutputBytesAccessed(
+              *defining_position.instruction, defining_position.index);
           VLOG(3) << "    pos: " << defining_position.ToString()
                   << ", accessed: " << accessed << " / " << size;
         }
         for (const HloUse& use : allocation->uses()) {
-          int64_t accessed =
-              options_.cost_analysis->base_costs().OperandBytesAccessed(
-                  *use.instruction, use.operand_number, use.operand_index);
+          int64_t accessed = options_.cost_analysis->OperandBytesAccessed(
+              *use.instruction, use.operand_number, use.operand_index);
           VLOG(3) << "    use: " << use.ToString() << ", accessed: " << accessed
                   << " / " << size;
         }
@@ -2279,15 +2277,14 @@ MsaAlgorithm::GetInefficientAllocationSites(
         copy_bytes += size;
       }
       if (position_memory_space == MemorySpace::kAlternate) {
-        use_bytes += options_.cost_analysis->base_costs().OutputBytesAccessed(
+        use_bytes += options_.cost_analysis->OutputBytesAccessed(
             *allocation->defining_position().instruction,
             allocation->defining_position().index);
       }
       if (allocation->memory_space() == MemorySpace::kAlternate) {
         for (const HloUse& use : allocation->uses()) {
-          use_bytes +=
-              options_.cost_analysis->base_costs().OperandBytesAccessed(
-                  *use.instruction, use.operand_number, use.operand_index);
+          use_bytes += options_.cost_analysis->OperandBytesAccessed(
+              *use.instruction, use.operand_number, use.operand_index);
         }
       }
     }
@@ -2857,6 +2854,20 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
     }
     required_copy_allocation_latest_time =
         std::min(earliest_use_time, earliest_position_time);
+    // We need to make sure that the copy allocation is scheduled before the
+    // controlled successor of the sync mem op.
+    for (const HloInstruction* control_successor :
+         required_copy_allocation_for->control_successors()) {
+      int64_t successor_time = instruction_schedule.at(control_successor);
+      if (successor_time < required_copy_allocation_latest_time) {
+        VLOG(3) << "Updating the required replacement async mem op allocation "
+                   "latest time from "
+                << required_copy_allocation_latest_time << " to "
+                << successor_time << ", because of control successor "
+                << control_successor->ToString();
+        required_copy_allocation_latest_time = successor_time;
+      }
+    }
   }
   int64_t use_time = instruction_schedule.at(hlo_use.instruction);
   bool allow_no_copy_alternate_mem_allocation = true;
@@ -4621,10 +4632,10 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
             << options_.cost_analysis->GetAlternateMemoryBenefit(
                    request.use->hlo_use);
     VLOG(3) << "Definition bytes accessed = "
-            << options_.cost_analysis->base_costs().OutputBytesAccessed(
+            << options_.cost_analysis->OutputBytesAccessed(
                    *defining_position.instruction, defining_position.index)
             << ", use bytes accessed = "
-            << options_.cost_analysis->base_costs().OperandBytesAccessed(
+            << options_.cost_analysis->OperandBytesAccessed(
                    *use.instruction, use.operand_number, use.operand_index);
   }
 

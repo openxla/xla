@@ -1512,6 +1512,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_query",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
@@ -1705,7 +1706,6 @@ cc_library(
         "//xla/service/gpu:triton_fusion_analysis",
         "//xla/service/gpu:triton_tiling_propagation",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -2152,9 +2152,11 @@ xla_cc_test(
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:status_matchers",
@@ -3396,6 +3398,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -3407,6 +3410,7 @@ xla_cc_test(
     srcs = ["ragged_all_to_all_decomposer_test.cc"],
     deps = [
         ":ragged_all_to_all_decomposer",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:hlo_cse",
         "//xla/service:hlo_runner",
@@ -3417,6 +3421,40 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "ragged_all_to_all_canonicalizer",
+    srcs = ["ragged_all_to_all_canonicalizer.cc"],
+    hdrs = ["ragged_all_to_all_canonicalizer.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "ragged_all_to_all_canonicalizer_test",
+    srcs = ["ragged_all_to_all_canonicalizer_test.cc"],
+    deps = [
+        ":ragged_all_to_all_canonicalizer",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_runner",
+        "//xla/service:platform_util",
+        "//xla/tests:hlo_runner_agnostic_test_base",
+        "//xla/tests:test_utils",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
     ],
 )

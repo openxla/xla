@@ -193,54 +193,6 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
   }
 }
 
-TEST(StreamExecutorGpuClientTest, DonateExternalMem) {
-  TF_ASSERT_OK_AND_ASSIGN(auto client,
-                          GetStreamExecutorGpuClient(GpuClientOptions()));
-  auto shape = xla::ShapeUtil::MakeScalarShape(xla::F32);
-
-  std::vector<float> data = {1.0f};
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto buffer_a,
-      client->BufferFromHostBuffer(
-          data.data(), shape.element_type(), shape.dimensions(),
-          /*byte_strides=*/std::nullopt,
-          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
-          /*on_done_with_host_buffer=*/nullptr,
-          client->addressable_devices()[0]->memory_spaces()[0],
-          /*device_layout=*/nullptr));
-
-  TF_ASSERT_OK_AND_ASSIGN(auto buffer_ref,
-                          buffer_a->AcquireExternalReference());
-
-  auto device_ptr = buffer_ref->OpaqueDeviceMemoryDataPointer();
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto buffer, client->CreateViewOfDeviceBuffer(
-                       device_ptr, shape, buffer_a->memory_space(),
-                       [buf = std::shared_ptr<PjRtBuffer::ExternalReference>(
-                            std::move(buffer_ref))]() {}));
-
-  static constexpr char const* kAddProgram =
-      R"(
-HloModule jit_add_one, input_output_alias={ {}: (0, {}, may-alias) }, entry_computation_layout={(f32[])->f32[]}
-
-ENTRY main.5 {
-  x = f32[] parameter(0), sharding={replicated}
-  constant = f32[] constant(1)
-  ROOT result = f32[] add(x, constant)
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(auto executable,
-                          CompileExecutable(kAddProgram, *client));
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result, executable->Execute({{buffer.get()}}, /*options=*/{}));
-
-  ASSERT_EQ(result.size(), 1);
-  ASSERT_EQ(result[0].size(), 1);
-  EXPECT_OK(result[0][0]->GetReadyFuture().Await());
-}
-
 TEST(StreamExecutorGpuClientTest, PropagateError) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -2055,12 +2007,12 @@ TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
   size_t dma_size = 1024;
   size_t alignment = 4096;
   void* host_dma_ptr = nullptr;
-  posix_memalign(&host_dma_ptr, alignment, dma_size);
-  EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
+  (void)posix_memalign(&host_dma_ptr, alignment, dma_size);
+  TF_EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
   EXPECT_TRUE(client->IsDmaMapped(host_dma_ptr, dma_size));
   EXPECT_FALSE(
       client->IsDmaMapped(reinterpret_cast<char*>(host_dma_ptr) + 5, dma_size));
-  EXPECT_OK(client->DmaUnmap(host_dma_ptr));
+  TF_EXPECT_OK(client->DmaUnmap(host_dma_ptr));
   EXPECT_FALSE(client->IsDmaMapped(host_dma_ptr, dma_size));
   free(host_dma_ptr);
 }
@@ -2092,8 +2044,8 @@ TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
   size_t dma_size = 2 * 1024 * 1024;
   size_t alignment = 1024;
   void* host_dma_ptr = nullptr;
-  posix_memalign(&host_dma_ptr, alignment, dma_size);
-  EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
+  (void)posix_memalign(&host_dma_ptr, alignment, dma_size);
+  TF_EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
 
   auto result = first_buffer->CopyRawToHost(host_dma_ptr, 0, size);
   TF_EXPECT_OK(result.Await());
@@ -2105,13 +2057,13 @@ TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
                               {shape}, second_device->memory_spaces()[0]));
   auto second_buffer = transfer_manager->RetrieveBuffer(0);
 
-  EXPECT_OK(transfer_manager->TransferRawDataToSubBuffer(0, host_dma_ptr, 0,
-                                                         size, true, []() {}));
-  ASSERT_OK_AND_ASSIGN(auto literal, second_buffer->ToLiteralSync());
+  TF_EXPECT_OK(transfer_manager->TransferRawDataToSubBuffer(
+      0, host_dma_ptr, 0, size, true, []() {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, second_buffer->ToLiteralSync());
   EXPECT_EQ(literal->element_count(), test_length);
   EXPECT_THAT(literal->data<int32_t>(), ElementsAreArray(data));
 
-  EXPECT_OK(client->DmaUnmap(host_dma_ptr));
+  TF_EXPECT_OK(client->DmaUnmap(host_dma_ptr));
   free(host_dma_ptr);
 }
 

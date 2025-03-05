@@ -98,20 +98,6 @@ xla_cc_binary(
 )
 
 xla_cc_binary(
-    name = "convert",
-    srcs = ["convert.cc"],
-    deps = [
-        "//xla/service:hlo_module_util",
-        "//xla/service:hlo_proto_util",
-        "//xla/tsl/util:command_line_flags",
-        "//xla/tsl/util:fixed_option_set_flag",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
-    ],
-)
-
-xla_cc_binary(
     name = "hlo_proto_to_json",
     srcs = ["hlo_proto_to_json.cc"],
     deps = [

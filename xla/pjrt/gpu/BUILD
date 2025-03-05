@@ -11,7 +11,7 @@ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 # Integrate with PJRT rather than the GPU client directly.
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//visibility:private"],
+    default_visibility = [":__subpackages__"],
     licenses = ["notice"],
 )
 
@@ -59,9 +59,7 @@ cc_library(
         ":gpu_topology",
         ":gpu_topology_proto_cc",
         ":se_gpu_topology_description",
-        "//xla:executable_run_options",
         "//xla:literal",
-        "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -91,7 +89,6 @@ cc_library(
         "//xla/pjrt/distributed:topology_util",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
-        "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
         "//xla/service:executable",
@@ -108,7 +105,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
-        "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
@@ -146,10 +142,7 @@ cc_library(
         ":nccl_id_store",
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_constants",
-        "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:gpu_memory_space_assignment",
-        "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
@@ -283,7 +276,10 @@ cc_library(
     name = "gpu_topology",
     srcs = ["gpu_topology.cc"],
     hdrs = ["gpu_topology.h"],
-    visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_topology_users"]),
+    visibility = internal_visibility([
+        "//xla/pjrt/gpu:legacy_gpu_topology_users",
+        ":__subpackages__",
+    ]),
     deps = [
         ":gpu_topology_proto_cc",
         "@com_google_absl//absl/strings:string_view",
@@ -467,6 +463,7 @@ cc_library(
     name = "se_gpu_topology_description",
     srcs = ["se_gpu_topology_description.cc"],
     hdrs = ["se_gpu_topology_description.h"],
+    visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_topology_users"]),
     deps = [
         ":gpu_topology",
         "//xla:shape_util",
