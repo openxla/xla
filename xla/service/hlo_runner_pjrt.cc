@@ -406,9 +406,12 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
   TF_ASSIGN_OR_RETURN(auto pjrt_executable,
                       CreateExecutable(module.get(), compile_options));
 
+  TF_ASSIGN_OR_RETURN(auto mods, pjrt_executable->GetHloModules());
+  if (mods.empty()) {
+    return absl::InternalError("No modules available in executable!");
+  }
   auto executable = std::make_unique<PjRtWrappedExecutable>(
-      std::shared_ptr<HloModule>(
-          std::move(pjrt_executable->GetHloModules().value()[0])),
+      std::shared_ptr<HloModule>(std::move(mods[0])),
       pjrt_executable.release());
 
   return executable;
