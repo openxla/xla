@@ -25,18 +25,32 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "third_party/gpus/cuda/include/cuda_bf16.h"
+#include "third_party/gpus/cuda/include/cuda_fp16.h"
+#include "third_party/nvshmem/nvshmemx.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 
 namespace xla::gpu {
 
 // NVIDIA NVSHMEM library
 class NvshmemCollectives : public Collectives {
  public:
+  enum class TEAMSKIND {
+    kWORLD = 0,
+    kSHARED = 1,
+    kNODE = 2,
+    kTOTAL_TEAMS_KIND = 3,
+  };
+
+  constexpr static int64_t kMaxNumTeams = 10;
+  bool IsInitialized();
+
   ~NvshmemCollectives() override;
 
   static NvshmemCollectives* Default();
@@ -67,6 +81,11 @@ class NvshmemCollectives : public Collectives {
     return absl::UnimplementedError("Not implemented.");
   }
 
+  absl::Status DoAllreduce(TEAMSKIND team_kind, PrimitiveType type,
+                           se::DeviceMemoryBase dest,
+                           se::DeviceMemoryBase source, int64_t num_elements,
+                           se::Stream& stream, ReductionKind reduction_kind);
+
  private:
   absl::Status InitializeOnce();
 
@@ -79,6 +98,8 @@ class NvshmemCollectives : public Collectives {
   bool initialized_ = false;
 
   static constexpr char kKvStoreKey[] = "nvshmem_global_init";
+
+  std::vector<nvshmemx_team_t> all_teams;
 };
 
 }  // namespace xla::gpu

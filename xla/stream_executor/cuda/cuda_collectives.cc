@@ -22,8 +22,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "third_party/nccl/nccl.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/debug_options_flags.h"
-#include "xla/service/gpu/runtime/nvshmem_api.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/logging.h"
@@ -37,7 +37,7 @@ namespace stream_executor::gpu {
   if (bytes == 0) return nullptr;
 
   if (xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem()) {
-    return xla::gpu::NvshmemApi::Default().Allocate(bytes);
+    return xla::gpu::NvshmemCollectives::Default()->Allocate(bytes);
   }
 
   void* ptr = nullptr;
@@ -59,7 +59,7 @@ namespace stream_executor::gpu {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   if (xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem()) {
-    return xla::gpu::NvshmemApi::Default().Deallocate(location);
+    return xla::gpu::NvshmemCollectives::Default()->Deallocate(location);
   }
 
   ncclResult_t res = ncclMemFree(location);

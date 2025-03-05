@@ -2760,6 +2760,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
             Thunk::kNvshmemAllReduceStart, all_reduce, all_reduce,
             all_reduce->use_global_device_ids());
       }
+      return EmitNcclThunk<NcclAllReduceStartThunk, HloAllReduceInstruction>(
           Thunk::kNcclAllReduceStart, all_reduce, all_reduce,
           all_reduce->use_global_device_ids());
     }
@@ -2770,7 +2771,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       }
       const HloInstruction* wrapped = instr->async_wrapped_instruction();
       switch (wrapped->opcode()) {
-          return EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr);
+        return EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr);
         case HloOpcode::kAllToAll:
           return EmitNcclAsyncDone(Thunk::kNcclAllToAllDone, instr);
         case HloOpcode::kRaggedAllToAll:
