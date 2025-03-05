@@ -981,10 +981,13 @@ absl::Status RunCollectiveOptimizationPasses(
 
   collectives_pipeline.AddPass<AllGatherBroadcastReorder>();
 
-  collectives_pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(
-      /*distance_threshold=*/debug_options
-          .xla_gpu_experimental_collective_cse_distance_threshold(),
-      /*for_replicas=*/false);
+  if (debug_options.xla_gpu_experimental_collective_cse_distance_threshold() >
+      0) {
+    collectives_pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(
+        /*distance_threshold=*/debug_options
+            .xla_gpu_experimental_collective_cse_distance_threshold(),
+        /*for_replicas=*/false);
+  }
 
   // promote 16 bit integer all-reduce and reduce-scatter to 32-bit.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {

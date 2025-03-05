@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/platform_util.h"
+#include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
@@ -145,6 +146,15 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::ReductionDimensionGrouper>();
     RegisterPass<gpu::ReductionLayoutNormalizer>();
     RegisterPass<gpu::SanitizeConstantNames>();
+    if (module.config()
+            .debug_options()
+            .xla_gpu_experimental_collective_cse_distance_threshold() > 0) {
+      RegisterPass<ScheduleAwareCollectiveOpsCSE>(
+          module.config()
+              .debug_options()
+              .xla_gpu_experimental_collective_cse_distance_threshold(),
+          false);
+    }
     RegisterPass<gpu::TopKSplitter>();
     RegisterPass<gpu::TopkSpecializer>();
     RegisterPass<gpu::TransposeDimensionGrouper>();

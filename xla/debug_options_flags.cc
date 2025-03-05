@@ -203,7 +203,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_pipeline_parallelism_opt_level(
       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE);
 
-  opts.set_xla_gpu_experimental_collective_cse_distance_threshold(100);
+  opts.set_xla_gpu_experimental_collective_cse_distance_threshold(0);
 
   opts.set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(false);
   opts.set_xla_partitioning_algorithm(

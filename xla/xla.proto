@@ -193,7 +193,7 @@ message DebugOptions {
   // When true, XLA:CPU all LLVM kernels entry points will be prefixed with the
   // module name. They will also be converted to C style names. This is required
   // for AOT compilation.
-  bool xla_cpu_generate_unique_c_style_kernel_entry_points = 374;
+  bool xla_cpu_generate_unique_c_style_kernel_entry_points = 372;
 
   // When set, XLA:CPU will only generate code up to the specified ISA.
   // (It will not use newer ISAs.) Using the string format allows us to extend
@@ -517,7 +517,7 @@ message DebugOptions {
   AutotuneCacheMode xla_gpu_experimental_autotune_cache_mode = 324;
 
   // Specifies the distance threshold in ScheduleAwareCollectiveOpsCSE
-  int64 xla_gpu_experimental_collective_cse_distance_threshold = 372;
+  int64 xla_gpu_experimental_collective_cse_distance_threshold = 374;
 
   // Experimentally disables binary libraries in GPU compiler passes.
   bool xla_gpu_experimental_disable_binary_libraries = 329;
