@@ -113,7 +113,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "xla/service/gpu/runtime/nvshmem_api.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -1156,30 +1156,9 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   static const bool xla_gpu_experimental_enable_nvshmem =
       xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem();
   if (xla_gpu_experimental_enable_nvshmem) {
-    std::weak_ptr<KeyValueStoreInterface> kv_store_weak_ptr = kv_store;
-    auto store_get_fn =
-        [kv_store_weak_ptr](
-            absl::string_view key) -> absl::StatusOr<std::string> {
-      if (std::shared_ptr<KeyValueStoreInterface> kv_store =
-              kv_store_weak_ptr.lock()) {
-        return kv_store->Get(key, absl::Minutes(10));
-      }
-      return absl::InternalError(
-          "KV store is not available for nvshmem initialization");
-    };
-    auto store_set_fn = [kv_store_weak_ptr](
-                            absl::string_view key,
-                            absl::string_view value) -> absl::Status {
-      if (std::shared_ptr<KeyValueStoreInterface> kv_store =
-              kv_store_weak_ptr.lock()) {
-        return kv_store->Set(key, value);
-      }
-      return absl::InternalError(
-          "KV store is not available for nvshmem initialization");
-    };
-    xla::gpu::NvshmemApi::SetEnvInfo(node_id, global_topology.nodes().size(),
-                                     local_device_states.size(), store_get_fn,
-                                     store_set_fn);
+    xla::gpu::NvshmemCollectives::Default()->SetEnvInfo(
+        node_id, global_topology.nodes().size(), local_device_states.size(),
+        kv_store);
   }
   if (num_nodes > 1) {
     auto nccl_id_store = std::make_shared<NcclIdStore>(node_id, device_to_node,
