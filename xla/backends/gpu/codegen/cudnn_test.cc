@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
@@ -219,13 +220,11 @@ ENTRY e {
   EXPECT_TRUE(changed);
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Fusion(m::GetTupleElement(m::Fusion()))));
-  EXPECT_THAT(module->entry_computation()
-                  ->root_instruction()
-                  ->operand(0)
-                  ->operand(0)
-                  ->fused_instructions_computation()
-                  ->root_instruction(),
-              GmockMatch(m::Tuple(m::Dot(), m::CustomCall())));
+  EXPECT_TRUE(IsWorkspaceAllocationRoot(*module->entry_computation()
+                                             ->root_instruction()
+                                             ->operand(0)
+                                             ->operand(0)
+                                             ->fused_expression_root()));
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
