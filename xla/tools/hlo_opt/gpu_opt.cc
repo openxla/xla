@@ -121,6 +121,7 @@ class GpuOptProvider : public CompiledOptProvider {
   //////////////////////////////////////////////////////////////////////////////
   void RegisterProviderPasses(HloModule& module) override {
     auto device_description = GetDeviceDescription(&module);
+    auto debug_config = module.config().debug_options();
     se::GpuComputeCapability gpu_compute_capability;
     if (device_description.ok()) {
       gpu_compute_capability = device_description->gpu_compute_capability();
@@ -146,13 +147,10 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::ReductionDimensionGrouper>();
     RegisterPass<gpu::ReductionLayoutNormalizer>();
     RegisterPass<gpu::SanitizeConstantNames>();
-    if (module.config()
-            .debug_options()
-            .xla_gpu_experimental_collective_cse_distance_threshold() > 0) {
+    if (debug_config.xla_gpu_experimental_collective_cse_distance_threshold() >
+        0) {
       RegisterPass<ScheduleAwareCollectiveOpsCSE>(
-          module.config()
-              .debug_options()
-              .xla_gpu_experimental_collective_cse_distance_threshold(),
+          debug_config.xla_gpu_experimental_collective_cse_distance_threshold(),
           false);
     }
     RegisterPass<gpu::TopKSplitter>();
