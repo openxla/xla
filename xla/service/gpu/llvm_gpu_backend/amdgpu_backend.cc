@@ -178,6 +178,20 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
   g_hsacoCache.cache.back().hsaco = hsaco;
 }
 
+struct JaxPluginPaths {
+  std::string bitcode_path;
+  std::string lld_path;
+};
+
+JaxPluginPaths getJaxPluginPaths() {
+  JaxPluginPaths paths;
+
+  paths.bitcode_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_BITCODE_PATH");
+  paths.lld_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_LLD_PATH");
+
+  return paths;
+}
+
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
@@ -244,12 +258,21 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   }
   // Locate lld.
   std::string lld_path;
-  if (std::getenv("LLVM_PATH")) {
-    lld_path = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
-  } else {
-    lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  llvm::SmallVector<std::string, 3> lld_paths;
+
+  if (const char* llvm_path = std::getenv("LLVM_PATH")) {
+    lld_paths.push_back(tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin"));
   }
-  auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
+  lld_paths.push_back(tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin"));
+
+  // push LLD path from JAX plugin if set
+  auto jax_paths = getJaxPluginPaths();
+  if (!jax_paths.lld_path.empty()) {
+    lld_paths.push_back(jax_paths.lld_path);
+  }
+
+  auto lld_program = llvm::sys::findProgramByName(
+      "ld.lld", llvm::to_vector_of<llvm::StringRef>(lld_paths));
   if (!lld_program) {
     return xla::Internal("unable to find ld.lld in PATH: %s",
                          lld_program.getError().message());
@@ -394,11 +417,12 @@ std::string GetROCDLDir(const DebugOptions& debug_options) {
     potential_rocdl_dirs.push_back(datadir);
   }
   potential_rocdl_dirs.push_back(tsl::RocdlRoot());
+  potential_rocdl_dirs.push_back(getJaxPluginPaths().bitcode_path);
 
   // Tries all potential ROCDL directories in the order they are inserted.
-  // Returns the first directory that exists in the file system.
+  // Returns the first directory that contains opencompute math libs bitcode file (ocml.bc)
   for (const std::string& potential_rocdl_dir : potential_rocdl_dirs) {
-    if (tsl::Env::Default()->IsDirectory(potential_rocdl_dir).ok()) {
+    if (tsl::Env::Default()->FileExists(tsl::io::JoinPath(potential_rocdl_dir, "ocml.bc")).ok()) {
       VLOG(2) << "Found ROCm-Device-Libs dir " << potential_rocdl_dir;
       return potential_rocdl_dir;
     }
