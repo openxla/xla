@@ -77,6 +77,10 @@ namespace gpu {
 
 namespace {
 
+bool IsTritonSnippet(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kCustomCall && instr.custom_call_target() == "triton::snippet";
+}
+
 bool IsFusible(const HloInstruction& instr) {
   // Side-effecting operations are not fusible.
   if (!instr.IsFusible()) {
@@ -93,6 +97,8 @@ bool IsFusible(const HloInstruction& instr) {
     case HloOpcode::kFusion:
       return IsGenericTritonFusion(instr) ||
              instr.fusion_kind() != HloInstruction::FusionKind::kCustom;
+    case HloOpcode::kCustomCall:
+      return IsTritonSnippet(instr);
     case HloOpcode::kCopy:
     case HloOpcode::kIota:
     case HloOpcode::kConstant:
@@ -176,6 +182,43 @@ class PriorityFusionQueue {
     std::vector<HloInstruction*> instructions;
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       TF_CHECK_OK(UpdatePerformanceModelCache(instruction));
+      if (IsTritonSnippet(*instruction)) {
+        // Rewrite Triton snippet in a Fusion instruction with only one node.
+        HloComputation* computation = instruction->parent();
+        HloInstruction* fusion_instruction = computation->AddInstruction(
+            HloInstruction::CreateFusion(
+              instruction->shape(), HloInstruction::FusionKind::kCustom, instruction));
+        fusion_instruction->set_fusion_kind(HloInstruction::FusionKind::kCustom);
+
+        // Set a default config using num_warps=1 and only 1 tile.
+        // IIUC the backend is allowed to split tiles if needed.
+        // If this prove problematic, we should store the required values inside the triton IR.
+        GpuBackendConfig backend_config;
+        backend_config.mutable_fusion_backend_config()->set_kind(std::string(kTritonFusionKind));
+        for (int i = 0; i < instruction->shape().dimensions_size(); ++i) {
+          backend_config.mutable_fusion_backend_config()->mutable_block_level_fusion_config()->add_output_tile_sizes(1);
+        }
+        backend_config.mutable_fusion_backend_config()->mutable_block_level_fusion_config()->set_num_warps(1);
+        TF_CHECK_OK(fusion_instruction->set_backend_config(backend_config));
+
+        fusion_instruction->set_called_computations_execution_thread(
+            computation->execution_thread(),
+            /*skip_async_execution_thread_overwrite=*/false);
+        VLOG(2) << "       created new fusion from triton snippet: " << fusion_instruction->ToString();
+        // VLOG(2) << "       analysis: " << analysis.fusion_backend_config().DebugString();
+
+        // actually replace the custom call instruction by the new fusion instruction.
+        TF_CHECK_OK(computation->ReplaceInstruction(instruction, fusion_instruction));
+
+        // update the caches
+        fusion_deduplication_cache.UpdateFusedInstructionId(
+            *fusion_instruction, *instruction, *instruction, 0);
+        gpu_performance_model_cache_.Set(*fusion_instruction, EstimateRunTimeData::Infinite());
+
+        //
+        instructions.push_back(fusion_instruction);
+        continue;
+      }
       if (HloPredicateIsOp<HloOpcode::kParameter>(instruction) ||
           instruction->user_count() == 0 || !instruction->IsFusible() ||
           HloPredicateIsOp<HloOpcode::kTuple, HloOpcode::kGetTupleElement>(
@@ -479,6 +522,7 @@ class PriorityFusionQueue {
     if (HloPredicateIsOp<HloOpcode::kBitcast>(producer)) {
       return absl::InfiniteDuration();
     }
+
     // We always fuse constants, but the cost model doesn't handle them very
     // well: fusing constants changes costs significantly. Also, there's no
     // point recomputing priorities. Therefore, we fuse all of them at the end.
@@ -539,11 +583,16 @@ class PriorityFusionQueue {
       step->set_us_fused(absl::ToDoubleMicroseconds(run_times.time_fused));
       step->set_us_unfused(absl::ToDoubleMicroseconds(run_times.time_unfused));
     }
+
+    // TODO consider boosting triton snippet if they don't get fused.
+    // if (IsTritonSnippet(producer)) {
+    //   return absl::InfiniteDuration();
+    // }
     return current_priority + run_times.time_unfused - run_times.time_fused;
   }
 
   FusionDecision IsTritonSupported(const HloInstruction& instruction) {
-    if (IsGenericTritonFusion(instruction)) {
+    if (IsGenericTritonFusion(instruction) || IsTritonSnippet(instruction)) {
       return FusionDecision::Allow();
     }
 
