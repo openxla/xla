@@ -781,6 +781,9 @@ message DebugOptions {
   // the results of regular emitters.
   bool xla_gpu_verify_triton_fusion_numerics = 291;
 
+  // Enable NVSHMEM.
+  bool xla_gpu_experimental_enable_nvshmem = 373;
+
   // go/keep-sorted end
 
   //--------------------------------------------------------------------------//
