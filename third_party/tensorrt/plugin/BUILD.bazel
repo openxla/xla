@@ -17,8 +17,8 @@ cuda_library(
     ],
     strip_include_prefix = "plugin/common",
     deps = [
-        "//third_party/tensorrt:nv_infer_headers",
         "@local_config_tensorrt//:tensorrt",
+        "@local_config_tensorrt//:tensorrt_headers",
     ],
 )
 
@@ -53,7 +53,7 @@ cuda_library(
     deps = [
         ":nms_plugin_hdrs",
         ":plugin_common",
-        "//third_party/tensorrt:nv_infer_headers",
         "@local_config_tensorrt//:tensorrt",
+        "@local_config_tensorrt//:tensorrt_headers",
     ],
 )
