@@ -1418,6 +1418,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@com_google_ortools//ortools/linear_solver",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:BitReader",
         "@llvm-project//llvm:BitWriter",
