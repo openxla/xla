@@ -90,7 +90,7 @@ class RocmComputeCapability {
 
   bool gfx10_rx69xx() const { return gfx_version() == "gfx1030"; }
 
-  bool gfx11_rx7900() const { return gfx_version() == "gfx1100"; }
+  bool gfx11() const { return gfx_version().find("gfx11"); }
 
   bool gfx1200() const { return gfx_version() == "gfx1200"; }
 
@@ -102,7 +102,7 @@ class RocmComputeCapability {
 
   bool has_fast_fp16_support() const {
     return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
-           gfx11_rx7900();
+           gfx11();
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
@@ -153,6 +153,7 @@ class RocmComputeCapability {
       "gfx950",   // MI355
       "gfx1030",  // RX68xx / RX69xx
       "gfx1100",  // RX7900
+      "gfx1101", 
       "gfx1200", "gfx1201",
   };
 };
