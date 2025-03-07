@@ -63,7 +63,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
                                   mt::nvidia_gpu::ClusterInfo& out_cluster_info,
                                   bool is_xla_fusion) {
   // TODO(ROCm): Check why some test fail when threadsPerWarp is set to 64.
-  const int threadsPerWarp = 32;
+  const int threadsPerWarp = 64;
   auto cc = se::RocmComputeCapability(std::move(arch_name));
 
   if (is_xla_fusion) {
