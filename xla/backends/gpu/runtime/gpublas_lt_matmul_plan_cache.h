@@ -59,6 +59,11 @@ struct MatmulPlanCache {
     return map_.size();
   }
 
+  void clear() {
+    absl::MutexLock lock(&mutex_); 
+    map_.clear();
+  }
+
   MatmulPlanCache() = default;
   
 private:

@@ -54,8 +54,9 @@ class CublasLtMatmulThunk : public Thunk {
     return workspace_;
   }
 
-  // Backdoor function needed for testing only.
-  static size_t MatmulPlanCacheSize(se::StreamExecutor *exec);
+  // Backdoor functions needed for testing only.
+  static size_t GetMatmulPlanCacheSize(se::StreamExecutor *exec);
+  static void ClearMatmulPlanCache(se::StreamExecutor *exec);
 
  protected:
   CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs);

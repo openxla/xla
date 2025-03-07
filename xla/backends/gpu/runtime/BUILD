@@ -632,8 +632,7 @@ xla_test(
     deps = [
         ":gpublas_lt_matmul_thunk",
          "//xla/tests:hlo_test_base",
-        # ":test_macros_header",
-        # ":xla_internal_test_main",
+        "//xla/hlo/ir:hlo",
         "//xla:literal",
         "//xla:shape_util",
         "//xla/hlo/testlib:test",

@@ -85,9 +85,14 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
   }
 }
 
-/* static */ size_t CublasLtMatmulThunk::MatmulPlanCacheSize(
+/* static */ size_t CublasLtMatmulThunk::GetMatmulPlanCacheSize(
         se::StreamExecutor *exec) {
   return MatmulPlanCache::GetCacheForExecutor(exec).size();
+}
+ 
+/* static */ void CublasLtMatmulThunk::ClearMatmulPlanCache(
+        se::StreamExecutor *exec) {
+  MatmulPlanCache::GetCacheForExecutor(exec).clear();
 }
 
 absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(se::Stream *stream, 
