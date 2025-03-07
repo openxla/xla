@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/generated_nvtx_meta.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
