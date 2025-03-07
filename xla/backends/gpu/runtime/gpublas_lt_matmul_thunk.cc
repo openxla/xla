@@ -46,8 +46,7 @@ struct MatmulPlanCache {
     static std::deque< MatmulPlanCache > meta(16);
     absl::MutexLock lock(&m);
     if (device_id >= meta.size()) meta.resize(device_id + 1);
-    auto& res = meta[device_id];
-    return res;
+    return meta[device_id];
   }
 
   template < class Func >
@@ -71,8 +70,7 @@ struct MatmulPlanCache {
     return map_.size();
   }
 
-  MatmulPlanCache() //: mutex_(std::make_unique< absl::Mutex >())
-   { }
+  MatmulPlanCache() = default;
 
 private:
   absl::Mutex mutex_;
