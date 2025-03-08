@@ -158,6 +158,7 @@ cc_library(
         "//tensorflow/core:__subpackages__",
         "@tsl//tsl:__subpackages__",
         "//tensorflow/python/profiler/internal:__pkg__",
+        "//third_party/xprof/pywrap:__pkg__",
     ]),
     deps = [
         ":numeric_types",
