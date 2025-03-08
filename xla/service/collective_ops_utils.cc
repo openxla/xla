@@ -158,6 +158,31 @@ absl::StatusOr<std::vector<int>> GetParticipatingIDs(
                           group->replica_ids().end());
 }
 
+std::vector<std::vector<int64_t>> get_replica_groups(
+    const HloInstruction* instruction) {
+  std::vector<std::vector<int64_t>> replica_groups;
+  if (instruction->opcode() == HloOpcode::kCollectivePermuteStart) {
+    absl::c_transform(instruction->source_target_pairs(),
+                      std::back_inserter(replica_groups),
+                      [](const std::pair<int64_t, int64_t>& pair) {
+                        std::vector<int64_t> ids({pair.first, pair.second});
+                        return ids;
+                      });
+  } else if (instruction->IsAsynchronous() ||
+             instruction->opcode() == HloOpcode::kAllGatherStart ||
+             instruction->opcode() == HloOpcode::kAllReduceStart) {
+    absl::c_transform(
+        instruction->replica_groups(), std::back_inserter(replica_groups),
+        [](const ReplicaGroup& group) {
+          std::vector<int64_t> ids;
+          absl::c_transform(group.replica_ids(), std::back_inserter(ids),
+                            [](auto id) { return id; });
+          return ids;
+        });
+  }
+  return replica_groups;
+}
+
 // Returns the group formation mode of instr, assuming that instr is, or is
 // derived from, an HloAllGatherInstruction, HloAllReduceInstructionBase,
 // HloAllToAllInstruction, HloCollectiveBroadcastInstruction or
@@ -777,6 +802,34 @@ bool IsCollective(const HloInstruction* instruction) {
     }
   }
   return false;
+}
+
+bool IsAsyncCollective(const HloInstruction* instruction) {
+  if (instruction->IsAsynchronous()) {
+    switch (instruction->async_wrapped_opcode()) {
+      case HloOpcode::kAllGather:
+      case HloOpcode::kAllReduce:
+      case HloOpcode::kAllToAll:
+      case HloOpcode::kCollectiveBroadcast:
+      case HloOpcode::kCollectivePermute:
+      case HloOpcode::kRaggedAllToAll:
+      case HloOpcode::kReduceScatter:
+        return true;
+      default:
+        return false;
+    }
+  }
+  switch (instruction->opcode()) {
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllGatherDone:
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kAllReduceDone:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kCollectivePermuteDone:
+      return true;
+    default:
+      return false;
+  }
 }
 
 HloInstruction* IsOrHasCollectiveWithChannelId(HloInstruction* instruction) {

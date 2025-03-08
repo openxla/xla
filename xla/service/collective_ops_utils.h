@@ -126,6 +126,10 @@ absl::StatusOr<std::vector<int>> GetParticipatingIDs(
     std::optional<int> total_participant_count,
     absl::Span<const ReplicaGroup> groups);
 
+// Returns the replica groups for the given instruction.
+std::vector<std::vector<int64_t>> get_replica_groups(
+    const HloInstruction* instruction);
+
 absl::string_view CollectiveOpGroupModeToString(
     CollectiveOpGroupMode group_mode);
 
@@ -244,6 +248,9 @@ bool IsNonFusionCollective(const HloInstruction* instruction);
 
 // Returns true if instruction is a collective op or a collective fusion.
 bool IsCollective(const HloInstruction* instruction);
+
+// Returns true if instruction is an async collective op.
+bool IsAsyncCollective(const HloInstruction* instruction);
 
 // Returns the collective instruction if argument is a collective op (or a
 // collective fusion) with channel_id.
