@@ -515,4 +515,94 @@ bool DistinctNumbersAreConsecutiveIfSorted(absl::Span<const int64_t> seq) {
          seq.size() - 1;
 }
 
+std::string PrintAllFields(const google::protobuf::Message& message) {
+  const google::protobuf::Reflection* reflection = message.GetReflection();
+  const google::protobuf::Descriptor* descriptor = message.GetDescriptor();
+  std::stringstream result;
+
+  for (int i = 0; i < descriptor->field_count(); i++) {
+    const google::protobuf::FieldDescriptor* field = descriptor->field(i);
+    result << field->name() << ": ";
+
+    if (field->is_repeated()) {
+      result << "[";
+      int field_size = reflection->FieldSize(message, field);
+      for (int j = 0; j < field_size; j++) {
+        if (j > 0) result << ", ";
+        switch (field->cpp_type()) {
+          case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+            result << reflection->GetRepeatedInt32(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+            result << reflection->GetRepeatedInt64(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+            result << reflection->GetRepeatedUInt32(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+            result << reflection->GetRepeatedUInt64(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+            result << reflection->GetRepeatedDouble(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+            result << reflection->GetRepeatedFloat(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+            result << (reflection->GetRepeatedBool(message, field, j)
+                           ? "true"
+                           : "false");
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+            result << reflection->GetRepeatedEnum(message, field, j)->name();
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+            result << reflection->GetRepeatedString(message, field, j);
+            break;
+          case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+            result << reflection->GetRepeatedMessage(message, field, j)
+                          .ShortDebugString();
+            break;
+        }
+      }
+      result << "]";
+    } else {
+      switch (field->cpp_type()) {
+        case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+          result << reflection->GetInt32(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+          result << reflection->GetInt64(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+          result << reflection->GetUInt32(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+          result << reflection->GetUInt64(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+          result << reflection->GetDouble(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+          result << reflection->GetFloat(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+          result << (reflection->GetBool(message, field) ? "true" : "false");
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+          result << reflection->GetEnum(message, field)->name();
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+          result << reflection->GetString(message, field);
+          break;
+        case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+          result << reflection->GetMessage(message, field).ShortDebugString();
+          break;
+      }
+    }
+    result << "\n";
+  }
+  return result.str();
+}
+
 }  // namespace xla
