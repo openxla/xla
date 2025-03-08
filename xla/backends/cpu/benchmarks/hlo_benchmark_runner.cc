@@ -68,6 +68,12 @@ absl::Status RunHloBenchmark(benchmark::State& state,
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
   }
+  // TODO(intel-tf): Remove this if-block once oneDNN custom calls are enabled
+  // with thunk runtime
+  if (!benchmark_options.use_thunk_runtime) {
+    compile_options.executable_build_options.mutable_debug_options()
+        ->set_xla_cpu_use_thunk_runtime(false);
+  }
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtLoadedExecutable> executable,
                       client->Compile(computation, compile_options));
 
@@ -179,6 +185,12 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
   if (benchmark_options.disable_parallel_task_assigner) {
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
+  }
+  // TODO(intel-tf): Remove this if-block once oneDNN custom calls are enabled
+  // with thunk runtime
+  if (!benchmark_options.use_thunk_runtime) {
+    compile_options.executable_build_options.mutable_debug_options()
+        ->set_xla_cpu_use_thunk_runtime(false);
   }
 
   for (auto _ : state) {

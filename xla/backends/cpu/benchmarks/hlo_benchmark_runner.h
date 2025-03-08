@@ -35,6 +35,7 @@ using StrToStrMapping =
 struct HloBenchmarkOptions {
   int32_t num_executions = 1;
   bool disable_parallel_task_assigner = false;
+  bool use_thunk_runtime = true;
 };
 
 // Runs the given HLO module as a benchmark.
