@@ -92,7 +92,9 @@ class Backend {
 
   // Accessors for the various objects.
   se::Platform* platform() const { return platform_; }
-  Compiler* compiler() const { return compiler_; }
+  Compiler* compiler() const {
+    return compiler_.get();
+  }  // TODO(aliia): this is dangerous
   se::DeviceMemoryAllocator* memory_allocator() const {
     return memory_allocator_.get();
   }
@@ -178,7 +180,7 @@ class Backend {
   absl::Status ResetDevices();
 
  private:
-  Backend(se::Platform* platform, Compiler* compiler,
+  Backend(se::Platform* platform, std::unique_ptr<Compiler> compiler,
           absl::Span<se::StreamExecutor* const> stream_executors,
           TransferManager* transfer_manager,
           ComputationPlacer* computation_placer,
@@ -187,7 +189,7 @@ class Backend {
   Backend& operator=(const Backend&) = delete;
 
   se::Platform* platform_;
-  Compiler* compiler_;
+  std::unique_ptr<Compiler> compiler_;
   TransferManager* transfer_manager_;
   ComputationPlacer* computation_placer_;
 
