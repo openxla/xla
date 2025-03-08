@@ -36,16 +36,13 @@ __global__ void redzone_checker_kernel(uint8_t* input_buffer,
 
 namespace stream_executor {
 
-absl::StatusOr<ComparisonKernel*> GetComparisonKernel(
+absl::StatusOr<ComparisonKernel> GetComparisonKernel(
     StreamExecutor* executor, GpuAsmOpts /*gpu_asm_opts*/) {
-  static auto kernel = TypedKernelFactory<
+  return TypedKernelFactory<
       DeviceMemory<uint8_t>, uint8_t, uint64_t,
       DeviceMemory<uint64_t>>::Create(executor, "redzone_checker",
                                       reinterpret_cast<void*>(
                                           redzone_checker_kernel));
-
-  if (!kernel.ok()) return kernel.status();
-  return &kernel.value();
 }
 
 }  // namespace stream_executor

@@ -34,7 +34,7 @@ using ComparisonKernel = TypedKernel<DeviceMemory<uint8_t>, uint8_t, uint64_t,
 // buffer_address
 // + buffer_length]` that is not equal to `redzone_pattern`,
 // `*mismatch_count_ptr` gets incremented by 1.
-absl::StatusOr<ComparisonKernel*> GetComparisonKernel(StreamExecutor* executor,
+absl::StatusOr<ComparisonKernel> GetComparisonKernel(StreamExecutor* executor,
                                                       GpuAsmOpts gpu_asm_opts);
 
 }  // namespace stream_executor

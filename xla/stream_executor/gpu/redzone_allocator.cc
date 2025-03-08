@@ -269,7 +269,7 @@ absl::StatusOr<DeviceMemoryBase> RedzoneAllocator::CreateBuffer(
 absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
   StreamExecutor* executor = stream_->parent();
 
-  TF_ASSIGN_OR_RETURN(ComparisonKernel * kernel,
+  TF_ASSIGN_OR_RETURN(ComparisonKernel kernel,
                       GetComparisonKernel(stream_->parent(), GpuAsmOpts()));
 
   stream_executor::DeviceMemoryHandle out_param(
@@ -282,7 +282,7 @@ absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
         RedzoneCheckStatus redzone_status,
         CheckRedzonesForBuffer(stream_, *buf_and_size.first,
                                DeviceMemory<uint64_t>(out_param.memory()),
-                               *kernel, buf_and_size.second, redzone_size_,
+                               kernel, buf_and_size.second, redzone_size_,
                                redzone_pattern_));
     if (!redzone_status.ok()) {
       return redzone_status;
