@@ -1770,6 +1770,14 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         return false;
       }
     }
+    // If rhs operand has no non-contracting dims, guarantee bias vector length
+    // will still match matrix D rows with HIPBLASLT_EPILOGUE_BIAS epilogue
+    // (https://rocm.docs.amd.com/projects/hipBLASLt/en/latest/datatypes.html).
+    if (num_col_dims == 0) {
+      std::unique_ptr<HloInstruction> bias_broadcasted =
+          broadcast->CloneWithNewOperands(broadcast->shape(), {bias});
+      bias = broadcast->parent()->AddInstruction(std::move(bias_broadcasted));
+    }
 
     // In the case of high rank input for FP8, it is necessary to consider
     // potential padding for the bias.
