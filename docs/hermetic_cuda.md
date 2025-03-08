@@ -164,6 +164,9 @@ is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https:
    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
    if needed.
 
+   Update `PTX_VERSION_DICT` in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
+   if needed.
+
 2. For each Google ML project create a separate pull request with updated
    `HERMETIC_CUDA_VERSION` and `HERMETIC_CUDNN_VERSION` in `.bazelrc` file.
 
