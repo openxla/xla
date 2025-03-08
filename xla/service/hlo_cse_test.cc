@@ -603,6 +603,53 @@ TEST_F(HloCseTest, DoNotCombineCallsToImpureFunctions) {
   EXPECT_THAT(root, op::Add(op::Map(op::Constant()), op::Map(op::Constant())));
 }
 
+TEST_F(HloCseTest, CopyOpCSE) {
+  // copy.5 can be replaced with copy.4
+  const char* const kModuleStr = R"(
+  HloModule m
+  ENTRY main {
+  %constant.2 = f32[] constant(0)
+  %broadcast.3 = f32[4,4]{1,0} broadcast(f32[] %constant.2), dimensions={}
+  %copy.4 = f32[4,4]{1,0} copy(f32[4,4]{1,0} %broadcast.3)
+  %copy.5 = f32[4,4]{1,0} copy(f32[4,4]{1,0} %broadcast.3)
+  ROOT %tuple.17 = (f32[4,4]{1,0}, f32[4,4]{1,0}) tuple(f32[4,4]{1,0} %copy.4, f32[4,4]{1,0} %copy.5)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  HloCSE cse(/*is_layout_sensitive=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&cse, module.get()));
+  EXPECT_TRUE(result);
+  HloInstruction* copy4;
+  HloInstruction* copy5;
+
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::Copy(&copy4), m::Copy(&copy5))));
+  // compare Op pointers to make sure it the same single copyOp
+  EXPECT_TRUE(copy4 == copy5);
+}
+
+TEST_F(HloCseTest, DontCSE_NonSafelyRemovableOp) {
+  // copy.5 is not SafelyRemovable (has control-predecessors)
+  // Skip CSE
+  const char* const kModuleStr = R"(
+  HloModule m
+  ENTRY main {
+  %p0 = f32[4,4]{1,0} parameter(0)
+  %p1 = f32[4,4]{1,0} parameter(1)
+  %constant.2 = f32[] constant(0)
+  %broadcast.3 = f32[4,4]{1,0} broadcast(f32[] %constant.2), dimensions={}
+  %copy.4 = f32[4,4]{1,0} copy(f32[4,4]{1,0} %broadcast.3), control-predecessors={%p0}
+  %copy.5 = f32[4,4]{1,0} copy(f32[4,4]{1,0} %broadcast.3), control-predecessors={%p1}
+  ROOT %tuple.17 = (f32[4,4]{1,0}, f32[4,4]{1,0}) tuple(f32[4,4]{1,0} %copy.4, f32[4,4]{1,0} %copy.5)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  // ignore_control_dependencies = false by default
+  HloCSE cse(/*is_layout_sensitive=*/false);
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&cse, module.get()));
+  EXPECT_FALSE(result);
+}
+
 TEST_F(HloCseTest, CompareComputations) {
   const char* const hlo_string = R"(
     HloModule m
