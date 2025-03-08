@@ -47,6 +47,8 @@ struct PythonHooksOptions {
   // result, profiler start, end time are used respectively to the absent
   // timestamps.
   bool include_incomplete_events = true;
+
+  uint64_t min_entry_duration_ns = 0;
 };
 
 struct PythonTraceEntry {
