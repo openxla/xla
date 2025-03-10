@@ -126,12 +126,233 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
 
+#include "xla/ffi/api/api.h"
+#include "xla/python/types.h"
+
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 
 namespace xla {
 namespace {
 
 namespace nb = nanobind;
+
+// Convert from XLA_FFI_DataType to PrimitiveType
+PrimitiveType FfiDataTypeToPrimitiveType(XLA_FFI_DataType type) {
+  switch (type) {
+    case XLA_FFI_DataType_PRED:
+      return PRED;
+    case XLA_FFI_DataType_S8:
+      return S8;
+    case XLA_FFI_DataType_S16:
+      return S16;
+    case XLA_FFI_DataType_S32:
+      return S32;
+    case XLA_FFI_DataType_S64:
+      return S64;
+    case XLA_FFI_DataType_U8:
+      return U8;
+    case XLA_FFI_DataType_U16:
+      return U16;
+    case XLA_FFI_DataType_U32:
+      return U32;
+    case XLA_FFI_DataType_U64:
+      return U64;
+    case XLA_FFI_DataType_F16:
+      return F16;
+    case XLA_FFI_DataType_F32:
+      return F32;
+    case XLA_FFI_DataType_F64:
+      return F64;
+    case XLA_FFI_DataType_BF16:
+      return BF16;
+    case XLA_FFI_DataType_C64:
+      return C64;
+    case XLA_FFI_DataType_C128:
+      return C128;
+    case XLA_FFI_DataType_TOKEN:
+      return TOKEN;
+    case XLA_FFI_DataType_F8E5M2:
+      return F8E5M2;
+    case XLA_FFI_DataType_F8E3M4:
+      return F8E3M4;
+    case XLA_FFI_DataType_F8E4M3:
+      return F8E4M3;
+    case XLA_FFI_DataType_F8E4M3FN:
+      return F8E4M3FN;
+    case XLA_FFI_DataType_F8E4M3B11FNUZ:
+      return F8E4M3B11FNUZ;
+    case XLA_FFI_DataType_F8E5M2FNUZ:
+      return F8E5M2FNUZ;
+    case XLA_FFI_DataType_F8E4M3FNUZ:
+      return F8E4M3FNUZ;
+    case XLA_FFI_DataType_F4E2M1FN:
+      return F4E2M1FN;
+    case XLA_FFI_DataType_F8E8M0FNU:
+      return F8E8M0FNU;
+    case XLA_FFI_DataType_INVALID:
+    default:
+      throw std::runtime_error("Invalid XLA_FFI_DataType");
+  }
+}
+
+absl::StatusOr<nb_dtype> FfiDataTypeToNbDtype(XLA_FFI_DataType ffi_dtype) {
+  PrimitiveType primitive_type = FfiDataTypeToPrimitiveType(ffi_dtype);
+  return PrimitiveTypeToNbDtype(primitive_type);
+}
+
+// Python wrapper for buffer interface
+struct PyFfiBuffer {
+  nb_dtype dtype;
+  int64_t data;
+  std::vector<int64_t> shape;
+
+  PyFfiBuffer(nb_dtype dtype, int64_t data, std::vector<int64_t> shape)
+    : dtype(std::move(dtype)), data(data), shape(std::move(shape)) {}
+
+  // __cuda_array_interface__ property
+  nb::dict cuda_array_interface() const {
+    nb::dict interface;
+    interface["shape"] = nb::cast(shape);
+    interface["typestr"] = std::string{dtype.kind()};
+    interface["data"] = nb::make_tuple(data, false);
+    interface["version"] = 2;
+    return interface;
+  }
+
+  static absl::StatusOr<PyFfiBuffer> FromXlaFfiBuffer(XLA_FFI_Buffer* buffer) {
+    TF_ASSIGN_OR_RETURN(nb_dtype dtype, FfiDataTypeToNbDtype(buffer->dtype));
+    std::vector<int64_t> shape(buffer->dims, buffer->dims + buffer->rank);
+    return PyFfiBuffer(dtype, reinterpret_cast<int64_t>(buffer->data), shape);
+  }
+};
+
+// Helper to convert C string spans to Python strings
+nb::str ByteSpanToStr(const XLA_FFI_ByteSpan* span) {
+  return nb::str(span->ptr, span->len);
+}
+
+absl::StatusOr<nb::object> PyObjectFromFfiScalar(XLA_FFI_Scalar* scalar) {
+  TF_ASSIGN_OR_RETURN(nb_dtype dtype, FfiDataTypeToNbDtype(scalar->dtype));
+  return nb_numpy_ndarray(dtype, {}, {}, scalar->value);
+}
+
+absl::StatusOr<nb::object> PyObjectFromFfiArray(XLA_FFI_Array* array) {
+  TF_ASSIGN_OR_RETURN(nb_dtype dtype,
+                      FfiDataTypeToNbDtype(array->dtype));
+
+  std::vector<int64_t> shape{static_cast<int64_t>(array->size)};
+  std::vector<int64_t> strides(dtype.itemsize());
+  return nb_numpy_ndarray(dtype, shape, strides, array->data);
+}
+
+absl::StatusOr<nb::object> PyObjectFromFfiAttr(XLA_FFI_Attrs* attrs) {
+  nb::dict dictionary;
+
+  for (int i = 0; i < attrs->size; i++) {
+    nb::str key = ByteSpanToStr(attrs->names[i]);
+    switch (attrs->types[i]) {
+      case XLA_FFI_AttrType_DICTIONARY: {
+        TF_ASSIGN_OR_RETURN(dictionary[key],  PyObjectFromFfiAttr(reinterpret_cast<XLA_FFI_Attrs*>(attrs->attrs[i])));
+        break;
+      }
+      case XLA_FFI_AttrType_ARRAY: {
+        TF_ASSIGN_OR_RETURN(dictionary[key], PyObjectFromFfiArray(reinterpret_cast<XLA_FFI_Array*>(attrs->attrs[i])));
+        break;
+      }
+      case XLA_FFI_AttrType_SCALAR: {
+        TF_ASSIGN_OR_RETURN(dictionary[key], PyObjectFromFfiScalar(reinterpret_cast<XLA_FFI_Scalar*>(attrs->attrs[i])));
+        break;
+      }
+      case XLA_FFI_AttrType_STRING: {
+        dictionary[key] = ByteSpanToStr(reinterpret_cast<XLA_FFI_ByteSpan*>(attrs->attrs[i]));
+        break;
+      }
+    }
+  }
+  return dictionary;
+}
+
+// Wrapper for XLA_FFI_CallFrame
+struct PyCallFrame {
+  XLA_FFI_ExecutionStage stage;
+  std::vector<std::optional<PyFfiBuffer>> args;
+  std::vector<std::optional<PyFfiBuffer>> rets;
+  nb::object attrs;
+
+  PyCallFrame() {}
+
+  absl::Status init(XLA_FFI_CallFrame* frame) {
+    args.resize(frame->args.size);
+    rets.resize(frame->rets.size);
+    stage = frame->stage;
+
+    for (int i = 0; i < frame->args.size; i++) {
+      if (frame->args.types[i] == XLA_FFI_ArgType_BUFFER) {
+        XLA_FFI_Buffer* buffer = reinterpret_cast<XLA_FFI_Buffer*>(frame->args.args[i]);
+        TF_ASSIGN_OR_RETURN(PyFfiBuffer py_buffer, PyFfiBuffer::FromXlaFfiBuffer(buffer));
+        args[i] = py_buffer;
+      }
+    }
+
+    for (int i = 0; i < frame->rets.size; i++) {
+      if (frame->rets.types[i] == XLA_FFI_RetType_BUFFER) {
+        XLA_FFI_Buffer* buffer = reinterpret_cast<XLA_FFI_Buffer*>(frame->rets.rets[i]);
+        TF_ASSIGN_OR_RETURN(PyFfiBuffer py_buffer, PyFfiBuffer::FromXlaFfiBuffer(buffer));
+        rets[i] = py_buffer;
+      }
+    }
+    
+    TF_ASSIGN_OR_RETURN(attrs, PyObjectFromFfiAttr(reinterpret_cast<XLA_FFI_Attrs*>(&(frame->attrs))));
+
+    return absl::OkStatus();
+  }
+
+  XLA_FFI_ExecutionStage get_stage() const {
+    return stage;
+  }
+};
+
+void RegisterXlaFfiTypes(nb::module_& m) {
+  // Register FFI types
+  nb::enum_<XLA_FFI_ExecutionStage>(m, "ExecutionStage")
+      .value("INSTANTIATE", XLA_FFI_ExecutionStage_INSTANTIATE)
+      .value("PREPARE", XLA_FFI_ExecutionStage_PREPARE)
+      .value("INITIALIZE", XLA_FFI_ExecutionStage_INITIALIZE)
+      .value("EXECUTE", XLA_FFI_ExecutionStage_EXECUTE);
+
+  // Register FFI types
+  nb::class_<PyCallFrame>(m, "CallFrame")
+      .def_prop_ro("context", &PyCallFrame::get_context)
+      .def_ro("attrs", &PyCallFrame::attrs)
+      .def_ro("args", &PyCallFrame::args)
+      .def_ro("rets", &PyCallFrame::rets)
+      .def_prop_ro("stage", &PyCallFrame::get_stage);
+
+  nb::class_<PyFfiBuffer>(m, "FfiBuffer")
+    .def(nb::init<nb_dtype, int64_t, std::vector<int64_t>>())
+    .def_rw("dtype", &PyFfiBuffer::dtype)
+    .def_rw("data", &PyFfiBuffer::data) 
+    .def_rw("shape", &PyFfiBuffer::shape)
+    .def_prop_ro("__cuda_array_interface__", &PyFfiBuffer::cuda_array_interface);
+
+  m.def(
+      "get_call_frame_from_address",
+      [](uint64_t address) {
+        XLA_FFI_CallFrame* frame = reinterpret_cast<XLA_FFI_CallFrame*>(address);
+        if (frame->extension_start && frame->extension_start->type == XLA_FFI_Extension_Metadata) {
+          XLA_FFI_Metadata_Extension* ext = reinterpret_cast<XLA_FFI_Metadata_Extension*>(frame->extension_start);
+          ext->metadata->api_version.major_version = 0;
+          ext->metadata->api_version.minor_version = 1;
+          ext->metadata->traits = XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE;
+          // TODO: Mark the call frame as invalid.
+        }
+        PyCallFrame py_frame{};
+        xla::ThrowIfError(py_frame.init(frame));
+        return py_frame;
+      },
+      nb::arg("address")
+  );
+}
 
 bool IsOptimizedBuild() {
 #if NDEBUG
@@ -960,6 +1181,8 @@ NB_MODULE(xla_extension, m) {
   m.def("check_and_canonicalize_memory_kind",
         &jax::CheckAndCanonicalizeMemoryKind, nb::arg("memory_kind").none(),
         nb::arg("device_list"));
+
+  RegisterXlaFfiTypes(m);
 }  // NOLINT(readability/fn_size)
 
 }  // namespace xla
