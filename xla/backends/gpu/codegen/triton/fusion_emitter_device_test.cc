@@ -1771,8 +1771,7 @@ TEST_F(TritonEmitterTest, SingleTileDotWithNestedFusionsIsEmittedCorrectly) {
   // debugging.
   const std::string kHloText = R"(
 flhs {
-  flhs.p0 = f32[16,16] parameter(0)
-  ROOT lhs.root = f32[16,16] negate(flhs.p0)
+  ROOT flhs.p0 = f32[16,16] parameter(0)
 }
 
 frhs {
