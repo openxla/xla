@@ -200,7 +200,7 @@ class RocmComputeCapability {
 
   bool gfx10_rx69xx() const { return gfx_version() == "gfx1030"; }
 
-  bool gfx11_rx7900() const { return gfx_version() == "gfx1100"; }
+  bool gfx11() const { return gfx_version().find("gfx11"); }
 
   bool gfx1200() const { return gfx_version() == "gfx1200"; }
 
@@ -211,8 +211,7 @@ class RocmComputeCapability {
   bool has_bf16_dtype_support() const { return gfx9_mi100_or_later(); }
 
   bool has_fast_fp16_support() const {
-    return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
-           gfx11_rx7900();
+    return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() || gfx11();
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
@@ -259,14 +258,15 @@ class RocmComputeCapability {
   std::string gcn_arch_name_ = "gfx000";  // default to invalid arch.
 
   static constexpr absl::string_view kSupportedGfxVersions[]{
-      "gfx900",                        // MI25
-      "gfx906",                        // MI50 / MI60
-      "gfx908",                        // MI100
-      "gfx90a",                        // MI200
-      "gfx942",                        // MI300
-      "gfx1030",                       // RX68xx / RX69xx
-      "gfx1100",                       // RX7900
-      "gfx1200", "gfx1201",
+      "gfx900",   // MI25
+      "gfx906",   // MI50 / MI60
+      "gfx908",   // MI100
+      "gfx90a",   // MI200
+      "gfx942",   // MI300
+      "gfx950",  
+      "gfx1030",  // RX68xx / RX69xx
+      "gfx1100",  // RX7900
+      "gfx1101", "gfx1200", "gfx1201",
   };
 };
 
