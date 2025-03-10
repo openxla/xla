@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <iterator>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -34,6 +33,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
@@ -54,9 +54,9 @@ limitations under the License.
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/instruction_fusion.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/statusor.h"
+#include "xla/shape.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
@@ -314,16 +314,16 @@ absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
 
   TF_ASSIGN_OR_RETURN(auto gpu_config,
                       fusion->backend_config<GpuBackendConfig>());
-  FusionBackendConfig& backend_config =
-      *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonFusionKind));
-
+  FusionBackendConfig new_fusion_backend_config;
+  new_fusion_backend_config.set_kind(std::string(kTritonFusionKind));
   BlockLevelParameters block_level_parameters;
   block_level_parameters.output_tile_sizes = {
       std::vector<int64_t>(output_tile_sizes.begin(), output_tile_sizes.end())};
 
-  *backend_config.mutable_block_level_fusion_config() =
+  *new_fusion_backend_config.mutable_block_level_fusion_config() =
       block_level_parameters.ToBlockLevelFusionConfig();
+  *gpu_config.mutable_fusion_backend_config() =
+      std::move(new_fusion_backend_config);
   TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
   return absl::OkStatus();
