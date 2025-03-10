@@ -16,6 +16,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/strings/str_replace.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -75,7 +76,7 @@ TEST_F(GpuCopyTest, CopyTranspose) {
 
 constexpr char kSliceMemcpyModule[] = R"(
     dynamic_slice {
-      p0 = s32[4,8,8] parameter(0)
+      p0 = s32[4,8,8]{2,1,0} parameter(0)
       p1 = s32[] parameter(1)
       c1 = s32[] constant(1)
       p2 = s32[] parameter(2)
@@ -114,9 +115,9 @@ constexpr char kSliceMemcpyModule[] = R"(
     }
 
     body {
-      p0 = (s32[], s32[4,8,8], s32[1,1,8], s32[]) parameter(0)
+      p0 = (s32[], s32[4,8,8]{2,1,0}, s32[1,1,8], s32[]) parameter(0)
       ivar = s32[] get-tuple-element(p0), index=0
-      input = s32[4,8,8] get-tuple-element(p0), index=1
+      input = s32[4,8,8]{2,1,0} get-tuple-element(p0), index=1
 
       ivar_copy = s32[] copy(ivar)
       acc = s32[1,1,8] get-tuple-element(p0), index=2
@@ -131,7 +132,7 @@ constexpr char kSliceMemcpyModule[] = R"(
       next_offset_2 = s32[] fusion(offset2), kind=kLoop, calls=times_two
 
       next_acc = s32[1,1,8] fusion(acc_copy, slice), kind=kLoop, calls=add_slices
-      ROOT result = (s32[], s32[4,8,8], s32[1,1,8], s32[])
+      ROOT result = (s32[], s32[4,8,8]{2,1,0}, s32[1,1,8], s32[])
           tuple(next_ivar, input, next_acc, next_offset_2)
     }
 
@@ -142,7 +143,7 @@ constexpr char kSliceMemcpyModule[] = R"(
     }
 
     condition {
-      p0 = (s32[], s32[4,8,8], s32[1,1,8], s32[]) parameter(0)
+      p0 = (s32[], s32[4,8,8]{2,1,0}, s32[1,1,8], s32[]) parameter(0)
       ivar = s32[] get-tuple-element(p0), index=0
       ROOT cmp = pred[] fusion(ivar), kind=kLoop, calls=compare
     }
@@ -154,16 +155,16 @@ constexpr char kSliceMemcpyModule[] = R"(
 
     input {
       iota = s32[256] iota(), iota_dimension=0
-      ROOT bc = s32[4,8,8] bitcast(iota)
+      ROOT bc = s32[4,8,8]{2,1,0} bitcast(iota)
     }
 
     ENTRY main {
-      input = s32[4,8,8] fusion(), kind=kLoop, calls=input
+      input = s32[4,8,8]{2,1,0} fusion(), kind=kLoop, calls=input
       init_acc = s32[1,1,8] fusion(), kind=kLoop, calls=zero
       c0 = s32[] constant(0)
       c1 = s32[] constant(1)
-      tuple = (s32[], s32[4,8,8], s32[1,1,8], s32[]) tuple(c0, input, init_acc, c1)
-      ROOT while = (s32[], s32[4,8,8], s32[1,1,8], s32[]) while(tuple),
+      tuple = (s32[], s32[4,8,8]{2,1,0}, s32[1,1,8], s32[]) tuple(c0, input, init_acc, c1)
+      ROOT while = (s32[], s32[4,8,8]{2,1,0}, s32[1,1,8], s32[]) while(tuple),
           condition=condition, body=body,
           backend_config={"known_trip_count":{"n":"6"},
                           "known_init_step":{"init":"0","step":"1"},
@@ -180,7 +181,8 @@ TEST_F(GpuCopyTest, UseMemcpyForDynamicSlice) {
   CompileAndVerifyIr(std::move(hlo_module), "; CHECK-NOT: void @slice",
                      /*match_optimized_ir=*/false,
                      /*run_optimization_passes=*/false);
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{1e-5, 1e-5}));
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{1e-5, 1e-5}));
 }
 
 TEST_F(GpuCopyTest, DoNotUseMemcpyForDynamicSlice) {
@@ -196,6 +198,20 @@ TEST_F(GpuCopyTest, DoNotUseMemcpyForDynamicSlice) {
   CompileAndVerifyIr(std::move(hlo_module), "; CHECK: void @slice",
                      /*match_optimized_ir=*/false,
                      /*run_optimization_passes=*/false);
+}
+
+TEST_F(GpuCopyTest, DoNotUseMemcpyWithLayoutChange) {
+  // By changing the layout of the result, the slice is no longer contiguous and
+  // cannot be emitted with a memcpy.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+                              kSliceMemcpyModule, {{"{2,1,0}", "{0,2,1}"}})));
+
+  CompileAndVerifyIr(std::move(hlo_module), "; CHECK: void @slice",
+                     /*match_optimized_ir=*/false,
+                     /*run_optimization_passes=*/false);
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{1e-5, 1e-5}));
 }
 
 }  // namespace gpu
