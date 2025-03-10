@@ -1,4 +1,5 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -21,6 +22,7 @@ cc_library(
     hdrs = ["copy.h"],
     deps = [
         ":fusion_emitter",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla/backends/gpu/runtime:copy_thunk",
         "//xla/backends/gpu/runtime:thunk",
@@ -28,11 +30,32 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "copy_test",
+    srcs = ["copy_test.cc"],
+    deps = [
+        ":copy",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:call_graph",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
