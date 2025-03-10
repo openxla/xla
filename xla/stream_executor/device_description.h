@@ -152,7 +152,7 @@ class RocmComputeCapability {
       "gfx908",   // MI100
       "gfx90a",   // MI200
       "gfx942",   // MI300
-      "gfx950",   // MI355
+      "gfx950",  
       "gfx1030",  // RX68xx / RX69xx
       "gfx1100",  // RX7900
       "gfx1101", "gfx1200", "gfx1201",
