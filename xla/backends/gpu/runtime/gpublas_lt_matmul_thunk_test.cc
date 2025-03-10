@@ -34,7 +34,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/executable_run_options.h"
-//#include "xla/service/platform_util.h"
+#include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -58,14 +58,15 @@ class GpuBlasLtMatmulThunkTest : public HloTestBase {
     debug_options.set_xla_gpu_enable_triton_gemm(false);
     return debug_options;
   }
-  se::StreamExecutor* stream_exec() {
+  se::StreamExecutor* default_exec() {
     return backend().default_stream_executor();
   }
-  const se::DeviceDescription& device_desc() {
-    return stream_exec()->GetDeviceDescription();
+  const se::DeviceDescription& device_desc(se::StreamExecutor *exec = nullptr) {
+    if (exec == nullptr) exec = default_exec();
+    return exec->GetDeviceDescription();
   }
-  const se::GpuComputeCapability& gpu_comp() {
-    return device_desc().gpu_compute_capability();
+  const se::GpuComputeCapability& gpu_comp(se::StreamExecutor *exec = nullptr) {
+    return device_desc(exec).gpu_compute_capability();
   }
 
   void SetUp() override {
@@ -75,13 +76,14 @@ class GpuBlasLtMatmulThunkTest : public HloTestBase {
     }
   }
 
-  void CreateExecuteThunksFromHLO(const absl::string_view hlo_string);
+  void CreateExecuteThunksFromHLO(
+        se::StreamExecutor *executor, const absl::string_view hlo_string);
 };
 
 struct GpuBlasLtThunkBuilder {
 
   GpuBlasLtThunkBuilder(se::StreamExecutor *exec,
-            const se::GpuComputeCapability& gpu_comp) : 
+        const se::GpuComputeCapability& gpu_comp) : 
         exec_(exec), allocator_(exec), gpu_comp_(gpu_comp) {}
 
    absl::StatusOr< std::unique_ptr<CublasLtMatmulThunk> > 
@@ -158,30 +160,19 @@ private:
   std::vector< se::OwningDeviceMemory > mem_buffers_;
 };
 
-std::unique_ptr<HloModule> BuildHloGraph(XlaBuilder* builder) {
-  auto computation_status = builder->Build();
-  TF_CHECK_OK(computation_status.status());
-  auto computation = std::move(computation_status).value();
-  auto config = HloModule::CreateModuleConfigFromProto(computation.proto(),
-                                                         DebugOptions())
-                      .value();
-  return HloModule::CreateFromProto(computation.proto(), config).value();
-}
-
 void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
-          const absl::string_view hlo_string) {
+        se::StreamExecutor *executor, const absl::string_view hlo_string) {
   
-  auto *executor = stream_exec();
   TF_ASSERT_OK_AND_ASSIGN(auto module,
         this->ParseAndReturnVerifiedModule(hlo_string));
 
   TF_ASSERT_OK_AND_ASSIGN(
-        bool changed, RunHloPass(GemmRewriter(gpu_comp(),
+        bool changed, RunHloPass(GemmRewriter(gpu_comp(executor),
                 /*toolkit_version=*/se::SemanticVersion{12, 4, 0}),
             module.get()));
   ASSERT_TRUE(changed);
 
-  GpuBlasLtThunkBuilder builder(executor, gpu_comp());
+  GpuBlasLtThunkBuilder builder(executor, gpu_comp(executor));
   std::vector< std::unique_ptr< CublasLtMatmulThunk >> gemm_thunks;
 
   for (auto* instr : module->entry_computation()->instructions()) {
@@ -204,13 +195,13 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
       TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(thunk_params));
     }
     TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+    return absl::OkStatus();
   };
 
   // Running BlasLt thunks across multiple streams with shared matmul plan
   int num_streams = 10;
   std::vector< std::unique_ptr< se::Stream > > streams(num_streams);
-  using FutureType = 
-        decltype(std::async(std::launch::async, thread_func, nullptr));
+  using FutureType = std::future<absl::Status>;
   std::vector< FutureType > future_results(num_streams);
 
   for(int i = 0; i < num_streams; i++) {
@@ -221,7 +212,6 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
             thread_func, streams[i].get());
   }
   for (auto& future_res : future_results) {
-    future_res.wait();
     TF_ASSERT_OK(future_res.get());
   }
 }
@@ -268,31 +258,31 @@ ENTRY test {
 
 XLA_TEST_F(GpuBlasLtMatmulThunkTest, SharedMatmulPlansUnit) {
 
-  auto *executor = stream_exec();
-  CublasLtMatmulThunk::ClearMatmulPlanCache(executor);
+  auto *exec = default_exec();
+  CublasLtMatmulThunk::ClearMatmulPlanCache(exec);
 
-  CreateExecuteThunksFromHLO(hlo_single_plan);
-   // Assert that only one matmul plan was created
-  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(executor) == 1);
+  CreateExecuteThunksFromHLO(exec, hlo_single_plan);
+  // Assert that only one matmul plan was created
+  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(exec) == 1);
 
-  CreateExecuteThunksFromHLO(hlo_two_plans);
+  CreateExecuteThunksFromHLO(exec, hlo_two_plans);
   // Assert that we have now 2 MatmulPlans (one more created for ReLu epilogue).
-  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(executor) == 2);
+  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(exec) == 2);
 }
 
 // Same as above but instead of creating thunks manually, we use XLA runtime
 XLA_TEST_F(GpuBlasLtMatmulThunkTest, SharedMatmulPlansFunctional) {
 
-  auto *executor = stream_exec();
-  CublasLtMatmulThunk::ClearMatmulPlanCache(executor);
+  auto *exec = default_exec();
+  CublasLtMatmulThunk::ClearMatmulPlanCache(exec);
 
   EXPECT_TRUE(RunAndCompare(hlo_single_plan, ErrorSpec{1e-3, 1e-3}));
   // Assert that only one MatmulPlan cache entry was created.
-  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(stream_exec()) == 1);
+  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(exec) == 1);
 
   EXPECT_TRUE(RunAndCompare(hlo_two_plans, ErrorSpec{1e-3, 1e-3}));
   // Assert that we have now 2 MatmulPlans (one more created for ReLu epilogue).
-  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(stream_exec()) == 2);
+  EXPECT_TRUE(CublasLtMatmulThunk::GetMatmulPlanCacheSize(exec) == 2);
 }
 
 } // namespace
