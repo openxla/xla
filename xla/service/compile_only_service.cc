@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/backend.h"
+#include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/dump.h"
 #include "xla/service/platform_util.h"
@@ -50,13 +51,14 @@ CompileOnlyService::NewService(const ServiceOptions& options) {
   TF_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(platform));
 
   std::unique_ptr<CompileOnlyService> service(
-      new CompileOnlyService(options, compiler));
+      new CompileOnlyService(options, std::move(compiler)));
   return std::move(service);
 }
 
 CompileOnlyService::CompileOnlyService(const ServiceOptions& options,
-                                       Compiler* compiler)
-    : Service(options, /*execute_backend=*/nullptr), compiler_(compiler) {}
+                                       std::unique_ptr<Compiler> compiler)
+    : Service(options, /*execute_backend=*/nullptr),
+      compiler_(std::move(compiler)) {}
 
 absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
 CompileOnlyService::CompileAheadOfTime(
