@@ -28,7 +28,6 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -83,10 +82,16 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
       absl::Span<tsl::RCReference<xla::ifrt::Array>> arrays,
       ArrayCopySemantics array_copy_semantics,
       SingleDeviceShardSemantics single_device_shard_semantics) override;
+  absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
+      absl::Span<tsl::RCReference<xla::ifrt::Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,
-      std::optional<tsl::RCReference<DeviceList>> devices,
+      std::optional<DeviceListRef> devices,
       std::optional<MemoryKind> memory_kind,
       ArrayCopySemantics semantics) override;
 
@@ -132,13 +137,13 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
     return absl::UnimplementedError(
         "LookupAddressableDevice is not supported for the IFRT proxy client.");
   }
-  tsl::RCReference<xla::ifrt::DeviceList> MakeDeviceList(
+  xla::ifrt::DeviceListRef MakeDeviceList(
       absl::Span<xla::ifrt::Device* const> devices) const override;
   xla::ifrt::Compiler* GetDefaultCompiler() override {
     return &default_compiler_;
   }
   absl::StatusOr<std::shared_ptr<xla::ifrt::Topology>> GetTopologyForDevices(
-      const tsl::RCReference<xla::ifrt::DeviceList>& devices) const override {
+      const xla::ifrt::DeviceListRef& devices) const override {
     return absl::UnimplementedError(
         "GetTopologyForDevices is not supported for the IFRT proxy client.");
   }

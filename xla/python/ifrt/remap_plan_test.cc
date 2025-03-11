@@ -22,7 +22,6 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/functional/bind_front.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
@@ -71,7 +70,7 @@ TEST_P(RemapPlanTest, ToFromProto) {
 
   Shape shape({20, 20});
   Shape shard_shape({5, 20});
-  tsl::RCReference<DeviceList> devices = GetDevices({0, 1, 2, 3});
+  DeviceListRef devices = GetDevices({0, 1, 2, 3});
   std::shared_ptr<const Sharding> sharding =
       ConcreteEvenSharding::Create(devices, MemoryKind(), /*shape=*/shape,
                                    /*shard_shape=*/shard_shape);
@@ -100,10 +99,8 @@ TEST_P(RemapPlanTest, ToFromProto) {
       /*to=*/{RemapPlan::Interval{0, 2, 1}, RemapPlan::Interval{2, 4, 1}}});
 
   TF_ASSERT_OK_AND_ASSIGN(RemapPlanProto plan_proto, plan.ToProto());
-  TF_ASSERT_OK_AND_ASSIGN(
-      RemapPlan plan_copy,
-      RemapPlan::FromProto(absl::bind_front(&Client::LookupDevice, client()),
-                           plan_proto));
+  TF_ASSERT_OK_AND_ASSIGN(RemapPlan plan_copy,
+                          RemapPlan::FromProto(client(), plan_proto));
 
   EXPECT_THAT(*plan_copy.mappings, ElementsAreArray(*plan.mappings));
 

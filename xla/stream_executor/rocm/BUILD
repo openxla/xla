@@ -1,11 +1,11 @@
-# Description:
-#   ROCm-platform specific StreamExecutor support code.
+"""ROCm-platform specific StreamExecutor support code."""
 
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_hipblaslt",
     "rocm_library",
 )
+load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
@@ -690,6 +690,7 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/gpu:gpu_stream",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
@@ -726,6 +727,7 @@ cc_library(
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -861,7 +863,7 @@ cc_library(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "rocm_version_parser_test",
     srcs = ["rocm_version_parser_test.cc"],
     tags = [
@@ -1014,7 +1016,7 @@ cc_library(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "rocm_status_test",
     srcs = ["rocm_status_test.cc"],
     tags = [

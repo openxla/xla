@@ -27,7 +27,7 @@ td_library(
         "ifrt_ops.td",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         "@llvm-project//mlir:AttrTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
@@ -148,7 +148,7 @@ cc_library(
         "ifrt_ops.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":ifrt_dialect_inc_gen",
         ":ifrt_interfaces_inc_gen",
@@ -172,7 +172,7 @@ cc_library(
     srcs = ["sharding_param.cc"],
     hdrs = ["sharding_param.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":sharding_param_proto_cc",
         "//xla/tsl/platform:errors",
@@ -188,7 +188,7 @@ cc_library(
 tf_proto_library(
     name = "sharding_param_proto",
     srcs = ["sharding_param.proto"],
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
 )
 
 cc_library(
@@ -196,9 +196,10 @@ cc_library(
     srcs = ["ifrt_ir_program.cc"],
     hdrs = ["ifrt_ir_program.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":ifrt_ir_compile_options_proto_cc",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
@@ -223,7 +224,7 @@ tf_proto_library(
     name = "ifrt_ir_compile_options_proto",
     srcs = ["ifrt_ir_compile_options.proto"],
     protodeps = ["//xla/pjrt:compile_options_proto"],
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
 )
 
 xla_cc_test(
@@ -246,8 +247,9 @@ cc_library(
     name = "ifrt_ir_program_serdes",
     srcs = ["ifrt_ir_program_serdes.cc"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
+        ":ifrt_ir_compile_options_proto_cc",
         ":ifrt_ir_program",
         ":ifrt_ir_program_proto_cc",
         ":version",
@@ -280,6 +282,7 @@ xla_cc_test(
         ":ifrt_ir_program_serdes",
         ":version",
         "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_proto_cc",
         "//xla/python/ifrt/support:module_parsing",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
@@ -296,7 +299,7 @@ cc_library(
     name = "atom_program_compiler",
     hdrs = ["atom_program_compiler.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":ir",
         "//xla/pjrt:pjrt_executable",
@@ -312,7 +315,7 @@ cc_library(
     srcs = ["version.cc"],
     hdrs = ["version.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -453,7 +456,7 @@ cc_library(
         "vifrt_dialect.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":sharding_param",
         ":version",
@@ -476,12 +479,13 @@ tsl_pybind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":ifrt_ir_program",
         ":ifrt_ir_program_serdes",
         ":version",
         "//xla/pjrt:status_casters",
+        "//xla/python/ifrt:serdes_proto_cc",
         "//xla/python/ifrt/ir/transforms:utils",
         "//xla/python/ifrt/support:module_parsing",
         "//xla/tsl/platform:statusor",

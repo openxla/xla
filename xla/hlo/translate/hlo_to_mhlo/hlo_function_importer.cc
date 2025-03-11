@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/types/optional.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/primitive_util.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape_util.h"
@@ -421,7 +422,7 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
         }
         // NOTE: since we are flattening args, all arguments will share the same
         // location as the tuple parameter instruction.
-        function.getArgument(i).setLoc(
+        function.getArgument(arg_index).setLoc(
             mlir::mhlo::GenerateInstructionLocation(instruction, context_));
         ++arg_index;
       }
@@ -454,7 +455,15 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
       ++arg_index;
     }
   }
-  if (computation.root_instruction()->has_sharding()) {
+  // TODO(b/260756663): Token sharding is unverified, legacy users provide
+  // multiple sharding values for a single token output.
+  bool is_token = computation.root_instruction()->shape().IsToken();
+  if (is_token && computation.root_instruction()->has_sharding()) {
+    function.setResultAttr(
+        0, kShardingAttr,
+        ConvertSharding(computation.root_instruction()->sharding(), builder_));
+  }
+  if (!is_token && computation.root_instruction()->has_sharding()) {
     ArrayRef<HloSharding> ret_shardings =
         computation.root_instruction()->sharding();
     if (flatten_computation_args_result_) {
@@ -1858,6 +1867,42 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       attributes.push_back(builder_->getNamedAttr(
           "precision_config",
           ConvertPrecisionConfig(&instruction->precision_config(), builder_)));
+
+      // If the element types of the operands for convolution are different,
+      // insert a convert op to convert the operands to the common element type
+      // while preserving the values.
+      auto lhs = operands[0];
+      auto rhs = operands[1];
+      auto lhs_element_type = instruction->operand(0)->shape().element_type();
+      auto rhs_element_type = instruction->operand(1)->shape().element_type();
+      if (lhs_element_type != rhs_element_type) {
+        if (primitive_util::CastPreservesValues(lhs_element_type,
+                                                rhs_element_type)) {
+          auto convert_op_return_type =
+              mlir::cast<mlir::ShapedType>(lhs.getType())
+                  .clone(mlir::getElementTypeOrSelf(rhs));
+          lhs = func_builder->create<mlir::mhlo::ConvertOp>(
+              loc, convert_op_return_type, lhs);
+        } else if (primitive_util::CastPreservesValues(rhs_element_type,
+                                                       lhs_element_type)) {
+          auto convert_op_return_type =
+              mlir::cast<mlir::ShapedType>(rhs.getType())
+                  .clone(mlir::getElementTypeOrSelf(lhs));
+          rhs = func_builder->create<mlir::mhlo::ConvertOp>(
+              loc, convert_op_return_type, rhs);
+        } else {
+          return InvalidArgument(
+              "Unsupported conversion between element types of operands (%s "
+              "and %s) for convolution.",
+              instruction->operand(0)->shape().ToString(),
+              instruction->operand(1)->shape().ToString());
+        }
+        return func_builder
+            ->create<mlir::mhlo::ConvolutionOp>(
+                loc, result_type, std::vector<mlir::Value>{lhs, rhs},
+                attributes)
+            .getOperation();
+      }
 
       return func_builder
           ->create<mlir::mhlo::ConvolutionOp>(loc, result_type, operands,

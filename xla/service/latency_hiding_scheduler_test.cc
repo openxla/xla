@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -4009,15 +4010,46 @@ TEST_F(LatencyHidingSchedulerTest, InvalidAnnotationOverlap) {
   }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
-  HloSchedule& module_schedule = hlo_module->schedule();
-  EXPECT_TRUE(hlo_module->has_entry_computation());
   auto sched_config = GetDefaultSchedConfig();
   sched_config.all_gather_overlap_limit = 1;
-  EXPECT_TRUE(RunScheduler(hlo_module.get(), sched_config,
-                           std::make_unique<TestLatencyEstimator>())
-                  .ok());
-  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto status = RunScheduler(hlo_module.get(), sched_config,
+                             std::make_unique<TestLatencyEstimator>())
+                    .status();
+  EXPECT_IS_NOT_OK(status);
+  EXPECT_EQ(status.message(),
+            "There is a scheduling group which exceeds the overlap limits. "
+            "Annotation id: 1. It needs 2 kAllGather resources, but the limit "
+            "is 1. ");
+}
 
+TEST_F(LatencyHidingSchedulerTest, AnnotatedProducerOpNotReady) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16,64,256]{2,1,0} parameter(0)
+  p1 = f32[128,2048,2048]{2,1,0} parameter(1)
+  p2 = f32[16,16,256]{2,1,0} parameter(2)
+  c0 = f32[16,256,256]{2,1,0} convolution(p2, p2),
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="1"}
+  a0 = f32[16,256,256]{2,1,0} add(c0, c0), frontend_attributes={_scheduling_group_id="1"}
+  cp1s = (f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0}, u32[], u32[]) collective-permute-start(c0), source_target_pairs={{1,0},{0,3},{3,2}}
+  cp1d = f32[16,256,256]{2,1,0} collective-permute-done(cp1s)
+  cp2s = (f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}, u32[], u32[]) collective-permute-start(p1), source_target_pairs={{1,0},{0,3},{3,2}}, frontend_attributes={_scheduling_group_id="1"}
+  cp2d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp2s), frontend_attributes={_scheduling_group_id="1"}
+  slice = f32[16,64,256]{2,1,0} slice(cp1d), slice={[0:16], [0:64], [0:256]}
+  c1 = f32[16,256,256]{2,1,0} convolution(p0, slice),
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+  ROOT tuple.2 = (f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0}, f32[128,2048,2048]{2,1,0}) tuple(c0, c1, cp2d)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.aggressive_scheduling_policies = true;
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,
+                            std::make_unique<TestLatencyEstimator>()));
+  HloSchedule& module_schedule = hlo_module->schedule();
   std::vector<HloInstruction*> new_instruction_sequence =
       module_schedule.sequence(hlo_module->entry_computation()).instructions();
   if (VLOG_IS_ON(1)) {
@@ -4025,15 +4057,10 @@ TEST_F(LatencyHidingSchedulerTest, InvalidAnnotationOverlap) {
       VLOG(1) << new_i->ToString();
     }
   }
-
-  EXPECT_LT(GetIndex(new_instruction_sequence, "ags0"),
+  EXPECT_LT(GetIndex(new_instruction_sequence, "cp2s"),
             GetIndex(new_instruction_sequence, "c0"));
-  EXPECT_LT(GetIndex(new_instruction_sequence, "c0"),
-            GetIndex(new_instruction_sequence, "agd0"));
-  EXPECT_TRUE((GetIndex(new_instruction_sequence, "ags0") >
-               GetIndex(new_instruction_sequence, "agd1")) ||
-              (GetIndex(new_instruction_sequence, "ags1") >
-               GetIndex(new_instruction_sequence, "agd0")));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "a0"),
+            GetIndex(new_instruction_sequence, "cp2d"));
 }
 
 }  // namespace xla

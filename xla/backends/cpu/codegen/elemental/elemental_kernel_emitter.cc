@@ -49,13 +49,13 @@ limitations under the License.
 #include "xla/service/cpu/elemental_ir_emitter.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_loop_emitter.h"
-#include "xla/service/cpu/shape_partition.h"
 #include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape.h"
+#include "xla/shape_partition.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -263,7 +263,9 @@ ElementalKernelEmitter::EmitKernelDefinition() {
                                                      std::move(llvm_module));
 
   KernelSpec spec(kernel_prototype.function->getName(), thread_dims,
-                  std::move(kernel_prototype.buffer_uses));
+                  std::move(kernel_prototype.argument_buffers),
+                  std::move(kernel_prototype.result_buffers),
+                  std::move(kernel_prototype.invariant_arguments));
 
   return KernelDefinition(std::move(spec), std::move(source));
 }

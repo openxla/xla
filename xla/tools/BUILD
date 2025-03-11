@@ -19,7 +19,7 @@ load(
     "if_google",
     "tsl_gpu_library",
 )
-load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -308,8 +308,8 @@ xla_cc_binary(
         "//xla/client:local_client",
         "//xla/service:compiler",
         "//xla/service:cpu_plugin",
+        "//xla/service:hlo_module_util",
         "//xla/service:hlo_proto_cc",
-        "//xla/service:hlo_runner",
         "//xla/service:local_service",
         "//xla/service:platform_util",
         "//xla/tsl/platform:subprocess",
@@ -512,6 +512,7 @@ xla_cc_binary(
     ],
     deps = [
         ":run_hlo_module_lib",
+        ":run_hlo_module_proto_cc",
         "//xla:debug_options_flags",
         "//xla/hlo/translate/mhlo_to_hlo:translate",
         "//xla/hlo/translate/stablehlo_to_hlo:translate",
@@ -521,6 +522,9 @@ xla_cc_binary(
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
         "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:logging",
@@ -712,13 +716,15 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:backend",
+        "//xla/service:hlo_module_config",
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
-        "//xla/service/gpu/model:hlo_op_profiler_lib",
         "//xla/service/gpu/model:hlo_op_profiles",
         "//xla/tools/multihost_hlo_runner:create_client",
         "//xla/tools/multihost_hlo_runner:functional_hlo_runner",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -755,6 +761,57 @@ cc_library(
     alwayslink = True,
 )
 
+cc_library(
+    name = "compute_gpu_device_stats",
+    srcs = ["compute_gpu_device_stats.cc"],
+    hdrs = ["compute_gpu_device_stats.h"],
+    deps = [
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "compute_gpu_device_stats_test",
+    srcs = ["compute_gpu_device_stats_test.cc"],
+    deps = [
+        ":compute_gpu_device_stats",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_binary(
+    name = "compute_gpu_device_stats_main",
+    srcs = ["compute_gpu_device_stats_main.cc"],
+    deps = [
+        ":compute_gpu_device_stats",
+        "//xla:debug_options_flags",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+tsl_pybind_extension(
+    name = "collective_perf_table_gen_bindings",
+    srcs = ["collective_perf_table_gen_bindings.cc"],
+    deps = [
+        ":collective_perf_table_gen",
+        "@com_google_absl//absl/log:check",
+        "@nanobind",
+    ],
+)
+
 xla_test(
     name = "collective_perf_table_gen_test",
     srcs = ["collective_perf_table_gen_test.cc"],
@@ -762,7 +819,6 @@ xla_test(
     local_defines = if_cuda(["GOOGLE_CUDA"]),
     deps = [
         ":collective_perf_table_gen",
-        "//xla/hlo/ir:hlo",
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",

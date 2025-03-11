@@ -186,7 +186,7 @@ class GemmAutotuner {
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
-        plan->GetAlgorithms(/*max_algorithm_count*/ 128,
+        plan->GetAlgorithms(stream_, /*max_algorithm_count*/ 128,
                             /*max_workspace_size*/ workspace_buffer.size()));
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
@@ -427,7 +427,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
                                   // non-Ampere architectures, as for Ampere
                                   // it's ignored in any case.
                                   return !cc.IsAtLeast(
-                                      se::CudaComputeCapability::AMPERE);
+                                      se::CudaComputeCapability::kAmpere);
                                 },
                                 [](const se::RocmComputeCapability&) {
                                   return true;  // TODO: not decided yet

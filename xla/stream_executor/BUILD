@@ -31,7 +31,7 @@ bzl_library(
         "//xla/tsl/platform:rules_cc_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
         "@local_config_cuda//cuda:build_defs_bzl",
-        "@tsl//third_party/py/rules_pywrap:pywrap_bzl",
+        "@xla//third_party/py/rules_pywrap:pywrap_bzl",
     ] + stream_executor_build_defs_bzl_deps(),
 )
 
@@ -718,18 +718,18 @@ cc_library(
 # StreamExecutor tests
 #===--------------------------------------------------------------------------------------------===#
 
-cc_test(
+xla_cc_test(
     name = "generic_memory_allocation_test",
     srcs = ["generic_memory_allocation_test.cc"],
     deps = [
         ":generic_memory_allocation",
         "//xla/tsl/platform:macros",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "generic_memory_allocator_test",
     srcs = ["generic_memory_allocator_test.cc"],
     deps = [
@@ -741,12 +741,12 @@ cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "semantic_version_test",
     srcs = ["semantic_version_test.cc"],
     deps = [
@@ -890,7 +890,7 @@ xla_cc_test(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "bit_pattern_test",
     srcs = ["bit_pattern_test.cc"],
     deps = [

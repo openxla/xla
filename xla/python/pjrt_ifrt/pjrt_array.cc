@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/utils.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -399,7 +400,7 @@ absl::StatusOr<Memory*> GetMemorySpaceFromMemoryKind(
 }
 
 absl::StatusOr<tsl::RCReference<Array>> PjRtArray::Copy(
-    std::optional<tsl::RCReference<xla::ifrt::DeviceList>> devices,
+    std::optional<xla::ifrt::DeviceListRef> devices,
     std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);

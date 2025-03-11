@@ -1337,6 +1337,10 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
   AutotuningLogs autotuning_logs;
   int fusion_id = 0;
   for (const auto& [fusion, candidates] : executable_sets) {
+    if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
+      TF_RETURN_IF_ERROR(DumpOriginalFusion(compile_util, *fusion, fusion_id));
+    }
+
     TF_ASSIGN_OR_RETURN(std::vector<AutotuneResult> results,
                         Profile(compile_util, *fusion, candidates));
 
@@ -1355,7 +1359,6 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
             << tsl::proto_utils::FromDurationProto(best.run_time());
 
     if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
-      TF_RETURN_IF_ERROR(DumpOriginalFusion(compile_util, *fusion, fusion_id));
       TF_RETURN_IF_ERROR(DumpAutotunedFusion(
           config_, toolkit_version_, compile_util, best, fusion, fusion_id++));
     }
@@ -1457,8 +1460,6 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
   XLA_SCOPED_LOGGING_TIMER("GEMM fusion autotuner");
 
   const DebugOptions& debug_options = module->config().debug_options();
-  const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
-                                key_value_store_.process_count > 1;
   GemmFusionAutotunerImpl autotuner(config_, toolkit_version_, debug_options,
                                     thread_pool_);
   GemmFusionCollector fusion_collector(&autotuner);
@@ -1466,6 +1467,10 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
       GemmFusionCollectorResult fusions,
       fusion_collector.CollectGemmFusions(*module, execution_threads));
   AutotuneCacheKeySet keys_of_this_rank;
+
+  const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
+                                key_value_store_.process_count > 1 &&
+                                autotuner.IsAutotuningEnabled();
   if (shard_autotuning) {
     if (key_value_store_.key_value_store == nullptr) {
       return absl::FailedPreconditionError(

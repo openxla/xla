@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -185,7 +186,8 @@ namespace gpu {
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
       send_recv_events_(std::make_shared<SendRecvAsyncEvents>()),
-      copy_events_(std::make_shared<CopyThunk::AsyncEvents>()) {}
+      copy_events_(std::make_shared<CopyThunk::AsyncEvents>()),
+      call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())) {}
 
 std::unique_ptr<IrEmitterUnnested> IrEmitterUnnested::Create(
     IrEmitterContext* ir_emitter_context) {
@@ -1542,8 +1544,11 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
   const HloFusionAnalysis fusion_analysis =
       HloFusionAnalysis::Create(*instr, device_info);
   VLOG(3) << "IrEmitterUnnested::EmitFusion:start";
-  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(HloFusionInfo(
-      fusion_analysis, instr, &ir_emitter_context_->buffer_assignment()));
+  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(
+      /*fusion_info=*/HloFusionInfo(
+          /*analysis=*/fusion_analysis, instr,
+          /*buffer_assignment=*/&ir_emitter_context_->buffer_assignment(),
+          /*call_graph=*/*call_graph_));
   TF_ASSIGN_OR_RETURN(auto result, emitter->Emit(*ir_emitter_context_, *instr));
 
   const ExecutionStreamAssignment& stream_assignment =
@@ -1902,7 +1907,8 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
     auto thunk = std::make_unique<NcclCollectivePermuteStartThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
         partition_count, buffers,
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        GetStreamKindForP2P(instr));
     GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
     AddThunkToThunkSequence(std::move(thunk));
   }
@@ -1975,22 +1981,24 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
   } else if (kind == Thunk::Kind::kNcclRaggedAllToAll) {
     // RaggedAllToAll operation has 6 operands: input, output, input_offset,
     // send_size, output_offset, recv_size.
+    // `output` operand is aliased with the instruction result. All other
+    // operands are not aliased.
     const Shape& input_shape = inst->operand(0)->shape();
-    const Shape& result_shape = inst->shape();
     TF_ASSIGN_OR_RETURN(auto input_buffer,
                         GetAllocationSliceForHlo(inst->operand(0)));
-    TF_ASSIGN_OR_RETURN(auto result_buffer, GetAllocationSliceForHlo(inst));
     add_buffer(ShapeUtil::ElementsIn(input_shape), input_buffer,
-               input_shape.layout().memory_space(), result_buffer,
-               result_shape.layout().memory_space());
+               input_shape.layout().memory_space(), input_buffer,
+               input_shape.layout().memory_space());
 
     const Shape& output_shape = inst->operand(1)->shape();
+    const Shape& result_shape = inst->shape();
     TF_ASSIGN_OR_RETURN(auto output_buffer,
                         GetAllocationSliceForHlo(inst->operand(1)));
+    TF_ASSIGN_OR_RETURN(auto result_buffer, GetAllocationSliceForHlo(inst));
 
     add_buffer(ShapeUtil::ElementsIn(result_shape), output_buffer,
-               output_shape.layout().memory_space(), output_buffer,
-               output_shape.layout().memory_space());
+               output_shape.layout().memory_space(), result_buffer,
+               result_shape.layout().memory_space());
 
     for (int64_t i = 2; i < operand_count; i++) {
       const Shape& shape = inst->operand(i)->shape();
@@ -2003,7 +2011,8 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
   } else {
     // For other operations simply zip operands with results.
     for (int64_t i = 0; i < operand_count; i++) {
-      ShapeIndex idx = operand_count > 1 ? ShapeIndex({i}) : ShapeIndex({});
+      ShapeIndex idx =
+          inst->shape().IsTuple() ? ShapeIndex({i}) : ShapeIndex({});
       const Shape& src_shape = inst->operand(i)->shape();
       const Shape& dst_shape = ShapeUtil::GetSubshape(inst->shape(), idx);
       TF_ASSIGN_OR_RETURN(auto src, GetAllocationSliceForHlo(inst->operand(i)));
@@ -2170,8 +2179,7 @@ absl::Status IrEmitterUnnested::EmitNcclGroupStartThunk(
         !stream_kind.has_value()) {
       // We only need to modify the stream kind once, since all send/recv
       // instructions in a group should have the same stream kind.
-      stream_kind = GetStreamKindForSendRecv(
-          Cast<HloSendRecvInstruction>(nested_instruction));
+      stream_kind = GetStreamKindForP2P(nested_instruction);
     }
   }
   auto thunk = std::make_unique<NcclGroupThunk>(
@@ -2205,7 +2213,7 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
 
   AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
   if (is_send_recv) {
-    stream_kind = GetStreamKindForSendRecv(Cast<HloSendRecvInstruction>(start));
+    stream_kind = GetStreamKindForP2P(start);
   }
   AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
       kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),
@@ -2323,7 +2331,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildWhileThunk(
   body_thunk_info.profile_annotation += "_body";
 
   return std::unique_ptr<Thunk>(new WhileThunk(
-      thunk_info, pred,
+      thunk_info, instr, pred,
       ir_emitter_condition->ConsumeThunkSequence(cond_thunk_info),
       ir_emitter_body->ConsumeThunkSequence(body_thunk_info), trip_count));
 }
@@ -2574,6 +2582,19 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   return absl::OkStatus();
 }
 
+// If the fusion instruction is a dynamic-slice-fusion instruction, with a
+// collective hero operation, then this function returns the collective
+// operation. Returns std::nullopt otherwise.
+std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
+    const HloFusionInstruction* instruction) {
+  if (!IsDynamicSliceFusion(instruction)) {
+    return std::nullopt;
+  }
+  return HloBfsFindIf(
+      {instruction->fused_instructions_computation()->root_instruction()},
+      [](const HloInstruction* instr) { return IsCollective(instr); });
+}
+
 absl::Status IrEmitterUnnested::EmitHloInstruction(
     const HloInstruction* instr) {
   switch (instr->opcode()) {
@@ -2609,7 +2630,27 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclAsyncDone(Thunk::kNcclRaggedAllToAllDone, instr);
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
-        case HloOpcode::kFusion:
+        case HloOpcode::kFusion: {
+          auto collective_hero = GetCollectiveHeroForDynamicSliceFusion(
+              Cast<HloFusionInstruction>(wrapped));
+          if (collective_hero.has_value()) {
+            switch ((*collective_hero)->opcode()) {
+              case HloOpcode::kReduceScatter:
+                TF_RETURN_IF_ERROR(
+                    EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr));
+                break;
+              default:
+                return absl::InternalError(absl::StrFormat(
+                    "Unhandled collective in dynamic slice fusion "
+                    "instruction: %s",
+                    (*collective_hero)
+                        ->fused_instructions_computation()
+                        ->ToString()));
+            }
+          }
+          // We still want to emit the stream done thunk.
+          [[clang::fallthrough]];
+        }
         case HloOpcode::kCall:
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.

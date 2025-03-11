@@ -215,11 +215,9 @@ TEST_P(SingleDeviceShardingTest, Hash) {
 }
 
 TEST_P(OpaqueShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(
-      OpaqueSharding::Create(tsl::RCReference<DeviceList>(), MemoryKind()), "");
+  EXPECT_DEATH(OpaqueSharding::Create(DeviceListRef(), MemoryKind()), "");
 
-  EXPECT_DEATH(
-      OpaqueSharding::Create(BasicDeviceList::Create({}), MemoryKind()), "");
+  EXPECT_DEATH(OpaqueSharding::Create(GetDevices({}), MemoryKind()), "");
 }
 
 TEST_P(OpaqueShardingTest, IsFullyReplicated) {
@@ -322,12 +320,12 @@ TEST_P(OpaqueShardingTest, Hash) {
 }
 
 TEST_P(ConcreteShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(ConcreteSharding::Create(tsl::RCReference<DeviceList>(),
-                                        MemoryKind(), Shape({}), {Shape({})}),
+  EXPECT_DEATH(ConcreteSharding::Create(DeviceListRef(), MemoryKind(),
+                                        Shape({}), {Shape({})}),
                "");
 
-  EXPECT_DEATH(ConcreteSharding::Create(BasicDeviceList::Create({}),
-                                        MemoryKind(), Shape({}), {Shape({})}),
+  EXPECT_DEATH(ConcreteSharding::Create(GetDevices({}), MemoryKind(), Shape({}),
+                                        {Shape({})}),
                "");
 }
 
@@ -520,8 +518,10 @@ TEST_P(ConcreteShardingTest, DisassembleDynamicShape) {
       DynamicShape shard_dynamic_shape3,
       DynamicShape::Create(Shape({7}), BoundedDynamicShapeTag({true})));
   std::vector<DynamicShape> shard_dynamic_shapes{
-      std::move(shard_dynamic_shape0), std::move(shard_dynamic_shape1),
-      std::move(shard_dynamic_shape2), std::move(shard_dynamic_shape3),
+      std::move(shard_dynamic_shape0),
+      std::move(shard_dynamic_shape1),
+      std::move(shard_dynamic_shape2),
+      std::move(shard_dynamic_shape3),
   };
   auto sharding = ConcreteSharding::Create(device_list, MemoryKind(),
                                            dynamic_shape, shard_dynamic_shapes);
@@ -605,13 +605,13 @@ TEST_P(ConcreteShardingTest, Hash) {
 }
 
 TEST_P(ConcreteEvenShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(ConcreteEvenSharding::Create(tsl::RCReference<DeviceList>(),
-                                            MemoryKind(), Shape({}), Shape({}),
+  EXPECT_DEATH(ConcreteEvenSharding::Create(DeviceListRef(), MemoryKind(),
+                                            Shape({}), Shape({}),
                                             /*is_fully_replicated=*/true),
                "");
 
-  EXPECT_DEATH(ConcreteEvenSharding::Create(BasicDeviceList::Create({}),
-                                            MemoryKind(), Shape({}), Shape({}),
+  EXPECT_DEATH(ConcreteEvenSharding::Create(GetDevices({}), MemoryKind(),
+                                            Shape({}), Shape({}),
                                             /*is_fully_replicated=*/true),
                "");
 }
@@ -811,15 +811,15 @@ TEST_P(ConcreteEvenShardingTest, Hash) {
 TEST_P(ShardingParamShardingTest, CreateWithBadDeviceList) {
   ShardingParam param{/*dim_shards=*/{2, 3},
                       {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}}};
-  EXPECT_DEATH(ShardingParamSharding::Create(
-                   param, tsl::RCReference<DeviceList>(), MemoryKind())
-                   .value(),
-               "");
+  EXPECT_DEATH(
+      ShardingParamSharding::Create(param, DeviceListRef(), MemoryKind())
+          .value(),
+      "");
 
-  EXPECT_DEATH(ShardingParamSharding::Create(param, BasicDeviceList::Create({}),
-                                             MemoryKind())
-                   .value(),
-               "");
+  EXPECT_DEATH(
+      ShardingParamSharding::Create(param, GetDevices({}), MemoryKind())
+          .value(),
+      "");
 }
 
 TEST_P(ShardingParamShardingTest, CreateFailsWhenDeviceCountNotMatch) {

@@ -29,7 +29,8 @@ cc_library(
     srcs = ["emitter_loc_op_builder.cc"],
     hdrs = ["emitter_loc_op_builder.h"],
     visibility = [
-        "//xla/backends/gpu/codegen:__subpackages__",
+        "//xla/backends:__subpackages__",
+        "//xla/codegen/emitters/transforms:__pkg__",
     ],
     deps = [
         "@com_google_absl//absl/strings",
@@ -71,8 +72,9 @@ cc_library(
     srcs = ["kernel_spec.cc"],
     hdrs = ["kernel_spec.h"],
     deps = [
-        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
         "//xla/stream_executor:launch_dim",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings:string_view",
     ],

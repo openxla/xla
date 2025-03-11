@@ -142,9 +142,20 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                 std::move(shape), std::move(sharding), arrays,
                 array_copy_semantics, single_device_shard_semantics);
           });
+  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _, _, _))
+      .WillByDefault(
+          [this](DType dtype, Shape shape,
+                 absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+                 absl::Span<tsl::RCReference<Array>> arrays,
+                 ArrayCopySemantics array_copy_semantics,
+                 SingleDeviceShardSemantics single_device_shard_semantics) {
+            return delegated_->AssembleArrayFromSingleDeviceArrays(
+                std::move(dtype), std::move(shape), std::move(sharding), arrays,
+                array_copy_semantics, single_device_shard_semantics);
+          });
   ON_CALL(*this, CopyArrays)
       .WillByDefault([this](absl::Span<tsl::RCReference<Array>> arrays,
-                            std::optional<tsl::RCReference<DeviceList>> devices,
+                            std::optional<DeviceListRef> devices,
                             std::optional<MemoryKind> memory_kind,
                             ArrayCopySemantics semantics) {
         return delegated_->CopyArrays(arrays, std::move(devices), memory_kind,
@@ -218,10 +229,9 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
     return delegated_->GetDefaultCompiler();
   });
   ON_CALL(*this, GetTopologyForDevices)
-      .WillByDefault(
-          [this](const tsl::RCReference<xla::ifrt::DeviceList>& devices) {
-            return delegated_->GetTopologyForDevices(devices);
-          });
+      .WillByDefault([this](const DeviceListRef& devices) {
+        return delegated_->GetTopologyForDevices(devices);
+      });
   ON_CALL(*this, GetDefaultLayout)
       .WillByDefault([this](xla::ifrt::DType dtype,
                             absl::Span<const int64_t> dims,

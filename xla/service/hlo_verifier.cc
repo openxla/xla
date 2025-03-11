@@ -2511,9 +2511,6 @@ absl::Status VerifyOriginalValue(const HloModule& module) {
 // collectives).
 absl::Status VerifyChannels(const HloModule& module,
                             const HloVerifierOpts& opts) {
-  absl::flat_hash_map<int64_t, std::vector<const HloInstruction*>>
-      channel_instructions;
-
   // Send/recv instruction must have a unique user. If it is the corresponding
   // send-done/recv-done operation, channel IDs must match.
   for (const HloComputation* computation : module.computations()) {
@@ -2522,7 +2519,6 @@ absl::Status VerifyChannels(const HloModule& module,
       if (!channel_instr || !channel_instr->channel_id()) {
         continue;
       }
-      channel_instructions[*channel_instr->channel_id()].push_back(instruction);
 
       switch (instruction->opcode()) {
         case HloOpcode::kSend: {
@@ -2561,29 +2557,6 @@ absl::Status VerifyChannels(const HloModule& module,
           break;
         default:
           break;
-      }
-    }
-  }
-
-  // Iterate over each channel to check invariants.
-  for (auto& [channel_id, instructions] : channel_instructions) {
-    const HloInstruction* first = instructions[0];
-    if (const auto* sendrecv = DynCast<HloSendRecvInstruction>(first)) {
-      absl::flat_hash_set<HloOpcode> opcodes;
-      for (const HloInstruction* instr : instructions) {
-        opcodes.insert(instr->opcode());
-        auto cast = DynCast<HloSendRecvInstruction>(instr);
-        TF_RET_CHECK(cast != nullptr)
-            << "channel " << channel_id
-            << " is used for different types of channel instructions";
-      }
-    } else {
-      if (opts.verify_unique_channel_ids) {
-        for (const HloInstruction* instr : instructions) {
-          TF_RET_CHECK(first->opcode() == instr->opcode())
-              << "channel " << channel_id
-              << " is used for different types of channel instructions";
-        }
       }
     }
   }
@@ -2979,6 +2952,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   absl::Status Postprocess(HloInstruction* instruction) override {
+    if (opts_.verify_no_host_memory_space) {
+      TF_RETURN_IF_ERROR(VerifyNoHostMemorySpace(instruction));
+    }
     if (!opts_.InstructionCanChangeLayout(instruction) &&
         LayoutUtil::IsDenseArray(instruction->shape()) &&
         instruction->shape().has_layout()) {
@@ -3071,6 +3047,26 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
                        instruction->ToString()));
     }
     return absl::OkStatus();
+  }
+
+  // Returns an error status if an instruction or any operand contains host
+  // memory space.
+  static absl::Status VerifyNoHostMemorySpace(
+      const HloInstruction* instruction) {
+    return ShapeUtil::ForEachSubshapeWithStatus(
+        instruction->shape(),
+        [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
+          if (subshape.has_layout()) {
+            const Layout& result_layout = subshape.layout();
+            if (result_layout.memory_space() == Layout::kHostMemorySpace) {
+              return absl::InternalError(absl::StrCat(
+                  "Instruction shouldn't have the layout of host memory "
+                  "space: ",
+                  instruction->ToString()));
+            }
+          }
+          return absl::OkStatus();
+        });
   }
 
   absl::flat_hash_map<std::string, const HloInstruction*> instructions_by_name_;

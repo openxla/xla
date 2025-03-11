@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -75,6 +76,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tools/hlo_extractor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -179,6 +181,120 @@ absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
   return absl::InternalError("WTF");
 }
 
+// Gets the innermost while op surrounding the operation `op` if it exists. This
+// also returns nullopt if there are multiple callers for the same while body.
+std::optional<HloInstruction*> GetParentWhileOp(const HloInstruction& op,
+                                                const CallGraph& call_graph) {
+  const HloInstruction* op_ptr = &op;
+  while (op_ptr) {
+    const HloComputation* parent = op_ptr->parent();
+    std::vector<HloInstruction*> callers =
+        call_graph.GetComputationCallers(parent);
+    if (callers.size() != 1) {
+      return std::nullopt;
+    }
+    if (callers[0]->opcode() == HloOpcode::kWhile) {
+      return callers[0];
+    }
+    op_ptr = callers[0];
+  }
+  return std::nullopt;
+}
+
+// Extracts the offset module as a function of induction variable. There are
+// hard checks for the conditions on this here, because these conditions are
+// ensured before fusing in
+// `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+std::unique_ptr<HloModule> ExtractOffsetModule(
+    const HloInstruction* offset_value,
+    std::optional<const HloInstruction*> while_op) {
+  if (while_op == std::nullopt) return nullptr;
+
+  // First we check that we can get the indvar index.
+  std::optional<int64_t> indvar_idx = GetLoopInductionVarTupleIdx(*while_op);
+  CHECK(indvar_idx != std::nullopt)
+      << "Unable to get tuple idx for offset value: "
+      << (*while_op)->ToString();
+
+  // Extract offset as a function of parameter to while body.
+  std::unique_ptr<HloModule> extracted_offset = ExtractModule(
+      /*instruction=*/offset_value, /*height=*/-1,
+      /*extract_selector=*/
+      [](const HloInstruction* instr) -> bool {
+        return instr->opcode() != HloOpcode::kParameter;
+      },
+      /*replace_type_selector=*/
+      [](const HloInstruction*) -> ReplaceType {
+        return ReplaceType::kReplaceParam;
+      },
+      /*cross_computation=*/false, /*inline_calls_and_fusions=*/true,
+      /*run_verifier=*/false);
+
+  // In the extracted computation
+  // 1. There should be only one parameter.
+  // 2. All operations on the parameter should be get-tuple-element.
+  // 3. All of these gte users should be for the index `indvar_idx`.
+  CHECK(extracted_offset->entry_computation()->num_parameters() == 1)
+      << "Extracted offset module does not have exactly one parameter: "
+      << extracted_offset->ToString();
+  CHECK(absl::c_all_of(
+      extracted_offset->entry_computation()->parameter_instruction(0)->users(),
+      [indvar_idx](const HloInstruction* instr) {
+        return instr->opcode() == HloOpcode::kGetTupleElement &&
+               instr->tuple_index() == *indvar_idx;
+      }))
+      << "Extracted offset module does not have all operations on the "
+         "parameter as get-tuple-element for index "
+      << *indvar_idx << ": " << extracted_offset->ToString();
+
+  // We simply replace the parameter with the get-tuple-element instruction as
+  // the parameter.
+  return ExtractModule(
+      extracted_offset->entry_computation()->root_instruction(), -1,
+      [](const HloInstruction* instr) {
+        return instr->opcode() != HloOpcode::kGetTupleElement ||
+               instr->operand(0)->opcode() != HloOpcode::kParameter;
+      });
+}
+
+// Extracts the while induction variable update as a function of the induction
+// variable. There are hard checks for the conditions on this here, because
+// these conditions are ensured before fusing in
+// `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+std::unique_ptr<HloModule> ExtractWhileUpdateModule(
+    const HloInstruction* while_op) {
+  std::optional<int64_t> tuple_idx = GetLoopInductionVarTupleIdx(while_op);
+  CHECK(tuple_idx != std::nullopt)
+      << "Unable to get tuple idx for whileop " << while_op->ToString();
+  const HloInstruction* update =
+      while_op->while_body()->root_instruction()->operand(*tuple_idx);
+  return ExtractOffsetModule(update, while_op);
+}
+
+// Extracts the while induction variable initialization module. This must have
+// no parameters and this condition was ensured before fusing in
+// `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+std::unique_ptr<HloModule> ExtractWhileInitModule(
+    const HloInstruction* while_op) {
+  std::optional<int64_t> tuple_idx = GetLoopInductionVarTupleIdx(while_op);
+  CHECK(tuple_idx != std::nullopt)
+      << "Unable to get tuple idx for while op: " << while_op->ToString();
+  const HloInstruction* init = while_op->operand(0)->operand(*tuple_idx);
+  std::unique_ptr<HloModule> init_module = ExtractModule(
+      /*instruction=*/init, /*height=*/-1, /*extract_selector=*/nullptr,
+      /*replace_type_selector=*/nullptr, /*cross_computation=*/false,
+      /*inline_calls_and_fusions=*/true, /*run_verifier=*/false);
+  CHECK(init_module->entry_computation()->num_parameters() == 0)
+      << "Expected zero parameter for init module: " << init_module->ToString();
+  return init_module;
+}
+
+bool IsDynamicSliceOrDynamicUpdateSlice(const HloInstruction* instr) {
+  return instr != nullptr &&
+         (instr->opcode() == HloOpcode::kDynamicSlice ||
+          instr->opcode() == HloOpcode::kDynamicUpdateSlice);
+}
+
 absl::Status CollectSliceInfo(
     const BufferAssignment& buffer_assignment,
     const HloInstruction& fusion_instr,
@@ -186,17 +302,27 @@ absl::Status CollectSliceInfo(
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>& offsets,
     std::vector<std::optional<Shape>>& orig_shapes,
     std::vector<std::optional<Shape>>& sliced_shapes,
-    std::vector<std::optional<uint64_t>>& offset_byte_sizes, unsigned arg_idx) {
-  auto* arg_slice_instr =
-      DynCastOrNull<HloDynamicIndexInstruction>(slice_instrs[arg_idx]);
-  if (arg_slice_instr == nullptr) {
+    std::vector<std::optional<uint64_t>>& offset_byte_sizes,
+    std::vector<std::unique_ptr<HloModule>>& extracted_offset_modules,
+    unsigned arg_idx, bool can_compute_indvar_on_host,
+    std::optional<const HloInstruction*> while_op) {
+  if (!IsDynamicSliceOrDynamicUpdateSlice(slice_instrs[arg_idx])) {
     return absl::OkStatus();
+  }
+  auto* arg_slice_instr =
+      Cast<HloDynamicIndexInstruction>(slice_instrs[arg_idx]);
+  std::optional<HloInstruction*> async_caller = std::nullopt;
+  if (fusion_instr.parent()->IsAsyncComputation()) {
+    async_caller = fusion_instr.parent()->AsyncStart();
   }
 
   std::vector<DynamicSliceThunk::Offset> arg_offsets;
   for (auto idx_op : arg_slice_instr->index_operands()) {
     const auto* param = Cast<HloParameterInstruction>(idx_op);
-    const auto* offset_value = fusion_instr.operand(param->parameter_number());
+    const HloInstruction* offset_value =
+        async_caller.has_value()
+            ? (*async_caller)->operand(param->parameter_number())
+            : fusion_instr.operand(param->parameter_number());
 
     VLOG(2) << "Offset value:" << offset_value->ToString();
 
@@ -218,6 +344,11 @@ absl::Status CollectSliceInfo(
                          offset_literal->shape().ToString()));
       }
 
+    } else if (std::unique_ptr<HloModule> offset_module =
+                   ExtractOffsetModule(offset_value, while_op);
+               (can_compute_indvar_on_host && offset_module != nullptr)) {
+      extracted_offset_modules.push_back(std::move(offset_module));
+      arg_offsets.emplace_back() = extracted_offset_modules.back().get();
     } else {
       // Loop offset computed on device and has to be transferred to host.
       TF_ASSIGN_OR_RETURN(arg_offsets.emplace_back(),
@@ -396,7 +527,7 @@ absl::StatusOr<BufferAllocation::Slice> GetResultSlice(
 absl::StatusOr<FusionEmissionResult> EmitGemm(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion,
-    const HloCustomCallInstruction& custom_call) {
+    const HloCustomCallInstruction& custom_call, const CallGraph& call_graph) {
   const BufferAssignment& buffer_assignment =
       ir_emitter_context.buffer_assignment();
 
@@ -408,6 +539,19 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
 
   std::vector<HloInstruction*> slice_instrs(4, nullptr);
 
+  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules;
+  std::optional<HloInstruction*> while_op =
+      GetParentWhileOp(fusion, call_graph);
+  std::unique_ptr<HloModule> init_module, update_module;
+  if (while_op != std::nullopt) {
+    CHECK(while_op.value() != nullptr)
+        << "GetWhileOp is not expected to return nullptr.";
+    init_module = ExtractWhileInitModule(*while_op);
+    update_module = ExtractWhileUpdateModule(*while_op);
+  }
+  bool can_compute_indvar_on_host =
+      (init_module != nullptr && update_module != nullptr);
+
   unsigned arg_idx = 0;
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice lhs_slice,
                       GetOperandSlice(buffer_assignment, adaptor, fusion,
@@ -416,7 +560,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
   TF_RETURN_IF_ERROR(CollectSliceInfo(
       buffer_assignment, fusion, absl::Span<HloInstruction*>(slice_instrs),
       offset_buffer_indices, orig_shapes, sliced_shapes, offset_byte_sizes,
-      arg_idx++));
+      extracted_offset_modules, arg_idx++, can_compute_indvar_on_host,
+      while_op));
 
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice rhs_slice,
                       GetOperandSlice(buffer_assignment, adaptor, fusion,
@@ -425,7 +570,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
   TF_RETURN_IF_ERROR(CollectSliceInfo(
       buffer_assignment, fusion, absl::Span<HloInstruction*>(slice_instrs),
       offset_buffer_indices, orig_shapes, sliced_shapes, offset_byte_sizes,
-      arg_idx++));
+      extracted_offset_modules, arg_idx++, can_compute_indvar_on_host,
+      while_op));
 
   BufferAllocation::Slice output;
   std::optional<BufferAllocation::Slice> workspace = std::nullopt;
@@ -443,7 +589,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     TF_RETURN_IF_ERROR(CollectSliceInfo(
         buffer_assignment, fusion, absl::Span<HloInstruction*>(slice_instrs),
         offset_buffer_indices, orig_shapes, sliced_shapes, offset_byte_sizes,
-        arg_idx));
+        extracted_offset_modules, arg_idx, can_compute_indvar_on_host,
+        while_op));
   } else {
     TF_ASSIGN_OR_RETURN(
         output,
@@ -453,7 +600,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     TF_RETURN_IF_ERROR(CollectSliceInfo(
         buffer_assignment, fusion, absl::Span<HloInstruction*>(slice_instrs),
         offset_buffer_indices, orig_shapes, sliced_shapes, offset_byte_sizes,
-        arg_idx++));
+        extracted_offset_modules, arg_idx++, can_compute_indvar_on_host,
+        while_op));
 
     // TODO(vuson): If we want to support slices of workspace, we'd need to
     // start `HloFindIf` with `get-tuple-element` with the right index.
@@ -463,7 +611,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     TF_RETURN_IF_ERROR(CollectSliceInfo(
         buffer_assignment, fusion, absl::Span<HloInstruction*>(slice_instrs),
         offset_buffer_indices, orig_shapes, sliced_shapes, offset_byte_sizes,
-        arg_idx));
+        extracted_offset_modules, arg_idx, can_compute_indvar_on_host,
+        while_op));
     fake_allocations[arg_idx] = std::make_unique<BufferAllocation>(
         /*index=*/arg_idx, workspace->size(), /*color=*/0);
     slice_workspace_fake = BufferAllocation::Slice(
@@ -489,10 +638,7 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
   std::unique_ptr<Thunk> thunk;
   auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&fusion);
 
-  if (absl::c_any_of(slice_instrs, [&](auto slice_instr) {
-        return DynCastOrNull<HloDynamicIndexInstruction>(slice_instr) !=
-               nullptr;
-      })) {
+  if (absl::c_any_of(slice_instrs, IsDynamicSliceOrDynamicUpdateSlice)) {
     // Creating embedded GEMM thunk.
     unsigned fake_arg_idx = 0;
     int64_t lhs_byte_size =
@@ -526,11 +672,21 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     std::vector<std::optional<BufferAllocation::Slice>> arguments{
         lhs_slice, rhs_slice, output, workspace};
 
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata{
+              /*indvar_init=*/std::move(init_module),
+              /*indvar_update=*/std::move(update_module),
+              /*extracted_offset_modules=*/std::move(extracted_offset_modules)};
+    }
     thunk = std::make_unique<DynamicSliceThunk>(
         thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
         std::move(arguments), std::move(fake_allocations),
         std::move(offset_buffer_indices), std::move(orig_shapes),
-        std::move(sliced_shapes), std::move(offset_byte_sizes));
+        std::move(sliced_shapes), std::move(offset_byte_sizes),
+        std::move(offset_modules_metadata));
   } else {
     thunk = std::make_unique<GemmThunk>(thunk_info, std::move(config),
                                         lhs_slice, rhs_slice, output, workspace,
@@ -545,7 +701,7 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
 absl::StatusOr<FusionEmissionResult> EmitCustomCall(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion,
-    const HloCustomCallInstruction& custom_call) {
+    const HloCustomCallInstruction& custom_call, const CallGraph& call_graph) {
   const BufferAssignment& buffer_assignment =
       ir_emitter_context.buffer_assignment();
 
@@ -589,6 +745,19 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   std::vector<HloInstruction*> slice_instrs(num_args, nullptr);
   std::vector<std::optional<BufferAllocation::Slice>> arguments;
 
+  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules;
+  std::optional<HloInstruction*> while_op =
+      GetParentWhileOp(fusion, call_graph);
+  std::unique_ptr<HloModule> init_module, update_module;
+  if (while_op != std::nullopt) {
+    CHECK(while_op.value() != nullptr)
+        << "GetWhileOp is not expected to return nullptr.";
+    init_module = ExtractWhileInitModule(*while_op);
+    update_module = ExtractWhileUpdateModule(*while_op);
+  }
+  bool can_compute_indvar_on_host =
+      (init_module != nullptr && update_module != nullptr);
+
   unsigned arg_idx = 0;
   // TODO(vuson): add test for custom call with token-typed operands
   Slices operands;
@@ -610,7 +779,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
           TF_RETURN_IF_ERROR(CollectSliceInfo(
               buffer_assignment, fusion,
               absl::Span<HloInstruction*>(slice_instrs), offsets, orig_shapes,
-              sliced_shapes, offset_byte_sizes, arg_idx++));
+              sliced_shapes, offset_byte_sizes, extracted_offset_modules,
+              arg_idx++, can_compute_indvar_on_host, while_op));
 
           operands.push_back(CustomCallThunk::Slice{slice, subshape});
           arguments.push_back(slice);
@@ -636,7 +806,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
         TF_RETURN_IF_ERROR(CollectSliceInfo(
             buffer_assignment, fusion,
             absl::Span<HloInstruction*>(slice_instrs), offsets, orig_shapes,
-            sliced_shapes, offset_byte_sizes, arg_idx++));
+            sliced_shapes, offset_byte_sizes, extracted_offset_modules,
+            arg_idx++, can_compute_indvar_on_host, while_op));
 
         results.push_back(CustomCallThunk::Slice{slice, subshape});
         arguments.push_back(slice);
@@ -738,10 +909,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   };
 
   std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(num_args);
-  if (absl::c_any_of(slice_instrs, [&](auto slice_instr) {
-        return DynCastOrNull<HloDynamicIndexInstruction>(slice_instr) !=
-               nullptr;
-      })) {
+  if (absl::c_any_of(slice_instrs, IsDynamicSliceOrDynamicUpdateSlice)) {
     // Creating embedded custom call thunk.
     unsigned fake_arg_idx = 0;
 
@@ -803,11 +971,20 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
             ? ffi_thunk(std::move(fake_operands), std::move(fake_results))
             : legacy_thunk(std::move(fake_operands), std::move(fake_results)));
 
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata{
+              /*indvar_init=*/std::move(init_module),
+              /*indvar_update=*/std::move(update_module),
+              /*extracted_offset_modules=*/std::move(extracted_offset_modules)};
+    }
     thunk = std::make_unique<DynamicSliceThunk>(
         thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
         std::move(arguments), std::move(fake_allocations), std::move(offsets),
         std::move(orig_shapes), std::move(sliced_shapes),
-        std::move(offset_byte_sizes));
+        std::move(offset_byte_sizes), std::move(offset_modules_metadata));
   } else {
     TF_ASSIGN_OR_RETURN(
         thunk, found_ffi_handler
@@ -820,11 +997,178 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   return result;
 }
 
+using Slice = std::optional<BufferAllocation::Slice>;
+using Slices = std::vector<Slice>;
+
+// This struct holds all the information about inputs and outputs of a dynamic
+// slice fusion with a collective hero.
+//
+// fake_allocations: the fake allocations for the inputs/outputs of the hero
+// instruction, when the slicing is dynamic. These are "fake" in the sense
+// that they have no "values" assigned to them. So, they never materialize and
+// are not seen in the final buffer assignment.
+//
+// fake_arguments: the fake slices of the inputs/outputs of the hero
+// instruction, when the slicing is dynamic.
+struct SliceDataForCollectives {
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
+  std::vector<HloInstruction*> slice_instrs;
+  Slices arguments, fake_arguments;
+  std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>
+      offset_buffer_indices;
+  std::vector<std::optional<Shape>> orig_shapes, sliced_shapes;
+  std::vector<std::optional<uint64_t>> offset_byte_sizes;
+  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules;
+  std::unique_ptr<HloModule> init_module, update_module;
+  bool isDynamic, can_compute_indvar_on_host;
+  explicit SliceDataForCollectives(int num_args)
+      : fake_allocations(num_args),
+        slice_instrs(num_args),
+        arguments(num_args, std::nullopt),
+        fake_arguments(num_args, std::nullopt),
+        offset_buffer_indices(num_args, std::nullopt),
+        orig_shapes(num_args, std::nullopt),
+        sliced_shapes(num_args, std::nullopt),
+        offset_byte_sizes(num_args, std::nullopt),
+        init_module(nullptr),
+        update_module(nullptr),
+        isDynamic(false),
+        can_compute_indvar_on_host(false) {}
+
+  Slices& args() { return isDynamic ? fake_arguments : arguments; }
+};
+
+// Collects slice information for inputs and outputs of a HLO instruction.
+template <typename HloInstType>
+absl::StatusOr<SliceDataForCollectives>
+CollectSliceArgumentMetadataForCollectives(
+    const HloInstType* instr, const BufferAssignment& buffer_assignment,
+    const HloFusionAdaptor& adaptor, const HloFusionInstruction& fusion_instr,
+    const CallGraph& call_graph) {
+  int num_args =
+      instr->operand_count() +
+      (instr->shape().IsTuple() ? instr->shape().tuple_shapes_size() : 1);
+  SliceDataForCollectives slice_data(num_args);
+  std::optional<HloInstruction*> while_op =
+      GetParentWhileOp(fusion_instr, call_graph);
+  if (while_op != std::nullopt) {
+    CHECK(while_op.value() != nullptr)
+        << "GetParentWhileOp is not expected to return nullptr.";
+    slice_data.init_module = ExtractWhileInitModule(*while_op);
+    slice_data.update_module = ExtractWhileUpdateModule(*while_op);
+  }
+  slice_data.can_compute_indvar_on_host = (slice_data.init_module != nullptr &&
+                                           slice_data.update_module != nullptr);
+  // Collect slice information for inputs.
+  unsigned arg_idx = 0;
+  for (HloInstruction* operand : instr->operands()) {
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice src,
+        GetOperandSlice(buffer_assignment, adaptor, fusion_instr,
+                        /*start_instr=*/*operand, slice_data.slice_instrs,
+                        /*shape_idx=*/{}, arg_idx));
+    slice_data.arguments[arg_idx] = src;
+    TF_RETURN_IF_ERROR(CollectSliceInfo(
+        buffer_assignment, fusion_instr,
+        /*slice_instrs=*/absl::Span<HloInstruction*>(slice_data.slice_instrs),
+        /*offsets=*/slice_data.offset_buffer_indices, slice_data.orig_shapes,
+        slice_data.sliced_shapes, slice_data.offset_byte_sizes,
+        slice_data.extracted_offset_modules, arg_idx,
+        slice_data.can_compute_indvar_on_host, while_op));
+    arg_idx++;
+  }
+
+  // Collect slice information for outputs.
+  PtrVec<const HloInstruction*> collective_results;
+  if (instr->shape().IsTuple()) {
+    for (const HloInstruction* user : instr->users()) {
+      collective_results.push_back(user);
+    }
+  } else {
+    collective_results.push_back(instr);
+  }
+  for (const HloInstruction* user : collective_results) {
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice dst,
+        GetResultSlice(buffer_assignment, adaptor, fusion_instr,
+                       /*start_instr=*/*user, slice_data.slice_instrs,
+                       /*shape_idx=*/{}, arg_idx));
+    slice_data.arguments[arg_idx] = dst;
+    TF_RETURN_IF_ERROR(CollectSliceInfo(
+        buffer_assignment, fusion_instr,
+        /*slice_instrs=*/absl::Span<HloInstruction*>(slice_data.slice_instrs),
+        /*offsets=*/slice_data.offset_buffer_indices, slice_data.orig_shapes,
+        slice_data.sliced_shapes, slice_data.offset_byte_sizes,
+        slice_data.extracted_offset_modules, arg_idx,
+        slice_data.can_compute_indvar_on_host, while_op));
+    arg_idx++;
+  }
+
+  // Sanity checks.
+  //  1. Expect at least one slicing operation.
+  //  2. Expect at least one dynamic index operation iff the fusion is a
+  //  dynamic-address-fusion.
+  if (absl::c_all_of(slice_data.slice_instrs, [&](HloInstruction* slice_instr) {
+        return slice_instr == nullptr;
+      })) {
+    return absl::InternalError("Expected atleast one slicing operation");
+  }
+  slice_data.isDynamic = absl::c_any_of(slice_data.slice_instrs,
+                                        IsDynamicSliceOrDynamicUpdateSlice);
+  TF_ASSIGN_OR_RETURN(
+      auto backend_config,
+      fusion_instr.backend_config<xla::gpu::GpuBackendConfig>());
+  const std::string fusion_name =
+      backend_config.fusion_backend_config().custom_fusion_config().name();
+  TF_RET_CHECK(slice_data.isDynamic ==
+               (fusion_name ==
+                kDynamicSliceFusionWithDynamicAddressComputationConfigName))
+      << "Dynamic index operation found in a fusion instruction that is not "
+         "labelled dynamic_address_computation";
+  if (slice_data.isDynamic) {
+    // Provide fake allocations for inputs and outputs. The dynamic-slice thunk
+    // will own these allocations.
+    unsigned fake_arg_idx = 0;
+    for (HloInstruction* operand : instr->operands()) {
+      int64_t operand_byte_size = ShapeUtil::ByteSizeOf(operand->shape());
+      slice_data.fake_allocations[fake_arg_idx] =
+          std::make_unique<BufferAllocation>(
+              /*index=*/fake_arg_idx, operand_byte_size, /*color=*/0);
+      BufferAllocation::Slice fake_slice(
+          /*allocation=*/slice_data.fake_allocations[fake_arg_idx].get(),
+          /*offset=*/0,
+          /*size=*/operand_byte_size);
+      slice_data.fake_arguments[fake_arg_idx] = fake_slice;
+      fake_arg_idx++;
+    }
+    PtrVec<const HloInstruction*> collective_results;
+    if (instr->shape().IsTuple()) {
+      for (const HloInstruction* user : instr->users()) {
+        collective_results.push_back(user);
+      }
+    } else {
+      collective_results.push_back(instr);
+    }
+    for (const HloInstruction* user : collective_results) {
+      int64_t out_fake_byte_size = ShapeUtil::ByteSizeOf(user->shape());
+      slice_data.fake_allocations[fake_arg_idx] =
+          std::make_unique<BufferAllocation>(
+              /*index=*/fake_arg_idx, /*size=*/out_fake_byte_size, /*color=*/0);
+      BufferAllocation::Slice fake_slice(
+          /*allocation=*/slice_data.fake_allocations[fake_arg_idx].get(),
+          /*offset=*/0, /*size=*/out_fake_byte_size);
+      slice_data.fake_arguments[fake_arg_idx] = fake_slice;
+      fake_arg_idx++;
+    }
+  }
+  return slice_data;
+}
+
 template <typename NcclThunkType, typename HloInstType>
 absl::StatusOr<FusionEmissionResult> EmitCollective(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion_instr, const HloInstType* instr,
-    bool use_global_device_ids) {
+    bool use_global_device_ids, const CallGraph& call_graph) {
   Thunk::Kind collective_done_thunk_kind;
   switch (instr->opcode()) {
     case HloOpcode::kReduceScatter:
@@ -838,64 +1182,10 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
   const BufferAssignment& buffer_assignment =
       ir_emitter_context.buffer_assignment();
 
-  std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>
-      offset_buffer_indices(2, std::nullopt);
-  std::vector<std::optional<Shape>> orig_shapes(2, std::nullopt);
-  std::vector<std::optional<Shape>> sliced_shapes(2, std::nullopt);
-  std::vector<std::optional<uint64_t>> offset_byte_sizes(2, std::nullopt);
-
-  std::vector<HloInstruction*> slice_instrs(2, nullptr);
-  std::vector<std::optional<BufferAllocation::Slice>> arguments;
-
-  // Collect slice information for inputs.
-  unsigned arg_idx = 0;
   TF_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice src,
-      GetOperandSlice(buffer_assignment, adaptor, fusion_instr,
-                      /*start_instr=*/*instr->operand(arg_idx), slice_instrs,
-                      /*shape_idx=*/{}, arg_idx));
-  arguments.push_back(src);
-  TF_RETURN_IF_ERROR(CollectSliceInfo(
-      buffer_assignment, fusion_instr,
-      /*slice_instrs=*/absl::Span<HloInstruction*>(slice_instrs),
-      /*offsets=*/offset_buffer_indices, orig_shapes, sliced_shapes,
-      offset_byte_sizes, arg_idx));
-  arg_idx++;
-
-  // Collect slice information for outputs.
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst,
-                      GetResultSlice(buffer_assignment, adaptor, fusion_instr,
-                                     /*start_instr=*/*instr, slice_instrs,
-                                     /*shape_idx=*/{}, arg_idx));
-  arguments.push_back(dst);
-  TF_RETURN_IF_ERROR(CollectSliceInfo(
-      buffer_assignment, fusion_instr,
-      /*slice_instrs=*/absl::Span<HloInstruction*>(slice_instrs),
-      /*offsets=*/offset_buffer_indices, orig_shapes, sliced_shapes,
-      offset_byte_sizes, arg_idx));
-
-  // Sanity checks.
-  //  1. Expect atleast one slicing operation.
-  //  2. Expect atleast one dynamic index operation iff the fusion is a
-  //  dynamic-address-fusion.
-  if (absl::c_all_of(slice_instrs, [&](HloInstruction* slice_instr) {
-        return slice_instr == nullptr;
-      })) {
-    return absl::InternalError("Expected atleast one slicing operation");
-  }
-  bool isDynamic =
-      absl::c_any_of(slice_instrs, [&](const HloInstruction* slice_instr) {
-        return DynCastOrNull<HloDynamicIndexInstruction>(slice_instr) !=
-               nullptr;
-      });
-  TF_ASSIGN_OR_RETURN(
-      auto backend_config,
-      fusion_instr.backend_config<xla::gpu::GpuBackendConfig>());
-  const std::string fusion_name =
-      backend_config.fusion_backend_config().custom_fusion_config().name();
-  TF_RET_CHECK(isDynamic == (fusion_name == "dynamic_address_computation"))
-      << "Dynamic index operation found in a fusion instruction that is not "
-         "labelled dynamic_address_computation";
+      auto slice_data,
+      CollectSliceArgumentMetadataForCollectives(
+          instr, buffer_assignment, adaptor, fusion_instr, call_graph));
 
   int64_t replica_count = instr->GetModule()->config().replica_count();
   int64_t partition_count = instr->GetModule()->config().num_partitions();
@@ -906,29 +1196,6 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(instr);
 
   FusionEmissionResult result;
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
-  if (isDynamic) {
-    // Provide fake allocations for inputs and outputs. The dynamic-slice thunk
-    // will own these allocations.
-    unsigned fake_arg_idx = 0;
-    int64_t operand_byte_size =
-        ShapeUtil::ByteSizeOf(instr->operand(fake_arg_idx)->shape());
-    fake_allocations[fake_arg_idx] = std::make_unique<BufferAllocation>(
-        /*index=*/fake_arg_idx, operand_byte_size, /*color=*/0);
-    src = BufferAllocation::Slice(
-        /*allocation=*/fake_allocations[fake_arg_idx].get(), /*offset=*/0,
-        /*size=*/operand_byte_size);
-    fake_arg_idx++;
-    TF_RET_CHECK(instr->shape().IsArray() &&
-                 "The output is not expected to be a tuple.");
-    int64_t out_fake_byte_size =
-        ShapeUtil::ByteSizeOf(instr->shape());  // TODO: we don't need this
-    fake_allocations[fake_arg_idx] = std::make_unique<BufferAllocation>(
-        /*index=*/fake_arg_idx, /*size*/ out_fake_byte_size, /*color=*/0);
-    dst = BufferAllocation::Slice(
-        /*allocation=*/fake_allocations[fake_arg_idx].get(),
-        /*offset=*/0, /*size=*/out_fake_byte_size);
-  }
 
   // First we get the thunk sequence. This decides whether to generate a d2d
   // copy thunk or collective thunk.
@@ -942,44 +1209,83 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
            "the "
            "collective is degenerate: "
         << shape.ToString() << " vs " << instr->shape().ToString();
-    seq.emplace_back(std::make_unique<DeviceToDeviceCopyThunk>(
-        thunk_info,
-        /*source_buffer=*/src,
-        /*destination_buffer=*/dst,
-        /*mem_size=*/ShapeUtil::ByteSizeOf(shape)));
+    for (int idx = 0; idx < instr->operand_count(); ++idx) {
+      std::optional<BufferAllocation::Slice> src = slice_data.args()[idx];
+      std::optional<BufferAllocation::Slice> dst =
+          slice_data.args()[idx + instr->operand_count()];
+      TF_RET_CHECK(src.has_value() && dst.has_value())
+          << "Expected source and destination to be present for degenerate "
+             "collective";
+      seq.emplace_back(std::make_unique<DeviceToDeviceCopyThunk>(
+          thunk_info,
+          /*source_buffer=*/src.value(),
+          /*destination_buffer=*/dst.value(),
+          /*mem_size=*/ShapeUtil::ByteSizeOf(shape)));
+    }
   } else if (implementable_status.ok()) {
     std::vector<NcclCollectiveThunk::Buffer> buffers;
-    const Shape& src_shape = instr->operand(0)->shape();
-    const Shape& dst_shape = instr->shape();
-    buffers.push_back(NcclCollectiveThunk::Buffer{
-        /*element_count=*/ShapeUtil::ElementsIn(src_shape),
-        /*source_buffer=*/src,
-        /*destination_buffer=*/dst,
-        /*source_memory_space=*/src_shape.layout().memory_space(),
-        /*destination_memory_space=*/dst_shape.layout().memory_space(),
-        /*source_value=*/nullptr,
-        /*destination_value=*/nullptr});
+    for (int idx = 0; idx < instr->operand_count(); ++idx) {
+      const Shape& src_shape = instr->operand(idx)->shape();
+      const Shape& dst_shape = instr->shape().IsTuple()
+                                   ? instr->shape().tuple_shapes(idx)
+                                   : instr->shape();
+      std::optional<BufferAllocation::Slice> src = slice_data.args()[idx];
+      std::optional<BufferAllocation::Slice> dst =
+          slice_data.args()[idx + instr->operand_count()];
+      TF_RET_CHECK(src.has_value() && dst.has_value())
+          << "Expected source and destination to be present for non-degenerate "
+             "collective";
+      buffers.push_back(NcclCollectiveThunk::Buffer{
+          /*element_count=*/ShapeUtil::ElementsIn(src_shape),
+          /*source_buffer=*/src.value(),
+          /*destination_buffer=*/dst.value(),
+          /*source_memory_space=*/src_shape.layout().memory_space(),
+          /*destination_memory_space=*/dst_shape.layout().memory_space(),
+          /*source_value=*/nullptr,
+          /*destination_value=*/nullptr});
+    }
     auto collective_start_thunk =
         std::make_unique<NcclThunkType>(thunk_info, instr, buffers);
-    auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
-        /*kind=*/collective_done_thunk_kind,
-        /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
-        /*async_events=*/collective_start_thunk->async_events(),
-        /*async_stream_kind=*/AsyncStreamKind::kCollective);
+    std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events =
+        collective_start_thunk->async_events();
     seq.emplace_back(std::move(collective_start_thunk));
-    seq.emplace_back(std::move(collective_done_thunk));
+    // If the fusion is async, we do not emit the done thunk at the end.
+    if (fusion_instr.parent()->IsAsyncComputation()) {
+      ir_emitter_context.collectives_async_events().insert(
+          {fusion_instr.parent()->AsyncStart(), async_events});
+    } else {
+      auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
+          /*kind=*/collective_done_thunk_kind,
+          /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
+          /*async_events=*/async_events,
+          /*async_stream_kind=*/AsyncStreamKind::kCollective);
+      seq.emplace_back(std::move(collective_done_thunk));
+    }
   } else {
     return implementable_status;
   }
 
   // Depending on whether this is a dynamic fusion or not, we wrap the thunk(s)
   // within a dynamic-slice thunk.
-  if (isDynamic) {
+  if (slice_data.isDynamic) {
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (slice_data.can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata(
+              /*indvar_init=*/std::move(slice_data.init_module),
+              /*indvar_update=*/std::move(slice_data.update_module),
+              /*extracted_offset_modules=*/
+              std::move(slice_data.extracted_offset_modules));
+    }
     std::unique_ptr<Thunk> thunk = std::make_unique<DynamicSliceThunk>(
-        thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
-        std::move(arguments), std::move(fake_allocations),
-        std::move(offset_buffer_indices), std::move(orig_shapes),
-        std::move(sliced_shapes), std::move(offset_byte_sizes));
+        thunk_info,
+        /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+        std::move(slice_data.arguments), std::move(slice_data.fake_allocations),
+        std::move(slice_data.offset_buffer_indices),
+        std::move(slice_data.orig_shapes), std::move(slice_data.sliced_shapes),
+        std::move(slice_data.offset_byte_sizes),
+        std::move(offset_modules_metadata));
     result.thunks.push_back(std::move(thunk));
   } else {
     for (auto& thunk : seq) {
@@ -1054,7 +1360,8 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
     return EmitCollective<NcclReduceScatterStartThunk,
                           HloReduceScatterInstruction>(
         ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/rs,
-        /*use_global_device_ids=*/rs->use_global_device_ids());
+        /*use_global_device_ids=*/rs->use_global_device_ids(),
+        /*call_graph=*/call_graph_);
   }
   auto maybe_custom_call_adaptor = HloBfsFindIf(
       adaptor.GetRoots(), adaptor,
@@ -1066,10 +1373,12 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
   const auto& custom_call = *static_cast<const HloCustomCallInstruction*>(
       &maybe_custom_call_adaptor->instruction());
   if (IsLegacyCublasMatmul(custom_call)) {
-    return EmitGemm(ir_emitter_context, adaptor, fusion, custom_call);
+    return EmitGemm(ir_emitter_context, adaptor, fusion, custom_call,
+                    call_graph_);
   }
 
-  return EmitCustomCall(ir_emitter_context, adaptor, fusion, custom_call);
+  return EmitCustomCall(ir_emitter_context, adaptor, fusion, custom_call,
+                        call_graph_);
 }
 
 }  // namespace gpu

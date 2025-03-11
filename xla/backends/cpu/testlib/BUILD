@@ -23,6 +23,7 @@ cc_library(
     srcs = ["kernel_runner.cc"],
     hdrs = ["kernel_runner.h"],
     deps = [
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/backends/cpu/codegen:execution_engine",
         "//xla/backends/cpu/codegen:ir_compiler",
@@ -71,7 +72,7 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -112,9 +113,9 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings:string_view",
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
-        "//xla/backends/cpu/codegen:dot_kernel_emitter",
         "//xla/backends/cpu/codegen:jit_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/codegen/dot:dot_kernel_emitter",
         "//xla/backends/cpu/codegen/elemental:concatenate_kernel_emitter",
         "//xla/backends/cpu/codegen/elemental:elemental_kernel_emitter",
         "//xla/codegen:kernel_definition",
@@ -150,12 +151,13 @@ xla_cc_test(
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_ir_kernel_source",
         "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:ir_headers",
         "@tsl//tsl/platform:casts",

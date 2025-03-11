@@ -1878,6 +1878,7 @@ def MHLO_DynamicSliceOp: MHLO_Op<"dynamic_slice",
 
   let results = (outs MHLO_Tensor:$result);
   let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
 
 def MHLO_DynamicUpdateSliceOp: MHLO_Op<"dynamic_update_slice",
@@ -2668,12 +2669,12 @@ def MHLO_RaggedDotOp: MHLO_Op<"ragged_dot", [Pure]> {
     most one group dimension. The op has three modes, depending on the kind of
     the lhs ragged dimension.
 
-    In mode 1, the shape-signature is `[b,m,k], [g,b,k,n], [g] -> [b,m,n]`.
+    In mode 1, the shape-signature is `[b,m,k], [g,b,k,n], [b,g] -> [b,m,n]`.
     Here the ragged dimension is an lhs non-contracting dimension (`m`). The
     dimensions `b` and `k` represent batch and contracting dimensions
     respectively. The rhs is required to have a group dimension (`g`).
 
-    In mode 2, the shape-signature is `[b,m,k], [b,k,n], [g] -> [g,b,m,n]`.
+    In mode 2, the shape-signature is `[b,m,k], [b,k,n], [b,g] -> [g,b,m,n]`.
     Here the ragged dimension is an lhs/rhs contracting dimension (`k`).
 
     In mode 3, the shape-signature is `[b,m,k], [b,k,n], [g] -> [b,m,n]`. Here

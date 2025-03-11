@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -326,10 +327,10 @@ PjRtLoadedExecutable::CreateInternal(
     TF_ASSIGN_OR_RETURN(Device * ifrt_device, client->LookupPjRtDevice(device));
     ds.push_back(ifrt_device);
   }
-  tsl::RCReference<DeviceList> devices = BasicDeviceList::Create(std::move(ds));
+  DeviceListRef devices = BasicDeviceList::Create(std::move(ds));
   // Devices used for constructing output shardings. A fake one will be used for
   // a portable executable.
-  std::optional<tsl::RCReference<DeviceList>> sharding_devices;
+  std::optional<DeviceListRef> sharding_devices;
   if (devices->devices().empty()) {
     sharding_devices =
         BasicDeviceList::Create({client->addressable_devices().front()});
@@ -467,8 +468,7 @@ PjRtLoadedExecutable::CreateInternal(
 PjRtLoadedExecutable::PjRtLoadedExecutable(
     PjRtCompatibleClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
-    tsl::RCReference<DeviceList> devices,
-    std::vector<Device*> addressable_devices,
+    DeviceListRef devices, std::vector<Device*> addressable_devices,
     std::vector<tsl::RCReference<LoadedHostCallback>> all_loaded_host_callbacks,
     std::vector<PjRtHostSendAndRecvLoadedHostCallback*>
         host_send_recv_callbacks,
@@ -489,9 +489,9 @@ PjRtLoadedExecutable::PjRtLoadedExecutable(
 PjRtLoadedExecutable::~PjRtLoadedExecutable() = default;
 
 absl::StatusOr<PjRtLoadedExecutable::ExecuteResult>
-PjRtLoadedExecutable::Execute(
-    absl::Span<tsl::RCReference<Array>> args, const ExecuteOptions& options,
-    std::optional<tsl::RCReference<DeviceList>> devices) {
+PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
+                              const ExecuteOptions& options,
+                              std::optional<DeviceListRef> devices) {
   DCHECK(this);
   // TODO(hyeontaek): Check input sharding consistency.
 
@@ -539,9 +539,6 @@ PjRtLoadedExecutable::Execute(
     }
   }
 
-  const bool returned_future_supported =
-      pjrt_loaded_executable_->IsReturnedFutureSupported();
-
   xla::ExecuteOptions opts;
   opts.untuple_result = true;
   opts.launch_id = options.launch_id;
@@ -555,13 +552,6 @@ PjRtLoadedExecutable::Execute(
       platform_id == RocmId() || platform_id == SyclId()) {
     CHECK_OK(context->ffi_context().Insert(all_loaded_host_callbacks_.get()));
     opts.context = context.get();
-  }
-
-  if (!all_loaded_host_callbacks_->empty() && !returned_future_supported) {
-    return Internal(
-        "Host callback not supported without returned future support in "
-        "runtime: %s",
-        client_->runtime_type());
   }
 
   // When using host callbacks on CPU, we need to use synchronous dispatch to
@@ -603,29 +593,19 @@ PjRtLoadedExecutable::Execute(
         pjrt_loaded_executable_->ExecutePortable(
             argument_handles.front(), portable_execution_device->pjrt_device(),
             opts, returned_pjrt_future,
-            /*fill_future=*/returned_future_supported));
+            /*fill_future=*/true));
 
     pjrt_outputs.push_back(std::move(single_device_pjrt_results));
-    if (returned_future_supported) {
-      status = *std::move(returned_pjrt_future);
-    } else {
-      status = Future<>(absl::OkStatus());
-    }
+    status = *std::move(returned_pjrt_future);
   } else {
     std::optional<std::vector<PjRtFuture<>>> returned_pjrt_futures;
-    if (returned_future_supported) {
-      returned_pjrt_futures.emplace();
-    }
+    returned_pjrt_futures.emplace();
 
     TF_ASSIGN_OR_RETURN(
         pjrt_outputs, pjrt_loaded_executable_->Execute(argument_handles, opts,
                                                        returned_pjrt_futures));
 
-    if (returned_future_supported) {
-      status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
-    } else {
-      status = Future<>(absl::OkStatus());
-    }
+    status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
   }
 
   if (!all_loaded_host_callbacks_->empty()) {

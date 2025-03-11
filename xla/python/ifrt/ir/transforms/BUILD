@@ -3,7 +3,7 @@ load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla/python/ifrt:friends"],
+    default_visibility = ["//xla/python/ifrt:users"],
     licenses = ["notice"],
 )
 
@@ -145,10 +145,13 @@ cc_library(
         "//xla/python/ifrt/ir",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
     ],
 )

@@ -51,7 +51,7 @@ class FloatSupportTestWithTriton : public FloatSupportTest {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = FloatSupportTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_triton_gemm(true);
-    debug_options.set_xla_gpu_triton_gemm_any(true);
+    debug_options.set_xla_gpu_unsupported_force_triton_gemm(true);
     debug_options.set_xla_gpu_cublas_fallback(false);
     return debug_options;
   }
@@ -77,7 +77,7 @@ ENTRY e {
 TEST_F(FloatSupportTestWithTriton, MixedTypeDotWithBF16IsNotUpcasted) {
   bool skip_test = std::visit(
       VariantVisitor{[](const se::CudaComputeCapability& cc) {
-                       return !cc.IsAtLeast(se::CudaComputeCapability::AMPERE);
+                       return !cc.IsAtLeast(se::CudaComputeCapability::kAmpere);
                      },
                      [](const se::RocmComputeCapability&) { return true; }},
       GetGpuComputeCapability());

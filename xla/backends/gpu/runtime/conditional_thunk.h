@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/host_memory_pool.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
@@ -73,16 +74,16 @@ class ConditionalThunk : public Thunk {
   }
 
   void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
+  bool branch_index_is_bool() const { return config_.branch_index_is_bool; }
 
  private:
   const ConditionalThunkConfig config_;
   const BufferAllocation::Slice branch_index_buffer_index_;
 
-  // Pinned host memory for transferring predicate value from device to host.
+  // Host memory pool for transferring predicate value from device to host.
   absl::Mutex mutex_;
-  absl::flat_hash_map<se::StreamExecutor*,
-                      std::unique_ptr<se::MemoryAllocation>>
-      predicates_ ABSL_GUARDED_BY(mutex_);
+  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<HostMemoryPool>>
+      host_memory_pools_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace gpu

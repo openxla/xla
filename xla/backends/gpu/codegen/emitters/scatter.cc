@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -46,6 +47,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -62,7 +64,6 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -211,55 +212,6 @@ SmallVector<Value, 4> PadWithZeros(ValueRange values, int64_t size,
     padded_values.push_back(zero);
   }
   return padded_values;
-}
-
-// Creates a new indexing map that is the same as `map` but with the range
-// variables at `range_var_indices` converted to the new dimensions variables at
-// and added to the end of dimension variables list. Potentially, it can be
-// moved to indexing_map.h.
-IndexingMap ConvertRangeVariableToDimension(
-    const IndexingMap& map, ArrayRef<int64_t> range_var_indices) {
-  CHECK(std::is_sorted(range_var_indices.begin(), range_var_indices.end()));
-  auto* mlir_context = map.GetMLIRContext();
-
-  AffineMap affine_map = map.GetAffineMap();
-  // Update the affine map and the variables.
-  std::vector<IndexingMap::Variable> dims = map.GetDimVars();
-  std::vector<IndexingMap::Variable> range_vars;
-  std::vector<IndexingMap::Variable> rt_vars = map.GetRTVars();
-  SmallVector<AffineExpr, 4> symbol_replacements;
-  symbol_replacements.reserve(affine_map.getNumSymbols());
-  int64_t range_var_count = 0;
-  int64_t range_var_indices_count = range_var_indices.size();
-  for (int i = 0; i < affine_map.getNumSymbols(); ++i) {
-    auto range_var = map.GetRangeVar(i);
-    if (range_var_count < range_var_indices_count &&
-        i == range_var_indices[range_var_count]) {
-      symbol_replacements.push_back(
-          getAffineDimExpr(affine_map.getNumDims(), mlir_context));
-      dims.push_back(range_var);
-      range_var_count++;
-    } else {
-      symbol_replacements.push_back(
-          getAffineSymbolExpr(i - range_var_count, mlir_context));
-      range_vars.push_back(range_var);
-    }
-  }
-
-  AffineMap converted_affine_map = affine_map.replaceDimsAndSymbols(
-      {}, symbol_replacements,
-      affine_map.getNumDims() + range_var_indices_count,
-      affine_map.getNumSymbols() - range_var_indices_count);
-
-  // Update the constraints.
-  std::vector<std::pair<AffineExpr, Interval>> constraints;
-  constraints.reserve(map.GetConstraintsCount());
-  for (auto constraint : map.GetConstraints()) {
-    constraints.push_back({constraint.first.replaceSymbols(symbol_replacements),
-                           constraint.second});
-  }
-  return IndexingMap{converted_affine_map, std::move(dims),
-                     std::move(range_vars), std::move(rt_vars), constraints};
 }
 
 }  // namespace
@@ -533,42 +485,48 @@ void EmitNaiveImplementation(ImplicitLocOpBuilder& b,
       emitters::ApplyIndexing(thread_id_to_update_id_map, thread_and_block_ids,
                               {}, b)
           .front();
+  Value index_id_in_bounds = b.createOrFold<arith::CmpIOp>(
+      arith::CmpIPredicate::ult, thread_id_to_index_id_value,
+      b.create<arith::ConstantIndexOp>(description.num_slices));
+  auto result = EmitUpdateIf(
+      b, index_id_in_bounds, {output_tensor},
+      [&](ImplicitLocOpBuilder& outer_nested_b) -> SmallVector<Value> {
+        SmallVector<Value, 4> update_offsets =
+            helper.ExtractOffsets(outer_nested_b, thread_id_to_index_id_value);
 
-  SmallVector<Value, 4> update_offsets =
-      helper.ExtractOffsets(b, thread_id_to_index_id_value);
+        Value in_bounds =
+            EmitBoundsCheck(outer_nested_b, description.slice_shape,
+                            description.output_shape, update_offsets);
 
-  Value in_bounds = EmitBoundsCheck(b, description.slice_shape,
-                                    description.output_shape, update_offsets);
-
-  Value predicated_update =
-      EmitUpdateIf(
-          b, in_bounds, {output_tensor},
-          [&](ImplicitLocOpBuilder& nested_b) -> SmallVector<Value> {
-            return EmitXlaLoopOp(
-                nested_b, thread_and_block_ids, {output_tensor}, updates_map,
-                [&](ImplicitLocOpBuilder& update_loop_b,
-                    ValueRange symbol_values, ValueRange map_results,
-                    ValueRange output_tensors) -> SmallVector<Value> {
-                  // Extract update element.
-                  auto update_elem =
-                      helper.GetUpdateElement(update_loop_b, map_results);
-                  auto output_indices = std::move(update_offsets);
-                  int64_t output_rank = description.output_shape.size();
-                  output_indices =
-                      PadWithZeros(output_indices, output_rank, update_loop_b);
-                  for (int i = 0; i < output_indices.size(); ++i) {
-                    output_indices[i] = update_loop_b.create<arith::AddIOp>(
-                        map_results[i + 1], output_indices[i]);
-                  }
-                  Value output_tensor = output_tensors.front();
-                  Value updated_output = helper.EmitScatterComputation(
-                      update_loop_b, output_indices, update_elem,
-                      output_tensor);
-                  return {updated_output};
-                });
-          })
-          .front();
-  b.create<ReturnOp>(predicated_update);
+        ValueRange predicated_update = EmitUpdateIf(
+            outer_nested_b, in_bounds, {output_tensor},
+            [&](ImplicitLocOpBuilder& nested_b) -> SmallVector<Value> {
+              return EmitXlaLoopOp(
+                  nested_b, thread_and_block_ids, {output_tensor}, updates_map,
+                  [&](ImplicitLocOpBuilder& update_loop_b,
+                      ValueRange symbol_values, ValueRange map_results,
+                      ValueRange output_tensors) -> SmallVector<Value> {
+                    // Extract update element.
+                    auto update_elem =
+                        helper.GetUpdateElement(update_loop_b, map_results);
+                    auto output_indices = std::move(update_offsets);
+                    int64_t output_rank = description.output_shape.size();
+                    output_indices = PadWithZeros(output_indices, output_rank,
+                                                  update_loop_b);
+                    for (int i = 0; i < output_indices.size(); ++i) {
+                      output_indices[i] = update_loop_b.create<arith::AddIOp>(
+                          map_results[i + 1], output_indices[i]);
+                    }
+                    Value output_tensor = output_tensors.front();
+                    Value updated_output = helper.EmitScatterComputation(
+                        update_loop_b, output_indices, update_elem,
+                        output_tensor);
+                    return {updated_output};
+                  });
+            });
+        return predicated_update;
+      });
+  b.create<ReturnOp>(result.front());
 }
 
 absl::Status ScatterWithDistributedUpdates::EmitEntryFunctionImpl(
@@ -738,7 +696,7 @@ absl::Status ScatterWithDistributedIndices::EmitEntryFunctionImpl(
 
   // Convert index_id_loop and index_vector_id to dimension variables.
   IndexingMap slice_indexing =
-      ConvertRangeVariableToDimension(updates_map, {0});
+      ConvertRangeVariablesToDimensions(updates_map, {0});
 
   // Prepare loop initial values. Inits are packed as
   // [index_changed, is_inbounds, index_0,  ..., accumulator].

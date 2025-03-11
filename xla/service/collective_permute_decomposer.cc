@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_conflict_analysis.h"
 #include "xla/service/collective_ops_utils.h"
@@ -47,7 +46,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -186,7 +184,10 @@ static absl::StatusOr<DecomposedCp> DecomposeCollectivePermute(
       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE) {
     TF_RETURN_IF_ERROR(recv_done->AddControlDependencyTo(send_done));
   }
-  TF_RETURN_IF_ERROR(send->AddControlDependencyTo(recv_done));
+  if (pipeline_parallelism_opt_level ==
+      DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE) {
+    TF_RETURN_IF_ERROR(send->AddControlDependencyTo(recv_done));
+  }
 
   if (!pipeline_decision.empty()) {
     send->set_frontend_attribute(kSendRecvPipelineAttr, pipeline_decision);
@@ -284,6 +285,22 @@ static absl::Status EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
   return absl::OkStatus();
 }
 
+// TODO(b/399486412) clean up collective permute decomposer and only return one
+// CP op
+void RemoveAllButOne(std::vector<HloCollectivePermuteInstruction*>& cps) {
+  // This is a heuristic that chooses the collective permute with the highest
+  // number of source-target pairs.
+  int cp_index = 0;
+  int max_num_pairs = 0;
+  for (int i = 0; i < cps.size(); ++i) {
+    if (cps[i]->source_target_pairs().size() > max_num_pairs) {
+      max_num_pairs = cps[i]->source_target_pairs().size();
+      cp_index = i;
+    }
+  }
+  cps = {cps[cp_index]};
+}
+
 absl::StatusOr<bool> CollectivePermuteDecomposer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -362,6 +379,12 @@ absl::StatusOr<bool> CollectivePermuteDecomposer::Run(
         cp1_to_pipeline = optional_pair.value().second;
       }
     }  // for MakeInstructionPostOrder
+
+    if (cps_to_decompose.size() > 1 &&
+        pipeline_parallelism_opt_level_ !=
+            DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE) {
+      RemoveAllButOne(cps_to_decompose);
+    }
 
     // Find all collectives conflicting with the collective permutes that we
     // want to decompose. We need this information to achieve two things:

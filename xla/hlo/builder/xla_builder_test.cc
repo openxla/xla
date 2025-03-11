@@ -603,18 +603,9 @@ TEST(XlaBuilderTest, OperandFromWrongBuilder) {
 TEST(XlaBuilderTest, ReshapeDefaultOrder) {
   XlaBuilder b(TestName());
   auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 3, 5, 7}), "x");
-  Reshape(x, /*new_sizes=*/{6, 35});
+  Reshape(x, /*dimensions=*/{6, 35});
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   EXPECT_THAT(GetRoot(*module), GmockMatch(m::Reshape(m::Parameter())));
-}
-
-TEST(XlaBuilderTest, ReshapeHasTranspose) {
-  XlaBuilder b(TestName());
-  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 3, 5, 7}), "x");
-  Reshape(x, /*dimensions=*/{3, 2, 1, 0}, /*new_sizes=*/{6, 35});
-  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
-  EXPECT_THAT(GetRoot(*module),
-              GmockMatch(m::Reshape(m::Transpose(m::Parameter()))));
 }
 
 TEST(XlaBuilderTest, Transpose) {
@@ -1532,6 +1523,31 @@ TEST(XlaBuilderTest, RaggedDotContractingWithPreferredElementType) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
+TEST(XlaBuilderTest, BatchedRaggedDotNonContractingWithPreferredElementType) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(S8, {19, 11, 5}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(S8, {3, 19, 5, 7}), "rhs");
+  auto group_sizes =
+      Parameter(&b, 2, ShapeUtil::MakeShape(U32, {19, 3}), "group_sizes");
+
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_batch_dimensions(0);
+  dot_dnums.add_lhs_contracting_dimensions(2);
+  dot_dnums.add_rhs_batch_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(2);
+  RaggedDotDimensionNumbers ragged_dot_dnums;
+  *ragged_dot_dnums.mutable_dot_dimension_numbers() = dot_dnums;
+  ragged_dot_dnums.add_lhs_ragged_dimensions(1);
+  ragged_dot_dnums.add_rhs_group_dimensions(0);
+
+  RaggedDot(lhs, rhs, group_sizes, ragged_dot_dnums,
+            /*precision_config=*/nullptr, /*preferred_element_type=*/S32);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("s32[19, 11, 7]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
 TEST(XlaBuilderTest, ConvolutionWithPreferredElementType) {
   XlaBuilder b(TestName());
   const Shape p0_shape = ShapeUtil::MakeShape(S16, {1, 2, 2, 128});
@@ -1997,6 +2013,36 @@ TEST(XlaBuilderTest, ExpWithResultAccuracy) {
   tolerance.set_ulps(120.0f);
   *result_accuracy.mutable_tolerance() = tolerance;
   Exp(Parameter(&b, 0, shape, "p0"), result_accuracy);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  const HloInstruction* root = GetRoot(*module);
+
+  EXPECT_EQ(root->result_accuracy().tolerance().ulps(), 120.0f);
+  EXPECT_EQ(root->result_accuracy().mode(), ResultAccuracy::DEFAULT);
+}
+
+TEST(XlaBuilderTest, RsqrtWithResultAccuracy) {
+  XlaBuilder b(TestName());
+  const Shape shape = ShapeUtil::MakeShape(F32, {1, 1});
+  ResultAccuracy result_accuracy;
+  ResultAccuracy::Tolerance tolerance;
+  tolerance.set_ulps(120.0f);
+  *result_accuracy.mutable_tolerance() = tolerance;
+  Rsqrt(Parameter(&b, 0, shape, "p0"), result_accuracy);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  const HloInstruction* root = GetRoot(*module);
+
+  EXPECT_EQ(root->result_accuracy().tolerance().ulps(), 120.0f);
+  EXPECT_EQ(root->result_accuracy().mode(), ResultAccuracy::DEFAULT);
+}
+
+TEST(XlaBuilderTest, CosineWithResultAccuracy) {
+  XlaBuilder b(TestName());
+  const Shape shape = ShapeUtil::MakeShape(F32, {1, 1});
+  ResultAccuracy result_accuracy;
+  ResultAccuracy::Tolerance tolerance;
+  tolerance.set_ulps(120.0f);
+  *result_accuracy.mutable_tolerance() = tolerance;
+  Cos(Parameter(&b, 0, shape, "p0"), result_accuracy);
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   const HloInstruction* root = GetRoot(*module);
 
@@ -3135,8 +3181,7 @@ TEST(XlaBuilderTest, UnboundedReshape) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?]"));
   TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[2,3]"));
-  Reshape(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0},
-          /*new_sizes=*/{2, 3});
+  Reshape(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{2, 3});
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   EXPECT_THAT(GetRoot(*module),
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
@@ -3145,8 +3190,8 @@ TEST(XlaBuilderTest, UnboundedReshape) {
 TEST(XlaBuilderTest, UnboundedReshapeUnsupportedOutputShape) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[6]"));
-  Reshape(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0},
-          /*new_sizes=*/{Shape::kUnboundedSize, Shape::kUnboundedSize});
+  Reshape(Parameter(&b, 0, operand, "operand"),
+          /*dimensions=*/{Shape::kUnboundedSize, Shape::kUnboundedSize});
   EXPECT_THAT(
       BuildHloModule(b),
       StatusIs(_,
@@ -3545,34 +3590,34 @@ TEST(XlaBuilderTest, UnboundedXor) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, XlaBuilderUnboundedUnaryOpTest,
-                         ::testing::ValuesIn<UnaryOpTestCase>(
-                             {{"f32[?]", "f32[?]", &Abs},
-                              {"f32[?]", "f32[?]", &Cbrt},
-                              {"f32[?]", "f32[?]", &Ceil},
-                              {"u32[?]", "u32[?]", &Clz},
-                              {"f32[?]", "f32[?]", &Cos},
-                              {"f32[?]", "f32[?]", &Erf},
-                              {"f32[?]", "f32[?]",
-                               [](XlaOp x) { return Exp(x); }},
-                              {"f32[?]", "f32[?]", &Expm1},
-                              {"f32[?]", "f32[?]", &Floor},
-                              {"f32[?]", "f32[?]", &Imag},
-                              {"f32[?]", "pred[?]", &IsFinite},
-                              {"f32[?]", "f32[?]", &Log},
-                              {"f32[?]", "f32[?]", &Log1p},
-                              {"f32[?]", "f32[?]", &Logistic},
-                              {"f32[?]", "f32[?]", &Neg},
-                              {"s32[?]", "s32[?]", &Not},
-                              {"u32[?]", "u32[?]", &PopulationCount},
-                              {"f32[?]", "f32[?]", &Real},
-                              {"f32[?]", "f32[?]", &Round},
-                              {"f32[?]", "f32[?]", &RoundNearestEven},
-                              {"f32[?]", "f32[?]", &Rsqrt},
-                              {"f32[?]", "f32[?]", &Sign},
-                              {"f32[?]", "f32[?]", &Sin},
-                              {"f32[?]", "f32[?]", &Sqrt},
-                              {"f32[?]", "f32[?]", &Tanh}}));
+INSTANTIATE_TEST_SUITE_P(
+    UnboundedDynamism, XlaBuilderUnboundedUnaryOpTest,
+    ::testing::ValuesIn<UnaryOpTestCase>(
+        {{"f32[?]", "f32[?]", &Abs},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Cbrt(x); }},
+         {"f32[?]", "f32[?]", &Ceil},
+         {"u32[?]", "u32[?]", &Clz},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Cos(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Erf(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Exp(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Expm1(x); }},
+         {"f32[?]", "f32[?]", &Floor},
+         {"f32[?]", "f32[?]", &Imag},
+         {"f32[?]", "pred[?]", &IsFinite},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Log(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Log1p(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Logistic(x); }},
+         {"f32[?]", "f32[?]", &Neg},
+         {"s32[?]", "s32[?]", &Not},
+         {"u32[?]", "u32[?]", &PopulationCount},
+         {"f32[?]", "f32[?]", &Real},
+         {"f32[?]", "f32[?]", &Round},
+         {"f32[?]", "f32[?]", &RoundNearestEven},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Rsqrt(x); }},
+         {"f32[?]", "f32[?]", &Sign},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Sin(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Sqrt(x); }},
+         {"f32[?]", "f32[?]", [](XlaOp x) { return Tanh(x); }}}));
 
 INSTANTIATE_TEST_SUITE_P(
     UnboundedDynamism, XlaBuilderUnboundedBinaryOpTest,
@@ -3675,6 +3720,26 @@ TEST(XlaBuilderTest, UnorderedOutfeed) {
   EXPECT_THAT(p1->users()[0], GmockMatch(m::Outfeed(
                                   m::Parameter(1),
                                   m::Outfeed(m::Parameter(0), m::AfterAll()))));
+}
+
+TEST(XlaBuilderTest, InfeedTokenSharding) {
+  XlaBuilder b(TestName());
+  b.SetSharding(sharding_builder::Replicate());
+  const Shape s = ShapeUtil::MakeShape(PRED, {});
+  XlaOp infeed0 = Infeed(&b, s);
+  XlaOp infeed1 = Infeed(&b, s);
+  And(infeed0, infeed1);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const auto token_sharding,
+      HloSharding::FromProto(sharding_builder::AssignDevice(0)));
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    if (instruction->shape().IsToken()) {
+      ASSERT_TRUE(instruction->has_sharding());
+      EXPECT_EQ(instruction->sharding(), token_sharding);
+    }
+  }
 }
 
 }  // namespace

@@ -209,7 +209,7 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
               std::string serialized_graph_string) {
     if (!IsCuda()) return;
     if (GetCudaComputeCapability().IsAtLeast(
-            se::CudaComputeCapability::HOPPER)) {
+            se::CudaComputeCapability::kHopper)) {
       // On Hopper and newer architectures, test numerical correctness and
       // verify the HLO of the Custom Call with operand and return layouts and
       // the serialized graph based on the full compiler pipeline.
@@ -243,19 +243,19 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
                               ParseAndReturnVerifiedModule(pre_hlo_string));
       TF_ASSERT_OK_AND_ASSIGN(
           bool changed, RunHloPass(ConvRewriter(se::CudaComputeCapability{
-                                       se::CudaComputeCapability::HOPPER, 0}),
+                                       se::CudaComputeCapability::kHopper, 0}),
                                    module.get()));
       EXPECT_TRUE(changed);
       RunAndFilecheckHloRewrite(
           module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
           CudnnFusedConvRewriter(
-              se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0},
+              se::CudaComputeCapability{se::CudaComputeCapability::kHopper, 0},
               GetDnnVersion(), GetToolkitVersion()),
           custom_call_string);
       RunAndFilecheckHloRewrite(
           module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
           CudnnFusedConvRewriter(
-              se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0},
+              se::CudaComputeCapability{se::CudaComputeCapability::kHopper, 0},
               GetDnnVersion(), GetToolkitVersion()),
           serialized_graph_string);
     }
@@ -495,7 +495,7 @@ TEST_F(CudnnFusedConvRewriterTest, DontFuseEluWithDepthwiseConv) {
 
 TEST_F(CudnnFusedConvRewriterTest, TestRelu6) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
-                      se::CudaComputeCapability::AMPERE)) {
+                      se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP() << "Conv-Bias-Relu6 fusion is supported and recommended with "
                     "the Nvidia Ampere+ GPUs.";
   }
@@ -523,7 +523,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestRelu6) {
 // with runtime fusion (or, if we do, that it works!).
 TEST_F(CudnnFusedConvRewriterTest, TestRelu6OddChannels) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
-                      se::CudaComputeCapability::AMPERE)) {
+                      se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP() << "Conv-Bias-Relu6 fusion is supported and recommended with "
                     "the Nvidia Ampere+ GPUs.";
   }
@@ -544,7 +544,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestRelu6OddChannels) {
 
 TEST_F(CudnnFusedConvRewriterTest, TestLeakyRelu) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
-                      se::CudaComputeCapability::AMPERE)) {
+                      se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP()
         << "Conv-Bias-LeakyRelu fusion is supported and recommended with "
            "the Nvidia Ampere+ GPUs.";
@@ -1332,6 +1332,47 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
       ROOT root = s8[1,32,9,9] convert(clamp(f32[1,32,9,9] broadcast(f32[] constant(-128)),
                                              add(add(conv_f32, bias), side_input),
                                              f32[1,32,9,9] broadcast(f32[] constant(127))))
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+
+  ConvRewriter rewriter{GetCudaComputeCapability()};
+  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
+  CudnnFusedConvRewriter fuser{GetCudaComputeCapability(), GetDnnVersion(),
+                               GetToolkitVersion()};
+  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
+
+  // Simplify new `convert`'s that may be added to the graph.
+  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
+  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
+
+  SCOPED_TRACE(m->ToString());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::GetTupleElement(
+                     m::CustomCall({kCudnnConvBiasActivationForwardCallTarget},
+                                   m::Parameter(0), m::Parameter(1),
+                                   m::Parameter(2), m::Parameter(3)),
+                     0)
+                     .WithShape(S8, {1, 32, 9, 9})));
+}
+
+TEST_F(CudnnFusedConvRewriterHloTest,
+       TestConvInt8ToInt8BiasSideInputWithoutClamp) {
+  MAYBE_SKIP_TEST("I8");
+  const std::string module_str = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = s32[1,17,9,9] convert(s8[1,17,9,9] parameter(0))
+      filter = s32[3,3,17,32] convert(s8[3,3,17,32] parameter(1))
+      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
+      side_input = f32[1,32,9,9] convert(s8[1,32,9,9] parameter(3))
+
+      conv = s32[1,32,9,9] convolution(input, filter),
+               window={size=3x3 pad=1_1x1_1},
+               dim_labels=bf01_01io->bf01
+      conv_f32 = f32[1,32,9,9] convert(conv)
+      ROOT root = s8[1,32,9,9] convert(add(add(conv_f32, bias), side_input))
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 

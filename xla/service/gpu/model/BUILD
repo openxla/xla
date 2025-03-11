@@ -437,6 +437,8 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -447,8 +449,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -511,9 +511,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "symbolic_tile",
-    srcs = ["symbolic_tile.cc"],
-    hdrs = ["symbolic_tile.h"],
+    name = "constraint_expression",
+    srcs = ["constraint_expression.cc"],
+    hdrs = ["constraint_expression.h"],
     deps = [
         ":affine_map_evaluator",
         "//xla/hlo/analysis:indexing_analysis",
@@ -522,6 +522,55 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "constraint_expression_test",
+    srcs = ["constraint_expression_test.cc"],
+    deps = [
+        ":constraint_expression",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "size_and_stride_expression",
+    srcs = ["size_and_stride_expression.cc"],
+    hdrs = ["size_and_stride_expression.h"],
+    deps = [
+        ":constraint_expression",
+        "//xla/hlo/analysis:indexing_analysis",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "symbolic_tile",
+    srcs = ["symbolic_tile.cc"],
+    hdrs = ["symbolic_tile.h"],
+    deps = [
+        ":affine_map_evaluator",
+        ":constraint_expression",
+        ":size_and_stride_expression",
+        "//xla/hlo/analysis:indexing_analysis",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -635,6 +684,7 @@ cc_library(
     srcs = ["symbolic_tile_analysis.cc"],
     hdrs = ["symbolic_tile_analysis.h"],
     deps = [
+        ":constraint_expression",
         ":symbolic_tile",
         ":symbolic_tiled_hlo_instruction",
         ":tiled_hlo_instruction_or_computation",
@@ -646,11 +696,13 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:instruction_fusion",
         "//xla/service:name_uniquer",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
@@ -660,6 +712,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -975,6 +1028,65 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "interpolator",
+    hdrs = ["interpolator.h"],
+    deps = ["@com_google_absl//absl/log:check"],
+)
+
+xla_cc_test(
+    name = "interpolator_test",
+    srcs = ["interpolator_test.cc"],
+    deps = [
+        ":interpolator",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "collective_interpolator",
+    srcs = ["collective_interpolator.cc"],
+    hdrs = ["collective_interpolator.h"],
+    deps = [
+        ":gpu_hlo_cost_analysis",
+        ":hlo_op_profile_proto_cc",
+        ":interpolator",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_interpolator_test",
+    srcs = ["collective_interpolator_test.cc"],
+    deps = [
+        ":collective_interpolator",
+        ":hlo_op_profile_proto_cc",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
     ],
 )

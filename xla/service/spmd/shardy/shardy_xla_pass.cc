@@ -173,9 +173,6 @@ Shape getFlattenedShape(const Shape& shape) {
       shape, [&](const Shape& subShape, const ShapeIndex& index) {
         flattenedShapes.push_back(subShape);
       });
-  if (flattenedShapes.empty()) {
-    return Shape();
-  }
   return ShapeUtil::MakeMaybeTupleShape(flattenedShapes);
 }
 
@@ -386,7 +383,7 @@ absl::StatusOr<bool> ShardyXLA::Run(
   if (runSdyShardingPropagation) {
     // NOTE: if we are using auto-spmd, we will use conservative propagation
     // since the TOAST cost model cannot account for split axes or padding.
-    mlir::sdy::PropagationOptions options;
+    mlir::sdy::PropagationOptions options = defaultOptions;
     options.dumpDirectory = shardyDir;
     options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
     mlir::sdy::addPropagationPipeline(pm, options);
@@ -421,8 +418,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
   // update_parameters_layout.
   TF_RETURN_IF_ERROR(
       hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-          hloModule, /*update_output_layout=*/true,
-          /*update_parameters_layout=*/true));
+          hloModule, /*update_output_layout=*/{true},
+          /*update_parameters_layout=*/{true}));
 
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.

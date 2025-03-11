@@ -88,6 +88,29 @@ inline constexpr absl::string_view kUncompilableFusion =
 
 inline constexpr absl::string_view kTopKCustomCallTarget = "__gpu$TopK";
 
+// The name of the custom fusion config for dynamic slice fusion with static
+// slices, such that the offset can be computed at compile time.
+inline constexpr absl::string_view
+    kDynamicSliceFusionWithStaticAddressComputationConfigName =
+        "address_computation";
+// The name of the custom fusion config for dynamic slice fusion with dynamic
+// slices, such that the offset is computed at runtime.
+inline constexpr absl::string_view
+    kDynamicSliceFusionWithDynamicAddressComputationConfigName =
+        "dynamic_address_computation";
+
+// Returns the name of the custom fusion config if the given instruction is a
+// custom fusion and has a custom fusion name, otherwise returns std::nullopt.
+// The custom fusion name is basically the value of
+// instr.backend_config().fusion_backend_config().custom_fusion_config().name().
+// If any of this does not exist in the chain, then we return std::nullopt.
+std::optional<std::string> GetCustomFusionConfigName(
+    const HloInstruction* instr);
+
+// Returns true if the given instruction is a custom fusion for dynamic slice
+// fusion. This is determined by checking the name of custom fusion config.
+bool IsDynamicSliceFusion(const HloInstruction* instr);
+
 // Returns true if `hlo` will be implemented as a call to a cuSolver routine.
 //
 // This returns true if `hlo` is a CustomCall HLO with a call target equal to
@@ -248,6 +271,30 @@ absl::StatusOr<std::string> FingerprintWithBackendConfig(
   return absl::StrCat(hlo.ToString(HloPrintOptions::Fingerprint()),
                       ", backend_config_fingerprint=", fingerprint);
 }
+
+struct InductionVariableFunctionalDependency {
+  // The value that is derived from the induction variable. This is guaranteed
+  // to have no other transitive dependencies (except constants).
+  const HloInstruction* derived_value;
+
+  // The loop and its induction variable that the value depends on.
+  const HloInstruction* loop;
+  const HloInstruction* induction_var;
+};
+
+// Checks if `parameter`'s value is a pure function of a while loop's induction
+// variable. This supports parameters that are inside call, async or fusion
+// instructions. The dependency can be through arbitrary non-side-effecting
+// instructions.
+// `call_stack` should contain the nested instructions that are ancestor of
+// `parameter`. For example, if it is a parameter of a fusion in a while loop,
+// it should contain the while loop as the first element and the fusion as the
+// second element.
+// Requires `while_loop_trip_count_annotator` to have been run on the loop.
+std::optional<InductionVariableFunctionalDependency>
+ResolveFunctionalDependencyOnInductionVariable(
+    absl::Span<const HloInstruction* const> call_stack,
+    const HloInstruction* parameter);
 
 }  // namespace gpu
 }  // namespace xla
