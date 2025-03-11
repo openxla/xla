@@ -252,8 +252,8 @@ absl::Status DynamicMemcpyThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     int64_t clamped_index =
         std::max<int64_t>(0, std::min(*array_index, offset.dimension_size - 1));
-    VLOG(3) << "Iteration index " << index << " resulted in array index "
-            << *array_index << ".";
+    VLOG(3) << "Iteration index " << induction_variable
+            << " resulted in array index " << *array_index << ".";
     src_offset += clamped_index * offset.byte_stride;
   }
 
