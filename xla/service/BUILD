@@ -1412,7 +1412,9 @@ cc_library(
 
 cc_library(
     name = "cpu_plugin",
-    compatible_with = [],
+    compatible_with = [
+        "//buildenv/target:non_prod",
+    ],
     deps = [
         ":service",
         "//xla/service/cpu:cpu_compiler",
