@@ -68,11 +68,13 @@ cc_library(
         "//xla:literal",
         "//xla:literal_pool",
         "//xla:literal_util",
+        "//xla:online_topsort",
         "//xla:printer",
         "//xla:protobuf_util",
         "//xla:shape_layout",
         "//xla:shape_tree",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:sort_json",
         "//xla:status_macros",
         "//xla:types",
@@ -126,6 +128,7 @@ xla_cc_test(
     deps = [
         ":hlo",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
@@ -177,6 +180,7 @@ xla_cc_test(
         ":hlo",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:hlo_module_config",
@@ -286,7 +290,7 @@ cc_library(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "ptrvec_test",
     srcs = ["ptrvec_test.cc"],
     deps = [

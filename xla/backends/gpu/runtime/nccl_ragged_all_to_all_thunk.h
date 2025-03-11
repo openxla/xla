@@ -25,10 +25,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/runtime/nccl_collective_thunk.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/device_memory_handle.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 
@@ -36,14 +37,15 @@ namespace xla {
 namespace gpu {
 
 struct NcclRaggedAllToAllConfig {
-  NcclCollectiveConfig config;
+  CollectiveConfig config;
   int64_t num_total_updates = 1;
-  int64_t ragged_row_element_size = 1;
+  int64_t num_input_rows = 1;
+  int64_t num_row_elements = 1;
 };
 
 // Thunk that performs a NCCL-based Ragged-All-to-All among CUDA GPU-based
 // replicas.
-class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
+class NcclRaggedAllToAllStartThunk : public CollectiveThunk {
  public:
   NcclRaggedAllToAllStartThunk(ThunkInfo thunk_info,
                                const HloRaggedAllToAllInstruction* instr,
@@ -63,22 +65,25 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
   static CollectiveOpGroupMode GetGroupMode(
       const HloRaggedAllToAllInstruction* instr);
 
-  const NcclCollectiveConfig& config() const override { return config_.config; }
+  const CollectiveConfig& config() const override { return config_.config; }
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
  protected:
-  absl::Status RunNcclCollective(const ExecuteParams& params,
-                                 se::Stream& stream,
-                                 CommunicatorHandle comm_handle) override;
+  absl::Status RunCollective(const ExecuteParams& params, se::Stream& stream,
+                             CommunicatorHandle comm_handle) override;
 
  private:
   bool is_local() const;
   bool should_use_memcpy() const { return p2p_memcpy_enabled_ && is_local(); }
+  bool should_use_one_shot_kernel() const {
+    return one_shot_kernel_enabled_ && is_local();
+  }
 
   const NcclRaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
   int64_t device_count_ = -1;
   const bool p2p_memcpy_enabled_;
+  const bool one_shot_kernel_enabled_;
 
   absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*,
@@ -88,20 +93,14 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
   absl::flat_hash_map<se::StreamExecutor*, se::DeviceMemoryHandle>
       device_buffer_allocs_ ABSL_GUARDED_BY(mutex_);
 
-  absl::Mutex pointers_mutex_;
-  // Maps from a device to a pointer to an uint64_t value. The pointer is
-  // written to and read from in each call to RunNcclCollective(), but is
-  // preallocated as CUDA host memory in the first call to Initialize(), since
-  // allocating CUDA host memory every call to RunNcclCollective() is expensive.
-  absl::flat_hash_map<se::StreamExecutor*,
-                      std::unique_ptr<se::MemoryAllocation>>
-      send_pointers_ ABSL_GUARDED_BY(pointers_mutex_);
-  // Maps from a device to a pointer to an uint64_t array whose size is the
-  // size of the replica_group the device is in. Like with send_pointers,
-  // this is used in RunNcclCollective() and allocated in Initialize().
-  absl::flat_hash_map<se::StreamExecutor*,
-                      std::unique_ptr<se::MemoryAllocation>>
-      receive_pointer_maps_ ABSL_GUARDED_BY(pointers_mutex_);
+  absl::Mutex events_mutex_;
+  // Events to synchronize steams on different devices at the start of the
+  // kernel.
+  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
+      start_events_ ABSL_GUARDED_BY(events_mutex_);
+  // Events to synchronize steams on different devices at the end of the kernel.
+  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
+      end_events_ ABSL_GUARDED_BY(events_mutex_);
 };
 
 }  // namespace gpu

@@ -1,4 +1,5 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -21,18 +22,41 @@ cc_library(
     hdrs = ["copy.h"],
     deps = [
         ":fusion_emitter",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla/backends/gpu/runtime:copy_thunk",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
+        "//xla/service:call_graph",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "copy_test",
+    srcs = ["copy_test.cc"],
+    deps = [
+        ":copy",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:call_graph",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -78,6 +102,7 @@ xla_test(
         "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:pattern_matcher",
+        "//xla/service/gpu:cudnn_support_utils",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:stream_executor_util",
         "//xla/service/gpu/tests:gpu_codegen_test",
@@ -110,6 +135,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/runtime:collective_thunk",
         "//xla/backends/gpu/runtime:copy_thunk",
         "//xla/backends/gpu/runtime:custom_call_target",
         "//xla/backends/gpu/runtime:custom_call_thunk",
@@ -117,7 +143,6 @@ cc_library(
         "//xla/backends/gpu/runtime:gemm_thunk",
         "//xla/backends/gpu/runtime:kernel_thunk",
         "//xla/backends/gpu/runtime:nccl_all_reduce_thunk",
-        "//xla/backends/gpu/runtime:nccl_collective_thunk",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/ffi:attribute_map",
         "//xla/ffi:ffi_api",
