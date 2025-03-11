@@ -522,6 +522,36 @@ TEST_F(CallInlinerTest, UseShardManualComputationBodySurroundedNotInlined) {
             "my_model.___call__.fwd.xla.sdy.manual_computation_body_14.1234");
 }
 
+TEST_F(CallInlinerTest, DontInlineNcclGroupCall) {
+  const absl::string_view hlo_string = R"(
+  HloModule composite
+
+  gather () -> f32[1] {
+    a = f32[1] parameter(0)
+    ROOT result = f32[1] all-gather(a), dimensions={0}
+  }
+
+  ENTRY %main () -> f32[1] {
+    b = f32[1] constant(42)
+    ROOT c = f32[1] call(f32[1] b), to_apply=gather, frontend_attributes={_nccl_group=""}
+  })";
+
+  auto debug_options = HloTestBase::GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_stream_annotation(true);
+  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
+  module->mutable_config().set_debug_options(debug_options);
+  CallInliner call_inliner(/*single_call_site=*/true);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  absl::StatusOr<bool> filecheck_result = RunFileCheck(module->ToString({}), R"(
+  //CHECK: %b = f32[1]{0} constant({42})
+  //CHECK: %c = f32[1]{0} call(f32[1]{0} %b), to_apply=%gather, frontend_attributes={_nccl_group=""}
+  )");
+  TF_ASSERT_OK(filecheck_result.status());
+  EXPECT_TRUE(*filecheck_result);
+  ASSERT_FALSE(mutated);
+}
+
 TEST_F(CallInlinerTest, DontInlineStreamAnnotationCall) {
   const absl::string_view hlo_string = R"(
   HloModule composite
