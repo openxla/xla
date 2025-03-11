@@ -112,7 +112,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cudnn_frontend(true);
 
+#if TENSORFLOW_USE_ROCM
+  opts.set_xla_gpu_enable_cublaslt(true);
+#else
   opts.set_xla_gpu_enable_cublaslt(false);
+#endif
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
