@@ -4025,7 +4025,7 @@ class OpGraph {
                      dnn::DataType result_type) {
     ops_.emplace_back(OpDescriptor({uid, operand_uids, mode, operand_kind,
                                     result_kind, result_type, false, -1}));
-    // If existing, the operands are virtual.
+    // If they exist, the operands are virtual.
     for (int operand_uid : operand_uids) {
       auto it = std::find_if(
           ops_.begin(), ops_.end(),
@@ -4091,8 +4091,8 @@ GetGenericCudnnOperationGraph(
 
   // The format of the serialized graph describing a sequence of ops fused
   // into the cuDNN convolution Custom Call is
-  // "UID:[output_type]conv();UID[output_type]:op_name(operand
-  // UID);UID:[output_type]op_name(operand UID);..." with the convolution
+  // "UID:[output_type]conv();UID:[output_type]op_name(operand
+  // UIDs);UID:[output_type]op_name(operand UIDs);..." with the convolution
   // assumed to be the first op in the graph. Operand UIDs identifying ops
   // outside the serialized graph are elided.
   auto deserialize_cudnn_graph = [&]() -> absl::StatusOr<OpGraph> {
@@ -4304,7 +4304,7 @@ GetGenericCudnnOperationGraph(
     std::optional<cudnn_frontend::Tensor> external_operand;
 
     // Create a cuDNN tensor for the potential non-graph operand of
-    // non-convolution binary ops (side inputs).
+    // non-convolution binary ops (side input).
     if (op_descriptor.operand_kind == TensorKind::kScalar &&
         preceding_ops.size() == 1) {
       std::vector<int64_t> scale_dim(4, 1);
@@ -4421,7 +4421,7 @@ GetGenericCudnnOperationGraph(
   non_virtual_uids.insert(non_virtual_uids.end(), output_uids.begin(),
                           output_uids.end());
 
-  return make_pair(
+  return std::make_pair(
       std::make_unique<cudnn_frontend::OperationGraph>(std::move(opGraph)),
       non_virtual_uids);
 }

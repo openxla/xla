@@ -66,60 +66,6 @@ namespace {
 
 namespace m = match;
 
-// Captures multiple HloInstruction pointers and verifies that their target
-// is identical.
-//
-// Example:
-// Pattern cos(x) / sin(x) with cos and sin intended to operate on the same
-// HloInstruction:
-//  UniqueHloInstruction x;
-//  bool m = Match(
-//      instr, m::Divide(m::Cos(m::Op().WithPredicate(x.CaptureOrVerifyFn())),
-//                       m::Sin(m::Op().WithPredicate(x.CaptureOrVerifyFn()))));
-// m is true and x.Instr() returns an HloInstruction pointer to the operand of
-// cosine and sine iff HloInstruction *instr points to a division of a cosine by
-// a sine that operate on the same instruction.
-//
-// TODO(philipphack): Move to shared header or integrate into pattern matcher.
-class UniqueHloInstruction {
- public:
-  UniqueHloInstruction()
-      : is_set_(false),
-        instr_(nullptr),
-        capture_or_verify_([this](const HloInstruction* instr) -> bool {
-          return CaptureOrVerify(const_cast<HloInstruction*>(instr));
-        }) {}
-  HloInstruction* Instr() const { return instr_; }
-  void SetInstr(HloInstruction* instr) {
-    is_set_ = true;
-    instr_ = instr;
-  }
-
-  // Stores instr when invoked the first time. Otherwise, compares instr to the
-  // stored value and sets the stored value to nullptr if the comparison fails.
-  bool CaptureOrVerify(HloInstruction* instr) {
-    if (is_set_ && instr != instr_) {
-      instr_ = nullptr;
-    }
-    if (!is_set_) {
-      is_set_ = true;
-      instr_ = instr;
-    }
-    return instr_;
-  }
-
-  // Returns a std::function for capturing or verifying an instruction using
-  // WithPredicate.
-  std::function<bool(const HloInstruction*)> CaptureOrVerifyFn() const {
-    return capture_or_verify_;
-  }
-
- private:
-  bool is_set_;
-  HloInstruction* instr_;
-  std::function<bool(const HloInstruction*)> capture_or_verify_;
-};
-
 bool IsConvCustomCall(const HloInstruction* instr) {
   return HloPredicateIsOp<HloOpcode::kCustomCall>(instr) &&
          (instr->custom_call_target() == kCudnnConvForwardCallTarget ||
@@ -438,7 +384,7 @@ class GraphString {
       return false;
     }
 
-    // Insert the op ahead of its first use as an operand of another op.
+    // Insert the op in front of its first use as an operand of another op.
     auto pos = std::find_if(
         graph_.begin(), graph_.end(), [&op](OpDescriptor graph_op) -> bool {
           return std::find(graph_op.operands.begin(), graph_op.operands.end(),
@@ -446,19 +392,26 @@ class GraphString {
         });
     pos = graph_.insert(pos, OpDescriptor{op, element_type, op_name, operands});
 
-    // If necessary, move the operands of the op already in the graph ahead of
-    // the op.
-    for (HloInstruction* operand : operands) {
-      auto operand_pos = std::find_if(
-          pos, graph_.end(), [&operand](OpDescriptor graph_op) -> bool {
-            return operand == graph_op.instr;
-          });
-      if (operand_pos != graph_.end()) {
-        OpDescriptor operand_desc = *operand_pos;
-        graph_.erase(operand_pos);
-        pos = graph_.insert(pos, operand_desc);
-      }
-    }
+    // If necessary, move the operands of the op already in the graph in front
+    // of the op. Recursively repeat for the operands' operands.
+    std::function<void(std::vector<HloInstruction*>,
+                       std::vector<OpDescriptor>::iterator)>
+        reorder_operands = [&](auto operands, auto pos) {
+          for (HloInstruction* operand : operands) {
+            auto operand_pos = std::find_if(
+                pos, graph_.end(), [operand](OpDescriptor graph_op) -> bool {
+                  return operand == graph_op.instr;
+                });
+            if (operand_pos != graph_.end()) {
+              OpDescriptor operand_desc = *operand_pos;
+              graph_.erase(operand_pos);
+              pos = graph_.insert(pos, operand_desc);
+              reorder_operands(Operands(operand), pos);
+            }
+          }
+        };
+    reorder_operands(operands, pos);
+
     return true;
   }
 
@@ -499,6 +452,16 @@ class GraphString {
     };
     return std::find_if(graph_.begin(), graph_.end(), op_filter) !=
            graph_.end();
+  }
+
+  std::vector<HloInstruction*> Operands(HloInstruction* op) const {
+    auto op_it = std::find_if(
+        graph_.begin(), graph_.end(),
+        [op](OpDescriptor graph_op) -> bool { return op == graph_op.instr; });
+    if (op_it != graph_.end()) {
+      return op_it->operands;
+    }
+    return {};
   }
 
  private:
@@ -571,12 +534,12 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
     return;
   }
 
-  int init_num_endpoints = num_endpoints;
-
   // Copy the current state in case fusion will be unsuccessful or unfavorable.
   GraphString init_graph_string = graph_string;
   std::vector<HloInstruction*> init_operands = operands;
   std::vector<HloInstruction*> init_aux_outputs = aux_outputs;
+  int init_num_endpoints = num_endpoints;
+
   // The loop adds each user of instr that supports fusion into the cuDNN
   // convolution Custom Call to graph_string. The identification of an op is
   // followed by a recursive call of CaptureConvGraphRecursive to match and
@@ -604,11 +567,11 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
   int num_existing_users = 0;
   for (HloInstruction* user : instr->users()) {
     HloInstruction *op0, *op1, *op2, *operand0, *operand1;
-    UniqueHloInstruction unique_operand;
     // Add
-    if (Match(user, m::AddAnyOrder(&op0, m::Op(&operand0), m::Op(&operand1)))) {
-      if (graph_string.AppendOp("add", op0, {operand0, operand1})) {
-        operands.push_back(operand0 == instr ? operand1 : operand0);
+    if (Match(user,
+              m::AddAnyOrder(&op0, m::Op().Is(instr), m::Op(&operand0)))) {
+      if (graph_string.AppendOp("add", op0, {instr, operand0})) {
+        operands.push_back(operand0);
         ++num_new_users;
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
@@ -622,11 +585,11 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
       continue;
     }
     // Scale
-    if (Match(user, m::MultiplyAnyOrder(&op0, m::Op(&operand0),
-                                        m::Broadcast(m::Op(&operand1)))) &&
-        ShapeUtil::IsScalar(operand1->shape())) {
-      if (graph_string.AppendOp("scale", op0, {operand0, operand1})) {
-        operands.push_back(operand1);
+    if (Match(user, m::MultiplyAnyOrder(&op0, m::Op().Is(instr),
+                                        m::Broadcast(m::Op(&operand0)))) &&
+        ShapeUtil::IsScalar(operand0->shape())) {
+      if (graph_string.AppendOp("scale", op0, {instr, operand0})) {
+        operands.push_back(operand0);
         ++num_new_users;
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
@@ -634,11 +597,11 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
       continue;
     }
     // Inverse Scale
-    if (Match(user, m::Divide(&op0, m::Op(&operand0),
-                              m::Broadcast(m::Op(&operand1)))) &&
-        ShapeUtil::IsScalar(operand1->shape())) {
-      if (graph_string.AppendOp("invscale", op0, {operand0, operand1})) {
-        operands.push_back(operand1);
+    if (Match(user, m::Divide(&op0, m::Op().Is(instr),
+                              m::Broadcast(m::Op(&operand0)))) &&
+        ShapeUtil::IsScalar(operand0->shape())) {
+      if (graph_string.AppendOp("invscale", op0, {instr, operand0})) {
+        operands.push_back(operand0);
         ++num_new_users;
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
@@ -646,36 +609,38 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
       continue;
     }
     // ReLU
-    if (Match(user, m::MaximumAnyOrder(&op0, m::Op(&operand0),
+    if (Match(user, m::MaximumAnyOrder(&op0, m::Op().Is(instr),
                                        m::Broadcast(m::ConstantScalar(0))))) {
-      if (graph_string.AppendOp("relu", op0, {operand0})) {
+      if (graph_string.AppendOp("relu", op0, {instr})) {
         ++num_new_users;
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
       }
       continue;
     }
-    //  Maximum of the absolute value (Amax) following ReLU (elided Abs) -- not
-    //  a linear user
-    if (Match(user, m::Reduce(&op0, m::Op(&operand0), m::Op())) &&
-        graph_string.OpInGraph(operand0, "relu") && AppliesMaxReduce(op0)) {
-      if (graph_string.AppendOp("amax", op0, {operand0})) {
+    //  Maximum of the absolute value (Amax) following ReLU (elided Abs)
+    if (Match(user, m::Reduce(&op0, m::Op().Is(instr), m::Op())) &&
+        graph_string.OpInGraph(instr, "relu") && AppliesMaxReduce(op0)) {
+      if (graph_string.AppendOp("amax", op0, {instr})) {
         aux_outputs.push_back(op0);
         ++num_new_users;
       }
       continue;
     }
-    // ReLU6, represented in the cuDNN graph as minimum(ReLU, 6)
+    // ReLU6, represented in the cuDNN graph as min(ReLU, 6)
     if (Match(
             user,
-            m::Clamp(&op1, m::Broadcast(&op0, m::ConstantEffectiveScalar(0)),
-                     m::Op(&operand0),
-                     m::Broadcast(&operand1, m::ConstantEffectiveScalar(6))))) {
+            m::Clamp(
+                &op1,
+                m::Broadcast(&op0, m::ConstantEffectiveScalar(0)).WithOneUser(),
+                m::Op().Is(instr),
+                m::Broadcast(&operand0, m::ConstantEffectiveScalar(6))
+                    .WithOneUser()))) {
       if (!graph_string.OpInGraph(op0) && !graph_string.OpInGraph(op1)) {
-        graph_string.AppendOp("relu", op0, {operand0});
-        graph_string.AppendOp("min", op1, {op0, operand1});
+        graph_string.AppendOp("relu", op0, {instr});
+        graph_string.AppendOp("min", op1, {op0, operand0});
         ++num_new_users;
-        operands.push_back(operand1);
+        operands.push_back(operand0);
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
       }
@@ -683,16 +648,12 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
     }
     // ELU
     if (Match(user,
-              m::Select(
-                  &op0,
-                  m::Compare(
-                      m::Op().WithPredicate(unique_operand.CaptureOrVerifyFn()),
-                      m::Broadcast(m::ConstantEffectiveScalar(0)))
-                      .WithComparisonDirection(ComparisonDirection::kGt),
-                  m::Op().WithPredicate(unique_operand.CaptureOrVerifyFn()),
-                  m::Expm1(m::Op().WithPredicate(
-                      unique_operand.CaptureOrVerifyFn()))))) {
-      if (graph_string.AppendOp("elu", op0, {unique_operand.Instr()})) {
+              m::Select(&op0,
+                        m::Compare(m::Op().Is(instr),
+                                   m::Broadcast(m::ConstantEffectiveScalar(0)))
+                            .WithComparisonDirection(ComparisonDirection::kGt),
+                        m::Op().Is(instr), m::Expm1(m::Op().Is(instr))))) {
+      if (graph_string.AppendOp("elu", op0, {instr})) {
         num_new_users += 3;
         CaptureConvGraphRecursive(user, operands, aux_outputs, graph_string,
                                   visited_instrs, final_instr, num_endpoints);
@@ -701,7 +662,7 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
     }
 
     // The following patterns match the user of `user`.
-    if (!user->users().empty()) {
+    if (user->user_count() == 1) {
       HloInstruction* users_user = user->users()[0];
       // Convert with Clamp to FP8 types
       std::optional<PrimitiveType> f8_type = IsSaturatingCastToF8(users_user);
@@ -713,11 +674,11 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
                                   num_endpoints);
         continue;
       }
-      // Maximum of the absolute value (Amax) -- not a linear user
+      // Maximum of the absolute value (Amax)
       if (Match(users_user,
-                m::Reduce(&op0, m::Abs(m::Op(&operand0)), m::Op())) &&
+                m::Reduce(&op0, m::Abs(m::Op().Is(instr)), m::Op())) &&
           AppliesMaxReduce(op0)) {
-        if (graph_string.AppendOp("amax", op0, {operand0})) {
+        if (graph_string.AppendOp("amax", op0, {instr})) {
           aux_outputs.push_back(op0);
           ++num_new_users;
         }
@@ -728,24 +689,23 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
       // max(x, alpha * min(0, x)).
       if (Match(
               users_user,
-              m::Select(
-                  &op2,
-                  m::Compare(
-                      &op0,
-                      m::Op().WithPredicate(unique_operand.CaptureOrVerifyFn()),
-                      m::Broadcast(&operand0, m::ConstantEffectiveScalar(0)))
-                      .WithComparisonDirection(ComparisonDirection::kGt),
-                  m::Op().WithPredicate(unique_operand.CaptureOrVerifyFn()),
-                  m::MultiplyAnyOrder(
-                      &op1,
-                      m::Op().WithPredicate(unique_operand.CaptureOrVerifyFn()),
-                      m::Broadcast(m::ConstantEffectiveScalar(&operand1)))))) {
+              m::Select(&op2,
+                        m::Compare(&op0, m::Op().Is(instr),
+                                   m::Broadcast(&operand0,
+                                                m::ConstantEffectiveScalar(0)))
+                            .WithComparisonDirection(ComparisonDirection::kGt)
+                            .WithOneUser(),
+                        m::Op().Is(instr),
+                        m::MultiplyAnyOrder(
+                            &op1, m::Op().Is(instr),
+                            m::Broadcast(m::ConstantEffectiveScalar(&operand1)))
+                            .WithOneUser()))) {
         if (!graph_string.OpInGraph(op0) && !graph_string.OpInGraph(op1) &&
             !graph_string.OpInGraph(op2)) {
           graph_string.AppendOp("min", op0, op2->shape().element_type(),
-                                {unique_operand.Instr(), operand0});
+                                {instr, operand0});
           graph_string.AppendOp("scale", op1, {op0, operand1});
-          graph_string.AppendOp("max", op2, {op1, unique_operand.Instr()});
+          graph_string.AppendOp("max", op2, {op1, instr});
           num_new_users += 3;
           operands.push_back(operand0);
           operands.push_back(operand1);
@@ -758,28 +718,25 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
     }
   }
 
-  // An endpoint is reached when the number of users eligibile for fusion is
-  // less than the total number of users or when instr has no users.
+  // instr is an endpoint when the number of users eligible for fusion is less
+  // than the total number of users or when instr has no users.
   if (num_new_users + num_existing_users < instr->user_count() ||
       instr->user_count() == 0) {
     final_instr = instr;
     ++num_endpoints;
   }
 
-  // Do not fuse into the cuDNN convolution Custom Call and roll back the graph
-  // when the number of users eligible for fusion is less than the total number
-  // of users or when there are more than one endpoints.
-  if (num_new_users + num_existing_users < instr->user_count() ||
-      num_endpoints > 1) {
+  // Since the cuDNN graph cannot have more than one endpoint, do not fuse
+  // into the cuDNN convolution Custom Call and roll back the graph when there
+  // are multiple endpoints. If the new graph still has more than one endpoint,
+  // the recursive caller will continue to roll back the graph.
+  if (num_endpoints > 1) {
     graph_string = init_graph_string;
     operands = init_operands;
     aux_outputs = init_aux_outputs;
     final_instr = instr;
-  }
-
-  // Reset the number of endpoints after rolling back the graph to a branching
-  // point that led to the addition of multiple endpoints.
-  if (num_endpoints - init_num_endpoints > 1) {
+    // Reverting the graph removes any users of instr from the graph and makes
+    // instr an endpoint.
     num_endpoints = init_num_endpoints + 1;
   }
 }
@@ -837,9 +794,7 @@ CaptureConvGraph(HloInstruction* instr, HloInstruction* convolution,
 // 2. Optionally unscale the filter and input by multiplying or dividing by
 // scalars.
 // 3. Evaluate the convolution based on the scaled filter and input.
-// 4. Apply a series of elementwise transformations, where a transformation can
-// be adding a matrix bias, applying a ReLU activation, or
-// multiplying or dividing by a broadcast scalar.
+// 4. Apply a series of elementwise transformations.
 // 5. Optionally calculate the maximum of the absolute of the result.
 // 6. Optionally cast the output back to FP8.
 absl::StatusOr<bool> F8GraphConv(HloComputation* comp,

@@ -1307,15 +1307,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
        z_scale0_bcast = f32[1,16,6,6] broadcast(z_scale0), dimensions={}
        z_scale1 = f32[] parameter(3)
        z_scale1_bcast = f32[1,16,6,6] broadcast(z_scale1), dimensions={}
+       z_scale2 = f32[] parameter(4)
+       z_scale2_bcast = f32[1,16,6,6] broadcast(z_scale2), dimensions={}
        conv_a = f32[1,16,6,6] convolution(input_f32, filter_f32), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
        conv_a_scaled0 = f32[1,16,6,6] multiply(conv_a, z_scale0_bcast)
-       conv_a_scaled1 = f32[1,16,6,6] multiply(conv_a, z_scale1_bcast)
+       conv_a_scaled1 = f32[1,16,6,6] multiply(conv_a_scaled0, z_scale1_bcast)
+       conv_a_scaled2 = f32[1,16,6,6] multiply(conv_a_scaled0, z_scale2_bcast)
        c1 = f32[] constant(-448.)
        c1_bcast = f32[1,16,6,6] broadcast(c1), dimensions={}
        c2 = f32[] constant(448.)
        c2_bcast = f32[1,16,6,6] broadcast(c2), dimensions={}
-       conv_a_clamped0 = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled0, c2_bcast)
-       conv_a_clamped1 = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled1, c2_bcast)
+       conv_a_clamped0 = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled1, c2_bcast)
+       conv_a_clamped1 = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled2, c2_bcast)
        conv_a_convert0 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped0)
        conv_a_convert1 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped1)
        ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f8e4m3fn[1,16,6,6]) tuple(conv_a_convert0, conv_a_convert1)
@@ -1323,11 +1326,11 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
     })",
       // custom_call
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
   )",
       // serialized_graph
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();"
+// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);"
       )");
 }
 
