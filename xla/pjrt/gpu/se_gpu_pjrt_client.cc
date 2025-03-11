@@ -1360,6 +1360,7 @@ std::string GetDeviceFabricInfo(const int device_ordinal) {
     return "NOT_SUPPORTED";
   }
 
+  CHECK_EQ(sizeof(fabricInfo.clusterUuid), 16);
   char uuid_str[72];
   sprintf(
       (char*)uuid_str,
