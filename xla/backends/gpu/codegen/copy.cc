@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -82,9 +83,7 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
     const HloFusionInstruction& fusion) const {
   CHECK_EQ(analysis_.fusion_roots().size(), 1);
 
-  const auto* root = &analysis_.fusion_roots()[0].instruction();
-  const HloInstruction* src_instr =
-      fusion.operand(root->operand(0)->parameter_number());
+  const auto* src_instr = &analysis_.fusion_root(0).GetOperand(0).instruction();
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice src_buffer,
                       buffer_assignment_->GetUniqueSlice(src_instr, {}));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_buffer,
@@ -134,8 +133,7 @@ std::vector<const HloInstruction*> GetCallStack(
 
 bool DynamicMemcpyFusion::IsCandidateFusion(
     const HloFusionInstruction& instruction) {
-  const HloInstruction* root =
-      instruction.fused_instructions_computation()->root_instruction();
+  const HloInstruction* root = instruction.fused_expression_root();
   if (root->opcode() != HloOpcode::kDynamicSlice) {
     return false;
   }
@@ -161,8 +159,7 @@ bool DynamicMemcpyFusion::IsCandidateFusion(
   int rank = root->operand(0)->shape().rank();
   for (int i = 0; i < rank; ++i) {
     auto* operand = root->operand(i + 1);
-    if (!IsZeroOffset(root, i) &&
-        operand->opcode() != HloOpcode::kConstant &&
+    if (!IsZeroOffset(root, i) && operand->opcode() != HloOpcode::kConstant &&
         operand->opcode() != HloOpcode::kParameter) {
       VLOG(5) << "Dimension " << i << " is not a constant or a parameter.";
       return false;
@@ -181,14 +178,15 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
     return std::nullopt;
   }
 
-  auto* slice = fusion.fused_instructions_computation()->root_instruction();
+  const HloInstruction* slice = fusion.fused_expression_root();
+  const Shape& slice_input_shape = slice->operand(0)->shape();
   std::optional<absl::InlinedVector<int64_t, 4>> strides =
-      ShapeUtil::ByteStrides(slice->operand(0)->shape());
+      ShapeUtil::ByteStrides(slice_input_shape);
   if (!strides) {
     return std::nullopt;
   }
 
-  int rank = slice->operand(0)->shape().rank();
+  int rank = slice_input_shape.rank();
   auto stack = GetCallStack(fusion, call_graph);
 
   VLOG(5) << "Preconditions passed, trying to build a memcpy descriptor.";
@@ -214,8 +212,8 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
       continue;
     }
 
-    auto functional_dependency = ResolveFunctionalDependencyOnInductionVariable(
-        stack, operand);
+    auto functional_dependency =
+        ResolveFunctionalDependencyOnInductionVariable(stack, operand);
     if (!functional_dependency) {
       VLOG(5) << "Offset for dimension " << i << " is not statically known.";
       return std::nullopt;
@@ -235,7 +233,7 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
     descriptor.src_dynamic_offsets.emplace_back() = {
         functional_dependency->loop, functional_dependency->induction_var,
         functional_dependency->derived_value,
-        /*dimension_size=*/slice->operand(0)->shape().dimensions(i),
+        /*dimension_size=*/slice_input_shape.dimensions(i),
         /*byte_stride=*/(*strides)[i]};
   }
 

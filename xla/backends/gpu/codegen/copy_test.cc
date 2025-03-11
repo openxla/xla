@@ -22,7 +22,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-using CopyFusionTest = HloTestBase;
+using CopyFusionTest = HloHardwareIndependentTestBase;
 
 const HloFusionInstruction& GetFusion(HloModule* module) {
   const HloInstruction* fusion =
