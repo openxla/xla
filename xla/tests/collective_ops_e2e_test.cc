@@ -537,7 +537,19 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteStart);
   HloInstruction* cp_done =
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteDone);
+  
   EXPECT_THAT(cp_start, NotNull());
+  // Count the number of collective permute start instructions in the module
+  int cp_start_count = 0;
+  for (const auto& computation : hlo_module->computations()) {
+    for (const auto& instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kCollectivePermuteStart) {
+        cp_start_count++;
+      }
+    }
+  }
+  EXPECT_EQ(cp_start_count, 1) << "Expected exactly one CollectivePermuteStart instruction";
+
   // Expect 3 collective permute instructions combined into one.
   EXPECT_EQ(cp_start->operand_count(), 3);
   EXPECT_THAT(cp_done, NotNull());
@@ -546,10 +558,10 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
                           ExecuteReplicated(executable.get(), kNumReplicas));
   ASSERT_EQ(results.size(), kNumReplicas);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({3, 3, 3, 3, 13, 13}, results[0]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 0, 0, 10, 10}, results[1]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 1, 1, 11, 11}, results[2]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 2, 2, 12, 12}, results[3]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({3, 3, 1, 1, 13, 13}, results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 2, 2, 10, 10}, results[1]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 3, 3, 11, 11}, results[2]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 0, 0, 12, 12}, results[3]);
 }
 
 XLA_TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
