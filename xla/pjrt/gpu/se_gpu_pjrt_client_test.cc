@@ -1716,6 +1716,8 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu",
 // Verify that the client can initialize NVSHMEM and that buffers used by
 // mosaic_gpu custom calls are assigned to the collective memory space.
 TEST(StreamExecutorGpuClientTest, NvshmemMemoryTest) {
+  tsl::setenv("XLA_FLAGS", "--xla_gpu_experimental_enable_nvshmem=true",
+              /*overwrite=*/true);
   static constexpr char const* kProgram = R"(
     HloModule ffi_handler
     ENTRY main {
@@ -1772,6 +1774,7 @@ TEST(StreamExecutorGpuClientTest, NvshmemMemoryTest) {
   Shape result_shape = result_buffers[0]->on_device_shape();
   int64_t memory_space = result_shape.layout().memory_space();
   EXPECT_EQ(memory_space, 1);
+  tsl::unsetenv("XLA_FLAGS");
 }
 
 TEST(StreamExecutorGpuClientTest,
