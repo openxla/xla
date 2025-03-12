@@ -23,9 +23,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 
@@ -35,7 +35,7 @@ namespace {
 
 using ::tsl::testing::IsOkAndHolds;
 
-using FusionDynamicMemcpyRewriterTest = HloTestBase;
+using FusionDynamicMemcpyRewriterTest = HloHardwareIndependentTestBase;
 
 bool IsMemcpyFusion(const HloInstruction* instr) {
   const auto& config = instr->backend_config<GpuBackendConfig>();
