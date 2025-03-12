@@ -1949,9 +1949,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
 
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
-      config.set_epilogue(GemmBackendConfig::SWISH);
+      config.set_epilogue(GemmBackendConfig::SILU);
     } else if (config.epilogue() == GemmBackendConfig::BIAS) {
-      config.set_epilogue(GemmBackendConfig::BIAS_SWISH);
+      config.set_epilogue(GemmBackendConfig::BIAS_SILU);
     } else {
       return absl::OkStatus();
     }

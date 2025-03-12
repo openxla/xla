@@ -133,9 +133,9 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
       return HIPBLASLT_EPILOGUE_GELU_AUX_BIAS;
 #endif
 #if TF_ROCM_VERSION >= 60400
-    case gpu::BlasLt::Epilogue::kSwish:
+    case gpu::BlasLt::Epilogue::kSILU:
       return HIPBLASLT_EPILOGUE_SWISH_EXT;
-    case gpu::BlasLt::Epilogue::kBiasThenSwish:
+    case gpu::BlasLt::Epilogue::kBiasThenSILU:
       return HIPBLASLT_EPILOGUE_SWISH_BIAS_EXT;
 #endif
     default:
