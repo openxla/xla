@@ -2130,6 +2130,70 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // This matrix of supported types is taken directly from cublasLt
     // documentation.
     // https://docs.nvidia.com/cuda/cublas/index.html#cublasLtMatmul
+    const TypeCombinations supported_cublas_type_combinations = {
+        // FP8 types:
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E4M3FN, DataType::kBF16},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E4M3FN, DataType::kHalf},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E4M3FN, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E5M2, DataType::kBF16},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E5M2, DataType::kF8E4M3FN},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E5M2, DataType::kF8E5M2},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E5M2, DataType::kHalf},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
+         PrimitiveType::F8E5M2, DataType::kFloat},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+         PrimitiveType::F8E4M3FN, DataType::kBF16},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+         PrimitiveType::F8E4M3FN, DataType::kF8E4M3FN},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+         PrimitiveType::F8E4M3FN, DataType::kF8E5M2},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+         PrimitiveType::F8E4M3FN, DataType::kHalf},
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2,
+         PrimitiveType::F8E4M3FN, DataType::kFloat},
+        // There would be an entry here for A/BType complex int8, but we do
+        // not support that type.
+        {ComputationType::kF32, DataType::kComplexFloat, PrimitiveType::C64,
+         PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kF16AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kF16AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+        // The next 4 may be supported by hipblaslt, but they are not
+        // covered by any unit tests
+        {ComputationType::kBF16AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kBF16AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
+        {ComputationType::kTF32AsF32, DataType::kComplexFloat,
+         PrimitiveType::C64, PrimitiveType::C64, DataType::kComplexFloat},
+
+        {ComputationType::kF64, DataType::kDouble, PrimitiveType::F64,
+         PrimitiveType::F64, DataType::kDouble},
+        {ComputationType::kF64, DataType::kComplexDouble, PrimitiveType::C128,
+         PrimitiveType::C128, DataType::kComplexDouble},
+    };
+    if (IsCuda(gpu_version_) &&
+        absl::c_linear_search(supported_cublas_type_combinations,
+                              std::tuple{compute_type, scale_type, a_dtype,
+                                         b_dtype, output_dtype})) {
+      return true;
+    }
     const TypeCombinations supported_hipblas_type_combinations = {
         // OCP FP8 types:
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E4M3FN,
