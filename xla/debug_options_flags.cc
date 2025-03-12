@@ -117,7 +117,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cudnn_frontend(true);
 
+#if TENSORFLOW_USE_ROCM
+  opts.set_xla_gpu_enable_cublaslt(true);
+#else
   opts.set_xla_gpu_enable_cublaslt(false);
+#endif
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -270,7 +274,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       stream_executor::IsLibNvPtxCompilerSupported());
   opts.set_xla_gpu_libnvjitlink_mode(DebugOptions::LIB_NV_JIT_LINK_MODE_AUTO);
 
-  opts.set_xla_gpu_enable_dot_strength_reduction(true);
+  opts.set_xla_gpu_enable_dot_strength_reduction(false);
 
   opts.set_xla_gpu_enable_bf16_6way_gemm(false);
   opts.set_xla_gpu_enable_bf16_3way_gemm(false);
