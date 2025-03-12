@@ -173,6 +173,9 @@ xla_cc_test(
         "nomsan",
         "requires-gpu-nvidia:2",
     ],
+    env = {
+        "XLA_FLAGS": "--xla_flags_reset=true",
+    },
     deps = [
         ":gpu_topology",
         ":gpu_topology_proto_cc",
