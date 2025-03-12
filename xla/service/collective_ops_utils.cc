@@ -158,7 +158,7 @@ absl::StatusOr<std::vector<int>> GetParticipatingIDs(
                           group->replica_ids().end());
 }
 
-std::vector<std::vector<int64_t>> get_replica_groups(
+absl::StatusOr<std::vector<std::vector<int64_t>>> GetAsyncReplicaGroups(
     const HloInstruction* instruction) {
   std::vector<std::vector<int64_t>> replica_groups;
   if (instruction->opcode() == HloOpcode::kCollectivePermuteStart) {
@@ -179,6 +179,11 @@ std::vector<std::vector<int64_t>> get_replica_groups(
                             [](auto id) { return id; });
           return ids;
         });
+  } else {
+    return InvalidArgument(
+        "Unexpected instruction type: %s is not an async collective "
+        "instruction",
+        instruction->ToString());
   }
   return replica_groups;
 }

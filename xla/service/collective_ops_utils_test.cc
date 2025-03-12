@@ -308,8 +308,8 @@ TEST(CollectiveOpsUtilsTest, GetReplicaGroups) {
       builder.AddInstruction(HloInstruction::CreateCollectivePermuteStart(
           param_shape, param_0, source_target_pairs, /*channel_id=*/1));
 
-  std::vector<std::vector<int64_t>> permute_groups =
-      get_replica_groups(permute_start);
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<std::vector<int64_t>> permute_groups,
+                          GetAsyncReplicaGroups(permute_start));
   EXPECT_EQ(permute_groups.size(), 4);
   for (int i = 0; i < 4; ++i) {
     EXPECT_EQ(permute_groups[i].size(), 2);
@@ -327,8 +327,8 @@ TEST(CollectiveOpsUtilsTest, GetReplicaGroups) {
           /*constrain_layout=*/false,
           /*channel_id=*/1, /*use_global_device_ids=*/false));
 
-  std::vector<std::vector<int64_t>> all_gather_groups =
-      get_replica_groups(all_gather_start);
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<std::vector<int64_t>> all_gather_groups,
+                          GetAsyncReplicaGroups(all_gather_start));
   EXPECT_EQ(all_gather_groups.size(), 2);
   EXPECT_THAT(all_gather_groups[0], testing::ElementsAre(0, 1));
   EXPECT_THAT(all_gather_groups[1], testing::ElementsAre(2, 3));
@@ -352,8 +352,8 @@ TEST(CollectiveOpsUtilsTest, GetReplicaGroups) {
           add_computation, replica_groups, /*constrain_layout=*/false,
           /*channel_id=*/2, /*use_global_device_ids=*/false));
 
-  std::vector<std::vector<int64_t>> all_reduce_groups =
-      get_replica_groups(all_reduce_start);
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<std::vector<int64_t>> all_reduce_groups,
+                          GetAsyncReplicaGroups(all_reduce_start));
   EXPECT_EQ(all_reduce_groups.size(), 2);
   EXPECT_THAT(all_reduce_groups[0], testing::ElementsAre(0, 1));
   EXPECT_THAT(all_reduce_groups[1], testing::ElementsAre(2, 3));

@@ -126,8 +126,8 @@ absl::StatusOr<std::vector<int>> GetParticipatingIDs(
     std::optional<int> total_participant_count,
     absl::Span<const ReplicaGroup> groups);
 
-// Returns the replica groups for the given instruction.
-std::vector<std::vector<int64_t>> get_replica_groups(
+// Returns the replica groups for the given async collective instruction.
+absl::StatusOr<std::vector<std::vector<int64_t>>> GetAsyncReplicaGroups(
     const HloInstruction* instruction);
 
 absl::string_view CollectiveOpGroupModeToString(
