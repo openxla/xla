@@ -83,6 +83,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
   // https://docs.nvidia.com/cuda/cublas/#cublassetworkspace
   static constexpr int64_t kHopperWorkspace = 32 * 1024 * 1024;  // 32 MiB
   static constexpr int64_t kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
+  // the number of algorithms to consider for autotuning by default
+  static constexpr int64_t kNumAlgorithms = 128;
 
   static absl::StatusOr<GemmConfig> For(
       const HloInstruction* gemm, const se::GpuComputeCapability& gpu_version);
