@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
-#include "xla/backends/gpu/runtime/nccl_collective_thunk.h"
 
 namespace xla {
 namespace gpu {
@@ -140,11 +140,11 @@ class NvshmemCollectiveThunk : public Thunk {
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events() const {
+  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events() const {
     return async_events_;
   }
   void set_async_events(
-      std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events) {
+      std::shared_ptr<CollectiveThunk::AsyncEvents> async_events) {
     async_events_ = async_events;
   }
 
@@ -177,7 +177,7 @@ class NvshmemCollectiveThunk : public Thunk {
 
  private:
   bool IsAsync() const { return async_events_ != nullptr; }
-  std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events_;
+  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
 
   // After a first call to this particular instance of a NCCL collective thunk
   // we do a round of rendezvous to make sure that all participants successfully
@@ -204,7 +204,7 @@ class NvshmemCollectiveDoneThunk : public Thunk {
  public:
   NvshmemCollectiveDoneThunk(
       Thunk::Kind kind, ThunkInfo thunk_info,
-      std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
+      std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
       AsyncStreamKind async_stream_kind);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
@@ -218,7 +218,7 @@ class NvshmemCollectiveDoneThunk : public Thunk {
   }
 
  private:
-  std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events_;
+  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
   AsyncStreamKind async_stream_kind_ = AsyncStreamKind::kCollective;
 };
 

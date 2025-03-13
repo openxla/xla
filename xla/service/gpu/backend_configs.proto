@@ -128,7 +128,7 @@ message CollectiveBackendConfig {
   repeated ReificationCost reification_cost = 4;
 
   reserved 2;
-  ReificationCost reification_cost = 4;
+
   enum CollectiveBackend {
     NCCL = 0;
     NVSHMEM = 1;

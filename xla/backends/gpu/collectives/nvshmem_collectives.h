@@ -106,6 +106,8 @@ class NvshmemCollectives : public GpuCollectives {
 
   absl::Status DoTeamBarrier(TEAMSKIND team_kind, se::Stream& stream);
 
+  absl::StatusOr<int64_t> NumOfParticipantsInTeam(TEAMSKIND team_kind);
+
  private:
   absl::Status InitializeOnce();
 
@@ -119,7 +121,7 @@ class NvshmemCollectives : public GpuCollectives {
 
   static constexpr char kKvStoreKey[] = "nvshmem_global_init";
 
-  std::vector<nvshmemx_team_t> all_teams;
+  std::vector<int32_t> all_teams;
 };
 
 }  // namespace xla::gpu

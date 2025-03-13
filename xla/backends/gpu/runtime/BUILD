@@ -1628,7 +1628,7 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_collectives_plugin",
         "//xla/backends/gpu/collectives:nvshmem_collectives",
-        "//xla/backends/gpu/runtime:nccl_collective_thunk",
+        "//xla/backends/gpu/runtime:collective_thunk",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/hlo/ir:hlo",

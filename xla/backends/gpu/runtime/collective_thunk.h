@@ -316,6 +316,9 @@ absl::Status MaybeRegisterBuffers(GpuCollectives* collectives,
                                   const std::vector<DeviceBufferPair>& buffers,
                                   Communicator* comm);
 
+absl::StatusOr<int64_t> GetNumLocalParticipants(
+    const Thunk::CollectiveExecuteParams& params,
+    const std::vector<GlobalDeviceId>& participants);
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_

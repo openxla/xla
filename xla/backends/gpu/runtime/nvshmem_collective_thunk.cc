@@ -208,8 +208,7 @@ NvshmemCollectiveConfig GetNvshmemCollectiveConfig(
 NvshmemCollectiveThunk::NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info,
                                                bool is_sync)
     : Thunk(kind, thunk_info),
-      async_events_(is_sync ? nullptr
-                            : new NcclCollectiveThunk::AsyncEvents()) {}
+      async_events_(is_sync ? nullptr : new CollectiveThunk::AsyncEvents()) {}
 
 absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
@@ -229,7 +228,11 @@ absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
         "Partial replica groups are not allowed when using NVSHMEM_COMM_ID "
         "environment configuration.");
   }
-  return GpuCliqueKey(std::move(participants), kNoStreamId, stream_kind);
+  TF_ASSIGN_OR_RETURN(int64_t num_local_participants,
+                      GetNumLocalParticipants(params, participants));
+
+  return GpuCliqueKey(std::move(participants), num_local_participants,
+                      kNoStreamId, stream_kind);
 }
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
@@ -267,11 +270,7 @@ absl::Status NvshmemCollectiveThunk::Prepare(
       GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
                              config().replica_groups, config().group_mode,
                              nvshmem_stream_id(), GetAsyncStreamKind()));
-  TF_ASSIGN_OR_RETURN(
-      size_t num_local_participants,
-      GetNumLocalParticipants(*params.collective_params,
-                              config().replica_groups, config().group_mode));
-  return resource_requests.AddClique(clique_key, num_local_participants);
+  return resource_requests.AddClique(clique_key);
 }
 
 absl::Status NvshmemCollectiveThunk::Initialize(
@@ -345,10 +344,7 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
         GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
                                config().replica_groups, config().group_mode,
                                stream_id, stream_kind));
-
-    TF_ASSIGN_OR_RETURN(
-        size_t num_local_participants,
-        params.collective_cliques->num_communicators(clique_key));
+    size_t num_local_participants = clique_key.num_local_participants();
 
     auto global_device_id = params.collective_params->global_device_id;
     RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
@@ -390,7 +386,7 @@ std::string NvshmemCollectiveThunk::GetDeviceString(
 
 NvshmemCollectiveDoneThunk::NvshmemCollectiveDoneThunk(
     Thunk::Kind kind, ThunkInfo thunk_info,
-    std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     AsyncStreamKind async_stream_kind)
     : Thunk(kind, std::move(thunk_info)),
       async_events_(async_events),

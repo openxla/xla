@@ -289,16 +289,20 @@ xla_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "nvshmem_gpu_collectives_test",
     srcs = ["nvshmem_gpu_collectives_test.cc"],
-    tags = [
-        "gpu",
+    backend_tags = {"gpu": [
+        "multi_gpu_h100",
         "no_oss",
         "noasan",
+        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
         "nomsan",
-        "requires-gpu-nvidia:2",
-    ],
+    ]},
+    backends = ["gpu"],
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+    },
     deps = [
         ":gpu_topology",
         ":se_gpu_pjrt_client",
@@ -306,7 +310,6 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:test",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -314,6 +317,7 @@ xla_cc_test(
         "//xla/ffi:ffi_api",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:test",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
@@ -325,7 +329,6 @@ xla_cc_test(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
-        "//xla/service:gpu_plugin",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",

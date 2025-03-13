@@ -201,12 +201,12 @@ absl::Status NvshmemCollectives::InitializeOnce() {
     return absl::OkStatus();
   };
 
-  all_teams.resize((int64_t)NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND);
-  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kWORLD] =
+  all_teams.resize((int32_t)NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND);
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kWORLD] =
       NVSHMEM_TEAM_WORLD;
-  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kSHARED] =
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kSHARED] =
       NVSHMEM_TEAM_SHARED;
-  all_teams[(int64_t)NvshmemCollectives::TEAMSKIND::kNODE] = NVSHMEMX_TEAM_NODE;
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kNODE] = NVSHMEMX_TEAM_NODE;
 
   static absl::once_flag once_flag;
   absl::Status status = absl::OkStatus();
@@ -215,6 +215,16 @@ absl::Status NvshmemCollectives::InitializeOnce() {
     initialized_ = true;
   });
   return status;
+}
+
+absl::StatusOr<int64_t> NvshmemCollectives::NumOfParticipantsInTeam(
+    NvshmemCollectives::TEAMSKIND team_kind) {
+  if (team_kind < NvshmemCollectives::TEAMSKIND::kWORLD ||
+      team_kind > NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND) {
+    return absl::InternalError(
+        "Invalid team when querying NumOfParticipantsInTeam.");
+  }
+  return nvshmem_team_n_pes(all_teams[(int32_t)team_kind]);
 }
 
 void NvshmemCollectives::Finalize() {
@@ -248,7 +258,7 @@ absl::Status NvshmemCollectives::Deallocate(void* buffer) {
 
 absl::Status NvshmemCollectives::DoTeamBarrier(
     NvshmemCollectives::TEAMSKIND team_kind, se::Stream& stream) {
-  nvshmemx_team_t& team = all_teams[(int64_t)team_kind];
+  nvshmemx_team_t& team = all_teams[(int32_t)team_kind];
   auto gpu_stream = se::gpu::AsGpuStreamValue(&stream);
 
   if (nvshmemx_barrier_on_stream(team, gpu_stream) != 0) {
@@ -265,7 +275,7 @@ absl::Status NvshmemCollectives::DoAllreduce(
   CHECK(team_kind == NvshmemCollectives::TEAMSKIND::kNODE);
   // nvshmemx_barrier_all_on_stream(stream);
   auto gpu_stream = se::gpu::AsGpuStreamValue(&stream);
-  nvshmemx_team_t& team = all_teams[(int64_t)team_kind];
+  nvshmemx_team_t& team = all_teams[(int32_t)team_kind];
 
   void* dest_ptr = dest.opaque();
   void* source_ptr = source.opaque();

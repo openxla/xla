@@ -39,7 +39,6 @@ absl::StatusOr<xla::gpu::GpuCollectives*> GetGpuCollectives(
 
 /* static */ absl::StatusOr<void*> CudaCollectives::CollectiveMemoryAllocate(
     StreamExecutor* executor, uint64_t bytes) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
   if (bytes == 0) return nullptr;
 
   std::unique_ptr<ActivateContext> activation = executor->Activate();
