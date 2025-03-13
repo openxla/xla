@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "third_party/gpus/cuda/include/cuda_fp16.h"
-#include "third_party/nvshmem/nvshmemx.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
@@ -88,6 +87,8 @@ class NvshmemCollectives : public Collectives {
 
   absl::Status DoTeamBarrier(TEAMSKIND team_kind, se::Stream& stream);
 
+  absl::StatusOr<int64_t> NumOfParticipantsInTeam(TEAMSKIND team_kind);
+
  private:
   absl::Status InitializeOnce();
 
@@ -101,7 +102,7 @@ class NvshmemCollectives : public Collectives {
 
   static constexpr char kKvStoreKey[] = "nvshmem_global_init";
 
-  std::vector<nvshmemx_team_t> all_teams;
+  std::vector<int32_t> all_teams;
 };
 
 }  // namespace xla::gpu
