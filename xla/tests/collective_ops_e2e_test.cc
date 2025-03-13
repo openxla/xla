@@ -516,8 +516,9 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
     sum = u32[] add(replica, ten)
     replica.1 = u32[2] broadcast(replica), dimensions={}
     sum.1 = u32[2] broadcast(sum), dimensions={}
+    replica.2 = u32[2] add(replica.1, replica.1)
     permute.0 = u32[2] collective-permute(replica.1), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
-    permute.1 = u32[2] collective-permute(replica.1), source_target_pairs={{0,3}, {3, 2}, {2, 1}, {1, 0}}
+    permute.1 = u32[2] collective-permute(replica.2), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
     permute.2 = u32[2] collective-permute(sum.1), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
     ROOT concat = u32[6] concatenate(permute.0, permute.1, permute.2), dimensions={0}
   }
@@ -537,7 +538,7 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteStart);
   HloInstruction* cp_done =
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteDone);
-  
+
   EXPECT_THAT(cp_start, NotNull());
   // Count the number of collective permute start instructions in the module
   int cp_start_count = 0;
@@ -548,7 +549,8 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
       }
     }
   }
-  EXPECT_EQ(cp_start_count, 1) << "Expected exactly one CollectivePermuteStart instruction";
+  EXPECT_EQ(cp_start_count, 1)
+      << "Expected exactly one CollectivePermuteStart instruction";
 
   // Expect 3 collective permute instructions combined into one.
   EXPECT_EQ(cp_start->operand_count(), 3);
@@ -558,10 +560,10 @@ XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
                           ExecuteReplicated(executable.get(), kNumReplicas));
   ASSERT_EQ(results.size(), kNumReplicas);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({3, 3, 1, 1, 13, 13}, results[0]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 2, 2, 10, 10}, results[1]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 3, 3, 11, 11}, results[2]);
-  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 0, 0, 12, 12}, results[3]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({3, 3, 6, 6, 13, 13}, results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 0, 0, 10, 10}, results[1]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 2, 2, 11, 11}, results[2]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 4, 4, 12, 12}, results[3]);
 }
 
 XLA_TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
