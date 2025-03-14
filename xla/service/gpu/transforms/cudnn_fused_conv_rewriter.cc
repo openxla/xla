@@ -384,16 +384,21 @@ class GraphString {
       return false;
     }
 
-    // Insert the op in front of its first use as an operand of another op.
+    // Insert op in front of its first use as an operand in graph_ or at the end
+    // of graph_ if not an operand of another op.
     auto pos = std::find_if(
-        graph_.begin(), graph_.end(), [&op](OpDescriptor graph_op) -> bool {
+        graph_.begin(), graph_.end(), [op](OpDescriptor graph_op) -> bool {
           return std::find(graph_op.operands.begin(), graph_op.operands.end(),
                            op) != graph_op.operands.end();
         });
     pos = graph_.insert(pos, OpDescriptor{op, element_type, op_name, operands});
 
     // If necessary, move the operands of the op already in the graph in front
-    // of the op. Recursively repeat for the operands' operands.
+    // of the op and recursively repeat for the operands' operands. Iterator pos
+    // marks the position of op in the vector and serves as an approximately
+    // optimal start point when finding operands that may need to be moved. With
+    // the exception of cases with multiple in-graph operands, pos is expected
+    // to be graph_.end(), which causes reorder_operands to return immediately.
     std::function<void(std::vector<HloInstruction*>,
                        std::vector<OpDescriptor>::iterator)>
         reorder_operands = [&](auto operands, auto pos) {
@@ -627,7 +632,7 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
       }
       continue;
     }
-    // ReLU6, represented in the cuDNN graph as min(ReLU, 6)
+    // ReLU6, equivalently represented in the cuDNN graph as min(ReLU, 6)
     if (Match(
             user,
             m::Clamp(
@@ -684,9 +689,9 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
         }
         continue;
       }
-      // Leaky ReLU, represented in the cuDNN graph as the maximum of the value
-      // and the slope times the minimum of zero and the value,
-      // max(x, alpha * min(0, x)).
+      // Leaky ReLU, equivalently represented in the cuDNN graph as the maximum
+      // of the value and the slope times the minimum of zero and the value,
+      // max(x, alpha * min(0, x))
       if (Match(
               users_user,
               m::Select(&op2,
@@ -728,15 +733,15 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
 
   // Since the cuDNN graph cannot have more than one endpoint, do not fuse
   // into the cuDNN convolution Custom Call and roll back the graph when there
-  // are multiple endpoints. If the new graph still has more than one endpoint,
-  // the recursive caller will continue to roll back the graph.
+  // are multiple endpoints. If the resulting graph still has more than one
+  // endpoint, the recursive caller will continue to roll back the graph.
   if (num_endpoints > 1) {
-    graph_string = init_graph_string;
+    graph_string = std::move(init_graph_string);
     operands = init_operands;
     aux_outputs = init_aux_outputs;
     final_instr = instr;
-    // Reverting the graph removes any users of instr from the graph and makes
-    // instr an endpoint.
+    // Reverting the graph removes any users of instr from the cuDNN graph and
+    // makes instr an endpoint.
     num_endpoints = init_num_endpoints + 1;
   }
 }

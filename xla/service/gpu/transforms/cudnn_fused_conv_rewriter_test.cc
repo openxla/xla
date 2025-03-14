@@ -1335,7 +1335,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
 }
 
 TEST_F(CudnnFusedConvRewriterTest,
-       TestConvScaledOutputMultipleUsersInGraphAddA8) {
+       TestConvScaledOutputMultipleUsersInGraphAddF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
