@@ -85,6 +85,8 @@ extern const char kXlaMultiRecvCountAttr[];
 
 // XLA frontend attribute for specifying the scheduling group id annotations.
 extern const char kXlaSchedulingGroupIdAttr[];
+extern const char kXlaSchedulingDoneGroupIdAttr[];
+
 }  // namespace xla
 
 #endif  // XLA_SIDE_EFFECT_UTIL_H_

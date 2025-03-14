@@ -359,8 +359,20 @@ class AnnotationTracker {
   std::vector<int64_t> GetAnnotations(const HloComputation* comp) const {
     return comp_annotation_map_.at(comp);
   }
+
+  bool IsAsyncDoneType(HloOpcode opcode) const {
+    return (opcode == HloOpcode::kAsyncDone || 
+            opcode == HloOpcode::kCollectivePermuteDone);
+  }
+  
   std::optional<int64_t> GetAnnotation(const HloInstruction* instr) const {
     const auto& attrs = instr->frontend_attributes().map();
+
+    if (IsAsyncDoneType(instr->opcode())) {
+      if (attrs.contains(kXlaSchedulingDoneGroupIdAttr)) {
+        return std::stoi(attrs.at(kXlaSchedulingDoneGroupIdAttr));
+      }    
+    }
     if (attrs.contains(kXlaSchedulingGroupIdAttr)) {
       return std::stoi(attrs.at(kXlaSchedulingGroupIdAttr));
     }
