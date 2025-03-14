@@ -1029,7 +1029,7 @@ absl::Status IrEmitterUnnested::EmitCholeskyThunk(const HloInstruction* instr) {
   TF_ASSIGN_OR_RETURN(CholeskyOptions options,
                       instr->backend_config<CholeskyOptions>());
   const Shape& shape = instr->operand(0)->shape();
-  int ndim = shape.dimensions_size();
+  int ndim = shape.rank();
   CHECK_GE(ndim, 2);
   int64_t n = shape.dimensions(ndim - 1);
 
@@ -1863,7 +1863,7 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
   const int64_t partition_count = hlo_config.num_partitions();
 
   auto operands = instr->operands();
-  std::vector<NcclCollectiveThunk::Buffer> buffers;
+  std::vector<CollectiveThunk::Buffer> buffers;
   for (int oprd_idx = 0; oprd_idx < operands.size(); ++oprd_idx) {
     const auto operand = operands.at(oprd_idx);
     const ShapeIndex nested_shape_idx = {1, oprd_idx}, normal_shape_idx = {1};
@@ -1893,7 +1893,7 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
       // Signal that start thunk not created with nullptr.
       GetCollectivesAsyncEvents().try_emplace(instr, nullptr);
     } else {
-      const NcclCollectiveThunk::Buffer buffer = {
+      const CollectiveThunk::Buffer buffer = {
           /*element_count=*/ShapeUtil::ElementsIn(operand_shape),
           /*source_buffer=*/source_slice,
           /*destination_buffer=*/result_slice,
@@ -1944,9 +1944,9 @@ absl::Status IrEmitterUnnested::EmitCollectiveThunk(
       inst, replica_count, partition_count);
   bool should_use_nccl_thunk = !is_degenerate && implementable_status.ok();
 
-  // Stash relevant information in NcclCollectiveThunk::Buffer even if we may
-  // not generate an NcclCollectiveThunk.
-  std::vector<NcclCollectiveThunk::Buffer> buffers;
+  // Stash relevant information in CollectiveThunk::Buffer even if we may
+  // not generate an CollectiveThunk.
+  std::vector<CollectiveThunk::Buffer> buffers;
 
   int64_t operand_count = inst->operand_count();
   buffers.reserve(operand_count);
@@ -1955,14 +1955,14 @@ absl::Status IrEmitterUnnested::EmitCollectiveThunk(
   auto add_buffer = [&](int64_t element_count, BufferAllocation::Slice src,
                         int64_t src_memory_space, BufferAllocation::Slice dst,
                         int64_t dst_memory_space) {
-    buffers.push_back(NcclCollectiveThunk::Buffer{
-        /*element_count=*/element_count,
-        /*source_buffer=*/src,
-        /*destination_buffer=*/dst,
-        /*source_memory_space=*/src_memory_space,
-        /*destination_memory_space=*/dst_memory_space,
-        /*source_value=*/nullptr,
-        /*destination_value=*/nullptr});
+    buffers.push_back(
+        CollectiveThunk::Buffer{/*element_count=*/element_count,
+                                /*source_buffer=*/src,
+                                /*destination_buffer=*/dst,
+                                /*source_memory_space=*/src_memory_space,
+                                /*destination_memory_space=*/dst_memory_space,
+                                /*source_value=*/nullptr,
+                                /*destination_value=*/nullptr});
   };
 
   if (kind == Thunk::Kind::kAllGatherStart) {
@@ -2217,7 +2217,7 @@ absl::Status IrEmitterUnnested::EmitCollectiveAsyncDone(
   if (is_send_recv) {
     stream_kind = GetStreamKindForP2P(start);
   }
-  AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
+  AddThunkToThunkSequence(std::make_unique<CollectiveDoneThunk>(
       kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),
       async_events_it->second, stream_kind));
   return absl::OkStatus();
@@ -2453,7 +2453,7 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
         instr->shape().IsTuple()
             ? instr->shape().tuple_shapes(0).layout().memory_space()
             : instr->shape().layout().memory_space();
-    const NcclCollectiveThunk::Buffer nccl_buffer = {
+    const CollectiveThunk::Buffer nccl_buffer = {
         /*element_count=*/ShapeUtil::ElementsIn(src->shape()),
         /*source_buffer=*/buffer,
         /*destination_buffer=*/buffer,
@@ -2527,7 +2527,7 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
             ? instr->shape().tuple_shapes(0).layout().memory_space()
             : instr->shape().layout().memory_space();
 
-    const NcclCollectiveThunk::Buffer nccl_buffer = {
+    const CollectiveThunk::Buffer nccl_buffer = {
         /*element_count=*/ShapeUtil::ElementsIn(instr->shape().tuple_shapes(0)),
         /*source_buffer=*/buffer,
         /*destination_buffer=*/buffer,
