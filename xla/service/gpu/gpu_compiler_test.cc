@@ -1511,7 +1511,7 @@ class PassOrderTest : public GpuCompilerTest {
     for (const HloPassMetadata& pass_metadata :
          optimized_module_->metadata()->proto().pass_metadata()) {
       std::string name = pass_metadata.pass_name();
-      if (match_pipeline_name) {
+      if (include_pipeline_name) {
         name = absl::StrCat(pass_metadata.pipeline_name(), ".",
                             pass_metadata.pass_name());
       }
