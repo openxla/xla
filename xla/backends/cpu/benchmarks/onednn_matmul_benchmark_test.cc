@@ -33,7 +33,7 @@ limitations under the License.
 
 namespace xla::cpu {
 
-static void BM_oneDNN_MM(benchmark::State &state) {
+static void BM_oneDNN_MM(benchmark::State& state) {
   PrimitiveType dtype = static_cast<PrimitiveType>(state.range(0));
   int64_t d0 = state.range(1);
 
@@ -71,7 +71,7 @@ static void BM_oneDNN_MM(benchmark::State &state) {
     return;
   }
 
-  std::vector<const Literal *> args = {&p0, &p1};
+  std::vector<const Literal*> args = {&p0, &p1};
   HloBenchmarkOptions benchmark_options;
   benchmark_options.use_thunk_runtime = false;
   CHECK_OK(RunHloBenchmark(
