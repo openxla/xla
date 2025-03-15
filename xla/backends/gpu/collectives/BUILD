@@ -292,6 +292,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:dso_loader",
         "@tsl//tsl/platform:numbers",
     ],
     alwayslink = True,  # registers collectives implementation
