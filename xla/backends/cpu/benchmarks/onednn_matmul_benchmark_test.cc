@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
 
 #include <cstdint>
 #include <random>
@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -29,11 +30,10 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla::cpu {
 
-static void BM_oneDNN_MM(benchmark::State& state) {
+static void BM_oneDNN_MM(benchmark::State &state) {
   PrimitiveType dtype = static_cast<PrimitiveType>(state.range(0));
   int64_t d0 = state.range(1);
 
@@ -71,7 +71,7 @@ static void BM_oneDNN_MM(benchmark::State& state) {
     return;
   }
 
-  std::vector<const Literal*> args = {&p0, &p1};
+  std::vector<const Literal *> args = {&p0, &p1};
   HloBenchmarkOptions benchmark_options;
   benchmark_options.use_thunk_runtime = false;
   CHECK_OK(RunHloBenchmark(
@@ -94,4 +94,4 @@ BENCHMARK_ONEDNN_MM(F16);
 
 }  // namespace xla::cpu
 
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL
