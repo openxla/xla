@@ -137,7 +137,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemm) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -290,7 +290,7 @@ TEST_F(DynamicSliceThunkTest, MulipleSlicedOperandsGemm) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -810,7 +810,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryArgumentOrder) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -959,7 +959,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryNumberOfArguments) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -1101,7 +1101,7 @@ TEST_F(DynamicSliceThunkTest, SlicedTupledOperandGemm) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -1455,7 +1455,7 @@ TEST_F(DynamicSliceThunkTest, SlicedOperandsSameBufferGemm) {
       ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
       PrecisionConfig::ALG_UNSET, std::nullopt,
-      se::blas::kDefaultComputePrecision, false, false,
+      se::blas::kDefaultComputePrecision, false, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
 
@@ -1642,7 +1642,7 @@ TEST_F(DynamicSliceThunkTest,
       /*precision_algorithm=*/PrecisionConfig::ALG_UNSET,
       /*algorithm=*/std::nullopt,
       /*compute_precision=*/se::blas::kDefaultComputePrecision,
-      /*grad_x=*/false, /*grad_y=*/false,
+      /*grad_x=*/false, /*grad_y=*/false, /*is_fp8*/ false,
       /*gpu_version=*/
       executor->GetDeviceDescription().gpu_compute_capability());
   ASSERT_TRUE(config.ok());
