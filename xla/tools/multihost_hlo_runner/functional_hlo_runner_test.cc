@@ -393,6 +393,16 @@ TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
                         /*num_partitions=*/16);
 }
 
+TEST_F(FunctionalHloRunnerTest, WhileKnownTripCountGetsCapped) {
+  compile_and_filecheck(
+      GetHloPath("while_with_known_trip_count.hlo"),
+      R"(
+      // CHECK: constant(5)
+      // CHECK: "known_trip_count":{"n":"5"}
+    )",
+      FunctionalHloRunner::PreprocessingOptions{.while_execution_count = 5});
+}
+
 // Name of the test binary.
 static const char* binary_name;
 constexpr int kNumNodes = 2;
