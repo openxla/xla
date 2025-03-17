@@ -46,7 +46,8 @@ TEST(TopologyTest, BuildGlobalTopology) {
   DeviceProto* d3 = locals[1].add_devices();
   d3->set_local_device_ordinal(1);
 
-  TF_ASSERT_OK_AND_ASSIGN(GlobalTopologyProto global,
+  TF_ASSERT_OK_AND_ASSIGN(
+      GlobalTopologyProto global,
       BuildGlobalTopology(absl::Span<LocalTopologyProto>(locals),
                           /*assign_global_device_ids=*/true));
   EXPECT_EQ(global.nodes_size(), 2);
@@ -197,7 +198,8 @@ TEST(TopologyTest, BuildGlobalTopologyWithExplicitSliceIndices) {
   DeviceProto* d3 = locals[1].add_devices();
   d3->set_local_device_ordinal(1);
 
-  TF_ASSERT_OK_AND_ASSIGN(GlobalTopologyProto global,
+  TF_ASSERT_OK_AND_ASSIGN(
+      GlobalTopologyProto global,
       BuildGlobalTopology(absl::Span<LocalTopologyProto>(locals),
                           /*assign_global_device_ids=*/true));
 
@@ -233,7 +235,8 @@ TEST(TopologyTest, BuildGpuTopology) {
   d3->set_local_device_ordinal(1);
   d3->set_core_count(20);
 
-  TF_ASSERT_OK_AND_ASSIGN(GlobalTopologyProto global,
+  TF_ASSERT_OK_AND_ASSIGN(
+      GlobalTopologyProto global,
       BuildGlobalTopology(absl::Span<LocalTopologyProto>(locals),
                           /*assign_global_device_ids=*/true));
 
@@ -262,7 +265,8 @@ TEST(TopologyTest, BuildGpuTopologyWithDifferentNumHostsPerSlice) {
   DeviceProto* d2 = locals[2].add_devices();
   d2->set_local_device_ordinal(0);
 
-  TF_ASSERT_OK_AND_ASSIGN(GlobalTopologyProto global,
+  TF_ASSERT_OK_AND_ASSIGN(
+      GlobalTopologyProto global,
       BuildGlobalTopology(absl::Span<LocalTopologyProto>(locals),
                           /*assign_global_device_ids=*/true));
 
@@ -289,7 +293,8 @@ TEST(TopologyTest, BuildGpuTopologyWithDifferentNumDevicesPerHost) {
   DeviceProto* d2 = locals[1].add_devices();
   d2->set_local_device_ordinal(0);
 
-  TF_ASSERT_OK_AND_ASSIGN(GlobalTopologyProto global,
+  TF_ASSERT_OK_AND_ASSIGN(
+      GlobalTopologyProto global,
       BuildGlobalTopology(absl::Span<LocalTopologyProto>(locals),
                           /*assign_global_device_ids=*/true));
 

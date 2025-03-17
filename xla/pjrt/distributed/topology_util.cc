@@ -164,8 +164,9 @@ absl::StatusOr<GlobalTopologyProto> BuildGlobalTopology(
     // Every local topology explicitly declares its slice_index.
     for (LocalTopologyProto& local : local_topologies) {
       if (!local.has_slice_index()) {
-        return InvalidArgument("Either all of or none of the local topologies "
-          "should explicitly set slice_index");
+        return InvalidArgument(
+            "Either all of or none of the local topologies "
+            "should explicitly set slice_index");
       }
       int slice_index = local.slice_index();
       for (DeviceProto& device : *local.mutable_devices()) {
@@ -177,19 +178,20 @@ absl::StatusOr<GlobalTopologyProto> BuildGlobalTopology(
     absl::flat_hash_map<std::string, int> boot_id_to_slice_index;
     for (LocalTopologyProto& local : local_topologies) {
       if (local.has_slice_index()) {
-        return InvalidArgument("Either all of or none of the local topologies "
-          "should explicitly set slice_index");
+        return InvalidArgument(
+            "Either all of or none of the local topologies "
+            "should explicitly set slice_index");
       }
       // Every new boot_id seen is treated as a new host/slice.
       auto [it, _] = boot_id_to_slice_index.try_emplace(
-        local.boot_id(), boot_id_to_slice_index.size());
+          local.boot_id(), boot_id_to_slice_index.size());
       for (DeviceProto& device : *local.mutable_devices()) {
         device.set_slice_index(it->second);
       }
     }
     if (VLOG_IS_ON(10)) {
       for (auto it = boot_id_to_slice_index.begin();
-          it != boot_id_to_slice_index.end(); ++it) {
+           it != boot_id_to_slice_index.end(); ++it) {
         LOG(INFO) << "BuildGlobalTopology boot_id_to_slice_index " << it->first
                   << "->" << it->second;
       }
@@ -259,7 +261,8 @@ absl::Status ExchangeTopologies(absl::string_view platform, int node_id,
     TF_ASSIGN_OR_RETURN(std::vector<LocalTopologyProto> local_topologies,
                         GetAllLocalTopologies(platform, num_nodes, kv_store,
                                               get_local_topology_timeout));
-    TF_ASSIGN_OR_RETURN(*global_topology,
+    TF_ASSIGN_OR_RETURN(
+        *global_topology,
         BuildGlobalTopology(absl::Span<LocalTopologyProto>(local_topologies),
                             assign_global_device_ids));
     TF_RETURN_IF_ERROR(kv_store->Set(global_topology_key,
