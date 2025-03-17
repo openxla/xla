@@ -37,6 +37,13 @@ namespace xla::gpu {
 // NVIDIA NVSHMEM library
 class NvshmemCollectives : public Collectives {
  public:
+  enum class TEAMSKIND {
+    kWORLD = 0,
+    kSHARED = 1,
+    kNODE = 2,
+    kTOTAL_TEAMS_KIND = 3,
+  };
+
   ~NvshmemCollectives() override;
 
   static NvshmemCollectives* Default();
@@ -67,6 +74,10 @@ class NvshmemCollectives : public Collectives {
     return absl::UnimplementedError("Not implemented.");
   }
 
+  absl::StatusOr<int64_t> NumOfParticipantsInTeam(TEAMSKIND team_kind);
+
+  size_t device_count_per_process() const { return device_count_per_process_; }
+
  private:
   absl::Status InitializeOnce();
 
@@ -79,6 +90,8 @@ class NvshmemCollectives : public Collectives {
   bool initialized_ = false;
 
   static constexpr char kKvStoreKey[] = "nvshmem_global_init";
+
+  std::vector<int32_t> all_teams;
 };
 
 }  // namespace xla::gpu

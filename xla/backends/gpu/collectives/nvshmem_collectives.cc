@@ -115,6 +115,13 @@ absl::Status NvshmemCollectives::InitializeOnce() {
     return absl::OkStatus();
   };
 
+  all_teams.resize((int32_t)NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND);
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kWORLD] =
+      NVSHMEM_TEAM_WORLD;
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kSHARED] =
+      NVSHMEM_TEAM_SHARED;
+  all_teams[(int32_t)NvshmemCollectives::TEAMSKIND::kNODE] = NVSHMEMX_TEAM_NODE;
+
   static absl::once_flag once_flag;
   absl::Status status = absl::OkStatus();
   absl::call_once(once_flag, [&]() {
@@ -151,6 +158,16 @@ absl::Status NvshmemCollectives::Deallocate(void* buffer) {
                                 buffer);
   nvshmem_free(buffer);
   return absl::OkStatus();
+}
+
+absl::StatusOr<int64_t> NvshmemCollectives::NumOfParticipantsInTeam(
+    NvshmemCollectives::TEAMSKIND team_kind) {
+  if (team_kind < NvshmemCollectives::TEAMSKIND::kWORLD ||
+      team_kind > NvshmemCollectives::TEAMSKIND::kTOTAL_TEAMS_KIND) {
+    return absl::InternalError(
+        "Invalid team when querying NumOfParticipantsInTeam.");
+  }
+  return nvshmem_team_n_pes(all_teams[(int32_t)team_kind]);
 }
 
 }  // namespace xla::gpu
