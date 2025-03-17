@@ -282,6 +282,7 @@ xla_test(
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
