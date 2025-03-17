@@ -89,7 +89,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
            PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
           {"enable_mock_nccl", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
           {"mock_gpu_topology", PJRT_NamedValue_Type::PJRT_NamedValue_kString},
-          {"override_slice_index", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+          {"override_slice_index",
+           PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
       });
   PJRT_RETURN_IF_ERROR(
       ValidateCreateOptions(create_options, kExpectedOptionNameAndTypes));
