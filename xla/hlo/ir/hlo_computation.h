@@ -984,7 +984,7 @@ class HloComputation {
   }
 
   // Returns the only caller with the given opcode, if there is exactly one.
-  std::optional<HloInstruction*> GetUniqueCaller(HloOpcode opcode) {
+  std::optional<HloInstruction*> GetUniqueCaller(HloOpcode opcode) const {
     auto callers = caller_instructions(opcode);
     if (callers.size() == 1) {
       return callers.front();
