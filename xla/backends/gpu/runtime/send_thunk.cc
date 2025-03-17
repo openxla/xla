@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/nccl_recv_thunk.h"
+#include "xla/backends/gpu/runtime/send_thunk.h"
 
 #include <cstdint>
 #include <optional>
@@ -24,9 +24,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/nccl_p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -42,22 +43,21 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-NcclRecvThunk::NcclRecvThunk(ThunkInfo thunk_info,
-                             const HloRecvInstruction* instr,
-                             int64_t replica_count, int64_t partition_count,
-                             const Buffer& buffer)
-    : CollectiveThunk(Thunk::kNcclRecv, thunk_info,
+SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
+                     int64_t replica_count, int64_t partition_count,
+                     const Buffer& buffer)
+    : CollectiveThunk(Thunk::kSend, thunk_info,
                       /*is_sync=*/false, GetStreamKindForP2P(instr)),
-      config_(GetNcclP2PConfigForSendRecv(instr, instr->shape().tuple_shapes(0),
-                                          replica_count, partition_count)),
+      config_(GetP2PConfigForSendRecv(instr, instr->operand(0)->shape(),
+                                      replica_count, partition_count)),
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
-                                  NcclP2PConfig::ValidationKind::kConditional
+                                  P2PConfig::ValidationKind::kConditional
                               ? new ExecutionCounters()
                               : nullptr),
       hlo_name_(instr->name()) {}
 
-absl::Status NcclRecvThunk::Initialize(const InitializeParams& params) {
+absl::Status SendThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
   if (execution_counters_) {
     TF_RETURN_IF_ERROR(execution_counters_->Initialize(
@@ -66,9 +66,9 @@ absl::Status NcclRecvThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status NcclRecvThunk::RunCollective(const ExecuteParams& params,
-                                          se::Stream& stream,
-                                          CommunicatorHandle comm_handle) {
+absl::Status SendThunk::RunCollective(const ExecuteParams& params,
+                                      se::Stream& stream,
+                                      CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, {buffer_},
@@ -86,15 +86,14 @@ absl::Status NcclRecvThunk::RunCollective(const ExecuteParams& params,
           : current_logical_id.computation_id;
   std::string device_string = GetDeviceString(*params.collective_params);
 
-  const NcclP2PConfig::SourceTargetMapEntry source_target =
-      NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
+  const P2PConfig::SourceTargetMapEntry source_target =
+      P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
   DeviceBufferPair& buffer = device_buffers[0];
 
-  // Determine the source IDs for this instance. The source ID is the ID for
-  // the peer that will copy its data to this instance. If there is no
-  // source, just memzero() the destination buffer.
+  // Determine the target IDs for this instance. The target ID is the ID
+  // to which this instance will copy its data.
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing Recv from device ordinal: " << device_ordinal
+  VLOG(3) << "Performing Send from device ordinal: " << device_ordinal
           << ", current_id: " << current_id << ", group mode: "
           << CollectiveOpGroupModeToString(config_.config.group_mode) << " ("
           << hlo_name_ << ")";
@@ -103,28 +102,26 @@ absl::Status NcclRecvThunk::RunCollective(const ExecuteParams& params,
   TF_RETURN_IF_ERROR(MaybeRegisterBuffers(collectives, stream.parent(),
                                           {buffer}, comm_handle.comm));
 
-  const std::optional<int64_t> source_id = source_target.source;
-  se::DeviceMemoryBase dest_addr = buffer.destination_buffer;
+  const std::optional<int64_t> target_id = source_target.target;
+  se::DeviceMemoryBase src_addr = buffer.source_buffer;
 
-  VLOG(3) << absl::StreamFormat("%s : id = %d, source_id = %d", device_string,
-                                current_id, source_id.value_or(-1));
+  VLOG(3) << absl::StreamFormat("%s : id = %d, target_id = %d", device_string,
+                                current_id, target_id.value_or(-1));
 
-  // Receive data from the source peer to the destination buffer.
-  if (source_id) {
+  // Send source buffer to target peer if needed.
+  if (target_id) {
     bool should_run =
-        config_.validation_kind == NcclP2PConfig::ValidationKind::kInvalid
-            ? false
-            : true;
-    if (config_.validation_kind ==
-        NcclP2PConfig::ValidationKind::kConditional) {
+        config_.validation_kind == P2PConfig::ValidationKind::kInvalid ? false
+                                                                       : true;
+    if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
       se::StreamExecutor* executor = params.stream->parent();
       TF_ASSIGN_OR_RETURN(int64_t* counter,
                           execution_counters_->GetCounter(
                               executor, params.collective_params->run_id));
       auto it = config_.source_target_to_bounds.find(
-          std::make_pair(*source_target.source, current_id));
+          std::make_pair(current_id, *source_target.target));
       if (it == config_.source_target_to_bounds.end()) {
-        return absl::InternalError("Missing bounds for conditional Recv");
+        return absl::InternalError("Missing bounds for conditional Send");
       }
       if (*counter < it->second.first || *counter > it->second.second) {
         should_run = false;
@@ -132,20 +129,16 @@ absl::Status NcclRecvThunk::RunCollective(const ExecuteParams& params,
       VLOG(3) << "RunCollective counter " << *counter << " " << should_run;
       ++(*counter);
     }
-    if (should_run) {
-      TF_RETURN_IF_ERROR(comm_handle.comm->Recv(
-          dest_addr, buffer.element_type, buffer.element_count,
-          RankId(*source_id), GpuCollectives::On(stream)));
-    } else {
-      VLOG(3) << "Skipping Recv";
-    }
 
-  } else {
-    // If there is no source peer, i.e. no sender to this instance, zero out
-    // the destination buffer.
-    VLOG(3) << absl::StreamFormat("%s : Recv: Issuing MemZero", device_string);
-    TF_RETURN_IF_ERROR(stream.MemZero(&dest_addr, dest_addr.size()));
+    if (should_run) {
+      TF_RETURN_IF_ERROR(comm_handle.comm->Send(
+          src_addr, buffer.element_type, buffer.element_count,
+          RankId(*target_id), GpuCollectives::On(stream)));
+    } else {
+      VLOG(3) << "Skipping Send";
+    }
   }
+
   return absl::OkStatus();
 }
 

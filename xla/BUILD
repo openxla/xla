@@ -348,6 +348,7 @@ cc_library(
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:stacktrace",
     ],
 )
@@ -358,12 +359,14 @@ xla_cc_test(
     deps = [
         ":types",
         ":util",
+        ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",

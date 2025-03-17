@@ -37,6 +37,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
-#include "xla/backends/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
@@ -1172,7 +1172,7 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
   Thunk::Kind collective_done_thunk_kind;
   switch (instr->opcode()) {
     case HloOpcode::kReduceScatter:
-      collective_done_thunk_kind = Thunk::kNcclReduceScatterDone;
+      collective_done_thunk_kind = Thunk::kReduceScatterDone;
       break;
     default:
       return absl::InternalError(
@@ -1357,8 +1357,7 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
     const HloReduceScatterInstruction* rs =
         Cast<const HloReduceScatterInstruction>(
             &maybe_collective->instruction());
-    return EmitCollective<NcclReduceScatterStartThunk,
-                          HloReduceScatterInstruction>(
+    return EmitCollective<ReduceScatterStartThunk, HloReduceScatterInstruction>(
         ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/rs,
         /*use_global_device_ids=*/rs->use_global_device_ids(),
         /*call_graph=*/call_graph_);

@@ -95,7 +95,6 @@ cc_library(
         ":gpu_collectives",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
-        "//xla:status_macros",
         "//xla:types",
         "//xla:util",
         "//xla/core/collectives",
@@ -184,7 +183,6 @@ cc_library(
     ],
 )
 
-# TODO(b/380457503): Update visibility to "//visibility:private".
 cc_library(
     name = "nccl_collectives",
     srcs = if_gpu_is_configured(["nccl_collectives.cc"]),
@@ -194,6 +192,7 @@ cc_library(
     ]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
+    visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
         ":nccl_communicator",
@@ -226,7 +225,6 @@ cc_library(
     alwayslink = True,  # registers collectives implementation
 )
 
-# TODO(b/380457503): Update visibility to "//visibility:private".
 cc_library(
     name = "nccl_communicator",
     srcs = if_gpu_is_configured(["nccl_communicator.cc"]),
@@ -236,6 +234,7 @@ cc_library(
     ]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
+    visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
         ":nccl_errors",

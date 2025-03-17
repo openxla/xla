@@ -100,6 +100,7 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
@@ -826,7 +827,7 @@ PjRtStreamExecutorClient::BufferFromHostBufferInternal(
         device_shape,
         transfer_manager->ChooseCompactLayoutForShape(device_shape));
   }
-  absl::InlinedVector<int64_t, 4> shape_strides(device_shape.dimensions_size());
+  absl::InlinedVector<int64_t, 4> shape_strides(device_shape.rank());
   TF_RETURN_IF_ERROR(
       ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
@@ -1895,8 +1896,7 @@ PjRtStreamExecutorBuffer::CopyToDeviceMemorySpace(
     TF_ASSIGN_OR_RETURN(std::shared_ptr<Literal> literal, ToLiteralSync());
     // Avoid use-after-free on `literal` due to unsequenced move and use.
     Literal* literal_pointer = literal.get();
-    absl::InlinedVector<int64_t, 4> byte_strides(
-        literal->shape().dimensions_size());
+    absl::InlinedVector<int64_t, 4> byte_strides(literal->shape().rank());
     TF_RETURN_IF_ERROR(
         ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
     return dst_device->client()->BufferFromHostBuffer(
@@ -2079,7 +2079,7 @@ absl::Status CheckCompatibleShapes(bool strict_shape_checking,
   // shape `pred[0]`.
   if (execution_shape.IsToken() &&
       buffer_on_device_shape.element_type() == PrimitiveType::PRED &&
-      buffer_on_device_shape.dimensions_size() == 1 &&
+      buffer_on_device_shape.rank() == 1 &&
       buffer_on_device_shape.dimensions(0) == 0) {
     return absl::OkStatus();
   }
@@ -2289,7 +2289,8 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
     }
     fingerprint = tsl::FingerprintCat128(
         fingerprint,
-        tsl::Fingerprint128(executable->executable()->module().ToString()));
+        tsl::Fingerprint128(executable->executable()->module().ToString(
+            HloPrintOptions::ModuleFingerprint())));
     executables_.emplace_back(std::move(executable));
     on_device_executable_parameter_shapes_.push_back(
         std::move(parameter_shapes));
@@ -3577,8 +3578,8 @@ PjRtStreamExecutorClient::CompileInternal(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
-                                  CompileOptions options) {
+PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
+                                         CompileOptions options) {
   XlaComputation xla_computation;
   const ExecutableBuildOptions& exec_build_options =
       options.executable_build_options;
@@ -3638,8 +3639,8 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
-                                  CompileOptions options) {
+PjRtStreamExecutorClient::CompileAndLoad(const XlaComputation& computation,
+                                         CompileOptions options) {
   std::vector<const Shape*> argument_layout_pointers;
   const ExecutableBuildOptions& build_options =
       options.executable_build_options;

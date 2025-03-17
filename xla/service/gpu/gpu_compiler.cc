@@ -169,6 +169,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/metrics.h"
+#include "xla/service/gpu/model/collective_ptable_stats_collection.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
@@ -522,10 +523,23 @@ void CheckNotScheduled(HloModule* hlo_module) {
 void LogDebugOptions(HloModule* hlo_module) {
   // LOG_LINES is used instead of LOG since the message can exceed the
   // maximum line length, which results in the message being truncated.
-  XLA_VLOG_LINES(
-      1, absl::StrFormat("GpuCompilationEnvironment of hlo_module %s:\n%s",
-                         hlo_module->name(),
-                         hlo_module->config().debug_options().DebugString()));
+  //
+  // We are also printing all the fields, instead of the DebugString() because
+  // DebugString() does not print the default values of the fields. For example
+  // for all boolean fields, the default value is false, it will not be printed
+  // by DebugString() if the value is false. We however need that value to be
+  // printed, because our "default" values (defined in
+  // xla/debug_options_flags.cc) override the default values of the fields. If
+  // we set the "default" value of a field to be true in
+  // `debug_option_flags.cc`, and it is overridden by XLA_FLAGS to false, we
+  // will not see it in the DebugString(). So, we print all the fields.
+  if (VLOG_IS_ON(1)) {
+    XLA_VLOG_LINES(
+        1,
+        absl::StrFormat("GpuCompilationEnvironment of hlo_module %s:\n%s",
+                        hlo_module->name(),
+                        PrintAllFields(hlo_module->config().debug_options())));
+  }
 }
 
 AlgebraicSimplifierOptions LayoutInsensitiveAlgebraicSimplifierOptions(
@@ -2565,9 +2579,19 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
     // Cost model analysis for compute.
     pipeline.AddPass<GpuCostModelStatsCollection>(gpu_device_info,
                                                   cost_analysis_options);
-    // Cost model analysis for collectives.
+    // S-curve model analysis for collectives.
     pipeline.AddPass<SolGpuCostModelStatsCollection>(gpu_device_info,
                                                      ShapeSizeBytesFunction());
+
+    // Perf tables model analysis for collectives.
+    if (std::string collective_perf_table_path =
+            module->config()
+                .debug_options()
+                .xla_gpu_experimental_collective_perf_table_path();
+        !collective_perf_table_path.empty()) {
+      pipeline.AddPass<CollectivePerfTableStatsCollection>(
+          collective_perf_table_path, gpu_device_info);
+    }
   }
   return pipeline.Run(module).status();
 }

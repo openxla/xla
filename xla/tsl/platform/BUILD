@@ -425,6 +425,8 @@ cc_library(
         ":statusor",
         ":types",
         "//xla/tsl/platform:env",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:mutex",

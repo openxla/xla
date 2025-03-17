@@ -13,9 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/nccl_collective_permute_thunk.h"
+#include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,12 +33,15 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/nccl_p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
@@ -43,9 +49,8 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
-#include "xla/status_macros.h"
+#include "xla/service/rendezvous.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -57,7 +62,7 @@ namespace {
 
 absl::StatusOr<const int64_t> GetCurrentId(
     Thunk::CollectiveExecuteParams* collective_params,
-    const NcclP2PConfig& config) {
+    const P2PConfig& config) {
   GlobalDeviceId global_device_id = collective_params->global_device_id;
   TF_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
@@ -69,9 +74,8 @@ absl::StatusOr<const int64_t> GetCurrentId(
   return current_id;
 }
 
-bool IsLocalPeerTransfer(
-    const NcclP2PConfig::SourceTargetMapEntry& source_target,
-    const int64_t current_id, const int64_t device_count) {
+bool IsLocalPeerTransfer(const P2PConfig::SourceTargetMapEntry& source_target,
+                         const int64_t current_id, const int64_t device_count) {
   const std::optional<int64_t> source_id = source_target.source;
   const std::optional<int64_t> target_id = source_target.target;
   // Mixing nccl p2p with p2p memcopy will cause random deadlocks, namely
@@ -90,21 +94,21 @@ bool IsLocalPeerTransfer(
 
 }  // namespace
 
-NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
+CollectivePermuteStartThunk::CollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count,
     const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled,
     AsyncStreamKind stream_kind)
-    : CollectiveThunk(Thunk::kNcclCollectivePermuteStart, thunk_info,
+    : CollectiveThunk(Thunk::kCollectivePermuteStart, thunk_info,
                       IsGPUSyncCollective(*instr), stream_kind),
-      config_(GetNcclP2PConfig(instr, replica_count, partition_count)),
+      config_(GetP2PConfig(instr, replica_count, partition_count)),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}
 
-/*static*/ NcclP2PConfig NcclCollectivePermuteStartThunk::GetNcclP2PConfig(
+/*static*/ P2PConfig CollectivePermuteStartThunk::GetP2PConfig(
     const HloCollectivePermuteInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
-  NcclP2PConfig collective_permute_config;
+  P2PConfig collective_permute_config;
   auto& config = collective_permute_config.config;
 
   config.operand_count = instr->operand_count();
@@ -143,7 +147,7 @@ NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
   return collective_permute_config;
 }
 
-/*static*/ bool NcclCollectivePermuteStartThunk::IsDegenerate(
+/*static*/ bool CollectivePermuteStartThunk::IsDegenerate(
     const HloCollectivePermuteInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
   // The collective permute is degenerate if all source-target pairs are
@@ -162,13 +166,13 @@ NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
                         });
 }
 
-/*static*/ CollectiveOpGroupMode NcclCollectivePermuteStartThunk::GetGroupMode(
+/*static*/ CollectiveOpGroupMode CollectivePermuteStartThunk::GetGroupMode(
     const HloCollectivePermuteInstruction* instr) {
   return GetCollectiveOpGroupMode(instr->channel_id().has_value(), std::nullopt)
       .value();
 }
 
-absl::Status NcclCollectivePermuteStartThunk::Initialize(
+absl::Status CollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
   device_count_ = params.local_device_count;
@@ -191,8 +195,8 @@ absl::Status NcclCollectivePermuteStartThunk::Initialize(
         std::vector<DeviceBufferPair> device_buffers,
         ConvertToDeviceBuffers(params.buffer_allocations, {buffers_},
                                config_.config.operand_element_type));
-    const NcclP2PConfig::SourceTargetMapEntry source_target =
-        NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
+    const P2PConfig::SourceTargetMapEntry source_target =
+        P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
 
     const std::optional<int64_t> source_id = source_target.source;
 
@@ -229,7 +233,7 @@ bool operator==(const CallRendezvousKey& a, const CallRendezvousKey& b) {
   return a.run_id == b.run_id;
 }
 
-absl::Status NcclCollectivePermuteStartThunk::RunCollective(
+absl::Status CollectivePermuteStartThunk::RunCollective(
     const ExecuteParams& params, se::Stream& stream,
     CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
@@ -241,8 +245,8 @@ absl::Status NcclCollectivePermuteStartThunk::RunCollective(
                       GetCurrentId(params.collective_params, config_));
   std::string device_string = GetDeviceString(*params.collective_params);
 
-  const NcclP2PConfig::SourceTargetMapEntry source_target =
-      NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
+  const P2PConfig::SourceTargetMapEntry source_target =
+      P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
   bool is_local_peer =
       IsLocalPeerTransfer(source_target, current_id, device_count_);
   VLOG(5) << "Is local peer : " << (is_local_peer ? "true" : "false");
@@ -295,12 +299,10 @@ absl::Status NcclCollectivePermuteStartThunk::RunCollective(
 }
 
 absl::Status RunCollectivePermute(
-    GpuCollectives* collectives,
-    NcclP2PConfig::SourceTargetMapEntry source_target,
+    GpuCollectives* collectives, P2PConfig::SourceTargetMapEntry source_target,
     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
     Communicator* comm, absl::string_view device_string, int64_t current_id,
-    bool use_memcpy,
-    NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
+    bool use_memcpy, CollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
   // Determine the source and target IDs for this instance. The source ID is the
   // ID which will copy its data to this instance. The destination ID is the ID
   // to which this instance will copy its data. Either are optional.

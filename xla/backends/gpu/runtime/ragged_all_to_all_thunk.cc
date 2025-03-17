@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/nccl_ragged_all_to_all_thunk.h"
+#include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
 #include <cstdint>
 #include <memory>
@@ -65,9 +65,9 @@ namespace {
 // send_sizes, output_offsets, and recv_sizes.
 constexpr int64_t kNumRaggedMetadataOperands = 4;
 
-NcclRaggedAllToAllConfig GetNcclRaggedAllToAllConfig(
+RaggedAllToAllConfig GetRaggedAllToAllConfig(
     const HloRaggedAllToAllInstruction* instr) {
-  NcclRaggedAllToAllConfig config;
+  RaggedAllToAllConfig config;
   config.config = GetCollectiveConfig(instr, std::nullopt);
 
   const Shape& input_size_shape = instr->operand(2)->shape();
@@ -396,13 +396,13 @@ absl::Status RunOneShotRaggedAllToAll(
 
 }  // namespace
 
-NcclRaggedAllToAllStartThunk::NcclRaggedAllToAllStartThunk(
+RaggedAllToAllStartThunk::RaggedAllToAllStartThunk(
     ThunkInfo thunk_info, const HloRaggedAllToAllInstruction* instr,
     std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
-    : CollectiveThunk(Thunk::kNcclRaggedAllToAllStart, thunk_info,
+    : CollectiveThunk(Thunk::kRaggedAllToAllStart, thunk_info,
                       IsGPUSyncCollective(*instr),
                       AsyncStreamKind::kCollective),
-      config_(GetNcclRaggedAllToAllConfig(instr)),
+      config_(GetRaggedAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled),
       one_shot_kernel_enabled_(
@@ -413,13 +413,13 @@ NcclRaggedAllToAllStartThunk::NcclRaggedAllToAllStartThunk(
   CHECK_EQ(config_.config.operand_count, buffers_.size());
 }
 
-/*static*/ absl::Status NcclRaggedAllToAllStartThunk::CheckImplementable(
+/*static*/ absl::Status RaggedAllToAllStartThunk::CheckImplementable(
     const HloRaggedAllToAllInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
   auto status = [&instr]() -> absl::Status {
     for (HloInstruction* operand : instr->operands()) {
       Shape shape = operand->shape();
-      TF_RETURN_IF_ERROR(IsValidOperand(shape, Thunk::kNcclRaggedAllToAll));
+      TF_RETURN_IF_ERROR(IsValidOperand(shape, Thunk::kRaggedAllToAll));
     }
 
     if (!ShapeUtil::IsEffectivelyMostMajorDimension(instr->shape(), 0)) {
@@ -437,16 +437,16 @@ NcclRaggedAllToAllStartThunk::NcclRaggedAllToAllStartThunk(
 
     return absl::OkStatus();
   };
-  return AddOpDescription<NcclRaggedAllToAllStartThunk>(
+  return AddOpDescription<RaggedAllToAllStartThunk>(
       status(), instr, replica_count, partition_count);
 }
 
-/*static*/ CollectiveOpGroupMode NcclRaggedAllToAllStartThunk::GetGroupMode(
+/*static*/ CollectiveOpGroupMode RaggedAllToAllStartThunk::GetGroupMode(
     const HloRaggedAllToAllInstruction* instr) {
-  return GetNcclRaggedAllToAllConfig(instr).config.group_mode;
+  return GetRaggedAllToAllConfig(instr).config.group_mode;
 }
 
-absl::Status NcclRaggedAllToAllStartThunk::Initialize(
+absl::Status RaggedAllToAllStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
   device_count_ = params.local_device_count;
@@ -478,7 +478,7 @@ absl::Status NcclRaggedAllToAllStartThunk::Initialize(
                                   std::move(output_offsets_device_buffer));
   }
 
-  if (should_use_memcpy() || should_use_one_shot_kernel()) {
+  if (is_local()) {
     se::StreamExecutor* executor = params.executor;
     {
       absl::MutexLock lock(&events_mutex_);
@@ -498,7 +498,7 @@ absl::Status NcclRaggedAllToAllStartThunk::Initialize(
   return absl::OkStatus();
 }
 
-bool NcclRaggedAllToAllStartThunk::is_local() const {
+bool RaggedAllToAllStartThunk::is_local() const {
   CHECK_NE(device_count_, -1);
   for (const auto& replica_group : config_.config.replica_groups) {
     const int64_t node_id = replica_group.replica_ids().at(0) / device_count_;
@@ -512,7 +512,7 @@ bool NcclRaggedAllToAllStartThunk::is_local() const {
   return true;
 }
 
-absl::Status NcclRaggedAllToAllStartThunk::RunCollective(
+absl::Status RaggedAllToAllStartThunk::RunCollective(
     const ExecuteParams& params, se::Stream& stream,
     CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
@@ -541,34 +541,42 @@ absl::Status NcclRaggedAllToAllStartThunk::RunCollective(
     output_offsets_device_buffer = jt->second.memory();
   }
 
-  if (should_use_memcpy() || should_use_one_shot_kernel()) {
-    se::Event* start_event = nullptr;
-    se::Event* end_event = nullptr;
-    {
-      absl::MutexLock lock(&events_mutex_);
-      start_event = start_events_[stream.parent()].get();
-      end_event = end_events_[stream.parent()].get();
-    }
-    TF_ASSIGN_OR_RETURN(
-        GpuCliqueKey clique_key,
-        GetGpuCliqueKey(collectives, *params.collective_params,
-                        config().replica_groups, config().group_mode,
-                        nccl_stream_id(), GetAsyncStreamKind()));
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(collectives, *params.collective_params,
+                      config().replica_groups, config().group_mode,
+                      nccl_stream_id(), GetAsyncStreamKind()));
 
-    std::optional<RankId> rank =
-        clique_key.rank(params.collective_params->global_device_id);
+  std::optional<RankId> rank =
+      clique_key.rank(params.collective_params->global_device_id);
 
-    TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
+  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
 
-    if (should_use_one_shot_kernel() &&
-        IsRaggedAllToAllKernelSupported(num_ranks,
-                                        device_buffers[0].element_type)) {
-      return RunOneShotRaggedAllToAll(
-          collectives, clique_key, config_.num_input_rows,
-          config_.num_row_elements, config_.num_total_updates, device_buffers,
-          stream, *rank, comm_handle.comm, start_event, end_event);
-    }
+  TF_ASSIGN_OR_RETURN(
+      bool peer_access_enabled,
+      params.collective_cliques->peer_access_enabled(clique_key));
 
+  se::Event* start_event = nullptr;
+  se::Event* end_event = nullptr;
+  {
+    absl::MutexLock lock(&events_mutex_);
+    start_event = start_events_[stream.parent()].get();
+    end_event = end_events_[stream.parent()].get();
+  }
+
+  bool should_use_one_shot_kernel =
+      is_local() && one_shot_kernel_enabled_ && peer_access_enabled &&
+      IsRaggedAllToAllKernelSupported(num_ranks,
+                                      device_buffers[0].element_type);
+
+  if (should_use_one_shot_kernel) {
+    return RunOneShotRaggedAllToAll(
+        collectives, clique_key, config_.num_input_rows,
+        config_.num_row_elements, config_.num_total_updates, device_buffers,
+        stream, *rank, comm_handle.comm, start_event, end_event);
+  }
+
+  if (should_use_memcpy()) {
     return RunMemCpyRaggedAllToAll(
         collectives, clique_key, *rank, config_.num_row_elements,
         config_.num_total_updates, device_buffers, stream, comm_handle.comm,

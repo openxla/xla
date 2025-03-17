@@ -87,7 +87,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
-  opts.set_xla_cpu_use_fusion_emitters(false);
+  opts.set_xla_cpu_use_fusion_emitters(true);
   opts.set_xla_cpu_use_thunk_runtime(true);
   opts.set_xla_cpu_use_xnnpack(false);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
@@ -110,8 +110,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   // By default, copy TF's Eigen style min_max behavior with nans.
   opts.set_xla_cpu_enable_fast_min_max(true);
-
-  opts.set_xla_gpu_enable_cudnn_frontend(true);
 
   opts.set_xla_gpu_enable_cublaslt(false);
 
@@ -309,6 +307,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
+  opts.set_xla_gpu_experimental_collective_perf_table_path("");
   opts.set_xla_gpu_experimental_disable_binary_libraries(false);
   opts.set_xla_ignore_channel_id(true);
   opts.set_xla_gpu_dot_merger_threshold_mb(32);
@@ -317,7 +316,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
-  opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(false);
+  opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
@@ -1443,11 +1442,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_dump_hlo_unoptimized_snapshots(),
       "Every time an HLO module is run, dumps an HloUnoptimizedSnapshot to the "
       "directory specified by --xla_dump_to."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_cudnn_frontend",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cudnn_frontend),
-      debug_options->xla_gpu_enable_cudnn_frontend(),
-      "Use the cuDNN frontend API for convolutions when possible."));
   flag_list->push_back(tsl::Flag("xla_gpu_enable_cudnn_fmha",
                                  noop_flag_setter<bool>, false,
                                  "[Deprecated, do not use]"));
@@ -2302,6 +2296,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_collective_cse_distance_threshold),
       debug_options->xla_gpu_experimental_collective_cse_distance_threshold(),
       "Set distance threshold for Collective CSE."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_collective_perf_table_path",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_collective_perf_table_path),
+      debug_options->xla_gpu_experimental_collective_perf_table_path(),
+      "If non empty will interpret this variable as a path for performance "
+      "tables for collectives. Expects `xla.gpu.DeviceHloInstructionProfiles` "
+      "proto."));
 }  // NOLINT(readability/fn_size)1
 
 // Allocates flag_values and flag_objects; this function must not be called more
