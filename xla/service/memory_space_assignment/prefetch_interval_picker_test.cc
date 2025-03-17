@@ -73,18 +73,17 @@ TEST_F(CostAnalysisPrefetchIntervalPickerTest, PrefetchIntervalOrder) {
                           ParseAndReturnVerifiedModule(hlo_string));
 
   HloCostAnalysis hlo_cost_analysis;
-  std::unique_ptr<HloCostAnalysisWithAcceptState> hlo_cost_analysis_wrapper =
+  auto hlo_cost_analysis_wrapper =
       std::make_unique<HloCostAnalysisWithAcceptState>(hlo_cost_analysis);
-  std::unique_ptr<OpCostManager> op_cost_manager =
-      std::make_unique<OpCostManager>(
-          OpCostManager::Options{
-              /*enable_cache=*/false,
-              /*enable_analysis_logging=*/false,
-          },
-          OpCostManager::CalculationNode::CreateLeaf(
-              "HloCostAnalysis",
-              CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
-              /*enable_cache=*/false));
+  auto op_cost_manager = std::make_unique<OpCostManager>(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
   CostAnalysisOptions options;
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,
@@ -184,18 +183,17 @@ TEST_F(CostAnalysisPrefetchIntervalPickerTest, PrefetchIntervalOrderWhile) {
                           ParseAndReturnVerifiedModule(hlo_string));
 
   HloCostAnalysis hlo_cost_analysis;
-  std::unique_ptr<HloCostAnalysisWithAcceptState> hlo_cost_analysis_wrapper =
+  auto hlo_cost_analysis_wrapper =
       std::make_unique<HloCostAnalysisWithAcceptState>(hlo_cost_analysis);
-  std::unique_ptr<OpCostManager> op_cost_manager =
-      std::make_unique<OpCostManager>(
-          OpCostManager::Options{
-              /*enable_cache=*/false,
-              /*enable_analysis_logging=*/false,
-          },
-          OpCostManager::CalculationNode::CreateLeaf(
-              "HloCostAnalysis",
-              CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
-              /*enable_cache=*/false));
+  auto op_cost_manager = std::make_unique<OpCostManager>(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
   CostAnalysisOptions options;
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,
@@ -280,18 +278,17 @@ TEST_F(CostAnalysisPrefetchIntervalPickerTest, NestedWhile) {
 
   CostAnalysisOptions options;
   HloCostAnalysis hlo_cost_analysis;
-  std::unique_ptr<HloCostAnalysisWithAcceptState> hlo_cost_analysis_wrapper =
+  auto hlo_cost_analysis_wrapper =
       std::make_unique<HloCostAnalysisWithAcceptState>(hlo_cost_analysis);
-  std::unique_ptr<OpCostManager> op_cost_manager =
-      std::make_unique<OpCostManager>(
-          OpCostManager::Options{
-              /*enable_cache=*/false,
-              /*enable_analysis_logging=*/false,
-          },
-          OpCostManager::CalculationNode::CreateLeaf(
-              "HloCostAnalysis",
-              CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
-              /*enable_cache=*/false));
+  auto op_cost_manager = std::make_unique<OpCostManager>(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,
       FakeCostAnalysis::Create(*op_cost_manager, *module, options));
@@ -360,18 +357,17 @@ TEST_F(CostAnalysisPrefetchIntervalPickerTest, ConsecutiveConditionals) {
 
   CostAnalysisOptions options;
   HloCostAnalysis hlo_cost_analysis;
-  std::unique_ptr<HloCostAnalysisWithAcceptState> hlo_cost_analysis_wrapper =
+  auto hlo_cost_analysis_wrapper =
       std::make_unique<HloCostAnalysisWithAcceptState>(hlo_cost_analysis);
-  std::unique_ptr<OpCostManager> op_cost_manager =
-      std::make_unique<OpCostManager>(
-          OpCostManager::Options{
-              /*enable_cache=*/false,
-              /*enable_analysis_logging=*/false,
-          },
-          OpCostManager::CalculationNode::CreateLeaf(
-              "HloCostAnalysis",
-              CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
-              /*enable_cache=*/false));
+  auto op_cost_manager = std::make_unique<OpCostManager>(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,
       FakeCostAnalysis::Create(*op_cost_manager, *module, options));
@@ -417,18 +413,17 @@ TEST_F(CostAnalysisPrefetchIntervalPickerTest, EarliestLatestWindowTooSmall) {
 
   CostAnalysisOptions options;
   HloCostAnalysis hlo_cost_analysis;
-  std::unique_ptr<HloCostAnalysisWithAcceptState> hlo_cost_analysis_wrapper =
+  auto hlo_cost_analysis_wrapper =
       std::make_unique<HloCostAnalysisWithAcceptState>(hlo_cost_analysis);
-  std::unique_ptr<OpCostManager> op_cost_manager =
-      std::make_unique<OpCostManager>(
-          OpCostManager::Options{
-              /*enable_cache=*/false,
-              /*enable_analysis_logging=*/false,
-          },
-          OpCostManager::CalculationNode::CreateLeaf(
-              "HloCostAnalysis",
-              CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
-              /*enable_cache=*/false));
+  auto op_cost_manager = std::make_unique<OpCostManager>(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,
       FakeCostAnalysis::Create(*op_cost_manager, *module, options));

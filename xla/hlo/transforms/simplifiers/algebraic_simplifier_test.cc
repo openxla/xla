@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -69,7 +70,9 @@ namespace xla {
 namespace {
 
 using ::testing::ElementsAre;
+using ::tsl::testing::IsOkAndHolds;
 namespace m = match;
+namespace op = xla::testing::opcode_matchers;
 
 class AlgebraicSimplifierTest : public HloHardwareIndependentTestBase {
  public:
@@ -3741,6 +3744,49 @@ ENTRY test {
   EXPECT_EQ(slice->slice_strides(2), 5);
 }
 
+TEST_F(AlgebraicSimplifierTest, SliceRedundantStrides) {
+  constexpr absl::string_view kHloString = R"(
+HloModule module
+
+ENTRY test {
+  param.0 = f32[6,7,32] parameter(0)
+  param.1 = f32[6,7,32,187] parameter(1)
+  slice.0 = f32[1,2,7] slice(param.0), slice={[2:3:2], [0:7:4], [0:32:5]}
+  slice.1 = f32[2,2,7] slice(param.0), slice={[2:6:3], [0:7:4], [0:32:5]}
+  slice.2 = f32[2,2,1] slice(param.0), slice={[2:6:3], [0:7:4], [0:32:32]}
+  slice.3 = f32[2,2,1,1] slice(param.1), slice={[2:6:3], [0:7:4], [0:32:32], [3:187:187]}
+  ROOT tuple = (f32[1,2,7], f32[2,2,7], f32[2,2,1], f32[2,2,1,1]) tuple(slice.0, slice.1, slice.2, slice.3)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_THAT(simplifier.Run(module.get()), IsOkAndHolds(true));
+  const HloInstruction* slice_0 = FindInstruction(module.get(), "slice.0");
+  EXPECT_EQ(slice_0->slice_starts(0), 2);
+  EXPECT_EQ(slice_0->slice_limits(0), 3);
+  EXPECT_EQ(slice_0->slice_strides(0), 1);
+
+  // No change to slice.1.
+  const HloInstruction* slice_1 = FindInstruction(module.get(), "slice.1");
+  EXPECT_EQ(slice_1->slice_starts(0), 2);
+  EXPECT_EQ(slice_1->slice_limits(0), 6);
+  EXPECT_EQ(slice_1->slice_strides(0), 3);
+
+  const HloInstruction* slice_2 = FindInstruction(module.get(), "slice.2");
+  EXPECT_EQ(slice_2->slice_starts(2), 0);
+  EXPECT_EQ(slice_2->slice_limits(2), 1);
+  EXPECT_EQ(slice_2->slice_strides(2), 1);
+
+  const HloInstruction* slice_3 = FindInstruction(module.get(), "slice.3");
+  EXPECT_EQ(slice_3->slice_starts(2), 0);
+  EXPECT_EQ(slice_3->slice_limits(2), 1);
+  EXPECT_EQ(slice_3->slice_strides(2), 1);
+  EXPECT_EQ(slice_3->slice_starts(3), 3);
+  EXPECT_EQ(slice_3->slice_limits(3), 4);
+  EXPECT_EQ(slice_3->slice_strides(3), 1);
+}
+
 // Test that empty operands of concatenates are removed.
 TEST_F(AlgebraicSimplifierTest, RemoveEmptyConcatenateOperands) {
   auto m = CreateNewVerifiedModule();
@@ -4951,6 +4997,28 @@ TEST_F(AlgebraicSimplifierTest, NegativePadding) {
               GmockMatch(m::Slice(m::Pad(m::Parameter(0), m::Op().Is(zero)))));
   EXPECT_FALSE(
       has_negative_padding(computation->root_instruction()->operand(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, BroadcastSinking) {
+  constexpr absl::string_view kModuleStr = R"(
+      HloModule m
+
+      main {
+        p0 = u32[2]{0} parameter(0)
+        p1 = u32[2]{0} parameter(1)
+        b0 = u32[1024,1,2]{2,1,0} broadcast(p0), dimensions={2}
+        b1 = u32[1024,1,2]{2,1,0} broadcast(p1), dimensions={2}
+        ROOT o = u32[1024,1,2]{2,1,0} or(b0, b1)
+      }
+    )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Broadcast(op::Or(op::Parameter(0), op::Parameter(1))));
 }
 
 TEST_F(AlgebraicSimplifierTest, CanDisableBroadcastSinking) {
@@ -12799,7 +12867,7 @@ TEST_F(AlgebraicSimplifierTest, PathologicalComplexity) {
               GmockMatch(m::Broadcast(m::Constant())));
 }
 
-TEST_F(AlgebraicSimplifierTest, TestNew123) {
+TEST_F(AlgebraicSimplifierTest, RespectHostOffloadingcopies) {
   const char* hlo_string = R"(
     HloModule m
     ENTRY test {
@@ -12881,6 +12949,28 @@ TEST_F(AlgebraicSimplifierTest, TestWithControlDependencies) {
   options.set_is_layout_sensitive(true);
   AlgebraicSimplifier simplifier(options);
   EXPECT_TRUE(simplifier.Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, CopyReshapeToReshapeCopyWithHostCopies) {
+  const char* hlo = R"(
+  HloModule module
+
+  ENTRY main {
+    param.251 = f32[128,8]{0,1:T(8,128)S(5)} parameter(0), sharding={devices=[1,16,16]<=[256] last_tile_dim_replicate}
+    copy.11654 = f32[128,8]{0,1:T(8,128)} copy(param.251)
+    reshape.37527 = f32[16,8,8]{1,0,2:T(8,128)} reshape(copy.11654)
+    ROOT copy.10970 = f32[16,8,8]{1,2,0:T(8,128)} copy(reshape.37527)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+  auto reshape_is_bitcast = [](const Shape& from_shape, const Shape& to_shape) {
+    return false;
+  };
+  AlgebraicSimplifierOptions options(reshape_is_bitcast);
+  options.set_enable_floats_are_real(true);
+  options.set_is_layout_sensitive(true);
+  options.set_enable_conv_simplification(false);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
 }  // namespace

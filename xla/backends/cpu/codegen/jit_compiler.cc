@@ -37,6 +37,7 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/TaskDispatch.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
@@ -183,12 +184,20 @@ JitCompiler::JitCompiler(
 
 JitCompiler::~JitCompiler() = default;
 
+static void AddDylibIndexModuleFlag(llvm::Module& llvm_module,
+                                    size_t dylib_index) {
+  auto i64ty = llvm::Type::getInt64Ty(llvm_module.getContext());
+  llvm_module.addModuleFlag(llvm::Module::Error, "xla_dylib_index",
+                            llvm::ConstantInt::get(i64ty, dylib_index));
+}
+
 absl::Status JitCompiler::AddModule(llvm::orc::ThreadSafeModule module,
                                     size_t dylib_index) {
   // Set up module for codegen for the target machine at hand.
   module.withModuleDo([&](llvm::Module& m) {
     m.setDataLayout(target_machine_->createDataLayout());
     m.setTargetTriple(target_machine_->getTargetTriple().getTriple());
+    AddDylibIndexModuleFlag(m, dylib_index);
   });
 
   // Add module to the selected dynamic library.
@@ -230,9 +239,13 @@ void JitCompiler::TaskDispatcher::dispatch(
     return;
   }
 
-  // Dispatch task using user-provided task runner.
-  absl::MutexLock lock(&mu_);
-  ++num_dispatched_tasks_;
+  // Dispatch task using user-provided task runner. We release the lock before
+  // dispatching the task to avoid deadlock, because `task_runner_` may choose
+  // to execute the task in the current thread.
+  {
+    absl::MutexLock lock(&mu_);
+    ++num_dispatched_tasks_;
+  }
 
   task_runner_([this, task = std::shared_ptr<llvm::orc::Task>(
                           std::move(task))]() mutable {

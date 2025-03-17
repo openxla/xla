@@ -360,11 +360,22 @@ float CostAnalysis::GetInstructionElapsedDueToMemory(
     return 0.0f;
   }
   float total_bytes_accessed = op_cost_manager_.TotalBytesAccessed(instruction);
-  float bytes_accessed_from_alternate_mem = GetBytesAccessedFromAlternateMemory(
-      instruction, operands_in_alternate_mem, outputs_in_alternate_mem);
+  float bytes_accessed_read_from_alternate_mem =
+      GetBytesAccessedFromAlternateMemory(instruction,
+                                          operands_in_alternate_mem, {});
+  float bytes_accessed_write_in_alternate_mem =
+      GetBytesAccessedFromAlternateMemory(instruction, {},
+                                          outputs_in_alternate_mem);
+
   float elapsed_due_to_alternate_mem =
-      bytes_accessed_from_alternate_mem /
-      options_.alternate_mem_bandwidth_bytes_per_second;
+      bytes_accessed_read_from_alternate_mem /
+          options_.alternate_mem_read_bandwidth_bytes_per_second +
+      bytes_accessed_write_in_alternate_mem /
+          options_.alternate_mem_write_bandwidth_bytes_per_second;
+
+  float bytes_accessed_from_alternate_mem =
+      bytes_accessed_read_from_alternate_mem +
+      bytes_accessed_write_in_alternate_mem;
   float elapsed_due_to_default_mem =
       (total_bytes_accessed - bytes_accessed_from_alternate_mem) /
       DefaultMemBandwidthBytesPerSecond();
@@ -394,6 +405,9 @@ float CostAnalysis::GetInstructionElapsedDueToMemory(
           }
         });
   }
+
+  float bytes_accessed_read_from_alternate_mem =
+      bytes_accessed_from_alternate_mem;
   ShapeUtil::ForEachSubshape(instruction.shape(), [&](const Shape& subshape,
                                                       const ShapeIndex& index) {
     if (!subshape.IsArray()) {
@@ -404,9 +418,15 @@ float CostAnalysis::GetInstructionElapsedDueToMemory(
           op_cost_manager_.OutputBytesAccessed(instruction, index);
     }
   });
+  float bytes_accessed_write_in_alternate_mem =
+      bytes_accessed_from_alternate_mem -
+      bytes_accessed_read_from_alternate_mem;
+
   float elapsed_due_to_alternate_mem =
-      bytes_accessed_from_alternate_mem /
-      options_.alternate_mem_bandwidth_bytes_per_second;
+      bytes_accessed_read_from_alternate_mem /
+          options_.alternate_mem_read_bandwidth_bytes_per_second +
+      bytes_accessed_write_in_alternate_mem /
+          options_.alternate_mem_write_bandwidth_bytes_per_second;
   float elapsed_due_to_default_mem =
       (total_bytes_accessed - bytes_accessed_from_alternate_mem) /
       DefaultMemBandwidthBytesPerSecond();

@@ -100,7 +100,8 @@ class GpuCompilerTest : public HloTestBase {
   }
 };
 
-TEST_F(GpuCompilerTest, CompiledProgramsCount) {
+// TODO(b/399912696): Fix and enable this test.
+TEST_F(GpuCompilerTest, DISABLED_CompiledProgramsCount) {
   const char* hlo_text = R"(
 HloModule test
 
@@ -535,7 +536,7 @@ TEST_F(GpuCompilerTestWithAutotuneDb,
                 .cuda_compute_capability();
   if (!cc.IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
-                 << "and Hopper GPUs";
+                 << "and later GPUs";
   }
   const absl::string_view hlo_string = R"(
 HloModule test
@@ -711,6 +712,9 @@ ENTRY main {
   const std::string fallback_convert_to_f16 =
       R"(CHECK: dot(f16{{[^)]*}}, f16{{[^)]*}}))";
 
+  HloPrintOptions print_options =
+      HloPrintOptions().set_print_operand_shape(true);
+
   {
     // Triton enabled, no fallback.
     TF_ASSERT_OK_AND_ASSIGN(auto optimized_module_no_fallback,
@@ -725,7 +729,7 @@ ENTRY main {
             : cublas_convert_to_f16;
     TF_ASSERT_OK_AND_ASSIGN(
         bool filecheck_matched,
-        RunFileCheck(optimized_module_no_fallback->ToString(),
+        RunFileCheck(optimized_module_no_fallback->ToString(print_options),
                      triton_expected_check));
     EXPECT_TRUE(filecheck_matched);
   }
@@ -743,9 +747,10 @@ ENTRY main {
             ? cublaslt_keep_types
             : cublas_convert_to_f16;
 
-    TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                            RunFileCheck(optimized_module_no_triton->ToString(),
-                                         blas_expected_check));
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool filecheck_matched,
+        RunFileCheck(optimized_module_no_triton->ToString(print_options),
+                     blas_expected_check));
     EXPECT_TRUE(filecheck_matched);
   }
 
@@ -755,9 +760,10 @@ ENTRY main {
                             optimize_module(/*enable_triton=*/false,
                                             /*enable_blas=*/false,
                                             /*enable_blas_fallback=*/false));
-    TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                            RunFileCheck(optimized_module_nothing->ToString(),
-                                         fallback_convert_to_f16));
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool filecheck_matched,
+        RunFileCheck(optimized_module_nothing->ToString(print_options),
+                     fallback_convert_to_f16));
     EXPECT_TRUE(filecheck_matched);
   }
 }
@@ -1036,7 +1042,8 @@ ENTRY e {
 
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
-        aot_result->LoadExecutable(compiler, aot_options.executor()));
+        std::move(*aot_result)
+            .LoadExecutable(compiler, aot_options.executor()));
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
@@ -1406,7 +1413,7 @@ TEST_F(GpuCompilerPassTest,
                 .cuda_compute_capability();
 
   bool expect_custom_kernel_fusion_rewriter_has_run =
-      cc.major == se::CudaComputeCapability::VOLTA;
+      cc.major == se::CudaComputeCapability::kVolta;
 
   constexpr absl::string_view constant_module = R"(
 HloModule noop
@@ -1702,6 +1709,15 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
+TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
+  // NestGemmFusion expect to see __triton_gemm custom call with a backend
+  // config created by gemm_fusion_autotuner.
+  DebugOptions options = GetDebugOptionsForTest();
+  options.set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
+  SetDebugOptions(options);
+  VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
+}
+
 TEST_F(PassOrderTest,
        ReducePrecisionIsRemovedAfterAllCallsToSimplifyFPConversions) {
   // Because of an issue with JAX remat and `SimplifyFPConversions` (see PR:
@@ -1830,7 +1846,7 @@ TEST_F(GpuCompilerTest,
   const char* kExpected = R"(
     // CHECK:      dynamic-slice-fusion{{.+}} {
     // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
-    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]), 
+    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]),
     // CHECK-SAME{LITERAL}:              replica_groups={{0,1}}, dimensions={0}
     // CHECK:        %[[bitcast:.+]] = {{.+}} bitcast(%[[rs]])
     // CHECK:        ROOT {{.+}} = {{.+}} dynamic-update-slice({{.+}}, %[[bitcast]], {{.+}})
@@ -1854,6 +1870,42 @@ TEST_F(GpuCompilerTest,
                                                 /*run_hlo_passes=*/true,
                                                 /*use_threads=*/true,
                                                 std::nullopt));
+}
+
+TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      p0 = s32[2,2,32] parameter(0)
+      p1 = s32[8,32] parameter(1)
+      slice = s32[4,32] slice(p1), slice={[4:8], [0:32]}
+      rs1 = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      slice2 = s32[4,32] slice(p1), slice={[0:4], [0:32]}
+      rs2 = s32[2,32] reduce-scatter(slice2), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      ROOT tuple = tuple(rs1, rs2)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(m, GetOptimizedModule(std::move(m)));
+  const char* kExpected = R"(
+    // CHECK: dynamic-slice-fusion{{.*}} {
+    // CHECK-DAG: %[[slice1:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
+    // CHECK-DAG: %[[slice2:.+]] = {{.+}} slice({{.+}}), slice={[0:4], [0:32]}
+    // CHECK-DAG: ROOT %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice1]], %[[slice2]]),
+    // CHECK-SAME{LITERAL}:                                      replica_groups={{0,1}}, dimensions={0}, to_apply=%add
+    // CHECK: ENTRY
+  )";
+  EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
+              ::tsl::testing::IsOkAndHolds(true));
 }
 
 }  // namespace

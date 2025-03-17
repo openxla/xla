@@ -47,8 +47,7 @@ bool IsTableLookup(const HloInstruction* hlo) {
 std::optional<int64_t> GetScalarInt64Value(const HloInstruction* constant) {
   CHECK_EQ(constant->opcode(), HloOpcode::kConstant);
   CHECK(ShapeUtil::IsEffectiveScalar(constant->shape()));
-  absl::InlinedVector<int64_t, 8> multi_index(
-      constant->shape().dimensions_size());
+  absl::InlinedVector<int64_t, 8> multi_index(constant->shape().rank());
   return constant->literal().GetIntegralAsS64(multi_index);
 }
 
@@ -332,8 +331,10 @@ std::optional<ReduceScatterSpec> AllGatherDynamicSliceCancellation(
       ag->channel_id() && ag->opcode() == HloOpcode::kAllGather,
       allow_intervening_bitcast, allow_multiple_users);
 
-  if (!spec.has_value() ||
-      (spec->dynamic_slice && spec->split_dim != ag->all_gather_dimension())) {
+  if (!spec.has_value()) {
+    return std::nullopt;
+  }
+  if (spec->dynamic_slice && spec->split_dim != ag->all_gather_dimension()) {
     VLOG(2) << "Mismatch AG and DS: AG: " << ag->ToString()
             << ", DS: " << spec->dynamic_slice->ToString()
             << ", ag_dim: " << ag->all_gather_dimension()

@@ -44,6 +44,7 @@ limitations under the License.
 #include "shardy/common/file_utils.h"
 #include "shardy/dialect/sdy/transforms/propagation/basic_propagation.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
+#include "re2/re2.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -173,9 +174,6 @@ Shape getFlattenedShape(const Shape& shape) {
       shape, [&](const Shape& subShape, const ShapeIndex& index) {
         flattenedShapes.push_back(subShape);
       });
-  if (flattenedShapes.empty()) {
-    return Shape();
-  }
   return ShapeUtil::MakeMaybeTupleShape(flattenedShapes);
 }
 
@@ -312,7 +310,14 @@ absl::StatusOr<bool> ShardyXLA::Run(
   TF_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> mlirModule,
       xla::ConvertHloToStablehlo(*mlirContext.get(), hloModule));
-  std::string shardyDir = hloModule->config().debug_options().xla_dump_to();
+
+  const DebugOptions& debug_options = hloModule->config().debug_options();
+  std::string shardyDir = debug_options.xla_dump_to();
+
+  if (!shardyDir.empty() &&
+      !RE2::PartialMatch(name(), debug_options.xla_dump_hlo_pass_re())) {
+    shardyDir.clear();
+  }
 
   if (shardyDir == "sponge") {
     shardyDir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
@@ -386,7 +391,7 @@ absl::StatusOr<bool> ShardyXLA::Run(
   if (runSdyShardingPropagation) {
     // NOTE: if we are using auto-spmd, we will use conservative propagation
     // since the TOAST cost model cannot account for split axes or padding.
-    mlir::sdy::PropagationOptions options;
+    mlir::sdy::PropagationOptions options = defaultOptions;
     options.dumpDirectory = shardyDir;
     options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
     mlir::sdy::addPropagationPipeline(pm, options);
@@ -421,8 +426,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
   // update_parameters_layout.
   TF_RETURN_IF_ERROR(
       hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-          hloModule, /*update_output_layout=*/true,
-          /*update_parameters_layout=*/true));
+          hloModule, /*update_output_layout=*/{true},
+          /*update_parameters_layout=*/{true}));
 
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.

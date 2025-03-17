@@ -124,6 +124,7 @@ xla_cc_test(
         "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:xla_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
@@ -617,7 +618,9 @@ lit_test_suite(
 #         "//xla/backends/gpu/codegen/triton/transforms:passes",
 #         "//xla/codegen/emitters/transforms:passes",
 #         "@llvm-project//mlir:AllExtensions",
+#         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MlirOptLib",
+#         "@llvm-project//mlir:TensorDialect",
 #         "@triton//:AllPassesAndDialects",
 #     ],
 # )
@@ -796,6 +799,7 @@ cc_library(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
     ],
+    alwayslink = True,  # This library registers test cases at static initialization time.
 )
 
 # This shows that tests can load an autotune cache.
@@ -892,5 +896,36 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "nvshmem_test",
+    srcs = ["nvshmem_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_oss",
+        "nomsan",
+        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
+    ] + if_google(google_value = ["requires-gpu-nvidia:2"]),  # This tag is not documented in OSS yet.
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla:status_macros",
+        "//xla/backends/gpu/collectives:nvshmem_collectives",
+        "//xla/pjrt/distributed",
+        "//xla/pjrt/distributed:client",
+        "//xla/pjrt/distributed:service",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:subprocess",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )

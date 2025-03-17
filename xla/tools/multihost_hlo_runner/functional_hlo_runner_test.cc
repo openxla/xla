@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/file_system_helper.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/subprocess.h"
@@ -57,6 +59,7 @@ namespace {
 
 using ::testing::SizeIs;
 using ::tsl::testing::StatusIs;
+using HloModuleAndArguments = ::xla::FunctionalHloRunner::HloModuleAndArguments;
 
 bool IsTestingCpu() {
 #ifdef XLA_TEST_BACKEND_CPU
@@ -206,12 +209,10 @@ TEST_F(FunctionalHloRunnerTest, Sharded2Devices) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -235,13 +236,11 @@ TEST_F(FunctionalHloRunnerTest, UseZerosAsInputs) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   // --hlo_argument_mode=use_zeros_as_input
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -267,13 +266,11 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputs) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   // --hlo_argument_mode=uninitialized
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -348,7 +345,7 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputsWithTupledArguments) {
 
 TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
   // This test corresponds to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=16
+  // --num_replicas=1 --num_partitions=16
   // --run=false --xla_dump_to=dump_dir
 
   tsl::Env* env = tsl::Env::Default();
@@ -360,8 +357,6 @@ TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 16;
   raw_compile_options.xla_dump_to = dump_dir;
@@ -478,12 +473,10 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
 
 absl::Status RunShardedHloWithClient(xla::PjRtClient& client) {
   // This method corresponds to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=16
+  // --num_replicas=1 --num_partitions=16
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 16;
 
@@ -495,6 +488,19 @@ absl::Status RunShardedHloWithClient(xla::PjRtClient& client) {
       client, debug_options, preproc_options, raw_compile_options,
       running_options, {GetHloPath("sharded_16_devices.hlo")},
       InputFormat::kText);
+}
+
+TEST_F(FunctionalHloRunnerTest, PreservesAutoLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      HloModuleAndArguments hlo_module_and_arguments,
+      FunctionalHloRunner::LoadHloModuleAndArguments(
+          GetHloPath("single_gemm_fusion.hlo"), InputFormat::kText));
+  const ComputationLayout& layout =
+      hlo_module_and_arguments.hlo_module->config().entry_computation_layout();
+  EXPECT_EQ(layout.parameter_count(), 2);
+  EXPECT_FALSE(layout.parameter_layouts()[0].AnyLayoutIsSet());
+  EXPECT_TRUE(layout.parameter_layouts()[1].AnyLayoutIsSet());
+  EXPECT_FALSE(layout.result_layout().AnyLayoutIsSet());
 }
 
 TEST_F(FunctionalHloRunnerTest, CanRunWithMockCollectives) {
@@ -538,12 +544,10 @@ TEST_F(FunctionalHloRunnerTest, Sharded2DevicesHloUnoptimizedSnapshot) {
   }
 
   // Options corresponding to:
-  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  // --num_replicas=1 --num_partitions=2
   xla::DebugOptions debug_options;
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
-  raw_compile_options.spmd_mode =
-      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 2;
   FunctionalHloRunner::RunningOptions running_options;
@@ -584,30 +588,41 @@ TEST_F(FunctionalHloRunnerTest, Sharded2DevicesHloUnoptimizedSnapshot) {
 }
 
 TEST_F(FunctionalHloRunnerTest, ReadHloUnoptimizedSnapshot) {
-  FunctionalHloRunner::HloModuleAndArguments hlo_module_and_arguments_from_text;
-  FunctionalHloRunner::HloModuleAndArguments
-      hlo_module_and_arguments_from_binary;
   std::string path_to_text_hlo =
       GetHloPath("sharded_unoptimized_hlo_snapshot.pbtxt");
   std::string path_to_binary_hlo =
       tsl::io::JoinPath(std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"),
                         "sharded_unoptimized_hlo_snapshot.pb");
+  tsl::Env* env = tsl::Env::Default();
 
-  // Read the text proto, dump it as a binary proto and read it back.
+  // Read the text proto
   HloUnoptimizedSnapshot message;
-  TF_ASSERT_OK(
-      tsl::ReadTextProto(tsl::Env::Default(), path_to_text_hlo, &message));
-  TF_ASSERT_OK(
-      tsl::WriteBinaryProto(tsl::Env::Default(), path_to_binary_hlo, message));
+  TF_ASSERT_OK(tsl::ReadTextProto(env, path_to_text_hlo, &message));
 
+  // Dump message in the custom binary format
+  std::unique_ptr<tsl::WritableFile> file;
+  TF_ASSERT_OK(env->NewWritableFile(path_to_binary_hlo, &file));
+
+  tsl::WritableFileCopyingOutputStream output(file.get());
+
+  tsl::protobuf::io::CopyingOutputStreamAdaptor adaptor(&output);
+  TF_ASSERT_OK(SerializeHloUnoptimizedSnapshot(message, &adaptor));
+  adaptor.Flush();
+
+  TF_ASSERT_OK(file->Close());
+
+  // Read HloModuleAndArguments from text dump.
   TF_ASSERT_OK_AND_ASSIGN(
-      hlo_module_and_arguments_from_text,
-      FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
-          path_to_text_hlo));
+      HloModuleAndArguments hlo_module_and_arguments_from_text,
+      FunctionalHloRunner::LoadHloModuleAndArguments(
+          path_to_text_hlo, InputFormat::kUnoptimizedSnapshotProtoText));
+  // Read HloModuleAndArguments from binary dump.
   TF_ASSERT_OK_AND_ASSIGN(
-      hlo_module_and_arguments_from_binary,
-      FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(
-          path_to_binary_hlo));
+      HloModuleAndArguments hlo_module_and_arguments_from_binary,
+      FunctionalHloRunner::LoadHloModuleAndArguments(
+          path_to_binary_hlo, InputFormat::kUnoptimizedSnapshotProtoBinary));
+
+  // Compare
   CHECK_EQ(hlo_module_and_arguments_from_binary.arguments.size(), 2);
 
   CHECK_EQ(hlo_module_and_arguments_from_text.hlo_module->ToString(),
@@ -635,7 +650,6 @@ TEST_F(FunctionalHloRunnerTest, FixFakeArguments) {
 }
 
 TEST(FunctionalHloRunnerTest, TestHloUnoptimizedSnapshotDeSerialization) {
-  FunctionalHloRunner::HloModuleAndArguments hlo_module_and_arguments_from_text;
   std::string path_to_text_hlo =
       GetHloPath("sharded_unoptimized_hlo_snapshot.pbtxt");
 
@@ -658,6 +672,30 @@ TEST(FunctionalHloRunnerTest, TestHloUnoptimizedSnapshotDeSerialization) {
 
   EXPECT_EQ(snapshot.SerializeAsString(),
             maybe_deserialized_snapshot->SerializeAsString());
+}
+
+TEST(FunctionalHloRunnerTest, TestDebugOptionsAreNotOverwrittenByRawOptions) {
+  // If xla_dump_to is set in the raw options, then the debug options are
+  // overridden in `CreateCompileOptions` and we lose the dumping debug options.
+  // This test checks that we don't overwrite if we don't set xla_dump_to in the
+  // raw options.
+  xla::DebugOptions debug_options;
+  debug_options.set_xla_dump_hlo_as_text(true);
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.execution_options = ExecutionOptions();
+  *raw_compile_options.execution_options->mutable_debug_options() =
+      debug_options;
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      CompileOptions compile_options,
+      FunctionalHloRunner::CreateCompileOptions(*client, raw_compile_options,
+                                                /*task_id=*/0, /*num_nodes=*/1,
+                                                /*kv_store=*/nullptr));
+  EXPECT_TRUE(compile_options.executable_build_options.debug_options()
+                  .xla_dump_hlo_as_text());
 }
 
 }  // namespace

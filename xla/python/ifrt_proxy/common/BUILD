@@ -88,7 +88,10 @@ tf_proto_library(
     create_grpc_library = True,
     create_java_proto = False,
     create_kotlin_proto = False,
-    protodeps = [":ifrt_service_proto"],
+    protodeps = [
+        ":ifrt_service_proto",
+        "//xla/python/ifrt:attribute_map_proto",
+    ],
 )
 
 cc_library(
@@ -230,6 +233,7 @@ cc_library(
 #     srcs = ["ifrt_proxy.bzl"],
 #     parse_tests = False,
 #     visibility = ["//visibility:private"],
+#     deps = ["//xla/tsl:package_groups_bzl"],
 # )
 #
 # bzl_library(

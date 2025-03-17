@@ -121,9 +121,9 @@ class TfrtCpuClient final : public PjRtClient {
   absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
       const override;
 
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       mlir::ModuleOp module, CompileOptions options) override;
 
   // For TfrtCpuClient, `options` is mandatory.
@@ -169,14 +169,6 @@ class TfrtCpuClient final : public PjRtClient {
                               PjRtDevice* device,
                               PjRtCrossHostRecvNotifier notifier) override {
     return Unimplemented("MakeCrossHostReceiveBuffers not implemented.");
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  MakeCrossHostReceiveBuffersForGather(
-      absl::Span<const Shape> shapes, std::vector<GatherDetails> gather_details,
-      PjRtDevice* device, PjRtCrossHostRecvNotifier notifier) override {
-    return Unimplemented(
-        "MakeCrossHostReceiveBuffersForGather not implemented.");
   }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
@@ -421,8 +413,6 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
   bool IsDeleted() override;
 
   absl::StatusOr<std::string> SerializeExecutable() const override;
-
-  bool IsReturnedFutureSupported() const override { return true; }
 
   std::shared_ptr<Executable> cpu_executable() const { return cpu_executable_; }
 

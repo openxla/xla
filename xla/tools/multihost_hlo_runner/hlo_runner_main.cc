@@ -32,15 +32,13 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
 #include "xla/tools/multihost_hlo_runner/functional_hlo_runner.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/init_main.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace {
 const char* const kUsage = R"(
@@ -135,10 +133,10 @@ ArgumentModeFromString(absl::string_view text) {
     return FunctionalHloRunner::ModuleArgumentMode::kUninitialized;
   }
   return absl::InvalidArgumentError(
-      absl::StrCat("Unrecognized module argument mode specified. Expect "
-                   "\"use_device_id_as_input\", \"use_random_inputs\", or "
-                   "\"use_shared_random_inputs\"., got: ",
-                   text));
+      absl::StrCat(R"(Invalid --hlo_argument_mode specified. Expected one of: )"
+                   R"("use_device_id_as_input", "use_random_inputs", )"
+                   R"("use_shared_random_inputs", "use_zeros_as_input", or )",
+                   R"("uninitialized". Got: )", text));
 }
 
 static absl::StatusOr<FunctionalHloRunner::PreprocessingOptions>
