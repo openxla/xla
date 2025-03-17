@@ -103,7 +103,7 @@ def make_gpu_client(
     allowed_devices: set[int] | None = ...,
     mock: bool | None = ...,
     mock_gpu_topology: str | None = ...,
-    override_slice_index: int | None = ...,
+    slice_index: int | None = ...,
 ) -> Client:
   ...
 

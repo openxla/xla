@@ -47,7 +47,7 @@ struct GpuClientOptions {
 
   std::optional<std::string> mock_gpu_topology;
 
-  std::optional<int> override_slice_index;
+  std::optional<int> slice_index;
 };
 
 }  //  namespace xla
