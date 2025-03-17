@@ -2466,7 +2466,7 @@ std::vector<StackAlloca> IrEmitter::EmitOneDnnOperandsAlloca(
 }
 
 std::pair<llvm::Value*, StackAlloca> IrEmitter::GetPtrAndAllocaFromBufferSlice(
-    const BufferAllocation::Slice slice, const Shape shape) {
+    const BufferAllocation::Slice& slice, const Shape& shape) {
   llvm::Value* slice_ptr = EmitBufferPointer(slice, shape);
   llvm::Type* type = IrShapeType(shape);
   llvm_ir::IrArray ir_array = llvm_ir::IrArray(slice_ptr, type, shape);
@@ -2678,7 +2678,7 @@ absl::Status IrEmitter::HandleOneDnnConvolution(HloInstruction* custom_call) {
   // Lifetime ends for all stack allocations.
   b()->CreateLifetimeEnd(nargs_ptr, b()->getInt64(-1));
   b()->CreateLifetimeEnd(args_ptr, b()->getInt64(-1));
-  for (auto& alloca : operands_stack_alloca) {
+  for (StackAlloca& alloca : operands_stack_alloca) {
     alloca.EmitLifetimeEnd();
   }
   result_stack_alloca.EmitLifetimeEnd();

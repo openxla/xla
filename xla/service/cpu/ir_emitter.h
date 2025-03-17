@@ -338,7 +338,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
                                                     llvm::Value*& args_val,
                                                     int& arg_indx);
   std::pair<llvm::Value*, StackAlloca> GetPtrAndAllocaFromBufferSlice(
-      const BufferAllocation::Slice slice, const Shape shape);
+      const BufferAllocation::Slice& slice, const Shape& shape);
   absl::Status HandleOneDnnMatMulCalls(HloInstruction* hlo,
                                        std::string runtime_symbol_name);
   absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);

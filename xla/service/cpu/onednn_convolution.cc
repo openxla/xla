@@ -54,49 +54,22 @@ using dnnl::prop_kind;
 using dnnl::stream;
 
 memory::dims GetPrimitiveParameter(
-    const tsl::protobuf::RepeatedField<uint64_t> field, int offset) {
+    const tsl::protobuf::RepeatedField<uint64_t>& field, int offset) {
   memory::dims param_field(field.begin(), field.end());
   // Subtract the offset so that values are interpreted accurately
   for (int64_t& n : param_field) n -= offset;
   return param_field;
 }
 
-std::vector<int> PopulateSpatialDimIndeces(
-    const tsl::protobuf::RepeatedField<uint64_t> spatial_dims,
-    std::vector<int> perm_axes, int index) {
-  std::vector<int64_t> dim_axes(spatial_dims.begin(), spatial_dims.end());
-  for (int64_t& n : dim_axes) perm_axes[--n] = index++;
+std::vector<int> ComputePermutations(
+    uint64_t dims, uint64_t dim0, uint64_t dim1,
+    const tsl::protobuf::RepeatedField<uint64_t>& spatial_dims) {
+  std::vector<int> perm_axes(dims);
+  perm_axes[dim0] = 0;
+  perm_axes[dim1] = 1;
+  int index = 2;
+  for (uint64_t n : spatial_dims) perm_axes[n - 1] = index++;
   return perm_axes;
-}
-
-std::vector<int> ComputeInputPermutations(
-    const OneDnnConvolutionConfig* conv_config) {
-  std::vector<int> perm_axes(conv_config->dims());
-  int index = 0;
-  perm_axes[conv_config->input().data().batch_dim()] = index++;
-  perm_axes[conv_config->input().data().feature_dim()] = index++;
-  return PopulateSpatialDimIndeces(conv_config->input().data().spatial_dims(),
-                                   perm_axes, index);
-}
-
-std::vector<int> ComputeKernelPermutations(
-    const OneDnnConvolutionConfig* conv_config) {
-  std::vector<int> perm_axes(conv_config->dims());
-  int index = 0;
-  perm_axes[conv_config->kernel().filter().output_feature_dim()] = index++;
-  perm_axes[conv_config->kernel().filter().input_feature_dim()] = index++;
-  return PopulateSpatialDimIndeces(
-      conv_config->kernel().filter().spatial_dims(), perm_axes, index);
-}
-
-std::vector<int> ComputeOutputPermutations(
-    const OneDnnConvolutionConfig* conv_config) {
-  std::vector<int> perm_axes(conv_config->dims());
-  int index = 0;
-  perm_axes[conv_config->output().data().batch_dim()] = index++;
-  perm_axes[conv_config->output().data().feature_dim()] = index++;
-  return PopulateSpatialDimIndeces(conv_config->output().data().spatial_dims(),
-                                   perm_axes, index);
 }
 
 }  // namespace
@@ -138,13 +111,13 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   if (!backend_config.ok()) {
     return nullptr;
   }
-  auto& conv_config = backend_config.value().onednn_conv_config();
-  absl::InlinedVector<HloInstruction*, 2> operands = custom_call->operands();
-  Shape input_shape = operands[0]->shape();
-  Shape weight_shape = operands[1]->shape();
-  Shape output_shape = custom_call->shape().IsTuple()
-                           ? custom_call->shape().tuple_shapes(0)
-                           : custom_call->shape();
+  const auto& conv_config = backend_config->onednn_conv_config();
+  const HloInstruction::InstructionVector& operands = custom_call->operands();
+  const Shape& input_shape = operands[0]->shape();
+  const Shape& weight_shape = operands[1]->shape();
+  const Shape& output_shape = custom_call->shape().IsTuple()
+                                  ? custom_call->shape().tuple_shapes(0)
+                                  : custom_call->shape();
 
   std::vector<Shape> fused_shapes;
   for (int i = 2; i < operands.size(); ++i) {
@@ -166,12 +139,18 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
 
   uint64_t groups = conv_config.feature_groups();
 
-  memory::desc new_inp_md =
-      input_md.permute_axes(ComputeInputPermutations(&conv_config));
-  memory::desc new_ker_md =
-      weights_md.permute_axes(ComputeKernelPermutations(&conv_config));
-  memory::desc new_out_md =
-      output_md.permute_axes(ComputeOutputPermutations(&conv_config));
+  memory::desc new_inp_md = input_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.input().data().batch_dim(),
+      conv_config.input().data().feature_dim(),
+      conv_config.input().data().spatial_dims()));
+  memory::desc new_ker_md = weights_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.kernel().filter().output_feature_dim(),
+      conv_config.kernel().filter().input_feature_dim(),
+      conv_config.kernel().filter().spatial_dims()));
+  memory::desc new_out_md = output_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.output().data().batch_dim(),
+      conv_config.output().data().feature_dim(),
+      conv_config.output().data().spatial_dims()));
 
   if (groups > 1) {
     memory::dims corr_dims = new_ker_md.get_dims();
@@ -244,81 +223,37 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   OneDnnConvolutionConfig conv_config;
   conv_config.ParseFromString(config_str);
 
-  // Generate permutations to create memory descriptors
-  std::vector<int64_t> inp_perm_axes(conv_config.dims());
-  std::vector<int64_t> ker_perm_axes(conv_config.dims());
-  std::vector<int64_t> out_perm_axes(conv_config.dims());
-
-  int index_i = 0;
-  int index_o = 0;
-  int index_k = 0;
-
-  inp_perm_axes[conv_config.input().data().batch_dim()] = index_i++;
-  out_perm_axes[conv_config.output().data().batch_dim()] = index_o++;
-  ker_perm_axes[conv_config.kernel().filter().output_feature_dim()] = index_k++;
-
-  inp_perm_axes[conv_config.input().data().feature_dim()] = index_i++;
-  out_perm_axes[conv_config.output().data().feature_dim()] = index_o++;
-  ker_perm_axes[conv_config.kernel().filter().input_feature_dim()] = index_k++;
-
-  std::vector<int64_t> inp_dim_axes(
-      conv_config.input().data().spatial_dims().begin(),
-      conv_config.input().data().spatial_dims().end());
-  std::vector<int64_t> ker_dim_axes(
-      conv_config.kernel().filter().spatial_dims().begin(),
-      conv_config.kernel().filter().spatial_dims().end());
-  std::vector<int64_t> out_dim_axes(
-      conv_config.output().data().spatial_dims().begin(),
-      conv_config.output().data().spatial_dims().end());
-
-  std::for_each(inp_dim_axes.begin(), inp_dim_axes.end(),
-                [&inp_perm_axes, &index_i](int64_t& n) {
-                  n -= 1;
-                  inp_perm_axes[n] = index_i++;
-                });
-  std::for_each(ker_dim_axes.begin(), ker_dim_axes.end(),
-                [&ker_perm_axes, &index_k](int64_t& n) {
-                  n -= 1;
-                  ker_perm_axes[n] = index_k++;
-                });
-  std::for_each(out_dim_axes.begin(), out_dim_axes.end(),
-                [&out_perm_axes, &index_o](int64_t& n) {
-                  n -= 1;
-                  out_perm_axes[n] = index_o++;
-                });
-
-  memory::dims strides(conv_config.window().strides().begin(),
-                       conv_config.window().strides().end());
-  memory::dims pad_left(conv_config.window().pad_left().begin(),
-                        conv_config.window().pad_left().end());
-  memory::dims pad_right(conv_config.window().pad_right().begin(),
-                         conv_config.window().pad_right().end());
-  memory::dims rhs_dilations(conv_config.window().window_dilations().begin(),
-                             conv_config.window().window_dilations().end());
-
-  std::for_each(strides.begin(), strides.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(pad_left.begin(), pad_left.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(pad_right.begin(), pad_right.end(), [](int64_t& n) { n -= 1; });
-  std::for_each(rhs_dilations.begin(), rhs_dilations.end(),
-                [](int64_t& n) { n -= 2; });
-
-  auto groups = conv_config.feature_groups();
-
   MemrefInfo inp_minfo(args[arg_indx++]);
   MemrefInfo ker_minfo(args[arg_indx++]);
   MemrefInfo res_minfo(result);
 
-  auto inp_md = inp_minfo.GetOneDnnMemDesc();
-  auto ker_md = ker_minfo.GetOneDnnMemDesc();
-  auto res_md = res_minfo.GetOneDnnMemDesc();
+  memory::desc inp_md = inp_minfo.GetOneDnnMemDesc();
+  memory::desc ker_md = ker_minfo.GetOneDnnMemDesc();
+  memory::desc res_md = res_minfo.GetOneDnnMemDesc();
 
-  std::vector<int> inp_axes(inp_perm_axes.begin(), inp_perm_axes.end());
-  std::vector<int> ker_axes(ker_perm_axes.begin(), ker_perm_axes.end());
-  std::vector<int> out_axes(out_perm_axes.begin(), out_perm_axes.end());
+  memory::desc new_inp_md = inp_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.input().data().batch_dim(),
+      conv_config.input().data().feature_dim(),
+      conv_config.input().data().spatial_dims()));
+  memory::desc new_ker_md = ker_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.kernel().filter().output_feature_dim(),
+      conv_config.kernel().filter().input_feature_dim(),
+      conv_config.kernel().filter().spatial_dims()));
+  memory::desc new_res_md = res_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.output().data().batch_dim(),
+      conv_config.output().data().feature_dim(),
+      conv_config.output().data().spatial_dims()));
 
-  auto new_inp_md = inp_md.permute_axes(inp_axes);
-  auto new_ker_md = ker_md.permute_axes(ker_axes);
-  auto new_res_md = res_md.permute_axes(out_axes);
+  memory::dims strides =
+      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims pad_left =
+      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+  memory::dims pad_right =
+      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+  memory::dims rhs_dilations =
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
+
+  uint64_t groups = conv_config.feature_groups();
 
   if (groups > 1) {
     auto corr_dims = new_ker_md.get_dims();
@@ -332,9 +267,12 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
     MemrefInfo operand_minfo(args[arg_indx++]);
-    auto mem_desc = operand_minfo.GetOneDnnMemDesc();
+    memory::desc mem_desc = operand_minfo.GetOneDnnMemDesc();
     if (mem_desc.get_ndims() == new_res_md.get_ndims()) {
-      mem_desc = mem_desc.permute_axes(out_axes);
+      mem_desc = mem_desc.permute_axes(ComputePermutations(
+          conv_config.dims(), conv_config.output().data().batch_dim(),
+          conv_config.output().data().feature_dim(),
+          conv_config.output().data().spatial_dims()));
     }
     fused_mds.push_back(mem_desc);
     fused_bufs.push_back(operand_minfo.Data());
@@ -343,7 +281,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   std::vector<std::pair<int, dnnl::memory>> postop_args;
   FusedOperandsRef fused_operands_ref{fused_bufs, postop_args};
 
-  auto bias_md = memory::desc();
+  memory::desc bias_md = memory::desc();
 
   dnnl::post_ops post_ops =
       PopulateOneDnnPostOps(cpu_engine, fused_mds, &conv_config.fusions(),
