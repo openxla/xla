@@ -829,3 +829,17 @@ func.func @transfer_write_f4(%arg0: tensor<43xf4E2M1FN> {xla.slice_index = 1},
 // CHECK-LABEL: @transfer_write_f4
 // CHECK: %[[PTR:.*]] = llvm.getelementptr inbounds %arg0[5] : (!llvm.ptr) -> !llvm.ptr, i8
 // CHECK: %[[OUT:.*]] = builtin.unrealized_conversion_cast %{{.*}} : vector<2xf4E2M1FN> to vector<2xi4>
+
+// -----
+
+func.func @bitcast_convert(%arg0: tensor<256xi4>, %arg1: index) -> i8 {
+  %0 = builtin.unrealized_conversion_cast %arg0 : tensor<256xi4> to tensor<128x2xi4>
+  %1 = mhlo.bitcast_convert %0 : (tensor<128x2xi4>) -> tensor<128xi8>
+  %out = tensor.extract %1[%arg1] : tensor<128xi8>
+  func.return %out : i8
+}
+// CHECK-LABEL: @bitcast_convert
+// CHECK: %[[V0:.*]] = builtin.unrealized_conversion_cast %arg0 : !llvm.ptr to tensor<256xi4>
+// CHECK: %[[V1:.*]] = builtin.unrealized_conversion_cast %[[V0]] : tensor<256xi4> to tensor<128x2xi4>
+// CHECK: %[[V2:.*]] = builtin.unrealized_conversion_cast %[[V1]] : tensor<128x2xi4> to tensor<128xi8>
+// CHECK: builtin.unrealized_conversion_cast %[[V2]] : tensor<128xi8> to !llvm.ptr

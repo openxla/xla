@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -87,6 +88,7 @@ using ::testing::IsSupersetOf;
 using ::testing::Matches;
 using ::testing::Not;
 using ::testing::TempDir;
+using ::tsl::testing::IsOkAndHolds;
 
 class GpuCompilerTest : public HloTestBase {
  public:
@@ -1906,6 +1908,36 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
   )";
   EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
               ::tsl::testing::IsOkAndHolds(true));
+}
+
+TEST_F(GpuCompilerTest, BitcastConvertExpansionIsOptional) {
+  constexpr absl::string_view hlo_string = R"(
+ENTRY main {
+  p0 = s8[128] parameter(0)
+  p1 = s4[64,2] parameter(1)
+  conv0 = s4[128,2] bitcast-convert(p0)
+  conv1 = s8[64] bitcast-convert(p1)
+  ROOT res = (s4[128,2], s8[64]) tuple(conv0, conv1)
+})";
+
+  EXPECT_TRUE(RunAndCompare(hlo_string, /*error=*/std::nullopt,
+                            /*reference_preprocessor=*/
+                            [](HloModule* reference_module) {
+                              BitcastDtypesExpander pass;
+                              EXPECT_THAT(RunHloPass(&pass, reference_module),
+                                          IsOkAndHolds(true));
+                            }));
+
+  // Verify that `BitcastDtypesExpander` pass is not run by default.
+  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto optimized_module,
+      backend().compiler()->RunHloPasses(std::move(test_module),
+                                         backend().default_stream_executor(),
+                                         /*device_allocator=*/nullptr));
+  BitcastDtypesExpander pass;
+  EXPECT_THAT(RunHloPass(&pass, optimized_module.get()), IsOkAndHolds(true));
 }
 
 }  // namespace

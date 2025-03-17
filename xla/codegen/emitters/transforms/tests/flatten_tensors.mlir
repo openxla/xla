@@ -364,3 +364,25 @@ func.func @constant_vector() -> vector<2x3xf32> {
 // CHECK-LABEL: func.func @constant_vector
 // CHECK-SAME: -> vector<6xf32>
 // CHECK-NOT:  builtin.unrealized_conversion_cast
+
+// -----
+
+func.func @bitcast_convert_expand(%arg0: tensor<10xi8>) -> tensor<10x2xi4> {
+  %res = mhlo.bitcast_convert %arg0 : (tensor<10xi8>) -> tensor<10x2xi4>
+  func.return %res : tensor<10x2xi4>
+}
+
+// CHECK-LABEL: func.func @bitcast_convert_expand
+// CHECK: %[[CONV:.*]] = mhlo.bitcast_convert %arg0 : (tensor<10xi8>) -> tensor<10x2xi4>
+// CHECK: builtin.unrealized_conversion_cast %[[CONV]] : tensor<10x2xi4> to tensor<20xi4>
+
+// -----
+
+func.func @bitcast_convert_collapse(%arg0: tensor<10x2xi4>) -> tensor<10xi8> {
+  %res = mhlo.bitcast_convert %arg0 : (tensor<10x2xi4>) -> tensor<10xi8>
+  func.return %res : tensor<10xi8>
+}
+
+// CHECK-LABEL: func.func @bitcast_convert_collapse
+// CHECK: %[[CONV:.*]] = builtin.unrealized_conversion_cast %arg0 : tensor<20xi4> to tensor<10x2xi4>
+// CHECK: mhlo.bitcast_convert %[[CONV]] : (tensor<10x2xi4>) -> tensor<10xi8>
