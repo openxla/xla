@@ -1,7 +1,7 @@
 # Description:
 #   XLA’s HLO Intermediate Representation implementation.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -266,20 +266,6 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
-)
-
-cc_library(
-    name = "hlo_reachability",
-    hdrs = ["hlo_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_reachability"],
-)
-
-cc_library(
-    name = "hlo_dfs_reachability",
-    hdrs = ["hlo_dfs_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_dfs_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_dfs_reachability"],
 )
 
 cc_library(

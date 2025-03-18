@@ -1,7 +1,7 @@
 # Description:
 #   XLA client libraries.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -25,15 +25,6 @@ filegroup(
         "**/*.cc",
         "**/*.h",
     ]),
-)
-
-cc_library(
-    name = "padding",
-    hdrs = ["padding.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/builder:padding instead.",
-    deps = [
-        "//xla/hlo/builder:padding",
-    ],
 )
 
 cc_library(
@@ -199,44 +190,5 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-    ],
-)
-
-cc_library(
-    name = "sharding_builder",
-    hdrs = ["sharding_builder.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/builder:sharding_builder instead.",
-    deps = [
-        "//xla/hlo/builder:sharding_builder",
-    ],
-)
-
-cc_library(
-    name = "xla_computation",
-    hdrs = ["xla_computation.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/builder:xla_computation instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:xla_computation",
-    ],
-)
-
-cc_library(
-    name = "value_inference",
-    hdrs = ["value_inference.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/builder:value_inference instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:value_inference",
-    ],
-)
-
-cc_library(
-    name = "xla_builder",
-    hdrs = ["xla_builder.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/builder:xla_builder instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:xla_builder",
     ],
 )

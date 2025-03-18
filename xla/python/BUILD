@@ -1,7 +1,7 @@
-load("//xla:pytype.default.bzl", "pytype_strict_library")
-load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
+load("//xla:py_strict.bzl", "py_strict_test")
+load("//xla:pytype.bzl", "pytype_strict_library")
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_test",
     "xla_py_test_deps",
 )
@@ -17,7 +17,7 @@ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility(["//visibility:private"]),
+    default_visibility = internal_visibility([":jax"]),
     licenses = ["notice"],
 )
 
@@ -29,106 +29,24 @@ package_group(
     ],
 )
 
-pytype_strict_library(
-    name = "xla_client",
-    srcs = ["xla_client.py"],
-    pytype_srcs = ["xla_client.pyi"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":xla_extension",  # buildcleaner: keep
-    ] + if_google([
-        "@ml_dtypes_py//ml_dtypes",
-        "//third_party/py/numpy",
-    ]),
-)
-
-exports_files([
-    "xla_client.py",
-    "xla_client.pyi",
-])
-
-tsl_pybind_extension(
-    name = "custom_calls_testlib",
-    srcs = ["custom_calls_testlib.cc"],
-    visibility = ["//visibility:private"],
-    deps = [
-        "//xla/ffi/api:c_api",
-        "//xla/ffi/api:ffi",
-        "@com_google_absl//absl/status",
-        "@nanobind",
+package_group(
+    name = "jax",
+    packages = [
+        "//third_party/py/jax/...",
     ],
 )
 
-py_strict_test(
-    name = "xla_client_backend_independent_test",
-    srcs = ["xla_client_backend_independent_test.py"],
-    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":xla_client",
-        ":xla_extension",
-        "@absl_py//absl/testing:absltest",
-    ] + if_google([
-        "//third_party/py/numpy",
-        "//third_party/py/portpicker",
-    ]) + xla_py_test_deps(),
-)
-
-py_strict_library(
-    name = "xla_client_test",
-    testonly = 1,
-    srcs = ["xla_client_test.py"],
-    visibility = internal_visibility([":friends"]),
-    deps = [
-        ":xla_client",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-        "@absl_py//absl/testing:parameterized",
-        "@ml_dtypes_py//ml_dtypes",
-    ] + if_google(["//third_party/py/numpy"]),
-)
-
-py_strict_test(
-    name = "xla_client_test_cpu",
-    srcs = ["xla_client_test.py"],
-    args = ["--backend=cpu"],
-    env = {
-        "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
-    },
-    main = "xla_client_test.py",
-    tags = [
-        "no_oss",
-        "not_run:arm",
-    ],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":custom_calls_testlib",
-        ":xla_client",
-        ":xla_extension",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-        "@absl_py//absl/testing:parameterized",
-        "@ml_dtypes_py//ml_dtypes",
-    ] + if_google(["//third_party/py/numpy"]) + xla_py_test_deps(),
-)
-
-py_strict_test(
-    name = "weakref_lru_cache_test",
-    srcs = ["weakref_lru_cache_test.py"],
-    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":xla_client",
-        ":xla_extension",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-    ] + xla_py_test_deps(),
+pytype_strict_library(
+    name = "xla_client",
+    srcs = ["xla_client.py"],
+    visibility = ["//visibility:public"],
+    deps = if_google(["//third_party/py/jax/jaxlib/xla:xla_client"]),
 )
 
 tsl_pybind_extension(
     name = "status_casters_ext",
+    testonly = 1,
     srcs = ["status_casters_ext.cc"],
-    visibility = ["//visibility:private"],
     deps = [
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
@@ -570,7 +488,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],  # For the functions to access C++ flags/thread-local variables
     deps = [
         ":nb_absl_inlined_vector",
         ":nb_absl_span",
@@ -671,7 +588,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         ":custom_call_batch_partitioner",
         ":custom_partition_callback",
@@ -738,7 +654,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         ":config",
         ":guard_lib",
@@ -788,7 +703,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         ":config",
         ":jax_jit",
@@ -826,19 +740,6 @@ cc_library(
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/profiler/lib:traceme",
     ],
-)
-
-py_strict_test(
-    name = "pytree_test",
-    srcs = ["pytree_test.py"],
-    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":xla_client",
-        ":xla_extension",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-    ] + xla_py_test_deps(),
 )
 
 tf_proto_library(
@@ -886,7 +787,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         ":python_ref_manager",
         # placeholder for index annotation deps
@@ -898,19 +798,6 @@ cc_library(
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/tsl/platform:logging",
     ],
-)
-
-py_strict_test(
-    name = "config_test",
-    srcs = ["config_test.py"],
-    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":xla_client",
-        ":xla_extension",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-    ] + xla_py_test_deps(),
 )
 
 cc_library(
@@ -1091,7 +978,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         # placeholder for index annotation deps
         "@com_google_absl//absl/base:core_headers",
@@ -1132,7 +1018,6 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//visibility:private"],
     deps = [
         # placeholder for index annotation deps
         "@com_google_absl//absl/base:core_headers",
@@ -1505,25 +1390,6 @@ xla_cc_test(
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
     ],
-)
-
-py_strict_test(
-    name = "jax_jit_test",
-    srcs = ["jax_jit_test.py"],
-    main = "jax_jit_test.py",
-    tags = [
-        "no_oss",
-        "not_run:arm",
-    ],  # TODO(phawkins): This test passes, but requires --config=monolithic.
-    deps = [
-        ":xla_client",
-        ":xla_extension",
-        "//third_party/py/numpy",
-        "@absl_py//absl/flags",
-        "@absl_py//absl/logging",
-        "@absl_py//absl/testing:absltest",
-        "@absl_py//absl/testing:parameterized",
-    ] + xla_py_test_deps(),
 )
 
 py_strict_test(
