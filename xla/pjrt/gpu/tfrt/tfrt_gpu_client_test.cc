@@ -186,22 +186,21 @@ TEST(TfrtGpuClientTest, AcquireDonation) {
 // supported.
 
 TEST(TfrtGpuClientTest, BufferFromHostBuffer) {
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetTfrtGpuClient(GpuClientOptions()));
   ASSERT_GE(client->devices().size(), 1);
   std::vector<int32_t> data(256);
   std::iota(data.begin(), data.end(), 10);
   Shape shape = ShapeUtil::MakeShape(S32, {256});
-  auto buffer =
-      client
-          ->BufferFromHostBuffer(
-              data.data(), shape.element_type(), shape.dimensions(),
-              /*byte_strides=*/std::nullopt,
-              PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
-              nullptr,
-              *client->addressable_devices()[0]->default_memory_space(),
-              /*device_layout=*/nullptr)
-          .value();
-  ASSERT_OK(buffer->GetReadyFuture().Await());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          *client->addressable_devices()[0]->default_memory_space(),
+          /*device_layout=*/nullptr));
+  EXPECT_OK(buffer->GetReadyFuture().Await());
 }
 
 }  // namespace
