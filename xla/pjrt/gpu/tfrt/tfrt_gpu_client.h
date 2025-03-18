@@ -229,6 +229,14 @@ class TfrtGpuDevice final : public PjRtDevice {
   std::random_device prng_seed_device_ ABSL_GUARDED_BY(mu_);
   std::mt19937 prng_seed_generator_ ABSL_GUARDED_BY(mu_);
   std::uniform_int_distribution<> prng_seed_distribution_ ABSL_GUARDED_BY(mu_);
+  // Launching collectives are prone to deadlock when we use fixed-sized
+  // thread pools and stream pools, since ExecuteHelper will block until all
+  // replicas reach the barrier. We ensure that
+  // 1. Thread pool size is at least as large as device_count so one collective
+  //    launch over all devices can succeed.
+  // 2. Gang-schedule each collective by conservatively ensuring a total order
+  //    of collectives and launching only one collective at a time to avoid
+  //    having no active threads to make progress
   tsl::AsyncValueRef<GpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
 
@@ -320,6 +328,12 @@ class TfrtGpuClient final : public PjRtClient {
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       PjRtMemorySpace* memory_space, const Layout* device_layout) override;
 
+  absl::StatusOr<std::unique_ptr<AsyncHostToDeviceTransferManager>>
+  CreateBuffersForAsyncHostToDevice(
+      absl::Span<const ShapeSpec> shape_specs,
+      std::optional<absl::Span<const std::optional<Layout>>> device_layouts,
+      PjRtMemorySpace* memory_space) override;
+
  private:
   // Helper function for creating PjRtStreamExecutorExecutables. Modifies
   // `options` in-place.
@@ -405,17 +419,11 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override;
 
   using PjRtBuffer::ToLiteralSync;
-  PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override {
-    // TODO(b/382117736): Implement ToLiteral.
-    return PjRtFuture<>(Unimplemented("ToLiteral not implemented."));
-  }
+  PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
 
   PjRtFuture<> LazyToLiteral(
       absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
-      override {
-    // TODO(b/382117736): Implement LazyToLiteral.
-    return PjRtFuture<>(Unimplemented("LazyToLiteral not implemented."));
-  }
+      override;
 
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
 
@@ -426,7 +434,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
 
   PjRtFuture<> CopyRawToHostFuture(PjRtFuture<void*> dst, int64_t offset,
                                    int64_t transfer_size) override {
-    // TODO(b/382117736): Implement CopyRawToHostFuture.
+    // TODO: b/400541410 - Implement CopyRawToHostFuture.
     return PjRtFuture<>(Unimplemented("CopyRawToHostFuture not implemented."));
   }
 
@@ -436,7 +444,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override {
-    // TODO(b/382117736): Implement CopyToMemorySpace.
+    // TODO: b/400541410 - Implement CopyToMemorySpace.
     return Unimplemented("CopyToMemorySpace not implemented.");
   }
 
@@ -637,17 +645,13 @@ class TfrtGpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override {
-    return Unimplemented("Not implemented");
-  }
+      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override {
-    return Unimplemented("Not implemented");
-  }
+      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
 
   void Delete() override { executables_.clear(); }
 
