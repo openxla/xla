@@ -626,6 +626,8 @@ def get_gpu_client(
     allowed_devices: Optional[Any] = ...,
     platform_name: Optional[str] = ...,
     mock: Optional[bool] = ...,
+    mock_gpu_topology: Optional[str] = ...,
+    slice_index: Optional[int] = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
