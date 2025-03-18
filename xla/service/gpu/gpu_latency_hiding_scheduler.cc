@@ -194,6 +194,20 @@ CanonicalAsyncOp GpuGetCanonicalAsyncOp(const HloInstruction& hlo) {
   }
 }
 
+std::vector<ReplicaGroup> GetReplicaGroupFromSourceTargetPairs(
+    HloInstruction* instr) {
+  HloCollectivePermuteInstruction* cp =
+      Cast<HloCollectivePermuteInstruction>(instr);
+  std::vector<ReplicaGroup> replica_groups;
+  for (auto& [i, j] : cp->source_target_pairs()) {
+    ReplicaGroup rep;
+    rep.add_replica_ids(i);
+    rep.add_replica_ids(j);
+    replica_groups.push_back(rep);
+  }
+  return replica_groups;
+}
+
 bool GpuScheduleCrossesOverlapLimit(
     const DefaultSchedulerCore::SchedulingState& sched_state,
     const HloGraphNode* node) {
@@ -237,12 +251,30 @@ bool GpuScheduleCrossesOverlapLimit(
 
       // If candidate can be overlapped with in-flight collectives
       bool can_overlap = true;
-      for (const auto occupier :
+      for (const auto async_occupier :
            sched_state.resource_occupiers_in_flight.at(resource_type)) {
-        if (sched_state.async_tracker->IsSupportedAsyncStart(*occupier)) {
+        if (sched_state.async_tracker->IsSupportedAsyncStart(*async_occupier)) {
+          HloInstruction* occupier =
+              async_occupier->opcode() == HloOpcode::kAsyncStart
+                  ? async_occupier->async_wrapped_instruction()
+                  : const_cast<HloInstruction*>(async_occupier);
+
           // Number of overlapping ranks between this occupier and candidate
+          std::vector<ReplicaGroup> curr_start_replica_group =
+              (curr_start_inst->opcode() ==
+                   HloOpcode::kCollectivePermuteStart ||
+               curr_start_inst->opcode() == HloOpcode::kCollectivePermute)
+                  ? GetReplicaGroupFromSourceTargetPairs(
+                        const_cast<HloInstruction*>(curr_start_inst))
+                  : curr_start_inst->replica_groups();
+          std::vector<ReplicaGroup> occupier_replica_group =
+              (occupier->opcode() == HloOpcode::kCollectivePermuteStart ||
+               occupier->opcode() == HloOpcode::kCollectivePermute)
+                  ? GetReplicaGroupFromSourceTargetPairs(occupier)
+                  : occupier->replica_groups();
+
           size_t overlapping_count = CountOverlappingRanks(
-              curr_start_inst->replica_groups(), occupier->replica_groups());
+              curr_start_replica_group, occupier_replica_group);
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count
