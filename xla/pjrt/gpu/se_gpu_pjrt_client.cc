@@ -119,6 +119,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -1239,6 +1240,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+  static const bool xla_gpu_experimental_enable_nvshmem =
+      xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem();
+  if (xla_gpu_experimental_enable_nvshmem) {
+    xla::gpu::NvshmemCollectives::Default()->SetEnvInfo(
+        node_id, global_topology.nodes().size(), local_device_states.size(),
+        kv_store);
+  }
   if (num_nodes > 1) {
     auto nccl_id_store = std::make_shared<NcclIdStore>(node_id, device_to_node,
                                                        std::move(kv_store));
