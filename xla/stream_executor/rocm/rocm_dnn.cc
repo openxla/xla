@@ -45,6 +45,11 @@ limitations under the License.
 #include "Eigen/Core"
 #include "rocm/include/hip/amd_detail/amd_hip_bfloat16.h"
 #include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
+
+#if (TF_ROCM_VERSION >= 60300)
+#define MIOPEN_BETA_API 1
+#endif
+
 #include "rocm/include/miopen/miopen.h"
 #include "rocm/rocm_config.h"
 #include "xla/stream_executor/activate_context.h"
@@ -551,6 +556,12 @@ namespace wrap {
 // clang-format on
 #endif
 
+#ifdef MIOPEN_BETA_API
+#define MIOPEN_DNN_ROUTINE_EACH(__macro)                             \
+  __macro(miopenSetTensorDescriptorV2)                          \
+#endif
+#endif
+
 MIOPEN_DNN_ROUTINE_EACH(STREAM_EXECUTOR_MIOPEN_WRAP)
 
 #undef MIOPEN_DNN_ROUTINE_EACH
@@ -917,6 +928,11 @@ absl::StatusOr<ScopedTensorDescriptor> scope(
       std::vector<int64_t> dims64 =
           batch_descriptor.full_dims(dnn::DataLayout::kBatchDepthYX);
 
+#ifdef MIOPEN_BETA_API
+      status = wrap::miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
+                                               (const size_t *)dims64.data(),
+                                               (const size_t *)strides64.data());
+#else
       // MIOpen requires arrays of ints.
       std::vector<int> strides(nd);
       std::vector<int> dims(nd);
@@ -926,7 +942,7 @@ absl::StatusOr<ScopedTensorDescriptor> scope(
                      &CheckedNarrowing<int64_t, int>);
       status = wrap::miopenSetTensorDescriptor(obj.handle_, data_type, nd,
                                                dims.data(), strides.data());
-
+#endif
       if (status != miopenStatusSuccess) {
         return absl::InternalError(
             "could not convert BatchDescriptor " + batch_descriptor.ToString() +
@@ -994,6 +1010,11 @@ absl::StatusOr<ScopedFilterDescriptor> scope(
       std::vector<int64_t> dims64 =
           filter_descriptor.full_dims(dnn::FilterLayout::kOutputInputYX);
 
+#ifdef MIOPEN_BETA_API
+      status = wrap::miopenSetTensorDescriptorV2(obj.handle_, data_type, nd,
+                                               (const size_t *)dims64.data(),
+                                               (const size_t *)strides64.data());
+#else
       // MIOpen requires arrays of ints.
       std::vector<int> strides;
       std::vector<int> dims;
@@ -1002,8 +1023,8 @@ absl::StatusOr<ScopedFilterDescriptor> scope(
       absl::c_transform(dims64, std::back_inserter(dims),
                         &CheckedNarrowing<int64_t, int>);
       status = wrap::miopenSetTensorDescriptor(obj.handle_, data_type, nd,
-                                               dims.data(), strides.data());
-
+                                          dims.data(), strides.data());
+#endif
       if (status != miopenStatusSuccess) {
         LOG(FATAL) << "could not convert FilterDescriptor "
                    << filter_descriptor.ToString()
