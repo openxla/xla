@@ -75,9 +75,21 @@ using mlir::ValueRange;
 using mlir::func::FuncOp;
 using mlir::func::ReturnOp;
 
-constexpr int kNumRows = 4;
-constexpr int kNumThreadsPerBlock = 128;
-constexpr int kMaxVectorizedBytes = 4;
+
+// # OK num_rows=8, num_threads=128, warp_size=16
+// # OK num_rows=4, num_threads=64, warp_size=16
+
+// # OK num_rows=2, num_threads=64, warp_size=32
+// # OK num_rows=4, num_threads=128, warp_size=32
+
+// # OK num_rows=4, num_threads=256, warp_size=64
+// # OK num_rows=8, num_threads=512, warp_size=64
+
+// The smaller is the value of kNumRows, the more work each thread does
+constexpr int kTileSize = 32;
+constexpr int kNumRows = 8;
+constexpr int kNumThreadsPerBlock = kNumRows * kTileSize;
+constexpr int kMaxVectorizedBytes = 16;
 
 }  // namespace
 
@@ -87,7 +99,7 @@ TransposeFusion::TransposeFusion(const HloFusionAnalysis& analysis)
       permutation_(transpose_.permutation),
       input_shape_(
           Permute(transpose_.dimensions, InversePermutation(permutation_))),
-      base_block_size_(WarpSize(analysis_.device_info())) {
+      base_block_size_(kTileSize) {
   ConstHloInstructionSet transposes_to_tile;
   int index = 0;
   int64_t shmem_usage = 0;
