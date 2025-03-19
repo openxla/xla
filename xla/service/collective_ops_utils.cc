@@ -809,7 +809,10 @@ bool IsCollective(const HloInstruction* instruction) {
   return false;
 }
 
-bool IsAsyncCollective(const HloInstruction* instruction) {
+absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
+  if (!IsNonFusionCollective(instruction)) {
+    return false;
+  }
   if (instruction->IsAsynchronous()) {
     switch (instruction->async_wrapped_opcode()) {
       case HloOpcode::kAllGather:
@@ -821,7 +824,9 @@ bool IsAsyncCollective(const HloInstruction* instruction) {
       case HloOpcode::kReduceScatter:
         return true;
       default:
-        return false;
+        return absl::InvalidArgumentError("Async instruction " +
+                                          instruction->ToString() +
+                                          " is not a collective.");
     }
   }
   switch (instruction->opcode()) {
@@ -832,8 +837,21 @@ bool IsAsyncCollective(const HloInstruction* instruction) {
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCollectivePermuteDone:
       return true;
-    default:
+    case HloOpcode::kSend:
+    case HloOpcode::kRecv:
+      return !Cast<HloSendRecvInstruction>(instruction)->is_host_transfer();
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllReduce:
+    case HloOpcode::kAllToAll:
+    case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectivePermute:
+    case HloOpcode::kRaggedAllToAll:
+    case HloOpcode::kReduceScatter:
       return false;
+    default:
+      return absl::InvalidArgumentError("Instruction " +
+                                        instruction->ToString() +
+                                        " is not an async collective.");
   }
 }
 

@@ -375,13 +375,17 @@ TEST(CollectiveOpsUtilsTest, IsAsyncCollective) {
       builder.AddInstruction(HloInstruction::CreateCollectivePermuteStart(
           param_shape, param_0, source_target_pairs, /*channel_id=*/1));
 
-  EXPECT_TRUE(IsAsyncCollective(permute_start));
+  auto is_async_status = IsAsyncCollective(permute_start);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   HloInstruction *permute_done =
       builder.AddInstruction(HloInstruction::CreateUnary(
           param_shape, HloOpcode::kCollectivePermuteDone, permute_start));
 
-  EXPECT_TRUE(IsAsyncCollective(permute_done));
+  is_async_status = IsAsyncCollective(permute_done);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   // Test for AllGatherStart and AllGatherDone
   std::vector<ReplicaGroup> replica_groups =
@@ -395,13 +399,17 @@ TEST(CollectiveOpsUtilsTest, IsAsyncCollective) {
           /*constrain_layout=*/false,
           /*channel_id=*/2, /*use_global_device_ids=*/false));
 
-  EXPECT_TRUE(IsAsyncCollective(all_gather_start));
+  is_async_status = IsAsyncCollective(all_gather_start);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   HloInstruction *all_gather_done = builder.AddInstruction(
       HloInstruction::CreateUnary(ShapeUtil::MakeShape(F32, {8, 4}),
                                   HloOpcode::kAllGatherDone, all_gather_start));
 
-  EXPECT_TRUE(IsAsyncCollective(all_gather_done));
+  is_async_status = IsAsyncCollective(all_gather_done);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   // Test for AllReduceStart and AllReduceDone
   // First create a reduction computation
@@ -422,20 +430,26 @@ TEST(CollectiveOpsUtilsTest, IsAsyncCollective) {
           add_computation, replica_groups, /*constrain_layout=*/false,
           /*channel_id=*/3, /*use_global_device_ids=*/false));
 
-  EXPECT_TRUE(IsAsyncCollective(all_reduce_start));
+  is_async_status = IsAsyncCollective(all_reduce_start);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   HloInstruction *all_reduce_done =
       builder.AddInstruction(HloInstruction::CreateUnary(
           param_shape, HloOpcode::kAllReduceDone, all_reduce_start));
 
-  EXPECT_TRUE(IsAsyncCollective(all_reduce_done));
+  is_async_status = IsAsyncCollective(all_reduce_done);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_TRUE(is_async_status.value());
 
   // Test for regular CollectivePermute (non-async)
   HloInstruction *permute =
       builder.AddInstruction(HloInstruction::CreateCollectivePermute(
           param_shape, param_0, source_target_pairs, /*channel_id=*/1));
 
-  EXPECT_FALSE(IsAsyncCollective(permute));
+  is_async_status = IsAsyncCollective(permute);
+  EXPECT_TRUE(is_async_status.ok());
+  EXPECT_FALSE(is_async_status.value());
 }
 
 TEST(IsExclusivelyCrossReplicaTest, CrossReplicaNoChannelSet) {

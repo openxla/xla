@@ -256,7 +256,7 @@ bool IsNonFusionCollective(const HloInstruction* instruction);
 bool IsCollective(const HloInstruction* instruction);
 
 // Returns true if instruction is an async collective op.
-bool IsAsyncCollective(const HloInstruction* instruction);
+absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction);
 
 // Returns the collective instruction if argument is a collective op (or a
 // collective fusion) with channel_id.
