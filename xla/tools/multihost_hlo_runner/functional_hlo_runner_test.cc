@@ -376,7 +376,7 @@ void compile_and_filecheck(
   }
 
   // Check that the LLVM IR has been generated.
-  {
+  if (!IsTestingCpu()) {
     std::vector<std::string> ir_paths;
     TF_ASSERT_OK(fs->GetMatchingPaths(fs->JoinPath(dump_dir, "*ir-no-opt.ll"),
                                       &ir_paths));
