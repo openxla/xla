@@ -347,6 +347,7 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputsWithTupledArguments) {
 void compile_and_filecheck(
     absl::string_view hlo_file, absl::string_view pattern,
     const FunctionalHloRunner::PreprocessingOptions& preproc_options,
+    const FunctionalHloRunner::HloPassesMode hlo_passes_mode,
     const int num_partitions = 1) {
   tsl::Env* env = tsl::Env::Default();
   std::string dump_dir;
@@ -357,7 +358,8 @@ void compile_and_filecheck(
                           GetPjRtClient());
   TF_EXPECT_OK(FunctionalHloRunner::LoadAndCompile(
       *client, xla::DebugOptions{}, preproc_options,
-      FunctionalHloRunner::RawCompileOptions{.num_partitions = num_partitions,
+      FunctionalHloRunner::RawCompileOptions{.hlo_passes_mode = hlo_passes_mode,
+                                             .num_partitions = num_partitions,
                                              .xla_dump_to = dump_dir},
       hlo_file, InputFormat::kText));
 
@@ -390,6 +392,7 @@ TEST_F(FunctionalHloRunnerTest, CanCompileWithoutHavingEnoughGpus) {
       // CHECK: add{{.*}} = f32[16,1]{1,0}
     )",
                         /*preproc_options=*/{},
+                        FunctionalHloRunner::HloPassesMode::kStandardCompile,
                         /*num_partitions=*/16);
 }
 
@@ -400,7 +403,9 @@ TEST_F(FunctionalHloRunnerTest, WhileKnownTripCountGetsCapped) {
       // CHECK: constant(5)
       // CHECK: "known_trip_count":{"n":"5"}
     )",
-      FunctionalHloRunner::PreprocessingOptions{.while_execution_count = 5});
+      FunctionalHloRunner::PreprocessingOptions{
+          .while_execution_count = 5, .annotate_while_loop_trip_count = true},
+      FunctionalHloRunner::HloPassesMode::kRunXLABackendOnly);
 }
 
 // Name of the test binary.

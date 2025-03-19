@@ -783,7 +783,9 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
             preproc_options.flatten_conditional,
             /*conditional_value=*/
             preproc_options.conditional_value});
-    pipeline.AddPass<WhileLoopTripCountAnnotator>();
+    if (preproc_options.annotate_while_loop_trip_count) {
+      pipeline.AddPass<WhileLoopTripCountAnnotator>();
+    }
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
   return absl::OkStatus();
