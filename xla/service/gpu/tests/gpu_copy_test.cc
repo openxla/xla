@@ -211,7 +211,7 @@ TEST_F(GpuCopyTest, DoNotUseMemcpyWithLayoutChange) {
                      /*match_optimized_ir=*/false,
                      /*run_optimization_passes=*/false);
   EXPECT_TRUE(
-      RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{1e-5, 1e-5}));
+      RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{0, 0}));
 }
 
 constexpr char kDynamicUpdateSliceModule[] = R"(
@@ -293,10 +293,13 @@ TEST_F(GpuCopyTest, UseMemcpyForDynamicUpdateSlice) {
                      /*match_optimized_ir=*/false,
                      /*run_optimization_passes=*/false);
   EXPECT_TRUE(RunAndCompareNoHloPasses(kDynamicUpdateSliceModule,
-                                       ErrorSpec{1e-5, 1e-5}));
+                                       ErrorSpec{0, 0}));
 }
 
 TEST_F(GpuCopyTest, DoNotUseMemcpyForDynamicUpdateSlice) {
+  // This is a test for the CompileAndVerifyIr statement in
+  // UseMemcpyForDynamicUpdateSlice. When the conditions are not met, there
+  // should be a fusion for the slice.
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> hlo_module,
       ParseAndReturnVerifiedModule(kDynamicUpdateSliceModule));

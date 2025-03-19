@@ -106,6 +106,7 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
     source_operand_index = 1;
     copy_shape = &root.GetOperand(source_operand_index).shape();
   } else {
+    CHECK_EQ(root.opcode(), HloOpcode::kDynamicSlice);
     source_operand_index = 0;
     copy_shape = &root.shape();
   }
@@ -128,11 +129,15 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
 
 namespace {
 
+// Whether the offset in the given dimension of the slice operation is
+// guaranteed to be clamped to 0. This is the case if the slice size is the
+// same as the size of the dimension in the unsliced shape.
 bool IsZeroOffset(const HloInstruction* slice, int dim) {
   if (slice->opcode() == HloOpcode::kDynamicSlice) {
     return slice->dynamic_slice_sizes()[dim] ==
            slice->operand(0)->shape().dimensions(dim);
   }
+  CHECK_EQ(slice->opcode(), HloOpcode::kDynamicUpdateSlice);
   return slice->operand(1)->shape().dimensions(dim) ==
          slice->operand(0)->shape().dimensions(dim);
 }
@@ -158,7 +163,7 @@ std::vector<const HloInstruction*> GetCallStack(
   return stack;
 }
 
-int GetFirstOffset(const HloInstruction* slice) {
+int GetFirstOffsetOperandIndex(const HloInstruction* slice) {
   // dynamic-slice takes the full array, then the offsets.
   // dynamic-update-slice takes the full array, then the update slice, then the
   // offsets.
@@ -190,8 +195,8 @@ bool DynamicMemcpyFusion::IsCandidateFusion(
     return false;
   }
 
-  int first_offset = GetFirstOffset(root);
-  for (int i = 0; i < first_offset; ++i) {
+  int first_offset_index = GetFirstOffsetOperandIndex(root);
+  for (int i = 0; i < first_offset_index; ++i) {
     if (root->operand(i)->opcode() != HloOpcode::kParameter) {
       VLOG(5) << "Not a slice of a parameter.";
       return false;
@@ -200,7 +205,7 @@ bool DynamicMemcpyFusion::IsCandidateFusion(
 
   int rank = root->operand(0)->shape().rank();
   for (int i = 0; i < rank; ++i) {
-    auto* operand = root->operand(i + first_offset);
+    auto* operand = root->operand(i + first_offset_index);
     if (!IsZeroOffset(root, i) && operand->opcode() != HloOpcode::kConstant &&
         operand->opcode() != HloOpcode::kParameter) {
       VLOG(5) << "Dimension " << i << " is not a constant or a parameter.";
@@ -228,7 +233,7 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
     return std::nullopt;
   }
 
-  int first_offset = GetFirstOffset(slice);
+  int first_offset_index = GetFirstOffsetOperandIndex(slice);
   int rank = slice_input_shape.rank();
   auto stack = GetCallStack(fusion, call_graph);
 
@@ -241,7 +246,7 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
                             ? descriptor.src_byte_static_offset
                             : descriptor.dst_byte_static_offset;
   for (int i = 0; i < rank; ++i) {
-    auto* operand = slice->operand(i + first_offset);
+    auto* operand = slice->operand(i + first_offset_index);
     // If this dimension's offset is always clamped to 0, we can skip it.
     if (IsZeroOffset(slice, i)) {
       VLOG(5) << "Offset for dimension " << i << " is clamped to 0.";
