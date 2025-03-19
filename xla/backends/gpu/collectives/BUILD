@@ -292,7 +292,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:dso_loader",
         "@tsl//tsl/platform:numbers",
     ],
     alwayslink = True,  # registers collectives implementation
@@ -358,7 +357,7 @@ xla_cc_test(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
-	    "//xla/pjrt/gpu:se_gpu_pjrt_compiler",
+        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
