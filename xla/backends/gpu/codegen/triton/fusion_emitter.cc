@@ -1606,7 +1606,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(CreateConvertIndexTypePass());
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
-  if (!CreateTritonPipeline(&pm, arch_name, block_level_parameters.num_warps,
+  if (!CreateTritonPipeline(&pm, device_info, block_level_parameters.num_warps,
                             block_level_parameters.num_ctas,
                             block_level_parameters.num_stages, cluster_info,
                             is_xla_fusion)
