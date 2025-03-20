@@ -3794,5 +3794,160 @@ ENTRY main {
       HasSubstr("Instruction shouldn't have the layout of host memory space"));
 }
 
+TEST_F(HloVerifierTest, ClonedComputationNameBypass) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  computation {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  computation.clone {
+    p0 = f32[] parameter(0) 
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    call1 = f32[] call(p0), to_apply=computation
+    call2 = f32[] call(p0), to_apply=computation.clone
+    ROOT tuple = (f32[], f32[]) tuple(call1, call2)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, MultipleClonedComputations) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  original {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  original.clone.1 {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  original.clone.2 {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    call1 = f32[] call(p0), to_apply=original
+    call2 = f32[] call(p0), to_apply=original.clone.1
+    call3 = f32[] call(p0), to_apply=original.clone.2
+    ROOT tuple = (f32[], f32[], f32[]) tuple(call1, call2, call3)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, NestedClonedComputations) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  inner {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  inner.clone {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  outer {
+    p0 = f32[] parameter(0)
+    call = f32[] call(p0), to_apply=inner
+    ROOT mul = f32[] multiply(call, p0)
+  }
+
+  outer.clone {
+    p0 = f32[] parameter(0)
+    call = f32[] call(p0), to_apply=inner.clone
+    ROOT mul = f32[] multiply(call, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    call1 = f32[] call(p0), to_apply=outer
+    call2 = f32[] call(p0), to_apply=outer.clone
+    ROOT tuple = (f32[], f32[]) tuple(call1, call2)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, SkipRematClonedInstructions) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  computation {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    add = f32[] add(p0, p0)
+    add.clone = f32[] add(p0, p0)
+    ROOT tuple = (f32[], f32[]) tuple(add, add.clone)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, ProcessNonClonedInstructions) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  computation {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    add1 = f32[] add(p0, p0)
+    add2 = f32[] add(p0, p0)
+    ROOT tuple = (f32[], f32[]) tuple(add1, add2)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, MultipleClonedAndNonClonedInstructions) {
+  const char* const hlo_string = R"(
+  HloModule test_module
+
+  computation {
+    p0 = f32[] parameter(0)
+    ROOT add = f32[] add(p0, p0)
+  }
+
+  ENTRY entry {
+    p0 = f32[] parameter(0)
+    add1 = f32[] add(p0, p0)
+    add1.clone = f32[] add(p0, p0)
+    add2 = f32[] add(p0, p0)
+    add2.clone = f32[] add(p0, p0)
+    ROOT tuple = (f32[], f32[], f32[], f32[]) tuple(add1, add1.clone, add2, add2.clone)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  TF_ASSERT_OK(verifier().Run(module.get()));
+}
+
 }  // namespace
 }  // namespace xla

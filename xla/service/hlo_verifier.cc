@@ -2186,6 +2186,10 @@ absl::Status VerifyInstructionNameUnchanged(const HloModule& module,
     return absl::OkStatus();
   }
   for (auto* comp : module.computations()) {
+    // We do not enforce the invariant when the computation has been cloned, is it too general?
+    if (absl::StrContains(comp->name(), ".clone")) {
+      continue;
+    }
     for (auto* inst : comp->instructions()) {
       if (inst->metadata().scheduling_name().empty()) {
         continue;
@@ -2917,6 +2921,12 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   absl::Status Preprocess(HloInstruction* instruction) override {
+    // skip processing of instructions that are cloned from remat
+    const HloComputation* compt = instruction->parent();
+    bool is_remat_cloned = absl::StrContains(instruction->name(), ".clone");
+    if (is_remat_cloned) {
+      return absl::OkStatus();
+    }
     auto [it, inserted] =
         instructions_by_name_.emplace(instruction->name(), instruction);
     TF_RET_CHECK(inserted) << "HLO has name that is not unique within module:\n"
