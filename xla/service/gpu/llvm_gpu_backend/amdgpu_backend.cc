@@ -186,8 +186,8 @@ struct JaxPluginPaths {
 JaxPluginPaths getJaxPluginPaths() {
   JaxPluginPaths paths;
 
-  paths.bitcode_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_BITCODE_PATH");
-  paths.lld_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_LLD_PATH");
+  paths.bitcode_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_BITCODE_PATH") ?: "";
+  paths.lld_path = std::getenv("JAX_ROCM_PLUGIN_INTERNAL_LLD_PATH") ?: "";
 
   return paths;
 }
