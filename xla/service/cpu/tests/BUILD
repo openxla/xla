@@ -337,6 +337,7 @@ xla_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:platform_port",
     ],
 )
