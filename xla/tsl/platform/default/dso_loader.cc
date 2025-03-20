@@ -162,37 +162,37 @@ absl::StatusOr<void*> GetRocblasDsoHandle() {
 }
 
 absl::StatusOr<void*> GetMiopenDsoHandle() {
-  return GetDsoHandle("MIOpen", "");
+  return GetDsoHandle("MIOpen", "1");
 }
 
 absl::StatusOr<void*> GetHipfftDsoHandle() {
-  return GetDsoHandle("hipfft", "");
+  return GetDsoHandle("hipfft", "0");
 }
 
 absl::StatusOr<void*> GetRocrandDsoHandle() {
-  return GetDsoHandle("rocrand", "");
+  return GetDsoHandle("rocrand", "1");
 }
 
 absl::StatusOr<void*> GetRocsolverDsoHandle() {
-  return GetDsoHandle("rocsolver", "");
+  return GetDsoHandle("rocsolver", "0");
 }
 
 #if TF_ROCM_VERSION >= 40500
 absl::StatusOr<void*> GetHipsolverDsoHandle() {
-  return GetDsoHandle("hipsolver", "");
+  return GetDsoHandle("hipsolver", "0");
 }
 #endif
 
 absl::StatusOr<void*> GetRoctracerDsoHandle() {
-  return GetDsoHandle("roctracer64", "");
+  return GetDsoHandle("roctracer64", "4");
 }
 
 absl::StatusOr<void*> GetHipsparseDsoHandle() {
-  return GetDsoHandle("hipsparse", "");
+  return GetDsoHandle("hipsparse", "1");
 }
 
 absl::StatusOr<void*> GetHipblasltDsoHandle() {
-  return GetDsoHandle("hipblaslt", "");
+  return GetDsoHandle("hipblaslt", "0");
 }
 
 absl::StatusOr<void*> GetHipDsoHandle() {

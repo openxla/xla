@@ -149,7 +149,6 @@ cc_library(
         ":amd_comgr",
         ":hsa_rocr",
         ":rocm_config",
-        ":rocm_smi",
         ":rocprofiler_register",
         ":system_libs",
     ],
@@ -215,7 +214,8 @@ cc_library(
 
 cc_library(
     name = "miopen",
-    hdrs = glob(["%{rocm_root}/include/rccl/**"]),
+    hdrs = glob(["%{rocm_root}/include/miopen/**"]),
+    srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     data = glob([
         "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
