@@ -36,8 +36,18 @@ def ConvertIndexTypePass : Pass<"xla-gpu-convert-index-type", "mlir::ModuleOp"> 
   let constructor = "CreateConvertIndexTypePass()";
 }
 
-def ConvertFloatPass : Pass<"xla-gpu-convert-float", "mlir::ModuleOp"> {
-  let summary = "Convert floating point types using LLVM intrinsics.";
+def ConvertFloatNvidiaPass : Pass<"xla-gpu-convert-float-nvidia", "mlir::ModuleOp"> {
+  let summary = "Convert floating point types using NVPTX intrinsics.";
+
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+    "mlir::arith::ArithDialect",
+  ];
+  let constructor = "CreateConvertFloatNvidiaPass()";
+}
+
+def ConvertFloatAMDPass : Pass<"xla-gpu-convert-float-amd", "mlir::ModuleOp"> {
+  let summary = "Convert floating point types using AMDGCN intrinsics.";
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
@@ -47,7 +57,7 @@ def ConvertFloatPass : Pass<"xla-gpu-convert-float", "mlir::ModuleOp"> {
     Option<"gpu_device_info_", "gpu_device_info", "std::string", /*default=*/"",
            "Serialized stream_executor::GPUDeviceInfo proto.">,
   ];
-  let constructor = "CreateConvertFloatPass()";
+  let constructor = "CreateConvertFloatAMDPass()";
 }
 
 def FuseLoopsPass : Pass<"xla-gpu-fuse-loops", "mlir::func::FuncOp"> {

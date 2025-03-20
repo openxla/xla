@@ -39,7 +39,7 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-#define GEN_PASS_DEF_CONVERTFLOATPASS
+#define GEN_PASS_DEF_CONVERTFLOATAMDPASS
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h.inc"
 
 namespace {
@@ -531,12 +531,13 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
   }
 };
 
-class ConvertFloatPass : public impl::ConvertFloatPassBase<ConvertFloatPass> {
+class ConvertFloatAMDPass
+    : public impl::ConvertFloatAMDPassBase<ConvertFloatAMDPass> {
  public:
-  explicit ConvertFloatPass(const ConvertFloatPassOptions& options)
-      : ConvertFloatPassBase(options) {}
+  explicit ConvertFloatAMDPass(const ConvertFloatAMDPassOptions& options)
+      : ConvertFloatAMDPassBase(options) {}
 
-  explicit ConvertFloatPass(const se::RocmComputeCapability& cc) : cc_(cc) {}
+  explicit ConvertFloatAMDPass(const se::RocmComputeCapability& cc) : cc_(cc) {}
 
   void runOnOperation() override {
     if (!gpu_device_info_.empty()) {
@@ -561,22 +562,24 @@ class ConvertFloatPass : public impl::ConvertFloatPassBase<ConvertFloatPass> {
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> CreateConvertFloatPass(
+std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
     const std::string& gpu_device_info) {
-  ConvertFloatPassOptions options;
+  ConvertFloatAMDPassOptions options;
   options.gpu_device_info_ = gpu_device_info;
-  return std::make_unique<ConvertFloatPass>(options);
+  return std::make_unique<ConvertFloatAMDPass>(options);
 }
 
+#ifdef TENSORFLOW_USE_ROCM
 std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
     const se::DeviceDescription& device_description) {
   auto cc = device_description.rocm_compute_capability();
 
   if (cc.has_fp8_support()) {
-    return std::make_unique<ConvertFloatPass>(cc);
+    return std::make_unique<ConvertFloatAMDPass>(cc);
   }
   return std::nullopt;
 }
+#endif
 
 }  // namespace gpu
 }  // namespace xla

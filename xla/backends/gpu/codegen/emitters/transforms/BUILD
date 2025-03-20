@@ -42,11 +42,9 @@ cc_library(
         "fuse_loops.cc",
         "optimize_loops.cc",
         "peel_loops.cc",
-    ] + if_cuda_is_configured([
-        "convert_float_cuda.cc",
-    ]) + if_rocm_is_configured([
-        "convert_float_rocm.cc",
-    ]),
+        "convert_float_nvidia.cc",
+        "convert_float_amd.cc",
+    ],
     hdrs = ["passes.h"],
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured(["-DTENSORFLOW_USE_ROCM=1"]),
     deps = [
