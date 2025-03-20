@@ -1,4 +1,4 @@
-// RUN: emitters_opt %s -split-input-file -xla-gpu-convert-float="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"}'" -canonicalize | FileCheck %s
+// RUN: emitters_opt %s -split-input-file -xla-gpu-convert-float-amd="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"}'" -canonicalize | FileCheck %s
 
 module {
   func.func @intr_f16_to_f8(%arg0: f16) -> (f8E4M3FNUZ, f8E5M2FNUZ) {
