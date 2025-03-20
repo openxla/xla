@@ -34,12 +34,14 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
 
+#ifdef GOOGLE_CUDA
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
+#endif
 
 namespace xla {
 namespace gpu {
 
-#define GEN_PASS_DEF_CONVERTFLOATPASS
+#define GEN_PASS_DEF_CONVERTFLOATNVIDIAPASS
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h.inc"
 
 namespace {
@@ -235,10 +237,10 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
   }
 };
 
-class ConvertFloatPass
-    : public impl::ConvertFloatPassBase<ConvertFloatPass> {
+class ConvertFloatNvidiaPass
+    : public impl::ConvertFloatNvidiaPassBase<ConvertFloatNvidiaPass> {
  public:
-  using ConvertFloatPassBase::ConvertFloatPassBase;
+  using ConvertFloatNvidiaPassBase::ConvertFloatNvidiaPassBase;
 
   void runOnOperation() override {
     mlir::RewritePatternSet patterns(&getContext());
@@ -252,13 +254,11 @@ class ConvertFloatPass
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> CreateConvertFloatPass(
-    const std::string& gpu_device_info) {
-  ConvertFloatPassOptions options;
-  options.gpu_device_info_ = gpu_device_info;
-  return std::make_unique<ConvertFloatPass>(options);
+std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass() {
+  return std::make_unique<ConvertFloatNvidiaPass>();
 }
 
+#ifdef GOOGLE_CUDA
 std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
     const se::DeviceDescription& device_description) {
   se::SemanticVersion ptx_version =
@@ -270,10 +270,11 @@ std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
   // Older ptx versions only support FP8 conversion for sm90
   if ((ptx_version >= se::SemanticVersion(8, 1, 0) && cc.IsAtLeast(8, 9)) ||
       (ptx_version >= se::SemanticVersion(7, 8, 0) && cc.IsAtLeast(9, 0))) {
-    return CreateConvertFloatPass();
+    return CreateConvertFloatNvidiaPass();
   }
   return std::nullopt;
 }
+#endif
 
 }  // namespace gpu
 }  // namespace xla
