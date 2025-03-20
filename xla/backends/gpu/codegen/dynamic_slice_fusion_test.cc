@@ -2213,6 +2213,99 @@ TEST_F(DynamicSliceFusionTest, CublasGemmDUS) {
       /*run_hlo_passes=*/false));
 }
 
+TEST_F(DynamicSliceFusionTest, CublasGemmDUSWithWorkspace) {
+  ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
+
+  const char* hlo_ref = R"(
+  HloModule jit_slice
+  ENTRY %main.9 {
+    %p0 = f16[2,8,8]{2,1,0} parameter(0)
+    %p1 = f16[2,8,8]{2,1,0} parameter(1)
+    %p2 = f16[4,8,8]{2,1,0} parameter(2)
+    %c1_s32 = s32[] constant(1)
+    %c0_s32 = s32[] constant(0)
+    %slice.13 = f16[1,8,8]{2,1,0} dynamic-slice(%p0, %c1_s32, %c0_s32, %c0_s32), dynamic_slice_sizes={1,8,8}
+    %bitcast.41 = f16[8,8]{1,0} bitcast(%slice.13)
+    %slice.14 = f16[1,8,8]{2,1,0} dynamic-slice(%p1, %c1_s32, %c0_s32, %c0_s32), dynamic_slice_sizes={1,8,8}
+    %bitcast.42 = f16[8,8]{1,0} bitcast(%slice.14)
+    %custom-call.1 = (f16[8,8]{1,0}, s8[256]{0}) custom-call(%bitcast.41, %bitcast.42),
+      custom_call_target="__cublas$gemm",
+      backend_config={"gemm_backend_config":{
+        "alpha_real":1,
+        "beta":0,
+        "dot_dimension_numbers":{
+          "lhs_contracting_dimensions":["1"],
+          "rhs_contracting_dimensions":["0"],
+          "lhs_batch_dimensions":[],
+          "rhs_batch_dimensions":[]
+        },
+        "alpha_imag":0,
+        "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
+        "epilogue":"DEFAULT",
+        "lhs_stride":"64",
+        "rhs_stride":"64",
+        "grad_x":false,
+        "grad_y":false
+      }}
+    %get-tuple-element.0 = f16[8,8]{1,0} get-tuple-element(%custom-call.1), index=0
+    %bitcast.43 = f16[1,8,8]{2,1,0} bitcast(%get-tuple-element.0)
+    ROOT %dus = f16[4,8,8]{2,1,0} dynamic-update-slice(%p2, %bitcast.43, %c1_s32, %c0_s32, %c0_s32)
+  })";
+
+  const char* hlo_opt = R"(
+  HloModule jit_slice
+  %fused_computation {
+    %p0 = f16[2,8,8]{2,1,0} parameter(0)
+    %p1 = f16[2,8,8]{2,1,0} parameter(1)
+    %p2 = f16[4,8,8]{2,1,0} parameter(2)
+    %c1_s32 = s32[] parameter(3)
+    %c0_s32 = s32[] parameter(4)
+    %slice.13 = f16[1,8,8]{2,1,0} dynamic-slice(%p0, %c1_s32, %c0_s32, %c0_s32), dynamic_slice_sizes={1,8,8}
+    %bitcast.41 = f16[8,8]{1,0} bitcast(%slice.13)
+    %slice.14 = f16[1,8,8]{2,1,0} dynamic-slice(%p1, %c1_s32, %c0_s32, %c0_s32), dynamic_slice_sizes={1,8,8}
+    %bitcast.42 = f16[8,8]{1,0} bitcast(%slice.14)
+    %custom-call.1 = (f16[8,8]{1,0}, s8[256]{0}) custom-call(%bitcast.41, %bitcast.42),
+      custom_call_target="__cublas$gemm",
+      backend_config={"gemm_backend_config":{
+        "alpha_real":1,
+        "beta":0,
+        "dot_dimension_numbers":{
+          "lhs_contracting_dimensions":["1"],
+          "rhs_contracting_dimensions":["0"],
+          "lhs_batch_dimensions":[],
+          "rhs_batch_dimensions":[]
+        },
+        "alpha_imag":0,
+        "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
+        "epilogue":"DEFAULT",
+        "lhs_stride":"64",
+        "rhs_stride":"64",
+        "grad_x":false,
+        "grad_y":false
+      }}
+    %get-tuple-element.0 = f16[8,8]{1,0} get-tuple-element(%custom-call.1), index=0
+    %bitcast.43 = f16[1,8,8]{2,1,0} bitcast(%get-tuple-element.0)
+    %dus = f16[4,8,8]{2,1,0} dynamic-update-slice(%p2, %bitcast.43, %c1_s32, %c0_s32, %c0_s32)
+    %get-tuple-element.1 = s8[256]{0} get-tuple-element(%custom-call.1), index=1
+    ROOT %tuple = (f16[4,8,8]{2,1,0}, s8[256]{0}) tuple(%dus, %get-tuple-element.1)
+  }
+  ENTRY %main.9 {
+    %p0 = f16[2,8,8]{2,1,0} parameter(0)
+    %p1 = f16[2,8,8]{2,1,0} parameter(1)
+    %p2 = f16[4,8,8]{2,1,0} parameter(2)
+    %c1_s32 = s32[] constant(1)
+    %c0_s32 = s32[] constant(0)
+    %fusion.2 = (f16[4,8,8]{2,1,0}, s8[256]{0}) fusion(%p0, %p1, %p2, %c1_s32, %c0_s32), kind=kCustom, calls=%fused_computation,
+        backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
+    ROOT %gte = f16[4,8,8]{2,1,0} get-tuple-element(%fusion.2), index=0
+  })";
+
+  EXPECT_TRUE(RunAndCompareTwoModules(
+      hlo_ref, hlo_opt, GetModuleConfigWithDeterministicOps(),
+      GetModuleConfigWithDeterministicOps(), error_spec,
+      /*run_hlo_passes=*/false));
+}
+
 TEST_F(DynamicSliceFusionTest, CublasGemmDUSWorkspaceIgnored) {
   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
 
