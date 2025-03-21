@@ -215,8 +215,6 @@ class HloComputation {
     // unreachable, and its instruction is set to null. We still need to regard
     // such computations as fusion computations for HLO scheduling purposes.
     kFusion,
-    // This computation is a custom-call computation.
-    kCustomCall,
     // This computation is a collective computation.
     kCollective,
     // This computation is a conditional branch computation.
@@ -805,21 +803,6 @@ class HloComputation {
   }
   void SetFusionInstruction(HloInstruction* fusion_instruction) {
     SetInstruction(fusion_instruction, InstructionType::kFusion);
-  }
-
-  // Returns if this computation is a custom-call computation.
-  bool IsCustomCallComputation() const {
-    return instruction_type() == InstructionType::kCustomCall;
-  }
-
-  // Returns the owning custom call instruction, or nullptr if this is not a
-  // custom call computation.
-  HloInstruction* CustomCallInstruction() const {
-    return instruction_type() == InstructionType::kCustomCall ? instruction()
-                                                              : nullptr;
-  }
-  void SetCustomCallInstruction(HloInstruction* custom_call_instruction) {
-    SetInstruction(custom_call_instruction, InstructionType::kCustomCall);
   }
 
   // Returns if this computation is a to_apply region of a collective.
