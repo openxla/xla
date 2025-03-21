@@ -284,21 +284,38 @@ absl::StatusOr<bool> CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
     //   (3) ROOT bitcast(dynamic-update-slice)
     //   (4) ROOT tuple(bitcast(dynamic-update-slice))
     //
-    // In case there is a root tuple, the search will stop at the tuple operand,
-    // as the root tuple is not considered a real user by HloInstructionAdaptor.
     // Note that due to AlgebraicSimplifier we will never have a chain of
     // bitcasts.
-    HloInstructionAdaptor real_root = dus;
-    auto users = real_root.GetUsers();
-    while (!users.empty()) {
-      if (users.size() > 1) {
-        return false;
+    if (fusion != nullptr) {
+      const HloInstruction* root = &dus.instruction();
+      PtrVec<HloInstruction*> users = root->users();
+      while (!users.empty()) {
+        if (users.size() > 1) {
+          return false;
+        }
+        root = users.front();
+        if (root->opcode() != HloOpcode::kBitcast &&
+            root->opcode() != HloOpcode::kTuple) {
+          return false;
+        }
+        users = root->users();
       }
-      real_root = users.front();
-      if (real_root.opcode() != HloOpcode::kBitcast) {
-        return false;
+    } else {
+      HloInstructionAdaptor real_root = dus;
+      auto users = real_root.GetUsers();
+      while (!users.empty()) {
+        if (users.size() > 1) {
+          return false;
+        }
+        real_root = users.front();
+        // In case there is a root tuple, the search will stop at the tuple
+        // operand, as the root tuple is not considered a real user by
+        // HloInstructionAdaptor.
+        if (real_root.opcode() != HloOpcode::kBitcast) {
+          return false;
+        }
+        users = real_root.GetUsers();
       }
-      users = real_root.GetUsers();
     }
 
     // Find "real" DUS operand by skipping bitcasted operands.

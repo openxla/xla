@@ -1087,6 +1087,43 @@ ENTRY main {
               IsOkAndHolds(true));
 }
 
+TEST_F(IrEmissionUtilsTest,
+       CanEmitFusedDynamicUpdateSliceInPlaceForGpu_HandlesCommandBuffer) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+    fusion {
+      a = f32[1024] parameter(0)
+      u = f32[1] constant(0)
+      i = s32[] constant(0)
+      dus = f32[1024] dynamic-update-slice(a, u, i)
+      t0 = tuple(dus)
+    }
+
+    command_buffer {
+      a = f32[1024] parameter(0)
+      cf = (f32[1024]) fusion(a), kind=kLoop, calls=fusion
+      t1 = tuple(cf)
+    }
+
+    entry {
+      a = f32[1024] parameter(0)
+      c = ((f32[1024])) call(a), to_apply=command_buffer
+      g = get-tuple-element(c), index=0
+    })"));
+  const HloInstruction* fusion =
+      module->GetComputationWithName("command_buffer")
+          ->GetInstructionWithName("cf");
+  BufferAllocation alloc(/*index=*/0, /*size=*/1, /*color=*/0);
+  BufferAllocation::Slice slice(&alloc, /*offset=*/0,
+                                /*size=*/1);
+  EXPECT_THAT(
+      CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
+          *HloFusionAdaptor::ForInstruction(fusion),
+          [&slice](const HloInstruction*, const ShapeIndex&) { return slice; },
+          fusion),
+      IsOkAndHolds(true));
+}
+
 gpu::GpuBackendConfig CreateTestProto() {
   gpu::GpuBackendConfig proto;
   auto& knobs = *proto.mutable_cudnn_fmha_backend_config()
