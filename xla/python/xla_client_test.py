@@ -610,6 +610,103 @@ def TestFactory(xla_backend,
       )
       self._ExecuteAndCompareClose(c, expected=[-1.75])
 
+    # Need to keep the callback functions alive.
+    ffi_callbacks = []
+
+    def _wrap_callback(self, callback):
+      class FfiBuffer:
+        def __init__(self, buffer):
+          self.data = buffer.data
+          self.shape = buffer.shape
+          self.dtype = buffer.dtype
+          self.__array_interface__ = {
+              "shape": tuple(self.shape),
+              "typestr": self.dtype.kind,
+              "data": (self.data, False),
+              "version": 3
+          }
+      def ffi_callback(call_frame_address):
+        call_frame = xla_extension.get_call_frame_from_address(call_frame_address)
+        # TODO error handling
+        if len(call_frame.args) == 0:
+          # TODO call frame should have a 'valid' flag.
+          return
+        # Turn the args and rets into something with __array_interface__.
+        callback([FfiBuffer(arg) for arg in call_frame.args],
+                 [FfiBuffer(ret) for ret in call_frame.rets],
+                 call_frame.attrs)
+
+      import ctypes
+      # Turn the python function into a ctypes function pointer.
+      FFI_CCALLFUNC = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p)
+      callback_func = FFI_CCALLFUNC(ffi_callback)
+      ffi_ccall_address = ctypes.cast(callback_func, ctypes.c_void_p)
+      # Need to keep the callback function alive.
+      self.ffi_callbacks.append(callback_func)
+      # Create capsule.
+      destructor = ctypes.CFUNCTYPE(None, ctypes.py_object)
+      builder = ctypes.pythonapi.PyCapsule_New
+      builder.restype = ctypes.py_object
+      builder.argtypes = (ctypes.c_void_p, ctypes.c_char_p, destructor)
+      ffi_capsule = builder(ffi_ccall_address.value, None, destructor(0))
+      return ffi_capsule
+
+    def _create_custom_call_computation(self, name,
+          operands=[np.float32(1.25)],
+          shape_with_layout=xla_client.Shape.array_shape(
+              np.dtype(np.float32), (), ()
+          ),
+          operand_shapes_with_layout=[
+              xla_client.Shape.array_shape(np.dtype(np.float32), (), ()),
+          ],
+          opaque=b"{}"):
+      c = self._NewComputation()
+      operands=[ops.Constant(c, op) for op in operands]
+      ops.CustomCallWithLayout(
+          c,
+          name,
+          operands=operands,
+          shape_with_layout=shape_with_layout,
+          operand_shapes_with_layout=operand_shapes_with_layout,
+          opaque=opaque,
+          api_version=xla_client.ops.CustomCallApiVersion.API_VERSION_TYPED_FFI,
+      )
+      return c
+
+    def testCustomCallPythonFfi(self):
+      if self.backend.platform != "cpu":
+        self.skipTest("Test requires cpu platform")
+
+      def sub_f(args, rets, attrs):
+        a = np.array(args[0])
+        r = np.array(rets[0], copy=False)
+        r.fill(a - attrs["f"])
+
+      xla_client.register_custom_call_target(
+          "py_sub_f", self._wrap_callback(sub_f), platform="cpu", api_version=1
+      )
+      c = self._create_custom_call_computation(name = b"py_sub_f", opaque = b"{f = 3.0}")
+      self._ExecuteAndCompareClose(c, expected=[-1.75])
+
+    def testCustomCallPythonFfiDictionaryAttributes(self):
+      if self.backend.platform != "cpu":
+        self.skipTest("Test requires cpu platform")
+
+      def sub_dict_f(args, rets, attrs):
+        a = np.array(args[0])
+        r = np.array(rets[0], copy=False)
+        r.fill(a - attrs["dict_attr"]["f"])
+
+      xla_client.register_custom_call_target(
+          "py_sub_dict_f", self._wrap_callback(sub_dict_f), platform="cpu", api_version=1
+      )
+      c = self._create_custom_call_computation(
+          name = b"py_sub_dict_f",
+          opaque = b"{ dict_attr = { f = 1 : i32 } }")
+      self._ExecuteAndCompareClose(c, expected=[0.25])
+
+    # c = self._create_custom_call_computation(opaque = b"{f = 3.0 : f32, dict_attr = {a = 1 : i64, b = 6.4 : f64}, str_attr = \"hi\"}")
+
     def testStatefulCustomCall(self):
       if self.backend.platform != "cpu":
         self.skipTest("Test requires cpu platform")
