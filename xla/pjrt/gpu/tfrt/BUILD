@@ -1,6 +1,6 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -154,6 +154,8 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -168,7 +170,6 @@ cc_library(
         "//xla:util",
         "//xla/pjrt:pjrt_client",
         "//xla/service:shaped_buffer",
-        "//xla/service:stream_pool",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework:allocator",
@@ -193,6 +194,12 @@ xla_cc_test(
     deps = [
         ":gpu_event",
         ":tracked_tfrt_gpu_device_buffer",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:util",
@@ -205,14 +212,9 @@ xla_cc_test(
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
+        # copybara:uncomment "//xla/tsl/framework:allocator",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:platform_port",
     ],
 )
