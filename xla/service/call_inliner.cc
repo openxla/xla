@@ -185,6 +185,10 @@ bool InlineInstruction(HloInstruction* instruction) {
   return true;
 }
 
+bool InlineNcclGroups(HloInstruction* instruction) {
+  return !instruction->frontend_attributes().map().contains(kNcclGroupAttr);
+}
+
 bool InlineStreamAnnotation(HloInstruction* instruction) {
   if (instruction->GetModule()
           ->config()
@@ -252,7 +256,7 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
          !instruction->parent()->IsAsyncComputation() &&
          InlineInstruction(instruction) && InlineUnderShardy(instruction) &&
          InlineComposites(instruction, composites_to_preserve_) &&
-         InlineStreamAnnotation(instruction);
+         InlineNcclGroups(instruction) && InlineStreamAnnotation(instruction);
 }
 
 absl::StatusOr<bool> CallInliner::Run(

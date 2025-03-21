@@ -96,6 +96,9 @@ extern const char kXlaSchedulingGroupIdAttr[];
 // are added.
 extern const char kMustFuseAttr[];
 extern const char kMaximalFuseAttr[];
+
+// XLA frontend attribute for specifying when NCCLGroups should be used.
+extern const char kNcclGroupAttr[];
 }  // namespace xla
 
 #endif  // XLA_SIDE_EFFECT_UTIL_H_
