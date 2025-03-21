@@ -1401,7 +1401,6 @@ constexpr std::array kUnsupportedOps = {
     HloOpcode::kCopyStart,
     HloOpcode::kCustomCall,
     HloOpcode::kDomain,
-    HloOpcode::kDot,
     HloOpcode::kDynamicReshape,
     HloOpcode::kDynamicSlice,
     HloOpcode::kDynamicUpdateSlice,
@@ -1466,7 +1465,9 @@ absl::flat_hash_set<HloOpcode> AllTestedOpcodes() {
 
 TEST(OpCoverage, UnsupportedOpcodes) {
   for (HloOpcode opcode : kUnsupportedOps) {
-    EXPECT_TRUE(internal::IsTritonUnsupportedOpcode(opcode));
+    EXPECT_TRUE(internal::IsTritonUnsupportedOpcode(opcode))
+        << "Opcode `" << HloOpcodeString(opcode)
+        << "` is not expected to be supported.";
   }
 }
 
