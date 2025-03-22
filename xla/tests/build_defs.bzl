@@ -7,6 +7,14 @@ load(
     "//xla/tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
+load(
+    "@local_config_cuda//cuda:build_defs.bzl",
+    "is_cuda_configured",
+)
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "is_rocm_configured",
+)
 load("//xla/tsl/platform/default:build_config.bzl", "strict_cc_test")
 
 visibility(DEFAULT_LOAD_VISIBILITY)
@@ -169,7 +177,9 @@ def prepare_gpu_backend_data(backends, disabled_backends, backend_tags, backend_
 
     new_backends = [
         backend
-        for backend in nvidia_backends + amd_backends + other_backends
+        for backend in (nvidia_backends if (not is_rocm_configured()) else []) 
+            + (amd_backends if (not is_cuda_configured()) else []) 
+            + other_backends
     ]
 
     disabled_backends = nvidia_disabled_backends + amd_disabled_backends
