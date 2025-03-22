@@ -765,11 +765,14 @@ void CaptureConvGraphRecursive(HloInstruction* instr,
     ++num_endpoints;
   }
 
-  // Since the cuDNN graph cannot have more than one endpoint, do not fuse
-  // into the cuDNN convolution Custom Call and roll back the graph when there
-  // are multiple endpoints. If the resulting graph still has more than one
-  // endpoint, the recursive caller will continue to roll back the graph.
-  if (num_endpoints > 1) {
+  // Do not fuse into the cuDNN convolution Custom Call and roll back the graph
+  // when the number of users eligible for fusion is less than the total number
+  // of users of instr. Since the cuDNN graph cannot have more than one
+  // endpoint, also roll back the graph when there are multiple endpoints. If
+  // the resulting graph still has more than one endpoint, the recursive caller
+  // will continue to roll back the graph.
+  if (num_new_users + num_existing_users < instr->user_count() ||
+      num_endpoints > 1) {
     graph_string = std::move(init_graph_string);
     operands = init_operands;
     aux_outputs = init_aux_outputs;
@@ -791,9 +794,6 @@ CaptureConvGraph(HloInstruction* instr, HloInstruction* convolution,
                  bool x_mult_scale, bool w_mult_scale) {
   GraphString graph_string;
   graph_string.AppendOp("conv", instr);
-
-  HloReachabilityMap* reachability =
-      HloReachabilityMap::Build(instr->parent()).release();
 
   // Shift the scaling of the input and filter to the output of the convolution.
   HloInstruction *input_scaled_conv, *filter_scaled_conv;
@@ -823,9 +823,11 @@ CaptureConvGraph(HloInstruction* instr, HloInstruction* convolution,
   absl::flat_hash_set<int> visited_instrs;
   HloInstruction* final_instr;
   int num_endpoints = 0;
+  std::unique_ptr<HloReachabilityMap> reachability =
+      HloReachabilityMap::Build(instr->parent());
   CaptureConvGraphRecursive(instr, operands, aux_outputs, graph_string,
                             visited_instrs, final_instr, num_endpoints,
-                            reachability);
+                            reachability.get());
   return std::make_tuple(operands, aux_outputs, graph_string, final_instr);
 }
 
