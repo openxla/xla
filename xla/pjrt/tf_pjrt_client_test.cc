@@ -57,6 +57,8 @@ TEST(TfClientTest, ExecuteAndHloSnapshot) {
 
   auto* device = client->addressable_devices()[0];
 
+  auto* device = client->addressable_devices()[0];
+
   std::vector<float> data1{1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
   std::vector<float> data2{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
   Shape shape = ShapeUtil::MakeShape(F32, {3, 2});
