@@ -181,6 +181,65 @@ ENTRY e {
   }
 }
 
+class NVPTXCompilerTestCudnn : public NVPTXCompilerTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = NVPTXCompilerTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_cublas_fallback(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
+    debug_options
+        .set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(true);
+    return debug_options;
+  }
+};
+
+TEST_F(NVPTXCompilerTestCudnn, BlockScaledDotSupportedOnBlackwell) {
+  const absl::string_view hlo_string = R"(
+block_scaled_dot {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  %a_conv = f16[256,128] convert(%lhs)
+  %b_conv = f16[384,128] convert(%rhs)
+  %a_scale_conv = f16[256,4] convert(%lhs_scale)
+  %b_scale_conv = f16[384,4] convert(%rhs_scale)
+  %a_scale_bc = f16[256,4,32] broadcast(%a_scale_conv), dimensions={0,1}
+  %b_scale_bc = f16[384,4,32] broadcast(%b_scale_conv), dimensions={0,1}
+  %a_scale = f16[256,128] reshape(%a_scale_bc)
+  %b_scale = f16[384,128] reshape(%b_scale_bc)
+  %lhs_dq = f16[256,128] multiply(%a_conv, %a_scale)
+  %rhs_dq = f16[384,128] multiply(%b_conv, %b_scale)
+  ROOT %result = f32[256,384] dot(%lhs_dq, %rhs_dq),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  ROOT %result = f32[256,384] call(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      to_apply=block_scaled_dot, is_composite=true,
+      frontend_attributes={composite.name="mx.block_scaled_dot",composite.version="1"}
+})";
+
+  se::CudaComputeCapability cc = backend()
+                                     .default_stream_executor()
+                                     ->GetDeviceDescription()
+                                     .cuda_compute_capability();
+  if (cc.IsBlackwell()) {
+    MatchOptimizedHlo(hlo_string, R"(
+; CHECK-COUNT-2: transpose({{.*}}), dimensions={0,1,4,3,2,5}
+; CHECK: __cudnn$fusion
+    )");
+  } else {
+    MatchOptimizedHlo(hlo_string, R"(
+; CHECK-NOT: __cudnn$fusion
+    )");
+  }
+}
+
 TEST_F(NVPTXCompilerTest, RemovesUnnecessaryCopyInPostSchedulingPipelines) {
   const absl::string_view hlo_text = R"(
 HloModule all_gather_overlapping, is_scheduled=true

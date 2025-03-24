@@ -281,29 +281,39 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "block_scaling_matcher",
+    hdrs = ["block_scaling_matcher.h"],
+    srcs = ["block_scaling_matcher.cc"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+    ],
+)
+
+cc_library(
     name = "block_scaling_rewriter",
     srcs = ["block_scaling_rewriter.cc"],
     hdrs = ["block_scaling_rewriter.h"],
     deps = [
-        "//xla:literal",
+        ":block_scaling_matcher",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/builder/lib:constants",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/transforms/expanders:op_expander_pass",
+        "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_creation_utils",
-        "//xla/service:shape_inference",
-        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service:pattern_matcher",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -312,18 +322,16 @@ xla_cc_test(
     srcs = ["block_scaling_rewriter_test.cc"],
     deps = [
         ":block_scaling_rewriter",
-        "//xla/hlo/parser:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
 )
 
 xla_test(
-    name = "block_scaling_rewriter_cudnn_test",
-    srcs = ["block_scaling_rewriter_cudnn_test.cc"],
+    name = "block_scaling_rewriter_runtime_test",
+    srcs = ["block_scaling_rewriter_runtime_test.cc"],
     backends = ["gpu_b200"],
     tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
@@ -709,6 +717,7 @@ cc_library(
     srcs = if_cuda_is_configured(["cudnn_fusion_compiler.cc"]),
     hdrs = if_cuda_is_configured(["cudnn_fusion_compiler.h"]),
     deps = if_cuda_is_configured([
+        ":block_scaling_matcher",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cudnn_support_utils",
         "//xla/service/gpu:ir_emission_utils",
@@ -978,7 +987,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@local_config_cuda//cuda:cudnn_header",
-        ":block_scaling_rewriter",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -1925,6 +1933,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:reduction_utils",
         "//xla/service/gpu:stream_executor_util",
+        "//xla/service/gpu/transforms:block_scaling_matcher",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/tsl/platform:errors",
