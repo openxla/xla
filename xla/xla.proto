@@ -459,7 +459,8 @@ message DebugOptions {
 
   bool xla_gpu_enable_pipelined_reduce_scatter = 231;
 
-  // Enable NVSHMEM.
+  // Enable NVSHMEM. Must be set via XLA_FLAGS variable before XLA client is
+  // initialized and can't be set just through HLO Config->ExecutionOptions.
   bool xla_gpu_experimental_enable_nvshmem = 386;
 
   // Enable allreduce reassociation on allreduces that are converted to a wider
