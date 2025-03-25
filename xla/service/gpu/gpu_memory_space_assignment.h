@@ -52,7 +52,8 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
     };
     auto is_mosaic_gpu_nvshmem_instr = [](const HloInstruction* instr) {
       return instr->opcode() == HloOpcode::kCustomCall &&
-             (instr->custom_call_target() == "mosaic_gpu" || instr->custom_call_target() == "mosaic_gpu_v2" ) &&
+             (instr->custom_call_target() == "mosaic_gpu" ||
+              instr->custom_call_target() == "mosaic_gpu_v2") &&
              instr->raw_backend_config_string().find("nvshmem") !=
                  std::string::npos;
     };
