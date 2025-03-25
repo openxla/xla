@@ -57,7 +57,8 @@ inline bool IsMosaicGpuNvshmemOp(const HloValue* alias) {
   // with the HLO of the pallas kernel. If an nvshmem instruction is present,
   // nvshmem will be in the backend config string.
   return alias->instruction()->opcode() == HloOpcode::kCustomCall &&
-         alias->instruction()->custom_call_target() == "mosaic_gpu" &&
+         (alias->instruction()->custom_call_target() == "mosaic_gpu" ||
+          alias->instruction()->custom_call_target() == "mosaic_gpu_v2") &&
          alias->instruction()->raw_backend_config_string().find("nvshmem") !=
              std::string::npos;
 }
