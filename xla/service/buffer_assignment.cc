@@ -2214,6 +2214,8 @@ BufferAssigner::CreateAssignment(
 
   TF_RETURN_IF_ERROR(
       colorer_(&assignment->alias_analysis(), assignment->hlo_ordering()));
+  TF_RETURN_IF_ERROR(DefaultColorer()(&assignment->alias_analysis(),
+                                      assignment->hlo_ordering()));
   VLOG(3) << "After coloring:";
   XLA_VLOG_LINES(3,
                  assignment->alias_analysis().dataflow_analysis().ToString());

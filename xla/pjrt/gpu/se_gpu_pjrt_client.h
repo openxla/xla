@@ -53,6 +53,10 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "tsl/platform/casts.h"
 
+#if GOOGLE_CUDA
+#include "xla/service/gpu/model/gpu_collective_performance_model.h"
+#endif
+
 namespace xla {
 using DeviceTopologyPair =
     std::pair<std::vector<std::unique_ptr<PjRtStreamExecutorDevice>>,
@@ -185,6 +189,10 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options);
+
+// Get the fabric info of a local device ordinal in the format of
+// "clusterUuid/cliqueId". Empty on SM90 or lower.
+absl::StatusOr<std::string> GetDeviceFabricInfo(int device_ordinal);
 
 }  // namespace xla
 
