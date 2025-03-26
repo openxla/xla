@@ -141,7 +141,7 @@ XLA_TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
   ENTRY main {
     id = u32[] replica-id()
     async-comm-start = ((u32[]), (u32[], u32[])) async-start(id), calls=bidirectional_ring,
-      frontend_attributes={_nccl_group=""}
+      frontend_attributes={_collectives_group=""}
    ROOT async-comm-done = (u32[], u32[]) async-done(async-comm-start)
   }
 

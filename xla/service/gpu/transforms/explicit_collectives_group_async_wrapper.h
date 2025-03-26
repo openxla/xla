@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_NCCL_GROUP_ASYNC_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_NCCL_GROUP_ASYNC_WRAPPER_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_COLLECTIVES_GROUP_ASYNC_WRAPPER_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_COLLECTIVES_GROUP_ASYNC_WRAPPER_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -27,15 +27,15 @@ namespace xla {
 namespace gpu {
 
 // This pass will find the kCall instructions that
-// are annotated with explicit nccl groups in their frontend
+// are annotated with explicit collectives groups in their frontend
 // attributes. It then will convert the kCall into an async
 // start-done pair with the same computation. This is then
 // picked up by the IR emitter stage, and the entire computation
-// will be launched in a single NCCL Group.
-class ExplicitNcclGroupAsyncWrapper : public HloModulePass {
+// will be launched in a single Collective Group.
+class ExplicitCollectivesGroupAsyncWrapper : public HloModulePass {
  public:
   absl::string_view name() const override {
-    return "explicit-nccl-group-async-wrapper";
+    return "explicit-collectives-group-async-wrapper";
   }
 
   using HloPassInterface::Run;
@@ -47,4 +47,4 @@ class ExplicitNcclGroupAsyncWrapper : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_NCCL_GROUP_ASYNC_WRAPPER_H_
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TRANSFORMS_EXPLICIT_COLLECTIVES_GROUP_ASYNC_WRAPPER_H_

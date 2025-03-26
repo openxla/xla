@@ -3083,12 +3083,14 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   std::optional<int64_t> num_devices_;
 };
 
-bool IsNcclGroupComputation(HloComputation* computation) {
+bool IsCollectivesGroupComputation(HloComputation* computation) {
   auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
   if (!maybe_caller.has_value()) {
     return false;
   }
-  return (*maybe_caller)->get_frontend_attribute(kNcclGroupAttr).has_value();
+  return (*maybe_caller)
+      ->get_frontend_attribute(kCollectivesGroupAttr)
+      .has_value();
 }
 
 }  // namespace
@@ -3127,7 +3129,7 @@ absl::StatusOr<bool> HloVerifier::Run(
       // groups on GPU.
       if (computation->IsAsyncComputation() &&
           !computation->OnlyContainsSendRecv() &&
-          !IsNcclGroupComputation(computation)) {
+          !IsCollectivesGroupComputation(computation)) {
         TF_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

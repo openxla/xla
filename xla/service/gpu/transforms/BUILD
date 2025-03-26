@@ -1625,9 +1625,9 @@ xla_cc_test(
 
 
 cc_library(
-    name = "explicit_nccl_group_async_wrapper",
-    srcs = ["explicit_nccl_group_async_wrapper.cc"],
-    hdrs = ["explicit_nccl_group_async_wrapper.h"],
+    name = "explicit_collectives_group_async_wrapper",
+    srcs = ["explicit_collectives_group_async_wrapper.cc"],
+    hdrs = ["explicit_collectives_group_async_wrapper.h"],
     deps = [
         "//xla:side_effect_util",
         "//xla:util",
@@ -1645,10 +1645,10 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "explicit_nccl_group_async_wrapper_test",
-    srcs = ["explicit_nccl_group_async_wrapper_test.cc"],
+    name = "explicit_collectives_group_async_wrapper_test",
+    srcs = ["explicit_collectives_group_async_wrapper_test.cc"],
     deps = [
-        ":explicit_nccl_group_async_wrapper",
+        ":explicit_collectives_group_async_wrapper",
         "//xla:side_effect_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",

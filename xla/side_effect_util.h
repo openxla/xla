@@ -97,8 +97,9 @@ extern const char kXlaSchedulingGroupIdAttr[];
 extern const char kMustFuseAttr[];
 extern const char kMaximalFuseAttr[];
 
-// XLA frontend attribute for specifying when NCCLGroups should be used.
-extern const char kNcclGroupAttr[];
+// XLA frontend attribute for specifying groups of collectives that should be
+// launched together.
+extern const char kCollectivesGroupAttr[];
 }  // namespace xla
 
 #endif  // XLA_SIDE_EFFECT_UTIL_H_

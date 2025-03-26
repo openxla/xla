@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/transforms/explicit_nccl_group_async_wrapper.h"
+#include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 
 #include <memory>
 
@@ -31,9 +31,9 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-using ExplicitNcclGroupAsyncWrapperTest = HloTestBase;
+using ExplicitCollectivesGroupAsyncWrapperTest = HloTestBase;
 
-TEST_F(ExplicitNcclGroupAsyncWrapperTest, AnnotatedOpIsWrapped) {
+TEST_F(ExplicitCollectivesGroupAsyncWrapperTest, AnnotatedOpIsWrapped) {
   const absl::string_view hlo_string = R"(
   HloModule composite
   comms {
@@ -45,28 +45,28 @@ TEST_F(ExplicitNcclGroupAsyncWrapperTest, AnnotatedOpIsWrapped) {
 
   ENTRY main {
     b = f32[1] parameter(0)
-    ROOT c = (f32[1], f32[1]) call(b), to_apply=comms, frontend_attributes={_nccl_group=""}
+    ROOT c = (f32[1], f32[1]) call(b), to_apply=comms, frontend_attributes={_collectives_group=""}
   }
   )";
 
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  ExplicitNcclGroupAsyncWrapper wrapper_pass;
+  ExplicitCollectivesGroupAsyncWrapper wrapper_pass;
 
   TF_ASSERT_OK_AND_ASSIGN(bool mutated, wrapper_pass.Run(module.get()));
   absl::StatusOr<bool> filecheck_result = RunFileCheck(module->ToString({}), R"(
   // CHECK: %b = f32[1]{0} parameter(0)
-  // CHECK: %tuple-start = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%b), async_execution_thread="explicit", calls=%comms.nccl_group, frontend_attributes={_nccl_group=""}
-  // CHECK: ROOT %tuple-done = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start), frontend_attributes={_nccl_group=""}
+  // CHECK: %tuple-start = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%b), async_execution_thread="explicit", calls=%comms.collectives_group, frontend_attributes={_collectives_group=""}
+  // CHECK: ROOT %tuple-done = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start), frontend_attributes={_collectives_group=""}
   )");
   TF_ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(*filecheck_result);
   ASSERT_TRUE(mutated);
 }
 
-TEST_F(ExplicitNcclGroupAsyncWrapperTest, ManyNcclGroups) {
-  // This test calls the same nccl group computation twice, so the computation
-  // is cloned so it can be used with many async instructions.
+TEST_F(ExplicitCollectivesGroupAsyncWrapperTest, ManyCollectivesGroups) {
+  // This test calls the same collectives group computation twice, so the
+  // computation is cloned so it can be used with many async instructions.
   const absl::string_view hlo_string = R"(
   HloModule composite
   comms {
@@ -78,24 +78,24 @@ TEST_F(ExplicitNcclGroupAsyncWrapperTest, ManyNcclGroups) {
 
   ENTRY main {
     b = f32[1] parameter(0)
-    group1 = (f32[1], f32[1]) call(b), to_apply=comms, frontend_attributes={_nccl_group=""}
+    group1 = (f32[1], f32[1]) call(b), to_apply=comms, frontend_attributes={_collectives_group=""}
     c = get-tuple-element(group1), index=0
-    ROOT d = (f32[1], f32[1]) call(c), to_apply=comms, frontend_attributes={_nccl_group=""}
+    ROOT d = (f32[1], f32[1]) call(c), to_apply=comms, frontend_attributes={_collectives_group=""}
   }
   )";
 
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  ExplicitNcclGroupAsyncWrapper wrapper_pass;
+  ExplicitCollectivesGroupAsyncWrapper wrapper_pass;
 
   TF_ASSERT_OK_AND_ASSIGN(bool mutated, wrapper_pass.Run(module.get()));
   absl::StatusOr<bool> filecheck_result = RunFileCheck(module->ToString({}), R"(
   // CHECK: %b = f32[1]{0} parameter(0)
-  // CHECK: %tuple-start = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%b), async_execution_thread="explicit", calls=%comms.nccl_group, frontend_attributes={_nccl_group=""} 
-  // CHECK: %tuple-done = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start), frontend_attributes={_nccl_group=""}
+  // CHECK: %tuple-start = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%b), async_execution_thread="explicit", calls=%comms.collectives_group, frontend_attributes={_collectives_group=""} 
+  // CHECK: %tuple-done = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start), frontend_attributes={_collectives_group=""}
   // CHECK: %c = f32[1]{0} get-tuple-element(%tuple-done), index=0
-  // CHECK: %tuple-start.1 = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%c), async_execution_thread="explicit", calls=%comms.nccl_group.1, frontend_attributes={_nccl_group=""}
-  // CHECK: ROOT %tuple-done.1 = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start.1), frontend_attributes={_nccl_group=""}
+  // CHECK: %tuple-start.1 = ((f32[1]{0}), (f32[1]{0}, f32[1]{0})) async-start(%c), async_execution_thread="explicit", calls=%comms.collectives_group.1, frontend_attributes={_collectives_group=""}
+  // CHECK: ROOT %tuple-done.1 = (f32[1]{0}, f32[1]{0}) async-done(%tuple-start.1), frontend_attributes={_collectives_group=""}
   )");
   TF_ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(*filecheck_result);

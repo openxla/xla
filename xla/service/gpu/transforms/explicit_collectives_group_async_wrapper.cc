@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/transforms/explicit_nccl_group_async_wrapper.h"
+#include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -35,14 +35,14 @@ namespace gpu {
 
 namespace {
 
-absl::StatusOr<bool> CreateNcclGroupAsyncPair(HloInstruction* instr) {
+absl::StatusOr<bool> CreateCollectivesGroupAsyncPair(HloInstruction* instr) {
   if (instr->opcode() != HloOpcode::kCall ||
-      !instr->frontend_attributes().map().contains(kNcclGroupAttr)) {
+      !instr->frontend_attributes().map().contains(kCollectivesGroupAttr)) {
     return false;
   }
   HloComputation* computation = instr->parent();
   auto new_computation = instr->GetModule()->AddEmbeddedComputation(
-      instr->to_apply()->Clone("nccl_group"));
+      instr->to_apply()->Clone("collectives_group"));
   // Get the shapes for the original instruction.
   std::vector<const Shape*> parameter_shapes(instr->operand_count());
   for (int i = 0; i < instr->operand_count(); ++i) {
@@ -64,13 +64,13 @@ absl::StatusOr<bool> CreateNcclGroupAsyncPair(HloInstruction* instr) {
 }
 }  // namespace
 
-absl::StatusOr<bool> ExplicitNcclGroupAsyncWrapper::Run(
+absl::StatusOr<bool> ExplicitCollectivesGroupAsyncWrapper::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (const HloComputation* comp : module->computations()) {
     for (HloInstruction* instr : comp->instructions()) {
-      TF_ASSIGN_OR_RETURN(bool result, CreateNcclGroupAsyncPair(instr));
+      TF_ASSIGN_OR_RETURN(bool result, CreateCollectivesGroupAsyncPair(instr));
       changed |= result;
     }
   }
