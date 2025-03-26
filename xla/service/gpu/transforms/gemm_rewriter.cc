@@ -808,7 +808,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    {
+    if (toolkit_version_ >= stream_executor::SemanticVersion{6, 5, 0}) {
       // Attempt to match approximate Swish activation
       // (https://flax.readthedocs.io/en/v0.5.3/_autosummary/flax.linen.swish.html),
       // where: swish(x) = x * sigmoid(x)

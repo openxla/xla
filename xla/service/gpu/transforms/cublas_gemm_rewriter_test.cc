@@ -2129,10 +2129,10 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, MatrixBiasSwishActivation) {
-  
+  auto runtime_version = GetRuntimeVersion();
   bool rocm_swish_available =
       IsRocm() &&
-      (runtime_version >= stream_executor::SemanticVersion(6, 4, 0));
+      (runtime_version >= stream_executor::SemanticVersion(6, 5, 0));
   if (IsRocm() && !rocm_swish_available) {
     GTEST_SKIP() << "TODO: Unsupported swish epilogue on ROCM";
   }
