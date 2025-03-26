@@ -808,7 +808,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    {
+    if (toolkit_version_ >= stream_executor::SemanticVersion{6, 5, 0}) {
       // Attempt to match approximate Swish activation
       // (https://flax.readthedocs.io/en/v0.5.3/_autosummary/flax.linen.swish.html),
       // where: swish(x) = x * sigmoid(x)
@@ -1946,9 +1946,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
 
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
-      config.set_epilogue(GemmBackendConfig::SWISH);
+      config.set_epilogue(GemmBackendConfig::SILU);
     } else if (config.epilogue() == GemmBackendConfig::BIAS) {
-      config.set_epilogue(GemmBackendConfig::BIAS_SWISH);
+      config.set_epilogue(GemmBackendConfig::BIAS_SILU);
     } else {
       return absl::OkStatus();
     }

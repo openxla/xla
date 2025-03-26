@@ -84,10 +84,10 @@ absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
       return BlasLt::Epilogue::kBiasThenGELU;
     case GemmBackendConfig::BIAS_GELU_AUX:
       return BlasLt::Epilogue::kBiasThenGELUWithAux;
-    case GemmBackendConfig::SWISH:
-      return BlasLt::Epilogue::kSwish;
-    case GemmBackendConfig::BIAS_SWISH:
-      return BlasLt::Epilogue::kBiasThenSwish;
+    case GemmBackendConfig::SILU:
+      return BlasLt::Epilogue::kSILU;
+    case GemmBackendConfig::BIAS_SILU:
+      return BlasLt::Epilogue::kBiasThenSILU;
     default:
       return Internal("Unsupported Epilogue.");
   }
@@ -200,15 +200,14 @@ class GemmAutotuner {
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer,
-          workspace_buffer));
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, workspace_buffer));
       se::blas::ProfileResult profile_result;
       profile_result.set_warmup_run_executed(true);
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer,
-          workspace_buffer, &profile_result));
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, workspace_buffer,
+          &profile_result));
       return std::move(profile_result);
     };
 

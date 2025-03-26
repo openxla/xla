@@ -731,13 +731,13 @@ absl::StatusOr<bool> EpilogueAddsVectorBias(
     case GemmBackendConfig::RELU:
     case GemmBackendConfig::GELU:
     case GemmBackendConfig::GELU_AUX:
-    case GemmBackendConfig::SWISH:
+    case GemmBackendConfig::SILU:
       return false;
     case GemmBackendConfig::BIAS:
     case GemmBackendConfig::BIAS_RELU:
     case GemmBackendConfig::BIAS_GELU:
     case GemmBackendConfig::BIAS_GELU_AUX:
-    case GemmBackendConfig::BIAS_SWISH:
+    case GemmBackendConfig::BIAS_SILU:
       return true;
     default:
       return Internal("Unknown Epilogue.");
@@ -753,8 +753,8 @@ absl::StatusOr<bool> EpilogueHasAuxiliaryOutput(
     case GemmBackendConfig::BIAS:
     case GemmBackendConfig::BIAS_RELU:
     case GemmBackendConfig::BIAS_GELU:
-    case GemmBackendConfig::SWISH:
-    case GemmBackendConfig::BIAS_SWISH:
+    case GemmBackendConfig::SILU:
+    case GemmBackendConfig::BIAS_SILU:
       return false;
     case GemmBackendConfig::GELU_AUX:
     case GemmBackendConfig::BIAS_GELU_AUX:
@@ -775,8 +775,8 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
       return se::gpu::BlasLt::Epilogue::kGELU;
     case GemmBackendConfig::GELU_AUX:
       return se::gpu::BlasLt::Epilogue::kGELUWithAux;
-    case GemmBackendConfig::SWISH:
-      return se::gpu::BlasLt::Epilogue::kSwish;
+    case GemmBackendConfig::SILU:
+      return se::gpu::BlasLt::Epilogue::kSILU;
     case GemmBackendConfig::BIAS:
       return se::gpu::BlasLt::Epilogue::kBias;
     case GemmBackendConfig::BIAS_RELU:
@@ -785,8 +785,8 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
       return se::gpu::BlasLt::Epilogue::kBiasThenGELU;
     case GemmBackendConfig::BIAS_GELU_AUX:
       return se::gpu::BlasLt::Epilogue::kBiasThenGELUWithAux;
-    case GemmBackendConfig::BIAS_SWISH:
-      return se::gpu::BlasLt::Epilogue::kBiasThenSwish;
+    case GemmBackendConfig::BIAS_SILU:
+      return se::gpu::BlasLt::Epilogue::kBiasThenSILU;
     default:
       return Internal("unexpected epilogue value");
   }
