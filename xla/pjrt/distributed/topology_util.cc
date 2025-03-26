@@ -154,6 +154,19 @@ static absl::StatusOr<std::vector<LocalTopologyProto>> GetAllLocalTopologies(
                    absl::StrJoin(error_messages, "\n\n")));
 }
 
+// Returns true if all devices have a valid fabric_uuid.
+bool HasFabricUuid(absl::Span<LocalTopologyProto> local_topologies) {
+  for (const LocalTopologyProto& local : local_topologies) {
+    for (const DeviceProto& device : local.devices()) {
+      if (device.fabric_uuid().empty() ||
+          device.fabric_uuid() == "00000000-0000-0000-0000-000000000000/0") {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Steals the contents of `local_topologies`.
 GlobalTopologyProto BuildGlobalTopology(
     absl::Span<LocalTopologyProto> local_topologies,
@@ -162,28 +175,45 @@ GlobalTopologyProto BuildGlobalTopology(
   int next_global_device_id = 0;
   // Assign local devices of the same host to the same slice_index.
   int next_slice_index = 0;
-  absl::flat_hash_map<std::string, int> boot_id_to_slice_index;
-  for (LocalTopologyProto& local : local_topologies) {
-    // Every new boot_id seen is treated as a new host/slice.
-    absl::string_view boot_id = local.boot_id();
-    auto [it, inserted] =
-        boot_id_to_slice_index.try_emplace(boot_id, next_slice_index);
-    if (inserted) {
-      ++next_slice_index;
-    }
-    for (DeviceProto& device : *local.mutable_devices()) {
-      if (assign_global_device_ids) {
-        device.set_global_device_id(next_global_device_id++);
+  if (HasFabricUuid(local_topologies)) {
+    absl::flat_hash_map<std::string, int> fabric_uuid_to_slice_index;
+    for (LocalTopologyProto& local : local_topologies) {
+      for (DeviceProto& device : *local.mutable_devices()) {
+        auto [it, inserted] = fabric_uuid_to_slice_index.try_emplace(
+            device.fabric_uuid(), next_slice_index);
+        if (inserted) ++next_slice_index;
+        if (assign_global_device_ids) {
+          device.set_global_device_id(next_global_device_id++);
+        }
+        device.set_slice_index(it->second);
       }
-      device.set_slice_index(it->second);
+      global_topology.add_nodes()->Swap(&local);
     }
-    global_topology.add_nodes()->Swap(&local);
-  }
-  if (VLOG_IS_ON(10)) {
-    for (auto it = boot_id_to_slice_index.begin();
-         it != boot_id_to_slice_index.end(); ++it) {
-      LOG(INFO) << "BuildGlobalTopology boot_id_to_slice_index " << it->first
-                << "->" << it->second;
+  } else {
+    // Fallback to boot_id if fabric_uuid is not available.
+    absl::flat_hash_map<std::string, int> boot_id_to_slice_index;
+    for (LocalTopologyProto& local : local_topologies) {
+      // Every new boot_id seen is treated as a new host/slice.
+      absl::string_view boot_id = local.boot_id();
+      auto [it, inserted] =
+          boot_id_to_slice_index.try_emplace(boot_id, next_slice_index);
+      if (inserted) {
+        ++next_slice_index;
+      }
+      for (DeviceProto& device : *local.mutable_devices()) {
+        if (assign_global_device_ids) {
+          device.set_global_device_id(next_global_device_id++);
+        }
+        device.set_slice_index(it->second);
+      }
+      global_topology.add_nodes()->Swap(&local);
+    }
+    if (VLOG_IS_ON(10)) {
+      for (auto it = boot_id_to_slice_index.begin();
+           it != boot_id_to_slice_index.end(); ++it) {
+        LOG(INFO) << "BuildGlobalTopology boot_id_to_slice_index " << it->first
+                  << "->" << it->second;
+      }
     }
   }
   return global_topology;
