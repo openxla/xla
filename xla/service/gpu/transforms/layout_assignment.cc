@@ -344,7 +344,7 @@ bool IsCustomCallToMemoryPlacement(const HloInstruction* hlo) {
   if (hlo->opcode() != HloOpcode::kCustomCall) {
     return false;
   }
-  const auto& target = hlo->custom_call_target();
+  const std::string& target = hlo->custom_call_target();
   return target == memory_annotations::kMoveToDeviceCustomCallTarget ||
          target == memory_annotations::kMoveToHostCustomCallTarget;
 }

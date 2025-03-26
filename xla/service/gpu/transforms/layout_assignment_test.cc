@@ -537,12 +537,8 @@ ENTRY entry {
   const HloInstruction* call_0 = FindInstruction(m.get(), "custom-call.0");
   const Layout input_layout = call_0->operand(0)->shape().layout();
   const Layout output_layout = call_0->shape().layout();
-  EXPECT_TRUE(
-      LayoutUtil::Equal(input_layout, LayoutUtil::MakeLayout({2, 1, 0})))
-      << "Expected default layout for input.  Input: " << input_layout;
-  EXPECT_TRUE(
-      LayoutUtil::Equal(output_layout, LayoutUtil::MakeLayout({2, 1, 0})))
-      << "Expected default layout for output.  Output: " << output_layout;
+  EXPECT_EQ(input_layout, LayoutUtil::GetDefaultLayoutForR3());
+  EXPECT_EQ(output_layout, LayoutUtil::GetDefaultLayoutForR3());
 }
 
 TEST_F(LayoutAssignmentTest, MoveToDeviceCustomCallConstrained) {
@@ -570,12 +566,8 @@ ENTRY entry {
   const HloInstruction* call_0 = FindInstruction(m.get(), "custom-call.0");
   const Layout input_layout = call_0->operand(0)->shape().layout();
   const Layout output_layout = call_0->shape().layout();
-  EXPECT_TRUE(
-      LayoutUtil::Equal(input_layout, LayoutUtil::MakeLayout({2, 1, 0})))
-      << "Expected default layout for input.  Input: " << input_layout;
-  EXPECT_TRUE(
-      LayoutUtil::Equal(output_layout, LayoutUtil::MakeLayout({2, 1, 0})))
-      << "Expected default layout for output.  Output: " << output_layout;
+  EXPECT_EQ(input_layout, LayoutUtil::GetDefaultLayoutForR3());
+  EXPECT_EQ(output_layout, LayoutUtil::GetDefaultLayoutForR3());
 }
 
 TEST_F(LayoutAssignmentTest, CuDNNConvolutionHasNHWCLayoutPostHopper) {
