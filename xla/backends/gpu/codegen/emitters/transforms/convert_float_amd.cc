@@ -302,7 +302,12 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
 
     if (match) {
       auto [input, outputs] = *match;
-      rewriter.setInsertionPointAfter(op);
+      if (auto* input_op = input.getDefiningOp()) {
+        rewriter.setInsertionPointAfter(input_op);
+      } else {
+        rewriter.setInsertionPointToStart(
+            input.cast<mlir::BlockArgument>().getOwner());
+      }
       mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
       auto new_outputs = EmitVectorizedExtFromF8Intrinsic(
           input, mlir::cast<mlir::FloatType>(outputs[0].getType()), b);
