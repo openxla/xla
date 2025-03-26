@@ -195,7 +195,7 @@ cc_library(
 )
 
 cc_library(
-    name = "protobuf",
+    name = "protobuf_impl",
     srcs = [
         "protobuf.cc",
         "protobuf_util.cc",
@@ -205,6 +205,17 @@ cc_library(
         ":platform",
         "@xla//xla/tsl/platform:types",
     ] + tsl_protobuf_deps(),
+)
+
+cc_library(
+    name = "protobuf",
+    hdrs = ["protobuf.h"],
+    deps = [
+        ":platform",
+        ":types",
+    ] + if_static([
+        ":protobuf_impl",
+    ]) + tsl_protobuf_deps(),
 )
 
 cc_library(
