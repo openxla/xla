@@ -1796,7 +1796,8 @@ ENTRY main {
           "num_stages":"1","num_warps":"4","num_ctas":"1"}}}
 })";
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{/*aabs=*/1.0, /*arel=*/1e-3}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text,
+                                       ErrorSpec{/*aabs=*/1.0, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonEmitterTest, SingleTileDotWithNestedFusionsIsEmittedCorrectly) {
