@@ -76,9 +76,8 @@ bool IsNopInstruction(const HloInstruction& hlo) {
   }
 }
 
-bool IsAsyncComputeOp(const HloInstruction& hlo) {
-  return (hlo.opcode() == HloOpcode::kAsyncStart ||
-          hlo.opcode() == HloOpcode::kAsyncDone) &&
+bool IsAsyncComputeStartOp(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kAsyncStart &&
          !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
@@ -123,15 +122,12 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
   return (hlo_query::IsAsyncCollectiveStartOp(&hlo,
                                               /*include_send_recv=*/true) &&
           !IsGPUSyncCollective(hlo)) ||
-         IsAsyncComputeOp(hlo) || hlo.opcode() == HloOpcode::kCopyStart;
+         IsAsyncComputeStartOp(hlo) || hlo.opcode() == HloOpcode::kCopyStart;
 }
 
 // Marks async done operations to be scheduled as late as possible.
 bool IsGpuAsyncDone(const HloInstruction& hlo) {
-  return (hlo_query::IsAsyncCollectiveDoneOp(&hlo,
-                                             /*include_send_recv=*/true) &&
-          !IsGPUSyncCollective(*hlo.operand(0))) ||
-         IsAsyncComputeOp(hlo) || hlo.opcode() == HloOpcode::kCopyDone;
+  return hlo.operand_count() == 1 && IsGpuAsyncStart(*hlo.operand(0));
 }
 
 bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
