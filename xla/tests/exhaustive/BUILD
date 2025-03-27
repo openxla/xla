@@ -97,7 +97,7 @@ cc_library(
     deps = [
         ":exhaustive_op_test_utils",
         "//xla/tsl/util:command_line_flags",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],

@@ -628,7 +628,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:net",
         "@tsl//tsl/platform:path",
