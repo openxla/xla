@@ -399,10 +399,10 @@ absl::Status RocmApiCallbackImpl::operator()(uint32_t domain, uint32_t cbid,
       default:
         //
         VLOG(1) << "API call "
-                     << se::wrap::roctracer_op_string(ACTIVITY_DOMAIN_HIP_API,
-                                                      cbid, 0)
-                     << ", corr. id=" << data->correlation_id
-                     << " dropped. No capturing function was found!";
+                << se::wrap::roctracer_op_string(ACTIVITY_DOMAIN_HIP_API,
+                                                cbid, 0)
+                << ", corr. id=" << data->correlation_id
+                << " dropped. No capturing function was found!";
         // AddGenericEventUponApiExit(cbid, data);
         break;
     }
