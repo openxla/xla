@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COMMAND_BUFFER_CMD_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COMMAND_BUFFER_CMD_H_
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -37,9 +36,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
-#include "xla/backends/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -179,18 +178,6 @@ class CommandBufferCmd {
     // An external state manager that gives efficient access to per-device state
     // to commands without a need to add expensive synchronization.
     StateManager& state;
-
-    // Execution scope id defines the default execution scope that should be
-    // used for recording commands. Each individual command uses this scope plus
-    // its own execution stream id to compute the execution scope that will be
-    // used for adding commands to command buffer. It is a command sequence
-    // responsibility to guarantee that all commands eventually will be
-    // correctly synchronized with an execution scope id passed as argument.
-    //
-    // This argument allows conditional commands to record a command sequence
-    // into non-default execution scope.
-    se::CommandBuffer::ExecutionScopeId execution_scope_id =
-        se::CommandBuffer::kDefaultExecutionScope;
   };
 
   // See Thunk documentation for XLA execution stages (prepare, initialize,
@@ -229,17 +216,6 @@ class CommandBufferCmd {
 
   // Returns true if command implemented as a nested command buffer.
   virtual bool IsNestedCommandBuffer() const { return false; }
-
-  // Returns a command execution scope created from the specified
-  // 'execution_stream_id'.
-  se::CommandBuffer::ExecutionScopeId GetExecutionScope(
-      const RecordParams& record_params,
-      ExecutionStreamId execution_stream_id) const;
-
-  // Return the execution scope created from the execution stream id of the
-  // thunk which is lowered to current command.
-  virtual se::CommandBuffer::ExecutionScopeId GetExecutionScope(
-      const CommandBufferCmd::RecordParams& record_params) const;
 
   absl::string_view profile_annotation() const { return profile_annotation_; }
   void set_profile_annotation(absl::string_view profile_annotation) {
@@ -362,11 +338,9 @@ class CommandBufferCmdSequence {
 
   // Functions for tracking buffer usage of recorded commands and figuring out
   // when the next command requires a barrier for correctness.
-  bool HasConflicts(ExecutionStreamId execution_stream_id,
-                    const CommandBufferCmd::BufferUseVector& buffers);
-  void TrackBuffers(ExecutionStreamId execution_stream_id,
-                    const CommandBufferCmd::BufferUseVector& buffers);
-  void ClearTrackedBuffers(ExecutionStreamId execution_stream_id);
+  bool HasConflicts(const CommandBufferCmd::BufferUseVector& buffers);
+  void TrackBuffers(const CommandBufferCmd::BufferUseVector& buffers);
+  void ClearTrackedBuffers();
 
   SynchronizationMode synchronization_mode_;
   std::vector<CommandInfo> commands_;
@@ -385,7 +359,7 @@ class CommandBufferCmdSequence {
     absl::flat_hash_set<BufferAllocation::Slice> write;
   };
 
-  absl::flat_hash_map<ExecutionStreamId, ReadWriteSet> read_write_sets_;
+  ReadWriteSet read_write_set_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -933,32 +907,6 @@ class CustomCallCmd : public CommandBufferCmd {
 };
 
 //===----------------------------------------------------------------------===//
-// BarrierCmd insert a barrier from the execution scope created from the
-// 'from_stream_id' to the execution scope created from the
-// 'execution_stream_id', e.g. Async operator lowered to command buffer requires
-// a barrier from the launching stream to the async operator's execution stream.
-//
-// In other words, all future commands added to `execution_stream_id` are
-// guaranteed to begin executing only after all already-added commands in
-// `from_stream_id` have completed.
-//===----------------------------------------------------------------------===//
-
-class BarrierCmd : public CommandBufferCmd {
- public:
-  BarrierCmd(ExecutionStreamId execution_stream_id,
-             ExecutionStreamId from_stream_id);
-
-  absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const RecordParams& record_params,
-                      se::CommandBuffer* command_buffer) override;
-
-  BufferUseVector buffers() override;
-
- private:
-  const ExecutionStreamId from_stream_id_;
-};
-
-//===----------------------------------------------------------------------===//
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
@@ -967,7 +915,7 @@ class CollectiveCmd : public CommandBufferCmd {
   CollectiveCmd(CommandBufferCmdType cmd_type,
                 ExecutionStreamId execution_stream_id,
                 ExecutionStreamId async_from_stream_id,
-                NcclCollectiveConfig config);
+                CollectiveConfig config);
 
   absl::Status Prepare(
       const Thunk::PrepareParams& params,
@@ -996,16 +944,12 @@ class CollectiveCmd : public CommandBufferCmd {
     return async_from_stream_id_;
   }
 
-  absl::Status BarrierIfAsync(
-      se::CommandBuffer* command_buffer, se::StreamExecutor* executor,
-      const CommandBufferCmd::RecordParams& record_params);
-
  protected:
-  const NcclCollectiveConfig& config() const { return config_; }
+  const CollectiveConfig& config() const { return config_; }
 
  private:
   ExecutionStreamId async_from_stream_id_;
-  NcclCollectiveConfig config_;
+  CollectiveConfig config_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1015,9 +959,9 @@ class CollectiveCmd : public CommandBufferCmd {
 class AllReduceCmd : public CollectiveCmd {
  public:
   AllReduceCmd(ExecutionStreamId execution_stream_id,
-               ExecutionStreamId async_from_stream_id,
-               NcclCollectiveConfig config, ReductionKind reduction_kind,
-               absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+               ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+               ReductionKind reduction_kind,
+               absl::Span<const CollectiveThunk::Buffer> buffers);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1031,7 +975,7 @@ class AllReduceCmd : public CollectiveCmd {
 
  private:
   ReductionKind reduction_kind_;
-  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1042,8 +986,8 @@ class ReduceScatterCmd : public CollectiveCmd {
  public:
   ReduceScatterCmd(ExecutionStreamId execution_stream_id,
                    ExecutionStreamId async_from_stream_id,
-                   NcclCollectiveConfig config, ReductionKind reduction_kind,
-                   absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+                   CollectiveConfig config, ReductionKind reduction_kind,
+                   absl::Span<const CollectiveThunk::Buffer> buffers);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1057,7 +1001,7 @@ class ReduceScatterCmd : public CollectiveCmd {
 
  private:
   ReductionKind reduction_kind_;
-  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1067,9 +1011,9 @@ class ReduceScatterCmd : public CollectiveCmd {
 class AllToAllCmd : public CollectiveCmd {
  public:
   AllToAllCmd(ExecutionStreamId execution_stream_id,
-              ExecutionStreamId async_from_stream_id,
-              NcclCollectiveConfig config, bool has_split_dimension,
-              absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+              ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+              bool has_split_dimension,
+              absl::Span<const CollectiveThunk::Buffer> buffers);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1083,7 +1027,7 @@ class AllToAllCmd : public CollectiveCmd {
 
  private:
   bool has_split_dimension_;
-  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1093,9 +1037,8 @@ class AllToAllCmd : public CollectiveCmd {
 class AllGatherCmd : public CollectiveCmd {
  public:
   AllGatherCmd(ExecutionStreamId execution_stream_id,
-               ExecutionStreamId async_from_stream_id,
-               NcclCollectiveConfig config,
-               absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+               ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+               absl::Span<const CollectiveThunk::Buffer> buffers);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1108,7 +1051,7 @@ class AllGatherCmd : public CollectiveCmd {
   };
 
  private:
-  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1119,8 +1062,8 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
  public:
   CollectiveBroadcastCmd(ExecutionStreamId execution_stream_id,
                          ExecutionStreamId async_from_stream_id,
-                         NcclCollectiveConfig config,
-                         absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+                         CollectiveConfig config,
+                         absl::Span<const CollectiveThunk::Buffer> buffers);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -1129,7 +1072,7 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
   BufferUseVector buffers() override;
 
  private:
-  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//

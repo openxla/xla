@@ -1,6 +1,6 @@
-load("//xla:pytype.default.bzl", "pytype_strict_library")
-load("//xla:strict.default.bzl", "py_strict_test")
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:py_strict.bzl", "py_strict_test")
+load("//xla:pytype.bzl", "pytype_strict_library")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -113,6 +113,7 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings:string_view",
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//xla/backends/cpu/codegen:computation_kernel_emitter",
         "//xla/backends/cpu/codegen:jit_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/codegen/dot:dot_kernel_emitter",

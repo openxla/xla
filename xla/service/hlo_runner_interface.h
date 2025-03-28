@@ -210,15 +210,6 @@ class HloRunnerInterface {
   HloRunnerInterface() = default;
   virtual ~HloRunnerInterface() = default;
 
-  // Converts an HloModule from the given hlo textual IR string (in
-  // HloModule::ToString format).
-  ABSL_DEPRECATE_AND_INLINE()
-  inline static absl::StatusOr<std::unique_ptr<HloModule>>
-  CreateModuleFromString(absl::string_view hlo_string,
-                         const DebugOptions& debug_options) {
-    return xla::CreateModuleFromString(hlo_string, debug_options);
-  }
-
   // Creates a runner-internal executable object given an HLO module and returns
   // a OpaqueExecutable. If run_hlo_passes is true, the HLO passes will be run
   // as part of compilation.
@@ -356,6 +347,13 @@ class HloRunnerInterface {
   // HloModule.
   virtual absl::StatusOr<absl::Nonnull<const HloModule*>> HloModuleFromWrapped(
       const OpaqueExecutable* wrapped) const = 0;
+
+  // Returns true if the two given OpaqueExecutables originate from the same
+  // runner and are equivalent according to some notion specific to that runner.
+  // Executables that were created by different runners can never be equivalent.
+  virtual bool ExecutablesAreEquivalent(
+      absl::Nonnull<const OpaqueExecutable*> lhs,
+      absl::Nonnull<const OpaqueExecutable*> rhs) const = 0;
 };
 
 }  // namespace xla

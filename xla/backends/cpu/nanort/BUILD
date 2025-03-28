@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/backends/cpu/nanort:package_groups.bzl", "xla_cpu_nanort_packages")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform/default:rules_cc.bzl", "cc_library")
@@ -46,6 +46,9 @@ xla_cc_test(
     deps = [
         ":nanort_client",
         ":nanort_executable",
+        "//xla:array2d",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:alignment",
@@ -65,6 +68,8 @@ xla_cc_test(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -80,6 +85,7 @@ cc_library(
         "//xla:util",
         "//xla/backends/cpu:alignment",
         "//xla/backends/cpu/runtime:buffer_allocations",
+        "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thread_pool_task_runner",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/hlo/ir:hlo",
@@ -135,6 +141,8 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt:basic_device_list",
+        "//xla/python/ifrt:client_impl_util",
+        "//xla/python/ifrt:user_context",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "//xla/python/pjrt_ifrt:xla_ifrt",
@@ -184,7 +192,6 @@ xla_cc_test(
         ":register_nanort_for_ifrt_tests",
         "//xla:literal",
         "//xla:literal_util",
-        "//xla:shape_util",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
@@ -192,11 +199,11 @@ xla_cc_test(
         "//xla/python/ifrt:client_impl_test_lib",
         "//xla/python/ifrt:test_util",
         "//xla/python/ifrt:tuple_impl_test_lib",
+        "//xla/python/ifrt:user_context",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/python/pjrt_ifrt:xla_executable_impl_test_lib",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/tsl/concurrency:ref_count",
-        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "@com_google_absl//absl/log:check",

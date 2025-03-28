@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -504,6 +505,65 @@ XLA_TEST_P(AsyncCollectiveOps, CombinedCollectivePermute) {
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 11, 11}, results[0]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 10, 10}, results[1]);
+}
+
+XLA_TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    replica = u32[] replica-id()
+    ten = u32[] constant(10)
+    sum = u32[] add(replica, ten)
+    replica.1 = u32[2] broadcast(replica), dimensions={}
+    sum.1 = u32[2] broadcast(sum), dimensions={}
+    replica.2 = u32[2] add(replica.1, replica.1)
+    permute.0 = u32[2] collective-permute(replica.1), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
+    permute.1 = u32[2] collective-permute(replica.2), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
+    permute.2 = u32[2] collective-permute(sum.1), source_target_pairs={{0,1}, {1, 2}, {2, 3}, {3, 0}}
+    ROOT concat = u32[6] concatenate(permute.0, permute.1, permute.2), dimensions={0}
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  const bool enable_async_collective_permute = GetParam();
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(kModuleStr, kNumReplicas));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const hlo_module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+
+  HloInstruction* cp_start =
+      FindInstruction(hlo_module, HloOpcode::kCollectivePermuteStart);
+  HloInstruction* cp_done =
+      FindInstruction(hlo_module, HloOpcode::kCollectivePermuteDone);
+
+  EXPECT_THAT(cp_start, NotNull());
+  // Count the number of collective permute start instructions in the module
+  int cp_start_count = 0;
+  for (const auto& computation : hlo_module->computations()) {
+    for (const auto& instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kCollectivePermuteStart) {
+        cp_start_count++;
+      }
+    }
+  }
+  EXPECT_EQ(cp_start_count, 1)
+      << "Expected exactly one CollectivePermuteStart instruction";
+
+  // Expect 3 collective permute instructions combined into one.
+  EXPECT_EQ(cp_start->operand_count(), 3);
+  EXPECT_THAT(cp_done, NotNull());
+  EXPECT_EQ(IsAsync(cp_start), enable_async_collective_permute);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({3, 3, 6, 6, 13, 13}, results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 0, 0, 10, 10}, results[1]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 2, 2, 11, 11}, results[2]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 4, 4, 12, 12}, results[3]);
 }
 
 XLA_TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
@@ -1987,6 +2047,7 @@ enum class RaggedAllToAllImplType {
   kNccl,
   kMemcpy,
   kDecomposer,
+  kOneShot,
 };
 
 class RaggedAllToAllTest : public CollectiveOpsWithFlagsBase,
@@ -2154,6 +2215,8 @@ class RaggedAllToAllTest : public CollectiveOpsWithFlagsBase,
     DebugOptions opts = CollectiveOpsWithFlagsBase::GetDebugOptionsForTest();
     opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(
         std::get<1>(GetParam()) == RaggedAllToAllImplType::kDecomposer);
+    opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
+        std::get<1>(GetParam()) == RaggedAllToAllImplType::kOneShot);
     return opts;
   }
 
@@ -2494,9 +2557,9 @@ XLA_TEST_P(RaggedAllToAllTest, RaggedAllToAll_2GPUs_Degenerate) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
 
-  TF_ASSERT_OK(
-      CreateRandomTestData(module.get(), /*input_sizes=*/{/*replica_0=*/{1},
-                                                          /*replica_1=*/{3}}));
+  TF_ASSERT_OK(CreateRandomTestData(module.get(),
+                                    /*input_sizes=*/{/*replica_0=*/{1},
+                                                     /*replica_1=*/{3}}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
@@ -2666,7 +2729,7 @@ XLA_TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs_2ReplicasPerGroups) {
     output_offsets = s64[32] parameter(4)
     recv_sizes = s64[32] parameter(5)
     ROOT ra2a = f32[8192,1024] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), channel_id=3,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,4},{1,5},{2,6},{3,7}}
   })";
 
@@ -2765,6 +2828,8 @@ std::string RaggedAllToAllImplTypeName(
       return "memcpy";
     case RaggedAllToAllImplType::kDecomposer:
       return "decomposer";
+    case RaggedAllToAllImplType::kOneShot:
+      return "one_shot";
     default:
       LOG(FATAL) << "Unknown ragged all-to-all implementation type.";
   }
@@ -2775,7 +2840,8 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::Bool(),
                        ::testing::Values(RaggedAllToAllImplType::kNccl,
                                          RaggedAllToAllImplType::kMemcpy,
-                                         RaggedAllToAllImplType::kDecomposer)),
+                                         RaggedAllToAllImplType::kDecomposer,
+                                         RaggedAllToAllImplType::kOneShot)),
     [](const ::testing::TestParamInfo<std::tuple<bool, RaggedAllToAllImplType>>&
            info) {
       return absl::StrCat(GetAsyncTestName(std::get<0>(info.param)), "_",
@@ -2904,5 +2970,93 @@ ENTRY main.49 {
     EXPECT_TRUE(LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
   }
 }
+
+TEST_F(CollectiveOpsTestE2E, MemcpyP2pLargeMessage) {
+  absl::string_view hlo_string = R"(
+HloModule MemcpyP2pLargeMessage, entry_computation_layout={(bf16[1024,64000]{1,0})->bf16[1024,64000]{1,0}}, num_partitions=4
+
+ENTRY main {
+  Arg_0.5 = bf16[1024,64000]{1,0} parameter(0)
+  collective-permute.0 = bf16[1024,64000]{1,0} collective-permute(Arg_0.5), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.1 = bf16[1024,64000]{1,0} collective-permute(collective-permute.0), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.2 = bf16[1024,64000]{1,0} collective-permute(collective-permute.1), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.3 = bf16[1024,64000]{1,0} collective-permute(collective-permute.2), channel_id=4, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.4 = bf16[1024,64000]{1,0} collective-permute(collective-permute.3), channel_id=5, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.5 = bf16[1024,64000]{1,0} collective-permute(collective-permute.4), channel_id=6, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.6 = bf16[1024,64000]{1,0} collective-permute(collective-permute.5), channel_id=7, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.7 = bf16[1024,64000]{1,0} collective-permute(collective-permute.6), channel_id=8, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+
+  constant.0 = bf16[] constant(2)
+  broadcast.0 = bf16[1024,64000]{1,0} broadcast(constant.0), dimensions={}
+  collective-permute.8 = bf16[1024,64000]{1,0} collective-permute(broadcast.0), channel_id=6, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.9 = bf16[1024,64000]{1,0} collective-permute(collective-permute.8), channel_id=9, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.10 = bf16[1024,64000]{1,0} collective-permute(collective-permute.9), channel_id=10, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.11 = bf16[1024,64000]{1,0} collective-permute(collective-permute.10), channel_id=11, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+
+  ROOT multiply.10 = bf16[1024,64000]{1,0} multiply(collective-permute.7, collective-permute.11)
+} // main
+)";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
+
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  auto opts = GetDebugOptionsForTest();
+  opts.set_xla_gpu_use_memcpy_local_p2p(true);
+  opts.add_xla_disable_hlo_passes("gpu-convert-async-collectives-to-sync");
+
+  config.set_debug_options(opts);
+  config.set_use_spmd_partitioning(false);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  auto fake_arguments = xla::MakeFakeArguments(module.get()).value();
+  std::vector<Literal*> fake_ptrs(fake_arguments.size());
+  for (int i = 0; i < fake_arguments.size(); ++i) {
+    fake_ptrs[i] = &fake_arguments[i];
+  }
+  HloModuleConfig ref_config =
+      GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  auto ref_opts = GetDebugOptionsForTest();
+  ref_opts.set_xla_gpu_use_memcpy_local_p2p(false);
+  ref_config.set_debug_options(ref_opts);
+  TF_ASSERT_OK_AND_ASSIGN(auto ref_module,
+                          ParseAndReturnVerifiedModule(hlo_string, ref_config));
+  auto fake_ref_arguments = xla::MakeFakeArguments(ref_module.get()).value();
+  std::vector<Literal*> ref_fake_ptrs(fake_ref_arguments.size());
+  for (int i = 0; i < fake_ref_arguments.size(); ++i) {
+    ref_fake_ptrs[i] = &fake_ref_arguments[i];
+  }
+
+  DeviceAssignment assn(/*replica_count=*/kNumReplicas,
+                        /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    assn(0, i) = i;
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      HloTestBase::ExecuteReplicated(
+          std::move(module), fake_ptrs, kNumPartitions, &assn,
+          /*run_hlo_passes=*/true, /*use-threads=*/true));
+  ASSERT_EQ(results.size(), kNumPartitions);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> ref_results,
+      HloTestBase::ExecuteReplicated(
+          std::move(ref_module), ref_fake_ptrs, kNumPartitions, &assn,
+          /*run_hlo_passes=*/true, /*use-threads=*/true));
+  ASSERT_EQ(ref_results.size(), kNumPartitions);
+  ErrorSpec error_spec{1e-5, 1e-5};
+  // Expect same results with and without pipelining of collectives.
+  for (int i = 0; i < kNumPartitions; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
+  }
+}
+
 }  // namespace
 }  // namespace xla

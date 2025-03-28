@@ -75,12 +75,12 @@ namespace {
 
 // Return whether the given shape is rank 2 excluding the batch dimensions.
 bool IsRank2(const Shape& shape, int64_t batch_dimensions_size) {
-  return shape.rank() == batch_dimensions_size + 2;
+  return shape.dimensions_size() == batch_dimensions_size + 2;
 }
 
 // Return whether the given shape is rank 1 excluding the batch dimensions.
 bool IsRank1(const Shape& shape, int64_t batch_dimensions_size) {
-  return shape.rank() == batch_dimensions_size + 1;
+  return shape.dimensions_size() == batch_dimensions_size + 1;
 }
 
 }  // namespace
@@ -662,6 +662,14 @@ bool IsDynamicSliceFusion(const HloInstruction* instr) {
   std::optional<std::string> name = GetCustomFusionConfigName(instr);
   return name == kDynamicSliceFusionWithStaticAddressComputationConfigName ||
          name == kDynamicSliceFusionWithDynamicAddressComputationConfigName;
+}
+
+bool IsDynamicMemcpyFusion(const HloInstruction* instr) {
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  return backend_config.ok() &&
+         backend_config->fusion_backend_config().kind() ==
+             kDynamicMemcpyFusionKind;
 }
 
 std::optional<InductionVariableFunctionalDependency>

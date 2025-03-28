@@ -7,7 +7,7 @@ load(
 )
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_test",
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
@@ -282,6 +282,7 @@ xla_test(
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -402,6 +403,7 @@ xla_test(
         ":gpu_codegen_test",
         "//xla:error_spec",
         "//xla/service:hlo_module_config",
+        "//xla/service:platform_util",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
@@ -537,11 +539,12 @@ xla_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -613,15 +616,16 @@ lit_test_suite(
 #     name = "xla-opt",
 #     srcs = ["xla-opt.cc"],
 #     deps = [
-#         "//xla/backends/gpu/codegen/emitters/transforms:passes",
-#         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
-#         "//xla/backends/gpu/codegen/triton/transforms:passes",
-#         "//xla/codegen/emitters/transforms:passes",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@llvm-project//mlir:TensorDialect",
+#         "//xla/backends/gpu/codegen/emitters/transforms:passes",
+#         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+#         "//xla/backends/gpu/codegen/triton/transforms:passes",
+#         "//xla/codegen/emitters/transforms:passes",
 #         "@triton//:AllPassesAndDialects",
+#         "@triton//third_party/amd:TestAMDRangeAnalysis",
 #     ],
 # )
 # copybara:uncomment_end
@@ -699,30 +703,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:tensor_float_32_utils",
     ],
-)
-
-xla_test(
-    name = "gpu_sparse_dot_test",
-    srcs = if_cuda_is_configured(["gpu_sparse_dot_test.cc"]),
-    backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
-    ],
-    tags = ["cuda-only"],
-    deps = if_cuda_is_configured(
-        [
-            ":gpu_codegen_test",
-            "@com_google_googletest//:gtest",
-            "@com_google_absl//absl/strings",
-            "@com_google_absl//absl/types:span",
-            "//xla:literal",
-            "//xla:literal_util",
-            "//xla/tests:xla_internal_test_main",
-            "//xla/tsl/lib/core:status_test_util",
-        ],
-        ["@com_google_googletest//:gtest_main"],  # b/317293391
-    ),
 )
 
 xla_test(
@@ -896,35 +876,5 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
-    ],
-)
-
-xla_cc_test(
-    name = "nvshmem_test",
-    srcs = ["nvshmem_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
-        "no_oss",
-        "nomsan",
-    ] + if_google(google_value = ["requires-gpu-nvidia:2"]),  # This tag is not documented in OSS yet.
-    deps = [
-        "//xla:debug_options_flags",
-        "//xla:status_macros",
-        "//xla/backends/gpu/collectives:nvshmem_collectives",
-        "//xla/pjrt/distributed",
-        "//xla/pjrt/distributed:client",
-        "//xla/pjrt/distributed:service",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:subprocess",
-        "//xla/tsl/util:command_line_flags",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/time",
-        "@com_google_googletest//:gtest",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )

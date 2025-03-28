@@ -342,6 +342,34 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
               : std::make_pair(ResourceTypeToIndex(ResourceType::kSendRecv),
                                ResourceUsageType::kResourceOccupy)};
     }
+    case HloOpcode::kWhile: {
+      ResourcesVector result;
+      absl::flat_hash_set<int64_t> seen_occupied_resources;
+      absl::flat_hash_set<int64_t> seen_released_resources;
+      absl::flat_hash_set<int64_t> seen_no_resource;
+      for (const HloInstruction* instr : hlo.while_body()->instructions()) {
+        ResourcesVector rv = GetResourcesFromInstructionImpl(*instr);
+        if (rv.empty()) {
+          continue;
+        }
+        for (const auto& [resource, usage] : rv) {
+          if (usage == ResourceUsageType::kResourceOccupy &&
+              !seen_occupied_resources.contains(resource)) {
+            seen_occupied_resources.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          } else if (usage == ResourceUsageType::kResourceRelease &&
+                     !seen_released_resources.contains(resource)) {
+            seen_released_resources.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          } else if (usage == ResourceUsageType::kNoResource &&
+                     !seen_no_resource.contains(resource)) {
+            seen_no_resource.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          }
+        }
+      }
+      return result;
+    }
     default:
       return ResourcesVector{};
   }
@@ -362,6 +390,18 @@ int64_t AsyncTracker::GetNumResourcesPerInstruction(
                                        instr);
 }
 
+// Returns the number of "occupy" type of resources used by the instructions in
+// the given computation. If there are multiple instructions in the computation
+// that have the exact same resource usages, it only counts one of them. For
+// example, if there are two non-overlapping async all-gathers in a while loop,
+// this will have 1 for all-gather in the returned map for the while
+// instruction. This is because there is no proof that those all-gathers will
+// overlap each other and over- counting such resources causes the while not
+// being scheduled due to the resource limits (checked in
+// scheduling_node_crosses_overlap_limit).
+//
+// If an instruction uses multiple instances of the same "occupy" type of
+// resource, that number is respected and returned in the resulting map.
 const absl::flat_hash_map<int64_t, int64_t>&
 AsyncTracker::RecursivelyComputeResourceMap(
     const HloComputation* computation) const {
@@ -371,16 +411,28 @@ AsyncTracker::RecursivelyComputeResourceMap(
   }
   per_opcode_map = std::make_unique<absl::flat_hash_map<int64_t, int64_t>>();
   auto* m = per_opcode_map.get();
+  absl::flat_hash_set<int64_t> seen_resources_per_comp;
   for (HloInstruction* instr : computation->instructions()) {
     if (IsSupportedAsyncDone(*instr)) {
+      absl::flat_hash_set<int64_t> seen_resources_per_inst;
       for (const auto& resource : GetResourcesFromInstruction(*instr)) {
+        if (seen_resources_per_comp.contains(resource.first)) {
+          continue;
+        }
         ++(*m)[resource.first];
+        seen_resources_per_inst.insert(resource.first);
       }
+      seen_resources_per_comp.insert(seen_resources_per_inst.begin(),
+                                     seen_resources_per_inst.end());
     }
     for (const HloComputation* called_comp : instr->called_computations()) {
       for (auto& called_per_opcode_pair :
            RecursivelyComputeResourceMap(called_comp)) {
+        if (seen_resources_per_comp.contains(called_per_opcode_pair.first)) {
+          continue;
+        }
         (*m)[called_per_opcode_pair.first] += called_per_opcode_pair.second;
+        seen_resources_per_comp.insert(called_per_opcode_pair.first);
       }
     }
   }
@@ -407,6 +459,9 @@ int64_t AsyncTracker::GetNumResourcesPerInstruction(
     auto opcode_it = map.find(resource_type);
     if (opcode_it != map.end()) {
       num_resources += opcode_it->second;
+      // We can return early if we have found the resource we are looking for.
+      // There is no need to check each called computation.
+      break;
     }
   }
   return num_resources;
@@ -1790,9 +1845,9 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
     }
   }
 
-  // If this node is an async start/done handle the increase/decrease the number
-  // of outstanding async ops.
-  for (auto& resource : n->GetResources()) {
+  // If this node is an instruction that occupies/releases resource(s), then
+  // handle the increase/decrease.
+  for (auto& resource : n->GetNetResources()) {
     if (resource.second == ResourceUsageType::kResourceRelease) {
       ++(sched_state->max_concurrent_resource[resource.first]);
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
@@ -2066,19 +2121,6 @@ HloScheduleGraph::HloScheduleGraph(
       while_instrs.push_back(instr);
     }
   }
-  auto add_dependency_helper = [latency_estimator](HloGraphNode* from,
-                                                   HloGraphNode* to) {
-    // Get the latency between these two instructions for this edge.
-    const LatencyEstimator::TimeCost latency =
-        latency_estimator->GetLatencyBetween(*from, *to);
-    // Adding dependencies as successors for the instruction we are
-    // considering now (instr) and as predecessor for the user.
-    from->successors_.push_back(HloEdge(latency, to));
-    to->predecessors_.push_back(HloEdge(latency, from));
-    ++to->indegree_;
-    ++from->outdegree_;
-  };
-
   // Add dependencies edges between each of the graph nodes.
   for (const HloInstruction* instr : *post_order_instructions) {
     auto node_it = nodes_.find(instr);
@@ -2091,14 +2133,15 @@ HloScheduleGraph::HloScheduleGraph(
       auto user_node_it = nodes_.find(user);
       CHECK(user_node_it != nodes_.end());
       HloGraphNode* user_node = user_node_it->second.get();
-      add_dependency_helper(instr_node, user_node);
+      HloGraphNode::AddDependency(instr_node, user_node, latency_estimator);
     }
     for (const HloInstruction* ctrl_succ : instr->control_successors()) {
       VLOG(10) << "\tCtrl Successor: " << ctrl_succ->ToString();
       auto ctrl_succ_node_it = nodes_.find(ctrl_succ);
       CHECK(ctrl_succ_node_it != nodes_.end());
       HloGraphNode* ctrl_succ_node = ctrl_succ_node_it->second.get();
-      add_dependency_helper(instr_node, ctrl_succ_node);
+      HloGraphNode::AddDependency(instr_node, ctrl_succ_node,
+                                  latency_estimator);
     }
     // To make sure an instruction that aliases with the buffer produced
     // by the async-done operation is not scheduled in between the start and the
@@ -2128,15 +2171,18 @@ HloScheduleGraph::HloScheduleGraph(
                 it = nodes_.find(async_start);
                 CHECK(it != nodes_.end());
                 HloGraphNode* start_node = it->second.get();
+                // Ignore token operands as they are not real aliasing.
+                if (use.instruction->operand(use.operand_number)
+                        ->shape()
+                        .IsToken()) {
+                  continue;
+                }
                 // If there is already a transitive link between the nodes the
                 // other way then skip adding this one.
                 if (IsPredecessorTransitively(pred_node, start_node)) {
                   continue;
                 }
-                pred_node->successors_.push_back(HloEdge(1, start_node));
-                start_node->predecessors_.push_back(HloEdge(1, pred_node));
-                ++pred_node->outdegree_;
-                ++start_node->indegree_;
+                HloGraphNode::AddDependency(pred_node, start_node, 1);
               }
             }
           }
@@ -2182,10 +2228,7 @@ HloScheduleGraph::HloScheduleGraph(
           auto while_it = nodes_.find(dependent_while_instr);
           CHECK(while_it != nodes_.end());
           HloGraphNode* while_node = while_it->second.get();
-          send_done_node->successors_.push_back(HloEdge(1, while_node));
-          while_node->predecessors_.push_back(HloEdge(1, send_done_node));
-          ++send_done_node->outdegree_;
-          ++while_node->indegree_;
+          HloGraphNode::AddDependency(send_done_node, while_node, 1);
         }
         break;
       }

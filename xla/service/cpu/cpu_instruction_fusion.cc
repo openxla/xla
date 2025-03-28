@@ -84,6 +84,9 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
   const auto computations_list =
       module->MakeComputationPostOrder(execution_threads);
   instructions_to_skip_.clear();
+  const bool is_fusion_emitters =
+      module->config().debug_options().xla_cpu_use_thunk_runtime() &&
+      module->config().debug_options().xla_cpu_use_fusion_emitters();
   for (auto* computation : computations_list) {
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       if (instruction->IsCustomFusion() ||
@@ -96,6 +99,16 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
         for (HloInstruction* instr :
              callable->called_computation()->instructions())
           instructions_to_skip_.insert(instr);
+      } else if (is_fusion_emitters &&
+                 instruction->opcode() == HloOpcode::kScatter) {
+        // Disallow fusions in the called computation (e.g. reduction)
+        // of a scatter "fusion"; the fusion emitter can't handle them.
+        auto* scatter = Cast<HloScatterInstruction>(instruction);
+        for (const auto* computation : scatter->called_computations()) {
+          for (const auto* instr : computation->instructions()) {
+            instructions_to_skip_.insert(instr);
+          }
+        }
       }
     }
   }
@@ -148,7 +161,7 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   // better job with pure data movement loops.
   auto is_minor_dim_concatenate = [](const HloInstruction* hlo) {
     // For vectors it's always beneficial to fuse concatenations.
-    if (hlo->shape().rank() <= 1) return false;
+    if (hlo->shape().dimensions_size() <= 1) return false;
 
     // For small concatenated dimensions we don't loose any performance by
     // fusing the concatenation as we don't have opportunities for vectorization
@@ -224,12 +237,13 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
       // traversal of a small enough (to fit in L1) column or row tensor is
       // "good enough" from the perspective of cache management; and calling out
       // to an optimized GEMM kernel is not a huge win.
-      if (consumer->operand(0)->shape().rank() == 1 && operand_index == 1 &&
+      if (consumer->operand(0)->shape().dimensions_size() == 1 &&
+          operand_index == 1 &&
           ShapeUtil::ByteSizeOfElements(consumer->operand(0)->shape()) <
               kFusionThresholdBytes) {
         VLOG(2) << "Fusing small matrix-vector product.";
         return FusionDecision::Allow();
-      } else if (consumer->operand(1)->shape().rank() == 1 &&
+      } else if (consumer->operand(1)->shape().dimensions_size() == 1 &&
                  operand_index == 0 &&
                  ShapeUtil::ByteSizeOfElements(consumer->operand(1)->shape()) <
                      kFusionThresholdBytes) {
@@ -237,23 +251,6 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
         return FusionDecision::Allow();
       }
     }
-  }
-
-  // Don't fuse reductions over the major dimensions. These have an efficient
-  // lowering that's only implemented for the unfused case.
-  if (consumer->opcode() == HloOpcode::kReduce &&
-      !absl::c_linear_search(
-          consumer->dimensions(),
-          LayoutUtil::Minor(consumer->operand(0)->shape().layout(), 0))) {
-    return FusionDecision::Forbid(
-        "Not fusing reductions over major dimensions");
-  }
-  if (producer->opcode() == HloOpcode::kReduce &&
-      !absl::c_linear_search(
-          producer->dimensions(),
-          LayoutUtil::Minor(producer->operand(0)->shape().layout(), 0))) {
-    return FusionDecision::Forbid(
-        "Not fusing reductions over major dimensions");
   }
 
   if (consumer->IsLoopFusion()) {

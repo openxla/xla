@@ -334,10 +334,10 @@ bool NoNonContractingDimension(const HloDotInstruction& dot) {
   const DotDimensionNumbers& dim_numbers = dot.dot_dimension_numbers();
   if (dim_numbers.lhs_batch_dimensions().size() +
               dim_numbers.lhs_contracting_dimensions().size() ==
-          dot.operand(0)->shape().rank() ||
+          dot.operand(0)->shape().dimensions_size() ||
       dim_numbers.rhs_batch_dimensions().size() +
               dim_numbers.rhs_contracting_dimensions().size() ==
-          dot.operand(1)->shape().rank()) {
+          dot.operand(1)->shape().dimensions_size()) {
     return true;
   }
   return false;

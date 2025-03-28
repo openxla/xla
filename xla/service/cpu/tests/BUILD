@@ -1,7 +1,7 @@
 # Description:
 #    Tests for LLVM-based CPU backend for XLA.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api")
@@ -337,6 +337,7 @@ xla_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -346,9 +347,15 @@ xla_cc_test(
     srcs = ["cpu_while_test.cc"],
     deps = [
         ":cpu_codegen_test_main",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/ir:hlo",
         "//xla/service/cpu:cpu_compiler",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep

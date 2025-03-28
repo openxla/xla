@@ -74,6 +74,10 @@ CUDA_REDIST_JSON_DICT = {
         "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.8.0.json",
         "daa0d766b36feaa933592162c27be5fb63b68fc547ca6886c160a35d96ee8891",
     ],
+    "12.8.1": [
+        "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.8.1.json",
+        "249e28a83008d711d5f72880541c8be6253f6d61608461de4fcb715554a6cf17",
+    ],
 }
 
 CUDNN_REDIST_JSON_DICT = {
@@ -133,6 +137,10 @@ CUDNN_REDIST_JSON_DICT = {
         "https://developer.download.nvidia.com/compute/cudnn/redist/redistrib_9.7.1.json",
         "f9bc411a4908f0931e7323f89049e3a38453632c4ac5f4aa3220af69ddded9dc",
     ],
+    "9.8.0": [
+        "https://developer.download.nvidia.com/compute/cudnn/redist/redistrib_9.8.0.json",
+        "a1599fa1f8dcb81235157be5de5ab7d3936e75dfc4e1e442d07970afad3c4843",
+    ],
 }
 
 CUDA_12_NCCL_WHEEL_DICT = {
@@ -172,6 +180,32 @@ CUDA_NCCL_WHEELS = {
     "12.6.2": CUDA_12_NCCL_WHEEL_DICT,
     "12.6.3": CUDA_12_NCCL_WHEEL_DICT,
     "12.8.0": CUDA_12_NCCL_WHEEL_DICT,
+    "12.8.1": CUDA_12_NCCL_WHEEL_DICT,
+}
+
+# Ensures PTX version compatibility w/ Clang & ptxas in cuda_configure.bzl
+PTX_VERSION_DICT = {
+    # To find, invoke `llc -march=nvptx64 -mcpu=help 2>&1 | grep ptx | sort -V | tail -n 1`
+    "clang": {
+        "14": "7.5",
+        "15": "7.5",
+        "16": "7.8",
+        "17": "8.1",
+        "18": "8.3",
+        "19": "8.5",
+        "20": "8.7",
+    },
+    # To find, look at https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#release-notes
+    "cuda": {
+        "11.8": "7.8",
+        "12.1": "8.1",
+        "12.2": "8.2",
+        "12.3": "8.3",
+        "12.4": "8.4",
+        "12.5": "8.5",
+        "12.6": "8.5",
+        "12.8": "8.7",
+    },
 }
 
 REDIST_VERSIONS_TO_BUILD_TEMPLATES = {

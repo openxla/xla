@@ -95,7 +95,7 @@ std::vector<HloInstruction*> GenerateExplicitBatchDimIndices(
 
 absl::StatusOr<HloInstruction*> TransformStartIndices(
     HloInstruction* indices, int64_t index_vector_dim) {
-  int64_t rank = indices->shape().rank();
+  int64_t rank = indices->shape().dimensions_size();
   if (index_vector_dim == rank) {
     // Add a size 1 dimension to the indices if the index_vector_dim is
     // implicit.

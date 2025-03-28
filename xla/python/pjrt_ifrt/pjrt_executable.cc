@@ -31,13 +31,17 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "xla/ffi/execution_context.h"
+#include "xla/ffi/type_id_registry.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/layout.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/basic_device_list.h"
@@ -256,9 +260,9 @@ absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
       (build_options.use_auto_spmd_partitioning() ||
        build_options.any_allow_spmd_sharding_propagation_to_parameters() ||
        build_options.any_allow_spmd_sharding_propagation_to_output());
-  TF_ASSIGN_OR_RETURN(
-      auto pjrt_loaded_executable,
-      client->pjrt_client()->Compile(module, std::move(compile_options)));
+  TF_ASSIGN_OR_RETURN(auto pjrt_loaded_executable,
+                      client->pjrt_client()->CompileAndLoad(
+                          module, std::move(compile_options)));
 
   if (auto_spmd_partitioning) {
     // TODO(hyeontaek): Use a full shape and a sharding rather than a per-shard
@@ -545,12 +549,36 @@ PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
   opts.use_major_to_minor_data_layout_for_callbacks = true;
   opts.non_donatable_input_indices = options.non_donatable_input_indices;
 
-  auto context = std::make_shared<xla::ExecuteContext>();
+  auto context = std::make_unique<xla::ExecuteContext>();
   auto platform_id = pjrt_loaded_executable_->client()->platform_id();
+  auto ffi_callbacks = std::make_unique<xla::FfiLoadedHostCallbacks>();
+  auto callbacks = std::make_unique<std::vector<void*>>();
   // Forward callbacks via FFI's ExecutionContext for CPU/GPU platforms only.
   if (platform_id == CpuId() || platform_id == CudaId() ||
       platform_id == RocmId() || platform_id == SyclId()) {
-    CHECK_OK(context->ffi_context().Insert(all_loaded_host_callbacks_.get()));
+    for (const auto& loaded_host_callback : *all_loaded_host_callbacks_) {
+      auto* ffi_loaded_host_callback =
+          llvm::dyn_cast<PjRtFfiLoadedHostCallback>(loaded_host_callback.get());
+      if (ffi_loaded_host_callback != nullptr) {
+        void* callback = ffi_loaded_host_callback->callable();
+        callbacks->push_back(callback);
+      }
+    }
+    // NOTE(dsuo): For now, check that either all or none of the host callbacks
+    // are FFI callbacks. Otherwise, we have an error.
+    // TODO(b/406585850): Improve how we determine when loaded host callbacks
+    // are forwarded to ffi::ExecutionContext.
+    if (!callbacks->empty() &&
+        callbacks->size() != all_loaded_host_callbacks_->size()) {
+      return InvalidArgument(
+          "ifrt::LoadedHostCallbacks must either be all "
+          "ifrt::PjRtFfiLoadedHostCallback or none.");
+    }
+    ffi_callbacks->callbacks = callbacks->data();
+    ffi_callbacks->num_callbacks = callbacks->size();
+    auto type_id = xla::ffi::TypeIdRegistry::TypeId(
+        xla::FfiLoadedHostCallbacks::id.type_id);
+    CHECK_OK(context->ffi_context().Insert(type_id, ffi_callbacks.get()));
     opts.context = context.get();
   }
 
@@ -614,7 +642,9 @@ PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
     // the execution finishes.
     status.OnReady([all_loaded_host_callbacks = all_loaded_host_callbacks_,
                     host_callback_states = std::move(host_callback_states),
-                    context = std::move(context)](absl::Status) mutable {
+                    context = std::move(context),
+                    ffi_callbacks = std::move(ffi_callbacks),
+                    callbacks = std::move(callbacks)](absl::Status) mutable {
       all_loaded_host_callbacks.reset();
     });
   }
@@ -638,6 +668,40 @@ PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
   // memory_kind shares the same Sharding object.
   absl::flat_hash_map<MemoryKind, std::shared_ptr<const Sharding>>
       single_device_shardings;
+
+  // TODO(emilyaf): Simplify the handling of layouts here when they're plumbed
+  // through from JAX.
+  std::vector<std::shared_ptr<const xla::PjRtLayout>> layouts;
+  layouts.reserve(num_outputs);
+  if (!pjrt_outputs.empty()) {
+    for (int i = 0; i < num_outputs; ++i) {
+      auto layout = output_dtypes_[i].kind() == xla::ifrt::DType::kToken
+                        ? std::make_shared<xla::PjRtLayout>(xla::Layout())
+                        : pjrt_outputs.front()[i]->layout();
+      layouts.push_back(std::move(layout));
+    }
+  } else {
+    auto maybe_layouts = GetOutputLayouts();
+    if (absl::IsUnimplemented(maybe_layouts.status())) {
+      for (int i = 0; i < num_outputs; ++i) {
+        std::shared_ptr<const xla::PjRtLayout> layout;
+        if (output_dtypes_[i].kind() == xla::ifrt::DType::kToken) {
+          layout = std::make_shared<xla::PjRtLayout>(xla::Layout());
+        } else {
+          TF_ASSIGN_OR_RETURN(layout,
+                              client_->GetDefaultLayout(
+                                  output_dtypes_[i], output_shapes_[i].dims(),
+                                  devices_->devices().front(),
+                                  output_shardings_[i]->memory_kind()));
+        }
+        layouts.push_back(std::move(layout));
+      }
+    } else {
+      TF_RETURN_IF_ERROR(maybe_layouts.status());
+      layouts = *std::move(maybe_layouts);
+    }
+  }
+
   for (int i = 0; i < num_outputs; ++i) {
     PjRtArray::PjRtBuffers buffers;
     buffers.reserve(num_computations);
@@ -678,9 +742,9 @@ PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
     } else {
       sharding = output_shardings_[i];
     }
-    outputs.push_back(*PjRtArray::Create(client_, output_dtypes_[i],
-                                         output_shapes_[i], std::move(sharding),
-                                         std::move(buffers)));
+    outputs.push_back(*PjRtArray::Create(
+        client_, output_dtypes_[i], output_shapes_[i], std::move(sharding),
+        std::move(buffers), std::move(layouts[i])));
   }
 
   ExecuteResult result;

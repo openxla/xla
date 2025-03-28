@@ -50,7 +50,7 @@ cc_library(
 
 cc_library(
     name = "criticality",
-    hdrs = ["@tsl//tsl/platform:criticality.h"],
+    hdrs = ["//xla/tsl/platform:criticality.h"],
     tags = [
         "manual",
         "nobuilder",
@@ -156,6 +156,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:blocking_counter",

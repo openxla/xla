@@ -473,6 +473,49 @@ class HloGraphNode {
   // Nullptr is not a valid value for 'i'.
   explicit HloGraphNode(const HloInstruction* i, int64_t original_position)
       : instr_(i), original_position_(original_position) {}
+
+  static void UpdateOrAddDependency(HloGraphNode* from, HloGraphNode* to,
+                                    LatencyEstimator::TimeCost latency) {
+    auto update_latency_if_edge_exists =
+        [&](absl::Span<HloEdge> edges, HloGraphNode* to,
+            LatencyEstimator::TimeCost latency) {
+          auto it = absl::c_find_if(
+              edges, [&](HloEdge edge) { return &edge.Target() == to; });
+          if (it != edges.end()) {
+            it->SetLatency(latency);
+            return true;
+          }
+          return false;
+        };
+    if (!update_latency_if_edge_exists(from->GetSuccessors(), to, latency)) {
+      from->successors_.push_back(HloEdge(latency, to));
+      from->outdegree_++;
+    }
+    if (!update_latency_if_edge_exists(to->GetPredecessors(), from, latency)) {
+      to->predecessors_.push_back(HloEdge(latency, from));
+      to->indegree_++;
+    }
+  }
+
+  static void UpdateOrAddDependency(HloGraphNode* from, HloGraphNode* to,
+                                    const LatencyEstimator* latency_estimator) {
+    UpdateOrAddDependency(from, to,
+                          latency_estimator->GetLatencyBetween(*from, *to));
+  }
+
+  static void AddDependency(HloGraphNode* from, HloGraphNode* to,
+                            LatencyEstimator::TimeCost latency) {
+    to->predecessors_.push_back(HloEdge(latency, from));
+    to->indegree_++;
+    from->successors_.push_back(HloEdge(latency, to));
+    from->outdegree_++;
+  }
+
+  static void AddDependency(HloGraphNode* from, HloGraphNode* to,
+                            const LatencyEstimator* latency_estimator) {
+    AddDependency(from, to, latency_estimator->GetLatencyBetween(*from, *to));
+  }
+
   const HloInstruction& GetInstr() const { return *instr_; }
   bool IsScheduled() const { return scheduled_; }
   int32_t GetIndegree() const { return indegree_; }
@@ -536,6 +579,35 @@ class HloGraphNode {
   }
   bool DoesReleaseResource(ResourceType res) const {
     return DoesReleaseResource(ResourceTypeToIndex(res));
+  }
+  bool DoesOccupyResource(int64_t res) const {
+    return absl::c_any_of(resources_, [res](const ResourcePair& resource) {
+      return resource.second == ResourceUsageType::kResourceOccupy &&
+             resource.first == res;
+    });
+  }
+  bool DoesOccupyResource(ResourceType res) const {
+    return DoesOccupyResource(ResourceTypeToIndex(res));
+  }
+  // Returns the net resources used by the node. For a while loop, it computes
+  // the net resources used by the instructions in the while body. Otherwise, it
+  // returns the readily-available resources vector.
+  ResourcesVector GetNetResources() const {
+    if (GetInstr().opcode() != HloOpcode::kWhile) {
+      return resources_;
+    }
+    ResourcesVector result;
+    for (const auto& [resource, usage] : resources_) {
+      if (usage == ResourceUsageType::kResourceOccupy &&
+          !DoesReleaseResource(resource)) {
+        result.push_back(std::make_pair(resource, usage));
+      }
+      if (usage == ResourceUsageType::kResourceRelease &&
+          !DoesOccupyResource(resource)) {
+        result.push_back(std::make_pair(resource, usage));
+      }
+    }
+    return result;
   }
   std::optional<ResourceUsageType> UsesResourceType(ResourceType res) const {
     int64_t res_type = ResourceTypeToIndex(res);

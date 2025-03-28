@@ -123,7 +123,8 @@ std::optional<int64_t> NumTrailingZeroOutputFeatures(HloInstruction* conv) {
     // If these don't hold, it means that some pass (e.g. constant folding)
     // has modified the filter, making making it infeasible to get the original,
     // un-reordered value.
-    if (!matched || feature_dim != 0 || transpose->shape().rank() != 8) {
+    if (!matched || feature_dim != 0 ||
+        transpose->shape().dimensions_size() != 8) {
       VLOG(2) << "The filter output feature dimension cannot be determined, as "
                  "the reordering sequence is modified";
       return std::nullopt;

@@ -75,13 +75,23 @@ inline constexpr absl::string_view kCustomFusionKind = "__custom_fusion";
 
 // Generic fusions that use Triton have FusionBackendConfig.kind equal to this
 // string. This fusion kind will eventually subsume all usages of
-// kTritonGemmFusionKind and kTritonSoftmaxFusionKind.
+// kTritonGemmFusionKind.
 inline constexpr absl::string_view kTritonFusionKind = "__triton";
 
 // Fusions that use Triton have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 
+// Generic fusions that use Triton have FusionBackendConfig.kind equal to this
+// string. Used for fusions that implement a dot expressed as nested fusions.
+inline constexpr absl::string_view kTritonNestedGemmFusionKind =
+    "__triton_nested_gemm_fusion";
+
 inline constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
+
+// Fusions that can be emitted using a dynamic memcpy. A dynamic memcpy depends
+// on some loop induction variable.
+inline constexpr absl::string_view kDynamicMemcpyFusionKind =
+    "__dynamic_memcpy";
 
 inline constexpr absl::string_view kUncompilableFusion =
     "__uncompilable_fusion";
@@ -110,6 +120,11 @@ std::optional<std::string> GetCustomFusionConfigName(
 // Returns true if the given instruction is a custom fusion for dynamic slice
 // fusion. This is determined by checking the name of custom fusion config.
 bool IsDynamicSliceFusion(const HloInstruction* instr);
+
+// Returns true if the given instruction is a dynamic memcpy fusion. This
+// function only checks the fusion kind, which is populated by the
+// FusionDispatch pipeline.
+bool IsDynamicMemcpyFusion(const HloInstruction* instr);
 
 // Returns true if `hlo` will be implemented as a call to a cuSolver routine.
 //

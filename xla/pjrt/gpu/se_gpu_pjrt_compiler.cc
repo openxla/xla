@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/executable.pb.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/local_service_utils.h"
@@ -130,7 +131,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   if (!options.target_config) {
     if (client != nullptr) {
       TF_RETURN_IF_ERROR(IsValidTopologyAndClientForCompile(topology, client));
-      return client->Compile(computation, options);
+      return client->CompileAndLoad(computation, options);
     }
     const auto& gpu_topology =
         tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
