@@ -1561,8 +1561,8 @@ absl::Status RocmTracer::DisableActivityTracing() {
   size_t threshold = 1;
   for (int i = 0; i < 6; i++, duration_ms *= 2, threshold *= 2) {
     if (GetPendingActivityRecordsCount() < threshold) break;
-    VLOG(3) << "Wait for pending activity records :" << " Pending count = "
-            << GetPendingActivityRecordsCount()
+    VLOG(3) << "Wait for pending activity records :"
+            << " Pending count = " << GetPendingActivityRecordsCount()
             << ", Threshold = " << threshold;
     VLOG(3) << "Wait for pending activity records : sleep for " << duration_ms
             << " ms";
