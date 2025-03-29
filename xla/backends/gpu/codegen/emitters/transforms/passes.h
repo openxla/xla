@@ -34,7 +34,9 @@ namespace gpu {
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h.inc"
 
 std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass();
-std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
+std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
+    const std::string& gpu_device_info = "");
+std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
     const se::DeviceDescription& device_description);
 std::unique_ptr<mlir::Pass> CreateConvertIndexTypePass();
 std::unique_ptr<mlir::Pass> CreateOptimizeLoopsPass();

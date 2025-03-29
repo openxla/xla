@@ -258,9 +258,9 @@ std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass() {
   return std::make_unique<ConvertFloatNvidiaPass>();
 }
 
-std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
-    const se::DeviceDescription& device_description) {
 #ifdef GOOGLE_CUDA
+std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
+    const se::DeviceDescription& device_description) {
   se::SemanticVersion ptx_version =
       nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
           device_description.runtime_version());
@@ -272,9 +272,9 @@ std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
       (ptx_version >= se::SemanticVersion(7, 8, 0) && cc.IsAtLeast(9, 0))) {
     return CreateConvertFloatNvidiaPass();
   }
-#endif
   return std::nullopt;
 }
+#endif
 
 }  // namespace gpu
 }  // namespace xla

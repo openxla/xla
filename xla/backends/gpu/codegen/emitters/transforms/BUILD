@@ -38,11 +38,12 @@ gentbl_cc_library(
 cc_library(
     name = "passes",
     srcs = [
-        "convert_float_nvidia.cc",
         "convert_index_type.cc",
         "fuse_loops.cc",
         "optimize_loops.cc",
         "peel_loops.cc",
+        "convert_float_nvidia.cc",
+        "convert_float_amd.cc",
     ],
     hdrs = ["passes.h"],
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_is_configured(["-DTENSORFLOW_USE_ROCM=1"]),
