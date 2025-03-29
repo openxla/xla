@@ -6540,6 +6540,22 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
   SmallVector<Value> newOperands, resultsToReplace;
   SmallVector<unsigned> invariantArgIdxs;
   BitVector invariantArgIdxBitVector(cond->getNumArguments());
+  auto shardingAttr = whileOp->getAttrOfType<mlir::StringAttr>("mhlo.sharding");
+  SmallVector<std::string> shards;
+  if (shardingAttr) {
+    // Parse the sharding string into a list
+    std::string shardingStr = shardingAttr.getValue().str();
+    size_t start = 0, end = 0;
+    // Split by ", " to extract individual shard entries
+    while ((end = shardingStr.find(", ", start)) != std::string::npos) {
+      shards.push_back(shardingStr.substr(start, end - start));
+      // Move past ", "
+      start = end + 2;
+    }
+    // Add the last shard
+    shards.push_back(shardingStr.substr(start));
+    assert(shards.size() == cond->getNumArguments());
+  }
   for (const auto& enumeratedOperands : llvm::enumerate(llvm::zip(
            whileOp.getOperands(), cond->getArguments(), body->getArguments(),
            bodyReturnOp->getOperands(), whileOp->getResults()))) {
@@ -6558,6 +6574,9 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
       condBlockArg.replaceAllUsesWith(whileOperand);
       bodyBlockArg.replaceAllUsesWith(whileOperand);
       whileResult.replaceAllUsesWith(whileOperand);
+      // Remove the specified shard entry
+      if (shardingAttr)
+        shards.erase(shards.begin() + enumeratedOperands.index());
       continue;
     }
     newOperands.push_back(whileOperand);
@@ -6576,6 +6595,19 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
   for (auto results : llvm::zip(resultsToReplace, newWhileOp->getResults()))
     std::get<0>(results).replaceAllUsesWith(std::get<1>(results));
   rewriter.eraseOp(whileOp);
+  // Reconstruct the sharding string
+  if (shardingAttr) {
+    std::string updatedShardingStr = "{";
+    for (size_t i = 0; i < shards.size(); ++i) {
+      updatedShardingStr += shards[i];
+      if (i != shards.size() - 1) updatedShardingStr += ", ";
+    }
+    updatedShardingStr += "}";
+    // Update the mhlo.sharding attribute on the new operation
+    newWhileOp->setAttr(
+        "mhlo.sharding",
+        StringAttr::get(newWhileOp->getContext(), updatedShardingStr));
+  }
   return success();
 }
 
