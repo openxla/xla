@@ -1011,7 +1011,77 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
                      add->shape(), HloOpcode::kAdd, a, b)),
                  c));
   }
+  {
+    HloInstruction *x, *y, *z, *y2;
+    // Match an Add( Div(x,y), Div(z,y) ).
+    if (Match(add, m::Add(m::Divide(m::Op(&x), m::Op(&y)),
+                          m::Divide(m::Op(&z), m::Op(&y2))))) {
 
+      if (y == y2) {
+        VLOG(10) << "Rewrite (x / y + z / y) => (x + z) / y";
+        // (x+z)
+        HloInstruction* x_plus_z =
+            add->AddInstruction(HloInstruction::CreateBinary(
+                x->shape(), HloOpcode::kAdd, x, z));
+        // (x+z)/y
+        HloInstruction* y_bcast = add->AddInstruction(
+            HloInstruction::CreateBroadcast(x_plus_z->shape(), y, /*dimensions=*/{}));
+
+        HloInstruction* new_div = add->AddInstruction(HloInstruction::CreateBinary(
+            add->shape(), HloOpcode::kDivide, x_plus_z, y_bcast));
+
+        return ReplaceInstruction(add, new_div);
+      }
+    }
+  }
+  HloInstruction *a, *b, *x_lhs, *x_rhs;
+  if (Match(add,
+            m::AddAnyOrder(
+                m::Dot(m::Op(&a), m::Op(&x_lhs))
+                    .WithNumBatchDimensions(0)
+                    .WithContractingDimensions({1}, {0}),
+                m::Dot(m::Op(&b), m::Op(&x_rhs))
+                    .WithNumBatchDimensions(0)
+                    .WithContractingDimensions({1}, {0}))) &&
+      x_lhs == x_rhs && lhs->user_count() == 1 && rhs->user_count() == 1 &&
+      SameShape(a->shape(), b->shape(), /*ignore_last_dim=*/true)) {
+    HloInstruction* x = x_lhs;
+    const Shape& a_shape = a->shape();
+    const Shape& b_shape = b->shape();
+    const Shape& x_shape = x->shape();
+    int64_t m = a_shape.dimensions(0);
+    int64_t n = b_shape.dimensions(0);
+    int64_t k = a_shape.dimensions(1);
+    int64_t p = x_shape.dimensions(1);
+
+    // Concatenate A and B along dimension 0
+    TF_ASSIGN_OR_RETURN(
+        HloInstruction * concat,
+        MakeConcatHlo({a, b}, 0, ShapeUtil::MakeShape(a_shape.element_type(), {m + n, k})));
+
+    // Create new Dot
+    DotDimensionNumbers dnums;
+    dnums.add_lhs_contracting_dimensions(1);
+    dnums.add_rhs_contracting_dimensions(0);
+    Shape dot_shape = ShapeUtil::MakeShape(convolution_shape.element_type(), {m + n, p});
+    HloInstruction* new_dot = add->AddInstruction(HloInstruction::CreateDot(
+        dot_shape, concat, x, dnums, add->precision_config()));
+
+    // Slice the result into two parts
+    std::vector<HloInstruction*> slices;
+    slices.push_back(add->AddInstruction(HloInstruction::CreateSlice(
+        ShapeUtil::MakeShape(add->shape().element_type(), {m, p}), new_dot,
+        {0, 0}, {m, p}, {1, 1})));
+    slices.push_back(add->AddInstruction(HloInstruction::CreateSlice(
+        ShapeUtil::MakeShape(add->shape().element_type(), {n, p}), new_dot,
+        {m, 0}, {m + n, p}, {1, 1})));
+
+    // Replace with the sum of slices (or directly with slices if further optimized)
+    TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+        add, HloInstruction::CreateBinary(add->shape(), HloOpcode::kAdd,
+                                          slices[0], slices[1])));
+    return true;
+  }
   if (options_.is_layout_sensitive()) {
     return absl::OkStatus();
   }
@@ -1178,7 +1248,18 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
   }
   return absl::OkStatus();
 }
-
+bool AlgebraicSimplifierVisitor::SameShape(const Shape& a, const Shape& b,
+                                           bool ignore_last_dim) const {
+  if (a.rank() != b.rank() || a.element_type() != b.element_type()) {
+    return false;
+  }
+  for (int64_t i = 0; i < a.rank() - (ignore_last_dim ? 1 : 0); ++i) {
+    if (a.dimensions(i) != b.dimensions(i)) {
+      return false;
+    }
+  }
+  return true;
+}
 absl::StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
     HloInstruction* conjunction) {
   HloInstruction *lhs, *rhs;
@@ -4911,7 +4992,40 @@ absl::Status AlgebraicSimplifierVisitor::HandleMultiply(
       }
     }
   }
-
+  HloInstruction *a, *b_lhs, *b_rhs, *c;
+  if (Match(multiply,
+            m::MultiplyAnyOrder(
+                m::Multiply(m::Op(&a), m::Reduce(m::Op(&b_lhs)).WithNumArgs(2)),
+                m::Multiply(m::Reduce(m::Op(&b_rhs)).WithNumArgs(2), m::Op(&c)))) &&
+      b_lhs == b_rhs && ShapeUtil::IsScalar(lhs->operand(1)->shape()) &&
+      ShapeUtil::IsScalar(rhs->operand(0)->shape()) &&
+      lhs->operand(1)->dimensions() == rhs->operand(0)->dimensions() &&
+      lhs->user_count() == 1 && rhs->user_count() == 1) {
+    HloInstruction* reduce_b = lhs->operand(1);  // Reuse one ReduceSum
+    HloInstruction* square_b = multiply->AddInstruction(
+        HloInstruction::CreateBinary(reduce_b->shape(), HloOpcode::kPower,
+                                     reduce_b, MakeScalarLike(reduce_b, 2)));
+    TF_ASSIGN_OR_RETURN(
+        HloInstruction * square_c,
+        MakeBinaryHlo(HloOpcode::kMultiply, square_b, c));
+    TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+        multiply, HloInstruction::CreateBinary(multiply->shape(),
+                                               HloOpcode::kMultiply, a, square_c)));
+    return true;
+  }
+  HloInstruction *a, *b, *c;
+  if (Match(multiply,
+            m::Multiply(m::Multiply(m::Op(&a), m::Op(&b)), m::Op(&c))) &&
+      SameShape(a->shape(), b->shape()) && SameShape(b->shape(), c->shape()) &&
+      lhs->user_count() == 1) {
+    TF_ASSIGN_OR_RETURN(
+        HloInstruction * bc,
+        MakeBinaryHlo(HloOpcode::kMultiply, b, c));
+    TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+        multiply, HloInstruction::CreateBinary(multiply->shape(),
+                                               HloOpcode::kMultiply, a, bc)));
+    return true;
+  }
   VLOG(10) << "trying transform [(A * C1) * C2 => A * (C1 * C2)]";
   HloInstruction *a, *c1, *c2;
   if (Match(multiply,
@@ -6108,7 +6222,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleRemainder(
 
   return absl::OkStatus();
 }
-
+bool AlgebraicSimplifierVisitor::RequiresDimensionReordering(const HloInstruction* reshape) {
+  const Shape& input_shape = reshape->operand(0)->shape();
+  const Shape& output_shape = reshape->shape();
+  // Simplified: assume reordering if ranks are equal and shapes differ.
+  return input_shape.rank() == output_shape.rank() &&
+         !ShapeUtil::Equal(input_shape, output_shape);
+}
 absl::Status AlgebraicSimplifierVisitor::HandleReshape(
     HloInstruction* reshape) {
   auto operand = reshape->mutable_operand(0);
@@ -6133,7 +6253,26 @@ absl::Status AlgebraicSimplifierVisitor::HandleReshape(
     VLOG(3) << "deleting no-op reshape";
     return ReplaceInstruction(reshape, operand);
   }
+  if (reshape->opcode() == HloOpcode::kReshape &&
+      !ShapeUtil::Equal(reshape->shape(), operand->shape()) &&
+      RequiresDimensionReordering(reshape)) {
+    const Shape& original_shape = operand->shape();
+    const Shape& target_shape = reshape->shape();
 
+    std::vector<int64_t> permutation = {1, 2, 0};
+
+    // Create the transpose instruction.
+    Shape transposed_shape = ShapeUtil::PermuteDimensions(permutation, original_shape);
+    HloInstruction* transpose = reshape->AddInstruction(
+        HloInstruction::CreateTranspose(transposed_shape, operand, permutation));
+
+    // Create the new reshape instruction.
+    HloInstruction* new_reshape = reshape->AddInstruction(
+        HloInstruction::CreateReshape(target_shape, transpose));
+
+    // Replace the original reshape with the new reshape.
+    return ReplaceInstruction(reshape, new_reshape);
+  }
   // Merge reshapes.
   if (HloOpcode::kReshape == operand->opcode()) {
     return ReplaceWithNewInstruction(
@@ -8949,6 +9088,39 @@ absl::Status AlgebraicSimplifierVisitor::HandleTranspose(
     return absl::OkStatus();
   }
 
+  HloInstruction *a, *b;
+  if (Match(transpose,
+            m::Transpose(m::Dot(m::Op(&a), m::Op(&b))
+                             .WithNumBatchDimensions(0)
+                             .WithContractingDimensions({1}, {0}))) &&
+      transpose->dimensions() == std::vector<int64_t>{1, 0} &&
+      operand->user_count() == 1 &&
+      !Cast<HloDotInstruction>(operand)->sparse_operands()) {
+    // Transpose B
+    TF_ASSIGN_OR_RETURN(
+        HloInstruction * transpose_b,
+        MakeTransposeHlo(b, {1, 0},
+                         ShapeUtil::MakeShape(b->shape().element_type(),
+                                              {b->shape().dimensions(1), b->shape().dimensions(0)})));
+
+    // Transpose A
+    TF_ASSIGN_OR_RETURN(
+        HloInstruction * transpose_a,
+        MakeTransposeHlo(a, {1, 0},
+                         ShapeUtil::MakeShape(a->shape().element_type(),
+                                              {a->shape().dimensions(1), a->shape().dimensions(0)})));
+
+    // Create new Dot
+    DotDimensionNumbers dnums;
+    dnums.add_lhs_contracting_dimensions(1);
+    dnums.add_rhs_contracting_dimensions(0);
+    HloInstruction* new_dot = transpose->AddInstruction(HloInstruction::CreateDot(
+        transpose->shape(), transpose_b, transpose_a, dnums,
+        operand->precision_config()));
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(transpose, new_dot));
+    return true;
+  }
   // Transpose(dot(a,b))->dot(b,a) for any dot.
   HloInstruction *lhs, *rhs, *dot;
   if (options_.supports_non_canonical_dots() &&
