@@ -119,6 +119,7 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   std::optional<int64_t> algorithm;
   bool grad_x;
   bool grad_y;
+  bool is_fp8;
   std::optional<blas::ComputationType> compute_type;
 };
 
