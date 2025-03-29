@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
