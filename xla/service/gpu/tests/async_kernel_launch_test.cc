@@ -82,16 +82,16 @@ TEST_F(AsyncKernelLaunchTest, BasicAsyncComputation) {
     HloModule Test1
 
     add_F32 {
-      lhs = f32[2] parameter(0)
-      rhs = f32[2] parameter(1)
-      ROOT add = f32[2] add(lhs, rhs)
+      lhs = f32[2]{0} parameter(0)
+      rhs = f32[2]{0} parameter(1)
+      ROOT add = f32[2]{0} add(lhs, rhs)
     }
 
     ENTRY Test1 {
-      a = f32[2] parameter(0)
-      b = f32[2] parameter(1)
-      start = ((f32[2], f32[2]), f32[2]) call-start(a, b), to_apply=add_F32
-      ROOT done = f32[2] call-done(start)
+      a = f32[2]{0} parameter(0)
+      b = f32[2]{0} parameter(1)
+      start = ((f32[2]{0}, f32[2]{0}), f32[2]{0}) call-start(a, b), to_apply=add_F32
+      ROOT done = f32[2]{0} call-done(start)
     }
   )";
 
@@ -103,27 +103,27 @@ TEST_F(AsyncKernelLaunchTest, ScheduledOverlappingAsyncComputations) {
     HloModule Test1
 
     add {
-      lhs = f32[2] parameter(0)
-      rhs = f32[2] parameter(1)
-      ROOT add = f32[2] add(lhs, rhs)
+      lhs = f32[2]{0} parameter(0)
+      rhs = f32[2]{0} parameter(1)
+      ROOT add = f32[2]{0} add(lhs, rhs)
     }
     
     mul {
-      lhs = f32[2] parameter(0)
-      rhs = f32[2] parameter(1)
+      lhs = f32[2]{0} parameter(0)
+      rhs = f32[2]{0} parameter(1)
       ROOT mul = f32[2] multiply(lhs, rhs)
     }
 
     ENTRY Test1 {
-      a = f32[2] parameter(0)
-      b = f32[2] parameter(1)
-      start = ((f32[2], f32[2]), f32[2]) call-start(a, b), to_apply=add,
+      a = f32[2]{0} parameter(0)
+      b = f32[2]{0} parameter(1)
+      start = ((f32[2]{0}, f32[2]{0}), f32[2]{0}) call-start(a, b), to_apply=add,
         frontend_attributes={_xla_stream_annotation="1", _scheduling_group_id="0"}
-      start.1 = ((f32[2], f32[2]), f32[2]) call-start(a, b), to_apply=mul,
+      start.1 = ((f32[2]{0}, f32[2]{0}), f32[2]{0}) call-start(a, b), to_apply=mul,
         frontend_attributes={_xla_stream_annotation="2", _scheduling_group_id="0"}
-      done = f32[2] call-done(start)
-      done.1 = f32[2] call-done(start.1)
-      ROOT result = f32[2] add(done, done.1)
+      done = f32[2]{0} call-done(start)
+      done.1 = f32[2]{0} call-done(start.1)
+      ROOT result = f32[2]{0} add(done, done.1)
     }
   )";
 
