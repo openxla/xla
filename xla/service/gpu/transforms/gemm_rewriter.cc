@@ -655,7 +655,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                  const_cast<HloInstruction *>(instr->operand(0)))) &&
             (b = MatchFp8Param(
                  const_cast<HloInstruction *>(instr->operand(1))))) {
-          gemm_backend_config.set_is_fp8(true);
           if (IsRocm(gpu_version_) &&
               toolkit_version_ < stream_executor::SemanticVersion{6, 2, 0} &&
               instr->shape().element_type() != F16 &&
