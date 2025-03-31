@@ -177,9 +177,7 @@ def prepare_gpu_backend_data(backends, disabled_backends, backend_tags, backend_
 
     new_backends = [
         backend
-        for backend in (nvidia_backends if (not is_rocm_configured()) else []) 
-            + (amd_backends if (not is_cuda_configured()) else []) 
-            + other_backends
+        for backend in nvidia_backends + amd_backends + other_backends
     ]
 
     disabled_backends = nvidia_disabled_backends + amd_disabled_backends
@@ -372,8 +370,9 @@ def xla_test(
             fail_if_no_test_linked = fail_if_no_test_linked,
             **this_backend_kwargs
         )
-
-        test_names.append(test_name)
+        if ((backend in NVIDIA_GPU_BACKENDS and is_cuda_configured()) or 
+           (backend in AMD_GPU_DEFAULT_BACKENDS and is_rocm_configured())):
+            test_names.append(test_name)
 
     # Notably, a test_suite with `tests = []` is not empty:
     # https://bazel.build/reference/be/general#test_suite_args and the default
@@ -408,7 +407,6 @@ def xla_test(
             # --build_tag_filters (see above). Therefore we don't want to fail
             # if no test case is linked in.
             fail_if_no_test_linked = False,
-            **kwargs
         )
 
 def xla_test_library(
