@@ -45,9 +45,6 @@ namespace gpu {
 namespace {
 
 using namespace mlir;
-using namespace mlir::LLVM;
-using namespace mlir::arith;
-using namespace mlir::vector;
 
 template <typename SourceOp>
 struct Fp8OpRewritePattern : public mlir::OpRewritePattern<SourceOp> {
@@ -100,9 +97,6 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
   std::optional<std::tuple<llvm::SmallVector<mlir::Value, 4>, FixedVectorValue>>
   MatchBuildVector(arith::TruncFOp op, FloatValue value,
                    mlir::FloatType to_ty) const {
-    mlir::Value vector;
-    size_t pos;
-
     auto matchPos = [](vector::InsertOp insert, size_t* pos) -> bool {
       llvm::APInt ap_pos;
       auto position = insert.getMixedPosition();
@@ -128,13 +122,14 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
       return std::nullopt;
     }
 
+    size_t pos;
     auto insert = mlir::dyn_cast<vector::InsertOp>(op->use_begin()->getOwner());
     if (!insert || insert.getSource() != op->getResult(0) ||
         !matchPos(insert, &pos) || !insert.getDest().hasOneUse()) {
       return std::nullopt;
     }
 
-    vector = insert.getDest();
+    auto vector = insert.getDest();
 
     size_t element_count =
         mlir::cast<FixedVectorValue>(vector).getType().getNumElements();
@@ -326,9 +321,6 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
   std::optional<std::tuple<FixedVectorValue, llvm::SmallVector<mlir::Value, 4>>>
   MatchDecomposeVector(arith::ExtFOp op, FloatValue value,
                        mlir::FloatType to_ty) const {
-    mlir::Value vector;
-    size_t pos;
-
     auto matchPos = [](vector::ExtractOp extract, size_t* pos) -> bool {
       llvm::APInt ap_pos;
       auto position = extract.getMixedPosition();
@@ -349,12 +341,13 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
       return true;
     };
 
+    size_t pos;
     auto extract = value.getDefiningOp<vector::ExtractOp>();
     if (!extract || !extract->hasOneUse() || !matchPos(extract, &pos)) {
       return std::nullopt;
     }
 
-    vector = extract.getVector();
+    auto vector = extract.getVector();
 
     size_t element_count =
         mlir::cast<FixedVectorValue>(vector).getType().getNumElements();
@@ -438,8 +431,6 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     size_t num_elements = value.getType().getNumElements();
     assert(num_elements == 2 || num_elements % 4 == 0);
 
-    llvm::SmallVector<mlir::Value, 4> results;
-
     size_t num_chunks = (num_elements + 2) / 4;
     auto chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
     mlir::Value chunks;
@@ -463,6 +454,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
                          .getResult(0));
     }
 
+    llvm::SmallVector<mlir::Value, 4> results;
     auto cvtIntr = b.getStringAttr(isFp8(value.getType().getElementType())
                                        ? "llvm.amdgcn.cvt.pk.f32.fp8"
                                        : "llvm.amdgcn.cvt.pk.f32.bf8");
