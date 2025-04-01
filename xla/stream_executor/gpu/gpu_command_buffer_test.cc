@@ -60,7 +60,8 @@ using MulI32Kernel =
     TypedKernelFactory<DeviceMemory<int32_t>, DeviceMemory<int32_t>,
                        DeviceMemory<int32_t>>;
 using IncAndCmpKernel =
-    TypedKernelFactory<DeviceMemory<int32_t>, DeviceMemory<bool>, int32_t>;
+    TypedKernelFactory<DeviceMemory<int32_t>, DeviceMemory<bool>,
+                       DeviceMemory<int32_t>>;
 
 using AddI32Ptrs3 = TypedKernelFactory<internal::Ptrs3<int32_t>>;
 
@@ -629,56 +630,6 @@ TEST(GpuCommandBufferTest, ConditionalCase) {
   ASSERT_EQ(dst, expected_mul);
 }
 
-TEST(GpuCommandBufferTest, ConditionalFor) {
-  Platform* platform = GpuPlatform();
-  StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
-  if (!IsAtLeastCuda12300(executor)) {
-    GTEST_SKIP() << "CUDA graph conditionals are not supported";
-  }
-
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  MultiKernelLoaderSpec spec(/*arity=*/3);
-  spec.AddInProcessSymbol(internal::GetAddI32Kernel(), "AddI32");
-  TF_ASSERT_OK_AND_ASSIGN(auto add, AddI32Kernel::Create(executor, spec));
-
-  int64_t length = 4;
-  int64_t byte_length = sizeof(int32_t) * length;
-
-  // Prepare arguments: a=1, b=0, loop_counter=100
-  DeviceMemory<int32_t> loop_counter = executor->AllocateArray<int32_t>(1, 0);
-  DeviceMemory<int32_t> a = executor->AllocateArray<int32_t>(length, 0);
-  DeviceMemory<int32_t> b = executor->AllocateArray<int32_t>(length, 0);
-
-  // Set loop counter to 100 to check that command buffer resets it.
-  TF_ASSERT_OK(stream->Memset32(&loop_counter, 100, sizeof(int32_t)));
-  TF_ASSERT_OK(stream->Memset32(&a, 1, byte_length));
-  TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-
-  // Loop body: b = a + b
-  CommandBuffer::Builder body_builder = [&](CommandBuffer* body_cmd) {
-    return body_cmd->Launch(add, ThreadDim(), BlockDim(4), {}, a, b, b)
-        .status();
-  };
-
-  int32_t num_iters = 10;
-
-  // Create a command buffer with a single conditional operation.
-  auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->For(num_iters, loop_counter, body_builder));
-  TF_ASSERT_OK(cmd_buffer->Finalize());
-
-  TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
-
-  // Copy `b` data back to host.
-  std::vector<int32_t> dst(4, 42);
-  TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
-
-  std::vector<int32_t> expected = {10, 10, 10, 10};
-  ASSERT_EQ(dst, expected);
-}
-
 TEST(GpuCommandBufferTest, ConditionalWhile) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
@@ -708,16 +659,16 @@ TEST(GpuCommandBufferTest, ConditionalWhile) {
   // below.
   DeviceMemory<bool> pred = executor->AllocateArray<bool>(1, 0);
   DeviceMemory<int32_t> loop_counter = executor->AllocateArray<int32_t>(1, 0);
+  DeviceMemory<int32_t> num_iters = executor->AllocateArray<int32_t>(1, 0);
   DeviceMemory<int32_t> a = executor->AllocateArray<int32_t>(length, 0);
   DeviceMemory<int32_t> b = executor->AllocateArray<int32_t>(length, 0);
 
   static constexpr bool kFalse = false;
   TF_ASSERT_OK(stream->Memcpy(&pred, &kFalse, 1));
   TF_ASSERT_OK(stream->Memset32(&loop_counter, 0, sizeof(int32_t)));
+  TF_ASSERT_OK(stream->Memset32(&num_iters, 10, sizeof(int32_t)));
   TF_ASSERT_OK(stream->Memset32(&a, 1, byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-
-  int32_t num_iters = 10;
 
   // Loop cond: loop_counter++ < num_iters;
   CommandBuffer::Builder cond_builder = [&](CommandBuffer* cond_cmd) {
@@ -735,7 +686,7 @@ TEST(GpuCommandBufferTest, ConditionalWhile) {
 
   // Create a command buffer with a single conditional operation.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->While(pred, cond_builder, body_builder));
+  TF_ASSERT_OK(cmd_buffer->While(pred, cond_builder, body_builder, {}));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
@@ -779,6 +730,7 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   DeviceMemory<bool> pred = executor->AllocateArray<bool>(1, 0);
   DeviceMemory<bool> pred_then = executor->AllocateArray<bool>(1, 0);
   DeviceMemory<int32_t> loop_counter = executor->AllocateArray<int32_t>(1, 0);
+  DeviceMemory<int32_t> num_iters = executor->AllocateArray<int32_t>(1, 0);
   DeviceMemory<int32_t> a = executor->AllocateArray<int32_t>(length, 0);
   DeviceMemory<int32_t> b = executor->AllocateArray<int32_t>(length, 0);
 
@@ -787,10 +739,9 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   TF_ASSERT_OK(stream->Memcpy(&pred, &kFalse, 1));
   TF_ASSERT_OK(stream->Memcpy(&pred_then, &kTrue, 1));
   TF_ASSERT_OK(stream->Memset32(&loop_counter, 0, sizeof(int32_t)));
+  TF_ASSERT_OK(stream->Memset32(&num_iters, 10, sizeof(int32_t)));
   TF_ASSERT_OK(stream->Memset32(&a, 1, byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-
-  int32_t num_iters = 10;
 
   CommandBuffer::Builder then_builder =
       // Then body: b = a + b
@@ -820,7 +771,7 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
 
   // Create a command buffer with a single conditional operation.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->While(pred, cond_builder, body_builder));
+  TF_ASSERT_OK(cmd_buffer->While(pred, cond_builder, body_builder, {}));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
