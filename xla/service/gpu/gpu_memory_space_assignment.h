@@ -50,6 +50,14 @@ inline BufferAssigner::Colorer CollectiveColorer() {
         HloOpcode::kAllToAll,
     };
     for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
+      // If the value has a layout, use the memory space from the layout.
+      const HloPosition& defining_position = value->defining_position();
+      if (defining_position.shape().has_layout()) {
+        value->set_color(BufferValue::Color(
+            defining_position.shape().layout().memory_space()));
+        continue;
+      }
+
       auto& buffer = alias_analysis->GetBufferContainingValue(*value);
       for (const auto& alias : buffer.values()) {
         // opcode or async wrapped opcode is in kSupportedOpcodes.
