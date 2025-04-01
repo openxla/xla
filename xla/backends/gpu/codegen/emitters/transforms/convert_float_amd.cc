@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/semantic_version.h"
 
 namespace xla {
 namespace gpu {
@@ -44,7 +43,11 @@ namespace gpu {
 
 namespace {
 
-using namespace mlir;
+namespace LLVM = ::mlir::LLVM;
+namespace arith = ::mlir::arith;
+namespace vector = ::mlir::vector;
+using ::mlir::Value;
+using ::mlir::MLIRContext;
 
 template <typename SourceOp>
 struct Fp8OpRewritePattern : public mlir::OpRewritePattern<SourceOp> {
@@ -566,17 +569,10 @@ std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
   return std::make_unique<ConvertFloatAMDPass>(options);
 }
 
-#ifdef TENSORFLOW_USE_ROCM
-std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatPass(
-    const se::DeviceDescription& device_description) {
-  auto cc = device_description.rocm_compute_capability();
-
-  if (cc.has_fp8_support()) {
-    return std::make_unique<ConvertFloatAMDPass>(cc);
-  }
-  return std::nullopt;
+std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
+    const se::RocmComputeCapability& cc) {
+  return std::make_unique<ConvertFloatAMDPass>(cc);
 }
-#endif
 
 }  // namespace gpu
 }  // namespace xla
