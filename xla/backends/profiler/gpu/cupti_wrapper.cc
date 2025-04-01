@@ -147,6 +147,7 @@ CUptiResult CuptiWrapper::GetStreamIdEx(CUcontext context, CUstream stream,
   return cuptiGetStreamIdEx(context, stream, per_thread_stream, stream_id);
 }
 
+#if CUPTI_PM_SAMPLING
 // Profiler Host APIs
 CUptiResult CuptiWrapper::ProfilerHostInitialize(
     CUpti_Profiler_Host_Initialize_Params* pParams) {
@@ -369,6 +370,7 @@ CUptiResult CuptiWrapper::PmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) {
   return cuptiPmSamplingCounterDataGetSampleInfo(pParams);
 }
+#endif // CUPTI_PM_SAMPLING
 
 CUptiResult CuptiWrapper::DeviceGetChipName(
     CUpti_Device_GetChipName_Params* pParams) {

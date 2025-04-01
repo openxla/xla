@@ -48,6 +48,7 @@ class TestableCuptiTracer : public CuptiTracer {
 
 namespace {
 
+#if CUPTI_PM_SAMPLING
 std::atomic_uint64_t atomic_total_fp64 = 0;
 std::atomic_uint64_t atomic_total_read = 0;
 std::atomic_uint64_t atomic_total_write = 0;
@@ -103,10 +104,12 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
     }
   }
   return; };
+#endif // CUPTI_PM_SAMPLING
 
 TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     constexpr int kNumElements = 256*1024;
 
+#if CUPTI_PM_SAMPLING
     CuptiTracerCollectorOptions collector_options;
     collector_options.num_gpus = CuptiTracer::NumGpus();
     auto start_walltime_ns = absl::GetCurrentTimeNanos();
@@ -132,10 +135,12 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
     TestableCuptiTracer tracer;
     tracer.Enable(tracer_options, collector.get());
+#endif // CUPTI_PM_SAMPLING
 
     // SimpleAddSub does num_elements * 4 integer add / subs
     std::vector<double> vec = SimpleAddSubWithProfiler(kNumElements);
 
+#if CUPTI_PM_SAMPLING
     tracer.Disable();
 
     EXPECT_EQ(vec.size(), kNumElements);
@@ -156,6 +161,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
     LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
     EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
+#endif // CUPTI_PM_SAMPLING
 }
 
 }  // namespace

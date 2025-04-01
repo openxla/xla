@@ -35,8 +35,10 @@ limitations under the License.
 #include "cupti_tracer.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
+#if CUPTI_PM_SAMPLING
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
+#endif // CUPTI_PM_SAMPLING
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
@@ -1105,17 +1107,21 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
   EnableActivityTracing().IgnoreError();
   tsl::profiler::AnnotationStack::Enable(true);
 
+#if CUPTI_PM_SAMPLING
   if (option_->pm_sampling_config->enable_pm_sampling) {
     TF_RETURN_IF_ERROR(EnablePMSampling());
   }
+#endif // CUPTI_PM_SAMPLING
 
   return status;
 }
 
 void CuptiTracer::Disable() {
+#if CUPTI_PM_SAMPLING
   if (option_ && option_->pm_sampling_config->enable_pm_sampling) {
     DisablePMSampling().IgnoreError();
   }
+#endif // CUPTI_PM_SAMPLING
   DisableApiTracing().IgnoreError();
   DisableActivityTracing().IgnoreError();
   cupti_interface_->CleanUp();
@@ -1251,6 +1257,7 @@ absl::Status CuptiTracer::DisableApiTracing() {
   return absl::OkStatus();
 }
 
+#if CUPTI_PM_SAMPLING
 // CUPTI params struct definitions are very long, macro it for convenience, ie:
 // CUpti_Struct_Type var = { CUpti_Struct_Type_STRUCT_SIZE };
 // Many strucs also have a pPriv field which must be null
@@ -1927,6 +1934,7 @@ absl::Status CuptiTracer::DisablePMSampling() {
 
   return absl::OkStatus();
 }
+#endif // CUPTI_PM_SAMPLING
 
 absl::Status CuptiTracer::EnableActivityTracing() {
   if (activity_tracing_enabled_) return absl::OkStatus();

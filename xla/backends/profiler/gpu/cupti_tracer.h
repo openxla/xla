@@ -32,6 +32,7 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
+#if CUPTI_PM_SAMPLING
 // Information related to a decode counters pass over a single device
 struct PmSamplingDecodeInfo {
   CUpti_PmSampling_DecodeStopReason decode_stop_reason =
@@ -46,6 +47,7 @@ struct PmSamplingDecodeInfo {
 };
 
 struct PmSamplingConfig;
+#endif // CUPTI_PM_SAMPLING
 
 struct CuptiTracerOptions {
   bool required_callback_api_events = true;
@@ -64,12 +66,15 @@ struct CuptiTracerOptions {
   bool sync_devices_before_stop = false;
   // Whether to enable NVTX tracking, we need this for TensorRT tracking.
   bool enable_nvtx_tracking = false;
+#if CUPTI_PM_SAMPLING
   // PM sampling configuration (defaults are 2khz rate, 100ms decode)
   // Only read during creation of a PM sampling object, later changes have 
   // no effect
   struct PmSamplingConfig* pm_sampling_config;
+#endif // CUPTI_PM_SAMPLING
 };
 
+#if CUPTI_PM_SAMPLING
 // Container class for all CUPTI pm sampling infrastructure
 // - Configuration
 // - Enablement / disablement
@@ -266,6 +271,7 @@ struct PmSamplingConfig {
   // Do not set manually
   std::vector< std::unique_ptr<PmSamplingDecodeThread> > threads;
 };
+#endif // CUPTI_PM_SAMPLING
 
 class CuptiTracer;
 
@@ -379,10 +385,12 @@ class CuptiTracer {
       bool stop_recording);
 
   absl::Status EnableApiTracing();
+#if CUPTI_PM_SAMPLING
   absl::Status EnablePMSampling();
+  absl::Status DisablePMSampling();
+#endif // CUPTI_PM_SAMPLING
   absl::Status EnableActivityTracing();
   absl::Status DisableApiTracing();
-  absl::Status DisablePMSampling();
   absl::Status DisableActivityTracing();
   absl::Status Finalize();
   void ConfigureActivityUnifiedMemoryCounter(bool enable);

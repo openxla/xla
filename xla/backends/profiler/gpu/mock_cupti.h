@@ -91,6 +91,7 @@ class MockCupti : public xla::profiler::CuptiInterface {
   MOCK_METHOD(CUptiResult, GetGraphExecId,
               (CUgraphExec graph_exec, uint32_t* graph_id), (override));
 
+#if CUPTI_PM_SAMPLING
   // Profiler Host APIs
   MOCK_METHOD(CUptiResult, ProfilerHostInitialize,
       (CUpti_Profiler_Host_Initialize_Params* pParams), (override));
@@ -189,6 +190,7 @@ class MockCupti : public xla::profiler::CuptiInterface {
       (CUpti_PmSampling_GetCounterDataInfo_Params* pParams), (override));
   MOCK_METHOD(CUptiResult, PmSamplingCounterDataGetSampleInfo,
       (CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams), (override));
+#endif // CUPTI_PM_SAMPLING
 
   MOCK_METHOD(CUptiResult, DeviceGetChipName, (CUpti_Device_GetChipName_Params*
       pParams), (override));

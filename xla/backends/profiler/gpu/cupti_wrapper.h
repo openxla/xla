@@ -96,6 +96,7 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
 
   CUptiResult SetThreadIdType(CUpti_ActivityThreadIdType type) override;
 
+#if CUPTI_PM_SAMPLING
   // Profiler Host APIs
   CUptiResult ProfilerHostInitialize(
       CUpti_Profiler_Host_Initialize_Params* pParams) override;
@@ -189,6 +190,7 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
       CUpti_PmSampling_GetCounterDataInfo_Params* pParams) override;
   CUptiResult PmSamplingCounterDataGetSampleInfo(
       CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) override;
+#endif // CUPTI_PM_SAMPLING
 
   CUptiResult DeviceGetChipName(
       CUpti_Device_GetChipName_Params* pParams) override;
@@ -274,6 +276,7 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
 
   CUptiResult SetThreadIdType(CUpti_ActivityThreadIdType type) override;
 
+#if CUPTI_PM_SAMPLING
   // Profiler Host APIs
   CUptiResult ProfilerHostInitialize(
       CUpti_Profiler_Host_Initialize_Params* pParams) override;
@@ -367,6 +370,7 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
       CUpti_PmSampling_GetCounterDataInfo_Params* pParams) override;
   CUptiResult PmSamplingCounterDataGetSampleInfo(
       CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) override;
+#endif // CUPTI_PM_SAMPLING
 
   CUptiResult DeviceGetChipName(
       CUpti_Device_GetChipName_Params* pParams) override;
