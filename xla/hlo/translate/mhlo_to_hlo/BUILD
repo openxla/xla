@@ -180,6 +180,7 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@stablehlo//:base",
         "@stablehlo//:stablehlo_ops",
+        "@stablehlo//:stablehlo_passes",
         "@tsl//tsl/platform:ml_dtypes",
     ],
 )
