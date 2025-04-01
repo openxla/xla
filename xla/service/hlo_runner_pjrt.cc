@@ -452,14 +452,6 @@ HloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
       std::unique_ptr<PjRtLoadedExecutable> pjrt_executable,
       CreateExecutable(module.get(), std::move(compile_options)));
 
-  TF_ASSIGN_OR_RETURN(auto mods, pjrt_executable->GetHloModules());
-  if (mods.empty()) {
-    return absl::InternalError("No modules available in executable!");
-  }
-  auto executable = std::make_unique<PjRtWrappedExecutable>(
-      std::shared_ptr<HloModule>(std::move(mods[0])),
-      pjrt_executable.release());
-
   return std::make_unique<HloRunnerPjRtExecutable>(this,
                                                    std::move(pjrt_executable));
 }

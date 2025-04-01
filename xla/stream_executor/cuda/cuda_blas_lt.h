@@ -87,10 +87,10 @@ class BlasLt : public gpu::BlasLt {
 
   class MatmulPlan : public gpu::BlasLt::MatmulPlan {
    public:
-    MatmulPlan(MatmulDesc&& op_desc, MatrixLayout&& a_desc,
-               MatrixLayout&& b_desc, MatrixLayout&& c_desc,
-               MatrixLayout&& d_desc, xla::complex128 alpha, double beta,
-               bool must_swap_operands)
+    MatmulPlan(MatmulDesc&& op_desc,
+               MatrixLayout&& a_desc, MatrixLayout&& b_desc,
+               MatrixLayout&& c_desc, MatrixLayout&& d_desc,
+               xla::complex128 alpha, double beta, bool must_swap_operands)
         : op_desc_(std::move(op_desc)),
           a_desc_(std::move(a_desc)),
           b_desc_(std::move(b_desc)),
@@ -108,12 +108,12 @@ class BlasLt : public gpu::BlasLt {
         blas::ProfileResult* profile_result) const override;
 
     absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        const Stream* stream, size_t max_algorithm_count,
+        const Stream* stream, size_t max_algorithm_count, 
         size_t max_workspace_size) const override;
 
    private:
-    absl::Status DoMatmul(Stream* stream, const void* alpha, const void* beta,
-                          const MatmulAlgorithm& algorithm,
+    absl::Status DoMatmul(Stream* stream, const void* alpha, 
+                          const void* beta, const MatmulAlgorithm& algorithm,
                           const gpu::BlasLt::MemoryArgs& args,
                           blas::ProfileResult* profile_result) const;
 

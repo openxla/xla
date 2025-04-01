@@ -150,31 +150,31 @@ struct BlasLt {
   };
 
   struct MemoryArgs {
-    DeviceMemoryBase a, b, c, d;                          // these are mandatory
-    DeviceMemoryBase bias, aux;                           // these may be null
-    DeviceMemoryBase a_scale, b_scale, c_scale, d_scale;  // these may be null
-    DeviceMemoryBase d_amax;                              // this may be null
-    DeviceMemoryBase workspace;                           // either workspace or
-    ScratchAllocator* scratch_allocator;  // scratch_allocator must not be null
+    DeviceMemoryBase a, b, c, d;  // these are mandatory
+    DeviceMemoryBase bias, aux;   // these may be null
+    DeviceMemoryBase a_scale, b_scale, c_scale, d_scale; // these may be null
+    DeviceMemoryBase d_amax;      // this may be null
+    DeviceMemoryBase workspace;          // either workspace or 
+    ScratchAllocator *scratch_allocator; // scratch_allocator must not be null
   };
 
   struct MatmulPlan {
+
     // API that uses scratch_allocator to allocate workspace.
     // This version is used by TF: see tensorflow/core/kernels/matmul_util.cc
     absl::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b,
+        Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b, 
         DeviceMemoryBase c, DeviceMemoryBase d,
         DeviceMemoryBase bias,  // may be null
         DeviceMemoryBase aux,   // may be null
         DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
         DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
-        DeviceMemoryBase d_amax, const MatmulAlgorithm& algorithm,
-        ScratchAllocator& scratch_allocator,
+        DeviceMemoryBase d_amax, ScratchAllocator& scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream, algorithm,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     d_amax, DeviceMemoryBase{}, &scratch_allocator},
+      return ExecuteOnStream(stream, 
+          MemoryArgs{a, b, c, d, bias, aux, 
+                     a_scale, b_scale, c_scale, d_scale, d_amax, 
+                     DeviceMemoryBase{}, &scratch_allocator}, 
           profile_result);
     }
 
@@ -186,20 +186,19 @@ struct BlasLt {
         DeviceMemoryBase aux,   // may be null
         DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
         DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
-        DeviceMemoryBase d_amax, const MatmulAlgorithm& algorithm,
-        DeviceMemoryBase workspace,
+        DeviceMemoryBase d_amax, DeviceMemoryBase workspace,
         blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream, algorithm,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     d_amax, workspace, nullptr},
+      return ExecuteOnStream(stream, 
+          MemoryArgs{a, b, c, d, bias, aux, 
+                      a_scale, b_scale, c_scale, d_scale, d_amax, 
+                      workspace, nullptr}, 
           profile_result);
     }
 
     // The most general form: to be implemented by derived clases.
     virtual absl::Status ExecuteOnStream(
-        Stream* stream, const MatmulAlgorithm& algorithm,
-        const MemoryArgs& args, blas::ProfileResult* profile_result) const = 0;
+        Stream* stream, const MemoryArgs& args,
+        blas::ProfileResult* profile_result) const = 0;
 
     // Returns a list of supported algorithms for DoMatmul. The algorithms are
     // returned in the order of increasing estimated compute time according to
@@ -207,6 +206,12 @@ struct BlasLt {
     virtual absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
         const Stream* stream, size_t max_algorithm_count = 128,
         size_t max_workspace_size = 1ll << 32) const = 0;
+
+    // Algorithm must to be set before calling ExecuteOnStream function(s).
+    // Usually, we call ExecuteOnStream with the same algorithm ID, hence using a 
+    // separate function here enables BlasLt implementations to do additional 
+    // optimizations (like preloading matmul kernels) once the algorithm is set.
+    virtual absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) const = 0;
 
     virtual ~MatmulPlan() {}
   };  // class MatmulPlan

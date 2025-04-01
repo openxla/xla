@@ -262,10 +262,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       stream_executor::IsLibNvPtxCompilerSupported());
   opts.set_xla_gpu_libnvjitlink_mode(DebugOptions::LIB_NV_JIT_LINK_MODE_AUTO);
 
-  opts.set_xla_gpu_enable_dot_strength_reduction(false);
-
-  opts.set_xla_gpu_enable_bf16_6way_gemm(false);
-  opts.set_xla_gpu_enable_bf16_3way_gemm(false);
+//   opts.set_xla_gpu_enable_dot_strength_reduction(false);
+//   opts.set_xla_gpu_enable_bf16_6way_gemm(false);
+//   opts.set_xla_gpu_enable_bf16_3way_gemm(false);
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
   opts.set_xla_gpu_multi_streamed_windowed_einsum(true);

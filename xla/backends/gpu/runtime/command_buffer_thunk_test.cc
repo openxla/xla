@@ -604,10 +604,6 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 TEST(CommandBufferThunkTest, GemmCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300(executor)) {
-    GTEST_SKIP() << "CUDA graph tracing is not supported";
-  }
-
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
@@ -877,10 +873,6 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
 TEST(CommandBufferThunkTest, CublasLtCmd) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300(executor)) {
-    GTEST_SKIP() << "CUDA graph tracing is not supported";
-  }
-
   TF_ASSERT_OK_AND_ASSIGN(auto stream1, executor->CreateStream());
   TF_ASSERT_OK_AND_ASSIGN(auto stream2, executor->CreateStream());
 
@@ -924,11 +916,14 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
   commands.Emplace<CublasLtCmd>(
-      s0, config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a,
-      slice_b, slice_c, slice_d, BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(), slice_workspace);
+      s0, 
+      CublasLtMatmulThunk(nullptr,
+        config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a,
+        slice_b, slice_c, slice_d, BufferAllocation::Slice(),
+        BufferAllocation::Slice(), BufferAllocation::Slice(),
+        BufferAllocation::Slice(), BufferAllocation::Slice(),
+        BufferAllocation::Slice(), BufferAllocation::Slice(), 
+        slice_workspace));
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());

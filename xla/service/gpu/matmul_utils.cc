@@ -511,6 +511,20 @@ absl::StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
   return DescriptorsTuple{lhs_desc, rhs_desc, out_desc, must_swap_operands};
 }
 
+std::string GemmConfig::ToString() const {
+  std::ostringstream oss;
+  auto printL = [&oss](const auto& L) {
+    oss << primitive_util::LowercasePrimitiveTypeName(L.dtype) << ": "
+      << L.num_rows << 'x' << L.num_cols << " trans: " << (int)L.transpose
+      << (L.order == se::gpu::MatrixLayout::Order::kRowMajor ? " R" : " C") 
+      << " LDS:" << L.leading_dim_stride << " BS:" << L.batch_stride;
+  };
+  printL(lhs_layout); oss << '\n';
+  printL(rhs_layout); oss << '\n';
+  printL(output_layout); oss << " batch: " << lhs_layout.batch_size;
+  return oss.str();
+}
+
 namespace {
 
 template <typename Scale, typename Input, typename Output>

@@ -236,14 +236,14 @@ cublasLtPointerMode_t BlasLt::MatmulDesc::pointer_mode() const {
           .value());
 }
 
-auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
+auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream, 
                                        size_t max_algorithm_count,
                                        size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<cublasLtMatmulHeuristicResult_t> results(max_algorithm_count);
   {
-    auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
+    auto blas_lt = static_cast< BlasLt *>(gpu::BlasLt::Get(stream));
     absl::MutexLock lock(&blas_lt->mu_);
     TF_RET_CHECK(blas_lt->blas_lt_ != nullptr);
 
@@ -258,13 +258,14 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
         cu_preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
         max_workspace_size));
 
-    std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
+    std::unique_ptr<ActivateContext> activation =
+        blas_lt->parent_->Activate();
 
     int found_algorithm_count = 0;
     SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmulAlgoGetHeuristic(
-        blas_lt->blas_lt_.get(), op_desc_.get(), a_desc_.get(), b_desc_.get(),
-        c_desc_.get(), d_desc_.get(), preference.get(), max_algorithm_count,
-        results.data(), &found_algorithm_count));
+        blas_lt->blas_lt_.get(), op_desc_.get(), a_desc_.get(),
+        b_desc_.get(), c_desc_.get(), d_desc_.get(), preference.get(),
+        max_algorithm_count, results.data(), &found_algorithm_count));
     results.resize(found_algorithm_count);
   }
 
@@ -339,24 +340,25 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
   TF_ASSIGN_OR_RETURN(auto c_desc, MatrixLayout::Create(c_layout));
   TF_ASSIGN_OR_RETURN(auto d_desc, MatrixLayout::Create(output_layout));
 
-  return std::make_unique<MatmulPlan>(std::move(op_desc), std::move(a_desc),
-                                      std::move(b_desc), std::move(c_desc),
-                                      std::move(d_desc), cfg.alpha, cfg.beta,
-                                      must_swap_operands);
+  return std::make_unique<MatmulPlan>(std::move(op_desc),
+                                      std::move(a_desc), std::move(b_desc),
+                                      std::move(c_desc), std::move(d_desc),
+                                      cfg.alpha, cfg.beta, must_swap_operands);
 }
 
-absl::Status BlasLt::MatmulPlan::DoMatmul(
-    Stream* stream, const void* alpha, const void* beta,
-    const MatmulAlgorithm& algorithm, const gpu::BlasLt::MemoryArgs& args,
-    blas::ProfileResult* profile_result) const {
+absl::Status BlasLt::MatmulPlan::DoMatmul(Stream* stream, const void* alpha, 
+                          const void* beta, const MatmulAlgorithm& algorithm,
+                          const gpu::BlasLt::MemoryArgs& args,
+                          blas::ProfileResult* profile_result) const 
+{
   DeviceMemoryBase a = args.a, b = args.b;
   if (must_swap_operands_) {
     std::swap(a, b);
   }
 
-  auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
+  auto blas_lt = static_cast< BlasLt *>(gpu::BlasLt::Get(stream));
   TF_RET_CHECK(blas_lt != nullptr);
-
+  
   std::unique_ptr<EventBasedTimer> timer;
   if (profile_result != nullptr) {
     TF_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
@@ -368,8 +370,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
   if (workspace_size > 0) {
     if (args.scratch_allocator != nullptr) {
       TF_ASSIGN_OR_RETURN(
-          DeviceMemory<uint8_t> alloc,
-          args.scratch_allocator->AllocateBytes(workspace_size));
+        DeviceMemory<uint8_t> alloc,
+        args.scratch_allocator->AllocateBytes(workspace_size));
       workspace_addr = gpu::GpuMemoryMutable(&alloc);
     } else {
       workspace_addr = args.workspace.opaque();
@@ -386,9 +388,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
     // We must set the bias and aux pointers while holding the mutex, to avoid a
     // potential race condition from multiple threads sharing the same plan.
     if (args.bias != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_BIAS_POINTER,
-                                 args.bias.opaque()));
+      TF_RETURN_IF_ERROR(SetAttr(
+         op_desc_.get(), CUBLASLT_MATMUL_DESC_BIAS_POINTER, args.bias.opaque()));
     }
 #if CUDA_VERSION >= 11080
     if (args.a_scale != nullptr) {
@@ -417,8 +418,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
                                  args.d_amax.opaque()));
     }
 #else
-    if (!(args.a_scale == nullptr && args.b_scale == nullptr &&
-          args.c_scale == nullptr && args.d_scale == nullptr &&
+    if (!(args.a_scale == nullptr && args.b_scale == nullptr && 
+          args.c_scale == nullptr && args.d_scale == nullptr && 
           args.d_amax == nullptr)) {
       return absl::InternalError(
           "A/B/C/D scales and amax require cublasLt >= 11.8");
@@ -455,7 +456,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
 #endif
     }
 
-    std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
+    std::unique_ptr<ActivateContext> activation =
+        blas_lt->parent_->Activate();
 
     if (palgo != nullptr) {
       SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmul(
@@ -478,18 +480,18 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
   return absl::OkStatus();
 }
 
-absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
-    Stream* stream, const MatmulAlgorithm& algorithm,
-    const gpu::BlasLt::MemoryArgs& args,
+absl::Status BlasLt::MatmulPlan::ExecuteOnStream(Stream* stream, 
+    const MatmulAlgorithm& algorithm, const gpu::BlasLt::MemoryArgs& args, 
     blas::ProfileResult* profile_result) const {
+
   auto wrapped_matmul = [&](auto scale) {
     using Scale = decltype(scale);
     Scale salpha;
     if constexpr (std::is_same_v<Scale, xla::complex64> ||
-                  std::is_same_v<Scale, xla::complex128>) {
+                    std::is_same_v<Scale, xla::complex128>) {
       salpha = static_cast<Scale>(alpha_);
     } else {
-      salpha = static_cast<Scale>(alpha_.real());
+      salpha = static_cast<Scale>(alpha_.real()); 
     }
     Scale sbeta = static_cast<Scale>(beta_);
     return DoMatmul(stream, &salpha, &sbeta, algorithm, args, profile_result);
@@ -498,9 +500,9 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
   std::tuple operand_types{a_desc_.type(), b_desc_.type(), c_desc_.type(),
                            d_desc_.type()};
 
-#define TYPED_MATMUL(Scale, ATYPE, BTYPE, CTYPE, DTYPE)          \
-  if (operand_types == std::tuple{ATYPE, BTYPE, CTYPE, DTYPE}) { \
-    return wrapped_matmul(Scale{});                              \
+#define TYPED_MATMUL(Scale, ATYPE, BTYPE, CTYPE, DTYPE)               \
+  if (operand_types == std::tuple{ATYPE, BTYPE, CTYPE, DTYPE}) {      \
+      return wrapped_matmul(Scale{});                                 \
   }
 
 #if CUDA_VERSION >= 11080

@@ -86,10 +86,10 @@ class BlasLt : public gpu::BlasLt {
   };
 
   struct MatmulPlan : public gpu::BlasLt::MatmulPlan {
-    MatmulPlan(MatmulDesc&& op_desc, MatrixLayout&& a_desc,
-               MatrixLayout&& b_desc, MatrixLayout&& c_desc,
-               MatrixLayout&& d_desc, xla::complex128 alpha, double beta,
-               bool must_swap_operands)
+    MatmulPlan(MatmulDesc&& op_desc,
+               MatrixLayout&& a_desc, MatrixLayout&& b_desc,
+               MatrixLayout&& c_desc, MatrixLayout&& d_desc,
+               xla::complex128 alpha, double beta, bool must_swap_operands)
         : op_desc_(std::move(op_desc)),
           a_desc_(std::move(a_desc)),
           b_desc_(std::move(b_desc)),
@@ -102,18 +102,21 @@ class BlasLt : public gpu::BlasLt {
     ~MatmulPlan() override = default;
 
     absl::Status ExecuteOnStream(
-        Stream* stream, const MatmulAlgorithm& algorithm,
-        const gpu::BlasLt::MemoryArgs& args,
+        Stream* stream, const gpu::BlasLt::MemoryArgs& args,
         blas::ProfileResult* profile_result) const override;
 
     absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        const Stream* stream, size_t max_algorithm_count,
+        const Stream* stream, size_t max_algorithm_count, 
         size_t max_workspace_size) const override;
 
+    absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) const override {
+      algorithm_ = algorithm;
+      return absl::OkStatus();
+    }
+
    protected:
-    absl::Status DoMatmul(Stream* stream, const void* alpha, const void* beta,
-                          const MatmulAlgorithm& algorithm,
-                          const gpu::BlasLt::MemoryArgs& args,
+    absl::Status DoMatmul(Stream* stream, const void* alpha, 
+                          const void* beta, const gpu::BlasLt::MemoryArgs& args,
                           blas::ProfileResult* profile_result) const;
 
    private:
@@ -126,6 +129,7 @@ class BlasLt : public gpu::BlasLt {
     xla::complex128 alpha_;
     double beta_;
     bool must_swap_operands_;
+    mutable std::optional< MatmulAlgorithm > algorithm_; // selected algorithm
   };  // class MatmulPlan
 
   explicit BlasLt(StreamExecutor* parent)
