@@ -147,5 +147,233 @@ CUptiResult CuptiWrapper::GetStreamIdEx(CUcontext context, CUstream stream,
   return cuptiGetStreamIdEx(context, stream, per_thread_stream, stream_id);
 }
 
+// Profiler Host APIs
+CUptiResult CuptiWrapper::ProfilerHostInitialize(
+    CUpti_Profiler_Host_Initialize_Params* pParams) {
+  return cuptiProfilerHostInitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostDeinitialize(
+    CUpti_Profiler_Host_Deinitialize_Params* pParams) {
+  return cuptiProfilerHostDeinitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetSupportedChips(
+    CUpti_Profiler_Host_GetSupportedChips_Params* pParams) {
+  return cuptiProfilerHostGetSupportedChips(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetBaseMetrics(
+    CUpti_Profiler_Host_GetBaseMetrics_Params* pParams) {
+  return cuptiProfilerHostGetBaseMetrics(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetSubMetrics(
+    CUpti_Profiler_Host_GetSubMetrics_Params* pParams) {
+  return cuptiProfilerHostGetSubMetrics(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetMetricProperties(
+    CUpti_Profiler_Host_GetMetricProperties_Params* pParams) {
+  return cuptiProfilerHostGetMetricProperties(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetRangeName(
+    CUpti_Profiler_Host_GetRangeName_Params* pParams) {
+  return cuptiProfilerHostGetRangeName(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostEvaluateToGpuValues(
+    CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams) {
+  return cuptiProfilerHostEvaluateToGpuValues(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostConfigAddMetrics(
+    CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams) {
+  return cuptiProfilerHostConfigAddMetrics(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetConfigImageSize(
+    CUpti_Profiler_Host_GetConfigImageSize_Params* pParams) {
+  return cuptiProfilerHostGetConfigImageSize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetConfigImage(
+    CUpti_Profiler_Host_GetConfigImage_Params* pParams) {
+  return cuptiProfilerHostGetConfigImage(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetNumOfPasses(
+    CUpti_Profiler_Host_GetNumOfPasses_Params* pParams) {
+  return cuptiProfilerHostGetNumOfPasses(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerHostGetMaxNumHardwareMetricsPerPass(
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams) {
+  return cuptiProfilerHostGetMaxNumHardwareMetricsPerPass(pParams);
+}
+
+// Profiler Target APIs
+CUptiResult CuptiWrapper::ProfilerInitialize(
+    CUpti_Profiler_Initialize_Params* pParams) {
+  return cuptiProfilerInitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerDeInitialize(
+    CUpti_Profiler_DeInitialize_Params* pParams) {
+  return cuptiProfilerDeInitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerCounterDataImageCalculateSize(
+    CUpti_Profiler_CounterDataImage_CalculateSize_Params* pParams) {
+  return cuptiProfilerCounterDataImageCalculateSize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerCounterDataImageInitialize(
+    CUpti_Profiler_CounterDataImage_Initialize_Params* pParams) {
+  return cuptiProfilerCounterDataImageInitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerCounterDataImageCalculateScratchBufferSize(
+    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
+        pParams) {
+  return cuptiProfilerCounterDataImageCalculateScratchBufferSize(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerCounterDataImageInitializeScratchBuffer(
+    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* pParams) {
+  return cuptiProfilerCounterDataImageInitializeScratchBuffer(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerBeginSession(
+    CUpti_Profiler_BeginSession_Params* pParams) {
+  return cuptiProfilerBeginSession(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerEndSession(
+    CUpti_Profiler_EndSession_Params* pParams) {
+  return cuptiProfilerEndSession(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerSetConfig(
+    CUpti_Profiler_SetConfig_Params* pParams) {
+  return cuptiProfilerSetConfig(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerUnsetConfig(
+    CUpti_Profiler_UnsetConfig_Params* pParams) {
+  return cuptiProfilerUnsetConfig(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerBeginPass(
+    CUpti_Profiler_BeginPass_Params* pParams) {
+  return cuptiProfilerBeginPass(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerEndPass(
+    CUpti_Profiler_EndPass_Params* pParams) {
+  return cuptiProfilerEndPass(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerEnableProfiling(
+    CUpti_Profiler_EnableProfiling_Params* pParams) {
+  return cuptiProfilerEnableProfiling(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerDisableProfiling(
+    CUpti_Profiler_DisableProfiling_Params* pParams) {
+  return cuptiProfilerDisableProfiling(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerIsPassCollected(
+    CUpti_Profiler_IsPassCollected_Params* pParams) {
+  return cuptiProfilerIsPassCollected(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerFlushCounterData(
+    CUpti_Profiler_FlushCounterData_Params* pParams) {
+  return cuptiProfilerFlushCounterData(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerPushRange(
+    CUpti_Profiler_PushRange_Params* pParams) {
+  return cuptiProfilerPushRange(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerPopRange(
+    CUpti_Profiler_PopRange_Params* pParams) {
+  return cuptiProfilerPopRange(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerGetCounterAvailability(
+    CUpti_Profiler_GetCounterAvailability_Params* pParams) {
+  return cuptiProfilerGetCounterAvailability(pParams);
+}
+
+CUptiResult CuptiWrapper::ProfilerDeviceSupported(
+    CUpti_Profiler_DeviceSupported_Params* pParams) {
+  return cuptiProfilerDeviceSupported(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingSetConfig(
+    CUpti_PmSampling_SetConfig_Params* pParams) {
+  return cuptiPmSamplingSetConfig(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingEnable(
+    CUpti_PmSampling_Enable_Params* pParams) {
+  return cuptiPmSamplingEnable(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingDisable(
+    CUpti_PmSampling_Disable_Params* pParams) {
+  return cuptiPmSamplingDisable(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingStart(
+    CUpti_PmSampling_Start_Params* pParams) {
+  return cuptiPmSamplingStart(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingStop(
+    CUpti_PmSampling_Stop_Params* pParams) {
+  return cuptiPmSamplingStop(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingDecodeData(
+    CUpti_PmSampling_DecodeData_Params* pParams) {
+  return cuptiPmSamplingDecodeData(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingGetCounterAvailability(
+    CUpti_PmSampling_GetCounterAvailability_Params* pParams) {
+  return cuptiPmSamplingGetCounterAvailability(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingGetCounterDataSize(
+    CUpti_PmSampling_GetCounterDataSize_Params* pParams) {
+  return cuptiPmSamplingGetCounterDataSize(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingCounterDataImageInitialize(
+    CUpti_PmSampling_CounterDataImage_Initialize_Params* pParams) {
+  return cuptiPmSamplingCounterDataImageInitialize(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingGetCounterDataInfo(
+    CUpti_PmSampling_GetCounterDataInfo_Params* pParams) {
+  return cuptiPmSamplingGetCounterDataInfo(pParams);
+}
+
+CUptiResult CuptiWrapper::PmSamplingCounterDataGetSampleInfo(
+    CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) {
+  return cuptiPmSamplingCounterDataGetSampleInfo(pParams);
+}
+
+CUptiResult CuptiWrapper::DeviceGetChipName(
+    CUpti_Device_GetChipName_Params* pParams) {
+  return cuptiDeviceGetChipName(pParams);
+}
+
 }  // namespace profiler
 }  // namespace xla

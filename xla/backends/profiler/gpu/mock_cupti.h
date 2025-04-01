@@ -43,7 +43,7 @@ class MockCupti : public xla::profiler::CuptiInterface {
               (CUcontext context, uint32_t stream_id, size_t* dropped),
               (override));
   MOCK_METHOD(CUptiResult, ActivityConfigureUnifiedMemoryCounter,
-              (CUpti_ActivityUnifiedMemoryCounterConfig * config,
+              (CUpti_ActivityUnifiedMemoryCounterConfig* config,
                uint32_t count),
               (override));
   MOCK_METHOD(CUptiResult, ActivityRegisterCallbacks,
@@ -66,7 +66,7 @@ class MockCupti : public xla::profiler::CuptiInterface {
                CUpti_CallbackDomain domain),
               (override));
   MOCK_METHOD(CUptiResult, Subscribe,
-              (CUpti_SubscriberHandle * subscriber, CUpti_CallbackFunc callback,
+              (CUpti_SubscriberHandle* subscriber, CUpti_CallbackFunc callback,
                void* userdata),
               (override));
   MOCK_METHOD(CUptiResult, Unsubscribe, (CUpti_SubscriberHandle subscriber),
@@ -91,8 +91,111 @@ class MockCupti : public xla::profiler::CuptiInterface {
   MOCK_METHOD(CUptiResult, GetGraphExecId,
               (CUgraphExec graph_exec, uint32_t* graph_id), (override));
 
+  // Profiler Host APIs
+  MOCK_METHOD(CUptiResult, ProfilerHostInitialize,
+      (CUpti_Profiler_Host_Initialize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostDeinitialize,
+      (CUpti_Profiler_Host_Deinitialize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetSupportedChips,
+      (CUpti_Profiler_Host_GetSupportedChips_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetBaseMetrics,
+      (CUpti_Profiler_Host_GetBaseMetrics_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetSubMetrics,
+      (CUpti_Profiler_Host_GetSubMetrics_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetMetricProperties,
+      (CUpti_Profiler_Host_GetMetricProperties_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetRangeName,
+      (CUpti_Profiler_Host_GetRangeName_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostEvaluateToGpuValues,
+      (CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostConfigAddMetrics,
+      (CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetConfigImageSize,
+      (CUpti_Profiler_Host_GetConfigImageSize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetConfigImage,
+      (CUpti_Profiler_Host_GetConfigImage_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetNumOfPasses,
+      (CUpti_Profiler_Host_GetNumOfPasses_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerHostGetMaxNumHardwareMetricsPerPass,
+      (CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams),
+      (override));
+
+  // Profiler Target APIs
+  MOCK_METHOD(CUptiResult, ProfilerInitialize,
+      (CUpti_Profiler_Initialize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerDeInitialize,
+      (CUpti_Profiler_DeInitialize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerCounterDataImageCalculateSize,
+      (CUpti_Profiler_CounterDataImage_CalculateSize_Params* pParams),
+      (override));
+  MOCK_METHOD(CUptiResult, ProfilerCounterDataImageInitialize,
+      (CUpti_Profiler_CounterDataImage_Initialize_Params* pParams),(override));
+  MOCK_METHOD(CUptiResult, ProfilerCounterDataImageCalculateScratchBufferSize,
+      (CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
+       pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerCounterDataImageInitializeScratchBuffer,
+      (CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* pParams),
+      (override));
+  MOCK_METHOD(CUptiResult, ProfilerBeginSession,
+      (CUpti_Profiler_BeginSession_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerEndSession,
+      (CUpti_Profiler_EndSession_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerSetConfig,
+      (CUpti_Profiler_SetConfig_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerUnsetConfig,
+      (CUpti_Profiler_UnsetConfig_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerBeginPass,
+      (CUpti_Profiler_BeginPass_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerEndPass,
+      (CUpti_Profiler_EndPass_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerEnableProfiling,
+      (CUpti_Profiler_EnableProfiling_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerDisableProfiling,
+      (CUpti_Profiler_DisableProfiling_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerIsPassCollected,
+      (CUpti_Profiler_IsPassCollected_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerFlushCounterData,
+      (CUpti_Profiler_FlushCounterData_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerPushRange,
+      (CUpti_Profiler_PushRange_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerPopRange,
+      (CUpti_Profiler_PopRange_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerGetCounterAvailability,
+      (CUpti_Profiler_GetCounterAvailability_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, ProfilerDeviceSupported,
+      (CUpti_Profiler_DeviceSupported_Params* pParams), (override));
+
+  // PM Sampling APIs
+  MOCK_METHOD(CUptiResult, PmSamplingSetConfig,
+      (CUpti_PmSampling_SetConfig_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingEnable,
+      (CUpti_PmSampling_Enable_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingDisable,
+      (CUpti_PmSampling_Disable_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingStart,
+      (CUpti_PmSampling_Start_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingStop,
+      (CUpti_PmSampling_Stop_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingDecodeData,
+      (CUpti_PmSampling_DecodeData_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingGetCounterAvailability,
+      (CUpti_PmSampling_GetCounterAvailability_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingGetCounterDataSize,
+      (CUpti_PmSampling_GetCounterDataSize_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingCounterDataImageInitialize,
+      (CUpti_PmSampling_CounterDataImage_Initialize_Params* pParams),
+      (override));
+  MOCK_METHOD(CUptiResult, PmSamplingGetCounterDataInfo,
+      (CUpti_PmSampling_GetCounterDataInfo_Params* pParams), (override));
+  MOCK_METHOD(CUptiResult, PmSamplingCounterDataGetSampleInfo,
+      (CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams), (override));
+
+  MOCK_METHOD(CUptiResult, DeviceGetChipName, (CUpti_Device_GetChipName_Params*
+      pParams), (override));
+
   MOCK_METHOD(void, CleanUp, (), (override));
   MOCK_METHOD(bool, Disabled, (), (const, override));
+
 };
 
 }  // namespace profiler

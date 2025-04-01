@@ -39,6 +39,8 @@ cc_library(
         %{comment}"include/cupti_nvtx_cbid.h",
         %{comment}"include/cupti_pcsampling.h",
         %{comment}"include/cupti_pcsampling_util.h",
+        %{comment}"include/cupti_pmsampling.h",
+        %{comment}"include/cupti_profiler_host.h",
         %{comment}"include/cupti_profiler_target.h",
         %{comment}"include/cupti_result.h",
         %{comment}"include/cupti_runtime_cbid.h",
