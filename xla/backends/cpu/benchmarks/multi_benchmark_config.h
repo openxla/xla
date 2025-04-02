@@ -288,6 +288,9 @@ inline MultiBenchmarkConfig* RegisterJitAndAotBenchmarks(
   static MultiBenchmarkConfig* xla_cpu_benchmark_ptr_##ctr = \
       RegisterJitAndAotBenchmarks(#n, n)
 
+#define XLA_CPU_NAMED_BENCHMARK(name, n) \
+  static MultiBenchmarkConfig* name##_ptr = RegisterJitAndAotBenchmarks(#n, n)
+
 }  // namespace xla::cpu
 
 #endif  // XLA_BACKENDS_CPU_BENCHMARKS_MULTI_BENCHMARK_CONFIG_H_
