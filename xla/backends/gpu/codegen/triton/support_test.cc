@@ -56,23 +56,6 @@ namespace {
 using ::testing::Not;
 using ::tsl::testing::IsOk;
 
-std::vector<xla::PrimitiveType> AllXlaDataTypes() {
-  std::vector<xla::PrimitiveType> xla_data_types;
-  std::vector<xla::PrimitiveType> to_filter_out = {PRIMITIVE_TYPE_INVALID,
-                                                   TUPLE, OPAQUE_TYPE, TOKEN};
-  const tsl::protobuf::EnumDescriptor* xla_type_descriptor =
-      tsl::protobuf::GetEnumDescriptor<xla::PrimitiveType>();
-  for (int enum_ix = 0; enum_ix < xla_type_descriptor->value_count();
-       ++enum_ix) {
-    xla::PrimitiveType xla_type = static_cast<xla::PrimitiveType>(
-        xla_type_descriptor->value(enum_ix)->number());
-    if (!absl::c_linear_search(to_filter_out, xla_type)) {
-      xla_data_types.push_back(xla_type);
-    }
-  }
-  return xla_data_types;
-}
-
 // Returns true if the given `opcode` supports the given `type` with respect to
 // HLO semantics. This is completely independent of the what Triton supports or
 // what the hardware supports.
@@ -203,7 +186,10 @@ auto AllTestCombinationsForOpcodes(absl::Span<const HloOpcode> opcodes) {
 
 // Expected failure mode of the Triton lowering.
 enum class ExpectedFailMode {
+  // Denotes a graceful failure, e.g. a verifier failure, or an absl::Status.
   kFail,
+  // Denotes a crash. That is typically the case when encountering a bug in
+  // the Triton compiler itself.
   kCrash,
   // Use only in cases when the failure mode depends on the compilation mode
   // (i.e. when the failure is caused by a CHECK).
@@ -1885,14 +1871,14 @@ ENTRY triton_computation {
   lhs = $0[16,128,256] fusion(p0), kind=kCustom, calls=flhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "16", "64"]}]
+        "output_tiles":[{"sizes":["1", "16", "64"]}]
       }
     }
   }
   rhs = $0[16,256,512] fusion(p1), kind=kCustom, calls=frhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "64", "32"]}]
+        "output_tiles":[{"sizes":["1", "64", "32"]}]
       }
     }
   }
@@ -1905,7 +1891,7 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, F32, HloOpcode::kDot,
                                      /* use_nested_gemm_fusions=*/true));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 16, 32},
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 16, 32},
                  se::CudaComputeCapability::Ampere());
 }
 
@@ -1925,14 +1911,14 @@ ENTRY triton_computation {
   lhs = $0[16,128,256] fusion(p0), kind=kCustom, calls=flhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["4", "16", "64"]}]
+        "output_tiles":[{"sizes":["1", "16", "64"]}]
       }
     }
   }
   rhs = $0[16,256,512] fusion(p1), kind=kCustom, calls=frhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["4", "64", "32"]}]
+        "output_tiles":[{"sizes":["1", "64", "32"]}]
       }
     }
   }
@@ -1944,7 +1930,7 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, F32, HloOpcode::kDot,
                                      /* use_nested_gemm_fusions=*/true));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{4, 16, 4, 32},
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 16, 1, 32},
                  se::CudaComputeCapability::Ampere());
 }
 
@@ -2170,9 +2156,7 @@ ENTRY triton_computation {
       PrecisionToString(lhs_precision), PrecisionToString(rhs_precision));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type) &&
-      lhs_precision == PrecisionConfig::DEFAULT &&
-      rhs_precision == PrecisionConfig::DEFAULT) {
+  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type)) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2258,8 +2242,8 @@ ENTRY triton_computation {
                                      /* use_nested_gemm_fusions=*/true));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type) &&
-      algorithm == PrecisionConfig::ALG_UNSET) {
+  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, F8E4M3, S8},
+                            data_type)) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32}, cc, fail_mode);
