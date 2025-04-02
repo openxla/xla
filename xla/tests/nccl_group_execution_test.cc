@@ -127,7 +127,7 @@ XLA_TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
 
 XLA_TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
   const absl::string_view kModuleStr = R"(
-  HloModule module_main, entry_computation_layout={()->(u32[], u32[])}, replica_count=4
+  HloModule module_main, entry_computation_layout={()->(u32[], u32[])}, num_partitions=4
 
   bidirectional_ring {
     a = u32[] parameter(0)
