@@ -56,23 +56,6 @@ namespace {
 using ::testing::Not;
 using ::tsl::testing::IsOk;
 
-std::vector<xla::PrimitiveType> AllXlaDataTypes() {
-  std::vector<xla::PrimitiveType> xla_data_types;
-  std::vector<xla::PrimitiveType> to_filter_out = {PRIMITIVE_TYPE_INVALID,
-                                                   TUPLE, OPAQUE_TYPE, TOKEN};
-  const tsl::protobuf::EnumDescriptor* xla_type_descriptor =
-      tsl::protobuf::GetEnumDescriptor<xla::PrimitiveType>();
-  for (int enum_ix = 0; enum_ix < xla_type_descriptor->value_count();
-       ++enum_ix) {
-    xla::PrimitiveType xla_type = static_cast<xla::PrimitiveType>(
-        xla_type_descriptor->value(enum_ix)->number());
-    if (!absl::c_linear_search(to_filter_out, xla_type)) {
-      xla_data_types.push_back(xla_type);
-    }
-  }
-  return xla_data_types;
-}
-
 // Returns true if the given `opcode` supports the given `type` with respect to
 // HLO semantics. This is completely independent of the what Triton supports or
 // what the hardware supports.
@@ -203,7 +186,10 @@ auto AllTestCombinationsForOpcodes(absl::Span<const HloOpcode> opcodes) {
 
 // Expected failure mode of the Triton lowering.
 enum class ExpectedFailMode {
+  // Denotes a graceful failure, e.g. a verifier failure, or an absl::Status.
   kFail,
+  // Denotes a crash. That is typically the case when encountering a bug in
+  // the Triton compiler itself.
   kCrash,
   // Use only in cases when the failure mode depends on the compilation mode
   // (i.e. when the failure is caused by a CHECK).
@@ -410,6 +396,7 @@ constexpr std::array kTestedOpsUnaryElementwise = {
     HloOpcode::kLogistic,
     HloOpcode::kNegate,
     HloOpcode::kNot,
+    HloOpcode::kOptimizationBarrier,
     HloOpcode::kPopulationCount,
     HloOpcode::kReal,
     HloOpcode::kReducePrecision,
@@ -2169,9 +2156,7 @@ ENTRY triton_computation {
       PrecisionToString(lhs_precision), PrecisionToString(rhs_precision));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type) &&
-      lhs_precision == PrecisionConfig::DEFAULT &&
-      rhs_precision == PrecisionConfig::DEFAULT) {
+  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type)) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2257,8 +2242,8 @@ ENTRY triton_computation {
                                      /* use_nested_gemm_fusions=*/true));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type) &&
-      algorithm == PrecisionConfig::ALG_UNSET) {
+  if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, F8E4M3, S8},
+                            data_type)) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32}, cc, fail_mode);
@@ -2279,7 +2264,8 @@ class FusionKindsTest
 
 TEST_P(FusionKindsTest, OperandOfDot) {
   auto [kind, cc] = GetParam();
-  const std::string hlo_text = absl::Substitute(R"(
+  const std::string hlo_text = absl::Substitute(
+      R"(
 flhs {
   ROOT result = f32[128,256] parameter(0)
 }
@@ -2301,7 +2287,7 @@ ENTRY triton_computation {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 )",
-                                                kind);
+      kind);
 
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
@@ -2360,12 +2346,121 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::ValuesIn(AllDevicesToTest())),
     FusionKindsTestName);
 
+using FusionTest = TritonSupportTest;
+
+TEST_F(FusionTest, FusionComputationIsCheckedRecursively) {
+  // We expect test for fail as `flhs` is not a supported computation as
+  // fusion there is not an operand of a dot or a concatenate.
+  absl::string_view hlo_text = R"(
+identity {
+  ROOT result = f32[128,256] parameter(0)
+}
+
+flhs {
+  p0 = f32[128,256] parameter(0)
+  ROOT result = f32[128,256] fusion(p0), kind=kCustom, calls=identity, backend_config={
+    "fusion_backend_config":{"kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+    "output_tiles":[{"sizes":["16", "64"]}]}}}
+}
+
+frhs {
+  ROOT result = f32[256,512] parameter(0)
+}
+
+ENTRY triton_computation {
+  p0 = f32[128,256] parameter(0)
+  p1 = f32[256,512] parameter(1)
+  lhs = f32[128,256] fusion(p0), kind=kCustom, calls=flhs, backend_config={
+    "fusion_backend_config":{"kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+    "output_tiles":[{"sizes":["16", "64"]}]}}}
+  rhs = f32[256,512]{1,0} fusion(p1), kind=kCustom, calls=frhs,
+    backend_config={ "fusion_backend_config":{ "kind":"__triton_nested_gemm_fusion",
+    "block_level_fusion_config": {"output_tiles":[{"sizes":["64", "32"]}]}}}
+  ROOT result = f32[128,512]{1,0} dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(hlo_text, F32, HloOpcode::kFusion,
+                                     /*use_nested_gemm_fusions=*/true));
+  se::GpuComputeCapability cc = se::CudaComputeCapability::Ampere();
+  ASSERT_FALSE(IsTritonSupportedInstruction(ti.Instruction(), cc));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{64, 32}, cc);
+}
+
+class BitcastConvertTest
+    : public TritonSupportTest,
+      public ::testing::WithParamInterface<
+          std::tuple<PrimitiveType, PrimitiveType, se::GpuComputeCapability>> {
+};
+
+TEST_P(BitcastConvertTest, BitcastConvert) {
+  auto [data_type_in, data_type_out, cc] = GetParam();
+
+  if (primitive_util::IsComplexType(data_type_in) !=
+      primitive_util::IsComplexType(data_type_out)) {
+    GTEST_SKIP()
+        << "BitcastConvert does not support complex <-> real conversion.";
+  }
+
+  std::string hlo_text;
+  std::vector<int64_t> output_tile_sizes = {1, 32};
+
+  const int bit_width_in = primitive_util::BitWidth(data_type_in);
+  const int bit_width_out = primitive_util::BitWidth(data_type_out);
+  const std::string data_type_in_str =
+      primitive_util::LowercasePrimitiveTypeName(data_type_in);
+  const std::string data_type_out_str =
+      primitive_util::LowercasePrimitiveTypeName(data_type_out);
+
+  if (bit_width_in == bit_width_out) {
+    hlo_text = absl::Substitute(
+        R"(
+ENTRY triton_computation {
+  parameter = $0[33,68] parameter(0)
+  ROOT bc_convert = $1[33,68] bitcast-convert(parameter)
+})",
+        data_type_in_str, data_type_out_str);
+  } else if (bit_width_in > bit_width_out) {
+    hlo_text = absl::Substitute(
+        R"(
+ENTRY triton_computation {
+  parameter = $0[33] parameter(0)
+  ROOT bc_convert = $1[33, $2] bitcast-convert(parameter)
+})",
+        data_type_in_str, data_type_out_str, bit_width_in / bit_width_out);
+  } else {  // bit_width_in < bit_width_out
+    hlo_text = absl::Substitute(
+        R"(
+ENTRY triton_computation {
+parameter = $0[33, $1] parameter(0)
+ROOT bc_convert = $2[33] bitcast-convert(parameter)
+})",
+        data_type_in_str, bit_width_out / bit_width_in, data_type_out_str);
+    output_tile_sizes = {1};
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(hlo_text, data_type_in,
+                                     HloOpcode::kBitcastConvert));
+
+  RunSupportTest(std::move(ti), output_tile_sizes, cc);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BitcastConvertSuite, BitcastConvertTest,
+    ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
+                       ::testing::ValuesIn(AllXlaDataTypes()),
+                       ::testing::ValuesIn(AllDevicesToTest())),
+    TritonSupportTestTwoTypesAndDeviceToString);
+
 constexpr std::array kUnsupportedOps = {
     // clang-format off
     // go/keep-sorted start
     HloOpcode::kAddDependency,
     HloOpcode::kAfterAll,
-    HloOpcode::kBitcastConvert,
     HloOpcode::kCholesky,
     HloOpcode::kConvolution,
     HloOpcode::kCopyDone,
@@ -2379,7 +2474,6 @@ constexpr std::array kUnsupportedOps = {
     HloOpcode::kGetTupleElement,
     HloOpcode::kInfeed,
     HloOpcode::kMap,
-    HloOpcode::kOptimizationBarrier,
     HloOpcode::kOutfeed,
     HloOpcode::kPad,
     HloOpcode::kRaggedDot,
@@ -2424,6 +2518,7 @@ absl::flat_hash_set<HloOpcode> AllTestedOpcodes() {
   ret.emplace(HloOpcode::kBatchNormGrad);
   ret.emplace(HloOpcode::kBatchNormInference);
   ret.emplace(HloOpcode::kBatchNormTraining);
+  ret.emplace(HloOpcode::kBitcastConvert);
   ret.emplace(HloOpcode::kCall);
   ret.emplace(HloOpcode::kComplex);
   ret.emplace(HloOpcode::kConditional);
