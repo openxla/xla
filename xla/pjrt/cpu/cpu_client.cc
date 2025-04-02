@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_client.h"
 
+#include <tuple>
+
 #define EIGEN_USE_THREADS
 
 #include <algorithm>
@@ -985,13 +987,11 @@ TfrtCpuClient::CreateViewOfDeviceBuffer(
         reinterpret_cast<std::uintptr_t>(device_ptr),
         cpu_function_runtime::MinAlign());
   }
-  absl::InlinedVector<tsl::AsyncValueRef<CpuDeviceMemory>, 4> buffers;
   size_t byte_size = ShapeUtil::ByteSizeOf(shape);
   auto non_owning_buffer =
       tsl::MakeAvailableAsyncValueRef<CpuDeviceMemory>(device_ptr, byte_size);
-  buffers.push_back(std::move(non_owning_buffer));
   auto tracked_device_buffer = std::make_unique<TrackedCpuDeviceBuffer>(
-      /*is_tuple=*/false, /*owns_buffers=*/false, std::move(buffers),
+      /*owns_buffers=*/false, std::move(non_owning_buffer),
       /*definition_event=*/tsl::MakeAvailableAsyncValueRef<CpuEvent>(),
       std::move(on_delete_callback));
   CHECK_EQ(memory_space->devices().size(), 1);
@@ -1015,9 +1015,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
   return std::make_unique<TfrtCpuBuffer>(
       shape,
       std::make_unique<TrackedCpuDeviceBuffer>(
-          /*is_tuple=*/false, /*owns_buffers=*/true,
-          absl::InlinedVector<tsl::AsyncValueRef<CpuDeviceMemory>, 4>{
-              std::move(buffer)},
+          /*owns_buffers=*/true, std::move(buffer),
           absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4>{
               tsl::AsyncValueRef<CpuEvent>(
                   tsl::MakeErrorAsyncValueRef(std::move(error)))}),
@@ -1155,12 +1153,6 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuBuffer::CopyToMemorySpace(
   CHECK_EQ(dst_memory_space->devices().size(), 1);
   PjRtDevice* dst_device = dst_memory_space->devices().front();
   tsl::profiler::TraceMe traceme("TfrtCpuBuffer::CopyToDevice");
-  // TODO(zhangqiaorjc): Remove this restriction after removing the test that
-  // explicitly asserts this.
-  if (dst_device == device_) {
-    return InvalidArgument(
-        "CopyToDevice cannot accept the same source and destination devices");
-  }
 
   // Copying across PjRtClients involves a copy through the host.
   if (dst_device->client() != client_) {
@@ -1314,20 +1306,48 @@ static absl::StatusOr<BufferInfo> MemoryForAllocation(
     const BufferAllocation& allocation,
     absl::Span<const cpu::ConstantAllocation> constants,
     absl::Span<std::pair<bool, TrackedCpuDeviceBuffer*> const> arguments,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy) {
+    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
+    const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table) {
   BufferInfo buffer_info;
   if (allocation.is_entry_computation_parameter()) {
-    auto [can_donate, arg] = arguments[allocation.parameter_number()];
-    tsl::AsyncValuePtr<CpuDeviceMemory> out =
-        arg->Buffer(allocation.param_shape_index());
-    CHECK_EQ(allocation.size(), arg->BufferSize(allocation.param_shape_index()))
+    bool can_donate = false;
+    TrackedCpuDeviceBuffer* arg = nullptr;
+    size_t buffer_size;
+    tsl::AsyncValuePtr<CpuDeviceMemory> out;
+    if (tuple_index_table) {
+      if (allocation.param_shape_index().empty()) {
+        out = tuple_index_table.AsPtr();
+        buffer_size = arguments.size() * sizeof(void*);
+      } else if (allocation.param_shape_index().size() == 1) {
+        std::tie(can_donate, arg) =
+            arguments[allocation.param_shape_index()[0]];
+        out = arg->buffer().AsPtr();
+        buffer_size = arg->BufferSize();
+      } else {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Nested tuples are not supported for argument: ",
+            allocation.parameter_number(),
+            " at shape index:", allocation.param_shape_index().ToString()));
+      }
+    } else if (!allocation.param_shape_index().empty()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Nested tuples are not supported for argument: ",
+          allocation.parameter_number(),
+          " at shape index:", allocation.param_shape_index().ToString()));
+    } else {
+      std::tie(can_donate, arg) = arguments[allocation.parameter_number()];
+      out = arg->buffer().AsPtr();
+      buffer_size = arg->BufferSize();
+    }
+    CHECK_EQ(allocation.size(), buffer_size)
         << "Size mismatch on param " << allocation.parameter_number()
         << " at shape index " << allocation.param_shape_index().ToString();
 
     // If we don't own the buffer, we can't overwrite it or donate it. For
     // example we might be pointing to a buffer owned by the client whose
     // lifetime will not extend past the lifetime of the donated input buffer.
-    if ((!can_donate || !arg->owns_buffers()) && !allocation.is_readonly()) {
+    if ((!can_donate || (arg && !arg->owns_buffers())) &&
+        !allocation.is_readonly()) {
       auto copy = tsl::MakeUnconstructedAsyncValueRef<CpuDeviceMemory>();
 
       buffer_alloc_and_copy.src_buffers.push_back(out.CopyRef());
@@ -1341,8 +1361,8 @@ static absl::StatusOr<BufferInfo> MemoryForAllocation(
     }
 
     buffer_info.buffer = out.CopyRef();
-    buffer_info.owns_buffer = arg->owns_buffers();
-    buffer_info.buffer_size = arg->BufferSize(allocation.param_shape_index());
+    buffer_info.owns_buffer = !arg || arg->owns_buffers();
+    buffer_info.buffer_size = buffer_size;
     return buffer_info;
 
   } else if (allocation.is_constant() &&
@@ -1378,14 +1398,15 @@ static absl::StatusOr<std::vector<BufferInfo>> CreateBufferTable(
     const BufferAssignment& assignment,
     absl::Span<const cpu::ConstantAllocation> constants,
     absl::Span<std::pair<bool, TrackedCpuDeviceBuffer*> const> arguments,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy) {
+    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
+    const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table) {
   std::vector<BufferInfo> buffer_table(assignment.Allocations().size());
   for (BufferAllocation::Index i = 0; i < buffer_table.size(); ++i) {
     const BufferAllocation& allocation = assignment.GetAllocation(i);
     TF_ASSIGN_OR_RETURN(
         buffer_table[i],
         MemoryForAllocation(allocation, constants, arguments, buffer_alloc,
-                            buffer_alloc_and_copy));
+                            buffer_alloc_and_copy, tuple_index_table));
   }
   return std::move(buffer_table);
 }
@@ -1552,29 +1573,28 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
 
   // Tuplize the inputs if compiler expects a single tuple argument but runtime
   // gets many inputs that are not yet tupled.
-  std::unique_ptr<TrackedCpuDeviceBuffer> tuplized_arg;
+  tsl::AsyncValueRef<CpuDeviceMemory> tuple_index_table;
   if (parameter_is_tupled_arguments_ && !options.arguments_are_tupled) {
-    bool owns_buffers = true;
     absl::InlinedVector<tsl::AsyncValueRef<CpuDeviceMemory>, 4> leaf_buffers;
-    absl::InlinedVector<size_t, 4> leaf_buffer_sizes;
     leaf_buffers.reserve(tracked_buffers.size());
-    leaf_buffer_sizes.reserve(tracked_buffers.size());
     for (const auto& tracked_buffer : tracked_buffers) {
-      owns_buffers = owns_buffers && tracked_buffer.second->owns_buffers();
-      auto span = tracked_buffer.second->Buffers();
-      leaf_buffers.insert(leaf_buffers.end(), span.begin(), span.end());
-      auto size_span = tracked_buffer.second->BufferSizes();
-      leaf_buffer_sizes.insert(leaf_buffer_sizes.end(), size_span.begin(),
-                               size_span.end());
+      leaf_buffers.push_back(tracked_buffer.second->buffer());
     }
-
-    // Tuplize into a single input.
-    tracked_buffers.clear();
-    tuplized_arg = std::make_unique<TrackedCpuDeviceBuffer>(
-        /*is_tuple=*/true, owns_buffers, std::move(leaf_buffers),
-        std::move(leaf_buffer_sizes),
-        /*definition_event=*/tsl::MakeConstructedAsyncValueRef<CpuEvent>());
-    tracked_buffers.emplace_back(false, tuplized_arg.get());
+    tuple_index_table = tsl::MakeUnconstructedAsyncValueRef<CpuDeviceMemory>();
+    tsl::RunWhenReady(
+        absl::MakeConstSpan(leaf_buffers),
+        [buffers = leaf_buffers, tuple_index_table = tuple_index_table] {
+          size_t index_table_byte_size = buffers.size() * sizeof(void*);
+          // We assume tuple table allocations will not fail.
+          tuple_index_table.emplace(
+              CpuDeviceMemory::Allocate(index_table_byte_size).value());
+          uintptr_t* index_table =
+              reinterpret_cast<uintptr_t*>(tuple_index_table->untyped_data());
+          for (int i = 0; i < buffers.size(); ++i) {
+            index_table[i] =
+                absl::bit_cast<uintptr_t>(buffers[i]->untyped_data());
+          }
+        });
   }
 
   auto* cpu_executable =
@@ -1587,7 +1607,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
       std::vector<BufferInfo> buffer_table,
       CreateBufferTable(cpu_executable->buffer_assignment(),
                         cpu_executable->constants(), tracked_buffers,
-                        buffer_alloc, buffer_alloc_and_copy));
+                        buffer_alloc, buffer_alloc_and_copy,
+                        tuple_index_table));
   auto result_buffers_info =
       CreateResultBufferInfo(result_buffer_indices_, buffer_table);
 
@@ -1780,7 +1801,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
          device_assignment = std::move(device_assignment),
          cpu_run_options = std::move(cpu_run_options),
          compute_reservation = std::move(compute_reservation),
-         tuplized_arg = std::move(tuplized_arg),
+         tuple_index_table = std::move(tuple_index_table),
          donation_transactions = std::move(donation_transactions),
          scoped_async_execution = std::move(scoped_async_execution),
          input_deps_avs = std::move(input_deps_avs_copy),
@@ -1903,7 +1924,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
   // Create output TFRT buffers.
   const Shape& result_shape = cpu_executable_->result_shape();
   std::vector<std::unique_ptr<PjRtBuffer>> res;
-  if (options.untuple_result && result_shape.IsTuple()) {
+  if (result_shape.IsTuple()) {
     res.reserve(result_buffers_info.size());
     for (int i = 0; i < result_buffers_info.size(); ++i) {
       // Program execution writes to output buffers so it's a definition event.
@@ -1911,32 +1932,21 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
       definition_events.push_back(execute_event.CopyRef());
       auto leaf_tracked_device_buffer =
           std::make_unique<TrackedCpuDeviceBuffer>(
-              /*is_tuple=*/false, result_buffers_info[i].owns_buffer,
-              absl::InlinedVector<tsl::AsyncValueRef<CpuDeviceMemory>, 4>{
-                  std::move(result_buffers_info[i].buffer)},
-              absl::InlinedVector<size_t, 4>{
-                  result_buffers_info[i].buffer_size},
-              std::move(definition_events));
+              result_buffers_info[i].owns_buffer,
+              std::move(result_buffers_info[i].buffer),
+              result_buffers_info[i].buffer_size, std::move(definition_events));
       auto leaf_buffer = std::make_unique<TfrtCpuBuffer>(
           result_shape.tuple_shapes(i), std::move(leaf_tracked_device_buffer),
           client_, device, *device->default_memory_space());
       res.push_back(std::move(leaf_buffer));
     }
   } else {
-    bool owns_buffers = true;
-    absl::InlinedVector<tsl::AsyncValueRef<CpuDeviceMemory>, 4> sub_buffers;
-    absl::InlinedVector<size_t, 4> sub_buffer_sizes;
-    sub_buffers.reserve(result_buffers_info.size());
-    sub_buffer_sizes.reserve(result_buffers_info.size());
-    for (int i = 0; i < result_buffers_info.size(); ++i) {
-      owns_buffers = owns_buffers && result_buffers_info[i].owns_buffer;
-      sub_buffers.push_back(std::move(result_buffers_info[i].buffer));
-      sub_buffer_sizes.push_back(result_buffers_info[i].buffer_size);
-    }
+    CHECK_EQ(result_buffers_info.size(), 1);
     // Program execution writes to output buffers so it's a definition event.
     auto tracked_device_buffer = std::make_unique<TrackedCpuDeviceBuffer>(
-        /*is_tuple=*/result_shape.IsTuple(), owns_buffers,
-        std::move(sub_buffers), std::move(sub_buffer_sizes),
+        result_buffers_info[0].owns_buffer,
+        std::move(result_buffers_info[0].buffer),
+        result_buffers_info[0].buffer_size,
         /*definition_event=*/execute_event);
     auto tfrt_output_buffer = std::make_unique<TfrtCpuBuffer>(
         result_shape, std::move(tracked_device_buffer), client_, device,
@@ -2002,6 +2012,14 @@ TfrtCpuExecutable::Execute(
   tsl::profiler::TraceMeProducer activity("TfrtCpuExecutable::Execute",
                                           tsl::profiler::ContextType::kPjRt,
                                           run_id.ToInt());
+  if (!options.untuple_result && cpu_executable_->module()
+                                     .config()
+                                     .entry_computation_layout()
+                                     .result_shape()
+                                     .IsTuple()) {
+    return InvalidArgument(
+        "Tuple results must be untupled using ExecuteOptions::untuple_result.");
+  }
   if (device_assignment_ == nullptr) {
     return InvalidArgument("Execute expects a non-null device_assignment");
   }
@@ -2124,6 +2142,14 @@ TfrtCpuExecutable::ExecuteSharded(
                                           run_id.ToInt());
   if (device_assignment_ == nullptr) {
     return InvalidArgument("ExecuteShard expects a non-null device_assignment");
+  }
+  if (!options.untuple_result && cpu_executable_->module()
+                                     .config()
+                                     .entry_computation_layout()
+                                     .result_shape()
+                                     .IsTuple()) {
+    return InvalidArgument(
+        "Tuple results must be untupled using ExecuteOptions::untuple_result.");
   }
   for (int i = 0; i < addressable_devices_.size(); ++i) {
     if (addressable_devices_[i] == device) {

@@ -619,7 +619,7 @@ ml::GlobalOp CreateGlobalOp(mlir::Attribute value,
   // Needed to support complex element type.
   mlir::LLVMTypeConverter converter(b.getContext());
   auto llvm_element_type = converter.convertType(element_type);
-  if (element_type.isIntOrFloat() &&
+  if (value && element_type.isIntOrFloat() &&
       element_type.getIntOrFloatBitWidth() == 4) {
     num_elements = CeilOfRatio<int64_t>(num_elements, 2);
     llvm_element_type = b.getI8Type();
@@ -846,7 +846,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       case ml::AtomicBinOp::umax:
       case ml::AtomicBinOp::umin: {
         rewriter.create<ml::AtomicRMWOp>(loc, atomic_bin_op, addr, modifier_arg,
-                                         ml::AtomicOrdering::seq_cst,
+                                         ml::AtomicOrdering::monotonic,
                                          sync_scope);
         return success();
       }
@@ -897,7 +897,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
     }
 
     b.create<ml::AtomicRMWOp>(loc, ml::AtomicBinOp::fadd, addr, modifier_arg,
-                              ml::AtomicOrdering::seq_cst, sync_scope);
+                              ml::AtomicOrdering::monotonic, sync_scope);
     return success();
   }
 
@@ -971,7 +971,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
           loc, ml::LLVMPointerType::get(b.getContext(), kGlobalMemory), addr);
     }
     b.create<ml::AtomicRMWOp>(loc, ml::AtomicBinOp::fadd, addr, modifier_arg,
-                              ml::AtomicOrdering::seq_cst, sync_scope);
+                              ml::AtomicOrdering::monotonic, sync_scope);
     return success();
   }
 
@@ -987,6 +987,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
     // propagating -NaNs. To handle this, we check if the update value is -NaN
     // and convert it to a positive one by dropping the sign-bit.
     Value current = b.create<ml::LoadOp>(loc, element_type, addr);
+
     Value current_is_nan =
         b.create<ml::FCmpOp>(loc, ml::FCmpPredicate::uno, current, current);
     auto is_current_nan =
@@ -1033,14 +1034,14 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
           // atomicMax((int *)address, __float_as_int(val))
           nested_b.create<ml::AtomicRMWOp>(
               loc, ml::AtomicBinOp::max, addr, source_float_as_int,
-              ml::AtomicOrdering::seq_cst, sync_scope);
+              ml::AtomicOrdering::monotonic, sync_scope);
           nested_b.create<scf::YieldOp>(nested_loc);
         },
         [&](OpBuilder& nested_b, Location nested_loc) {
           // atomicMax((int *)address, __float_as_int(val))
           nested_b.create<ml::AtomicRMWOp>(
               loc, ml::AtomicBinOp::umin, addr, source_float_as_int,
-              ml::AtomicOrdering::seq_cst, sync_scope);
+              ml::AtomicOrdering::monotonic, sync_scope);
           nested_b.create<scf::YieldOp>(nested_loc);
         });
     then_builder.create<scf::YieldOp>(loc);
@@ -1093,7 +1094,16 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
 
     // Calculate load address for the input.
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
-    Value addr = CreateGep(input, op.getIndices(), b);
+    Value linear_index = GetLinearIndex(op.getIndices(), b);
+    Value is_low_nibble;
+
+    bool is_4_bit_wide =
+        result_ty.isIntOrFloat() && result_ty.getIntOrFloatBitWidth() == 4;
+    if (is_4_bit_wide) {
+      std::tie(linear_index, is_low_nibble) =
+          GetI4IndexAndNibble(linear_index, b);
+    }
+    Value addr = CreateGep(input, linear_index, b);
     Value shift, mask;
     if (small_type) {
       // Update input pointer by discarding the last two bits - i.e. align to
@@ -1115,6 +1125,13 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       shift = rewriter.create<ml::MulOp>(
           loc, offset,
           rewriter.create<ml::ConstantOp>(loc, offset.getType(), 8));
+      if (is_4_bit_wide) {
+        auto c0 = rewriter.create<ml::ConstantOp>(loc, shift.getType(), 0);
+        auto c4 = rewriter.create<ml::ConstantOp>(loc, shift.getType(), 4);
+        auto subshift =
+            rewriter.create<ml::SelectOp>(loc, is_low_nibble, c0, c4);
+        shift = rewriter.create<ml::AddOp>(loc, shift, subshift);
+      }
 
       // Compose the update mask.
       Value bits_long = rewriter.create<ml::ConstantOp>(loc, atomic_ty, -1);
@@ -1168,8 +1185,8 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
           // Try saving the result atomically, retry if failed.
           Value cmpxchg = b.create<ml::AtomicCmpXchgOp>(
               loc, addr, old_value, new_value,
-              /*success_ordering=*/ml::AtomicOrdering::seq_cst,
-              /*failure_ordering=*/ml::AtomicOrdering::seq_cst);
+              /*success_ordering=*/ml::AtomicOrdering::monotonic,
+              /*failure_ordering=*/ml::AtomicOrdering::monotonic);
           Value next = b.create<ml::ExtractValueOp>(cmpxchg, 0);
           Value ok = b.create<ml::ExtractValueOp>(cmpxchg, 1);
           Value low_bit = b.create<ml::ConstantOp>(b.getOneAttr(b.getI1Type()));

@@ -91,6 +91,53 @@ cc_library(
 )
 
 cc_library(
+    name = "fusion_compiler",
+    srcs = ["fusion_compiler.cc"],
+    hdrs = ["fusion_compiler.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/backends/cpu/codegen/emitters/ir:xla_cpu",
+        "//xla/backends/cpu/codegen/emitters/transforms:passes",
+        "//xla/codegen/emitters/ir:xla",
+        "//xla/codegen/emitters/transforms:passes",
+        "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc",
+        "//xla/mlir_hlo",
+        "//xla/mlir_hlo:mhlo_passes",
+        "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AffineToStandard",
+        "@llvm-project//mlir:AffineTransforms",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
+        "@llvm-project//mlir:ComplexToStandard",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DLTIDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LLVMIRTransforms",
+        "@llvm-project//mlir:LLVMToLLVMIRTranslation",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefTransforms",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:ReconcileUnrealizedCasts",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:SCFToControlFlow",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
+        "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:VectorDialect",
+    ],
+)
+
+cc_library(
     name = "jit_compiler",
     srcs = ["jit_compiler.cc"],
     hdrs = ["jit_compiler.h"],
@@ -194,11 +241,41 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:alignment",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
-        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "target_machine_test_base",
+    testonly = True,
+    hdrs = ["target_machine_test_base.h"],
+    deps = [
+        ":target_machine_features",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_for_library",
+        "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+    ],
+)
+
+xla_cc_test(
+    name = "target_machine_features_test",
+    srcs = ["target_machine_features_test.cc"],
+    deps = [
+        ":target_machine_features",
+        ":target_machine_test_base",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

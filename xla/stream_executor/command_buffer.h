@@ -23,12 +23,13 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/tsl/platform/errors.h"
 
 namespace stream_executor {
 
@@ -46,6 +47,23 @@ class Stream;
 // device.
 class CommandBuffer {
  public:
+  // Command represents an operation recorded into a command buffer. It's owned
+  // by the command buffer and returned to the caller to enable efficient
+  // command buffer updates.
+  class Command {
+   public:
+    virtual ~Command() = default;
+
+   protected:
+    Command() = default;
+
+    Command(const Command&) = default;
+    Command& operator=(const Command&) = default;
+
+    Command(Command&&) = default;
+    Command& operator=(Command&&) = default;
+  };
+
   // Builder constructs nested command buffers owned by a parent command buffer.
   using Builder = std::function<absl::Status(CommandBuffer*)>;
 
@@ -90,32 +108,61 @@ class CommandBuffer {
   // Command buffer API
   //===--------------------------------------------------------------------===//
 
-  // Adds an execution barrier to the command buffer: all commands added
-  // before a barrier will complete before any of the commands added after a
-  // barrier.
-  virtual absl::Status Barrier() = 0;
-
   // Adds a kernel launch command.
-  virtual absl::Status Launch(const ThreadDim& threads, const BlockDim& blocks,
-                              const Kernel& kernel, const KernelArgs& args) = 0;
+  virtual absl::StatusOr<const Command*> Launch(
+      const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
+      const KernelArgs& args,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a kernel launch command.
+  virtual absl::Status Launch(const Command* command, const ThreadDim& threads,
+                              const BlockDim& blocks, const Kernel& kernel,
+                              const KernelArgs& args) = 0;
 
   // Type-safe wrapper for launching typed kernels. Notice that the order of
   // arguments is different do disambiguate from the regular launch API.
   template <typename... Params, typename... Args>
-  absl::Status Launch(const TypedKernel<Params...>& kernel,
+  absl::StatusOr<const Command*> Launch(
+      const TypedKernel<Params...>& kernel, const ThreadDim& threads,
+      const BlockDim& blocks, absl::Span<const Command* const> dependencies,
+      Args... args);
+
+  // Type-safe wrapper for updating typed kernels. Notice that the order of
+  // arguments is different do disambiguate from the regular launch API.
+  template <typename... Params, typename... Args>
+  absl::Status Launch(const Command* command,
+                      const TypedKernel<Params...>& kernel,
                       const ThreadDim& threads, const BlockDim& blocks,
                       Args... args);
 
   // Adds a nested command buffer.
-  virtual absl::Status AddNestedCommandBuffer(const CommandBuffer& nested) = 0;
+  virtual absl::StatusOr<const Command*> AddNestedCommandBuffer(
+      const CommandBuffer& nested,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a nested command buffer.
+  virtual absl::Status AddNestedCommandBuffer(const Command* command,
+                                              const CommandBuffer& nested) = 0;
 
   // Adds a device-to-device memory copy.
-  virtual absl::Status MemcpyDeviceToDevice(DeviceMemoryBase* dst,
+  virtual absl::StatusOr<const Command*> MemcpyDeviceToDevice(
+      DeviceMemoryBase* dst, const DeviceMemoryBase& src, uint64_t size,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a device-to-device memory copy.
+  virtual absl::Status MemcpyDeviceToDevice(const Command* command,
+                                            DeviceMemoryBase* dst,
                                             const DeviceMemoryBase& src,
                                             uint64_t size) = 0;
 
   // Adds a memset command.
-  virtual absl::Status Memset(DeviceMemoryBase* dst, BitPattern bit_pattern,
+  virtual absl::StatusOr<const Command*> Memset(
+      DeviceMemoryBase* dst, BitPattern bit_pattern, size_t num_elements,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a memset command.
+  virtual absl::Status Memset(const Command* command, DeviceMemoryBase* dst,
+                              const BitPattern& bit_pattern,
                               size_t num_elements) = 0;
 
   //--------------------------------------------------------------------------//
@@ -123,33 +170,24 @@ class CommandBuffer {
   //--------------------------------------------------------------------------//
 
   // Adds a conditional operation that will execute a command buffer constructed
-  // by `then_builder` if `pred` value is `true`.
-  virtual absl::Status If(DeviceMemory<bool> pred, Builder then_builder) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
-  // by `then_builder` if `pred` value is `true`, or a command buffer
-  // constructed by `else_builder` if `pred` is `false`.
-  virtual absl::Status IfElse(DeviceMemory<bool> pred, Builder then_builder,
-                              Builder else_builder) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
   // by the `branches` builder at `index`. If `index` is out of range, then it
   // will run a conditional command buffer constructed by the last builder.
   //
   // See: https://github.com/openxla/stablehlo/blob/main/docs/spec.md#case
-  virtual absl::Status Case(DeviceMemory<int32_t> index,
+  virtual absl::StatusOr<const Command*> Case(
+      DeviceMemory<int32_t> index, std::vector<Builder> branches,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  virtual absl::StatusOr<const Command*> Case(
+      DeviceMemory<bool> index, std::vector<Builder> branches,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a Case operation.
+  virtual absl::Status Case(const Command* command, DeviceMemory<int32_t> index,
                             std::vector<Builder> branches) = 0;
 
-  virtual absl::Status Case(DeviceMemory<bool> index,
+  virtual absl::Status Case(const Command* command, DeviceMemory<bool> index,
                             std::vector<Builder> branches) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
-  // by the `body_builder` exactly `num_iteration` times. This means the
-  // condition is known at compile time (`num_iteration` < `loop_counter`), and
-  // does not require a `cond_builder`.
-  virtual absl::Status For(int32_t num_iteration,
-                           DeviceMemory<int32_t> loop_counter,
-                           Builder body_builder) = 0;
 
   // Adds a conditional operation that will execute a command buffer constructed
   // by the `cond_builder` that must update `pred` value, and then depending on
@@ -164,8 +202,13 @@ class CommandBuffer {
   //     body_builder()
   //     cond_builder()
   //
-  virtual absl::Status While(DeviceMemory<bool> pred, Builder cond_builder,
-                             Builder body_builder) = 0;
+  virtual absl::StatusOr<const Command*> While(
+      DeviceMemory<bool> pred, Builder cond_builder, Builder body_builder,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a While operation.
+  virtual absl::Status While(const Command* command, DeviceMemory<bool> pred,
+                             Builder cond_builder, Builder body_builder) = 0;
 
   // Submits the command buffer for execution.
   virtual absl::Status Submit(Stream* stream) {
@@ -195,6 +238,7 @@ class CommandBuffer {
   //--------------------------------------------------------------------------//
  private:
   friend class TraceCommandBufferFactory;
+
   // Tracing APIs are private because they do not compose with command buffer
   // updates. Instead of tracing directly into the command buffer users should
   // create traced command buffers using factory methods and add them to primary
@@ -211,13 +255,21 @@ class CommandBuffer {
 //===----------------------------------------------------------------------===//
 
 template <typename... Params, typename... Args>
-inline absl::Status CommandBuffer::Launch(const TypedKernel<Params...>& kernel,
-                                          const ThreadDim& threads,
-                                          const BlockDim& blocks,
-                                          Args... args) {
+absl::StatusOr<const CommandBuffer::Command*> CommandBuffer::Launch(
+    const TypedKernel<Params...>& kernel, const ThreadDim& threads,
+    const BlockDim& blocks, absl::Span<const Command* const> dependencies,
+    Args... args) {
   auto kernel_args = PackKernelArgs(kernel, args...);
-  TF_RETURN_IF_ERROR(Launch(threads, blocks, *kernel, *kernel_args));
-  return absl::OkStatus();
+  return Launch(threads, blocks, *kernel, *kernel_args, dependencies);
+}
+
+template <typename... Params, typename... Args>
+absl::Status CommandBuffer::Launch(const Command* command,
+                                   const TypedKernel<Params...>& kernel,
+                                   const ThreadDim& threads,
+                                   const BlockDim& blocks, Args... args) {
+  auto kernel_args = PackKernelArgs(kernel, args...);
+  return Launch(command, threads, blocks, *kernel, *kernel_args);
 }
 
 }  // namespace stream_executor

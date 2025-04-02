@@ -400,6 +400,18 @@ class GemmFusionAutotunerTestWithMorePreciseReduction
   }
 };
 
+// TODO: b/404470821 - Remove once this is enabled by default.
+class DynamicSearchSpaceAutotunerTest : public GemmFusionAutotunerTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        GemmFusionAutotunerTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_dynamic_dot_search_space(
+        true);
+    return debug_options;
+  }
+};
+
 absl::StatusOr<std::vector<TritonGemmConfig>>
 GetPossibleMatmulAutotuneTritonConfigs(
     const HloDotInstruction& dot,
@@ -762,7 +774,6 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
                           ParseTextProto<AutotuneResults>(R"pb(
-                            version: 3
                             results {
                               device: "..."
                               hlo: "..."
@@ -771,6 +782,7 @@ ENTRY main {
                                 run_time { nanos: 14 }
                               }
                             })pb"));
+  AddVersionToAutotuneResults(autotune_results_override);
   autotune_results_override.mutable_results(0)->set_device(
       std::string(cache_key.GetModelStr()));
   autotune_results_override.mutable_results(0)->set_hlo(
@@ -1496,6 +1508,7 @@ absl::StatusOr<AutotuneResults> GetDummyAutotuneResultsForCacheKey(
                             run_time { nanos: 14 }
                           }
                         })pb"));
+  AddVersionToAutotuneResults(autotune_results);
   autotune_results.mutable_results(0)->set_device(
       std::string(cache_key.GetModelStr()));
   autotune_results.mutable_results(0)->set_hlo(std::string(cache_key.GetHlo()));
@@ -1754,6 +1767,26 @@ ENTRY e {
   EXPECT_TRUE(std::any_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.num_ctas > 2; }));
+}
+
+TEST_F(DynamicSearchSpaceAutotunerTest, AutotunesSimpleDotFusion) {
+  const std::string hlo = R"(
+HloModule module
+ENTRY e {
+  x = s8[128,64] parameter(0)
+  c = f16[128,64] convert(x)
+  y = f16[64,6144] parameter(1)
+  ROOT out = f16[128,6144] dot(c, y),
+                lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  CheckTritonAutotuning(hlo, R"(
+// CHECK: ENTRY
+// CHECK: ROOT
+// CHECK-SAME: kCustom
+// CHECK-SAME: block_m
+)");
+  EXPECT_TRUE(RunAndCompare(hlo, ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
 }
 
 }  // namespace

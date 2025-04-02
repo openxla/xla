@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -115,6 +116,7 @@ static absl::StatusOr<Command> Convert(
   TF_ASSIGN_OR_RETURN(CommandBufferCmdSequence body_cmds,
                       ConvertToCommands(thunk.body_thunk_sequence()->thunks(),
                                         synchronization_mode));
+
   return std::make_unique<WhileCmd>(thunk.execution_stream_id(),
                                     thunk.condition_result_buffer(),
                                     std::move(cond_cmds), std::move(body_cmds));

@@ -3,11 +3,7 @@ load("//xla/service/cpu:build_defs.bzl", "runtime_copts")
 load("//xla/tsl:tsl.bzl", "if_google", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
-load(
-    "//xla/tsl/platform:rules_cc.bzl",
-    "cc_library",
-    "cc_library_optional_no_mkl",
-)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -442,7 +438,7 @@ cc_library(
     ],
 )
 
-cc_library_optional_no_mkl(
+cc_library(
     name = "convolution_thunk_internal",
     srcs = [
         "convolution_thunk_f16.cc",
@@ -450,27 +446,25 @@ cc_library_optional_no_mkl(
     ],
     hdrs = ["convolution_thunk_internal.h"],
     copts = runtime_copts(),
-    mkl_deps = [
-        "//xla/tsl/framework/contraction:eigen_contraction_kernel",
-        "//xla/tsl/framework/convolution:eigen_helpers",
-    ],
     visibility = internal_visibility([":friends"]),
     deps = [
         ":work_queue",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/framework/contraction:eigen_contraction_kernel",
+        "//xla/tsl/framework/convolution:eigen_helpers",
         "//xla/tsl/platform:logging",
         "@eigen_archive//:eigen3",
     ],
 )
 
-cc_library_optional_no_mkl(
+cc_library(
     name = "convolution_thunk",
     srcs = ["convolution_thunk.cc"],
     hdrs = ["convolution_thunk.h"],
     copts = runtime_copts(),
-    mkl_deps = [":convolution_thunk_internal"],
     deps = [
         ":convolution_lib",
+        ":convolution_thunk_internal",
         ":thunk",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -750,6 +744,7 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_status_internal",
         "//xla/service:custom_call_target_registry",
+        "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
@@ -779,6 +774,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/algorithm:container",
@@ -789,7 +785,7 @@ cc_library(
     ],
 )
 
-cc_library_optional_no_mkl(
+cc_library(
     name = "dot_thunk",
     srcs = [
         "dot_thunk.cc",
@@ -801,7 +797,6 @@ cc_library_optional_no_mkl(
         "dot_thunk_s32.cc",
     ],
     hdrs = ["dot_thunk.h"],
-    mkl_deps = ["//xla/tsl/framework/contraction:eigen_contraction_kernel"],
     deps = [
         ":dot_lib",
         ":thunk",
@@ -812,6 +807,7 @@ cc_library_optional_no_mkl(
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
@@ -1171,6 +1167,7 @@ cc_library(
         ":thunk",
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service/cpu:runtime_fft",
@@ -1210,14 +1207,10 @@ cc_library(
     deps = ["@com_google_absl//absl/status:statusor"],
 )
 
-cc_library_optional_no_mkl(
+cc_library(
     name = "thunk_proto_serdes",
     srcs = ["thunk_proto_serdes.cc"],
     hdrs = ["thunk_proto_serdes.h"],
-    mkl_deps = [
-        ":convolution_thunk",
-        ":dot_thunk",
-    ],
     deps = [
         ":all_gather_thunk",
         ":all_reduce_thunk",
@@ -1227,8 +1220,10 @@ cc_library_optional_no_mkl(
         ":collective_thunk",
         ":conditional_thunk",
         ":convolution_lib",
+        ":convolution_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
+        ":dot_thunk",
         ":fft_thunk",
         ":infeed_thunk",
         ":kernel_thunk",
@@ -1253,7 +1248,10 @@ cc_library_optional_no_mkl(
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -1348,9 +1346,12 @@ xla_cc_test(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",

@@ -709,7 +709,6 @@ xla_cc_test(
     ],
     deps = [
         ":sharding_propagation",
-        "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -720,6 +719,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -930,7 +930,6 @@ xla_cc_test(
         ":pattern_matcher_gmock",
         "//xla:comparison_util",
         "//xla:literal_util",
-        "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
@@ -942,9 +941,11 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
     ],
@@ -954,7 +955,6 @@ xla_cc_test(
     name = "hlo_sharding_test",
     srcs = ["hlo_sharding_test.cc"],
     deps = [
-        "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
@@ -962,6 +962,7 @@ xla_cc_test(
         "//xla/hlo/parser:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/types:span",
     ],
@@ -1093,15 +1094,16 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2022,6 +2024,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -4081,6 +4084,7 @@ cc_library(
         "//xla:permutation_util",
         "//xla:shape_layout",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -4733,13 +4737,11 @@ cc_library(
     hdrs = ["hlo_runner_interface.h"],
     deps = [
         ":computation_placer",
-        ":hlo_module_util",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:die_if_null",
@@ -4747,7 +4749,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -4797,7 +4798,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -4838,7 +4838,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -5913,7 +5912,9 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
@@ -5956,7 +5957,9 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -6170,14 +6173,6 @@ cc_library(
     deps = ["//xla/hlo/transforms/simplifiers:sub_byte_normalization"],
 )
 
-cc_library(
-    name = "sharding_format_picker",
-    testonly = True,
-    hdrs = ["sharding_format_picker.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/transforms:sharding_format_picker instead.",
-    deps = ["//xla/hlo/transforms:sharding_format_picker"],
-)
-
 xla_cc_test(
     name = "batched_gather_scatter_normalizer_test",
     srcs = ["batched_gather_scatter_normalizer_test.cc"],
@@ -6239,9 +6234,9 @@ xla_cc_binary(
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/rocm:rocm_platform",
     ]) + if_cuda([
-        "//xla/stream_executor/cuda:cublas_plugin",
+        "//xla/stream_executor/cuda:all_runtime",
     ]) + if_rocm([
-        "//xla/stream_executor/rocm:rocblas_plugin",
+        "//xla/stream_executor/rocm:all_runtime",
     ]) + xla_internal(["tools:xsymbol_repository"]),
 )
 
@@ -6485,6 +6480,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 

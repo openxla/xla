@@ -108,54 +108,6 @@ cc_library(
 )
 
 cc_library(
-    name = "python_ref_manager",
-    srcs = ["python_ref_manager.cc"],
-    hdrs = ["python_ref_manager.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = internal_visibility([":friends"]),
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
-        "@nanobind",
-    ],
-)
-
-cc_library(
-    name = "traceback",
-    srcs = ["traceback.cc"],
-    hdrs = ["traceback.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = internal_visibility([":friends"]),
-    deps = [
-        ":nb_class_ptr",
-        # placeholder for index annotation deps
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@nanobind",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
-        "//xla/pjrt:exceptions",
-        "//xla/tsl/platform:logging",
-        "@tsl//tsl/platform",
-    ],
-)
-
-cc_library(
     name = "pprof_profile_builder",
     srcs = ["pprof_profile_builder.cc"],
     hdrs = ["pprof_profile_builder.h"],
@@ -175,34 +127,6 @@ cc_library(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profile_proto_cc",
     ],
-)
-
-cc_library(
-    name = "py_client",
-    hdrs = [
-        "py_array.h",
-        "py_client.h",
-        "py_compile_only_client.h",
-        "py_device.h",
-        "py_device_list.h",
-        "py_executable.h",
-        "py_memory_space.h",
-        "py_program.h",
-        "py_values.h",
-        "sharded_device_array.h",
-        "sharding.h",
-        "to_ifrt_sharding.h",
-    ],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = internal_visibility([":friends"]),
-    deps = if_google([
-        "//third_party/py/jax/jaxlib/xla:py_client",
-    ]),
 )
 
 cc_library(
@@ -449,15 +373,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "nb_class_ptr",
-    hdrs = ["nb_class_ptr.h"],
-    copts = ["-fexceptions"],
-    features = ["-use_header_modules"],
-    visibility = internal_visibility([":friends"]),
-    deps = ["@nanobind"],
-)
-
-cc_library(
     name = "nb_helpers",
     hdrs = ["nb_helpers.h"],
     compatible_with = [],
@@ -577,4 +492,11 @@ py_strict_test(
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ] + xla_py_test_deps(),
+)
+
+cc_library(
+    name = "version",
+    hdrs = ["version.h"],
+    compatible_with = [],
+    visibility = internal_visibility([":friends"]),
 )

@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/shape_layout.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -102,7 +101,7 @@ class HloRunnerPjRt : public HloRunnerInterface {
   // representation must have been produced by a compiler of the same platform
   // and version as this one.
   absl::StatusOr<std::unique_ptr<OpaqueExecutable>> DeserializeExecutable(
-      absl::Nonnull<const tsl::protobuf::Message*> serialized) const override;
+      absl::string_view serialized) const override;
 
   absl::StatusOr<Literal> ExecuteWithExecutable(
       OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
@@ -164,8 +163,9 @@ class HloRunnerPjRt : public HloRunnerInterface {
       HloModule* module, bool run_hlo_passes);
 
   absl::StatusOr<std::vector<Literal>> ExecuteReplicatedImpl(
-      std::function<absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>(
-          absl::Span<const std::vector<PjRtBuffer*>>)>
+      std::function<
+          absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>(
+              absl::Span<const std::vector<PjRtBuffer*>>)>
           execution_helper,
       std::function<int64_t(int64_t)> argument_count_provider,
       std::function<const Literal*(int64_t, int64_t)> argument_provider,
