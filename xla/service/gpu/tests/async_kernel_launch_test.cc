@@ -95,7 +95,7 @@ TEST_F(AsyncKernelLaunchTest, BasicAsyncComputation) {
     }
   )";
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-5, 1e-5}));
 }
 
 TEST_F(AsyncKernelLaunchTest, ScheduledOverlappingAsyncComputations) {
@@ -127,7 +127,7 @@ TEST_F(AsyncKernelLaunchTest, ScheduledOverlappingAsyncComputations) {
     }
   )";
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-5, 1e-5}));
 }
 
 }  // namespace
