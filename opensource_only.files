@@ -7,12 +7,10 @@ compiler/xla/pjrt/cpu/package_groups.bzl:
 compiler/xla/pjrt/gpu/package_groups.bzl:
 compiler/xla/stream_executor/build_defs.bzl:
 compiler/xla/tsl/cuda/stub.bzl:
-compiler/xla/tsl/mkl/BUILD:
 compiler/xla/tsl/mkl/LICENSE:
 compiler/xla/tsl/mkl/MKL_LICENSE:
 compiler/xla/tsl/mkl/build_defs.bzl:
 compiler/xla/tsl/package_groups.bzl:
-compiler/xla/tsl/profiler/BUILD:
 third_party/absl/com_google_absl.BUILD:
 third_party/clang_toolchain/cc_configure_clang.bzl:
 third_party/clang_toolchain/download_clang.bzl:
@@ -106,11 +104,8 @@ third_party/py/python_init_rules.bzl:
 third_party/py/python_init_toolchains.bzl:
 third_party/py/python_repo.bzl:
 third_party/py/python_wheel.bzl:
+third_party/py/rules_pywrap/def_file_filter_tool.py:
 third_party/pybind11.BUILD:
-third_party/remote_config/BUILD.tpl:
-third_party/remote_config/common.bzl:
-third_party/remote_config/remote_platform_configure.bzl:
-third_party/repo.bzl:
 third_party/six.BUILD:
 third_party/snappy.BUILD:
 third_party/spirv_llvm_translator/spirv_llvm_translator.BUILD:

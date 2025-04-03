@@ -55,6 +55,7 @@ limitations under the License.
 #include "tsl/platform/bfloat16.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/ml_dtypes.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -846,12 +847,15 @@ absl::Status EraseElementFromVector(std::vector<T>* container, const T& value) {
   return absl::OkStatus();
 }
 
-// Takes a sequence of unpacked n-bit values, such that every byte stores one
-// value in the low-order bits, and packs them so every byte stores as many
-// which will fit. `output` should have ceil((input.size()*kBitsPerElement)/8)
-// bytes. The high-order bits of each byte in `input` are ignored.
+// Takes a sequence of unpacked kBitsPerElement-bit values (kBitsPerElement must
+// be between 1 and 7), such that every byte stores one value in the low-order
+// bits, and packs them so every byte stores as many which will fit. `output`
+// should have at least ceil((input.size()*kBitsPerElement)/8.0) bytes. The
+// high-order bits of each byte in `input` are ignored.
 template <size_t kBitsPerElement>
 void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  static_assert(1 <= kBitsPerElement);
+  static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
   const size_t aligned_inputs = input.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_inputs; ++i) {
@@ -863,7 +867,8 @@ void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
     }
     output[i] = byte;
   }
-  if (size_t remainder = input.size() % kElementsPerByte; remainder != 0) {
+  if (const size_t remainder = input.size() % kElementsPerByte;
+      remainder != 0) {
     char byte = 0;
     for (size_t j = 0; j < remainder; ++j) {
       byte |= (input[aligned_inputs * kElementsPerByte + j] &
@@ -874,6 +879,8 @@ void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
   }
 }
 
+// Same as above, but takes the number of bits per element as an argument.
+// `bits_per_element` must be 2 or 4, or this function will crash.
 inline void PackIntN(int bits_per_element, absl::Span<const char> input,
                      absl::Span<char> output) {
   if (bits_per_element == 2) {
@@ -885,13 +892,28 @@ inline void PackIntN(int bits_per_element, absl::Span<const char> input,
   }
 }
 
+// Same as above, but takes the number of bits per element, a pointer to the
+// source data, and the size of the data in bytes. Returns a unique pointer to
+// the packed data.
+inline std::unique_ptr<char[]> PackIntN(int bits_per_element, const char* data,
+                                        size_t size) {
+  size_t packed_size = size * bits_per_element / 8;
+  auto buffer = std::make_unique<char[]>(packed_size);
+  auto src = absl::MakeSpan(data, size);
+  auto dst = absl::MakeSpan(buffer.get(), packed_size);
+  PackIntN(bits_per_element, src, dst);
+  return buffer;
+}
+
 // Takes a sequence of packed values, such that every byte stores multiple
 // values, and unpacks them so every byte stores one value in the low-order
 // bits. `input` should have
-// ceil(output.size()*8/kBitsPerElement) bytes. The high-order bits in each
-// output are zero.
+// ceil(output.size()*8.0/kBitsPerElement) bytes. kBitsPerElement must be
+// between 1 and 7. ßThe high-order bits in each output are zero.
 template <size_t kBitsPerElement>
 void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  static_assert(1 <= kBitsPerElement);
+  static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
   const size_t aligned_outputs = output.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_outputs; ++i) {
@@ -910,6 +932,8 @@ void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
   }
 }
 
+// Same as above, but takes the number of bits per element as an argument.
+// `bits_per_element` must be 2 or 4, or this function will crash.
 inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
                        absl::Span<char> output) {
   if (bits_per_element == 2) {
@@ -919,6 +943,19 @@ inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
   } else {
     LOG(FATAL) << "Invalid bits_per_element: " << bits_per_element;
   }
+}
+
+// Same as above, but takes the number of bits per element, a pointer to the
+// source data, and the size of the data in bytes. Returns a unique pointer to
+// the unpacked data.
+inline std::unique_ptr<char[]> UnpackIntN(int bits_per_element,
+                                          const char* data, size_t size) {
+  size_t unpacked_size = size * 8 / bits_per_element;
+  auto buffer = std::make_unique<char[]>(unpacked_size);
+  auto src = absl::MakeSpan(data, size);
+  auto dst = absl::MakeSpan(buffer.get(), unpacked_size);
+  UnpackIntN(bits_per_element, src, dst);
+  return buffer;
 }
 
 // Returns a container with `sorted_ids_to_remove` elements removed.
@@ -949,6 +986,8 @@ inline bool HloPredicateFalse(const HloInstruction*) { return false; }
 
 using Vector2 = std::array<int64_t, 2>;
 using Vector3 = std::array<int64_t, 3>;
+
+std::string PrintAllFields(const tsl::protobuf::Message& message);
 
 }  // namespace xla
 

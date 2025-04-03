@@ -56,7 +56,7 @@ XlaOp TopK(XlaOp input, int64_t k, PrimitiveType index_type) {
     Shape iota_shape =
         ShapeUtil::MakeShape(index_type, input_shape.dimensions());
     XlaOp iota = Iota(builder, iota_shape, last_dim);
-    for (int64_t i = 0; i < input_shape.rank(); ++i) {
+    for (int64_t i = 0; i < input_shape.dimensions_size(); ++i) {
       if (input_shape.is_dynamic_dimension(i)) {
         // Propagate dynamic dimension from inputs to iota.
         iota = SetDimensionSize(iota, GetDimensionSize(input, i), i);
@@ -79,7 +79,7 @@ XlaOp TopK(XlaOp input, int64_t k, PrimitiveType index_type) {
         (input_shape.element_type() == BF16 &&
          last_dim_size < kLow16BitsLimit &&
          (last_dim_size < kMaxLastDimSizeForSmallBatches ||
-          (input_shape.rank() == 2 &&
+          (input_shape.dimensions_size() == 2 &&
            input_shape.dimensions(0) >= kSmallBatchSizeThreshold)));
 
     std::vector<int64_t> start_indices(input_shape.dimensions_size(), 0);
@@ -179,7 +179,7 @@ XlaOp TopKWithPartitions(XlaOp input, int64_t k, int64_t num_partitions,
     Shape iota_shape =
         ShapeUtil::MakeShape(index_type, input_shape.dimensions());
     XlaOp iota = Iota(builder, iota_shape, last_dim);
-    for (int64_t i = 0; i < input_shape.rank(); ++i) {
+    for (int64_t i = 0; i < input_shape.dimensions_size(); ++i) {
       if (input_shape.is_dynamic_dimension(i)) {
         // Propagate dynamic dimension from inputs to iota.
         iota = SetDimensionSize(iota, GetDimensionSize(input, i), i);

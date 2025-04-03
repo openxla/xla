@@ -44,8 +44,8 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
-#include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/logical_buffer.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
@@ -322,11 +322,11 @@ bool DotCanSupportShapeWithLayout(const HloInstruction* dot,
   // If we are able to construct a `MatrixLayout` then the dot can support
   // this layout.
   return MatrixLayout::For(shape, dot_dims.lhs_batch_dimensions().size(),
-                           dot->operand(0)->shape().rank() -
+                           dot->operand(0)->shape().dimensions_size() -
                                dot_dims.lhs_contracting_dimensions().size() -
                                dot_dims.lhs_batch_dimensions().size(),
                            dot_dims.rhs_batch_dimensions().size(),
-                           dot->operand(1)->shape().rank() -
+                           dot->operand(1)->shape().dimensions_size() -
                                dot_dims.rhs_contracting_dimensions().size() -
                                dot_dims.rhs_batch_dimensions().size())
       .ok();
@@ -338,6 +338,15 @@ bool IsPackedInstruction(const HloInstruction* instruction) {
          (instruction->opcode() == HloOpcode::kConvert &&
           primitive_util::IsSubByteNonPredType(
               instruction->operand(0)->shape().element_type()));
+}
+
+bool IsCustomCallToMemoryPlacement(const HloInstruction* hlo) {
+  if (hlo->opcode() != HloOpcode::kCustomCall) {
+    return false;
+  }
+  const std::string& target = hlo->custom_call_target();
+  return target == memory_annotations::kMoveToDeviceCustomCallTarget ||
+         target == memory_annotations::kMoveToHostCustomCallTarget;
 }
 
 }  // namespace
@@ -479,11 +488,11 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
     } else if ((HloPredicateIsOp<HloOpcode::kSort>(instruction) ||
                 IsCubDeviceRadixSort(*instruction)) &&
-               instruction->operand(0)->shape().rank() > 1) {
+               instruction->operand(0)->shape().dimensions_size() > 1) {
       // Make sure that all the operands and the output(s) have the same layout.
       Shape keys_shape = instruction->operand(0)->shape();
       Layout keys_layout =
-          LayoutUtil::GetDefaultLayoutForRank(keys_shape.rank());
+          LayoutUtil::GetDefaultLayoutForRank(keys_shape.dimensions_size());
       for (int64_t i = 0; i < instruction->operand_count(); ++i) {
         Shape shape = instruction->operand(i)->shape();
         *shape.mutable_layout() = keys_layout;
@@ -503,7 +512,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     } else if (IsCustomCallToTopK(*instruction)) {
       // The output of the TopK custom call needs to have default layout.
       Layout default_layout = LayoutUtil::GetDefaultLayoutForRank(
-          instruction->operand(0)->shape().rank());
+          instruction->operand(0)->shape().dimensions_size());
       TF_ASSIGN_OR_RETURN(
           auto values_buffer,
           points_to_analysis_->GetBufferDefinedAt(instruction, {0}));
@@ -571,6 +580,13 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
             LayoutUtil::SetToDefaultLayout(subshape);
           });
       TF_RETURN_IF_ERROR(SetInstructionLayout(s, instruction));
+    } else if (IsCustomCallToMemoryPlacement(instruction)) {
+      // Make sure that host memory buffers use the default layout so that
+      // the compiler does not insert transposes on host memory buffers.
+      Shape operand_shape = instruction->operand(0)->shape();
+      LayoutUtil::SetToDefaultLayout(&operand_shape);
+      TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
+      TF_RETURN_IF_ERROR(SetInstructionLayout(operand_shape, instruction));
     }
   }
   return absl::OkStatus();
@@ -691,19 +707,12 @@ bool GpuLayoutAssignment::PropagateReductionLayoutToOperand(
 
 bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
     const HloInstruction* instruction) {
-  // The host offloading custom calls will be eventually removed
-  // by the offloader, so we need to make sure that the calls do not change
-  // the layout and thus cause layout mismatches after the removal.
   // The TopK custom call cannot handle the case if the operand has a different
   // layout.
   const HloCustomCallInstruction* custom_call =
       DynCast<HloCustomCallInstruction>(instruction);
   if (custom_call != nullptr &&
-      (custom_call->custom_call_target() ==
-           host_memory_offload_annotations::kMoveToHostCustomCallTarget ||
-       custom_call->custom_call_target() ==
-           host_memory_offload_annotations::kMoveToDeviceCustomCallTarget ||
-       custom_call->custom_call_target() == kTopKCustomCallTarget)) {
+      custom_call->custom_call_target() == kTopKCustomCallTarget) {
     return false;
   }
 

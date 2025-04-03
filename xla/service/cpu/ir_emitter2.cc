@@ -15,23 +15,25 @@ limitations under the License.
 
 #include "xla/service/cpu/ir_emitter2.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -47,7 +49,13 @@ limitations under the License.
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Support/CodeGen.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
+#include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -56,14 +64,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/layout_util.h"
-#include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/elemental_ir_emitter.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_loop_emitter.h"
-#include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
@@ -72,15 +77,44 @@ limitations under the License.
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape.h"
 #include "xla/shape_partition.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::cpu {
+
+namespace {
+
+// Explicitly in HLO we mostly see "loop" types for fusions.
+// However, internally we pick a fusion kind to pick the appropriate
+// fusion emitter.
+enum class FusionEmitterKind {
+  kLoop,
+  kScatter,
+};
+
+// This is very crude at the moment. Eventually we will need to either have
+// the fusion indicate what emitter it is meant for (e.g. producing this
+// info via a cost model), or heuristics to estimate which emitter is best
+// for the fusion.
+FusionEmitterKind AnalyzeHloFusion(const HloFusionInstruction* fusion) {
+  if (fusion->fused_expression_root()->opcode() == HloOpcode::kScatter) {
+    return FusionEmitterKind::kScatter;
+  }
+  return FusionEmitterKind::kLoop;
+}
+
+std::string SortCsv(absl::string_view csv) {
+  std::vector<absl::string_view> v =
+      absl::StrSplit(csv, ',', absl::SkipEmpty());
+  std::sort(v.begin(), v.end());
+  return absl::StrJoin(v, ",");
+}
+
+}  // namespace
 
 //===----------------------------------------------------------------------===//
 // IrEmitter2
@@ -98,6 +132,21 @@ IrEmitter2::IrEmitter2(const HloModule& hlo_module, llvm::Module* module,
 bool IrEmitter2::fast_min_max() const {
   return hlo_module_.config().debug_options().xla_cpu_enable_fast_min_max();
 }
+
+bool IrEmitter2::IsSupportedByFusionEmitter(
+    const HloFusionInstruction* fusion) const {
+  if (!hlo_module_.config().debug_options().xla_cpu_use_fusion_emitters()) {
+    return false;
+  }
+  FusionEmitterKind fusion_emitter_kind = AnalyzeHloFusion(fusion);
+  switch (fusion_emitter_kind) {
+    case FusionEmitterKind::kScatter:
+      return kFusionEmitterScatterEnabled;
+    default:
+      return false;
+  }
+}
+
 IrEmitter2::KernelInfo::KernelInfo(KernelPrototype prototype,
                                    const se::BlockDim& block_dims,
                                    const se::ThreadDim& thread_dims)
@@ -105,6 +154,17 @@ IrEmitter2::KernelInfo::KernelInfo(KernelPrototype prototype,
       block_dims(block_dims),
       thread_dims(thread_dims),
       invariant_arguments(std::move(prototype.invariant_arguments)) {}
+
+IrEmitter2::KernelInfo::KernelInfo(
+    const std::string& name, const se::BlockDim& block_dims,
+    const se::ThreadDim& thread_dims,
+    const absl::flat_hash_set<int64_t>& invariant_arguments,
+    absl::string_view backend_extra_options)
+    : name(name),
+      block_dims(block_dims),
+      thread_dims(thread_dims),
+      invariant_arguments(invariant_arguments),
+      backend_extra_options(SortCsv(backend_extra_options)) {}
 
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
     const HloInstruction* pad) {
@@ -136,6 +196,37 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
       KernelInfo(std::move(kernel_prototype), se::BlockDim(), se::ThreadDim()));
 }
 
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionWithFusionEmitters(
+    const HloFusionInstruction* fusion) {
+  std::unique_ptr<mlir::MLIRContext> mlir_context =
+      FusionCompiler::CreateContext();
+  FusionEmitterKind fusion_emitter_kind = AnalyzeHloFusion(fusion);
+  std::unique_ptr<CpuFusionEmitterBase> emitter;
+  switch (fusion_emitter_kind) {
+    case FusionEmitterKind::kScatter:
+      emitter = std::make_unique<CpuScatterFusion>(
+          mlir_context.get(), &module_->getContext(),
+          nested_ir_emitter_->assignment(), fusion);
+      break;
+    default:
+      return Internal("Unimplemented fusion kind %d for instruction: %s",
+                      fusion_emitter_kind, fusion->ToString());
+  }
+
+  TF_ASSIGN_OR_RETURN(auto fusion_result, emitter->Emit());
+  // Match data layouts to avoid warning messages.
+  fusion_result.llvm_module->setDataLayout(module_->getDataLayout());
+  if (llvm::Linker::linkModules(*module_,
+                                std::move(fusion_result.llvm_module))) {
+    return Internal("Cannot link additional LLVM module for fusion %s",
+                    fusion->name());
+  }
+  return kernels_.emplace_back(KernelInfo(
+      std::string(fusion->name()), se::BlockDim(),
+      se::ThreadDim(emitter->num_threads()), fusion_result.invariant_arguments,
+      emitter->BackendExtraOptions()));
+}
+
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
     const HloFusionInstruction* fusion) {
   VLOG(2) << "Emit fusion host kernel: " << fusion->name();
@@ -150,6 +241,10 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
                     fusion->ToString());
   }
 
+  if (IsSupportedByFusionEmitter(fusion)) {
+    return EmitFusionWithFusionEmitters(fusion);
+  }
+
   TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
                       EmitKernelPrototype(fusion));
 
@@ -159,8 +254,10 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
   IrEmitter::IRBuilderGuard builder_guard = nested_ir_emitter_->WithBuilder(b);
 
   HloComputation* nested_computation = fusion->fused_instructions_computation();
-  TF_RETURN_IF_ERROR(nested_ir_emitter_->EmitNestedComputation(
-      *nested_computation, llvm_ir::IrName(fusion), false));
+  TF_RETURN_IF_ERROR(nested_ir_emitter_
+                         ->EmitNestedComputation(*nested_computation,
+                                                 llvm_ir::IrName(fusion), false)
+                         .status());
 
   CpuElementalIrEmitter elemental_emitter = ElementalIrEmmiterFactory(&b);
 
@@ -235,8 +332,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
 
   // Check that we can emit LLVM IR for this dot operation.
   DotImplementationStrategy strategy = GetDotImplementationStrategy(
-      hlo_module_.config(), *dot,
-      nested_ir_emitter_->target_machine_features());
+      hlo_module_.config(), *dot, nested_ir_emitter_->target_machine_features(),
+      /*allow_runtime_calls=*/false);
 
   if (!IsDotCodegenStrategy(strategy)) {
     return Internal("Unsupported dot implementation strategy");

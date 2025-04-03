@@ -1,6 +1,6 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("//xla:xla.bzl", "xla_cc_binary")
+load("//xla:xla.default.bzl", "xla_cc_binary")
 load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
 load("//xla/tests:build_defs.bzl", "DEFAULT_DISABLED_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_windows")
@@ -288,13 +288,15 @@ cc_library(
     ],
 )
 
-cuda_library(
+gpu_kernel_library(
     name = "ragged_all_to_all_kernel_gpu",
     srcs = ["ragged_all_to_all_kernel.cu.cc"],
     hdrs = ["ragged_all_to_all_kernel_common.h"],
-    deps = [
+    deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",  # build_cleaner: keep
-    ],
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(

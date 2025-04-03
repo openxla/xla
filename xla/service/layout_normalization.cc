@@ -273,7 +273,8 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   // BitcastConvert is only layout-preserving if it doesn't change the rank.
   absl::Status HandleBitcastConvert(HloInstruction* hlo) override {
     // If the rank isn't changing this is just an unary op.
-    if (hlo->shape().rank() == hlo->operand(0)->shape().rank()) {
+    if (hlo->shape().dimensions_size() ==
+        hlo->operand(0)->shape().dimensions_size()) {
       return HandleElementwiseUnary(hlo);
     }
 
@@ -429,7 +430,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     // 'scatter_indices'. So we require that there is just a single
     // 'scatter' dimension. This is ensured by the ScatterSimplifier pass.
     const auto& dims = scatter->scatter_dimension_numbers();
-    if (scatter->scatter_updates().front()->shape().rank() -
+    if (scatter->scatter_updates().front()->shape().dimensions_size() -
             dims.update_window_dims_size() >
         1) {
       return FailedPrecondition(

@@ -73,7 +73,7 @@ class AotCompilationResult {
   }
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, const se::StreamExecutor* executor) const {
+      Compiler* compiler, const se::StreamExecutor* executor) const&& {
     return Unimplemented("LoadExecutable unimplemented.");
   }
 
@@ -324,7 +324,7 @@ class Compiler {
       absl::string_view filename_prefix) const;
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> DeserializeExecutable(
-      absl::Nonnull<const tsl::protobuf::Message*> serialized) const {
+      const absl::string_view serialized) const {
     return Unimplemented("DeserializeExecutable unimplemented");
   }
 

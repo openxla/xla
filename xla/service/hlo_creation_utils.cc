@@ -416,7 +416,9 @@ absl::StatusOr<HloInstruction*> MakeMapHlo(
   for (const HloInstruction* operand : operands) {
     CHECK_EQ(computation, operand->parent());
     operand_shapes.push_back(&operand->shape());
-    max_operand_rank = std::max(max_operand_rank, operand->shape().rank());
+    max_operand_rank =
+        std::max(max_operand_rank,
+                 static_cast<int64_t>(operand->shape().dimensions_size()));
   }
   std::vector<int64_t> map_dims(max_operand_rank);
   std::iota(map_dims.begin(), map_dims.end(), 0);
@@ -516,7 +518,7 @@ absl::StatusOr<HloInstruction*> MakeReduceHlo(
     HloOpcode binary_opcode, HloModule* module, const OpMetadata* metadata,
     const FrontendAttributes* frontend_attributes) {
   DCHECK_NE(nullptr, module);
-  std::vector<int64_t> all_dims(operand->shape().rank());
+  std::vector<int64_t> all_dims(operand->shape().dimensions_size());
   std::iota(all_dims.begin(), all_dims.end(), 0);
 
   HloComputation* reduce_computation = MakeBinaryScalarComputation(
@@ -836,8 +838,8 @@ HloInstruction* CreateDegenerateRemovingReshape(HloInstruction* hlo,
                                                 const int64_t index_to_remove) {
   Shape input_shape = hlo->shape();
   std::vector<int64_t> dims;
-  dims.reserve(input_shape.rank() - 1);
-  for (int64_t index = 0; index < input_shape.rank(); index++) {
+  dims.reserve(input_shape.dimensions_size() - 1);
+  for (int64_t index = 0; index < input_shape.dimensions_size(); index++) {
     if (index == index_to_remove) {
       continue;
     }
@@ -852,15 +854,15 @@ HloInstruction* CreateDegenerateAddingReshape(HloInstruction* hlo,
                                               const int index_to_add) {
   Shape input_shape = hlo->shape();
   std::vector<int64_t> dims;
-  dims.reserve(input_shape.rank() - 1);
-  for (int64_t index = 0; index < input_shape.rank(); index++) {
+  dims.reserve(input_shape.dimensions_size() - 1);
+  for (int64_t index = 0; index < input_shape.dimensions_size(); index++) {
     if (index == index_to_add) {
       dims.push_back(1);
     }
     int64_t dim_size = input_shape.dimensions(index);
     dims.push_back(dim_size);
   }
-  if (index_to_add == input_shape.rank()) {
+  if (index_to_add == input_shape.dimensions_size()) {
     dims.push_back(1);
   }
   Shape new_shape = ShapeUtil::MakeShape(input_shape.element_type(), dims);

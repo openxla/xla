@@ -59,10 +59,10 @@ static HloInstruction* PadInstruction(HloInstruction* instr,
   HloComputation* comp = instr->parent();
 
   const Shape& shape = instr->shape();
-  PaddingConfig pad_config = MakeNoPaddingConfig(shape.rank());
+  PaddingConfig pad_config = MakeNoPaddingConfig(shape.dimensions_size());
 
   bool added_padding = false;
-  for (int64_t dim = 0; dim < shape.rank(); ++dim) {
+  for (int64_t dim = 0; dim < shape.dimensions_size(); ++dim) {
     if (shape.dimensions(dim) == new_shape.dimensions(dim)) {
       continue;
     }

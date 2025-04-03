@@ -130,7 +130,7 @@ IrArray::Index LoopEmitter::EmitStaticIndex(ForLoopNest* loop_nest,
     int64_t dimension = LayoutUtil::Major(shape_.layout(), i);
     // Only unroll the most minor dimension, this seems to give us good runtime
     // performance with a large improvement in compile time.
-    auto unroll_mode = (i == shape_.rank() - 1)
+    auto unroll_mode = (i == shape_.dimensions_size() - 1)
                            ? llvm_ir::UnrollMode::kDefaultUnroll
                            : llvm_ir::UnrollMode::kNoUnroll;
     std::unique_ptr<ForLoop> loop = loop_nest->AddLoop(
@@ -154,7 +154,7 @@ IrArray::Index LoopEmitter::EmitDynamicIndex(ForLoopNest* loop_nest,
     int64_t dimension = LayoutUtil::Major(shape_.layout(), i);
     // Only unroll the most minor dimension, this seems to give us good runtime
     // performance with a large improvement in compile time.
-    auto unroll_mode = (i == shape_.rank() - 1)
+    auto unroll_mode = (i == shape_.dimensions_size() - 1)
                            ? llvm_ir::UnrollMode::kDefaultUnroll
                            : llvm_ir::UnrollMode::kNoUnroll;
     std::unique_ptr<ForLoop> loop = loop_nest->AddLoop(

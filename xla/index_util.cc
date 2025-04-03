@@ -64,7 +64,7 @@ namespace xla {
 
 /* static */ bool IndexUtil::IndexInBounds(const Shape& shape,
                                            absl::Span<const int64_t> index) {
-  int64_t rank = shape.rank();
+  int64_t rank = shape.dimensions_size();
   const int64_t index_size = index.size();
   if (rank != index_size) {
     return false;

@@ -1,6 +1,6 @@
 # Integrates Shardy into the current XLA pipeline.
 
-load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
+load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -19,6 +19,7 @@ package_group(
         "//learning/deepmind/jax/ocean/...",
         "//learning/deepmind/partir/...",
         "//third_party/openxla/shardy/...",
+        "//third_party/py/jax/...",
     ],
 )
 
@@ -41,11 +42,13 @@ cc_library(
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:computation_layout",
         "//xla/service:hlo_proto_cc",
-        "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -57,15 +60,13 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_googlesource_code_re2//:re2",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@shardy//shardy/common:file_utils",
         "@shardy//shardy/dialect/sdy/transforms/propagation:passes",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -75,6 +76,8 @@ cc_library(
     hdrs = ["utils.h"],
     deps = [
         ":constants",
+        "//xla/mlir_hlo",
+        "//xla/service/spmd/shardy/extensions:mhlo_extensions",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -117,11 +120,13 @@ xla_cc_binary(
     name = "sdy_opt",
     srcs = ["sdy_opt_main.cc"],
     deps = [
+        "//xla/mlir_hlo",
         "//xla/mlir_hlo:stablehlo_extension_passes",
+        "//xla/service/spmd/shardy/extensions:mhlo_extensions",
         "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
-        "//xla/service/spmd/shardy/round_trip_common:import_backend_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
+        "//xla/service/spmd/shardy/round_trip_common:import_uninlineable_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
         "//xla/service/spmd/shardy/sdy_round_trip:dedup_meshes",
         "//xla/service/spmd/shardy/sdy_round_trip:export_ops",

@@ -578,7 +578,7 @@ absl::StatusOr<HloInstruction*> CheckValidIndices(
       ShapeUtil::MakeShape(PRED, indices->shape().dimensions()),
       max_valid_index_constant, indices, ComparisonDirection::kGe));
   HloInstruction* oob_check_mask;
-  if (indices->shape().rank() == 1) {
+  if (indices->shape().dimensions_size() == 1) {
     oob_check_mask = oob_check;
   } else {
     // Reduce across rows to get a mask (for multi-dimensional indices).
