@@ -627,6 +627,7 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndGeluExactPattern2Test) {
 TEST_P(ConvolutionTest, Conv2DWithBiasAndSwishTest) {
   const absl::string_view outline = R"(
   HloModule convolution.test.with.bias.swish
+
   ENTRY convolution.test.with.bias.swish {
     arg.0 = $dtype[2,40,40,128] parameter(0)
     arg.1 = $dtype[1,1,128,128] parameter(1)
