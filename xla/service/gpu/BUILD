@@ -623,16 +623,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cublas_plugin",
-        "//xla/stream_executor/cuda:cudnn_plugin",
-        "//xla/stream_executor/cuda:cufft_plugin",
-        "//xla/stream_executor/cuda:stream_executor_cuda",
-        "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:stream_executor_rocm",
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+    ],
 )
 
 cc_library(
@@ -2164,7 +2155,6 @@ cc_library(
         "//xla/service/gpu/model:sol_latency_estimator",
         "//xla/service/gpu/transforms:async_collective_annotator",
         "//xla/service/gpu/transforms:pgle_accuracy_checker",
-        "//xla/service/gpu/transforms:schedule_postprocessing",
         "//xla/service/gpu/transforms:scheduling_instruction_annotator",
         "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/stream_executor:device_description",
@@ -2207,7 +2197,6 @@ xla_test(
         "//xla/service:hlo_module_config",
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:legalize_scheduling_annotations",
-        "//xla/service/gpu/transforms:schedule_postprocessing",
         "//xla/service/gpu/transforms:scheduling_instruction_annotator",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
@@ -2371,6 +2360,7 @@ gpu_kernel_library(
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
         "@local_config_rocm//rocm:rocm_config",
+        "@local_config_rocm//rocm:hip",
     ]),
 )
 

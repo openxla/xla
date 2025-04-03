@@ -1154,7 +1154,7 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
                   &executor->GetDeviceDescription())) == 9) {
             auto fabric_info = GetDeviceFabricInfo(executor->device_ordinal());
             if (fabric_info.ok()) {
-              ADD_FAILURE();
+              EXPECT_FALSE(true);
             }
           }
         }
@@ -1924,7 +1924,8 @@ TEST(StreamExecutorGpuClientTest, MlirParameterLayoutFromOptionsIsSetInHlo) {
   xla::CompileOptions options;
   options.argument_layouts = {
       {ShapeUtil::MakeShapeWithDenseLayout(S32, {2, 2, 2}, {0, 2, 1})}};
-  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, options));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          client->CompileAndLoad(*module, options));
   TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
 
   auto first_param_layout =
@@ -2334,7 +2335,6 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   DebugOptions& debug_options =
       *compile_options.executable_build_options.mutable_debug_options();
   debug_options.set_xla_gpu_shard_autotuning(true);
-  debug_options.set_xla_gpu_unsupported_force_triton_gemm(true);
   debug_options.set_xla_gpu_cublas_fallback(false);
 
   if (node_id < num_nodes_using_cache) {
