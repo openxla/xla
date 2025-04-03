@@ -468,6 +468,7 @@ tsl_cc_test(
     deps = [
         ":cache",
         "//xla/tsl/platform:test",
+        "//xla/tsl/util:safe_reinterpret_cast",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:coding",
         "@tsl//tsl/platform:raw_coding",
