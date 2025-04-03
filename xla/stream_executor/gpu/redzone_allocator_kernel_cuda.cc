@@ -46,8 +46,8 @@ static absl::StatusOr<TypedKernel<Args...>*> LoadKernelOrGetPtr(
       std::tuple<StreamExecutor*, std::string, std::string>;
 
   static absl::Mutex kernel_ptr_cache_mutex(absl::kConstInit);
-  static auto& kernel_ptr_cache ABSL_GUARDED_BY(kernel_ptr_cache_mutex) =
-      *new absl::node_hash_map<KernelPtrCacheKey, TypedKernel<Args...>>();
+  static absl::node_hash_map<KernelPtrCacheKey, TypedKernel<Args...>>
+      kernel_ptr_cache ABSL_GUARDED_BY(kernel_ptr_cache_mutex);
   KernelPtrCacheKey kernel_ptr_cache_key{executor, kernel_name, ptx};
   absl::MutexLock lock(&kernel_ptr_cache_mutex);
 
@@ -60,7 +60,6 @@ static absl::StatusOr<TypedKernel<Args...>*> LoadKernelOrGetPtr(
         kernel_ptr_cache.emplace(kernel_ptr_cache_key, std::move(loaded)).first;
   }
 
-  CHECK(it != kernel_ptr_cache.end());
   return &it->second;
 }
 
