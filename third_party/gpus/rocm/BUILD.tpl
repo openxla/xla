@@ -37,6 +37,13 @@ config_setting(
     },
 )
 
+sh_binary(
+    name = "asan_wrapper",
+    srcs = ["asan_wrapper.sh"],
+    data = ["asan_blacklist.txt"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "config",
     hdrs = [
