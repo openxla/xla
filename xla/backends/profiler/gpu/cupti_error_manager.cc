@@ -287,7 +287,6 @@ CUptiResult CuptiErrorManager::SetThreadIdType(
   return error;
 }
 
-#if CUPTI_PM_SAMPLING
 // Profiler Host APIs
 CUptiResult CuptiErrorManager::ProfilerHostInitialize(
     CUpti_Profiler_Host_Initialize_Params* pParams) {
@@ -646,7 +645,6 @@ CUptiResult CuptiErrorManager::PmSamplingCounterDataGetSampleInfo(
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
-#endif // CUPTI_PM_SAMPLING
 
 CUptiResult CuptiErrorManager::DeviceGetChipName(
     CUpti_Device_GetChipName_Params* pParams) {

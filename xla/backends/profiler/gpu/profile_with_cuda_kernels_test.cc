@@ -48,7 +48,6 @@ class TestableCuptiTracer : public CuptiTracer {
 
 namespace {
 
-#if CUPTI_PM_SAMPLING
 std::atomic_uint64_t atomic_total_fp64 = 0;
 std::atomic_uint64_t atomic_total_read = 0;
 std::atomic_uint64_t atomic_total_write = 0;
@@ -71,27 +70,11 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
     EXPECT_LT(ns_per_sample, 500000. * 1.05);
   }
 
-#define VERBOSE_LOGGING 0
-#if VERBOSE_LOGGING
-  LOG(INFO) << info->num_completed << " samples found for device " <<
-      info->device_id << " over " << ranges_duration << " ns, " <<
-      ns_per_sample << " ns per sample";
-
-    LOG(INFO) << "  Decode stopped due to " << info->decode_stop_reason;
-    LOG(INFO) << "  Room for " << info->num_samples << " samples, " <<
-        info->num_populated << " populated";
-    LOG(INFO) << "  The following metrics were gathered, with their sums:";
-#endif
-
   for (int i = 0; i < info->metrics.size(); i++) {
     double sum = 0;
     for (int j = 0; j < info->sampler_ranges.size(); j++) {
       sum += info->sampler_ranges[j].metric_values[i];
     }
-
-#if VERBOSE_LOGGING
-    LOG(INFO) << "  " << info->metrics[i] << " = " << sum;
-#endif
 
     if (strcmp("sm__inst_executed_pipe_fp64.sum", info->metrics[i]) == 0) {
       atomic_total_fp64 += sum;
@@ -104,12 +87,19 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
     }
   }
   return; };
-#endif // CUPTI_PM_SAMPLING
 
 TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
+    // Ensure this is only run on CUPTI > 26 (paired w/ CUDA 12.6)
+    uint32_t cupti_version = 0;
+    cuptiGetVersion(&cupti_version);
+    EXPECT_GE(cupti_version, 24);
+
+    if (! CUPTI_PM_SAMPLING || (cupti_version < 24)) {
+        GTEST_SKIP() << "PM Sampling not supported on this version of CUPTI";
+    }
+
     constexpr int kNumElements = 256*1024;
 
-#if CUPTI_PM_SAMPLING
     CuptiTracerCollectorOptions collector_options;
     collector_options.num_gpus = CuptiTracer::NumGpus();
     auto start_walltime_ns = absl::GetCurrentTimeNanos();
@@ -135,12 +125,10 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
     TestableCuptiTracer tracer;
     tracer.Enable(tracer_options, collector.get());
-#endif // CUPTI_PM_SAMPLING
 
     // SimpleAddSub does num_elements * 4 integer add / subs
     std::vector<double> vec = SimpleAddSubWithProfiler(kNumElements);
 
-#if CUPTI_PM_SAMPLING
     tracer.Disable();
 
     EXPECT_EQ(vec.size(), kNumElements);
@@ -161,7 +149,6 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
     LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
     EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
-#endif // CUPTI_PM_SAMPLING
 }
 
 }  // namespace

@@ -126,7 +126,6 @@ CUptiResult CuptiWrapperStub::SetThreadIdType(CUpti_ActivityThreadIdType type) {
   return CUPTI_SUCCESS;
 }
 
-#if CUPTI_PM_SAMPLING
 // Profiler Host APIs
 CUptiResult CuptiWrapperStub::ProfilerHostInitialize(
     CUpti_Profiler_Host_Initialize_Params* pParams) {
@@ -351,7 +350,6 @@ CUptiResult CuptiWrapperStub::PmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) {
   return CUPTI_SUCCESS;
 }
-#endif // CUPTI_PM_SAMPLING
 
 CUptiResult CuptiWrapperStub::DeviceGetChipName(
     CUpti_Device_GetChipName_Params* pParams) {

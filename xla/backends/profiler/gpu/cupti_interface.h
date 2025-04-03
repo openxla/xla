@@ -19,12 +19,11 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
+#include "third_party/gpus/cuda/include/cuda.h"
+
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_target.h"
-#include "third_party/gpus/cuda/include/cuda.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/types.h"
 
@@ -32,6 +31,8 @@ limitations under the License.
 // Note - bug fix for PM sampling added after 12.6.2
 #if CUDA_VERSION >= 12060
 #define CUPTI_PM_SAMPLING 1
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
 #else
 #define CUPTI_PM_SAMPLING 0
 #endif
@@ -113,7 +114,6 @@ class CuptiInterface {
 
   virtual CUptiResult SetThreadIdType(CUpti_ActivityThreadIdType type) = 0;
 
-#if CUPTI_PM_SAMPLING
   // Functions related to profiling APIs - range profiling, PC sampling, PM
   // sampling Equivalent functions are declared in
   // cuda/extras/CUPTI/include/cupti_profiler_host.h and
@@ -211,7 +211,6 @@ class CuptiInterface {
       CUpti_PmSampling_GetCounterDataInfo_Params* pParams) = 0;
   virtual CUptiResult PmSamplingCounterDataGetSampleInfo(
       CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) = 0;
-#endif // CUPTI_PM_SAMPLING
 
   virtual CUptiResult DeviceGetChipName(
       CUpti_Device_GetChipName_Params* pParams) = 0;
