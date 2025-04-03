@@ -271,6 +271,7 @@ cc_library(
         "cuda-only",
         "gpu",
     ],
+    visibility = ["//visibility:private"],
     deps = [
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
@@ -356,9 +357,6 @@ xla_cc_test(
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
-        "//xla/pjrt/gpu:se_gpu_pjrt_client",
-        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",
-        "//xla/tests:literal_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
