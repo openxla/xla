@@ -34,14 +34,7 @@ std::optional<CollectivePermuteKey> GetCollectivePermuteKey(
   }
 
   const auto* cp = Cast<HloCollectivePermuteInstruction>(instruction);
-  return CollectivePermuteKey{cp->source_target_pairs(),
-                              instruction->parent()
-                                      ->parent()
-                                      ->config()
-                                      .debug_options()
-                                      .xla_ignore_channel_id()
-                                  ? std::nullopt
-                                  : cp->channel_id()};
+  return CollectivePermuteKey{cp->source_target_pairs()};
 }
 
 }  // namespace xla

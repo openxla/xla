@@ -301,46 +301,6 @@ ENTRY %CombineCollectivePermutes () -> (f32[256], f32[512], f32[2560], f32[1792]
   EXPECT_TRUE(changed);
 }
 
-TEST_F(CollectivePermuteCombinerTest, ChannelIdPreventsCombining) {
-  const char* const hlo_string = R"(
-HloModule CombineCollectivePermutes, entry_computation_layout={()->(f32[256]{0}, f32[512]{0}, f32[2560]{0}, f32[1792]{0}, f32[1536]{0})}
-
-ENTRY %CombineCollectivePermutes () -> (f32[256], f32[512], f32[2560], f32[1792], f32[1536]) {
-  %constant = f64[] constant(42.3)
-  %broadcast = f32[256]{0} broadcast(f64[] %constant), dimensions={}
-  %collective-permute = f32[256]{0} collective-permute(f32[256]{0} %broadcast), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=1
-
-  %constant.1 = f64[] constant(42.3)
-  %broadcast.1 = f32[512]{0} broadcast(f64[] %constant.1), dimensions={}
-  %collective-permute.1 = f32[512]{0} collective-permute(f32[512]{0} %broadcast.1), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=1
-
-  %constant.2 = f64[] constant(42.3)
-  %broadcast.2 = f32[2560]{0} broadcast(f64[] %constant.2), dimensions={}
-  %collective-permute.2 = f32[2560]{0} collective-permute(f32[2560]{0} %broadcast.2), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=2
-
-  %constant.3 = f64[] constant(42.3)
-  %broadcast.3 = f32[1792]{0} broadcast(f64[] %constant.3), dimensions={}
-  %collective-permute.3 = f32[1792]{0} collective-permute(f32[1792]{0} %broadcast.3), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=2
-
-  %constant.4 = f64[] constant(42.3)
-  %broadcast.4 = f32[1536]{0} broadcast(f64[] %constant.4), dimensions={}
-  %collective-permute.4 = f32[1536]{0} collective-permute(f32[1536]{0} %broadcast.4), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=1
-  
-  ROOT %tuple = (f32[256]{0}, f32[512]{0}, f32[2560]{0}, f32[1792]{0}, f32[1536]{0}) tuple(f32[256]{0} %collective-permute, f32[512]{0} %collective-permute.1, f32[2560]{0} %collective-permute.2, f32[1792]{0} %collective-permute.3, f32[1536]{0} %collective-permute.4)
-})";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  const int64_t total_count = 5;
-  CollectivePermuteCombiner combine(1024 * 1024, kMaxCombineCount);
-  ASSERT_EQ(CollectivePermuteCount(*module), total_count);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
-  // Expect two combined collective permute ops since there are two types of
-  // channel_id in HLO
-  EXPECT_EQ(CollectivePermuteCount(*module), 2);
-  EXPECT_TRUE(changed);
-}
-
 TEST_F(CollectivePermuteCombinerTest, IgnoreChannelId) {
   const char* const hlo_string = R"(
 HloModule CombineCollectivePermutes, entry_computation_layout={()->(f32[256]{0}, f32[512]{0}, f32[2560]{0}, f32[1792]{0}, f32[1536]{0})}
