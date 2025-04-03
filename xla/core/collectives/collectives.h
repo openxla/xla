@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 
 namespace xla {
 
@@ -93,6 +94,20 @@ class Collectives {
   // collectives instance stays alive until all the XLA program executions that
   // use it are finished.
   void AddOnDestroyCallback(absl::AnyInvocable<void()> callback);
+
+  // Set global initialization information used by NVSHMEM
+  virtual void SetEnvInfo(int process_id, size_t num_processes,
+                          size_t device_count_per_process,
+                          std::weak_ptr<KeyValueStoreInterface> kv_store) {}
+
+  // Allocation/Deallocation for NVSHMEM memory
+  virtual absl::StatusOr<void*> Allocate(uint64_t bytes) {
+    return absl::UnimplementedError("Not implemented.");
+  }
+
+  virtual absl::Status Deallocate(void* buffer) {
+    return absl::UnimplementedError("Not implemented.");
+  }
 
  protected:
   Collectives() = default;
