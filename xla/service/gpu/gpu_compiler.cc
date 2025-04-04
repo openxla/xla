@@ -239,6 +239,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/gemv_rewriter.h"
 #include "xla/service/gpu/transforms/layout_assignment.h"
+#include "xla/service/gpu/transforms/l2_prefetch_scheduler.h"
 #include "xla/service/gpu/transforms/move_copy_to_users.h"
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
@@ -563,8 +564,8 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
 
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
-void AddHloVerifier(HloPassPipeline* pipeline,
-                    HloVerifierOpts&& opts = {}, bool debug_only = false) {
+void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
+                    bool debug_only = false) {
   opts.verify_no_collective_deadlocks = true;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
@@ -2541,7 +2542,7 @@ GpuCompiler::CompileToBackendResult(
   TF_RETURN_IF_ERROR(pipeline.Run(module).status());
   TF_RETURN_IF_ERROR(
       RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
-                                 gpu_device_info, alias_info.get()));
+                                 gpu_device_info, alias_info.get(), options));
 
   absl::StatusOr<se::Platform*> platform =
       se::PlatformManager::PlatformWithId(PlatformId());
@@ -2966,7 +2967,7 @@ HloRematerialization::Options CreateRematOpts(
 absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloModule* module, int64_t scheduler_mem_limit,
     const se::DeviceDescription& gpu_device_info,
-    const GpuAliasInfo* alias_info) {
+    const GpuAliasInfo* alias_info, const CompileOptions& options) {
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
   TF_RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
   HloPassPipeline main_pipeline("post-scheduling-passes");
@@ -3015,8 +3016,13 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
 
+  if (!options.is_autotuning_compilation) {
+    main_pipeline.AddPass<L2PrefetchScheduler>(gpu_device_info);
+  }
+
   const auto* cuda_cc =
       gpu_device_info.gpu_compute_capability().cuda_compute_capability();
+
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.

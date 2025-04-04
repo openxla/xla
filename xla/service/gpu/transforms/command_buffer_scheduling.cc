@@ -141,6 +141,10 @@ static bool AsyncStartOrDoneCommandIsSupported(
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
+  if (hlo->async_wrapped_opcode() == HloOpcode::kCustomCall) {
+    return config.enabled_commands.contains(DebugOptions::CUSTOM_CALL);
+  }
+
   return false;
 }
 

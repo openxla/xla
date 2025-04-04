@@ -98,7 +98,7 @@ class GpuCompiler : public LLVMCompiler {
   absl::Status RunPostSchedulingPipelines(
       HloModule* module, int64_t scheduler_mem_limit,
       const se::DeviceDescription& gpu_device_info,
-      const GpuAliasInfo* alias_info);
+      const GpuAliasInfo* alias_info, const CompileOptions& = CompileOptions{});
 
   std::string target_triple() const { return target_triple_; }
   std::string data_layout() const { return data_layout_; }
