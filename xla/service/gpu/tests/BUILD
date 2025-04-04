@@ -613,6 +613,7 @@ lit_test_suite(
             "calling_convention.hlo",
             "dot_bf16.hlo",
             "kernel_reuse.hlo",
+            "l2_prefetch.hlo",
             "offload_scan_output.hlo",
             "pad_to_static.hlo",
             "reduce_fold_zero_add.hlo",
