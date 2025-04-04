@@ -219,6 +219,7 @@ TEST_P(ConvolutionTest, Conv3DWithBiasTest) {
 TEST_P(ConvolutionTest, Conv2DWithSmallBiasTest) {
   const absl::string_view outline = R"(
   HloModule convolution.test.with.constant.bias
+
   ENTRY convolution.test.with.bias {
     arg.0 = $dtype[1,10,10,32] parameter(0)
     arg.1 = $dtype[10,10,32,64] parameter(1)
