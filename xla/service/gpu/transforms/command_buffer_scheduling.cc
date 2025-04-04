@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -134,6 +135,10 @@ static bool AsyncStartOrDoneCommandIsSupported(
   if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
       hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
+  }
+
+  if (hlo->async_wrapped_opcode() == HloOpcode::kCustomCall) {
+    return config.enabled_commands.contains(DebugOptions::CUSTOM_CALL);
   }
 
   return false;
@@ -405,7 +410,7 @@ static void RemoveTrailingNoOps(HloInstructionSequence& seq) {
 // Moving the GTE right after `t` solves this, as command-buffers never start
 // with a GTE, so it's impossible for a command buffer to contain the GTE but
 // not the custom-call itself.
-static absl::StatusOr<bool> MoveGTEsRightAfterTupleDefinition(
+absl::StatusOr<bool> MoveGTEsRightAfterTupleDefinition(
     HloComputation* computation) {
   HloInstructionSequence new_sequence;
   HloSchedule& schedule = computation->parent()->schedule();
@@ -615,8 +620,13 @@ absl::StatusOr<bool> CommandBufferScheduling::MoveParametersAndConstantsToFront(
   HloSchedule& schedule = computation->parent()->schedule();
   HloInstructionSequence& sequence = schedule.GetOrCreateSequence(computation);
 
+  auto should_move = [](const HloInstruction& inst) {
+    return IsParameter(&inst) || IsConstant(&inst) ||
+           hlo_query::IsEffectiveParameter(inst);
+  };
+
   for (HloInstruction* inst : sequence.instructions()) {
-    if (IsParameter(inst) || IsConstant(inst)) {
+    if (should_move(*inst)) {
       new_sequence.push_back(inst);
 
       // Because we move instruction to the front of the computation we can't
@@ -633,7 +643,7 @@ absl::StatusOr<bool> CommandBufferScheduling::MoveParametersAndConstantsToFront(
   }
 
   for (HloInstruction* inst : sequence.instructions()) {
-    if (!IsParameter(inst) && !IsConstant(inst)) {
+    if (!should_move(*inst)) {
       new_sequence.push_back(inst);
     }
   }
@@ -644,6 +654,22 @@ absl::StatusOr<bool> CommandBufferScheduling::MoveParametersAndConstantsToFront(
     if (old_i != new_i) return true;
   }
   return false;
+}
+
+static std::optional<std::string> GetCustomFusionKind(
+    const HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return std::nullopt;
+  }
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return std::nullopt;
+  }
+  const FusionBackendConfig& fusion_backend_config =
+      backend_config->fusion_backend_config();
+  return fusion_backend_config.kind();
 }
 
 //===----------------------------------------------------------------------===//
@@ -733,7 +759,8 @@ absl::StatusOr<CommandBuffer> CommandBufferScheduling::PrepareCommandBuffer(
   std::vector<HloInstruction*> returned;
 
   auto has_external_users = [&](HloInstruction* inst) {
-    return inst->IsRoot() || absl::c_any_of(inst->users(), [&](auto* user) {
+    return inst->IsRoot() || (GetCustomFusionKind(inst) == kL2Prefetch) ||
+           absl::c_any_of(inst->users(), [&](auto* user) {
              return !in_command_buffer.contains(user);
            });
   };

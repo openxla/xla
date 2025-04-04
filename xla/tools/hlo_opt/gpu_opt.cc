@@ -216,7 +216,7 @@ class GpuOptProvider : public CompiledOptProvider {
                               device_description, alias_info.get()));
       TF_RETURN_IF_ERROR(gpu_compiler->RunPostSchedulingPipelines(
           optimized_module, schedule_metadata.scheduler_mem_limit,
-          device_description, alias_info.get()));
+          device_description, alias_info.get(), Compiler::CompileOptions()));
     }
 
     llvm::LLVMContext llvm_context;
