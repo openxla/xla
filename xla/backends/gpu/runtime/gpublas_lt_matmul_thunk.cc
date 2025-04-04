@@ -129,12 +129,13 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(se::Stream *stream,
 absl::StatusOr<se::gpu::BlasLt::MatmulPlan *> 
         CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
 
+  auto *blas_lt = se::gpu::BlasLt::Get(params.stream);
   auto create = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr>  {
     VLOG(2) << this << ": Adding new MatmulPlan for stream: " << params.stream << 
                        " instr: " << canonical_hlo_;
     
-    TF_ASSIGN_OR_RETURN(auto plan, se::gpu::BlasLt::GetMatmulPlan(
-                params.stream, gemm_config_, epilogue_));
+    TF_ASSIGN_OR_RETURN(auto plan, blas_lt->GetMatmulPlan(
+                                                    gemm_config_, epilogue_));
     // if workspace buffer is not provided, consider onlt the algorithms which
     // do not require a scratch space
     int64_t max_workspace = workspace_.has_value()
@@ -149,8 +150,7 @@ absl::StatusOr<se::gpu::BlasLt::MatmulPlan *>
     TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[algorithm_idx_]));
     return std::move(plan);
   };
-  return se::gpu::BlasLt::Get(params.stream)->GetOrCreateMatmulPlan(
-            canonical_hlo_, create);
+  return blas_lt->GetOrCreateMatmulPlan(canonical_hlo_, create);
 }
 
 absl::Status CublasLtMatmulThunk::Initialize(const InitializeParams& params) {
