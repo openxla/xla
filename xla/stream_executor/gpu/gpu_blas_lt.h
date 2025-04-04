@@ -26,6 +26,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/container/flat_hash_map.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/host_or_device_scalar.h"
@@ -123,6 +125,7 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
 };
 
 struct BlasLt {
+
   enum class Epilogue {
     kDefault = 1,                   // No special postprocessing
     kReLU = 2,                      // Apply point-wise ReLU function
@@ -235,6 +238,7 @@ struct BlasLt {
   };  // class MatmulPlan
 
   using MatmulPlanPtr = std::unique_ptr<MatmulPlan>;
+  using PlanCreateFunc = absl::AnyInvocable<absl::StatusOr<MatmulPlanPtr>()>;
 
   virtual absl::Status Init() = 0;
 
@@ -248,7 +252,19 @@ struct BlasLt {
                                                      const GemmConfig& cfg,
                                                      Epilogue epilogue);
 
+  absl::StatusOr<MatmulPlan *> GetOrCreateMatmulPlan(
+                    const std::string& key, PlanCreateFunc create);
+  
+  void ClearMatmulPlanCache();
+  size_t GetMatmulPlanCacheSize() const;
+
   virtual ~BlasLt() {}
+
+protected:
+  mutable absl::Mutex plan_cache_mu_;
+  absl::flat_hash_map<std::string, MatmulPlanPtr> plan_cache_
+          ABSL_GUARDED_BY(plan_cache_mu_);
+
 };  // class BlasLt
 
 }  // namespace stream_executor::gpu

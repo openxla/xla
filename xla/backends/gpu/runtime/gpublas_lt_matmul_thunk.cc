@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
-#include "xla/backends/gpu/runtime/gpublas_lt_matmul_plan_cache.h"
 
 #include <cstdint>
 #include <optional>
@@ -85,16 +84,6 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
   }
 }
 
-/* static */ size_t CublasLtMatmulThunk::GetMatmulPlanCacheSize(
-        se::StreamExecutor *exec) {
-  return MatmulPlanCache::GetCacheForExecutor(exec).size();
-}
- 
-/* static */ void CublasLtMatmulThunk::ClearMatmulPlanCache(
-        se::StreamExecutor *exec) {
-  MatmulPlanCache::GetCacheForExecutor(exec).clear();
-}
-
 absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(se::Stream *stream, 
                                       const ExecuteParams& params) 
 {
@@ -160,8 +149,8 @@ absl::StatusOr<se::gpu::BlasLt::MatmulPlan *>
     TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[algorithm_idx_]));
     return std::move(plan);
   };
-  return MatmulPlanCache::GetCacheForExecutor(params.stream->parent()).
-            GetOrCreate(canonical_hlo_, create);
+  return se::gpu::BlasLt::Get(params.stream)->GetOrCreateMatmulPlan(
+            canonical_hlo_, create);
 }
 
 absl::Status CublasLtMatmulThunk::Initialize(const InitializeParams& params) {
