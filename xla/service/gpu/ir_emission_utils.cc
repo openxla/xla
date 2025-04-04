@@ -146,6 +146,11 @@ bool IsCustomCallToTopK(const HloInstruction& hlo) {
          hlo.custom_call_target() == kTopKCustomCallTarget;
 }
 
+bool IsL2PrefetchCustomCall(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kL2Prefetch;
+}
+
 static bool IsContiguousSlice(
     const Shape& orig, const Shape& sliced,
     std::optional<absl::Span<const int64_t>> slice_strides) {
