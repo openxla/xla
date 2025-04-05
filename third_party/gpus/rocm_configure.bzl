@@ -447,6 +447,16 @@ def _create_dummy_repository(repository_ctx):
         "crosstool/error_gpu_disabled.bzl",
         _DUMMY_CROSSTOOL_BZL_FILE,
     )
+
+    # asan blacklist
+    _tpl(
+        repository_ctx,
+        "rocm:asan_blacklist.txt",
+    )
+    _tpl(
+        repository_ctx,
+        "rocm:asan_wrapper.sh",
+    )
     repository_ctx.file("crosstool/BUILD", _DUMMY_CROSSTOOL_BUILD_FILE)
 
 def _norm_path(path):
@@ -565,6 +575,8 @@ def _create_local_rocm_repository(repository_ctx):
         "crosstool:hipcc_cc_toolchain_config.bzl",
         "crosstool:clang/bin/crosstool_wrapper_driver_rocm",
         "rocm:rocm_config.h",
+        "rocm:asan_blacklist.txt",
+        "rocm:asan_wrapper.sh",
     ]}
 
     rocm_config = _setup_rocm_distro_dir(repository_ctx)
@@ -607,6 +619,17 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocm_version_number}": str(rocm_version_number),
             "%{rocm_hipblaslt}": "True" if rocm_libs["hipblaslt"] != None else "False",
         },
+    )
+
+    # asan wrapper
+    repository_ctx.template(
+        "rocm/asan_blacklist.txt",
+        tpl_paths["rocm:asan_blacklist.txt"],
+    )
+
+    repository_ctx.template(
+        "rocm/asan_wrapper.sh",
+        tpl_paths["rocm:asan_wrapper.sh"],
     )
 
     repository_dict = {
