@@ -1919,6 +1919,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_enable_reduction_epilogue_fusion),
       debug_options->xla_gpu_enable_reduction_epilogue_fusion(),
       "Enable fusion for reduction epilogues"));
+  flag_list->push_back(tsl::Flag("xla_gpu_enable_nccl_clique_optimization",
+                                 noop_flag_setter<bool>, false,
+                                 "[Deprecated, do not use]."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_enable_nccl_clique_optimization",
                 bool_setter_for(
