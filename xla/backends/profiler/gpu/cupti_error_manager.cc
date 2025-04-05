@@ -287,6 +287,373 @@ CUptiResult CuptiErrorManager::SetThreadIdType(
   return error;
 }
 
+// Profiler Host APIs
+CUptiResult CuptiErrorManager::ProfilerHostInitialize(
+    CUpti_Profiler_Host_Initialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostInitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostDeinitialize(
+    CUpti_Profiler_Host_Deinitialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostDeinitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetSupportedChips(
+    CUpti_Profiler_Host_GetSupportedChips_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetSupportedChips(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetBaseMetrics(
+    CUpti_Profiler_Host_GetBaseMetrics_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetBaseMetrics(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetSubMetrics(
+    CUpti_Profiler_Host_GetSubMetrics_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetSubMetrics(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetMetricProperties(
+    CUpti_Profiler_Host_GetMetricProperties_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetMetricProperties(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetRangeName(
+    CUpti_Profiler_Host_GetRangeName_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetRangeName(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostEvaluateToGpuValues(
+    CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostEvaluateToGpuValues(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostConfigAddMetrics(
+    CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostConfigAddMetrics(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetConfigImageSize(
+    CUpti_Profiler_Host_GetConfigImageSize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetConfigImageSize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetConfigImage(
+    CUpti_Profiler_Host_GetConfigImage_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetConfigImage(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetNumOfPasses(
+    CUpti_Profiler_Host_GetNumOfPasses_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerHostGetNumOfPasses(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerHostGetMaxNumHardwareMetricsPerPass(
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err =
+      interface_->ProfilerHostGetMaxNumHardwareMetricsPerPass(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+// Profiler Target APIs
+CUptiResult CuptiErrorManager::ProfilerInitialize(
+    CUpti_Profiler_Initialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerInitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerDeInitialize(
+    CUpti_Profiler_DeInitialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerDeInitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerCounterDataImageCalculateSize(
+    CUpti_Profiler_CounterDataImage_CalculateSize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerCounterDataImageCalculateSize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerCounterDataImageInitialize(
+    CUpti_Profiler_CounterDataImage_Initialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerCounterDataImageInitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult
+CuptiErrorManager::ProfilerCounterDataImageCalculateScratchBufferSize(
+    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
+        pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err =
+      interface_->ProfilerCounterDataImageCalculateScratchBufferSize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerCounterDataImageInitializeScratchBuffer(
+    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err =
+      interface_->ProfilerCounterDataImageInitializeScratchBuffer(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerBeginSession(
+    CUpti_Profiler_BeginSession_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerBeginSession(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerEndSession(
+    CUpti_Profiler_EndSession_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerEndSession(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerSetConfig(
+    CUpti_Profiler_SetConfig_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerSetConfig(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerUnsetConfig(
+    CUpti_Profiler_UnsetConfig_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerUnsetConfig(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerBeginPass(
+    CUpti_Profiler_BeginPass_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerBeginPass(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerEndPass(
+    CUpti_Profiler_EndPass_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerEndPass(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerEnableProfiling(
+    CUpti_Profiler_EnableProfiling_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerEnableProfiling(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerDisableProfiling(
+    CUpti_Profiler_DisableProfiling_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerDisableProfiling(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerIsPassCollected(
+    CUpti_Profiler_IsPassCollected_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerIsPassCollected(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerFlushCounterData(
+    CUpti_Profiler_FlushCounterData_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerFlushCounterData(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerPushRange(
+    CUpti_Profiler_PushRange_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerPushRange(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerPopRange(
+    CUpti_Profiler_PopRange_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerPopRange(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerGetCounterAvailability(
+    CUpti_Profiler_GetCounterAvailability_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerGetCounterAvailability(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::ProfilerDeviceSupported(
+    CUpti_Profiler_DeviceSupported_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->ProfilerDeviceSupported(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingSetConfig(
+    CUpti_PmSampling_SetConfig_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingSetConfig(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingEnable(
+    CUpti_PmSampling_Enable_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingEnable(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingDisable(
+    CUpti_PmSampling_Disable_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingDisable(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingStart(
+    CUpti_PmSampling_Start_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingStart(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingStop(
+    CUpti_PmSampling_Stop_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingStop(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingDecodeData(
+    CUpti_PmSampling_DecodeData_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingDecodeData(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingGetCounterAvailability(
+    CUpti_PmSampling_GetCounterAvailability_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingGetCounterAvailability(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingGetCounterDataSize(
+    CUpti_PmSampling_GetCounterDataSize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingGetCounterDataSize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingCounterDataImageInitialize(
+    CUpti_PmSampling_CounterDataImage_Initialize_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingCounterDataImageInitialize(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingGetCounterDataInfo(
+    CUpti_PmSampling_GetCounterDataInfo_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingGetCounterDataInfo(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::PmSamplingCounterDataGetSampleInfo(
+    CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->PmSamplingCounterDataGetSampleInfo(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::DeviceGetChipName(
+    CUpti_Device_GetChipName_Params* pParams) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->DeviceGetChipName(pParams);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
 void CuptiErrorManager::CleanUp() {
   if (undo_disabled_) {  // prevent deadlock
     return;

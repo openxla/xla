@@ -452,3 +452,36 @@ xla_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cuda_library(
+    name = "profile_with_cuda_kernels",
+    testonly = 1,
+    srcs = ["profile_with_cuda_kernels.cu.cc"],
+    hdrs = ["profile_with_cuda_kernels.h"],
+    copts = if_nvcc([
+        "-nvcc_options",
+        "ptxas-options=-v",
+    ]),
+    tags = ["cuda-only"],
+    visibility = ["//visibility:public"],
+)
+
+xla_test(
+    name = "profile_with_cuda_kernels_test",
+    size = "small",
+    srcs = ["profile_with_cuda_kernels_test.cc"],
+    backends = ["gpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "cuda-only",
+        "no_mac",
+    ],
+    deps = if_cuda([
+        ":cupti_collector",
+        ":cupti_tracer",
+        ":cupti_utils",
+    ]) + [
+        ":profile_with_cuda_kernels",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
