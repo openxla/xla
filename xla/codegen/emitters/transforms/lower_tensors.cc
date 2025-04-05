@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/util.h"
@@ -674,6 +675,18 @@ struct RewriteAllocateShared : OpRewritePattern<gpu::AllocateSharedOp> {
   }
 };
 
+struct RewriteBitcastConvert : OpRewritePattern<mlir::mhlo::BitcastConvertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(
+      mlir::mhlo::BitcastConvertOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(
+        op, op.getResult().getType(), op.getOperand());
+    return success();
+  }
+};
+
 struct RewriteNonScalarConstants : OpRewritePattern<mlir::arith::ConstantOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -1276,10 +1289,11 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
     mlir::RewritePatternSet tensor_patterns(mlir_context);
 
     tensor_patterns.add<RewriteAtomicRMW>(mlir_context, device_spec_);
-    tensor_patterns
-        .add<RewriteAllocateShared, RewriteNonScalarConstants,
-             RewriteSyncThreads, RewriteTensorExtract, RewriteTransferRead,
-             RewriteTensorInsert, RewriteTransferWrite>(mlir_context);
+    tensor_patterns.add<RewriteAllocateShared, RewriteBitcastConvert,
+                        RewriteNonScalarConstants, RewriteSyncThreads,
+                        RewriteTensorExtract, RewriteTransferRead,
+                        RewriteTensorInsert, RewriteTransferWrite>(
+        mlir_context);
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                  std::move(tensor_patterns)))) {
       signalPassFailure();

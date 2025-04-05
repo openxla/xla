@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
@@ -757,11 +758,26 @@ class FlattenTensorsPass
       return;
     }
     // Check if there are no unrealized_conversion_casts.
-    bool module_has_casts = module
-                                .walk([](UnrealizedConversionCastOp op) {
-                                  return mlir::WalkResult::interrupt();
-                                })
-                                .wasInterrupted();
+    // Allow such casts around `mhlo::BitcastConvertOp`, which changes both the
+    // type and the shape of the tensor.
+    bool module_has_casts =
+        module
+            .walk([](UnrealizedConversionCastOp op) {
+              Value input = op.getInputs().front();
+              Value output = op.getOutputs().front();
+              auto is_bitcast_convert = [](mlir::Operation* op) {
+                return op != nullptr &&
+                       mlir::isa<mlir::mhlo::BitcastConvertOp>(op);
+              };
+              if (is_bitcast_convert(input.getDefiningOp()) ||
+                  llvm::all_of(output.getUses(), [&](mlir::OpOperand& use) {
+                    return is_bitcast_convert(use.getOwner());
+                  })) {
+                return mlir::WalkResult::advance();
+              }
+              return mlir::WalkResult::interrupt();
+            })
+            .wasInterrupted();
     if (module_has_casts) {
       llvm::outs() << "FlattenTensorsPass failed to converge";
       signalPassFailure();
