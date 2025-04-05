@@ -58,6 +58,10 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
+// TODO: These timeouts should really be configurable via debug options.
+extern "C" int XLA_FIRST_CALL_RENDEZVOUS_WARN = 20;
+extern "C" int XLA_FIRST_CALL_RENDEZVOUS_TERMINATE = 40;
+
 namespace xla::gpu {
 namespace {
 
@@ -482,8 +486,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     Rendezvous(first_call_rendezvous_flag_, rendezvous_name, rendezvous_key,
                num_local_participants,
-               /*warn_stuck_timeout=*/absl::Seconds(20),
-               /*terminate_timeout=*/absl::Seconds(40));
+               /*warn_stuck_timeout=*/absl::Seconds(XLA_FIRST_CALL_RENDEZVOUS_WARN),
+               /*terminate_timeout=*/absl::Seconds(XLA_FIRST_CALL_RENDEZVOUS_TERMINATE));
   }
 
   return absl::OkStatus();
