@@ -353,6 +353,7 @@ xla_cc_test(
         ":nvshmem_collectives",
         "//xla:debug_options_flags",
         "//xla:status_macros",
+        "//xla/hlo/utils:hlo_query",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",

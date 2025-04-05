@@ -94,7 +94,6 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
 }  // namespace xla::gpu
 
 int main(int argc, char* argv[]) {
-  // Save name of binary so that it may invoke itself.
   int node_id = -1;
   int num_nodes = -1;
   std::vector<tsl::Flag> flag_list = {
@@ -102,7 +101,6 @@ int main(int argc, char* argv[]) {
       tsl::Flag("num_nodes", &num_nodes,
                 "Number of nodes for Initialization test."),
   };
-  xla::AppendDebugOptionsFlags(&flag_list);
   std::string usage = tsl::Flags::Usage(argv[0], flag_list);
   tsl::Flags::Parse(&argc, argv, flag_list);
   testing::InitGoogleTest(&argc, argv);

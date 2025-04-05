@@ -76,6 +76,7 @@ absl::Status NvshmemCollectives::InitializeOnce() {
     if (device_count_per_process_ != 1) {
       LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
     }
+
     nvshmemx_init_attr_t nvshmem_init_attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
     nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 
 namespace xla {
 
@@ -79,6 +80,11 @@ class Collectives {
   virtual absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
   SplitCommunicators(absl::Span<const Communicator* const> comms, int32_t color,
                      absl::Span<const RankId> keys, const Config& config) = 0;
+
+  // Set global initialization information used by NVSHMEM
+  virtual void SetEnvInfo(int process_id, size_t num_processes,
+                          size_t device_count_per_process,
+                          std::weak_ptr<KeyValueStoreInterface> kv_store) {}
 };
 
 }  // namespace xla
