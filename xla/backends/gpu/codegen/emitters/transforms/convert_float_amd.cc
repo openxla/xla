@@ -46,14 +46,12 @@ namespace {
 namespace LLVM = ::mlir::LLVM;
 namespace arith = ::mlir::arith;
 namespace vector = ::mlir::vector;
-using ::mlir::Value;
-using ::mlir::MLIRContext;
 
 template <typename SourceOp>
 struct Fp8OpRewritePattern : public mlir::OpRewritePattern<SourceOp> {
   using FixedVectorValue = mlir::TypedValue<mlir::FixedVectorType>;
   using FloatValue = mlir::TypedValue<mlir::FloatType>;
-  Fp8OpRewritePattern(MLIRContext* context, bool nativeNanooFp8)
+  Fp8OpRewritePattern(mlir::MLIRContext* context, bool nativeNanooFp8)
       : mlir::OpRewritePattern<SourceOp>(context),
         nativeNanooFp8_(nativeNanooFp8) {}
   bool isFp8(const mlir::Type& type) const {
@@ -132,7 +130,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
       return std::nullopt;
     }
 
-    auto vector = insert.getDest();
+    mlir::Value vector = insert.getDest();
 
     size_t element_count =
         mlir::cast<FixedVectorValue>(vector).getType().getNumElements();
@@ -156,8 +154,8 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
 
     addInput(value, pos);
 
-    Value input;
-    auto to_match = vector.getDefiningOp();
+    mlir::Value input;
+    mlir::Operation* to_match = vector.getDefiningOp();
     while (mlir::matchPattern(to_match, mlir::m_Op<vector::InsertOp>(
                                             mlir::m_Op<arith::TruncFOp>(
                                                 mlir::matchers::m_Any(&input)),
@@ -193,7 +191,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
                            mlir::cast<FixedVectorValue>(insert->getResult(0)));
   }
 
-  Value EmitVectorizedTruncToF8Intrinsic(
+  mlir::Value EmitVectorizedTruncToF8Intrinsic(
       llvm::SmallVector<mlir::Value, 4>& inputs, mlir::FixedVectorType to_ty,
       mlir::ImplicitLocOpBuilder& b) const {
     assert(isFp8(to_ty.getElementType()) || isBf8(to_ty.getElementType()));
@@ -213,9 +211,9 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
       }
     });
 
-    auto cvtIntr = b.getStringAttr(isFp8(to_ty.getElementType())
-                                       ? "llvm.amdgcn.cvt.pk.fp8.f32"
-                                       : "llvm.amdgcn.cvt.pk.bf8.f32");
+    mlir::StringAttr cvtIntr = b.getStringAttr(
+        isFp8(to_ty.getElementType()) ? "llvm.amdgcn.cvt.pk.fp8.f32"
+                                      : "llvm.amdgcn.cvt.pk.bf8.f32");
 
     size_t num_elements = to_ty.getNumElements();
     assert(num_elements == inputs.size() &&
@@ -223,12 +221,12 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
 
     size_t num_chunks = (num_elements + 2) / 4;
 
-    auto chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
+    mlir::Type chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
     mlir::Value chunks = b.create<LLVM::UndefOp>(chunks_ty);
     bool pos = false;
     for (size_t i = 0; i < inputs.size() / 2; i++) {
-      Value chunk_pos = b.create<LLVM::ConstantOp>(i32_ty, 2 * i / 4);
-      Value chunk = b.create<LLVM::ExtractElementOp>(chunks, chunk_pos);
+      mlir::Value chunk_pos = b.create<LLVM::ConstantOp>(i32_ty, 2 * i / 4);
+      mlir::Value chunk = b.create<LLVM::ExtractElementOp>(chunks, chunk_pos);
       LLVM::CallIntrinsicOp cvtOp = b.create<LLVM::CallIntrinsicOp>(
           i32_ty, cvtIntr,
           mlir::ValueRange{inputs[2 * i], inputs[2 * i + 1], chunk,
@@ -258,8 +256,8 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
         .getResult(0);
   }
 
-  Value EmitTruncToF8Intrinsic(Value value, mlir::FloatType to_ty,
-                               mlir::ImplicitLocOpBuilder& b) const {
+  mlir::Value EmitTruncToF8Intrinsic(mlir::Value value, mlir::FloatType to_ty,
+                                     mlir::ImplicitLocOpBuilder& b) const {
     assert(isFp8(to_ty) || isBf8(to_ty));
 
     mlir::FloatType f32_ty = b.getF32Type();
@@ -270,15 +268,17 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
       value = b.create<arith::TruncFOp>(f32_ty, value);
     }
 
-    auto cvtIntr = b.getStringAttr(isFp8(to_ty) ? "llvm.amdgcn.cvt.pk.fp8.f32"
-                                                : "llvm.amdgcn.cvt.pk.bf8.f32");
+    mlir::StringAttr cvtIntr =
+        b.getStringAttr(isFp8(to_ty) ? "llvm.amdgcn.cvt.pk.fp8.f32"
+                                     : "llvm.amdgcn.cvt.pk.bf8.f32");
 
     LLVM::CallIntrinsicOp cvtOp = b.create<LLVM::CallIntrinsicOp>(
         i32_ty, cvtIntr,
         mlir::ValueRange{value, b.create<LLVM::UndefOp>(f32_ty),
                          b.create<LLVM::UndefOp>(i32_ty),
                          b.create<LLVM::ConstantOp>(b.getI1Type(), 0)});
-    Value res = b.create<LLVM::TruncOp>(b.getI8Type(), cvtOp.getResults());
+    mlir::Value res =
+        b.create<LLVM::TruncOp>(b.getI8Type(), cvtOp.getResults());
     return b
         .create<mlir::UnrealizedConversionCastOp>(to_ty, mlir::ValueRange{res})
         .getResult(0);
@@ -300,11 +300,11 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
 
     if (match) {
       auto [input, outputs] = *match;
-      if (auto* input_op = input.getDefiningOp()) {
+      if (mlir::Operation* input_op = input.getDefiningOp()) {
         rewriter.setInsertionPointAfter(input_op);
       } else {
         rewriter.setInsertionPointToStart(
-            input.cast<mlir::BlockArgument>().getOwner());
+            mlir::cast<mlir::BlockArgument>(input).getOwner());
       }
       mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
       auto new_outputs = EmitVectorizedExtFromF8Intrinsic(
@@ -350,7 +350,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
       return std::nullopt;
     }
 
-    auto vector = extract.getVector();
+    mlir::Value vector = extract.getVector();
 
     size_t element_count =
         mlir::cast<FixedVectorValue>(vector).getType().getNumElements();
@@ -372,7 +372,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
       return true;
     };
 
-    for (const auto& use : vector.getUses()) {
+    for (const mlir::OpOperand& use : vector.getUses()) {
       extract = mlir::dyn_cast<vector::ExtractOp>(use.getOwner());
       if (!extract || !extract->hasOneUse() || extract.getVector() != vector ||
           !matchPos(extract, &pos)) {
@@ -395,7 +395,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
                            std::move(outputs));
   }
 
-  mlir::Value ConvertFromFloat(Value v, mlir::FloatType to_ty,
+  mlir::Value ConvertFromFloat(mlir::Value v, mlir::FloatType to_ty,
                                mlir::ImplicitLocOpBuilder& b) const {
     mlir::FloatType f32_ty = b.getF32Type();
     mlir::IntegerType i32_ty = b.getI32Type();
@@ -428,14 +428,14 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     mlir::IntegerType i16_ty = b.getI16Type();
     mlir::IntegerType i8_ty = b.getI8Type();
     mlir::IntegerType i1_ty = b.getI1Type();
-    Value zero_cst = b.create<LLVM::ConstantOp>(i32_ty, 0);
-    Value one_cst = b.create<LLVM::ConstantOp>(i32_ty, 1);
+    mlir::Value zero_cst = b.create<LLVM::ConstantOp>(i32_ty, 0);
+    mlir::Value one_cst = b.create<LLVM::ConstantOp>(i32_ty, 1);
 
     size_t num_elements = value.getType().getNumElements();
     assert(num_elements == 2 || num_elements % 4 == 0);
 
     size_t num_chunks = (num_elements + 2) / 4;
-    auto chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
+    mlir::Type chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
     mlir::Value chunks;
 
     if (num_elements == 2) {
@@ -458,15 +458,15 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     }
 
     llvm::SmallVector<mlir::Value, 4> results;
-    auto cvtIntr = b.getStringAttr(isFp8(value.getType().getElementType())
-                                       ? "llvm.amdgcn.cvt.pk.f32.fp8"
-                                       : "llvm.amdgcn.cvt.pk.f32.bf8");
-    auto result_ty = LLVM::getFixedVectorType(f32_ty, 2);
-    auto flags =
+    mlir::StringAttr cvtIntr = b.getStringAttr(
+        isFp8(value.getType().getElementType()) ? "llvm.amdgcn.cvt.pk.f32.fp8"
+                                                : "llvm.amdgcn.cvt.pk.f32.bf8");
+    mlir::Type result_ty = LLVM::getFixedVectorType(f32_ty, 2);
+    LLVM::FastmathFlagsAttr flags =
         LLVM::FastmathFlagsAttr::get(b.getContext(), LLVM::FastmathFlags::ninf);
     for (size_t i = 0; i < num_elements / 2; i++) {
-      Value chunk_pos = b.create<LLVM::ConstantOp>(i32_ty, (2 * i) / 4);
-      Value chunk = b.create<LLVM::ExtractElementOp>(chunks, chunk_pos);
+      mlir::Value chunk_pos = b.create<LLVM::ConstantOp>(i32_ty, (2 * i) / 4);
+      mlir::Value chunk = b.create<LLVM::ExtractElementOp>(chunks, chunk_pos);
       LLVM::CallIntrinsicOp cvtOp = b.create<LLVM::CallIntrinsicOp>(
           result_ty, cvtIntr,
           mlir::ValueRange{
@@ -502,28 +502,28 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     return results;
   }
 
-  Value EmitExtFromF8Intrinsic(Value value, mlir::FloatType to_ty,
-                               mlir::ImplicitLocOpBuilder& b) const {
+  mlir::Value EmitExtFromF8Intrinsic(mlir::Value value, mlir::FloatType to_ty,
+                                     mlir::ImplicitLocOpBuilder& b) const {
     assert(isFp8(value.getType()) || isBf8(value.getType()));
 
     mlir::FloatType f32_ty = b.getF32Type();
     mlir::IntegerType i32_ty = b.getI32Type();
     mlir::IntegerType i8_ty = b.getI8Type();
-    Value zero_cst = b.create<LLVM::ConstantOp>(i32_ty, 0);
+    mlir::Value zero_cst = b.create<LLVM::ConstantOp>(i32_ty, 0);
     // Emulate anyext
-    Value input = b.create<LLVM::BitcastOp>(
+    mlir::Value input = b.create<LLVM::BitcastOp>(
         i32_ty, b.create<LLVM::InsertElementOp>(
                     b.create<LLVM::UndefOp>(LLVM::getFixedVectorType(i8_ty, 4)),
                     b.create<mlir::UnrealizedConversionCastOp>(
                          i8_ty, mlir::ValueRange{value})
                         .getResult(0),
                     zero_cst));
-    auto cvtIntr =
+    mlir::StringAttr cvtIntr =
         b.getStringAttr(isFp8(value.getType()) ? "llvm.amdgcn.cvt.f32.fp8"
                                                : "llvm.amdgcn.cvt.f32.bf8");
-    auto flags =
+    LLVM::FastmathFlagsAttr flags =
         LLVM::FastmathFlagsAttr::get(b.getContext(), LLVM::FastmathFlags::ninf);
-    auto cvtOp = b.create<LLVM::CallIntrinsicOp>(
+    LLVM::CallIntrinsicOp cvtOp = b.create<LLVM::CallIntrinsicOp>(
         mlir::TypeRange{f32_ty}, cvtIntr, mlir::ValueRange{input, zero_cst},
         flags);
 
