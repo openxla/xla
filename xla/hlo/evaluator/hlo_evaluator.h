@@ -413,6 +413,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   // Returns the already-evaluated literal result for the instruction and
   // removes it from internal evaluate state.
   Literal ExtractEvaluatedLiteralFor(const HloInstruction* hlo) {
+    if (state_.has_evaluated(hlo)) {
+      return state_.extract_evaluated(hlo);
+    }
     if (hlo->IsConstant()) {
       return hlo->literal().Clone();
     }
@@ -420,9 +423,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
       return state_.arg(hlo->parameter_number())->Clone();
     }
 
-    CHECK(state_.has_evaluated(hlo))
-        << "could not find evaluated value for: " << hlo->ToString();
-    return state_.extract_evaluated(hlo);
+    LOG(FATAL) << "could not find evaluated value for: " << hlo->ToString();
   }
 
   // Returns true if the given hlo has been evaluated and cached.

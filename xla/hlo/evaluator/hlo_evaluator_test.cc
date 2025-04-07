@@ -3318,6 +3318,15 @@ TEST_P(HloEvaluatorBf16Test, EvaluateWithSubstitutions) {
                                               {square, &square_literal}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR1<float>({11, 22, 33, 44}), result));
+
+  // Evaluate again, with a different substitution. This verifies we don't
+  // accidentally cache anything.
+  Literal param0_literal2 = LiteralUtil::CreateR1<float>({5, 6, 7, 8});
+  TF_ASSERT_OK_AND_ASSIGN(Literal result2,
+                          evaluator.Evaluate(add, {}, true,
+                                             {{param0, &param0_literal2}}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR1<float>({30, 42, 56, 72}), result2));
 }
 
 TEST_F(HloEvaluatorTest, EvaluateWithSubstitutionsRecursive) {
