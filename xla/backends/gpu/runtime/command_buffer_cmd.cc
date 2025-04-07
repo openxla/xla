@@ -999,6 +999,8 @@ absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> CublasLtCmd::GetMatmulPlan(
   }
   TF_ASSIGN_OR_RETURN(auto plan, se::gpu::BlasLt::GetMatmulPlan(
                                      stream, gemm_config_, epilogue_));
+
+  absl::MutexLock lock(&matmul_plans_cache_mutex_);
   auto [it_insert, _] = matmul_plans_cache_.emplace(stream, std::move(plan));
   return it_insert->second.get();
 }
@@ -1017,6 +1019,7 @@ CublasLtCmd::GetMatmulAlgorithm(const se::Stream* stream,
       plan->GetAlgorithms(stream, /*max_algorithm_count*/ 128,
                           /*max_workspace_size*/ max_workspace));
   TF_RET_CHECK(algorithm_idx_ >= 0 && algorithm_idx_ < algorithms.size());
+  absl::MutexLock lock(&matmul_algorithm_cache_mutex_);
   auto [it_insert, _] =
       matmul_algorithm_cache_.emplace(plan, algorithms[algorithm_idx_]);
   return it_insert->second;
