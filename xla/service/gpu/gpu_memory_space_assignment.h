@@ -50,12 +50,15 @@ inline BufferAssigner::Colorer CollectiveColorer() {
         HloOpcode::kAllToAll,
     };
     for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
-      // If the value has a layout, use the memory space from the layout.
+      // If the value has a layout with non-default memory space, use the memory
+      // space from the layout.
       const HloPosition& defining_position = value->defining_position();
       if (defining_position.shape().has_layout()) {
-        value->set_color(BufferValue::Color(
-            defining_position.shape().layout().memory_space()));
-        continue;
+        auto memory_space = defining_position.shape().layout().memory_space();
+        if (memory_space != 0) {
+          value->set_color(BufferValue::Color(memory_space));
+          continue;
+        }
       }
 
       auto& buffer = alias_analysis->GetBufferContainingValue(*value);
