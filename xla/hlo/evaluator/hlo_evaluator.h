@@ -544,6 +544,16 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
     EvaluationState* state_;
   };
 
+  static Literal CreateLiteral(const Shape& shape) {
+    if (shape.has_layout()) {
+      return Literal(shape);
+    }
+
+    Shape shape_copy = shape;
+    LayoutUtil::SetToDefaultLayout(&shape_copy);
+    return Literal(shape_copy);
+  }
+
   template <typename ReturnT, typename NativeT, typename UnaryOp>
   static absl::StatusOr<Literal> ElementWiseUnaryOpImpl(
       const HloInstruction* instruction, UnaryOp&& unary_op,
@@ -555,7 +565,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
     const auto* operand = instruction->operand(0);
     TF_RET_CHECK(ShapeUtil::SameDimensions(shape, operand->shape()));
 
-    Literal result(shape);
+    Literal result = CreateLiteral(shape);
     TF_RETURN_IF_ERROR(
         result.PopulateLinearParallel<ReturnT>([&](int64_t linear_index, int) {
           return unary_op(operand_literal.GetLinear<NativeT>(linear_index));
