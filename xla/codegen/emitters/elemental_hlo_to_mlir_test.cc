@@ -1765,6 +1765,20 @@ TEST_F(ElementalHloToMlirTest, BroadcastSelect) {
   )"));
 }
 
+TEST_F(ElementalHloToMlirTest, BitcastConvert) {
+  TF_EXPECT_OK(Run(R"(
+    ENTRY main {
+      p0 = s8[128] parameter(0)
+      ROOT r = s4[128,2] bitcast-convert(p0)
+    })",
+                   R"(
+    // CHECK: @main
+    // CHECK-SAME: %[[P0:.*]]: tensor<128xi8>
+    // CHECK-SAME: %[[X:.*]]: index {{{.*}}}, %[[Y:.*]]: index {{{.*}}}
+    // CHECK: %[[V0:.+]] = mhlo.bitcast_convert %[[P0]] : (tensor<128xi8>) -> tensor<128x2xi4>
+    // CHECK: tensor.extract %[[V0]][%[[X]], %[[Y]]] : tensor<128x2xi4>
+  )"));
+}
 }  // namespace
 }  // namespace emitters
 }  // namespace xla

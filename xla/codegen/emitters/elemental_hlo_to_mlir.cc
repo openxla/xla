@@ -795,6 +795,21 @@ absl::StatusOr<SmallVector<Value, 2>> GetOperands(
   return operands;
 }
 
+absl::StatusOr<SmallVector<Value, 1>> EmitBitcastConvert(
+    const HloInstruction* instr, ValueRange indices,
+    const OperandProvider& operand_provider, ImplicitLocOpBuilder& builder) {
+  TF_ASSIGN_OR_RETURN(
+      auto operand, GetSingleOperandValue(operand_provider, instr, 0, indices));
+  auto input = operand.getDefiningOp()->getOperand(0);
+  auto result_type = TensorShapeToMlirType(instr->shape(), builder);
+  auto bitcast = builder.create<mhlo::BitcastConvertOp>(
+      operand.getLoc(), result_type, ValueRange{input});
+  auto result =
+      builder.create<mlir::tensor::ExtractOp>(bitcast.getResult(), indices);
+  operand.getDefiningOp()->remove();
+  return {{result}};
+}
+
 absl::StatusOr<SmallVector<Value, 1>> EmitConvert(
     const HloInstruction* instr, llvm::ArrayRef<mlir::Type> arg_types,
     ValueRange operands, ImplicitLocOpBuilder& builder) {
@@ -919,7 +934,6 @@ absl::StatusOr<SmallVector<Value, 1>> EmitReducePrecision(
       /*attributes=*/std::nullopt, builder, nullptr, properties);
 }
 
-namespace {
 // Return a named attribute that can be used to annotate an op to be eligible
 // for lowering to an approximation function in GPUToNVVM conversion.
 mlir::NamedAttribute GetFastMathFlagsForApproximationFunctions(
@@ -929,7 +943,6 @@ mlir::NamedAttribute GetFastMathFlagsForApproximationFunctions(
       mlir::arith::FastMathFlagsAttr::get(builder.getContext(),
                                           mlir::arith::FastMathFlags::afn));
 }
-}  // namespace
 
 absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
     const HloInstruction* instr, mlir::func::FuncOp this_fn, ValueRange indices,
@@ -979,6 +992,14 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       TF_ASSIGN_OR_RETURN(auto tuple, operand_provider(instr, 0, indices));
       return {{tuple[instr->tuple_index()]}};
     }
+    case HloOpcode::kBitcastConvert:
+      // If the input and output shapes are different, emit a bitcast (no-op).
+      // HLO validator verifies that the input and output shapes are compatible.
+      if (!ShapeUtil::EqualIgnoringElementType(instr->shape(),
+                                               instr->operand(0)->shape())) {
+        return EmitBitcastConvert(instr, indices, operand_provider, builder);
+      }
+      break;
     default:
       break;
   }
@@ -1347,7 +1368,8 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::EmitInstruction(
     }
   }
 
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
+  if (HloInstruction::IsOpElementwise(instr->opcode()) &&
+      instr->opcode() != HloOpcode::kBitcastConvert) {
     return EmitElementwiseInstruction(instr, indices);
   }
 
