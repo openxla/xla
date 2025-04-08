@@ -2070,7 +2070,12 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@com_google_absl//absl/functional:any_invocable",
-    ]),
+    ]) + [
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+    ],
 )
 
 cc_library(
