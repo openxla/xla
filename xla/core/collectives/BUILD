@@ -38,6 +38,7 @@ cc_library(
         ":clique_key",
         ":communicator",
         ":rank_id",
+        "//xla/pjrt/distributed:key_value_store_interface",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
