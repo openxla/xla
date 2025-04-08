@@ -67,9 +67,6 @@ cc_library(
     hdrs = [
         "ptx_version_util.h",
     ],
-    tags = [
-        "gpu",
-    ],
     deps = [
         "//xla/stream_executor:semantic_version",
         "@com_google_absl//absl/status:statusor",
