@@ -60,9 +60,9 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
     auto is_collective_memory_instr = [&](const HloInstruction* instr) {
       if (use_user_buffers) {
         return kSupportedOpcodes->contains(instr->opcode()) ||
-              // opcode or async wrapped opcode is in kSupportedOpcodes.
-              ((instr->opcode() == HloOpcode::kAsyncStart ||
-                instr->opcode() == HloOpcode::kAsyncDone) &&
+               // opcode or async wrapped opcode is in kSupportedOpcodes.
+               ((instr->opcode() == HloOpcode::kAsyncStart ||
+                 instr->opcode() == HloOpcode::kAsyncDone) &&
                 kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
       }
       if (use_nvshmem) {
