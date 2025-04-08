@@ -253,3 +253,24 @@ func.func @named_computation_in_manual_computation(%arg0: tensor<32xi32>) -> (te
   } : (tensor<32xi32>) -> (tensor<32xi32>, tensor<32xi32>, tensor<16xi32>)
   return %0#0, %0#1, %0#2 : tensor<32xi32>, tensor<32xi32>, tensor<16xi32>
 }
+
+// CHECK-LABEL: func @manual_computation_with_tokens
+func.func @manual_computation_with_tokens(
+    %arg0: !stablehlo.token {sdy.sharding = #sdy.sharding<@mesh_0, []>},
+    %arg1: tensor<2xi64> {sdy.sharding = #sdy.sharding<@mesh_0, [{"b"}]>}
+) -> (!stablehlo.token, tensor<2xi64>) {
+  // CHECK-NEXT: %[[COPY_OPERAND:.*]] = mhlo.copy %arg1 {mhlo.sharding = "{devices=[2,4]<=[4,2]T(1,0) last_tile_dim_replicate}"} : tensor<2xi64>
+  // CHECK-NEXT: %[[FULL_TO_SHARD:.*]] = stablehlo.custom_call @SPMDFullToShardShape(%[[COPY_OPERAND]]) {mhlo.sharding = "{devices=[1,2,4]<=[4,2]T(1,0) last_tile_dims={manual, replicated}}"} : (tensor<2xi64>) -> tensor<1xi64>
+  // CHECK-NEXT: %[[TOKEN_CALL:.*]] = stablehlo.custom_call @sdy_testonly(%arg0) {mhlo.sharding = "{devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual, replicated}}"} : (!stablehlo.token) -> !stablehlo.token
+  // CHECK-NEXT: %[[COPY_RESULT:.*]] = mhlo.copy %[[FULL_TO_SHARD]] {mhlo.sharding = "{devices=[1,2,4]<=[4,2]T(1,0) last_tile_dims={manual, replicated}}"} : tensor<1xi64>
+  // CHECK-NEXT: %[[SHARD_TO_FULL:.*]] = stablehlo.custom_call @SPMDShardToFullShape(%[[COPY_RESULT]]) {mhlo.sharding = "{devices=[2,4]<=[4,2]T(1,0) last_tile_dim_replicate}"} : (tensor<1xi64>) -> tensor<2xi64>
+  // CHECK-NEXT: return %[[TOKEN_CALL]], %[[SHARD_TO_FULL]] : !stablehlo.token, tensor<2xi64>
+  %0:2 = sdy.manual_computation(%arg0, %arg1)
+      in_shardings=[<@mesh_0, []>, <@mesh_0, [{"b"}]>]
+      out_shardings=[<@mesh_0, []>, <@mesh_0, [{"b"}]>]
+      manual_axes={"b"} (%arg2: !stablehlo.token, %arg3: tensor<1xi64>) {
+    %1 = stablehlo.custom_call @sdy_testonly(%arg2) : (!stablehlo.token) -> (!stablehlo.token)
+    sdy.return %1, %arg3 : !stablehlo.token, tensor<1xi64>
+  } : (!stablehlo.token, tensor<2xi64>) -> (!stablehlo.token, tensor<2xi64>)
+  return %0#0, %0#1 : !stablehlo.token, tensor<2xi64>
+}
