@@ -25,7 +25,9 @@ cc_library(
     deps = [
         ":gpu_collectives_stub",
         ":nccl_collectives",
-    ],
+    ] + if_cuda_is_configured([
+        ":nvshmem_collectives",
+    ]),
 )
 
 cc_library(
