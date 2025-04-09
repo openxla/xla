@@ -36,7 +36,8 @@ inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
 // collective memory using ncclMemAlloc in the runtime.
 inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
                                                  bool use_nvshmem) {
-  return [](HloAliasAnalysis* alias_analysis, const HloOrdering&) {
+  return [use_user_buffers, use_nvshmem](HloAliasAnalysis* alias_analysis,
+                                         const HloOrdering&) {
     static const auto* kSupportedOpcodes = new absl::flat_hash_set<HloOpcode>{
         HloOpcode::kAllReduce,
         HloOpcode::kAllReduceStart,
