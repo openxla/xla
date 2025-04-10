@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL)
-
 #include "xla/service/cpu/onednn_memory_util.h"
 
 #include <string>
@@ -37,6 +35,9 @@ limitations under the License.
 
 namespace xla {
 namespace cpu {
+
+#if defined(INTEL_MKL)
+
 namespace {
 
 class MemoryUtilTest
@@ -105,7 +106,11 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 }  // namespace
-}  // namespace cpu
-}  // namespace xla
 
 #endif  // INTEL_MKL
+
+// Ensure at least one test case is linked to avoid test failures.
+TEST(Dummy, Test) {}
+
+}  // namespace cpu
+}  // namespace xla

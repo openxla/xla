@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL)
-
 #include <cstdint>
 #include <random>
 #include <string_view>
@@ -32,6 +30,8 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
+
+#if defined(INTEL_MKL)
 
 static void BM_oneDNN_MM(benchmark::State& state) {
   PrimitiveType dtype = static_cast<PrimitiveType>(state.range(0));
@@ -92,6 +92,15 @@ BENCHMARK_ONEDNN_MM(F32);
 BENCHMARK_ONEDNN_MM(BF16);
 BENCHMARK_ONEDNN_MM(F16);
 
-}  // namespace xla::cpu
-
 #endif  // INTEL_MKL
+
+static void BM_Dummy(benchmark::State& state) {
+  for (auto _ : state) {
+    continue;
+  }
+}
+
+// Ensure at least one benchmark test case is linked to avoid test failures.
+BENCHMARK(BM_Dummy);
+
+}  // namespace xla::cpu
