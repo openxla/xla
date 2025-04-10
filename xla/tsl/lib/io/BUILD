@@ -89,6 +89,9 @@ cc_library(
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
     ],
     alwayslink = True,
@@ -465,6 +468,7 @@ tsl_cc_test(
     deps = [
         ":cache",
         "//xla/tsl/platform:test",
+        "//xla/tsl/util:safe_reinterpret_cast",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:coding",
         "@tsl//tsl/platform:raw_coding",

@@ -177,24 +177,6 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
         instr->shape().tuple_shapes(0).dimensions_size() != 4) {
       return kAllNCHW;
     }
-
-    // Empirically we've found with Volta and cudnn <= 7.3 that backward-input
-    // convs with stride are significantly faster with NCHW layouts.
-    //
-    // We could have used a mixed layout combination, e.g. (NHWC, NCHW, NCHW),
-    // which on paper gives good performance. However, there are two
-    // observations:
-    // * a mixed layout combination is more cuDNN-bug prone, based on empirical
-    //   evidence.
-    // * we've also observed that for mixed layouts, cuDNN transposes data back
-    //   and forth from a different layout combination. If we end up with
-    //   transposes anyway, we prefer to have them in XLA, as they can be fused.
-    if (std::make_tuple(dnn_version.major_version(),
-                        dnn_version.minor_version()) <= std::make_tuple(7, 3) &&
-        instr->custom_call_target() == kCudnnConvBackwardInputCallTarget &&
-        window_util::HasStride(instr->window())) {
-      return kAllNCHW;
-    }
   } else if (std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
     bool is_enabled = false;
     TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
@@ -388,20 +370,12 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   // dimensions. Additionally, no batch dimension can be in the most
   // minor physical dimension for inputs or the output.
 
-  const bool xla_gpu_ensure_minor_dot_contraction_dims =
-      instruction->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_ensure_minor_dot_contraction_dims();
   const bool pack_along_contracting_dims =
       instruction->GetModule()
           ->config()
           .debug_options()
           .xla_gpu_experimental_pack_dot_operands_along_k_dimension();
 
-  const bool is_bf16_to_bf16 =
-      (output_type == PrimitiveType::BF16 && lhs.type == PrimitiveType::BF16 &&
-       rhs.type == PrimitiveType::BF16);
   const bool is_s8_to_s32 = output_type == PrimitiveType::S32 &&
                             lhs.type == PrimitiveType::S8 &&
                             rhs.type == PrimitiveType::S8;
@@ -413,7 +387,6 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   const se::CudaComputeCapability* cc =
       std::get_if<se::CudaComputeCapability>(&gpu_version_);
   const bool both_operands_require_minor_contraction_dims =
-      (is_bf16_to_bf16 && xla_gpu_ensure_minor_dot_contraction_dims) ||
       is_s8_to_s32 || (is_fp8 && !(cc && cc->IsBlackwell()));
 
   for (const Side& side : {lhs, rhs}) {

@@ -575,7 +575,8 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
 
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdSequence cmd_sequence,
-      ConvertToCommands(thunk_sequence->thunks(), synchronization_mode));
+      ConvertToCommands(thunk_sequence->thunks(),
+                        ConvertToCommandsOptions{synchronization_mode}));
 
   AddThunkToThunkSequence(std::make_unique<CommandBufferThunk>(
       std::move(cmd_sequence), Thunk::ThunkInfo::WithProfileAnnotation(instr),

@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/casts.h"
 
@@ -112,15 +113,6 @@ class GpuCommandBuffer : public CommandBuffer {
     GraphNodeHandle barrier_node;
   };
 
-  // A GPU command recorded for the For operation.
-  struct GpuForCommand : public CommandBuffer::Command {
-    GraphConditionalHandle conditional;
-    GraphNodeHandle memset_node;
-    GraphNodeHandle set_init_condition_node;
-    GraphNodeHandle set_body_condition_node;
-    GraphConditionalNodeHandle conditional_node;
-  };
-
   // A GPU command recorded for the While operation.
   struct GpuWhileCommand : public CommandBuffer::Command {
     GraphConditionalHandle conditional;
@@ -170,6 +162,13 @@ class GpuCommandBuffer : public CommandBuffer {
       DeviceMemory<int32_t> index, std::vector<Builder> branches,
       absl::Span<const Command* const> dependencies) override;
 
+  absl::StatusOr<const Command*> DnnGraph(
+      dnn::DnnGraph&, Stream&, absl::Span<DeviceMemoryBase> operands,
+      absl::Span<const Command* const> dependencies) override;
+
+  absl::Status DnnGraph(const Command*, dnn::DnnGraph&, Stream&,
+                        absl::Span<DeviceMemoryBase> operands) override;
+
   absl::StatusOr<const Command*> Case(
       DeviceMemory<bool> index, std::vector<Builder> branches,
       absl::Span<const Command* const> dependencies) override;
@@ -180,11 +179,12 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::Status Case(const Command* command, DeviceMemory<bool> index,
                     std::vector<Builder> branches) override;
 
-  absl::Status For(int32_t num_iteration, DeviceMemory<int32_t> loop_counter,
-                   Builder body_builder) override;
+  absl::StatusOr<const Command*> While(
+      DeviceMemory<bool> pred, Builder cond_builder, Builder body_builder,
+      absl::Span<const Command* const> dependencies) override;
 
-  absl::Status While(DeviceMemory<bool> pred, Builder cond_builder,
-                     Builder body_builder) override;
+  absl::Status While(const Command* command, DeviceMemory<bool> pred,
+                     Builder cond_builder, Builder body_builder) override;
 
   absl::Status Finalize() override;
   absl::Status Update() override;
@@ -247,18 +247,6 @@ class GpuCommandBuffer : public CommandBuffer {
       bool enable_conditional_default) = 0;
 
   // Launches a kernel that updates the state of the given graph conditional
-  // based on the loop counter and the total number of iterations. If the loop
-  // counter is less than the number of iterations, `conditional` is set to 1,
-  // otherwise to 0. The loop counter is also incremented by 1.
-  virtual absl::StatusOr<GraphNodeHandle> CreateSetForConditionNode(
-      GraphConditionalHandle conditional, DeviceMemory<int32_t> loop_counter,
-      int32_t iterations, absl::Span<const GraphNodeHandle> dependencies) = 0;
-
-  virtual absl::Status UpdateSetForConditionNode(
-      GraphNodeHandle handle, GraphConditionalHandle conditional,
-      DeviceMemory<int32_t> loop_counter, int32_t iterations) = 0;
-
-  // Launches a kernel that updates the state of the given graph conditional
   // based on the predicate. If the predicate is true, `conditional` is set to
   // 1, otherwise to 0.
   virtual absl::StatusOr<GraphNodeHandle> CreateSetWhileConditionNode(
@@ -286,6 +274,10 @@ class GpuCommandBuffer : public CommandBuffer {
   // Returns OK status if command buffer is not finalized and it is still
   // possible to add new commands to it, otherwise returns internal error.
   absl::Status CheckNotFinalized();
+
+  // Return OK status if command buffer is in the given state, otherwise returns
+  // an error.
+  absl::Status CheckInState(State state);
 
   // Returns OK status if the command buffer can be updated.
   virtual absl::Status CheckCanBeUpdated() = 0;
@@ -340,7 +332,7 @@ class GpuCommandBuffer : public CommandBuffer {
       DeviceMemoryBase destination, BitPattern bit_pattern,
       size_t num_elements) = 0;
 
-  // Updates an existing memset node. Note that `node_handle` needs to be refer
+  // Updates an existing memset node. Note that `node_handle` needs to refer
   // to a node created by `CreateMemsetNode`.
   virtual absl::Status UpdateMemsetNode(GraphNodeHandle node_handle,
                                         DeviceMemoryBase destination,
@@ -356,6 +348,13 @@ class GpuCommandBuffer : public CommandBuffer {
                                            DeviceMemoryBase destination,
                                            DeviceMemoryBase source,
                                            uint64_t size) = 0;
+
+  virtual absl::Status PopulateDnnGraphNode(
+      dnn::DnnGraph&, Stream&, absl::Span<DeviceMemoryBase> operands) = 0;
+
+  virtual absl::Status UpdateDnnGraphNode(dnn::DnnGraph&, Stream&,
+                                          absl::Span<DeviceMemoryBase> operands,
+                                          GraphNodeHandle) = 0;
 
   // Adds a new nested command buffer node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
@@ -420,14 +419,6 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Gpu commands recorded into the command buffer.
   std::vector<std::unique_ptr<Command>> commands_;
-
-  // Tracks indices into data structures during command buffer updates.
-  struct UpdateState {
-    int64_t command_idx = 0;
-  };
-
-  // Tracks execution scope update state.
-  UpdateState update_state_;
 };
 
 }  // namespace stream_executor::gpu

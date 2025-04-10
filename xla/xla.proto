@@ -443,8 +443,8 @@ message DebugOptions {
   // threads. Setting to 0 (the default value) means no enforcement.
   bool xla_gpu_enable_llvm_module_compilation_parallelism = 268;
 
-  // Allow early return when acquiring NCCL cliques.
-  bool xla_gpu_enable_nccl_clique_optimization = 244;
+  // DEPRECATED: This flag is a no-op.
+  bool xla_gpu_enable_nccl_clique_optimization = 244 [deprecated = true];
 
   // Enable NCCL communicator splitting.
   bool xla_gpu_enable_nccl_comm_splitting = 272;
@@ -500,10 +500,6 @@ message DebugOptions {
   // Determine the while loop unrolling scheme.
   WhileLoopUnrolling xla_gpu_enable_while_loop_unrolling = 294;
 
-  // Change the layout of the second triton dot operand to be column major.
-  // Only works for (bf16 x bf16) -> bf16.
-  bool xla_gpu_ensure_minor_dot_contraction_dims = 249;
-
   // Excludes non-deterministic ops from compiled executables.
   // Unlike --xla_gpu_deterministic_ops does not disable autotuning - the
   // compilation itself can be non-deterministic.
@@ -539,6 +535,11 @@ message DebugOptions {
   // xla_gpu_multi_streamed_windowed_einsum is set to true.
   bool xla_gpu_experimental_enable_alltoall_windowed_einsum = 360;
 
+  // Enable dynamically generating and pruning the autotuning search space for
+  // Triton dot fusions, based on the properties of the problem and hardware
+  // (shapes, instructions, GPU limits, etc.).
+  bool xla_gpu_experimental_enable_dynamic_dot_search_space = 385;
+
   // Enabling this flag will attempt to redirect every already-constructed
   // fusion possible to the Triton emitter.
   //
@@ -549,6 +550,10 @@ message DebugOptions {
   //
   // Pre-existing block-level fusions are left unmodified.
   bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
+
+  // Enable the pass that splits GEMMs that underutilize the GPU load by
+  // splitting the K dimension using a heuristic.
+  bool xla_gpu_experimental_enable_split_k_rewrite = 386;
 
   // Enable fusion for the subchannel dequantisation sequences like
   // [x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot.
@@ -765,6 +770,9 @@ message DebugOptions {
   // the code that emits a particular instruction.
   bool xla_gpu_unsupported_annotate_with_emitter_loc = 358;
 
+  // Internal testing flag to switch AllReduceDecomposer on or off.
+  bool xla_gpu_unsupported_enable_all_reduce_decomposer = 384;
+
   // Enable experimental tiling for Triton GEMM fusions.
   // TODO(b/393299275): remove the flag once the feature is stable.
   bool xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms = 367;
@@ -778,12 +786,6 @@ message DebugOptions {
   // Enable experimental triton multi-output fusion.
   // TODO(b/390559452): Remove the flag once the feature is stable.
   bool xla_gpu_unsupported_enable_triton_multi_output_fusion = 382;
-
-  // Internal debug/testing flag to force all GEMMs to use Triton, independently
-  // of known issues.
-  // TODO(b/395903738): use to make specific tests pass on A100 while working
-  // around this bug. The can be removed once the bug is fixed.
-  bool xla_gpu_unsupported_force_triton_gemm = 369;
 
   // Internal testing flag to enable one-shot kernel for single-host
   // ragged-all-to-all operations.
@@ -1188,11 +1190,6 @@ message DebugOptions {
 
   bool xla_pjrt_allow_auto_layout_in_hlo = 344;
 
-  // If false, platform_util::GetDefaultPlatform() will return an error. Used as
-  // a safeguard for tests where GetDefaultPlatform() won't work properly and
-  // its use indicates an error in test setup.
-  bool xla_allow_get_default_platform = 371;
-
   // If true, the test launched with ClientLibraryTestBase will also try to
   // use command buffer mode to run.
   bool xla_test_add_command_buffer_mode = 373;
@@ -1203,7 +1200,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 384
+  // Next id: 387
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1230,8 +1227,11 @@ message DebugOptions {
   // xla_gpu_enable_bf16_3way_gemm
   // xla_gpu_enable_bf16_6way_gemm
   // xla_gpu_enable_cudnn_fmha
+  // xla_gpu_unsupported_force_triton_gemm
+  // xla_allow_get_default_platform
+  // xla_gpu_ensure_minor_dot_contraction_dims
   reserved 5, 117, 133, 139, 176, 178, 180, 193, 214, 194, 221, 242, 206, 320,
-      325, 326, 332, 361, 270, 229, 271, 279, 218;
+      325, 326, 332, 361, 270, 229, 271, 279, 218, 369, 371, 249;
 }
 
 // Contains flags which affects the GPU compilation result.
@@ -1498,7 +1498,6 @@ message ScheduleProto {
     double start_timestamp_cycles = 2;
     double end_timestamp_cycles = 3;
   }
-  repeated Instruction instructions = 1;
 
   message SchedulerStatisticsProto {
     double all_gather_wasted_cycles = 1;
@@ -1515,11 +1514,16 @@ message ScheduleProto {
     int64 memory_pressure_peak = 12;
   }
 
-  // Computation id (matches the id in HloComputationProto).
-  int64 computation_id = 2;
-  HloModuleProto hlo_module = 3;
-  int64 cycles_per_microsecond = 4;
-  SchedulerStatisticsProto scheduler_statistics = 5;
+  message ComputationScheduleProto {
+    // Computation id (matches the id in HloComputationProto).
+    int64 computation_id = 1;
+    repeated Instruction instructions = 2;
+    SchedulerStatisticsProto scheduler_statistics = 3;
+    int64 cycles_per_microsecond = 4;
+  }
+
+  HloModuleProto hlo_module = 1;
+  repeated ComputationScheduleProto computation_schedules = 2;
 }
 
 // Message that captures sharding configuration of an HLO op.

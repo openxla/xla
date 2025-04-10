@@ -253,12 +253,7 @@ void Shape::CheckStateIsEmpty() const {
 }
 
 const std::vector<Shape>& Shape::tuple_shapes() const {
-  if (const auto* const state = if_tuple_state()) {
-    return state->tuple_shapes;
-  }
-  // TODO(b/404276923): ensure that this is never called on non-tuple shapes.
-  static const auto* const kEmpty = new std::vector<Shape>();
-  return *kEmpty;
+  return tuple_state().tuple_shapes;
 }
 
 void Shape::Clear() {
@@ -358,7 +353,7 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
       VLOG(3) << "CompareShapes: lhs rank != rhs rank";
       return false;
     }
-    for (int i = 0; i < lhs.dimensions_size(); ++i) {
+    for (int i = 0; i < lhs.dimensions().size(); ++i) {
       if (ignore_dynamic_dimension_ &&
           (lhs.is_unbounded_dynamic_dimension(i) ||
            rhs.is_unbounded_dynamic_dimension(i))) {
@@ -408,7 +403,7 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
   }
 
   if (!ignore_dynamic_dimension_) {
-    for (int i = 0; i < lhs.dimensions_size(); ++i) {
+    for (int i = 0; i < lhs.dimensions().size(); ++i) {
       if (lhs.is_dynamic_dimension(i) != rhs.is_dynamic_dimension(i)) {
         VLOG(3)
             << "CompareShapes: lhs and rhs have different dynamic dimensions.";

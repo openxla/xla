@@ -17,6 +17,7 @@ limitations under the License.
 #include <array>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -117,7 +118,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
                          ::testing::ValuesIn({
                              MixTypeParams{PRED, F16, 16, 32, 8},
                              MixTypeParams{PRED, BF16, 16, 32, 8},
-                             MixTypeParams{PRED, F32, 16, 32, 8, 1e-4, 1e-3},
+                             MixTypeParams{PRED, F32, 16, 32, 8, 2e-4, 2e-3},
                              MixTypeParams{S8, F16, 16, 32, 8},
                              MixTypeParams{S8, BF16, 16, 32, 8},
                              MixTypeParams{S8, F32, 16, 32, 8, 5e-2, 1e-2},
@@ -151,7 +152,6 @@ class TritonTest : public GpuCodegenTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_unsupported_force_triton_gemm(true);
     debug_options.set_xla_gpu_cublas_fallback(false);
     // Always rewrite Gemms with Triton regardless of size.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);

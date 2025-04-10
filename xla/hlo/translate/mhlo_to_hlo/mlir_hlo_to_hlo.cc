@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "mhlo/transforms/passes.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -63,6 +64,8 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "stablehlo/dialect/Base.h"
+#include "stablehlo/dialect/StablehloOps.h"
+#include "stablehlo/transforms/Passes.h"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
@@ -92,6 +95,7 @@ limitations under the License.
 #include "xla/mlir/utils/type_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo.pb.h"
@@ -1083,6 +1087,17 @@ void BuildGetTupleElementsForTupleResults(mlir::Operation* op, xla::XlaOp tuple,
 }  // namespace
 
 namespace mlir {
+
+namespace stablehlo {
+namespace {
+
+LogicalResult ExportXlaOp(ConstantOp op, OpLoweringContext ctx) {
+  return failure();
+}
+
+}  // namespace
+}  // namespace stablehlo
+
 namespace mhlo {
 namespace {
 LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
@@ -3636,8 +3651,8 @@ LogicalResult ConvertToHloModule::Lower(
     ConvertToHloModule::ValueLoweringMap* value_lowering,
     xla::XlaOp* return_value) {
   // Explicitly fail for ops that are not supported for export.
-  if (inst->getDialect() !=
-          inst->getContext()->getLoadedDialect<mlir::mhlo::MhloDialect>() &&
+  if (!mlir::isa<mhlo::MhloDialect, stablehlo::StablehloDialect>(
+          inst->getDialect()) &&
       !mlir::isa<mlir::func::ConstantOp, mlir::arith::ConstantOp,
                  mlir::func::CallOp, mlir::tensor::CastOp,
                  mlir::func::ReturnOp>(inst)) {
@@ -4100,9 +4115,18 @@ absl::Status PrepareForExport(mlir::ModuleOp module) {
     // Experimental support for exporting dynamic MHLO programs to HLO.
     // Only bounded dynamism is planned to be supported; unbounded dynamism
     // is out of scope for now.
+    //
+    // Shape -> MHLO
+    // Currently takes overhead if input is MHLO for MHLO->StableHLO, can
+    // be deleted once conversion can assume StableHLO input.
+    mlir::mhlo::HloLegalizeToStablehloPassOptions options;
+    options.allow_xla_features_ = true;
     pm.addNestedPass<mlir::func::FuncOp>(
-        mhlo::createSymbolicShapeOptimizationPass());
-    pm.addNestedPass<mlir::func::FuncOp>(mhlo::createShapeLegalizeToHloPass());
+        stablehlo_ext::createSymbolicShapeOptimizationPass());
+    pm.addPass(mhlo::createHloLegalizeToStablehloPass(options));
+    pm.addNestedPass<mlir::func::FuncOp>(
+        stablehlo::createShapeLegalizeToStablehloPass());
+    pm.addPass(mhlo::createStablehloLegalizeToHloPass());
   }
 
   mlir::BaseScopedDiagnosticHandler handler(module.getContext());

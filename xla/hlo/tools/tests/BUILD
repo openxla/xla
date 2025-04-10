@@ -59,9 +59,8 @@ py_strict_test(
         "generate_hlo_test_checks_test_output.hlo",
         "//xla/hlo/tools:hlo-opt",
     ],
-    python_version = "PY3",
     deps = [
-        "//xla/hlo/tools:generate_hlo_test_checks",
+        "//xla/hlo/tools:generate_hlo_test_checks_lib",
         "@absl_py//absl/testing:absltest",
     ],
 )
@@ -90,6 +89,7 @@ cc_library(
         "//xla/hlo/builder/lib:math",
         "//xla/hlo/builder/lib:matrix",
         "//xla/hlo/builder/lib:prng",
+        "//xla/hlo/builder/lib:tridiagonal",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
@@ -102,6 +102,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

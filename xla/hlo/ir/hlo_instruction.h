@@ -300,9 +300,11 @@ class HloInstruction {
   void DetachFromOperandsAndUsers();
 
   // Adds a derived instruction to the parent computation of this instruction.
-  // Also update setup the new instruction as a derived instruction.
+  // Updates setup the new instruction as a derived instruction, and sets the
+  // name of the new instruction (if `new_name` is not empty).
   HloInstruction* AddInstruction(
-      std::unique_ptr<HloInstruction> derived_instruction);
+      std::unique_ptr<HloInstruction> derived_instruction,
+      absl::string_view new_name = "");
 
   // Creates an instruction from the given proto. Arguments:
   //
@@ -1964,7 +1966,7 @@ class HloInstruction {
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
-    return std::move(proto);
+    return proto;
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
@@ -2024,10 +2026,7 @@ class HloInstruction {
   }
   const OpMetadata& metadata() const { return *metadata_; }
 
-  // Set/get the computation containing this instruction. set_parent should only
-  // be called by HloComputation methods which add/remove instructions to
-  // computations.
-  void set_parent(HloComputation* computation) { parent_ = computation; }
+  // Get the computation containing this instruction.
   const HloComputation* parent() const { return parent_; }
   HloComputation* parent() { return parent_; }
 
@@ -2429,6 +2428,9 @@ class HloInstruction {
       bool layout_sensitive, bool sharding_sensitive,
       bool ignore_channel_id_values,
       bool ignore_commutative_operand_order) const;
+
+  // Set the computation containing this instruction.
+  void set_parent(HloComputation* computation) { parent_ = computation; }
 
   // Implementation for non-common logic of PrintExtraAttributes.
   virtual void PrintExtraAttributesImpl(AttributePrinter& printer,

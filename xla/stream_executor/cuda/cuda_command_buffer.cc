@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/scoped_update_mode.h"
@@ -145,32 +146,6 @@ absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
 //===----------------------------------------------------------------------===//
 // APIs for launching kernels to update conditional handles.
 //===----------------------------------------------------------------------===//
-
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetForConditionNode(
-    GraphConditionalHandle conditional, DeviceMemory<int32_t> loop_counter,
-    int32_t iterations, absl::Span<const GraphNodeHandle> dependencies) {
-  if (!set_for_condition_kernel_) {
-    TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetForConditionKernelLoaderSpec());
-    TF_ASSIGN_OR_RETURN(
-        set_for_condition_kernel_,
-        SetForConditionKernel::FactoryType::Create(parent_, spec));
-  }
-  auto kernel_args =
-      PackKernelArgs(set_for_condition_kernel_, ToCudaGraphHandle(conditional),
-                     loop_counter, iterations);
-  return CreateKernelNode(dependencies, ThreadDim(), BlockDim(),
-                          *set_for_condition_kernel_, *kernel_args);
-}
-
-absl::Status CudaCommandBuffer::UpdateSetForConditionNode(
-    GraphNodeHandle handle, GraphConditionalHandle conditional,
-    DeviceMemory<int32_t> loop_counter, int32_t iterations) {
-  auto kernel_args =
-      PackKernelArgs(set_for_condition_kernel_, ToCudaGraphHandle(conditional),
-                     loop_counter, iterations);
-  return UpdateKernelNode(handle, ThreadDim(), BlockDim(),
-                          *set_for_condition_kernel_, *kernel_args);
-}
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetWhileConditionNode(
     GraphConditionalHandle conditional, DeviceMemory<bool> predicate,
@@ -415,6 +390,23 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
       cuGraphExecMemcpyNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
                                      &params, cuda_context_->context()),
       "Failed to set memcpy d2d node params");
+}
+
+absl::Status CudaCommandBuffer::PopulateDnnGraphNode(
+    dnn::DnnGraph& dnn_graph, Stream& stream,
+    absl::Span<DeviceMemoryBase> operands) {
+  return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
+                                                    false);
+}
+
+absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
+    dnn::DnnGraph& dnn_graph, Stream& stream,
+    absl::Span<DeviceMemoryBase> operands, GraphNodeHandle node_handle) {
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphChildGraphNodeGetGraph(ToCudaGraphHandle(node_handle), &graph_)));
+  is_owned_graph_ = false;
+  return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
+                                                    true);
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(

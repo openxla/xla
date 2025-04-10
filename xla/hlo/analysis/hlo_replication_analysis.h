@@ -16,7 +16,10 @@ limitations under the License.
 #ifndef XLA_HLO_ANALYSIS_HLO_REPLICATION_ANALYSIS_H_
 #define XLA_HLO_ANALYSIS_HLO_REPLICATION_ANALYSIS_H_
 
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -76,13 +79,24 @@ class HloReplicationAnalysis {
     HloReplication();
     HloReplication(const HloReplication& other) = default;
     HloReplication(HloReplication&& other) = default;
+    // Create a new HloReplication that is the merge of two other HloReplication
+    // objects using the Merge() method, useful for lazy construction with
+    // try_emplace.
+    explicit HloReplication(
+        const std::pair<HloReplication, HloReplication>& merge_pair);
     HloReplication& operator=(HloReplication&& other) = default;
     HloReplication Merge(const HloReplication& other) const;
     bool Equal(const HloReplication& other) const;
+    bool operator==(const HloReplication& rhs) const;
     bool IsReplicatedOnAllDevices() const;
     bool IsUniqueOnAllDevices() const;
     bool IsReplicatedWithinSubgroup(absl::Span<const int64_t> device_ids) const;
     std::string ToString() const;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const HloReplication& r) {
+      return H::combine(std::move(h), r.state_, r.device_set_root_per_replica_);
+    }
 
    private:
     enum class State {
@@ -111,7 +125,26 @@ class HloReplicationAnalysis {
       bool cross_partition_spmd,
       const absl::flat_hash_map<const HloInstruction*,
                                 ShapeTree<HloReplication>>& hlo_replication,
-      bool support_partial_replication);
+      bool support_partial_replication,
+      const absl::flat_hash_map<const HloInstruction*,
+                                std::optional<HloReplication>*>&
+          replica_group_dedup_map,
+      absl::flat_hash_map<std::pair<HloReplication, HloReplication>,
+                          HloReplication>& replication_merge_map);
+
+  static HloReplication MergeReplications(
+      const HloReplication& replication_a, const HloReplication& replication_b,
+      absl::flat_hash_map<std::pair<HloReplication, HloReplication>,
+                          HloReplication>& replication_merge_map) {
+    std::pair<HloReplication, HloReplication> key = {replication_a,
+                                                     replication_b};
+
+    // Look replication pair up in map: if not found we pass the pair to an
+    // overloaded constructor of HloReplication which constructs and returns
+    // a merged HloReplication.
+    auto [iter, inserted] = replication_merge_map.try_emplace(key, key);
+    return iter->second;
+  }
 
   HloReplicationAnalysis(const HloModule* module, bool cross_partition_spmd,
                          const absl::flat_hash_set<const HloInstruction*>*
@@ -129,6 +162,12 @@ class HloReplicationAnalysis {
   // Returns whether hlo_replication_ is changed.
   bool ComputeHloReplicationOnComputation(const HloComputation* computation,
                                           bool mark_everything_not_replicated);
+
+  // Builds the replica group dedup map that allows caching replication
+  // calculations for all-reduce/all-gather that share the same replica groups.
+  // This can significantly help in compile times when replica groups are very
+  // large.
+  void BuildReplicaGroupDedupMap();
 
   const HloModule* module_;
 
@@ -155,6 +194,15 @@ class HloReplicationAnalysis {
   // partitions at each shape index.
   absl::flat_hash_map<const HloInstruction*, ShapeTree<HloReplication>>
       hlo_replication_;
+
+  // Replications for all-reduce/all-gather that have the same replica groups is
+  // usually identical. We use the following data structures to memoize the
+  // replications for instructions with identical replica groups.
+  absl::flat_hash_map<const HloInstruction*, std::optional<HloReplication>*>
+      replica_group_dedup_map_;
+  absl::flat_hash_map<std::pair<HloReplication, HloReplication>, HloReplication>
+      replication_merge_map_;
+  std::vector<std::optional<HloReplication>> unique_replications_;
 };
 
 }  // namespace xla

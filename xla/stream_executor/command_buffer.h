@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 
@@ -85,6 +86,17 @@ class CommandBuffer {
   //   (2) Update:   kFinalized -> kUpdate
   //
   enum class State { kCreate, kUpdate, kFinalized };
+
+  friend absl::string_view StateToString(State state) {
+    switch (state) {
+      case CommandBuffer::State::kCreate:
+        return "create";
+      case CommandBuffer::State::kUpdate:
+        return "update";
+      case CommandBuffer::State::kFinalized:
+        return "finalized";
+    }
+  }
 
   // Command buffers have two modes of execution:
   //
@@ -165,6 +177,15 @@ class CommandBuffer {
                               const BitPattern& bit_pattern,
                               size_t num_elements) = 0;
 
+  // Adds a DNN graph launch command.
+  virtual absl::StatusOr<const Command*> DnnGraph(
+      dnn::DnnGraph&, Stream&, absl::Span<DeviceMemoryBase> operands,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a DNN graph command.
+  virtual absl::Status DnnGraph(const Command*, dnn::DnnGraph&, Stream&,
+                                absl::Span<DeviceMemoryBase> operands) = 0;
+
   //--------------------------------------------------------------------------//
   // Command buffer condtitional commands API
   //--------------------------------------------------------------------------//
@@ -190,14 +211,6 @@ class CommandBuffer {
                             std::vector<Builder> branches) = 0;
 
   // Adds a conditional operation that will execute a command buffer constructed
-  // by the `body_builder` exactly `num_iteration` times. This means the
-  // condition is known at compile time (`num_iteration` < `loop_counter`), and
-  // does not require a `cond_builder`.
-  virtual absl::Status For(int32_t num_iteration,
-                           DeviceMemory<int32_t> loop_counter,
-                           Builder body_builder) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
   // by the `cond_builder` that must update `pred` value, and then depending on
   // the value might execute command buffer constructed by `body_builder` and
   // `cond_builder`. Will continue while `pred` value (which is continuously
@@ -210,8 +223,13 @@ class CommandBuffer {
   //     body_builder()
   //     cond_builder()
   //
-  virtual absl::Status While(DeviceMemory<bool> pred, Builder cond_builder,
-                             Builder body_builder) = 0;
+  virtual absl::StatusOr<const Command*> While(
+      DeviceMemory<bool> pred, Builder cond_builder, Builder body_builder,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a While operation.
+  virtual absl::Status While(const Command* command, DeviceMemory<bool> pred,
+                             Builder cond_builder, Builder body_builder) = 0;
 
   // Submits the command buffer for execution.
   virtual absl::Status Submit(Stream* stream) {
