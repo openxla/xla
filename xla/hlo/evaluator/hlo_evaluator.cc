@@ -3404,12 +3404,12 @@ absl::Status HloEvaluator::HandleFusion(const HloInstruction* fusion) {
         &GetEvaluatedLiteralFor(operands[i]);
   }
 
-  TF_ASSIGN_OR_RETURN(Literal result,
-                      embedded_evaluator->Evaluate(
-                          fusion->fused_expression_root(),
-                          /*precomputed_analyses=*/{},
-                          /*recursively_evaluate_nonconstant_operands=*/true,
-                          substitutions));
+  TF_ASSIGN_OR_RETURN(
+      Literal result,
+      embedded_evaluator->Evaluate(
+          fusion->fused_expression_root(),
+          /*precomputed_analyses=*/{},
+          /*recursively_evaluate_nonconstant_operands=*/true, substitutions));
   SetEvaluatedLiteralFor(fusion, std::move(result));
   return absl::OkStatus();
 }

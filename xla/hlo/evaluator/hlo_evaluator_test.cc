@@ -5027,6 +5027,24 @@ TEST_F(HloEvaluatorTest, AsyncOps) {
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 }
 
+
+TEST_F(HloEvaluatorTest, AsyncOpsWithLayout) {
+  const absl::string_view hlo_text = R"(
+  HloModule test
+  ENTRY AsyncOps {
+    init = f32[2,2]{0,1} constant({{1.0, 2.0}, {3.0, 4.0}})
+    async-start = ((f32[2,2]{0,1}), f32[2,2]{0,1}, u32[]) negate-start(init)
+    async-update = ((f32[2,2]{0,1}), f32[2,2]{0,1}, u32[]) negate-update(async-start)
+    ROOT async-done = f32[2,2]{0,1} negate-done(async-update)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  Literal expected = LiteralUtil::CreateR2<float>({{-1.0, -2.0}, {-3.0, -4.0}});
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result, HloEvaluator().Evaluate(*m_->entry_computation(), {}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
 TEST_F(HloEvaluatorTest, MapBF16) {
   const absl::string_view hlo_text = R"(
   HloModule test
