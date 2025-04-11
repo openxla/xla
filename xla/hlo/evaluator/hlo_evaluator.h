@@ -166,7 +166,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   bool TryEvaluate(const HloInstruction* instruction, Literal* result,
                    bool recursively_evaluate_nonconstant_operands = false);
 
-
   absl::StatusOr<Literal> EvaluateElementwiseBinaryOp(HloOpcode opcode,
                                                       const Literal& lhs,
                                                       const Literal& rhs);
@@ -545,12 +544,20 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   };
 
   static Literal CreateLiteral(const Shape& shape) {
-    if (shape.has_layout()) {
+    // If the shape (and all subshapes, if it is a tuple) have a layout, we can
+    // just use it directly.
+    if (LayoutUtil::HasLayout(shape)) {
       return Literal(shape);
     }
 
+    // Otherwise, set all missing layouts in `shape` to the default.
     Shape shape_copy = shape;
-    LayoutUtil::SetToDefaultLayout(&shape_copy);
+    ShapeUtil::ForEachMutableLeafShape(
+        &shape_copy, [](Shape* subshape, const ShapeIndex& index) {
+          if (!subshape->has_layout()) {
+            LayoutUtil::SetToDefaultLayout(subshape);
+          }
+        });
     return Literal(shape_copy);
   }
 
