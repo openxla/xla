@@ -25,6 +25,7 @@ ASAN_ARGS=()
 if [[ $CONFIG == "rocm_ci_hermetic" ]]; then
 	ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt")
 	ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt")
+	ASAN_ARGS+=("--compilation_mode=dbg")
 fi
 
 bazel --bazelrc=/usertools/rocm.bazelrc test \
