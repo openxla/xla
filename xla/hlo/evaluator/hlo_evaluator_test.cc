@@ -3322,9 +3322,9 @@ TEST_P(HloEvaluatorBf16Test, EvaluateWithSubstitutions) {
   // Evaluate again, with a different substitution. This verifies we don't
   // accidentally cache anything.
   Literal param0_literal2 = LiteralUtil::CreateR1<float>({5, 6, 7, 8});
-  TF_ASSERT_OK_AND_ASSIGN(Literal result2,
-                          evaluator.Evaluate(add, {}, true,
-                                             {{param0, &param0_literal2}}));
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result2,
+      evaluator.Evaluate(add, {}, true, {{param0, &param0_literal2}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR1<float>({30, 42, 56, 72}), result2));
 }
@@ -5026,7 +5026,6 @@ TEST_F(HloEvaluatorTest, AsyncOps) {
       Literal result, HloEvaluator().Evaluate(*m_->entry_computation(), {}));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 }
-
 
 TEST_F(HloEvaluatorTest, AsyncOpsWithLayout) {
   const absl::string_view hlo_text = R"(
