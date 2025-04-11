@@ -121,7 +121,7 @@ class ReductionFusion : public EmitterBase {
     return IndexingMap::GetUndefined();
   }
 
-  virtual int64_t WarpSize() const {
+  int64_t WarpSize() const {
     return ::xla::gpu::WarpSize(analysis_.device_info());
   }
 
@@ -198,11 +198,6 @@ class ColumnReductionFusion : public ReductionFusion {
  public:
   explicit ColumnReductionFusion(const HloFusionAnalysis& analysis);
 
-  int64_t WarpSize() const override {
-    // PAE HACK HACK
-    return 32;
-  }
-
  protected:
   llvm::SmallVector<mlir::Value> EmitReduction(
       int group_id, EmitterState& state) const override;
@@ -213,6 +208,8 @@ class ColumnReductionFusion : public ReductionFusion {
   IndexingMap GetSharedMemoryReductionReadMap(
       mlir::MLIRContext* ctx) const override;
   IndexingMap GetSharedMemoryWriteMap(mlir::MLIRContext* ctx) const override;
+
+  const int64_t kTileSize = 32;
 };
 
 // Special emitter for column reductions whose minor reduced dimension divides
@@ -221,11 +218,6 @@ class SmallColumnReductionFusion : public ReductionFusion {
  public:
   explicit SmallColumnReductionFusion(const HloFusionAnalysis& analysis);
 
-  int64_t WarpSize() const override {
-    // PAE HACK HACK
-    return 32;
-  }
-
  protected:
   llvm::SmallVector<mlir::Value> EmitReduction(
       int group_id, EmitterState& state) const override;
@@ -236,6 +228,8 @@ class SmallColumnReductionFusion : public ReductionFusion {
   IndexingMap GetSharedMemoryReductionReadMap(
       mlir::MLIRContext* ctx) const override;
   IndexingMap GetSharedMemoryWriteMap(mlir::MLIRContext* ctx) const override;
+
+  const int64_t kTileSize = 32;
 
   int64_t shared_rows_;
   int64_t loop_size_;
