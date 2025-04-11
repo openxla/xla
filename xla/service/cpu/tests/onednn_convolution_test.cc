@@ -141,7 +141,7 @@ class ConvolutionTest : public HloTestBase,
     const std::string convolution_module_str = absl::StrReplaceAll(
         outline,
         {{"$dtype", dtypeString_}, {"$pdtype", PromotedDtypeToString()}});
-    EXPECT_EXIT(Run(convolution_module_str, true),
+    EXPECT_EXIT((void)Run(convolution_module_str, true),
                 ::testing::KilledBySignal(signal), "");
   }
 
