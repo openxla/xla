@@ -286,8 +286,6 @@ absl::StatusOr<int64_t> GetMaxRegistersPerBlock(hipDevice_t device) {
 }
 
 absl::StatusOr<int64_t> GetThreadsPerWarp(hipDevice_t device) {
-  // TODO(ROCm): This is almost certainly wrong but tests seem to rely on it.
-  // HACK
   return 64;
 }
 
