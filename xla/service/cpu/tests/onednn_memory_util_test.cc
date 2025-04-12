@@ -25,13 +25,13 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "tsl/platform/test.h"
+#include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

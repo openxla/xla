@@ -415,14 +415,14 @@ xla_cc_test(
     srcs = ["onednn_memory_util_test.cc"],
     copts = tsl_copts(),
     deps = [
-        "//xla:test",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:test",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_memory_util",
-        "//xla/tests:filecheck",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:test",
     ],
 )
 
