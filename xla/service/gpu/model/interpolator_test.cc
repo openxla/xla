@@ -27,7 +27,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
-#include "xla/service/gpu/variant_visitor.h"
+#include "xla/service/overload.h"
 
 namespace xla::gpu {
 namespace {
@@ -52,6 +52,11 @@ class InterpolatorFake : public InterpolatorBase<int, 2> {
 
   // Fake eval function which just returns the size of the consumed set.
   int Eval(std::array<int64_t, 2>& x) const override { return plane_.size(); }
+
+  void Add(std::array<int64_t, 2>& x, int val) override { plane_.push_back(x); }
+
+ private:
+  std::vector<std::array<int64_t, 2>> plane_;
 };
 
 TEST(Interpolator, PersistsEuclideanPoints) {
@@ -119,17 +124,16 @@ TEST_P(EuclideanNN2DInterpolatorTest, ReturnsNearestNeighbour) {
     std::array<int64_t, 2> plane_point = point.first;
     int val = point.second;
     std::visit(
-        VariantVisitor{
-            [&](const std::unique_ptr<EuclideanNNInterpolator<int64_t, 2>>&
-                    nn) { return nn->Add(plane_point, val); },
-            [&](const std::unique_ptr<
-                EuclideanComplementInterpolator<int64_t, 2>>& comp) {
-              return comp->Add(plane_point, val);
-            }},
+        Overload{[&](const std::unique_ptr<EuclideanNNInterpolator<int64_t, 2>>&
+                         nn) { return nn->Add(plane_point, val); },
+                 [&](const std::unique_ptr<
+                     EuclideanComplementInterpolator<int64_t, 2>>& comp) {
+                   return comp->Add(plane_point, val);
+                 }},
         interpolator);
   }
   std::visit(
-      VariantVisitor{
+      Overload{
           [&](const std::unique_ptr<EuclideanNNInterpolator<int64_t, 2>>& nn) {
             EXPECT_EQ(nn->Eval(param.eval_point), param.expected_value);
           },

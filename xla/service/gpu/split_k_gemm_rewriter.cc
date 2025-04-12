@@ -127,6 +127,20 @@ absl::StatusOr<HloInstruction*> MakeSparseMetaOperand(
   return MakeBitcastHlo(meta, new_shape);
 }
 
+PrimitiveType GetAccumulatorType(bool disable_reduced_precision_reduction,
+                                 HloComputation* computation,
+                                 HloInstruction* instr) {
+  if (!disable_reduced_precision_reduction) {
+    return instr->shape().element_type();
+  }
+
+  PrimitiveType output_type =
+      computation->root_instruction()->shape().element_type();
+  PrimitiveType accumulator_type = output_type == PrimitiveType::F64
+                                       ? PrimitiveType::F64
+                                       : PrimitiveType::F32;
+  return accumulator_type;
+}
 }  // namespace
 
 absl::StatusOr<HloInstruction*> MakeSplitKOperand(
@@ -320,8 +334,11 @@ absl::Status MakeDotComputationSplitKBatch(
         TF_ASSIGN_OR_RETURN(sparse_meta[i],
                             MakeSparseMetaOperand(*dot, config));
       }
+      // Keep the precision of the accumulator type for the dot output.
+      PrimitiveType dot_dtype = GetAccumulatorType(
+          disable_reduced_precision_reduction, computation, dot);
       expanded = MakeDotHlo(lhs, rhs, new_dim_numbers, dot->precision_config(),
-                            dot->shape().element_type(), sparsity, sparse_meta)
+                            dot_dtype, sparsity, sparse_meta)
                      .value();
       // Make the added batch dimension the major-most, keep the order of the
       // original dimensions.
@@ -334,8 +351,13 @@ absl::Status MakeDotComputationSplitKBatch(
       expanded->mutable_shape()->mutable_layout()->add_minor_to_major(0);
       dot->SetupDerivedInstruction(expanded);
     } else {
-      expanded = computation->AddInstruction(current->CloneWithNewShape(
-          ShapeUtil::PrependMajorDimension(config.split_k, current->shape())));
+      // Propagate the precision of the accumulator to the GEMM fusion root.
+      PrimitiveType accumulator_dtype = GetAccumulatorType(
+          disable_reduced_precision_reduction, computation, current);
+      expanded = computation->AddInstruction(
+          current->CloneWithNewShape(ShapeUtil::PrependMajorDimension(
+              config.split_k, ShapeUtil::ChangeElementType(
+                                  current->shape(), accumulator_dtype))));
       if (expanded->opcode() == HloOpcode::kTranspose) {
         const auto* old_transpose = Cast<HloTransposeInstruction>(current);
         auto* new_transpose = Cast<HloTransposeInstruction>(expanded);
@@ -358,26 +380,23 @@ absl::Status MakeDotComputationSplitKBatch(
     for (int i = 0; i < expanded->operands().size(); ++i) {
       HloInstruction* operand = expanded->mutable_operand(i);
       if (!to_process_set.contains(operand)) {
+        // Broadcast the operand to the Split-K dimension and convert to the
+        // accumulator dtype.
+        auto accumulator_dtype = GetAccumulatorType(
+            disable_reduced_precision_reduction, computation, operand);
+        HloInstruction* convert = MakeConvertToHlo(operand, accumulator_dtype);
         std::vector<int64_t> broadcast_dimensions(
             operand->shape().dimensions_size());
         absl::c_iota(broadcast_dimensions, 1);
         TF_RETURN_IF_ERROR(expanded->ReplaceOperandWithDifferentShape(
-            i, MakeBroadcastHlo(operand, broadcast_dimensions,
-                                ShapeUtil::PrependMajorDimension(
-                                    config.split_k, operand->shape()))));
+            i,
+            MakeBroadcastHlo(convert, broadcast_dimensions,
+                             ShapeUtil::PrependMajorDimension(
+                                 config.split_k,
+                                 ShapeUtil::ChangeElementType(
+                                     operand->shape(), accumulator_dtype)))));
       }
     }
-  }
-
-  if (disable_reduced_precision_reduction) {
-    PrimitiveType output_type =
-        computation->root_instruction()->shape().element_type();
-    PrimitiveType accumulator_type = output_type == PrimitiveType::F64
-                                         ? PrimitiveType::F64
-                                         : PrimitiveType::F32;
-
-    computation->root_instruction()->mutable_shape()->set_element_type(
-        accumulator_type);
   }
 
   if (did_pad) {
@@ -417,6 +436,7 @@ absl::Status MakeDotSplitKBatch(HloInstruction* dot_fusion,
   HloInstruction* zero =
       dot_fusion->parent()->AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::Zero(root->shape().element_type())));
+  auto initial_dot_fusion_users = dot_fusion->users();
   // The batch dimension to reduce is the first one by construction.
   TF_ASSIGN_OR_RETURN(HloInstruction * reduce,
                       MakeReduceHlo(dot_fusion, zero, /*dimensions=*/{0},
@@ -425,21 +445,17 @@ absl::Status MakeDotSplitKBatch(HloInstruction* dot_fusion,
   // The output of the reduce has to have the layout of the original dot.
   *reduce->mutable_shape()->mutable_layout() = output_layout;
 
+  HloInstruction* split_k_root = disable_reduced_precision_reduction
+                                     ? MakeConvertToHlo(reduce, output_type)
+                                     : reduce;
+
   if (dot_fusion->IsRoot()) {
-    dot_fusion->parent()->set_root_instruction(reduce,
+    dot_fusion->parent()->set_root_instruction(split_k_root,
                                                /*accept_different_shape=*/true);
   } else {
-    TF_RETURN_IF_ERROR(dot_fusion->ReplaceAllUsesWithDifferentShape(reduce));
-  }
-
-  if (disable_reduced_precision_reduction) {
-    HloInstruction* convert = MakeConvertToHlo(reduce, output_type);
-    if (reduce->IsRoot()) {
-      reduce->parent()->set_root_instruction(convert,
-                                             /*accept_different_shape=*/true);
-    } else {
-      TF_RETURN_IF_ERROR(reduce->ReplaceAllUsesWithDifferentShape(convert));
-    }
+    // Replace all users expect for split_k_root created above to avoid cycles.
+    TF_RETURN_IF_ERROR(dot_fusion->ReplaceAllUsesWithDifferentShape(
+        initial_dot_fusion_users, split_k_root));
   }
 
   return absl::OkStatus();

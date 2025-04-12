@@ -21,11 +21,13 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -36,7 +38,6 @@ cc_library(
     deps = [
         ":attribute_importer",
         ":hlo_utils",
-        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -48,6 +49,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -119,6 +121,7 @@ cc_library(
         "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:Support",
         "@stablehlo//:base",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -137,6 +140,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
+        "//xla/mlir_hlo:mhlo_passes",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
@@ -144,7 +148,9 @@ cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:QuantOps",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -188,6 +194,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:SparseTensorEnums",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 

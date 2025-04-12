@@ -2982,7 +2982,7 @@ HloInstructionProto HloConvolutionInstruction::ToProto() const {
 
 void HloConvolutionInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3067,7 +3067,7 @@ HloInstructionProto HloReduceWindowInstruction::ToProto() const {
 
 void HloReduceWindowInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3118,7 +3118,7 @@ HloInstructionProto HloSelectAndScatterInstruction::ToProto() const {
 
 void HloSelectAndScatterInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3454,7 +3454,7 @@ HloCustomCallInstruction::CloneWithNewOperandsImpl(
   cloned->set_padding_type(padding_type_);
   *cloned->mutable_precision_config() = precision_config();
   cloned->set_custom_call_schedule(custom_call_schedule_);
-  return std::move(cloned);
+  return cloned;
 }
 
 HloPadInstruction::HloPadInstruction(const Shape& shape,

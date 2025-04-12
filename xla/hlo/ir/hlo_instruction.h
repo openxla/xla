@@ -998,7 +998,7 @@ class HloInstruction {
   // Creates a dynamic reshape instruction. Similar to reshape but dynamic
   // dimensions sizes are provided as additional variadic arguments.
   //
-  // Precondition: dim_sizes.size() == shape.dimensions_size()
+  // Precondition: dim_sizes.size() == shape.dimensions().size()
   static std::unique_ptr<HloInstruction> CreateDynamicReshape(
       const Shape& shape, HloInstruction* data_operand,
       absl::Span<HloInstruction* const> dim_sizes);
@@ -1966,7 +1966,7 @@ class HloInstruction {
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
-    return std::move(proto);
+    return proto;
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
@@ -2026,10 +2026,7 @@ class HloInstruction {
   }
   const OpMetadata& metadata() const { return *metadata_; }
 
-  // Set/get the computation containing this instruction. set_parent should only
-  // be called by HloComputation methods which add/remove instructions to
-  // computations.
-  void set_parent(HloComputation* computation) { parent_ = computation; }
+  // Get the computation containing this instruction.
   const HloComputation* parent() const { return parent_; }
   HloComputation* parent() { return parent_; }
 
@@ -2431,6 +2428,9 @@ class HloInstruction {
       bool layout_sensitive, bool sharding_sensitive,
       bool ignore_channel_id_values,
       bool ignore_commutative_operand_order) const;
+
+  // Set the computation containing this instruction.
+  void set_parent(HloComputation* computation) { parent_ = computation; }
 
   // Implementation for non-common logic of PrintExtraAttributes.
   virtual void PrintExtraAttributesImpl(AttributePrinter& printer,

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/support.h"
 
-#include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
@@ -592,7 +591,6 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     case HloOpcode::kDynamicReshape:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
-    case HloOpcode::kFft:
     case HloOpcode::kGather:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kInfeed:

@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 
 namespace xla {
@@ -132,10 +133,6 @@ class TritonGemmTestWithoutTritonGemmAny : public TritonGemmTest {
 };
 
 TEST_F(TritonGemmTest, FP8DotSmallTileDoesNotCrash) {
-  GTEST_SKIP() << "TODO(b/337839570): Re-enable once the bug is fixed. "
-                  "Currently the test is not representative of the issue. "
-                  "While the test passes, the end-to-end model fails.";
-
   if (!GetCudaComputeCapability().IsAtLeastHopper()) {
     GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
   }
@@ -862,21 +859,16 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTest, NondefaultOperandLayoutIsSupported) {
-  // TODO(bchetioui): reenable when b/285866137 is fixed.
-#ifndef NDEBUG
-  GTEST_SKIP() << "This test times out when -UNDEBUG is set.";
-#endif
   constexpr absl::string_view kHloText = R"(
 ENTRY r {
-  p1 = f16[9,140,128]{2,1,0} parameter(1)
-  cp = f16[9,140,128]{2,0,1} copy(p1)
-  cv = f32[9,140,128]{2,0,1} convert(cp)
-  p0 = f32[9,140,123]{2,1,0} parameter(0)
-  ROOT d = f32[9,128,123]{2,1,0} dot(cv, p0),
+  p1 = f16[3,10,128]{2,1,0} parameter(1)
+  cp = f16[3,10,128]{2,0,1} copy(p1)
+  cv = f32[3,10,128]{2,0,1} convert(cp)
+  p0 = f32[3,10,123]{2,1,0} parameter(0)
+  ROOT d = f32[3,128,123]{2,1,0} dot(cv, p0),
     lhs_batch_dims={0}, lhs_contracting_dims={1},
     rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
-
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(kHloText));
   EXPECT_THAT(
@@ -3965,123 +3957,6 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompareTwoModules(kHloTextRef, kHloTextTest,
                                       ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4},
                                       /*run_hlo_passes=*/false));
-}
-
-class TritonGemmContractionDims : public TritonGemmTest {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = TritonGemmTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_ensure_minor_dot_contraction_dims(true);
-    return debug_options;
-  }
-};
-
-TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_0) {
-  if (!SupportsBF16(GpuComputeComp())) {
-    GTEST_SKIP() << "BF16 not supported.";
-  }
-  constexpr absl::string_view kHloText = R"(
-HloModule m
-
-ENTRY e {
-  parameter.0 = bf16[16,40]{1,0} parameter(0)
-  parameter.1 = bf16[40,32]{1,0} parameter(1)
-  ROOT dot.31472 = bf16[16,32]{1,0} dot(parameter.0, parameter.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(kHloText));
-
-  EXPECT_THAT(module->entry_computation()
-                  ->root_instruction()
-                  ->fused_instructions_computation()
-                  ->root_instruction(),
-              GmockMatch(m::Dot(m::Op().WithShape(BF16, {16, 40}, {1, 0}),
-                                m::Op().WithShape(BF16, {40, 32}, {0, 1}))
-                             .WithShape(BF16, {16, 32}, {1, 0})));
-}
-
-TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_2_1_2) {
-  if (!SupportsBF16(GpuComputeComp())) {
-    GTEST_SKIP() << "BF16 not supported.";
-  }
-  constexpr absl::string_view kHloText = R"(
-HloModule m
-
-ENTRY e {
-  parameter_0 = bf16[32,4,36]{2,1,0} parameter(0)
-  parameter_1 = bf16[40,4,36]{2,1,0} parameter(1)
-  ROOT dot.16450 = bf16[4,32,40]{2,1,0} dot(parameter_0, parameter_1),
-      lhs_batch_dims={1}, lhs_contracting_dims={2},
-      rhs_batch_dims={1}, rhs_contracting_dims={2}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(kHloText));
-
-  // The contracting dims were already minor, so the layout is unchanged
-  // (non-major batch dims are fine).
-  EXPECT_THAT(module->entry_computation()
-                  ->root_instruction()
-                  ->fused_instructions_computation()
-                  ->root_instruction(),
-              GmockMatch(m::Dot(m::Op().WithShape(BF16, {32, 4, 36}, {2, 1, 0}),
-                                m::Op().WithShape(BF16, {40, 4, 36}, {2, 1, 0}))
-                             .WithShape(BF16, {4, 32, 40}, {2, 1, 0})));
-}
-
-TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_2_0_1) {
-  if (!SupportsBF16(GpuComputeComp())) {
-    GTEST_SKIP() << "BF16 not supported.";
-  }
-  constexpr absl::string_view kHloText = R"(
-HloModule m
-
-ENTRY e {
-  parameter_1 = bf16[16,16,48]{2,1,0} parameter(1)
-  parameter_2 = bf16[16,48,32]{2,1,0} parameter(0)
-  ROOT dot.16125 = bf16[16,16,32]{2,1,0} dot(parameter_1, parameter_2),
-      lhs_batch_dims={1}, lhs_contracting_dims={2},
-      rhs_batch_dims={0}, rhs_contracting_dims={1}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(kHloText));
-
-  // lhs has minor contracting dims, so the layout is changed.
-  // rhs changes layout to have minor contracting dims.
-  EXPECT_THAT(
-      module->entry_computation()
-          ->root_instruction()
-          ->fused_instructions_computation()
-          ->root_instruction(),
-      GmockMatch(m::Dot(m::Op().WithShape(BF16, {16, 16, 48}, {2, 1, 0}),
-                        m::Op().WithShape(BF16, {16, 48, 32}, {1, 2, 0}))
-                     .WithShape(BF16, {16, 16, 32}, {2, 1, 0})));
-}
-
-TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_1) {
-  if (!SupportsBF16(GpuComputeComp())) {
-    GTEST_SKIP() << "BF16 not supported.";
-  }
-  constexpr absl::string_view kHloText = R"(
-HloModule m
-
-ENTRY e {
-  parameter_0 = bf16[16,32]{1,0} parameter(0)
-  parameter_1 = bf16[40,32]{0,1} parameter(1)
-  ROOT dot.15148 = bf16[16,40]{1,0} dot(parameter_0, parameter_1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(kHloText));
-  EXPECT_THAT(module->entry_computation()
-                  ->root_instruction()
-                  ->fused_instructions_computation()
-                  ->root_instruction(),
-              GmockMatch(m::Dot(m::Op().WithShape(BF16, {16, 32}, {1, 0}),
-                                m::Op().WithShape(BF16, {32, 40}, {1, 0}))
-                             .WithShape(BF16, {16, 40}, {1, 0})));
 }
 
 TEST_F(TritonTest, UseTF32For8BitOrLessWithF32) {

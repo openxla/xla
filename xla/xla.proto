@@ -443,8 +443,8 @@ message DebugOptions {
   // threads. Setting to 0 (the default value) means no enforcement.
   bool xla_gpu_enable_llvm_module_compilation_parallelism = 268;
 
-  // Allow early return when acquiring NCCL cliques.
-  bool xla_gpu_enable_nccl_clique_optimization = 244;
+  // DEPRECATED: This flag is a no-op.
+  bool xla_gpu_enable_nccl_clique_optimization = 244 [deprecated = true];
 
   // Enable NCCL communicator splitting.
   bool xla_gpu_enable_nccl_comm_splitting = 272;
@@ -500,10 +500,6 @@ message DebugOptions {
   // Determine the while loop unrolling scheme.
   WhileLoopUnrolling xla_gpu_enable_while_loop_unrolling = 294;
 
-  // Change the layout of the second triton dot operand to be column major.
-  // Only works for (bf16 x bf16) -> bf16.
-  bool xla_gpu_ensure_minor_dot_contraction_dims = 249;
-
   // Excludes non-deterministic ops from compiled executables.
   // Unlike --xla_gpu_deterministic_ops does not disable autotuning - the
   // compilation itself can be non-deterministic.
@@ -554,6 +550,10 @@ message DebugOptions {
   //
   // Pre-existing block-level fusions are left unmodified.
   bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
+
+  // Enable the pass that splits GEMMs that underutilize the GPU load by
+  // splitting the K dimension using a heuristic.
+  bool xla_gpu_experimental_enable_split_k_rewrite = 386;
 
   // Enable fusion for the subchannel dequantisation sequences like
   // [x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot.
@@ -1200,7 +1200,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 386
+  // Next id: 387
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1229,8 +1229,9 @@ message DebugOptions {
   // xla_gpu_enable_cudnn_fmha
   // xla_gpu_unsupported_force_triton_gemm
   // xla_allow_get_default_platform
+  // xla_gpu_ensure_minor_dot_contraction_dims
   reserved 5, 117, 133, 139, 176, 178, 180, 193, 214, 194, 221, 242, 206, 320,
-      325, 326, 332, 361, 270, 229, 271, 279, 218, 369, 371;
+      325, 326, 332, 361, 270, 229, 271, 279, 218, 369, 371, 249;
 }
 
 // Contains flags which affects the GPU compilation result.

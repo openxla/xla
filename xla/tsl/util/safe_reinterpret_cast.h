@@ -48,17 +48,6 @@ struct IsByteLike<unsigned char> : std::true_type {};
 template <>
 struct IsByteLike<std::byte> : std::true_type {};
 
-// IsCvByteLike<T>::value is true if T is a possibly CV-qualified byte-like type
-// (char, unsigned char, or std::byte).
-template <typename T>
-struct IsCvByteLike : IsByteLike<T> {};
-template <typename T>
-struct IsCvByteLike<const T> : IsByteLike<T> {};
-template <typename T>
-struct IsCvByteLike<volatile T> : IsByteLike<T> {};
-template <typename T>
-struct IsCvByteLike<const volatile T> : IsByteLike<T> {};
-
 // IsSafeCast<From, To>::value is true if it is safe to reinterpret_cast a
 // value of type From to a value of type To.
 //
@@ -67,15 +56,43 @@ struct IsCvByteLike<const volatile T> : IsByteLike<T> {};
 template <typename From, typename To>
 struct IsSafeCast : std::false_type {};
 
-// It's safe to cast a type to itself.
-template <typename T>
-struct IsSafeCast<T, T> : std::true_type {};
-
-// It's safe to cast a pointer to/from a byte-like type.
+// 1.  The C++ standard guarantees that it's safe to cast a pointer to/from a
+//     pointer to a byte-like type.
+// 2a. The Google C++ style guide states that it's safe to cast a data pointer
+//     to/from a void pointer.
+// 2b. While not guaranteed by the C++ standard, POSIX mandates that it's safe
+//     to cast a function pointer to/from a void pointer
+//     (https://pubs.opengroup.org/onlinepubs/9799919799/functions/dlsym.html).
+//     On Windows (with MSVC), casting a function pointer to/from a void
+//     pointer has been a widely adopted practice for decades and is considered
+//     safe in practice, even though it is not explicitly guaranteed by
+//     Microsoft.
+// 3.  It's safe to cast a pointer or to/from the same type.
 template <typename From, typename To>
 struct IsSafeCast<From*, To*>
-    : std::integral_constant<bool, IsCvByteLike<From>::value ||
-                                       IsCvByteLike<To>::value> {};
+    : std::integral_constant<
+          bool,
+          // To/from a pointer to a byte-like type.
+          (IsByteLike<typename std::remove_cv<From>::type>::value ||
+           IsByteLike<typename std::remove_cv<To>::type>::value) ||
+              // To/from void pointer.
+              (std::is_void_v<From> || std::is_void_v<To>) ||
+              // Between the same type.
+              std::is_same_v<From, To>> {};
+
+// If __restrict is a macro, we assume that the compiler doesn't support
+// the __restrict keyword (e.g. when the code is compiled for iOS). Otherwsie,
+// we make safe_reinterpret_cast ignore the __restrict qualifier.
+#ifndef __restrict  // If __restrict is not a macro.
+
+template <typename From, typename To>
+struct IsSafeCast<From*, To* __restrict> : IsSafeCast<From*, To*> {};
+template <typename From, typename To>
+struct IsSafeCast<From* __restrict, To*> : IsSafeCast<From*, To*> {};
+template <typename From, typename To>
+struct IsSafeCast<From* __restrict, To* __restrict> : IsSafeCast<From*, To*> {};
+
+#endif  // __restrict
 
 // It's safe to cast a pointer to/from std::uintptr_t.
 template <typename From>
@@ -88,6 +105,12 @@ template <typename From>
 struct IsSafeCast<From*, std::intptr_t> : std::true_type {};
 template <typename To>
 struct IsSafeCast<std::intptr_t, To*> : std::true_type {};
+
+// It's safe to cast the nullptr literal to std::uintptr_t or std::intptr_t.
+template <>
+struct IsSafeCast<std::nullptr_t, std::uintptr_t> : std::true_type {};
+template <>
+struct IsSafeCast<std::nullptr_t, std::intptr_t> : std::true_type {};
 
 }  // namespace internal
 

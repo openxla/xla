@@ -1011,10 +1011,10 @@ TEST(TfrtGpuClientTest, CreateViewOfDeviceBuffer) {
 TEST(TfrtGpuClientTest, CopyRawToHostFullBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
   auto literal = xla::LiteralUtil::CreateR1<float>({41.0f, 42.0f});
+
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtBuffer> buffer,
       client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
-
   TF_ASSERT_OK_AND_ASSIGN(int64_t size, buffer->GetOnDeviceSizeInBytes());
   void* dst =
       tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
@@ -1363,7 +1363,8 @@ TEST(TfrtGpuClientTest, AsyncCopyToDevice) {
 }
 
 TEST(TfrtGpuClientTest, OnDoneSafelyDestructTransferManagerAsync) {
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetTfrtGpuClient(GpuClientOptions()));
   ASSERT_GE(client->addressable_devices().size(), 1);
   PjRtDevice* const device = client->addressable_devices()[0];
 

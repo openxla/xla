@@ -87,6 +87,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -103,6 +104,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/host_callback.h"
@@ -117,6 +119,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/stream_executor_executable.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
@@ -529,76 +532,14 @@ AllocateDestinationBuffer(
   return py_buffer;
 }
 
-PjRtStreamExecutorBuffer::ScopedHold::~ScopedHold() {
-  if (ok()) {
-    if (type_ == kDonation) {
-      parent_->DropDonationHold(std::move(buffer_));
-    } else {
-      parent_->DropUsageOrExternalHold(type_, buffer_ptr_);
-    }
-  }
-}
-
-PjRtStreamExecutorBuffer::ScopedHold::ScopedHold(ScopedHold&& other)
-    : parent_(other.parent_),
-      type_(other.type_),
-      state_(other.state_),
-      status_(std::move(other.status_)),
-      buffer_ptr_(other.buffer_ptr_),
-      buffer_(std::move(other.buffer_)) {
-  // Preserve the invariant that status is invalid if buffer == nullptr.
-  other.SetState(kMoved);
-}
-
-void PjRtStreamExecutorBuffer::ScopedHold::AcquireDonation(
-    absl::StatusOr<std::unique_ptr<TrackedDeviceBuffer>> buffer_or) {
-  CHECK(!ok());
-  if (buffer_or.ok()) {
-    buffer_ = std::move(buffer_or).value();
-    buffer_ptr_ = buffer_.get();
-    SetState(kValid);
-  } else {
-    status_ = std::move(buffer_or).status();
-    buffer_ = nullptr;
-    buffer_ptr_ = nullptr;
-    SetState(kError);
-  }
-  // Check the invariant holds.
-  CHECK(!ok() || buffer_ptr_ != nullptr);
-}
-
-void PjRtStreamExecutorBuffer::ScopedHold::AcquireUsageOrExternalReference(
-    absl::StatusOr<TrackedDeviceBuffer*> buffer_or) {
-  CHECK(!ok());
-  if (buffer_or.ok()) {
-    buffer_.reset();
-    buffer_ptr_ = buffer_or.value();
-    SetState(kValid);
-  } else {
-    status_ = std::move(buffer_or).status();
-    buffer_.reset();
-    buffer_ = nullptr;
-    SetState(kError);
-  }
-  // Check the invariant holds.
-  CHECK(!ok() || buffer_ptr_ != nullptr);
-}
-
 void PjRtStreamExecutorBuffer::ScopedHold::ConvertUsageHold(
     se::Stream* usage_stream, std::shared_ptr<BufferSequencingEvent> event,
     bool reference_held) {
   CHECK(ok());
-  CHECK_EQ(type_, kUsage);
-  parent_->ConvertUsageHold(buffer(), usage_stream, std::move(event),
-                            reference_held);
+  CHECK_EQ(type(), kUsage);
+  parent()->ConvertUsageHold(buffer(), usage_stream, std::move(event),
+                             reference_held);
   SetState(kConverted);
-}
-
-void PjRtStreamExecutorBuffer::ScopedHold::ConfirmDonation() {
-  CHECK(ok());
-  CHECK_EQ(type_, kDonation);
-  parent_->ConfirmDonation(buffer());
-  SetState(kDonated);
 }
 
 bool PjRtStreamExecutorBuffer::IsOnCpu() const {
@@ -612,16 +553,11 @@ absl::StatusOr<Shape> PjRtStreamExecutorBuffer::logical_on_device_shape() {
   }
   auto* local_device = device_->local_device_state();
   auto* stream = local_device->GetDeviceToHostStream();
-  ScopedHold device_buffer(this, ScopedHold::kUsage);
-  {
-    absl::MutexLock lock(&mu_);
-    // We can't perform any other action while a donation hold is in progress.
-    WaitForOutstandingDonationHold();
-    if (device_buffer_ == nullptr) {
-      return InvalidArgument(
-          "logical_on_device_shape() called on deleted or donated buffer");
-    }
-    AcquireHoldLocked(&device_buffer);
+  auto device_buffer = GetBufferWithUsageHold();
+  if (!device_buffer.ok()) {
+    return InvalidArgument(
+        "logical_on_device_shape() called on deleted or donated buffer: %s",
+        device_buffer.status().ToString());
   }
 
   WaitForBufferDefinitionEventsOnStream(device_buffer->definition_events(),
@@ -857,8 +793,8 @@ PjRtStreamExecutorClient::BufferFromHostBufferInternal(
   // Allocating multigigabyte pinned buffers can be very slow. In that case,
   // using a staging buffer is probably worse than not using one.
   // TODO(phawkins): add chunking for transfers.
-  if (!IsDmaMapped(data, packed_size) &&
-      (must_use_staging_buffer || (should_stage_host_to_device_transfers() &&
+  if (must_use_staging_buffer || (!IsDmaMapped(data, packed_size) &&
+                                  (should_stage_host_to_device_transfers() &&
                                    packed_size < (int64_t{1} << 30)))) {
     void* ptr = host_memory_allocator()->AllocateRaw(
         tsl::Allocator::kAllocatorAlignment, transpose ? size : packed_size);
@@ -1348,60 +1284,26 @@ absl::Span<PjRtMemorySpace* const> PjRtStreamExecutorClient::memory_spaces()
 PjRtStreamExecutorBuffer::PjRtStreamExecutorBuffer(
     Shape on_device_shape, std::unique_ptr<TrackedDeviceBuffer> device_buffer,
     PjRtClient* client, PjRtDevice* device, PjRtMemorySpace* memory_space)
-    : client_(tensorflow::down_cast<PjRtStreamExecutorClient*>(client)),
+    : CommonPjRtBuffer(std::move(device_buffer)),
+      client_(tensorflow::down_cast<PjRtStreamExecutorClient*>(client)),
       on_device_shape_(std::move(on_device_shape)),
       device_(tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)),
-      memory_space_(memory_space),
-      device_buffer_(std::move(device_buffer)) {
-  for (int i = 0; i < ScopedHold::Type::kMaxValue; ++i) {
-    holds_[i] = 0;
-  }
-}
+      memory_space_(memory_space) {}
 
 PjRtStreamExecutorBuffer::~PjRtStreamExecutorBuffer() {
   Delete();
-  for (int i = 0; i < ScopedHold::Type::kMaxValue; ++i) {
-    CHECK_EQ(holds_[i], 0);
-  }
-}
-
-void PjRtStreamExecutorBuffer::WaitForOutstandingUsageHolds() {
-  auto not_in_usage_hold = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-    return holds_[ScopedHold::kUsage] == 0;
-  };
-  mu_.Await(absl::Condition(&not_in_usage_hold));
-}
-
-void PjRtStreamExecutorBuffer::WaitForOutstandingDonationHold() {
-  auto not_in_donation_hold = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-    return holds_[ScopedHold::kDonation] == 0;
-  };
-  mu_.Await(absl::Condition(&not_in_donation_hold));
 }
 
 absl::StatusOr<tsl::RCReference<RawSEDeviceMemory>>
 PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
   tsl::profiler::TraceMe trace_me("PjRtStreamExecutorBuffer::Release");
-  std::unique_ptr<TrackedDeviceBuffer> device_buffer;
-  TrackedDeviceBuffer::StreamAndEventContainer events;
-  {
-    absl::MutexLock lock(&mu_);
-    // We first wait for a donation hold to complete if there is one in
-    // progress. If the donation succeeds via ConfirmDonation() then it will
-    // set device_buffer_ to nullptr before returning to this thread.
-    WaitForOutstandingDonationHold();
-    if (device_buffer_ == nullptr) {
-      return tsl::RCReference<RawSEDeviceMemory>();
-    }
-    // Set device_buffer_ to null now so that no other
-    // thread can add a hold while we are in WaitForOutstandingUsageHolds()
-    // below.
-    std::swap(device_buffer_, device_buffer);
-    WaitForOutstandingUsageHolds();
-    // Now that all holds have completed and no more can be added, we can get
-    // the final set of usage events.
-    events = device_buffer->LockUseAndTransferUsageEvents();
+  std::unique_ptr<TrackedDeviceBuffer> device_buffer(
+      static_cast<TrackedDeviceBuffer*>(ReleaseBuffer().release()));
+  if (device_buffer == nullptr) {
+    return tsl::RCReference<RawSEDeviceMemory>();
   }
+  TrackedDeviceBuffer::StreamAndEventContainer events =
+      device_buffer->LockUseAndTransferUsageEvents();
   auto device_memory = device_buffer->device_memory();
   LocalDeviceState* local_device_state = device_->local_device_state();
   if (wait_for_operations_to_complete) {
@@ -1514,104 +1416,13 @@ void PjRtStreamExecutorBuffer::Delete() {
   TF_CHECK_OK(Release(/*wait_for_operations_to_complete=*/false).status());
 }
 
-bool PjRtStreamExecutorBuffer::IsDeleted() {
-  absl::MutexLock lock(&mu_);
-  return device_buffer_ == nullptr;
-}
-
-absl::StatusOr<TrackedDeviceBuffer*>
-PjRtStreamExecutorBuffer::GetBufferForUsageOrExternalHoldLocked(
-    ScopedHold::Type type) {
-  // All callers should have called WaitForOutstandingDonationHold().
-  CHECK_EQ(holds_[ScopedHold::kDonation], 0);
-  if (device_buffer_ == nullptr) {
-    return InvalidArgument("Buffer has been deleted or donated.");
-  } else {
-    ++holds_[type];
-  }
-  return device_buffer_.get();
-}
-
-absl::StatusOr<std::unique_ptr<TrackedDeviceBuffer>>
-PjRtStreamExecutorBuffer::GetBufferForDonationHoldLocked() {
-  // All callers should have called WaitForOutstandingDonationHold().
-  CHECK_EQ(holds_[ScopedHold::kDonation], 0);
-  if (device_buffer_ == nullptr) {
-    return InvalidArgument("Donation requested for invalid buffer");
-  }
-  if (holds_[ScopedHold::kExternalReference] > 0) {
-    return InvalidArgument(
-        "Donation requested for buffer with external reference");
-  }
-  // First add the donation hold.
-  ++holds_[ScopedHold::kDonation];
-  // Then wait for any usage holds to be dropped or converted. No new usage
-  // holds can be added until we drop the donation hold so this wait will
-  // complete eventually.
-  WaitForOutstandingUsageHolds();
-  // Because we added a donation hold, nobody could release the buffer while
-  // we were waiting.
-  CHECK(device_buffer_ != nullptr);
-  return std::move(device_buffer_);
-}
-
-void PjRtStreamExecutorBuffer::AcquireHoldLocked(ScopedHold* hold) {
-  if (hold->type() == ScopedHold::kDonation) {
-    hold->AcquireDonation(GetBufferForDonationHoldLocked());
-    return;
-  }
-
-  hold->AcquireUsageOrExternalReference(
-      GetBufferForUsageOrExternalHoldLocked(hold->type()));
-}
-
 void PjRtStreamExecutorBuffer::ConvertUsageHold(
     TrackedDeviceBuffer* buffer, se::Stream* usage_stream,
     std::shared_ptr<BufferSequencingEvent> event, bool reference_held) {
   absl::MutexLock lock(&mu_);
-  CHECK(device_buffer_.get() == buffer || device_buffer_ == nullptr);
+  CHECK(device_buffer() == buffer || device_buffer() == nullptr);
   buffer->AddUsageEvent(usage_stream, std::move(event), reference_held);
-  CHECK_GT(holds_[ScopedHold::kUsage], 0);
-  --holds_[ScopedHold::kUsage];
-}
-
-void PjRtStreamExecutorBuffer::ConfirmDonation(
-    TrackedDeviceBuffer* device_buffer) {
-  {
-    absl::MutexLock lock(&mu_);
-    CHECK_EQ(holds_[ScopedHold::kUsage], 0);
-    CHECK_EQ(holds_[ScopedHold::kExternalReference], 0);
-    CHECK_EQ(holds_[ScopedHold::kDonation], 1);
-    holds_[ScopedHold::kDonation] = 0;
-    // As a sanity check ensure no more usage events can be added to the buffer.
-    device_buffer->LockUseAndTransferUsageEvents();
-    // Give up ownership of the device memory so we don't free it when the last
-    // reference to device_buffer_ goes away.
-    device_buffer->ReleaseDeviceMemory();
-    // Make *this invalid so it can't be used again. Any threads blocking in
-    // Release or GetBufferWithHold will see an invalid buffer and return.
-    device_buffer_.reset();
-  }
-}
-
-void PjRtStreamExecutorBuffer::DropUsageOrExternalHold(
-    ScopedHold::Type type, TrackedDeviceBuffer* buffer) {
-  absl::MutexLock lock(&mu_);
-  CHECK(device_buffer_.get() == buffer || device_buffer_ == nullptr);
-  CHECK_GT(holds_[type], 0);
-  --holds_[type];
-}
-
-void PjRtStreamExecutorBuffer::DropDonationHold(
-    std::unique_ptr<TrackedDeviceBuffer> buffer) {
-  absl::MutexLock lock(&mu_);
-  CHECK_EQ(device_buffer_.get(), nullptr);
-  device_buffer_ = std::move(buffer);
-  CHECK_GT(holds_[ScopedHold::kDonation], 0);
-  --holds_[ScopedHold::kDonation];
-  CHECK_EQ(holds_[ScopedHold::kDonation], 0);
-  CHECK_EQ(holds_[ScopedHold::kUsage], 0);
-  CHECK_EQ(holds_[ScopedHold::kExternalReference], 0);
+  DecrementUsage();
 }
 
 PjRtFuture<> PjRtStreamExecutorBuffer::LazyToLiteral(
@@ -1630,16 +1441,11 @@ PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
   }
   LocalDeviceState* local_device = device_->local_device_state();
   se::Stream* stream = local_device->GetDeviceToHostStream();
-  ScopedHold device_buffer(this, ScopedHold::kUsage);
-  {
-    absl::MutexLock lock(&mu_);
-    // We can't perform any other action while a donation hold is in progress.
-    WaitForOutstandingDonationHold();
-    if (device_buffer_ == nullptr) {
-      return PjRtFuture<>(InvalidArgument(
-          "CopyToHostAsync() called on deleted or donated buffer"));
-    }
-    AcquireHoldLocked(&device_buffer);
+  auto device_buffer = GetBufferWithUsageHold();
+  if (!device_buffer.ok()) {
+    return PjRtFuture<>(
+        InvalidArgument("ToLiteral() called on deleted or donated buffer: %s",
+                        device_buffer.status().ToString()));
   }
 
   auto promise = PjRtFuture<>::CreatePromise();
@@ -1740,11 +1546,11 @@ PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
 absl::StatusOr<size_t> PjRtStreamExecutorBuffer::GetOnDeviceSizeInBytes()
     const {
   absl::MutexLock lock(&mu_);
-  if (device_buffer_ == nullptr || !device_buffer_->device_memory()) {
+  if (device_buffer() == nullptr || !device_buffer()->device_memory()) {
     return InvalidArgument(
         "GetOnDeviceSizeInBytes called on deleted or donated buffer");
   }
-  return device_buffer_->device_memory()->mem().size();
+  return device_buffer()->device_memory()->mem().size();
 }
 
 PjRtFuture<> PjRtStreamExecutorBuffer::CopyRawToHost(void* dst, int64_t offset,
@@ -1756,15 +1562,6 @@ PjRtFuture<> PjRtStreamExecutorBuffer::CopyRawToHost(void* dst, int64_t offset,
 PjRtFuture<> PjRtStreamExecutorBuffer::CopyRawToHostFuture(
     PjRtFuture<void*> dst, int64_t offset, int64_t transfer_size) {
   return client_->CopyRawSubBufferToHost(this, dst, offset, transfer_size);
-}
-
-absl::StatusOr<ShapedBuffer> PjRtStreamExecutorBuffer::AsShapedBuffer() const {
-  absl::MutexLock lock(&mu_);
-  if (device_buffer_ == nullptr) {
-    return InvalidArgument(
-        "Attempted to fetch value of invalid/deleted buffer.");
-  }
-  return device_buffer_->AsShapedBuffer(on_device_shape_);
 }
 
 PjRtStreamExecutorBuffer::ScopedHold
@@ -1915,16 +1712,11 @@ PjRtStreamExecutorBuffer::CopyToDeviceMemorySpace(
   se::Stream* transfer_stream =
       transfer_local_device->GetDeviceToDeviceStream();
 
-  ScopedHold src_device_buffer(this, ScopedHold::kUsage);
-  {
-    absl::MutexLock lock(&mu_);
-    // We can't perform any other action while a donation hold is in progress.
-    WaitForOutstandingDonationHold();
-    if (device_buffer_ == nullptr) {
-      return InvalidArgument(
-          "CopyToDevice called on deleted or donated buffer");
-    }
-    AcquireHoldLocked(&src_device_buffer);
+  auto src_device_buffer = GetBufferWithUsageHold();
+  if (!src_device_buffer.ok()) {
+    return InvalidArgument(
+        "CopyToDevice() called on deleted or donated buffer: %s",
+        src_device_buffer.status().ToString());
   }
 
   absl::StatusOr<std::pair<std::unique_ptr<PjRtBuffer>,
@@ -1972,12 +1764,12 @@ PjRtFuture<> PjRtStreamExecutorBuffer::GetReadyFuture() {
   PjRtFuture<>::Promise definition_promise;
   {
     absl::MutexLock lock(&mu_);
-    if (device_buffer_ == nullptr) {
+    if (device_buffer() == nullptr) {
       return PjRtFuture<>(InvalidArgument(
           "GetReadyFuture() called on deleted or donated buffer"));
     }
     if (!definition_promise_) {
-      definition_events = device_buffer_->definition_events();
+      definition_events = device_buffer()->definition_events();
       definition_promise_ = PjRtFuture<>::CreatePromise();
     }
     definition_promise = definition_promise_;
@@ -2733,8 +2525,8 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
   absl::Span<int const> donated_params =
       ParametersThatMustBeDonated(executable_idx);
   auto donate_it = donated_params.begin();
-  absl::flat_hash_set<PjRtStreamExecutorBuffer*> used_buffers;
-  absl::flat_hash_set<PjRtStreamExecutorBuffer*> donated_buffers;
+  absl::flat_hash_map<const void*, std::pair<bool, int>> donation_clashes;
+  donation_clashes.reserve(argument_handles.size());
   for (int i = 0; i < argument_handles.size(); ++i) {
     auto* handle =
         tensorflow::down_cast<PjRtStreamExecutorBuffer*>(argument_handles[i]);
@@ -2751,29 +2543,8 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
     if (must_donate) {
       ++donate_it;
     }
-    bool already_used = !used_buffers.emplace(handle).second;
-    bool already_donated =
-        must_donate ? !donated_buffers.emplace(handle).second
-                    : donated_buffers.find(handle) != donated_buffers.end();
-    if (must_donate && already_donated) {
-      return InvalidArgument(
-          "Attempt to donate the same buffer twice in Execute() (second use: "
-          "flattened argument %d, replica %d). "
-          "Toy example for this bug: `f(donate(a), donate(a))`.",
-          i, replica);
-    } else if (must_donate && already_used) {
-      return InvalidArgument(
-          "Attempt to donate a buffer which is also used by the same call to "
-          "Execute() (second use: flattened argument %d, replica %d). "
-          "Toy example for this bug: `f(a, donate(a))`.",
-          i, replica);
-    } else if (already_donated) {
-      return InvalidArgument(
-          "Attempt to use a buffer that was previously donated in the same "
-          "call to Execute() (second use: flattened argument %d, replica %d). "
-          "Toy example for this bug: `f(donate(a), a)`.",
-          i, replica);
-    }
+    TF_RETURN_IF_ERROR(TestBufferDonationClashes(
+        handle, donation_clashes, must_donate, i, replica, partition));
     device_buffers->emplace_back(handle->GetBufferWithHold(
         must_donate ? PjRtStreamExecutorBuffer::ScopedHold::kDonation
                     : PjRtStreamExecutorBuffer::ScopedHold::kUsage));
@@ -3414,8 +3185,23 @@ PjRtStreamExecutorLoadedExecutable::GetOutputMemoryKinds() const {
   return out;
 }
 
-void PjRtStreamExecutorClient::UpdateCompileOptions(CompileOptions* options) {
+absl::Status PjRtStreamExecutorClient::UpdateCompileOptions(
+    CompileOptions* options) {
+  return UpdateCompileOptionsInternal(options, /*returned_extras=*/nullptr);
+}
+
+absl::StatusOr<PjRtStreamExecutorClient::ExecutableExtras>
+PjRtStreamExecutorClient::UpdateCompileOptionsAndGetExecutableExtras(
+    CompileOptions* options) {
+  ExecutableExtras extras;
+  TF_RETURN_IF_ERROR(UpdateCompileOptionsInternal(options, &extras));
+  return extras;
+}
+
+absl::Status PjRtStreamExecutorClient::UpdateCompileOptionsInternal(
+    CompileOptions* options, ExecutableExtras* returned_extras) {
   ExecutableBuildOptions& build_options = options->executable_build_options;
+  const int original_device_ordinal = build_options.device_ordinal();
   if (!build_options.compile_thread_pool()) {
     build_options.set_compile_thread_pool(thread_pool());
   }
@@ -3455,15 +3241,17 @@ void PjRtStreamExecutorClient::UpdateCompileOptions(CompileOptions* options) {
   if (build_options.device_ordinal() < 0) {
     build_options.set_device_ordinal(0);
   }
-}
 
-absl::StatusOr<PjRtStreamExecutorClient::ExecutableExtras>
-PjRtStreamExecutorClient::UpdateCompileOptionsAndGetExecutableExtras(
-    CompileOptions* options) {
-  const int original_device_ordinal =
-      options->executable_build_options.device_ordinal();
-
-  UpdateCompileOptions(options);
+  // We need the information of device assignment for
+  //   1) XLA GPU shard autotuning, as the process count and the current process
+  //   index are needed;
+  //   2) getting executable extras, as the addressable devices are needed.
+  const bool use_xla_gpu_shard_autotuning =
+      build_options.has_debug_options() &&
+      build_options.debug_options().xla_gpu_shard_autotuning();
+  if (!use_xla_gpu_shard_autotuning && returned_extras == nullptr) {
+    return absl::OkStatus();
+  }
 
   ExecutableExtras extras;
   std::shared_ptr<DeviceAssignment>& device_assignment =
@@ -3515,7 +3303,6 @@ PjRtStreamExecutorClient::UpdateCompileOptionsAndGetExecutableExtras(
           device_assignment->ToString());
     }
 
-    ExecutableBuildOptions& build_options = options->executable_build_options;
     if (original_device_ordinal < 0) {
       build_options.set_device_ordinal(
           addressable_devices.front()->local_hardware_id().value());
@@ -3524,17 +3311,20 @@ PjRtStreamExecutorClient::UpdateCompileOptionsAndGetExecutableExtras(
     build_options.set_process_index(*this_process_index);
     build_options.set_process_count(all_process_indices.size());
   }
-  return extras;
+  if (returned_extras != nullptr) {
+    *returned_extras = std::move(extras);
+  }
+  return absl::OkStatus();
 }
 
-absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 PjRtStreamExecutorClient::CompileInternal(
     const XlaComputation& computation,
     const std::vector<const Shape*>& argument_layout_pointers,
     LayoutCanonicalizationCallback layout_canonicalization_callback,
     CompileOptions options) {
-  tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Compile");
-  VLOG(1) << "PjRtStreamExecutorClient::Compile";
+  tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::CompileInternal");
+  VLOG(1) << "PjRtStreamExecutorClient::CompileInternal";
   if (key_value_store().has_value() &&
       !options.executable_build_options.key_value_store()) {
     options.executable_build_options.set_key_value_store(*key_value_store());
@@ -3542,14 +3332,7 @@ PjRtStreamExecutorClient::CompileInternal(
   auto input_options = options;
 
   TF_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
-
-  TF_ASSIGN_OR_RETURN(ExecutableExtras extras,
-                      UpdateCompileOptionsAndGetExecutableExtras(&options));
-  std::shared_ptr<DeviceAssignment>& device_assignment =
-      extras.device_assignment;
-  std::vector<PjRtStreamExecutorLoadedExecutable::LogicalDeviceIds>&
-      addressable_device_logical_ids = extras.addressable_device_logical_ids;
-  std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
+  TF_RETURN_IF_ERROR(UpdateCompileOptions(&options));
 
   // It is important to set the canonicalization callback after creating
   // a copy of the options so that the executable's options remain without
@@ -3564,26 +3347,39 @@ PjRtStreamExecutorClient::CompileInternal(
       client()->Compile(computation, argument_layout_pointers,
                         options.executable_build_options));
 
-  auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
-      std::move(local_executables), options.parameter_is_tupled_arguments,
-      std::move(device_assignment), std::move(input_options),
-      std::move(addressable_device_logical_ids), std::move(addressable_devices),
-      this);
-
-  TF_RETURN_IF_ERROR(
-      executable->SetUpDonation(options.parameter_is_tupled_arguments));
-  const auto& ex_options = options.executable_build_options;
-  if (ex_options.has_debug_options() &&
-      ex_options.debug_options().xla_gpu_dump_hlo_unoptimized_snapshots()) {
-    executable->SetInputHloSnapshotBits(
-        computation.proto(), options.executable_build_options.debug_options());
-  }
-  return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));
+  return BuildPjRtExecutable(std::move(local_executables), input_options);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
-                                         CompileOptions options) {
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
+                                  CompileOptions options) {
+  std::vector<const Shape*> argument_layout_pointers;
+  const ExecutableBuildOptions& build_options =
+      options.executable_build_options;
+  const bool allow_auto_layout =
+      build_options.has_debug_options() &&
+      build_options.debug_options().xla_pjrt_allow_auto_layout_in_hlo();
+  TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
+      computation,
+      [local_client = client(),
+       allow_auto_layout](Shape shape) -> absl::StatusOr<Shape> {
+        if (allow_auto_layout && !shape.has_layout()) {
+          return shape;
+        }
+        return local_client->backend()
+            .transfer_manager()
+            ->ChooseCompactLayoutForShape(shape);
+      },
+      options.argument_layouts, &options.executable_build_options,
+      &argument_layout_pointers));
+  return CompileInternal(computation, argument_layout_pointers,
+                         /* layout_canonicalization_callback = */ nullptr,
+                         options);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
+                                  CompileOptions options) {
   XlaComputation xla_computation;
   const ExecutableBuildOptions& exec_build_options =
       options.executable_build_options;
@@ -3595,7 +3391,7 @@ PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
   // If the compile options specify argument layout, then let's
   // fall back to using the options to determine layouts.
   if (options.argument_layouts) {
-    return CompileAndLoad(xla_computation, options);
+    return Compile(xla_computation, options);
   }
 
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
@@ -3645,28 +3441,17 @@ PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::CompileAndLoad(const XlaComputation& computation,
                                          CompileOptions options) {
-  std::vector<const Shape*> argument_layout_pointers;
-  const ExecutableBuildOptions& build_options =
-      options.executable_build_options;
-  const bool allow_auto_layout =
-      build_options.has_debug_options() &&
-      build_options.debug_options().xla_pjrt_allow_auto_layout_in_hlo();
-  TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
-      computation,
-      [local_client = client(),
-       allow_auto_layout](Shape shape) -> absl::StatusOr<Shape> {
-        if (allow_auto_layout && !shape.has_layout()) {
-          return shape;
-        }
-        return local_client->backend()
-            .transfer_manager()
-            ->ChooseCompactLayoutForShape(shape);
-      },
-      options.argument_layouts, &options.executable_build_options,
-      &argument_layout_pointers));
-  return CompileInternal(computation, argument_layout_pointers,
-                         /* layout_canonicalization_callback = */ nullptr,
-                         options);
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
+                      Compile(computation, options));
+  return Load(std::move(executable), LoadOptions());
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
+                                         CompileOptions options) {
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
+                      Compile(module, options));
+  return Load(std::move(executable), LoadOptions());
 }
 
 absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
@@ -3703,21 +3488,55 @@ absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
   return proto.SerializeAsString();
 }
 
-absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::LoadSerializedExecutable(
-    absl::string_view serialized, std::optional<CompileOptions> options,
-    const LoadOptions& load_options) {
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+PjRtStreamExecutorClient::BuildPjRtExecutable(
+    std::vector<std::unique_ptr<LocalExecutable>> local_executables,
+    CompileOptions compile_options) {
+  if (local_executables.empty()) {
+    return Internal("No local executable");
+  }
+  if (local_executables.size() != 1) {
+    return Unimplemented("Multiple executables are not supported");
+  }
+  Executable* built_executable = local_executables[0]->executable();
+  if (!built_executable->has_module()) {
+    return absl::InternalError("Executable does not have HLO modules.");
+  }
+  const auto& hlo_module = built_executable->module();
+
+  const int num_replicas = hlo_module.config().replica_count();
+  const int num_partitions = hlo_module.config().num_partitions();
+  const std::string name = hlo_module.name();
+  const std::string fingerprint = hlo_module.GetFingerprint128();
+
+  return std::make_unique<StreamExecutorExecutable>(
+      std::move(compile_options), std::move(local_executables), client_,
+      num_replicas, num_partitions, name, fingerprint,
+      memory_spaces()[0]->kind());
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+PjRtStreamExecutorClient::DeserializeExecutable(
+    absl::string_view serialized,
+    std::optional<CompileOptions> compile_options) {
+  TF_ASSIGN_OR_RETURN(
+      auto local_executables_and_options,
+      DeserializeToLocalExecutable(serialized, compile_options));
+
+  return BuildPjRtExecutable(std::move(local_executables_and_options.first),
+                             local_executables_and_options.second);
+}
+
+absl::StatusOr<
+    std::pair<std::vector<std::unique_ptr<LocalExecutable>>, CompileOptions>>
+PjRtStreamExecutorClient::DeserializeToLocalExecutable(
+    absl::string_view serialized, std::optional<CompileOptions> options) {
   ExecutableAndOptionsProto proto;
   if (serialized.size() > std::numeric_limits<int>::max()) {
-    return Internal(
-        "PjRtStreamExecutorClient::DeserializeExecutable proto too large "
-        "(>2GB)");
+    return Internal("Proto is too large (>2GB)");
   }
   if (!proto.ParseFromArray(serialized.data(), serialized.size())) {
-    return Internal(
-        "PjRtStreamExecutorClient::DeserializeExecutable proto "
-        "deserialization "
-        "failed");
+    return Internal("Proto deserialization failed");
   }
 
   CompileOptions compile_options;
@@ -3727,11 +3546,39 @@ PjRtStreamExecutorClient::LoadSerializedExecutable(
     TF_ASSIGN_OR_RETURN(compile_options,
                         CompileOptions::FromProto(proto.compile_options()));
   }
-  auto input_options = compile_options;
 
   tsl::profiler::TraceMe traceme(
-      "PjRtStreamExecutorClient::DeserializeExecutable");
-  VLOG(1) << "PjRtStreamExecutorClient::DeserializeExecutable";
+      "PjRtStreamExecutorClient::DeserializeToLocalExecutable");
+  VLOG(1) << "PjRtStreamExecutorClient::DeserializeToLocalExecutable";
+
+  std::string str = std::move(*proto.mutable_serialized_executable());
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<LocalExecutable> loaded,
+      client()->Load(str, compile_options.executable_build_options));
+
+  std::vector<std::unique_ptr<LocalExecutable>> local_executables;
+  local_executables.push_back(std::move(loaded));
+
+  return std::make_pair(std::move(local_executables), compile_options);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtStreamExecutorClient::LoadSerializedExecutable(
+    absl::string_view serialized, std::optional<CompileOptions> options,
+    const LoadOptions& load_options) {
+  TF_ASSIGN_OR_RETURN(auto local_executables_and_options,
+                      DeserializeToLocalExecutable(serialized, options));
+  return LoadInternal(std::move(local_executables_and_options.first),
+                      local_executables_and_options.second);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtStreamExecutorClient::LoadInternal(
+    std::vector<std::unique_ptr<LocalExecutable>> local_executables,
+    CompileOptions compile_options) {
+  auto input_options = compile_options;
+
+  TF_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
 
   TF_ASSIGN_OR_RETURN(
       ExecutableExtras extras,
@@ -3742,13 +3589,14 @@ PjRtStreamExecutorClient::LoadSerializedExecutable(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
-  std::string str = std::move(*proto.mutable_serialized_executable());
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<LocalExecutable> loaded,
-      client()->Load(str, compile_options.executable_build_options));
-
-  std::vector<std::unique_ptr<LocalExecutable>> local_executables;
-  local_executables.push_back(std::move(loaded));
+  const auto& ex_options = compile_options.executable_build_options;
+  const bool xla_gpu_dump_hlo_unoptimized_snapshots =
+      ex_options.has_debug_options() &&
+      ex_options.debug_options().xla_gpu_dump_hlo_unoptimized_snapshots();
+  HloModuleProto hlo_module_proto;
+  if (xla_gpu_dump_hlo_unoptimized_snapshots) {
+    hlo_module_proto = local_executables[0]->executable()->module().ToProto();
+  }
 
   auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
       std::move(local_executables),
@@ -3759,7 +3607,27 @@ PjRtStreamExecutorClient::LoadSerializedExecutable(
 
   TF_RETURN_IF_ERROR(
       executable->SetUpDonation(compile_options.parameter_is_tupled_arguments));
+  if (xla_gpu_dump_hlo_unoptimized_snapshots) {
+    executable->SetInputHloSnapshotBits(
+        std::move(hlo_module_proto),
+        compile_options.executable_build_options.debug_options());
+  }
   return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtStreamExecutorClient::Load(std::unique_ptr<PjRtExecutable> executable,
+                               const LoadOptions& load_options) {
+  auto se_executable = absl::WrapUnique(
+      tensorflow::down_cast<StreamExecutorExecutable*>(executable.release()));
+  CompileOptions compile_options = se_executable->compile_options();
+
+  tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Load");
+  VLOG(1) << "PjRtStreamExecutorClient::Load";
+
+  TF_ASSIGN_OR_RETURN(auto local_executables, se_executable->ConsumeExecutable(
+                                                  client(), compile_options));
+  return LoadInternal(std::move(local_executables), compile_options);
 }
 
 bool PjRtStreamExecutorClient::IsDmaMapped(const void* data_start,

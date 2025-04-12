@@ -34,6 +34,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@stablehlo//:base",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -206,7 +207,7 @@ cc_binary(
 gentbl_cc_library(
     name = "hlo_op_writer_inc",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [([], "hlo_op_writer.inc")],
+    tbl_outs = {"hlo_op_writer.inc": []},
     tblgen = ":gen_hlo_op_writer",
     td_file = "gen_hlo_op_writer.td",
     deps = [

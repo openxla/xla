@@ -19,6 +19,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <ostream>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -62,17 +64,34 @@ struct ComputationSummary {
   bool all_unchanged = true;
 };
 
-// A group of computations that are connected in the graph.
+// A group of left and right computations that form a diff pattern.
 struct ComputationGroup {
   std::vector<const HloComputation*> left_computations;
   std::vector<const HloComputation*> right_computations;
 };
 
-// Summary of the diff result of the left and right HLO modules.
+// Metrics of the diff pattern.
+struct DiffMetrics {
+  int64_t changed_instruction_count = 0;
+  int64_t left_unmatched_instruction_count = 0;
+  int64_t right_unmatched_instruction_count = 0;
+};
+
+// A computation diff pattern is multiple groups of computations that have the
+// same diff.
+struct ComputationDiffPattern {
+  uint64_t fingerprint = 0;
+  std::vector<ComputationGroup> computation_groups;
+  DiffMetrics diff_metrics;
+};
+
+// Teach the gunit to print the diff pattern.
+void PrintTo(const ComputationDiffPattern& diff_pattern, std::ostream* os);
+
+//  Summary of the diff result of the left and right HLO modules.
 struct DiffSummary {
-  // Connected computations grouped by fingerprint.
-  absl::flat_hash_map<uint64_t, std::vector<ComputationGroup>>
-      grouped_computations;
+  // The computation diff patterns found in the diff result.
+  std::vector<ComputationDiffPattern> computation_diff_patterns;
 
   // Summary of each computation.
   absl::flat_hash_map<const HloComputation*, const ComputationSummary>

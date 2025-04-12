@@ -35,6 +35,8 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/tests/client_library_test_runner_utils.h"
 #include "xla/tests/hlo_runner_agnostic_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/bitmap.h"
@@ -92,7 +94,7 @@ class ClientLibraryTestRunnerMixin : public T {
 
   absl::StatusOr<Literal> ExecuteAndTransfer(
       const XlaComputation& computation,
-      const absl::Span<Literal* const> arguments,
+      const absl::Span<const Literal* const> arguments,
       const Shape* const shape_with_output_layout = nullptr) {
     ExecutionOptions execution_options = execution_options_;
     if (shape_with_output_layout != nullptr) {
@@ -106,7 +108,8 @@ class ClientLibraryTestRunnerMixin : public T {
   }
 
   absl::StatusOr<Literal> ExecuteAndTransfer(
-      XlaBuilder* const builder, const absl::Span<Literal* const> arguments,
+      XlaBuilder* const builder,
+      const absl::Span<const Literal* const> arguments,
       const Shape* shape_with_output_layout = nullptr) {
     // Build the computation, as a convenience.
     TF_ASSIGN_OR_RETURN(XlaComputation computation, builder->Build());
@@ -116,8 +119,9 @@ class ClientLibraryTestRunnerMixin : public T {
 
   // Run a computation and return its value as a string. If an error
   // occurs, then instead return the error as a string.
-  std::string ExecuteToString(XlaBuilder* const builder,
-                              const absl::Span<Literal* const> arguments) {
+  std::string ExecuteToString(
+      XlaBuilder* const builder,
+      const absl::Span<const Literal* const> arguments) {
     const absl::StatusOr<Literal> result =
         ExecuteAndTransfer(builder, arguments);
     if (!result.ok()) {
@@ -130,7 +134,7 @@ class ClientLibraryTestRunnerMixin : public T {
   // Compare with reference.
   // Side effect: EXPECT_OK
   void ComputeAndCompare(XlaBuilder* const builder,
-                         const absl::Span<Literal* const> arguments,
+                         const absl::Span<const Literal* const> arguments,
                          const std::optional<ErrorSpec> error = std::nullopt) {
     TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder->Build());
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -142,31 +146,65 @@ class ClientLibraryTestRunnerMixin : public T {
   // Side effect: EXPECT_OK
   void ComputeAndCompareLiteral(
       XlaBuilder* const builder, const Literal& expected,
-      const absl::Span<Literal* const> arguments,
-      const std::optional<ErrorSpec> error = std::nullopt) {
-    TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder->Build());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            BuildAndVerifyHloModule(computation));
-    TF_ASSERT_OK_AND_ASSIGN(Literal actual,
-                            this->Execute(std::move(module), arguments));
+      const absl::Span<const Literal* const> arguments,
+      const Shape* shape_with_layout) {
+    return ComputeAndCompareLiteral(builder, expected, arguments, std::nullopt,
+                                    shape_with_layout);
+  }
+
+  // Compare with literal.
+  // Side effect: EXPECT_OK
+  void ComputeAndCompareLiteral(
+      XlaBuilder* const builder, const Literal& expected,
+      const absl::Span<const Literal* const> arguments,
+      const std::optional<ErrorSpec> error = std::nullopt,
+      const Shape* shape_with_layout = nullptr) {
+    if (error == std::nullopt) {
+      if (ShapeUtil::ElementIsFloating(expected.shape()) ||
+          ShapeUtil::ElementIsComplex(expected.shape())) {
+        LOG(WARNING) << "performing exact comparison of floating point numbers";
+      }
+    }
+    // We allow using a float expected literal for a non float outputs. In this
+    // case, we need to convert the expected literal to test_type_.
+    const Literal* expected_ptr = &expected;
+    Literal converted_expected;
+    Shape layout_shape;
+    if (test_type_ != F32) {
+      converted_expected = MaybeConvertLiteralToTestType(expected);
+      expected_ptr = &converted_expected;
+      if (shape_with_layout != nullptr) {
+        layout_shape = *shape_with_layout;
+        ShapeUtil::ForEachMutableSubshape(
+            &layout_shape, [&](Shape* subshape, const ShapeIndex& /*index*/) {
+              if (subshape->element_type() == F32) {
+                subshape->set_element_type(test_type_);
+              }
+            });
+        shape_with_layout = &layout_shape;
+      }
+    }
+    TF_ASSERT_OK_AND_ASSIGN(
+        Literal actual,
+        this->ExecuteAndTransfer(builder, arguments, shape_with_layout));
     if (error.has_value()) {
-      EXPECT_TRUE(LiteralTestUtil::Near(expected, actual, *error));
+      EXPECT_TRUE(LiteralTestUtil::Near(*expected_ptr, actual, *error));
     } else {
-      EXPECT_TRUE(LiteralTestUtil::Equal(expected, actual));
+      EXPECT_TRUE(LiteralTestUtil::Equal(*expected_ptr, actual));
     }
   }
 
   // Compare with literal.
   // Side effect: EXPECT_OK
   void ComputeAndCompareTuple(XlaBuilder* builder, const Literal& expected,
-                              absl::Span<Literal* const> arguments,
+                              absl::Span<const Literal* const> arguments,
                               std::optional<ErrorSpec> error = std::nullopt) {
     return ComputeAndCompareLiteral(builder, expected, arguments, error);
   }
 
   template <typename NativeT>
   void ComputeAndCompareR0(XlaBuilder* builder, NativeT expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal = LiteralUtil::CreateR0<NativeT>(expected);
@@ -176,7 +214,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR1(XlaBuilder* builder,
                            absl::Span<const NativeT> expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal = LiteralUtil::CreateR1<NativeT>(expected);
@@ -185,7 +223,7 @@ class ClientLibraryTestRunnerMixin : public T {
 
   void ComputeAndCompareR1(XlaBuilder* builder,
                            const tsl::core::Bitmap& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     Literal expected_literal = LiteralUtil::CreateR1(expected);
     ComputeAndCompareLiteral(builder, expected_literal, arguments, error);
@@ -194,7 +232,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR2(XlaBuilder* builder,
                            const Array2D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
@@ -205,7 +243,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR3(XlaBuilder* builder,
                            const Array3D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
@@ -216,13 +254,15 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR4(XlaBuilder* builder,
                            const Array4D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
         LiteralUtil::CreateR4FromArray4D<NativeT>(expected);
     ComputeAndCompareLiteral(builder, expected_literal, arguments, error);
   }
+
+  XlaComputation CreateScalarMax() { return xla::CreateScalarMax(test_type_); }
 
   Literal CreateParameterAndTransferLiteral(const int64_t parameter_number,
                                             const Literal& literal,
@@ -275,6 +315,16 @@ class ClientLibraryTestRunnerMixin : public T {
     return literal;
   }
 
+  template <typename NativeT>
+  Literal CreateR4Parameter(const Array4D<NativeT>& array_4d,
+                            int64_t parameter_number, const std::string& name,
+                            XlaBuilder* builder, XlaOp* data_handle) {
+    Literal literal = LiteralUtil::CreateR4FromArray4D(array_4d);
+    literal = MaybeConvertLiteralToTestType(literal);
+    *data_handle = Parameter(builder, parameter_number, literal.shape(), name);
+    return literal;
+  }
+
   Literal MaybeConvertLiteralToTestType(const Literal& literal) const {
     switch (test_type_) {
       case BF16:
@@ -301,26 +351,6 @@ class ClientLibraryTestRunnerMixin : public T {
   // tests tweak the options that will be used to compile/run the graph.
   DebugOptions* mutable_debug_options() {
     return execution_options_.mutable_debug_options();
-  }
-
-  // Creates a (rows x cols) array filled in the following form:
-  //
-  //  [      0              1 ...                   cols-1]
-  //  [  1,000          1,001 ...          1000.0 + cols-1]
-  //  [    ...            ... ...                      ...]
-  //  [(rows-1)*1000.0    ... ... (rows-1)*1000.0 + cols-1]
-  //
-  // If provided, offset is added uniformly to every element (e.g. an offset of
-  // 64 would cause 0 in the above to be 64, 1 to be 65, 1000 to be 1064, etc.)
-  static std::unique_ptr<Array2D<float>> CreatePatternedMatrix(
-      const int rows, const int cols, float offset = 0.0) {
-    auto array = std::make_unique<Array2D<float>>(rows, cols);
-    for (int64_t row = 0; row < rows; ++row) {
-      for (int64_t col = 0; col < cols; ++col) {
-        (*array)(row, col) = col + (row * 1000.0f) + offset;
-      }
-    }
-    return array;
   }
 
  private:

@@ -122,11 +122,6 @@ void HloValueTracing::DeleteMarkedValues() {
   value_ids_to_delete_.clear();
 }
 
-const HloValue& HloValueTracing::GetValue(HloValue::Id value_id) const {
-  DCHECK(values_.contains(value_id)) << "Value not found: " << value_id;
-  return *values_.find(value_id)->second;
-}
-
 HloValue& HloValueTracing::GetValue(HloValue::Id value_id) {
   DCHECK(values_.contains(value_id)) << "Value not found: " << value_id;
   return *values_.find(value_id)->second;
@@ -156,15 +151,6 @@ const HloValueSet& HloValueTracing::GetValueSet(
 HloValueSet& HloValueTracing::GetValueSet(const HloInstruction* instruction,
                                           const ShapeIndex& index) {
   return *GetInstructionValueSet(instruction).mutable_element(index);
-}
-
-const HloValueSet& HloValueTracing::GetValueSet(
-    const HloPosition& position) const {
-  return GetValueSet(position.instruction, position.index);
-}
-
-HloValueSet& HloValueTracing::GetValueSet(const HloPosition& position) {
-  return GetValueSet(position.instruction, position.index);
 }
 
 bool HloValueTracing::UpdateSendValueSet(HloInstruction* send) {
@@ -1229,6 +1215,6 @@ absl::StatusOr<std::unique_ptr<HloValueTracing>> HloValueTracing::Run(
   }
   absl::c_sort(hlo_value_tracing->values_vector_, HloValue::IdLessThan);
 
-  return std::move(hlo_value_tracing);
+  return hlo_value_tracing;
 }
 }  // namespace xla

@@ -98,6 +98,7 @@ cc_library(
     deps = [
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/hlo/ir:hlo",
@@ -184,6 +185,7 @@ cc_library(
         ":emitter_helpers",
         ":fusion_emitter_legacy_matmul",
         ":support",
+        ":tma_utils",
         "//xla:autotuning_proto_cc",
         "//xla:permutation_util",
         "//xla:shape_util",
@@ -296,6 +298,7 @@ cc_library(
     deps = [
         ":dot_algorithms",
         ":emitter_helpers",
+        "//xla:autotuning_proto_cc",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:shape_util",
@@ -310,6 +313,7 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/mlir_hlo:transformation_helpers",
         "//xla/service:algorithm_util",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:matmul_indexing_utils",
@@ -465,19 +469,19 @@ xla_cc_test(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "fusion_emitter_deviceless_test",
     srcs = ["fusion_emitter_deviceless_test.cc"],
-    backends = ["gpu"],
+    tags = ["no_oss"],  # Doesn't pass in OSS when building with the `fusion_emitter_stub`.
     deps = [
         ":fusion_emitter",
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
-        "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",
@@ -519,6 +523,7 @@ xla_test(
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -563,6 +568,7 @@ xla_test(
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -753,6 +759,7 @@ cc_library(
         "//xla/backends/profiler/gpu:cupti_tracer",
         "//xla/tsl/profiler/utils:time_utils",
         "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -783,6 +790,8 @@ cc_library(
         ":fusion_emitter",
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/testlib:filecheck",
@@ -841,6 +850,7 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -889,10 +899,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:algorithm_util",
         "//xla/service:instruction_fusion",
+        "//xla/service:overload",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_indexing_utils",
-        "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:errors",
@@ -1002,6 +1012,7 @@ xla_cc_test(
     deps = [
         ":tma_utils",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:llvm_util",

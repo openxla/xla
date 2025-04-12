@@ -71,6 +71,7 @@ cc_library(
         "//xla/service/gpu:kernel_reuse_cache",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:target_util",
+        "//xla/service/gpu/llvm_gpu_backend:ptx_version_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
@@ -354,6 +355,7 @@ cc_library(
         "//xla/codegen/emitters:computation_partitioner",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/emitters:type_util",
+        "//xla/codegen/emitters:utils",
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
@@ -411,19 +413,5 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
-    ],
-)
-
-xla_cc_test(
-    name = "transpose_test",
-    srcs = ["transpose_test.cc"],
-    deps = [
-        ":transpose",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest",
     ],
 )

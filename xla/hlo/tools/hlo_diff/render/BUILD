@@ -22,6 +22,7 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -36,6 +37,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -61,6 +63,7 @@ cc_library(
     srcs = ["hlo_gumgraph_html_renderer.cc"],
     hdrs = ["hlo_gumgraph_html_renderer.h"],
     deps = [
+        ":graph_url_generator",
         ":hlo_gumgraph_renderer_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/tools/hlo_diff:hlo_diff_result",
@@ -72,5 +75,14 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "graph_url_generator",
+    hdrs = ["graph_url_generator.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )

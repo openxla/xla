@@ -17,11 +17,10 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
-#include <system_error>  // NOLINT(build/c++11): required to interface with LLVM
+#include <system_error>  // NOLINT
 #include <utility>
 #include <variant>
 #include <vector>
@@ -41,6 +40,7 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/fusion_emitter_legacy_matmul.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
@@ -131,10 +132,12 @@ limitations under the License.
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tools/hlo_decomposer.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -1360,11 +1363,12 @@ absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
   const Shape& shape = tiled_hlo.hlo()->shape();
   TF_ASSIGN_OR_RETURN(Type expected_element_type,
                       TritonType(b, shape.element_type()));
+  Type storage_type = StorageType(b, expected_element_type);
   auto result_type = mtx::TiledTensorType::get(
       b.getContext(), padded_tile_sizes,
       llvm::ArrayRef<int64_t>(shape.dimensions().data(),
                               shape.dimensions().size()),
-      expected_element_type);
+      storage_type);
 
   return b.create<mtx::TileOp>(
       result_type, parent_base_ptr, ptr_offsets,
@@ -1534,6 +1538,7 @@ absl::Status CreateInternalError(absl::string_view message,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
+// TODO(393299275): Remove legacy optionality once migration is complete.
 void AppendFuncArgType(EmitterLocOpBuilder& b, absl::Span<const int64_t> dims,
                        absl::string_view fusion_kind, Type ir_type,
                        SmallVector<Type>& fn_arg_types) {
@@ -1549,6 +1554,7 @@ void AppendFuncArgType(EmitterLocOpBuilder& b, absl::Span<const int64_t> dims,
 
 // Only needed for the new emitter since we are using func.func instead of
 // tt.func.
+// TODO(393299275): Remove legacy optionality once migration is complete.
 void AppendFuncResultType(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
                           absl::Span<const int64_t> dims, Type ir_type,
                           SmallVector<Type>& fn_result_types) {
@@ -1560,6 +1566,7 @@ void AppendFuncResultType(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
+// TODO(393299275): Remove legacy optionality once migration is complete.
 mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
                                        absl::string_view fn_name,
                                        absl::string_view fusion_kind,
@@ -1580,6 +1587,7 @@ mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
 }
 
 // Legacy emitter works with tt.return. New emitter works with func.return.
+// TODO(393299275): Remove legacy optionality once migration is complete.
 void EmitReturnOp(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
                   SmallVector<Value> insert_results) {
   if (fusion_kind == kTritonGemmFusionKind) {
@@ -1589,7 +1597,34 @@ void EmitReturnOp(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
   }
 }
 
-absl::StatusOr<TritonModule> CreateTritonModule(
+absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
+    mlir::ModuleOp triton_module, absl::string_view kernel_name) {
+  stream_executor::gpu::TmaMetadata tma_metadata;
+  SmallVector<mlir::LLVM::LLVMFuncOp> func_ops;
+  for (auto func : triton_module.getOps<mlir::LLVM::LLVMFuncOp>()) {
+    // Custom calls will also match to LLVMFuncOp, so we are only interested in
+    // the entry function.
+    if (func.getName().str() == kernel_name) {
+      func_ops.push_back(func);
+    }
+  }
+  CHECK_EQ(func_ops.size(), 1)
+      << "Expected a single LLVMFuncOp in the module for the entry function.";
+
+  for (auto [idx, arg] : llvm::enumerate(func_ops[0].getArguments())) {
+    if (auto attr = func_ops[0].getArgAttrOfType<mtx::TmaDescriptorAttr>(
+            idx, "tt.tma_descriptor")) {
+      TF_ASSIGN_OR_RETURN(
+          auto tma_desc,
+          Create2DTmaDescriptor(attr.getGlobalShape(), attr.getBlockShape(),
+                                attr.getElementByteSize()));
+      tma_metadata.arg_index_to_tma_info.insert({idx, tma_desc});
+    }
+  }
+  return tma_metadata;
+}
+
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
@@ -1651,10 +1686,7 @@ absl::StatusOr<TritonModule> CreateTritonModule(
   std::string libdevice_path =
       GetLibdevicePath(fusion->GetModule()->config(), device_info);
 
-  // It's okay for tma_metadata to be empty; it's only populated when used
-  // explicitly.
   SmallVector<Value> insert_results;
-  std::optional<stream_executor::gpu::TmaMetadata> tma_metadata = std::nullopt;
   if (fusion_kind == kTritonGemmFusionKind) {
     // If the generic Triton emitter is enabled, we should never go through the
     // legacy MatMul emitter.
@@ -1663,9 +1695,8 @@ absl::StatusOr<TritonModule> CreateTritonModule(
           "The generic Triton emitter is enabled, but the legacy MatMul "
           "emitter is being used.");
     }
-    TF_ASSIGN_OR_RETURN(tma_metadata,
-                        EmitMatMul(b, libdevice_path, device_info, fusion, fn,
-                                   block_level_parameters));
+    TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
+                                  block_level_parameters));
   } else if (fusion_kind == kTritonFusionKind ||
              fusion_kind == kTritonNestedGemmFusionKind) {
     TF_ASSIGN_OR_RETURN(insert_results,
@@ -1698,9 +1729,6 @@ absl::StatusOr<TritonModule> CreateTritonModule(
 
   mlir::PassManager pm(&mlir_context);
 
-  // TODO(b/315957220): Pass device and tma_flag to the pass.
-  pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass());
-
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   if (mlir::failed(pm.run(triton_module.get()))) {
@@ -1726,7 +1754,7 @@ absl::StatusOr<TritonModule> CreateTritonModule(
                          .xla_gpu_unsupported_annotate_with_emitter_loc()));
   }
 
-  return TritonModule{std::move(triton_module), tma_metadata};
+  return std::move(triton_module);
 }
 
 absl::StatusOr<TritonWrapperResult> TritonWrapper(
@@ -1745,7 +1773,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(auto triton_module,
+  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> triton_module,
                       CreateTritonModule(fn_name, fusion, device_info,
                                          block_level_parameters, mlir_context));
 
@@ -1755,14 +1783,10 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
 
   // Compile Triton kernel to LLVM.
   const HloModule* hlo_module = fusion->GetModule();
-  TF_ASSIGN_OR_RETURN(
-      TritonWrapperResult result,
-      CompileTritonToLLVM(fn_name, *hlo_module, device_info,
-                          block_level_parameters, triton_module.module.get(),
-                          llvm_module, mlir_context,
-                          /*is_xla_fusion=*/true));
-  result.tma_metadata = triton_module.tma_metadata;
-  return result;
+  return CompileTritonToLLVM(fn_name, *hlo_module, device_info,
+                             block_level_parameters, triton_module.get(),
+                             llvm_module, mlir_context,
+                             /*is_xla_fusion=*/true);
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
@@ -1793,12 +1817,51 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 #endif
 
   bool should_dump_mlir_passes =
+      hlo_config.debug_options().xla_enable_dumping() &&
       DumpingEnabledForHloModule(hlo_module) &&
       DumpingEnabledForHloPass("triton-fusion-emitter",
                                hlo_config.debug_options());
 
   mlir::PassManager pm(&mlir_context);
   pm.enableVerifier(should_verify);
+
+  std::optional<llvm::raw_fd_ostream> log_stream;
+  if (should_dump_mlir_passes) {
+    std::string outputs_dir;
+    if (!tsl::io::GetTestUndeclaredOutputsDir(&outputs_dir)) {
+      outputs_dir = hlo_config.debug_options().xla_dump_to();
+    }
+    if (!outputs_dir.empty()) {
+      const std::string basename =
+          absl::StrCat(absl::string_view(tsl::io::Basename(hlo_module.name())),
+                       ".", kernel_name, ".triton-passes.log");
+      std::string path = tsl::io::JoinPath(outputs_dir, basename);
+      std::error_code err;
+      log_stream.emplace(path, err, llvm::sys::fs::OF_None);
+      if (err) {
+        log_stream.reset();
+        LOG(ERROR) << err.message();
+      } else {
+        pm.getContext()->disableMultithreading();
+        auto print_always = [](mlir::Pass*, mlir::Operation*) { return true; };
+        pm.enableIRPrinting(/*shouldPrintBeforePass=*/print_always,
+                            /*shouldPrintAfterPass=*/print_always,
+                            /*printModuleScope=*/true,
+                            /*printAfterOnlyOnChange=*/false,
+                            /*printAfterOnlyOnFailure=*/true, *log_stream,
+                            /*opPrintingFlags=*/{});
+      }
+    } else {
+      LOG(ERROR)
+          << "--xla_dump_hlo_pass_re=triton-fusion-emitter is set, but neither "
+          << "the environment variable TEST_UNDECLARED_OUTPUTS_DIR nor the "
+          << "flag --xla_dump_to is set, so the llvm dumps are disabled.";
+    }
+  }
+
+  // TODO(b/315957220): Propagate TMA flag once it's supported.
+  pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass(
+      device_info, /*tma_enabled=*/false));
 
   // Lower affine expressions into arithmetic ops.
   pm.addPass(mlir::createLowerAffinePass());
@@ -1829,29 +1892,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   // llvm::Linker::linkModules() segfaults if we don't strip locations.
   pm.addPass(mlir::createStripDebugInfoPass());
 
-  std::string mlir_passes_dump_result;
-  llvm::raw_string_ostream log_stream(mlir_passes_dump_result);
-  if (should_dump_mlir_passes) {
-    pm.getContext()->disableMultithreading();
-    auto print_always = [](mlir::Pass*, mlir::Operation*) { return true; };
-    pm.enableIRPrinting(/*shouldPrintBeforePass=*/print_always,
-                        /*shouldPrintAfterPass=*/print_always,
-                        /*printModuleScope=*/true,
-                        /*printAfterOnlyOnChange=*/false,
-                        /*printAfterOnlyOnFailure=*/true, log_stream,
-                        /*opPrintingFlags=*/{});
-
-    pm.printAsTextualPipeline(log_stream);
-    log_stream.write("\n\n", 2);
-  }
-
   bool succeeded = mlir::succeeded(pm.run(triton_module));
-
-  if (should_dump_mlir_passes) {
-    DumpToFileInDirOrStdout(hlo_module, "",
-                            absl::StrCat(kernel_name, ".triton-passes.log"),
-                            mlir_passes_dump_result);
-  }
 
   if (!succeeded) {
     return Internal("Failed to compile Triton kernel.");
@@ -1860,8 +1901,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   const int shared_mem_bytes =
       triton_module->getAttrOfType<mlir::IntegerAttr>("ttg.shared").getInt();
   VLOG(2) << "Shared memory usage: " << shared_mem_bytes << " B";
-  if (std::holds_alternative<se::CudaComputeCapability>(cc) &&
-      shared_mem_bytes > device_info.shared_memory_per_block_optin()) {
+  if (shared_mem_bytes > device_info.shared_memory_per_block_optin()) {
     return absl::ResourceExhaustedError(absl::StrFormat(
         "Shared memory size limit exceeded: requested %d, available: %d",
         shared_mem_bytes, device_info.shared_memory_per_block_optin()));
@@ -1932,7 +1972,13 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                  cluster_info.clusterDimY == 1 &&
                  cluster_info.clusterDimZ == 1);
   }
-  return {{shared_mem_bytes, cluster_dim}};
+
+  // It's okay for tma_metadata to be empty; it's only populated when used
+  // explicitly.
+  TF_ASSIGN_OR_RETURN(stream_executor::gpu::TmaMetadata tma_metadata,
+                      ExtractTmaMetadata(triton_module, kernel_name));
+
+  return {{shared_mem_bytes, cluster_dim, tma_metadata}};
 }
 
 }  // namespace gpu
