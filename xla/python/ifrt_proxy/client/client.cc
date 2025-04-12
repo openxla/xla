@@ -33,7 +33,9 @@
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "xla/pjrt/pjrt_device_description.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/client.h"
@@ -228,7 +230,7 @@ Client::MakeArrayFromHostBuffer(
     xla::ifrt::Client::HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer,
     tsl::RCReference<xla::ifrt::UserContext> user_context) {
-  // Currently the `user_context` parameter is ignored.
+  // TODO(b/407104769): Handle `user_context`.
   return Array::MakeArrayFromHostBuffer(
       this, rpc_helper_, data, dtype, std::move(shape), std::move(byte_strides),
       std::move(sharding), semantics, std::move(on_done_with_host_buffer));
@@ -237,9 +239,18 @@ Client::MakeArrayFromHostBuffer(
 absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
 Client::MakeArraysFromHostBufferShards(
     absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
-    xla::ifrt::Client::HostBufferSemantics semantics) {
-  return Array::MakeArraysFromHostBufferShards(this, rpc_helper_, specs,
-                                               semantics);
+    xla::ifrt::Client::HostBufferSemantics semantics,
+    tsl::RCReference<UserContext> user_context) {
+  return Array::MakeArraysFromHostBufferShards(
+      this, rpc_helper_, specs, semantics, std::move(user_context));
+}
+
+absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
+Client::MakeErrorArrays(const absl::Status& error,
+                        absl::Span<const xla::ifrt::ArraySpec> array_specs,
+                        tsl::RCReference<xla::ifrt::UserContext> user_context) {
+  return Array::MakeErrorArrays(this, rpc_helper_, error, array_specs,
+                                std::move(user_context));
 }
 
 absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
@@ -403,6 +414,28 @@ absl::StatusOr<DeviceAssignment> Client::GetDefaultDeviceAssignment(
 xla::ifrt::DeviceListRef Client::MakeDeviceList(
     absl::Span<xla::ifrt::Device* const> devices) const {
   return xla::ifrt::BasicDeviceList::Create(devices);
+}
+
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> Client::GetDefaultLayout(
+    xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
+    xla::ifrt::Device* device, xla::ifrt::MemoryKind memory_kind) const {
+  tsl::profiler::TraceMe traceme_ifrt_entrypoint(
+      "IfrtProxyEntrypointGetDefaultLayout");
+  auto req = std::make_unique<GetDefaultLayoutRequest>();
+  *req->mutable_dtype() = dtype.ToProto();
+  req->mutable_dims()->Reserve(dims.size());
+  for (int64_t dim : dims) {
+    req->add_dims(dim);
+  }
+  req->set_device_id(device->Id().value());
+  req->set_memory_kind(std::string(memory_kind.memory_kind().value_or("")));
+
+  auto future = rpc_helper_->GetDefaultLayout(std::move(req));
+  TF_ASSIGN_OR_RETURN(auto response, future.Await());
+
+  TF_ASSIGN_OR_RETURN(auto layout, xla::PjRtLayout::Deserialize(
+                                       response->serialized_pjrt_layout()));
+  return layout;
 }
 
 }  // namespace proxy

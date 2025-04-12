@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -49,10 +50,23 @@ namespace xla {
 namespace ifrt {
 namespace {
 
+using ::testing::_;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
+using ::testing::HasSubstr;
 using ::testing::SizeIs;
 using ::tsl::testing::StatusIs;
+
+// Returns a list of non-addressable devices in the client.
+std::vector<Device*> GetNonAddressableDevices(Client* client) {
+  std::vector<Device*> devices;
+  for (auto* device : client->devices()) {
+    if (!device->IsAddressable()) {
+      devices.push_back(device);
+    }
+  }
+  return devices;
+}
 
 TEST(ArrayImplTest, MakeArrayFromHostBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
@@ -64,6 +78,43 @@ TEST(ArrayImplTest, MakeArrayFromHostBuffer) {
   Device* device = client->addressable_devices().at(0);
   std::shared_ptr<const Sharding> sharding =
       SingleDeviceSharding::Create(device, MemoryKind());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto array, client->MakeArrayFromHostBuffer(
+                      data->data(), dtype, shape,
+                      /*byte_strides=*/std::nullopt, sharding,
+                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                      /*on_done_with_host_buffer=*/nullptr));
+
+  EXPECT_EQ(array->dtype(), dtype);
+  EXPECT_EQ(array->shape(), shape);
+  EXPECT_EQ(array->shared_ptr_sharding().get(), sharding.get());
+}
+
+TEST(ArrayImplTest,
+     MakeArrayFromHostBufferWithAddressableAndNonAddressableDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.empty()) {
+    GTEST_SKIP() << "Skipping test; needs at least 1 non-addressable device.";
+  }
+
+  DType dtype(DType::kF32);
+  Shape shape({2, 3});
+  auto data = std::make_unique<std::vector<float>>(6);
+  std::iota(data->begin(), data->end(), 0);
+
+  std::vector<Device*> devices;
+  devices.reserve(2);
+  devices.push_back(non_addressable_devices.at(0));
+  devices.push_back(client->addressable_devices().at(0));
+  std::shared_ptr<const Sharding> sharding =
+      xla::ifrt::ConcreteEvenSharding::Create(client->MakeDeviceList(devices),
+                                              xla::ifrt::MemoryKind(), shape,
+                                              /*shard_shape=*/shape,
+                                              /*is_fully_replicated=*/true);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array, client->MakeArrayFromHostBuffer(
@@ -398,7 +449,8 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsAndCopyToHostBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto arrays, client->MakeArraysFromHostBufferShards(
                        absl::MakeSpan(specs),
-                       Client::HostBufferSemantics::kImmutableOnlyDuringCall));
+                       Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                       client->CreateUserContext()));
   ASSERT_THAT(arrays, SizeIs(2));
 
   // Once the `Array` has become ready, the host buffer is not accessed.
@@ -431,6 +483,71 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsAndCopyToHostBuffer) {
       }
     }
   }
+}
+
+TEST(ArrayImplTest, MakeErrorArrays) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+  xla::ifrt::DeviceListRef device_list =
+      client->MakeDeviceList(client->addressable_devices());
+
+  Shape shape({2, 2});
+  ArraySpec array_spec = {
+      /*dtype=*/xla::ifrt::DType(xla::ifrt::DType::kS8),
+      /*shape=*/shape,
+      /*sharding=*/
+      xla::ifrt::ConcreteEvenSharding::Create(
+          device_list, xla::ifrt::MemoryKind(), shape, /*shard_shape=*/shape,
+          /*is_fully_replicated=*/true),
+  };
+
+  const absl::Status error = absl::InternalError("injected error");
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<tsl::RCReference<xla::ifrt::Array>> arrays,
+      client->MakeErrorArrays(error, {array_spec, array_spec},
+                              client->CreateUserContext()));
+  ASSERT_EQ(arrays.size(), 2);
+
+  EXPECT_THAT(arrays[0]->GetReadyFuture().Await(),
+              StatusIs(_, HasSubstr("injected error")));
+  EXPECT_THAT(arrays[1]->GetReadyFuture().Await(),
+              StatusIs(_, HasSubstr("injected error")));
+}
+
+TEST(ArrayImplTest, MakeErrorArraysWithAddressableAndNonAddressableDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.empty()) {
+    GTEST_SKIP() << "Skipping test; needs at least 1 non-addressable device.";
+  }
+
+  Shape shape({2, 2});
+
+  std::vector<Device*> devices;
+  devices.reserve(2);
+  devices.push_back(client->addressable_devices().at(0));
+  devices.push_back(non_addressable_devices.at(0));
+  std::shared_ptr<const Sharding> sharding =
+      ConcreteEvenSharding::Create(client->MakeDeviceList(devices),
+                                   MemoryKind(), shape, /*shard_shape=*/shape,
+                                   /*is_fully_replicated=*/true);
+
+  ArraySpec array_spec = {/*dtype=*/xla::ifrt::DType(xla::ifrt::DType::kS8),
+                          /*shape=*/shape,
+                          /*sharding=*/sharding};
+
+  const absl::Status error = absl::InternalError("injected error");
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<tsl::RCReference<xla::ifrt::Array>> arrays,
+      client->MakeErrorArrays(error, {array_spec, array_spec},
+                              client->CreateUserContext()));
+  ASSERT_EQ(arrays.size(), 2);
+
+  EXPECT_THAT(arrays[0]->GetReadyFuture().Await(),
+              StatusIs(_, HasSubstr("injected error")));
+  EXPECT_THAT(arrays[1]->GetReadyFuture().Await(),
+              StatusIs(_, HasSubstr("injected error")));
 }
 
 TEST(ArrayImplTest, AssembleArray) {
@@ -624,7 +741,9 @@ TEST(ArrayImplTest, CopyToSameDevices) {
 TEST(ArrayImplTest, AssembleAndDisassembleNonAddressableArray) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
-  if (client->device_count() - client->addressable_device_count() < 2) {
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.size() < 2) {
     GTEST_SKIP() << "Skipping test; needs at least 2 non-addressable devices.";
   }
 
@@ -648,16 +767,8 @@ TEST(ArrayImplTest, AssembleAndDisassembleNonAddressableArray) {
   for (auto* device : client->addressable_devices()) {
     addressable_device_ids.insert(device->Id());
   }
-  std::vector<Device*> non_addressable_devices;
-  for (auto* device : client->devices()) {
-    if (!addressable_device_ids.contains(device->Id())) {
-      non_addressable_devices.push_back(device);
-    }
-    if (non_addressable_devices.size() >= 2) {
-      break;
-    }
-  }
-  auto ifrt_device_list = client->MakeDeviceList(non_addressable_devices);
+  auto ifrt_device_list = client->MakeDeviceList(
+      absl::MakeConstSpan(non_addressable_devices).subspan(0, 2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::shared_ptr<const Sharding> sharding_param_sharding,
       ShardingParamSharding::Create(std::move(sharding_param), ifrt_device_list,

@@ -45,8 +45,8 @@ TEST(TritonStub, CallStubApi) {
   LoadMlirDialectsForTriton(context);
   EXPECT_FALSE(TritonWrapper({}, nullptr, {}, {}, {}, nullptr, context).ok());
   EXPECT_FALSE(CreateTritonModule({}, nullptr, {}, {}, context).ok());
-  EXPECT_FALSE(CompileTritonToLLVM(HloModule("test", HloModuleConfig()), {}, {},
-                                   {}, nullptr, context,
+  EXPECT_FALSE(CompileTritonToLLVM("", HloModule("test", HloModuleConfig()), {},
+                                   {}, {}, nullptr, context,
                                    /*is_xla_fusion=*/true, {})
                    .ok());
 
@@ -68,8 +68,8 @@ TEST(TritonStub, CallStubApi) {
   auto tiled_hlo = TiledHloInstruction::Create(&constant, {}, {1}, {1}, {});
   EXPECT_TRUE(tiled_hlo.ok());
 
-  EXPECT_FALSE(ir_emitter_triton_internal::CreateMakeTensorPtrOp(
-                   builder, {}, *tiled_hlo.value(), {})
+  EXPECT_FALSE(ir_emitter_triton_internal::CreateTileOp(builder, {},
+                                                        *tiled_hlo.value(), {})
                    .ok());
 }
 

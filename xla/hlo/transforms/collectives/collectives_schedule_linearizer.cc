@@ -43,14 +43,15 @@ absl::StatusOr<bool> CollectivesScheduleLinearizer::Run(
        module->MakeNonfusionComputations(execution_threads)) {
     std::unique_ptr<HloReachabilityMap> reachability;
     HloInstruction* prev_done = nullptr;
-    for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
+    auto post_order = computation->MakeInstructionPostOrder();
+    for (HloInstruction* inst : post_order) {
       auto* next = DynCast<HloCollectiveInstruction>(inst);
       if (!next) {
         continue;
       }
       // Build reachability map on demand if we actually see collectives.
       if (!reachability) {
-        reachability = HloReachabilityMap::Build(computation);
+        reachability = HloReachabilityMap::Build(computation, post_order);
       }
       // Derive the 'start' and 'done' peers of this instruction. For non-async
       // variants of collectives, they are the same as this instruction. For
@@ -74,6 +75,9 @@ absl::StatusOr<bool> CollectivesScheduleLinearizer::Run(
       if (prev_done && !reachability->IsConnected(start, prev_done)) {
         // If prev_done and start are independent, enforce ordering.
         TF_RETURN_IF_ERROR(prev_done->AddControlDependencyTo(next));
+        // Adding control dependency does not update the reachability map.
+        reachability->UpdateReachabilityThroughInstruction(start);
+
         VLOG(1) << "Adding control dependency from " << prev_done->ToString()
                 << " to " << start->ToString();
         changed = true;

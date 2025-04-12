@@ -42,7 +42,12 @@ limitations under the License.
 
 namespace xla::gpu {
 
+std::vector<xla::PrimitiveType> AllXlaDataTypes();
+
 bool SupportsBF16(const stream_executor::GpuComputeCapability& cc);
+
+std::string ComputeCapabilityToString(
+    const stream_executor::GpuComputeCapability& cc);
 
 absl::Status CreateTritonIrAndFileCheck(HloTestBase* test,
                                         absl::string_view hlo_text,
@@ -62,9 +67,9 @@ absl::Status CreateTritonIrAndFileCheckForDot(
     const HloComputation& computation, absl::string_view filecheck_pattern);
 
 inline BlockLevelParameters FromOutputTileSizes(
-    std::vector<int64_t> output_tile_sizes) {
+    std::vector<std::vector<int64_t>> output_tile_sizes) {
   BlockLevelParameters block_level_parameters;
-  block_level_parameters.output_tile_sizes.push_back(output_tile_sizes);
+  block_level_parameters.output_tile_sizes = std::move(output_tile_sizes);
   return block_level_parameters;
 }
 

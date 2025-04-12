@@ -62,8 +62,10 @@ cc_library(
         "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:platform_manager",
         "//xla/tests:llvm_irgen_test_base",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )
 
@@ -129,6 +131,23 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
+    name = "command_buffer_test",
+    srcs = ["command_buffer_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -616,14 +635,14 @@ lit_test_suite(
 #     name = "xla-opt",
 #     srcs = ["xla-opt.cc"],
 #     deps = [
-#         "//xla/backends/gpu/codegen/emitters/transforms:passes",
-#         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
-#         "//xla/backends/gpu/codegen/triton/transforms:passes",
-#         "//xla/codegen/emitters/transforms:passes",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@llvm-project//mlir:TensorDialect",
+#         "//xla/backends/gpu/codegen/emitters/transforms:passes",
+#         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+#         "//xla/backends/gpu/codegen/triton/transforms:passes",
+#         "//xla/codegen/emitters/transforms:passes",
 #         "@triton//:AllPassesAndDialects",
 #         "@triton//third_party/amd:TestAMDRangeAnalysis",
 #     ],

@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -217,27 +218,7 @@ absl::Status ShapeVerifier::HandleDot(HloInstruction* dot) {
           dot->operand(0)->shape(), dot->operand(1)->shape(),
           dot->dot_dimension_numbers(),
           /*preferred_element_type=*/dot->shape().element_type(), sparsity));
-  if (auto nibble_count =
-          absl::c_count(dot->precision_config().operand_precision(),
-                        PrecisionConfig::PACKED_NIBBLE)) {
-    if (nibble_count == 1) {
-      return InvalidArgument("Dot cannot have a single packed nibble argument");
-    }
-    if (nibble_count == 2) {
-      if (!ShapeUtil::ElementIsIntegralWithBits(dot->operand(0)->shape(), 8)) {
-        return InvalidArgument(
-            "Packed nibble precision can only apply to 8 bit integers. LHS is "
-            "%s.",
-            dot->operand(0)->ToString());
-      }
-      if (!ShapeUtil::ElementIsIntegralWithBits(dot->operand(1)->shape(), 8)) {
-        return InvalidArgument(
-            "Packed nibble precision can only apply to 8 bit integers. RHS is "
-            "%s.",
-            dot->operand(1)->ToString());
-      }
-    }
-  }
+
   for (int i = 0; i < sparsity.size(); ++i) {
     const SparsityDescriptor& descriptor = sparsity[i];
     TF_RET_CHECK(descriptor.index() == 0 || descriptor.index() == 1);
@@ -280,42 +261,7 @@ absl::Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
           convolution->feature_group_count(), convolution->batch_group_count(),
           convolution->window(), convolution->convolution_dimension_numbers(),
           /*preferred_element_type=*/convolution->shape().element_type()));
-  if (auto nibble_count =
-          absl::c_count(convolution->precision_config().operand_precision(),
-                        PrecisionConfig::PACKED_NIBBLE)) {
-    if (nibble_count == 1) {
-      return InvalidArgument(
-          "Convolution cannot have a single packed nibble argument");
-    }
-    if (nibble_count == 2) {
-      if (convolution->feature_group_count() != 1) {
-        return InvalidArgument(
-            "Packed nibble precision does not support feature group count "
-            "%s.",
-            convolution->ToString());
-      }
-      if (convolution->batch_group_count() != 1) {
-        return InvalidArgument(
-            "Packed nibble precision does not support batch group count "
-            "%s.",
-            convolution->ToString());
-      }
-      if (!ShapeUtil::ElementIsIntegralWithBits(
-              convolution->operand(0)->shape(), 8)) {
-        return InvalidArgument(
-            "Packed nibble precision can only apply to 8 bit integers. LHS is "
-            "%s.",
-            convolution->operand(0)->ToString());
-      }
-      if (!ShapeUtil::ElementIsIntegralWithBits(
-              convolution->operand(1)->shape(), 8)) {
-        return InvalidArgument(
-            "Packed nibble precision can only apply to 8 bit integers. RHS is "
-            "%s.",
-            convolution->operand(1)->ToString());
-      }
-    }
-  }
+
   return CheckShape(convolution, expected);
 }
 
@@ -889,7 +835,7 @@ absl::Status ShapeVerifier::HandleCollectivePermuteStart(HloInstruction* hlo) {
       hlo->operands(), std::back_inserter(operand_shapes),
       [](const HloInstruction* operand) { return &(operand->shape()); });
   std::vector<Shape> context_shapes;
-  if (hlo->shape().tuple_shapes_size() > 2) {
+  if (hlo->shape().IsTuple() && hlo->shape().tuple_shapes_size() > 2) {
     context_shapes = std::vector<Shape>(hlo->shape().tuple_shapes().begin() + 2,
                                         hlo->shape().tuple_shapes().end());
   }
@@ -2629,7 +2575,8 @@ absl::Status CheckFusionInstruction(HloInstruction* fusion) {
   for (auto* instruction :
        fusion->fused_instructions_computation()->instructions()) {
     if (instruction != fused_root) {
-      if (instruction->user_count() == 0) {
+      if (instruction->user_count() == 0 &&
+          !instruction->HasSideEffectNoRecurse()) {
         return Internal("Non-root instruction %s in %s must have users.",
                         instruction->ToString(), fusion->ToString());
       }
@@ -2980,7 +2927,8 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
               instruction->opcode() == HloOpcode::kCompare ||
               instruction->opcode() == HloOpcode::kIsFinite ||
               (instruction->opcode() == HloOpcode::kSelect &&
-               operand_shape.element_type() == PRED)) {
+               operand_shape.element_type() == PRED) ||
+              instruction->opcode() == HloOpcode::kScatter) {
             // Some instructions can change element_size_in_bits
             // Select instructions ignore element_size_in_bits for predicate
             equal_predicate.IgnoreElementSize();
@@ -3082,6 +3030,16 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   std::optional<int64_t> num_devices_;
 };
 
+bool IsCollectivesGroupComputation(HloComputation* computation) {
+  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
+  if (!maybe_caller.has_value()) {
+    return false;
+  }
+  return (*maybe_caller)
+      ->get_frontend_attribute(kCollectivesGroupAttr)
+      .has_value();
+}
+
 }  // namespace
 
 absl::StatusOr<bool> HloVerifier::Run(
@@ -3117,7 +3075,8 @@ absl::StatusOr<bool> HloVerifier::Run(
       // collection of send/recv instructions. This is needed to represent NCCL
       // groups on GPU.
       if (computation->IsAsyncComputation() &&
-          !computation->OnlyContainsSendRecv()) {
+          !computation->OnlyContainsSendRecv() &&
+          !IsCollectivesGroupComputation(computation)) {
         TF_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

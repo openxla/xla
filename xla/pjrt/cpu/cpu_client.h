@@ -1,3 +1,4 @@
+#include "xla/pjrt/async_work_runner.h"
 /* Copyright 2021 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -181,10 +182,6 @@ class TfrtCpuClient final : public PjRtClient {
       void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
       std::function<void()> on_delete_callback,
       std::optional<std::intptr_t> stream) override;
-
-  absl::Status Defragment() override {
-    return Unimplemented("Defragment not implemented.");
-  }
 
   tsl::thread::ThreadPool* pjrt_client_thread_pool() const {
     return pjrt_client_thread_pool_.get();

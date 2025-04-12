@@ -293,7 +293,8 @@ class Compiler {
 
   // Returns the compiler singleton pointer if it is available for the given
   // platform, or an error status if it is not.
-  static absl::StatusOr<Compiler*> GetForPlatform(const se::Platform* platform);
+  static absl::StatusOr<std::unique_ptr<Compiler>> GetForPlatform(
+      const se::Platform* platform);
 
   // Returns a function that computes the size in bytes of the logical
   // buffer that contains a shape.
@@ -324,7 +325,7 @@ class Compiler {
       absl::string_view filename_prefix) const;
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> DeserializeExecutable(
-      absl::Nonnull<const tsl::protobuf::Message*> serialized) const {
+      const absl::string_view serialized) const {
     return Unimplemented("DeserializeExecutable unimplemented");
   }
 

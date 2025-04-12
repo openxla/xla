@@ -200,11 +200,13 @@ cc_library(
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
         ":cpu_executable",
+        ":cpu_float_support",
         ":cpu_instruction_fusion",
         ":cpu_layout_assignment",
         ":cpu_options",
         ":dot_op_emitter",
         ":executable_proto_cc",
+        ":fusion_wrapper",
         ":ir_emission_utils",
         ":ir_emitter",
         ":ir_emitter2",
@@ -229,6 +231,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:xnn_fusion",
         "//xla/backends/cpu/codegen:compiled_function_library",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/backends/cpu/codegen:execution_engine",
@@ -335,7 +338,6 @@ cc_library(
         "//xla/service:while_loop_constant_sinking",
         "//xla/service:while_loop_invariant_code_motion",
         "//xla/service:while_loop_simplifier",
-        "//xla/service/cpu:fusion_wrapper",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
@@ -2061,6 +2063,40 @@ cc_library(
     deps = [
         ":onednn_contraction_rewriter",
         "//xla/service:float_support",
+    ],
+)
+
+cc_library(
+    name = "cpu_float_support",
+    hdrs = ["cpu_float_support.h"],
+    copts = tsl_copts(),
+    deps = [
+        "//xla/backends/cpu:xnn_fusion",
+        "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:float_support",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_float_support_test",
+    srcs = ["cpu_float_support_test.cc"],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
+    deps = [
+        ":cpu_float_support",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/codegen:target_machine_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/transforms/simplifiers:float_normalization",
+        "//xla/service:hlo_module_config",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

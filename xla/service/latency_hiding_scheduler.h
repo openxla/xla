@@ -242,6 +242,11 @@ class AsyncTracker {
   virtual int64_t GetNumResourcesPerInstruction(
       int64_t resource_type, const HloInstruction& instr) const;
 
+  // Returns a map of number of resources used per resource type by this
+  // instruction.
+  virtual absl::flat_hash_map<int64_t, int64_t> GetNumResourcesPerInstruction(
+      const HloInstruction& instr) const;
+
   // Sets the maximum allowed number of instances for each resource
   virtual void SetConcurrentResourceLimits(
       absl::flat_hash_map<int64_t, int64_t>& max_concurrent_resource) const;
@@ -328,8 +333,14 @@ class AsyncTracker {
 class SchedulerCore {
  public:
   virtual absl::Status InitializeScheduler(const HloModule* module) = 0;
+
+  virtual absl::Status CaptureScheduleProto() = 0;
+
+  virtual absl::StatusOr<ScheduleProto> GetCapturedScheduleProto() = 0;
+
   virtual absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) = 0;
+
   virtual ~SchedulerCore() = default;
   virtual int64_t GetMemoryPeak() = 0;
   virtual void SetMemoryLimit(uint64_t new_limit) = 0;
@@ -1125,7 +1136,23 @@ class DefaultSchedulerCore : public SchedulerCore {
         post_processing_fn_(post_processing_fn),
         scheduling_instruction_crosses_overlap_limit_(
             scheduling_instruction_crosses_overlap_limit) {}
+
   absl::Status InitializeScheduler(const HloModule* module) override;
+
+  absl::Status CaptureScheduleProto() override {
+    schedule_proto_ = ScheduleProto();
+    *schedule_proto_->mutable_hlo_module() = module_->ToProto();
+
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<ScheduleProto> GetCapturedScheduleProto() override {
+    if (!schedule_proto_.has_value()) {
+      return absl::FailedPreconditionError("Schedule proto not captured.");
+    }
+    return schedule_proto_.value();
+  }
+
   absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) override;
   static bool AddOccupierToResource(
@@ -1147,6 +1174,11 @@ class DefaultSchedulerCore : public SchedulerCore {
   absl::flat_hash_map<int64_t, int64_t> GetNumResourcesNeededForAnnotation(
       const SchedulingState& sched_state, int64_t annotation);
 
+  ScheduleProto::ComputationScheduleProto ComputationScheduleToProto(
+      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+      const LatencyEstimator& estimator,
+      const std::vector<HloInstruction*>& instructions);
+
  protected:
   virtual void LogInstruction(const HloInstruction* instr) const;
   // Schedules the given annotated node.
@@ -1167,10 +1199,6 @@ class DefaultSchedulerCore : public SchedulerCore {
   virtual absl::StatusOr<HloGraphNode*> FindAndExtractBestNodeAvailable(
       SchedulingState& sched_state,
       DefaultSchedulerCore::ShouldSkipNodeFunction should_skip_node);
-  void DumpLatencyHidingSchedule(
-      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
-      const std::vector<HloInstruction*>& instructions,
-      int cycles_per_microsecond, const DebugOptions& debug_options);
 
   HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   std::unique_ptr<ModulePressureState> module_pressure_state_;
@@ -1183,6 +1211,8 @@ class DefaultSchedulerCore : public SchedulerCore {
   PostProcessingFn post_processing_fn_ = nullptr;
   OverlapLimitRule scheduling_instruction_crosses_overlap_limit_ = nullptr;
   std::unique_ptr<AnnotationTracker> annotation_tracker_;
+  std::optional<ScheduleProto> schedule_proto_;
+  const HloModule* module_ = nullptr;
 };
 
 // A scheduler oriented to hiding latencies of operations that can run in
@@ -1202,6 +1232,17 @@ class LatencyHidingScheduler : public HloModulePass {
     double recv_wasted_cycles = 0;
     double total_cycles = 0;
     int64_t memory_pressure_peak = 0;
+
+    double GetTotalWastedCycles() const {
+      return all_gather_wasted_cycles + all_reduce_wasted_cycles +
+             collective_broadcast_wasted_cycles +
+             collective_permute_wasted_cycles + all_to_all_wasted_cycles +
+             ragged_all_to_all_wasted_cycles + reduce_scatter_wasted_cycles +
+             send_wasted_cycles + recv_wasted_cycles;
+    }
+
+    ScheduleProto::SchedulerStatisticsProto ToProto() const;
+    std::string ToString() const;
   };
 
   LatencyHidingScheduler(
@@ -1224,9 +1265,7 @@ class LatencyHidingScheduler : public HloModulePass {
       const LatencyEstimator* latency_estimator,
       const AsyncTracker* async_tracker,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes);
-  // Returns a string representation of the scheduler statistics object.
-  static std::string SchedulerStatisticsString(
-      const SchedulerStatistics& sched_stats);
+
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(
       HloModule* module,

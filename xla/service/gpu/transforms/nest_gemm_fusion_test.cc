@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 
-#include <ostream>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -34,13 +36,9 @@ limitations under the License.
 
 using ::testing::ElementsAre;
 using ::tsl::testing::IsOkAndHolds;
+using ::tsl::testing::StatusIs;
 
 namespace xla {
-
-// Gtest hook to pretty-print an HloInstruction.
-static void PrintTo(const HloInstruction& hlo, std::ostream* os) {
-  *os << hlo.ToString();
-}
 
 namespace gpu {
 namespace {
@@ -69,39 +67,55 @@ MATCHER_P(OutputTileSizesIs, matcher, "") {
   return ExplainMatchResult(matcher, output_tile_sizes, result_listener);
 }
 
-class NestGemmFusionTest : public HloTestBase {};
+class NestGemmFusionTest : public HloTestBase {
+ protected:
+  const se::GpuComputeCapability compute_capability_{
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability::Ampere())
+          .gpu_compute_capability()};
+};
 
 TEST_F(NestGemmFusionTest, BasicTest) {
   absl::string_view hlo = R"(
 dot {
-  lhs = bf16[8192,512] parameter(0)
-  rhs = bf16[512,512] parameter(1)
-  ROOT  dot = bf16[8192,512] dot(lhs, rhs),
+  lhs = f32[8192,512] parameter(0)
+  rhs = f32[512,512] parameter(1)
+  ROOT  dot = f32[8192,512] dot(lhs, rhs),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
 ENTRY entry {
-  p0 = bf16[8192,512] parameter(0)
-  p1 = bf16[512,512] parameter(1)
-  ROOT fusion = bf16[8192,512] fusion(p0, p1),
+  p0 = f32[8192,512] parameter(0)
+  p1 = f32[512,512] parameter(1)
+  ROOT fusion = f32[8192,512] fusion(p0, p1),
     kind=kCustom, calls=dot, backend_config={
       "fusion_backend_config": {
         "kind":"__triton_gemm",  "triton_gemm_config": {
           "block_m":"64", "block_n":"256", "block_k":"32",
-          "split_k":"1", "num_stages":"1", "num_warps":"1", "num_ctas":"1"
+          "split_k":"1", "num_stages":"5", "num_warps":"4", "num_ctas":"3"
         }
       }
     }
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* fusion = nullptr;
   ASSERT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(match::Fusion(&fusion)));
   EXPECT_THAT(*fusion, OutputTileSizesIs(ElementsAre(64, 256)));
+
+  BlockLevelFusionConfig block_level_fusion_config =
+      fusion->backend_config<GpuBackendConfig>()
+          ->fusion_backend_config()
+          .block_level_fusion_config();
+  EXPECT_THAT(block_level_fusion_config.output_tiles(0).sizes(),
+              ElementsAre(64, 256));
+  EXPECT_THAT(block_level_fusion_config.num_warps(), 4);
+  EXPECT_THAT(block_level_fusion_config.num_ctas(), 3);
+  EXPECT_THAT(block_level_fusion_config.num_stages(), 5);
 
   const HloInstruction* lhs = nullptr;
   const HloInstruction* rhs = nullptr;
@@ -144,7 +158,8 @@ ENTRY entry {
 )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* fusion = nullptr;
@@ -186,7 +201,8 @@ ENTRY entry {
 )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* fusion = nullptr;
@@ -228,7 +244,8 @@ ENTRY entry {
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -255,10 +272,10 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -290,10 +307,10 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -322,10 +339,10 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -356,11 +373,11 @@ ENTRY entry_computation {
         }
       }
     }
-}
-)";
+})";
   // Note: block sizes were 16,16,32, but that now fails to satisfy constraints.
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -389,11 +406,84 @@ ENTRY entry_computation {
         }
       }
     }
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
+  TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
+
+TEST_F(NestGemmFusionTest, ConcatenationsAreHoistedWithinNestedGemmFusions) {
+  absl::string_view hlo = R"(
+HloModule t
+
+triton_gemm {
+  parameter_0 = f32[2,3,10]{2,1,0} parameter(0)
+  parameter_1 = f32[2,10,128]{2,1,0} parameter(1)
+  parameter_2 = f32[2,10,256]{2,1,0} parameter(2)
+  concatenate = f32[2,10,384]{2,1,0} concatenate(parameter_1, parameter_2), dimensions={2}
+  ROOT dot = f32[2,3,384]{2,1,0} dot(parameter_0, concatenate),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  parameter_0 = f32[2,3,10]{2,1,0} parameter(0)
+  parameter_1 = f32[2,10,128]{2,1,0} parameter(1)
+  parameter_2 = f32[2,10,256]{2,1,0} parameter(2)
+  ROOT dot = f32[2,3,384]{2,1,0} fusion(parameter_0, parameter_1, parameter_2),
+    kind=kCustom, calls=triton_gemm,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":64,"block_k":32,
+                         "split_k":1,"num_stages":1,"num_warps":2,
+                         "num_ctas":1}}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
+  TF_ASSERT_OK(verifier().Run(module.get()).status());
+  HloComputation* fusion_computation = module->entry_computation()
+                                           ->root_instruction()
+                                           ->fused_instructions_computation();
+  HloInstruction* dot_lhs;
+  HloInstruction* dot_rhs;
+  EXPECT_THAT(
+      fusion_computation->root_instruction(),
+      GmockMatch(match::Dot(match::Fusion(&dot_lhs), match::Fusion(&dot_rhs))));
+  EXPECT_THAT(dot_rhs->fused_instructions_computation()->root_instruction(),
+              GmockMatch(match::Concatenate(match::Fusion(), match::Fusion())));
+}
+
+TEST_F(NestGemmFusionTest, UnsupportedComputationsAreRejected) {
+  // Fusions other than kTritonNestedGemmFusionKind are not supported so
+  // we expect that the pass will fail as the resulting computation is not
+  // supported.
+  absl::string_view hlo = R"(
+identity {
+  ROOT result = f32[128,128]{1,0} parameter(0)
+}
+
+triton_dot {
+  p0 = f32[128,128]{1,0} parameter(0)
+  cp0 = f32[128,128]{1,0} fusion(p0), kind=kCustom, calls=identity
+  p1 = f32[128,128]{1,0} parameter(1)
+  ROOT result = f32[128,128]{1,0} dot(cp0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[128,128]{1,0} parameter(0)
+  p1 = f32[128,128]{1,0} parameter(1)
+  ROOT result = f32[128,128] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    "triton_gemm_config": {
+      "block_m":32,"block_n":16,"block_k":128,
+      "split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
-  TF_ASSERT_OK(verifier().Run(module.get()).status());
+  absl::StatusOr<bool> result =
+      NestGemmFusion(compute_capability_).Run(module.get());
+  EXPECT_THAT(result, StatusIs(absl::StatusCode::kInternal)) << result.status();
 }
 
 // TODO(b/393299275): correctly hoist bitcast through compare.
@@ -424,7 +514,8 @@ ENTRY e {
       "split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -451,7 +542,8 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -492,7 +584,7 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_TRUE(!NestGemmFusion().Run(module.get()).ok());
+  EXPECT_TRUE(!NestGemmFusion(compute_capability_).Run(module.get()).ok());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   // Cos should not be rewritten as we cannot hoist bitcast.
   EXPECT_THAT(
@@ -527,7 +619,8 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -562,7 +655,8 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(

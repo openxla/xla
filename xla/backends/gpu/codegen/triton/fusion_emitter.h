@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir {
 namespace triton {
@@ -93,7 +93,8 @@ absl::StatusOr<TritonModule> CreateTritonModule(
 // the kernels, but it still returns correctly filled TritonWrapperResult.
 // That is useful when deserializing from the compilation cache.
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
-    const HloModule& hlo_module, const se::DeviceDescription& device_info,
+    absl::string_view kernel_name, const HloModule& hlo_module,
+    const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
     mlir::MLIRContext& mlir_context, bool is_xla_fusion,
@@ -111,16 +112,7 @@ namespace ir_emitter_triton_internal {
 llvm::SmallVector<mlir::Value, 3> ComputeDelinearizedTileIndex(
     EmitterLocOpBuilder& b, absl::Span<const int64_t> num_output_tiles_per_dim);
 
-// Used for creating Triton Load and Store ops.
-struct MakeTensorPtrOpAndBoundaryChecks {
-  ::mlir::triton::MakeTensorPtrOp op;
-
-  // Indices of dimensions where the original tile size is not a power of 2 and
-  // requires a boundary check.
-  llvm::SmallVector<int32_t> boundary_checks;
-};
-
-absl::StatusOr<MakeTensorPtrOpAndBoundaryChecks> CreateMakeTensorPtrOp(
+absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
     EmitterLocOpBuilder& b, mlir::ValueRange tile_multi_index,
     const TiledHloInstruction& tiled_hlo, mlir::Value parent_base_ptr);
 

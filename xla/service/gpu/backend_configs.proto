@@ -105,6 +105,8 @@ message GemmBackendConfig {
   optional bool grad_x = 16;
   optional bool grad_y = 17;
   bool damax_output = 18;
+
+  repeated ReificationCost reification_cost = 19;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.
@@ -183,6 +185,12 @@ message BlockLevelFusionConfig {
 
   // The number of warps to use for the kernel.
   int64 num_warps = 2;
+
+  // The number of CTAs to use for the kernel.
+  int32 num_ctas = 4;
+
+  // The number of stages to use for loop pipelining.
+  int32 num_stages = 5;
 }
 
 message FusionBackendConfig {

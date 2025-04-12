@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/cpu/cpu_event.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -73,19 +74,6 @@ class MarkEventReadyOnExit {
 
  private:
   tsl::AsyncValueRef<CpuEvent> event_;
-};
-
-// Async work runner abstracts away the implementation of the underlying thread
-// pool (or concurrent work queue).
-class AsyncWorkRunner {
- public:
-  virtual ~AsyncWorkRunner() = default;
-
-  // `work` euqueued by `Schedule` may run on the calling thread.
-  virtual void Schedule(absl::AnyInvocable<void()> work) = 0;
-  virtual void ScheduleWhenReady(
-      absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-      absl::AnyInvocable<void()> work) = 0;
 };
 
 class AbstractTfrtCpuBuffer : public PjRtBuffer {
@@ -296,12 +284,6 @@ class AbstractTfrtCpuBuffer : public PjRtBuffer {
       ABSL_GUARDED_BY(mu_);
   // Count of external references on the buffer.
   int external_reference_counter_ ABSL_GUARDED_BY(mu_) = 0;
-
-  // If this buffer has external references when Delete() is called, this event
-  // is populated by Delete(). When the last external reference is released,
-  // the event is triggered, which is a precondition for the buffer being
-  std::optional<tsl::AsyncValueRef<CpuEvent>> external_references_dropped_event_
-      ABSL_GUARDED_BY(mu_);
 
   // `pending_donation_` indicates whether a donation is pending. The destructor
   // of the AbstractTfrtCpuBuffer will wait for a pending donation, as the

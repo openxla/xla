@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/stream_executor/device_description.h"
@@ -37,9 +38,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 
-#if CUDNN_VERSION >= 8100
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
-#endif  // CUDNN_VERSION >= 8100
 
 namespace stream_executor {
 namespace gpu {
@@ -54,7 +53,6 @@ using BatchDescriptorSlice = absl::Span<const dnn::BatchDescriptor>;
 template <typename T>
 using DeviceMemorySlice = absl::Span<const DeviceMemory<T>* const>;
 
-#if CUDNN_VERSION >= 8100
 class CudnnGraph : public dnn::DnnGraph {
  public:
   explicit CudnnGraph(cudnn_frontend::graph::Graph&& graph)
@@ -84,7 +82,6 @@ class CudnnGraph : public dnn::DnnGraph {
   mutable std::vector<int64_t> current_dropout_rng_offset_;
   int64_t dropout_rng_offset_increment_ = 0;
 };
-#endif  // CUDNN_VERSION >= 8100
 
 // cudnn-library based DNN support. For details on overridden interface
 // functions, see dnn.h.
@@ -554,11 +551,9 @@ class CudnnSupport : public dnn::DnnSupport {
 
   void NotifyStreamDestroyed(Stream* stream) override;
 
-#if CUDNN_VERSION >= 8100
   // Loads complete graph from its serialized representation.
   absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
       Stream& stream, absl::string_view serialized_data) const override;
-#endif  // CUDNN_VERSION >= 8100
 
  private:
   // Uses cuDNN handle for execution.
@@ -727,7 +722,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     const dnn::MatmulTensorDescriptor& do_desc,
     const dnn::TensorDescriptor& dq_desc, const dnn::TensorDescriptor& dk_desc,
     const dnn::TensorDescriptor& dv_desc,
-    std::optional<dnn::TensorDescriptor> bias_descriptor,
+    const std::optional<dnn::TensorDescriptor> bias_descriptor,
+    const std::optional<dnn::TensorDescriptor> dbias_descriptor,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     double scale, bool use_dropout, bool use_bias, dnn::FMHAMaskKind mask_type,
     bool force_deterministic, int sliding_window_length, int max_seg_per_batch);

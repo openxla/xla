@@ -37,7 +37,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
-#include "absl/types/variant.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
@@ -174,6 +173,7 @@ limitations under the License.
 #include "xla/service/gpu/model/collective_ptable_stats_collection.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/model/matmul_ptable_stats_collection.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/pre_scheduling_copy_insertion_pipeline.h"
 #include "xla/service/gpu/reduction_utils.h"
@@ -185,6 +185,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/all_gather_dynamic_slice_simplifier.h"
 #include "xla/service/gpu/transforms/all_gather_optimizer.h"
 #include "xla/service/gpu/transforms/all_reduce_blueconnect.h"
+#include "xla/service/gpu/transforms/all_reduce_decomposer.h"
 #include "xla/service/gpu/transforms/all_reduce_splitter.h"
 #include "xla/service/gpu/transforms/async_wrapper.h"
 #include "xla/service/gpu/transforms/collective_permute_cycle_decomposer.h"
@@ -192,6 +193,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collective_select_folder.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/transforms/collectives/all_reduce_combiner.h"
+#include "xla/service/gpu/transforms/collectives/collective_combiner_annotator.h"
 #include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
@@ -205,6 +207,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/dot_operand_converter.h"
 #include "xla/service/gpu/transforms/double_buffer_loop_unrolling.h"
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
+#include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 #include "xla/service/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
 #include "xla/service/gpu/transforms/gemm_broadcast_folding_rewriter.h"
@@ -654,7 +657,8 @@ absl::Status RunSPMDPasses(
 }
 
 absl::Status RunOptimizationPasses(
-    HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
+    HloModule* hlo_module, stream_executor::StreamExecutor* stream_exec,
+    const Compiler::TargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
@@ -694,8 +698,16 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<RngExpander>();
   pipeline.AddPass<RngBitGeneratorExpander>(RandomAlgorithm::RNG_PHILOX);
 
+  // SortRewriter needs to ask the device how much scratch space is needed,
+  // which isn't feasible if we don't have a device.
   if (hlo_module->config().debug_options().xla_gpu_enable_cub_radix_sort()) {
-    pipeline.AddPass<SortRewriter>();
+    if (stream_exec != nullptr) {
+      pipeline.AddPass<SortRewriter>();
+    } else {
+      LOG(WARNING) << "Using fallback sort algorithm rather than SortRewriter, "
+                      "which will be slower at runtime. To avoid this, "
+                      "compile with a GPU present.";
+    }
   }
 
   // Comparison total order expander
@@ -781,14 +793,15 @@ absl::Status RunOptimizationPasses(
       LOG(FATAL) << "Unreachable";
   }
 
+  // DynamicPadder creates a stable KeyValue sort for dynamic reshapes.
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
+
+  // TODO(b/407909195): Add SortRewriter here once it supports S32 keys for
+  // KeyValueSort. It needs to run before StableSortExpander, otherwise we will
+  // not match the comparison computation.
 
   // Expand the sort op to support stable sorting if required.
   pipeline.AddPass<StableSortExpander>();
-
-  if (hlo_module->config().debug_options().xla_gpu_enable_cub_radix_sort()) {
-    pipeline.AddPass<SortRewriter>();
-  }
 
   se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
@@ -878,6 +891,9 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<AllReduceSimplifier>();
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<AllReduceSplitter>();
+  if (debug_options.xla_gpu_unsupported_enable_all_reduce_decomposer()) {
+    collectives_pipeline.AddPass<AllReduceDecomposer>();
+  }
   collectives_pipeline.AddPass<AllGatherOptimizer>();
   collectives_pipeline.AddPass<AllGatherDynamicSliceSimplifier>();
   collectives_pipeline.AddPass<AllReduceReassociate>(
@@ -1143,6 +1159,12 @@ absl::Status RunPostFusionPasses(
 
   HloPassPipeline pipeline("post-fusion optimization");
   pipeline.AddPass<RenameFusions>();
+  if (hlo_module->config()
+          .debug_options()
+          .xla_gpu_experimental_enable_sync_collective_combining()) {
+    pipeline.AddPass<CollectiveCombinerAnnotator>(device_description,
+                                                  pointer_size);
+  }
   pipeline.AddPass<GpuAllGatherCombiner>(
       device_description,
       /*default_combine_threshold_in_bytes=*/kDefaultAllGatherCombineThreshold,
@@ -1211,6 +1233,7 @@ absl::Status RunPostFusionSimplificationPasses(
           .xla_gpu_experimental_stream_annotation()) {
     pipeline.AddPass<ExplicitStreamAnnotationAsyncWrapper>();
   }
+  pipeline.AddPass<ExplicitCollectivesGroupAsyncWrapper>();
   return pipeline.Run(hlo_module).status();
 }
 
@@ -1357,7 +1380,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
                                    layout_insensitive_algsimp_opts));
-  TF_RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, gpu_target_config,
+  TF_RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, stream_exec,
+                                           gpu_target_config,
                                            layout_insensitive_algsimp_opts));
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
@@ -1648,7 +1672,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   if (debug_options
           .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms()) {
-    pipeline.AddPass<NestGemmFusion>();
+    pipeline.AddPass<NestGemmFusion>(
+        gpu_target_config.device_description.gpu_compute_capability());
   }
   // Inline back the calls which have better performance with cuBLAS.
   pipeline.AddPass<CallInliner>(
@@ -2608,6 +2633,16 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
         !collective_perf_table_path.empty()) {
       pipeline.AddPass<CollectivePerfTableStatsCollection>(
           collective_perf_table_path, gpu_device_info);
+    }
+
+    // Perf tables model analysis for matmuls.
+    if (std::string matmul_perf_table_path =
+            module->config()
+                .debug_options()
+                .xla_gpu_experimental_matmul_perf_table_path();
+        !matmul_perf_table_path.empty()) {
+      pipeline.AddPass<MatmulPerfTableStatsCollection>(matmul_perf_table_path,
+                                                       gpu_device_info);
     }
   }
   return pipeline.Run(module).status();

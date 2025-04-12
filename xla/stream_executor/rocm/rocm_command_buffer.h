@@ -56,29 +56,33 @@ class RocmCommandBuffer : public GpuCommandBuffer {
         graph_(graph),
         is_owned_graph_(is_owned_graph) {}
 
-  absl::Status LaunchSetIfConditionKernel(
-      GraphConditionalHandle if_conditional,
-      DeviceMemory<bool> predicate) override;
+  //===--------------------------------------------------------------------===//
+  // APIs for launching kernels to update conditional handles.
+  //===--------------------------------------------------------------------===//
 
-  absl::Status LaunchSetIfElseConditionKernel(
-      GraphConditionalHandle if_conditional,
-      GraphConditionalHandle else_conditional,
-      DeviceMemory<bool> predicate) override;
+  absl::StatusOr<GraphNodeHandle> CreateSetCaseConditionNode(
+      absl::Span<const GraphConditionalHandle> conditionals,
+      DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
+      bool enable_conditional_default,
+      absl::Span<const GraphNodeHandle> dependencies) override;
 
-  absl::Status LaunchSetCaseConditionKernel(
-      GraphConditionalHandles conditionals, DeviceMemory<uint8_t> index,
-      bool index_is_bool, int32_t batch_offset,
+  absl::Status UpdateSetCaseConditionNode(
+      GraphNodeHandle handle,
+      absl::Span<const GraphConditionalHandle> conditionals,
+      DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
       bool enable_conditional_default) override;
 
-  absl::Status LaunchSetForConditionKernel(GraphConditionalHandle conditional,
-                                           DeviceMemory<int32_t> loop_counter,
-                                           int32_t iterations) override;
+  absl::StatusOr<GraphNodeHandle> CreateSetWhileConditionNode(
+      GraphConditionalHandle conditional, DeviceMemory<bool> predicate,
+      absl::Span<const GraphNodeHandle> dependencies) override;
 
-  absl::Status LaunchSetWhileConditionKernel(
-      GraphConditionalHandle conditional,
+  absl::Status UpdateSetWhileConditionNode(
+      GraphNodeHandle handle, GraphConditionalHandle conditional,
       DeviceMemory<bool> predicate) override;
 
-  absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
+  //===--------------------------------------------------------------------===//
+
+  absl::StatusOr<GraphConditionalNodeHandle> CreateConditionalNode(
       absl::Span<const GraphNodeHandle> dependencies,
       GraphConditionalHandle conditional, ConditionType type) override;
 

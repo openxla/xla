@@ -40,6 +40,7 @@
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/client_impl_util.h"
 #include "xla/python/ifrt/dtype.h"
@@ -47,6 +48,7 @@
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt_proxy/client/global_flags.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
 #include "xla/python/ifrt_proxy/common/array_util.h"
@@ -57,6 +59,7 @@
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_to_from_proto.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -252,12 +255,14 @@ absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
 Array::MakeArraysFromHostBufferShards(
     xla::ifrt::Client* client, std::shared_ptr<RpcHelper> rpc_helper,
     absl::Span<xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec> specs,
-    xla::ifrt::Client::HostBufferSemantics semantics) {
+    xla::ifrt::Client::HostBufferSemantics semantics,
+    tsl::RCReference<xla::ifrt::UserContext> user_context) {
   if (rpc_helper->version().protocol_version() <
       protocol_version::kMakeArraysFromHostBufferShards) {
-    return xla::ifrt::ClientMakeArraysFromHostBufferShards(client, specs,
-                                                           semantics);
+    return xla::ifrt::ClientMakeArraysFromHostBufferShards(
+        client, specs, semantics, std::move(user_context));
   }
+  // TODO(b/407104769): Handle `user_context`.
 
   absl::InlinedVector<absl::InlinedVector<uint64_t, 1>, 1>
       host_buffer_handles_for_specs;
@@ -367,6 +372,47 @@ Array::MakeArraysFromHostBufferShards(
         client, rpc_helper, spec.array_spec.dtype,
         std::move(spec.array_spec.shape), std::move(spec.array_spec.sharding),
         arr_handles[spec_idx]));
+  }
+  return arrays;
+}
+
+absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
+Array::MakeErrorArrays(xla::ifrt::Client* client,
+                       std::shared_ptr<RpcHelper> rpc_helper,
+                       const absl::Status& error,
+                       absl::Span<const ArraySpec> array_specs,
+                       tsl::RCReference<UserContext> user_context) {
+  auto req = std::make_unique<MakeErrorArraysRequest>();
+  *req->mutable_error() = tsl::StatusToProto(error);
+
+  std::vector<ArrayHandle> arr_handles;
+  arr_handles.reserve(array_specs.size());
+
+  for (const ArraySpec& array_spec : array_specs) {
+    const uint64_t array_handle = rpc_helper->NextHandle();
+    req->add_array_handles(array_handle);
+    TF_ASSIGN_OR_RETURN(*req->add_array_specs(), array_spec.ToProto());
+    arr_handles.push_back(ArrayHandle{array_handle});
+  }
+
+  if (rpc_helper->version().protocol_version() < 10) {
+    TF_ASSIGN_OR_RETURN(auto resp,
+                        rpc_helper->MakeErrorArrays(std::move(req)).Await());
+    for (const uint64_t array_handle : resp->array_handles()) {
+      arr_handles.push_back(ArrayHandle{array_handle});
+    }
+  } else {
+    CheckResponseAfterAsyncCall(rpc_helper->MakeErrorArrays(std::move(req)),
+                                arr_handles);
+  }
+
+  std::vector<tsl::RCReference<xla::ifrt::Array>> arrays;
+  arrays.reserve(array_specs.size());
+  for (int i = 0; i < array_specs.size(); ++i) {
+    const xla::ifrt::ArraySpec& array_spec = array_specs[i];
+    arrays.push_back(tsl::MakeRef<Array>(client, rpc_helper, array_spec.dtype,
+                                         array_spec.shape, array_spec.sharding,
+                                         arr_handles[i]));
   }
   return arrays;
 }

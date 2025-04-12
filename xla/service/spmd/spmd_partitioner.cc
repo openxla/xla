@@ -759,7 +759,7 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].window_reshard_cache;
   for (auto& entry : cache) {
     if (std::get<0>(entry) == target &&
-        protobuf_util::ProtobufEquals(std::get<1>(entry), window)) {
+        protobuf_util::HaveSameSerialization(std::get<1>(entry), window)) {
       return std::get<2>(entry);
     }
   }
@@ -1124,7 +1124,7 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
 
   auto sharding_with_windowed_dims_replicated =
       GetShardingReplicatedOnWindowedDimension(target, window);
-  // If the currrent HLO is replicated or all windows dimensions are replicated,
+  // If the current HLO is replicated or all windows dimensions are replicated,
   // pad then slice. If the target sharding and current sharding are not the
   // same then give the halo exchange system a chance to run as it can skip
   // generating a dynamic slice.
@@ -3761,8 +3761,11 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
         if (slice_size == 1) {
           partitioned_slice_offsets.push_back(-1);
         } else {
+          const PrimitiveType elemType =
+              hlo->operand(i + 2)->shape().element_type();
           partitioned_slice_offsets.push_back(
-              hlo->operand(i + 2)->literal().Get<int>({}));
+              elemType == S64 ? hlo->operand(i + 2)->literal().Get<int64_t>({})
+                              : hlo->operand(i + 2)->literal().Get<int>({}));
         }
       }
     } else if (hlo->sharding().tile_assignment().dim(i) != 1) {
@@ -3860,6 +3863,12 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
       auto per_partition_size_hlo = add_hlo(HloInstruction::CreateConstant(
           LiteralUtil::CreateR0<int>(per_partition_size)));
       const Shape& offset_shape = per_partition_size_hlo->shape();
+      const Shape& index_shape = new_indices[dim]->shape();
+      if (offset_shape.element_type() != index_shape.element_type())
+        new_indices[dim] = add_hlo(HloInstruction::CreateConvert(
+            ShapeUtil::ChangeElementType(index_shape,
+                                         offset_shape.element_type()),
+            new_indices[dim]));
       auto partition_offset = add_hlo(HloInstruction::CreateBinary(
           offset_shape, HloOpcode::kMultiply, partition_ordinals[dim],
           per_partition_size_hlo));
@@ -3897,6 +3906,12 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
               partition_offset)),
           add_hlo(
               HloInstruction::CreateConstant(LiteralUtil::CreateR0<int>(0)))));
+      if (new_indices[dim]->shape().element_type() !=
+          index_shape.element_type())
+        new_indices[dim] = add_hlo(HloInstruction::CreateConvert(
+            ShapeUtil::ChangeElementType(new_indices[dim]->shape(),
+                                         index_shape.element_type()),
+            new_indices[dim]));
     }
 
     // Create dynamic update slice.
@@ -4964,6 +4979,60 @@ absl::Status SpmdPartitioningVisitor::HandlePartitionId(HloInstruction* hlo) {
       "the data is replicated, and if the latter which data is replicated.");
 }
 
+absl::Status SpmdPartitioningVisitor::HandleRaggedDot(HloInstruction* hlo) {
+  LOG(WARNING) << "You have to use Shardy for RaggedDot. If not, the behavior "
+                  "is undefined.";
+
+  const RaggedDotDimensionNumbers& ragged_dot_dnums =
+      hlo->ragged_dot_dimension_numbers();
+  const DotDimensionNumbers& dot_dnums =
+      ragged_dot_dnums.dot_dimension_numbers();
+
+  CHECK_EQ(ragged_dot_dnums.lhs_ragged_dimensions_size(), 1);
+  int64_t lhs_ragged_dim = ragged_dot_dnums.lhs_ragged_dimensions(0);
+
+  PartitionedHlo& lhs = GetPartitionedHlo(hlo->operand(0));
+  PartitionedHlo& rhs = GetPartitionedHlo(hlo->operand(1));
+  PartitionedHlo& group_sizes = GetPartitionedHlo(hlo->operand(2));
+  if (lhs.hlo() == rhs.hlo()) {
+    rhs = MakeACopyAndReturnItsPartitionedHlo(rhs, builder());
+  }
+
+  std::vector<int64_t> sharded_lhs_contracting_dims;
+  if (lhs.sharding().IsTiled()) {
+    for (int64_t dim : dot_dnums.lhs_contracting_dimensions()) {
+      if (lhs.sharding().tile_assignment().dim(dim) > 1) {
+        sharded_lhs_contracting_dims.push_back(dim);
+      }
+    }
+  }
+
+  if (!sharded_lhs_contracting_dims.empty()) {
+    lhs = lhs.PadWithZero();
+    rhs = rhs.PadWithZero();
+  }
+
+  HloInstruction* phlo;
+  Shape pshape = MakePartitionedShape(hlo->shape(), hlo->sharding());
+  if (absl::c_linear_search(dot_dnums.lhs_batch_dimensions(), lhs_ragged_dim)) {
+    phlo = b_.AddInstruction(HloInstruction::CreateDot(
+        pshape, lhs.hlo(), rhs.hlo(), dot_dnums, hlo->precision_config()));
+  } else {
+    phlo = b_.AddInstruction(hlo->CloneWithNewOperands(
+        pshape, {lhs.hlo(), rhs.hlo(), group_sizes.hlo()}));
+  }
+
+  if (!sharded_lhs_contracting_dims.empty()) {
+    phlo = lhs.state().partitioner->AllReduceAlongShardingDims(
+        lhs.state().b, phlo, lhs.sharding(), lhs.state().next_channel_id,
+        sharded_lhs_contracting_dims, lhs.state().collective_ops_creator,
+        MakeBinaryAdd(phlo->shape().element_type(), lhs.state().module));
+  }
+
+  SetPartitionedHlo(hlo, [&]() { return phlo; });
+  return absl::OkStatus();
+}
+
 SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                                                         int64_t num_replicas) {
   return {
@@ -5005,7 +5074,6 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 CollectiveDeviceList(device_groups),
                 /*constrain_layout=*/false, channel_id,
                 /*use_global_device_ids=*/true));
-        reduction_clone->SetCollectiveCallInstruction(all_reduce);
         return all_reduce;
       },
       [num_replicas, num_partitions](
@@ -5022,7 +5090,6 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                     partition_group_list, num_replicas, num_partitions),
                 /*constrain_layout=*/false, channel_id,
                 /*use_global_device_ids=*/true));
-        reduction_clone->SetCollectiveCallInstruction(all_reduce);
         return all_reduce;
       },
       [num_partitions](SpmdBuilder* b, HloInstruction* operand,

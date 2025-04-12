@@ -108,11 +108,6 @@ class CommandBuffer {
   // Command buffer API
   //===--------------------------------------------------------------------===//
 
-  // Adds an execution barrier to the command buffer: all commands added
-  // before a barrier will complete before any of the commands added after a
-  // barrier.
-  virtual absl::Status Barrier() = 0;
-
   // Adds a kernel launch command.
   virtual absl::StatusOr<const Command*> Launch(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
@@ -175,33 +170,24 @@ class CommandBuffer {
   //--------------------------------------------------------------------------//
 
   // Adds a conditional operation that will execute a command buffer constructed
-  // by `then_builder` if `pred` value is `true`.
-  virtual absl::Status If(DeviceMemory<bool> pred, Builder then_builder) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
-  // by `then_builder` if `pred` value is `true`, or a command buffer
-  // constructed by `else_builder` if `pred` is `false`.
-  virtual absl::Status IfElse(DeviceMemory<bool> pred, Builder then_builder,
-                              Builder else_builder) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
   // by the `branches` builder at `index`. If `index` is out of range, then it
   // will run a conditional command buffer constructed by the last builder.
   //
   // See: https://github.com/openxla/stablehlo/blob/main/docs/spec.md#case
-  virtual absl::Status Case(DeviceMemory<int32_t> index,
+  virtual absl::StatusOr<const Command*> Case(
+      DeviceMemory<int32_t> index, std::vector<Builder> branches,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  virtual absl::StatusOr<const Command*> Case(
+      DeviceMemory<bool> index, std::vector<Builder> branches,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a Case operation.
+  virtual absl::Status Case(const Command* command, DeviceMemory<int32_t> index,
                             std::vector<Builder> branches) = 0;
 
-  virtual absl::Status Case(DeviceMemory<bool> index,
+  virtual absl::Status Case(const Command* command, DeviceMemory<bool> index,
                             std::vector<Builder> branches) = 0;
-
-  // Adds a conditional operation that will execute a command buffer constructed
-  // by the `body_builder` exactly `num_iteration` times. This means the
-  // condition is known at compile time (`num_iteration` < `loop_counter`), and
-  // does not require a `cond_builder`.
-  virtual absl::Status For(int32_t num_iteration,
-                           DeviceMemory<int32_t> loop_counter,
-                           Builder body_builder) = 0;
 
   // Adds a conditional operation that will execute a command buffer constructed
   // by the `cond_builder` that must update `pred` value, and then depending on
@@ -216,8 +202,13 @@ class CommandBuffer {
   //     body_builder()
   //     cond_builder()
   //
-  virtual absl::Status While(DeviceMemory<bool> pred, Builder cond_builder,
-                             Builder body_builder) = 0;
+  virtual absl::StatusOr<const Command*> While(
+      DeviceMemory<bool> pred, Builder cond_builder, Builder body_builder,
+      absl::Span<const Command* const> dependencies) = 0;
+
+  // Updates a While operation.
+  virtual absl::Status While(const Command* command, DeviceMemory<bool> pred,
+                             Builder cond_builder, Builder body_builder) = 0;
 
   // Submits the command buffer for execution.
   virtual absl::Status Submit(Stream* stream) {

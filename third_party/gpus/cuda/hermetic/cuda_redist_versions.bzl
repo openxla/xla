@@ -74,13 +74,13 @@ CUDA_REDIST_JSON_DICT = {
         "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.8.0.json",
         "daa0d766b36feaa933592162c27be5fb63b68fc547ca6886c160a35d96ee8891",
     ],
+    "12.8.1": [
+        "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.8.1.json",
+        "249e28a83008d711d5f72880541c8be6253f6d61608461de4fcb715554a6cf17",
+    ],
 }
 
 CUDNN_REDIST_JSON_DICT = {
-    "8.6": [
-        "https://developer.download.nvidia.com/compute/cudnn/redist/redistrib_8.6.0.json",
-        "7f6f50bed4fd8216dc10d6ef505771dc0ecc99cce813993ab405cb507a21d51d",
-    ],
     "8.9.4.25": [
         "https://developer.download.nvidia.com/compute/cudnn/redist/redistrib_8.9.4.25.json",
         "02258dba8384860c9230fe3c78522e7bd8e350e461ccd37a8d932cb64127ba57",
@@ -176,6 +176,7 @@ CUDA_NCCL_WHEELS = {
     "12.6.2": CUDA_12_NCCL_WHEEL_DICT,
     "12.6.3": CUDA_12_NCCL_WHEEL_DICT,
     "12.8.0": CUDA_12_NCCL_WHEEL_DICT,
+    "12.8.1": CUDA_12_NCCL_WHEEL_DICT,
 }
 
 # Ensures PTX version compatibility w/ Clang & ptxas in cuda_configure.bzl
@@ -239,6 +240,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_cudart": {
         "repo_name": "cuda_cudart",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_cudart.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_cudart.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_cudart.BUILD.tpl",
         },
@@ -279,12 +281,14 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "libnvjitlink": {
         "repo_name": "cuda_nvjitlink",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvjitlink.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvjitlink.BUILD.tpl",
         },
     },
     "cuda_nvrtc": {
         "repo_name": "cuda_nvrtc",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvrtc.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvrtc.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvrtc.BUILD.tpl",
         },
@@ -292,6 +296,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_cccl": {
         "repo_name": "cuda_cccl",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_cccl.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_cccl.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_cccl.BUILD.tpl",
         },
@@ -299,6 +304,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_nvcc": {
         "repo_name": "cuda_nvcc",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvcc.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvcc.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvcc.BUILD.tpl",
         },
@@ -306,6 +312,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_nvml_dev": {
         "repo_name": "cuda_nvml",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvml.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvml.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvml.BUILD.tpl",
         },
@@ -313,6 +320,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_nvprune": {
         "repo_name": "cuda_nvprune",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
         },
@@ -320,6 +328,7 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_nvtx": {
         "repo_name": "cuda_nvtx",
         "version_to_template": {
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvtx.BUILD.tpl",
             "12": "//third_party/gpus/cuda/hermetic:cuda_nvtx.BUILD.tpl",
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvtx.BUILD.tpl",
         },

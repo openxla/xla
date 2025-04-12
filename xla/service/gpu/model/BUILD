@@ -1044,7 +1044,11 @@ xla_cc_test(
 cc_library(
     name = "interpolator",
     hdrs = ["interpolator.h"],
-    deps = ["@com_google_absl//absl/log:check"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 xla_cc_test(
@@ -1052,6 +1056,8 @@ xla_cc_test(
     srcs = ["interpolator_test.cc"],
     deps = [
         ":interpolator",
+        "//xla/service/gpu:variant_visitor",
+        "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -1200,5 +1206,54 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "matmul_ptable_stats_collection",
+    srcs = ["matmul_ptable_stats_collection.cc"],
+    hdrs = ["matmul_ptable_stats_collection.h"],
+    deps = [
+        ":hlo_op_profile_proto_cc",
+        ":hlo_op_profiles",
+        ":matmul_interpolator",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+xla_cc_test(
+    name = "matmul_ptable_stats_collection_test",
+    srcs = ["matmul_ptable_stats_collection_test.cc"],
+    deps = [
+        ":hlo_op_profile_proto_cc",
+        ":matmul_ptable_stats_collection",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
     ],
 )

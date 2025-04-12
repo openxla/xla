@@ -210,6 +210,10 @@ class RawSEDeviceMemory : public tsl::ReferenceCounted<RawSEDeviceMemory> {
   // buffer.
   virtual void UnsafeReleaseMemory() = 0;
 
+  // Builds a ShapedBuffer which points to mem() of shape on_device_shape.
+  ShapedBuffer AsShapedBuffer(PjRtDevice* device,
+                              const Shape& on_device_shape) const;
+
   static tsl::RCReference<RawSEDeviceMemory> Create(
       se::DeviceMemoryBase value, PjRtLocalDeviceId device_id,
       se::DeviceMemoryAllocator* allocator);
@@ -239,14 +243,6 @@ class TrackedDeviceBuffer {
     bool reference_held;
   };
 
-  // Converts a ScopedShapedBuffer into a TrackedDeviceBuffer. Takes ownership
-  // of the buffers of the shaped_buffer.
-  static std::shared_ptr<TrackedDeviceBuffer> FromScopedShapedBuffer(
-      ScopedShapedBuffer* shaped_buffer,
-      absl::Span<const std::shared_ptr<BufferSequencingEvent>>
-          definition_events,
-      PjRtDevice* device);
-
   // Builds a ShapedBuffer view onto the buffers of 'tree'.
   ShapedBuffer AsShapedBuffer(const Shape& on_device_shape) const;
 
@@ -273,15 +269,12 @@ class TrackedDeviceBuffer {
       ExecutionInput* execution_input,
       se::DeviceMemoryAllocator* allocator) const;
 
-  absl::InlinedVector<tsl::RCReference<RawSEDeviceMemory>, 1>& device_memory() {
+  const tsl::RCReference<RawSEDeviceMemory>& device_memory() const {
     return device_memory_;
   }
-  const absl::InlinedVector<tsl::RCReference<RawSEDeviceMemory>, 1>&
-  device_memory() const {
-    return device_memory_;
-  }
-  absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events()
-      const {
+
+  const absl::InlinedVector<std::shared_ptr<BufferSequencingEvent>, 2>&
+  definition_events() const {
     return definition_events_;
   }
   absl::Span<const StreamAndEvent> usage_events() const {
@@ -312,19 +305,17 @@ class TrackedDeviceBuffer {
   // any stream and, e.g. AddUsageHold will CHECK fail.
   StreamAndEventContainer LockUseAndTransferUsageEvents();
 
-  TrackedDeviceBuffer() : in_use_(true) {}
-  TrackedDeviceBuffer(
-      PjRtDevice* device,
-      absl::Span<tsl::RCReference<RawSEDeviceMemory> const> device_memory,
-      absl::Span<const std::shared_ptr<BufferSequencingEvent>>
-          definition_events);
+  TrackedDeviceBuffer(PjRtDevice* device,
+                      tsl::RCReference<RawSEDeviceMemory> device_memory,
+                      absl::Span<const std::shared_ptr<BufferSequencingEvent>>
+                          definition_events);
   ~TrackedDeviceBuffer();
 
  private:
   PjRtDevice* device_;
 
   // Each host-side buffer may have several buffers on-device.
-  absl::InlinedVector<tsl::RCReference<RawSEDeviceMemory>, 1> device_memory_;
+  tsl::RCReference<RawSEDeviceMemory> device_memory_;
 
   // Events that are triggered when the content of one or more buffers is ready
   // during multistream execution. May be nullptr, which is used in the
@@ -354,8 +345,9 @@ void GetDeviceBufferEvents(const TrackedDeviceBuffer& buffer,
                            absl::flat_hash_set<BufferSequencingEvent*>* events);
 
 // Waits for all of the definition events in a buffer on 'stream'.
-void WaitForBufferDefinitionEventsOnStream(const TrackedDeviceBuffer& buffer,
-                                           se::Stream* stream);
+void WaitForBufferDefinitionEventsOnStream(
+    absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events,
+    se::Stream* stream);
 
 }  // namespace xla
 
