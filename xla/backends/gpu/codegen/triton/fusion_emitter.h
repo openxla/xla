@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/PassManager.h"
@@ -101,13 +102,23 @@ std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
 // Exposed for testing purposes only. Do not use.
 namespace ir_emitter_triton_internal {
 
+struct TileInfo {
+  llvm::SmallVector<mlir::Value> offsets;
+  llvm::SmallVector<mlir::Value> strides;
+  llvm::SmallVector<int64_t> original_shape;
+  llvm::SmallVector<int64_t> padded_tile_sizes;
+  llvm::SmallVector<int64_t> minor_to_major_layout;
+  mlir::Type storage_type;
+};
+
 // Computes the transformation from a 1-d program_id to a tile multi-index.
 llvm::SmallVector<mlir::Value, 3> ComputeDelinearizedTileIndex(
     EmitterLocOpBuilder& b, absl::Span<const int64_t> num_output_tiles_per_dim);
 
-absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
-    EmitterLocOpBuilder& b, mlir::ValueRange tile_multi_index,
-    const TiledHloInstruction& tiled_hlo, mlir::Value parent_base_ptr);
+absl::StatusOr<TileInfo> ConstructTileInfo(EmitterLocOpBuilder& b,
+                                           mlir::ValueRange tile_multi_index,
+                                           const TiledHloInstruction& tiled_hlo,
+                                           mlir::Value parent_base_ptr);
 
 // Dumps the Triton IR to a string.
 //
