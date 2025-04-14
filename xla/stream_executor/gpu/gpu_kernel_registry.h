@@ -102,7 +102,7 @@ class GpuKernelRegistry {
 
   absl::Mutex mutex_;
   using KernelRegistryKey = std::tuple<std::type_index, Platform::Id>;
-  std::map<KernelRegistryKey, MultiKernelLoaderSpec> kernel_specs_
+  absl::flat_hash_map<KernelRegistryKey, MultiKernelLoaderSpec> kernel_specs_
       ABSL_GUARDED_BY(mutex_);
 };
 
