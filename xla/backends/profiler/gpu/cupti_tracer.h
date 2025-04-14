@@ -21,13 +21,19 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <thread>
+#include <vector>
 
 #include "absl/status/status.h"
+#include "absl/time/time.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "tsl/platform/types.h"
+
+#if CUPTI_PM_SAMPLING // CUPTI PM sampling headers added in CUDA 12.6
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
+#endif
 
 namespace xla {
 namespace profiler {
@@ -35,16 +41,16 @@ namespace profiler {
 // Provide safe types if CUPTI_PM_SAMPLING is not defined
 // (And therefor CUPTI PM sampling headers are not included)
 #if CUPTI_PM_SAMPLING == 0
-typedef int CUpti_PmSampling_DecodeStopReason;
-constexpr CUpti_PmSampling_DecodeStopReason
-    CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT = 0;
+enum CUpti_PmSampling_DecodeStopReason {
+  CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT = 0
+};
 #endif
 
 // Information related to a decode counters pass over a single device
 struct PmSamplingDecodeInfo {
   CUpti_PmSampling_DecodeStopReason decode_stop_reason =
       CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT;
-  uint8_t overflow_ = 0;
+  uint8_t overflow = 0;
   size_t num_samples = 0;
   size_t num_completed = 0;
   size_t num_populated = 0;
@@ -53,7 +59,34 @@ struct PmSamplingDecodeInfo {
   std::vector<char const*> metrics;
 };
 
-struct PmSamplingConfig;
+// Should be safe on all hardware
+struct PmSamplingConfig {
+  // Whether to enable PM sampling
+  bool enable_pm_sampling = false;
+  // List of metrics to enable
+  std::vector<const char*> metrics{};
+  // 64MB hardware buffer (on device)
+  size_t hw_buf_size = 64 * 1024 * 1024;
+  // Sample interval of 500,000ns = 2khz
+  size_t sample_interval = 500000;
+  // Decode thread triggers every 100ms (should have 200 samples @ 2khz)
+  absl::Duration decode_period = absl::Milliseconds(100);
+  // Maximum samples to allocate host space for, 2.5x expected
+  size_t max_samples = 500;
+  // Devices per decode thread
+  size_t devs_per_decode_thd = 8;
+  // What to do with samples once gathered
+  // Note, must be thread-safe - may be called by multiple decode threads
+  // simultaneously
+  void (*process_samples)(struct PmSamplingDecodeInfo* info) = nullptr;
+  // All PM sampling device objects
+  // Do not set manually
+  std::vector<std::shared_ptr<class PmSamplingDevice>> devices;
+  // All PM sampling decode thread objects
+  // Do not set manually
+  std::vector<std::unique_ptr<class PmSamplingDecodeThread>> threads;
+};
+
 
 struct CuptiTracerOptions {
   bool required_callback_api_events = true;
@@ -75,7 +108,7 @@ struct CuptiTracerOptions {
   // PM sampling configuration (defaults are 2khz rate, 100ms decode)
   // Only read during creation of a PM sampling object, later changes have 
   // no effect
-  struct PmSamplingConfig* pm_sampling_config;
+  PmSamplingConfig* pm_sampling_config;
 };
 
 // Container class for all CUPTI pm sampling infrastructure
@@ -85,15 +118,60 @@ struct CuptiTracerOptions {
 // - Worker thread creation / control
 // Decoding of counter data is done in PmSamplingDecodeThread class
 class PmSamplingDevice {
+  public:
+  // Device information
+  int device_id_;
+
+  // PM sampling public configuration
+  PmSamplingConfig* config_;
+
+  // Creates host and sampler objects, all images
+  absl::Status CreateConfig();
+
+  // Requires config image, pm sampler object
+  absl::Status SetConfig();
+
+  // Requires pm sampler object
+  absl::Status StartSampling();
+
+  // Requires pm sampler object
+  absl::Status StopSampling();
+
+  // Requires pm sampler object
+  absl::Status DisableSampling();
+
+  // Collect sampling data
+  // Requires pm sampler object, counter data image, fetches data from hw
+  // buffer into counter data image
+  absl::Status FillCounterDataImage(PmSamplingDecodeInfo& decode_info);
+
+  // Requires counter data image
+  absl::Status GetSampleCounts(PmSamplingDecodeInfo& decode_info);
+
+  // Requires host object, pm sampler object, counter data image, metric
+  // names, returns sample time, metric values
+  absl::Status GetSample(SamplerRange& sample, size_t index);
+
+  // Requires pm sampler object, counter data image, (re)initializes it
+  absl::Status InitializeCounterDataImage();
+
+  // Restores image from backup (faster than re-initializing)
+  absl::Status RestoreCounterDataImage();
+
+  // Constructor provides all configuration needed to set up sampling on a
+  // single device
+  PmSamplingDevice(int device_id, struct PmSamplingConfig* config);
+
+  private:
   // Internal state
   // Declared roughly in order of initialization
-  char const* chipName_ = nullptr;
+  std::string chipName_;
   std::vector<uint8_t> counter_availability_image_;
   CUpti_Profiler_Host_Object* host_obj_ = nullptr;
   std::vector<uint8_t> config_image_;
   CUpti_PmSampling_Object* sampling_obj_ = nullptr;
   std::vector<uint8_t> counter_data_image_;
-  std::unique_ptr< const std::vector<uint8_t> > p_counter_data_image_backup_;
+  std::vector<uint8_t> counter_data_image_backup_;
 
   // XLA interface to CUPTI
   // Needed both to call PM sampling APIs and stringify CUPTI errors
@@ -133,74 +211,62 @@ class PmSamplingDevice {
     "pcie__read_bytes.sum",
     "pcie__write_bytes.sum"
   };
-
-  public:
-  // Device information
-  int device_id_;
-
-  // PM sampling public configuration
-  struct PmSamplingConfig* config_;
-
-  // Creates host and sampler objects, all images
-  absl::Status CreateConfig();
-
-  // Requires config image, pm sampler object
-  absl::Status SetConfig();
-
-  // Requires pm sampler object
-  absl::Status StartSampling();
-
-  // Requires pm sampler object
-  absl::Status StopSampling();
-
-  // Requires pm sampler object
-  absl::Status DisableSampling();
-
-  // Collect sampling data
-  // Requires pm sampler object, counter data image, fetches data from hw
-  // buffer into counter data image
-  absl::Status FillCounterDataImage(struct PmSamplingDecodeInfo& decodeInfo);
-
-  // Requires counter data image
-  absl::Status GetSampleCounts(struct PmSamplingDecodeInfo& decodeInfo);
-
-  // Requires host object, pm sampler object, counter data image, metric
-  // names, returns sample time, metric values
-  absl::Status GetSample(SamplerRange& sample, size_t index);
-
-  // Requires pm sampler object, counter data image, (re)initializes it
-  absl::Status InitializeCounterDataImage();
-
-  // Restores image from backup (faster than re-initializing)
-  absl::Status RestoreCounterDataImage();
-
-  // Constructor provides all configuration needed to set up sampling on a
-  // single device
-  PmSamplingDevice(int device_id, struct PmSamplingConfig* config);
 };
 
 // Container for PM sampling decode thread
 // Responsible for fetching PM sampling data from device and providing it to
 // handler or other external container
 class PmSamplingDecodeThread {
-  enum thd_state {
+  public:
+  // Spin wait sleep period, set to the min of this and all device periods
+  // Space to asynchronously initialize this class and the thread it spawns
+  absl::Duration decode_period_ = absl::Seconds(1);
+  PmSamplingDecodeThread(std::vector<std::shared_ptr<PmSamplingDevice>> devs);
+
+  // Signal thread to exit; join thread
+  ~PmSamplingDecodeThread() {
+    nextThdState_ = kStateExiting;
+    thd_->join();
+  }
+
+  // Signal and test for state transitions
+  bool IsThdInitialized() { return current_thd_state_ == kStateInitialized; }
+  void ThdIsInitialized() { current_thd_state_ = kStateInitialized; }
+
+  void EnableThd() { nextThdState_ = kStateEnabled; }
+  bool ShouldThdEnable() { return nextThdState_ == kStateEnabled; }
+  void ThdIsEnabled() { current_thd_state_ = kStateEnabled; }
+  bool IsThdEnabled() { return current_thd_state_ == kStateEnabled; }
+
+  void DisableThd() { nextThdState_ = kStateDisabled; };
+  bool ShouldThdDisable() { return nextThdState_ == kStateDisabled; }
+  void ThdIsDisabled() { current_thd_state_ = kStateDisabled; }
+  bool IsThdDisabled() { return current_thd_state_ == kStateDisabled; }
+
+  void ExitThd() { nextThdState_ = kStateExiting; }
+  bool ShouldThdExit() { return nextThdState_ == kStateExiting; }
+  void ThdIsExiting() { current_thd_state_ = kStateExiting; }
+  bool IsThdExiting() { return current_thd_state_ == kStateExiting; }
+
+  private:
+  enum ThdState {
     // Thread is starting, not yet ready to be enabled
-    state_uninitialized_,
+    kStateUninitialized,
     // Thread is ready for enablement but decoding has not yet been triggered
-    state_initialized_,
+    kStateInitialized,
     // Thread is enabled, polling for metrics from all devices
-    state_enabled_,
+    kStateEnabled,
     // Thread is disabled, not polling for metrics, but could be re-enabled
-    state_disabled_,
+    kStateDisabled,
     // Thread is finishing and guaranteed to return, allowing join
-    state_exiting_
+    kStateExiting
   };
 
   // Current state of the thread (only set by worker thread)
-  volatile thd_state current_thd_state_ = state_uninitialized_;
+  volatile ThdState current_thd_state_ = kStateUninitialized;
     
   // State thread should transition to (only set by main thread)
-  volatile thd_state nextThdState_ = state_initialized_;
+  volatile ThdState nextThdState_ = kStateInitialized;
 
   // Thread handle
   std::thread* thd_;
@@ -212,67 +278,7 @@ class PmSamplingDecodeThread {
   static void ThdFuncDecodeUntilDisabled(PmSamplingDecodeThread* control);
 
   // Devices to decode by this thread
-  std::vector< std::shared_ptr<PmSamplingDevice> > devs_;
-
-  public:
-  // Spin wait sleep period, set to the min of this and all device periods
-  // Space to asynchronously initialize this class and the thread it spawns
-  absl::Duration decode_period_ = absl::Seconds(1);
-  PmSamplingDecodeThread(std::vector< std::shared_ptr<PmSamplingDevice> >
-      devs);
-
-  // Signal thread to exit; join thread
-  ~PmSamplingDecodeThread() {
-    nextThdState_ = state_exiting_;
-    thd_->join();
-  }
-
-  // Signal and test for state transitions
-  bool IsThdInitialized() { return current_thd_state_ == state_initialized_; }
-  void ThdIsInitialized() { current_thd_state_ = state_initialized_; }
-
-  void EnableThd() { nextThdState_ = state_enabled_; }
-  bool ShouldThdEnable() { return nextThdState_ == state_enabled_; }
-  void ThdIsEnabled() { current_thd_state_ = state_enabled_; }
-  bool IsThdEnabled() { return current_thd_state_ == state_enabled_; }
-
-  void DisableThd() { nextThdState_ = state_disabled_; };
-  bool ShouldThdDisable() { return nextThdState_ == state_disabled_; }
-  void ThdIsDisabled() { current_thd_state_ = state_disabled_; }
-  bool IsThdDisabled() { return current_thd_state_ == state_disabled_; }
-
-  void ExitThd() { nextThdState_ = state_exiting_; }
-  bool ShouldThdExit() { return nextThdState_ == state_exiting_; }
-  void ThdIsExiting() { current_thd_state_ = state_exiting_; }
-  bool IsThdExiting() { return current_thd_state_ == state_exiting_; }
-};
-
-// Should be safe on all hardware
-struct PmSamplingConfig {
-  // Whether to enable PM sampling
-  bool enable_pm_sampling = false;
-  // List of metrics to enable
-  std::vector<const char*> metrics{};
-  // 64MB hardware buffer (on device)
-  size_t hw_buf_size = 64 * 1024 * 1024;
-  // Sample interval of 500,000ns = 2khz
-  size_t sample_interval = 500000;
-  // Decode thread triggers every 100ms (should have 200 samples @ 2khz)
-  absl::Duration decode_period = absl::Milliseconds(100);
-  // Maximum samples to allocate host space for, 2.5x expected
-  size_t max_samples = 500;
-  // Devices per decode thread
-  size_t devs_per_decode_thd = 8;
-  // What to do with samples once gathered
-  // Note, must be thread-safe - may be called by multiple decode threads
-  // simultaneously
-  void (*process_samples)(struct PmSamplingDecodeInfo* info) = nullptr;
-  // All PM sampling device objects
-  // Do not set manually
-  std::vector< std::shared_ptr<PmSamplingDevice> > devices;
-  // All PM sampling decode thread objects
-  // Do not set manually
-  std::vector< std::unique_ptr<PmSamplingDecodeThread> > threads;
+  std::vector<std::shared_ptr<PmSamplingDevice>> devs_;
 };
 
 class CuptiTracer;

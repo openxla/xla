@@ -22,6 +22,12 @@ limitations under the License.
 #include <cstdint>
 
 #include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
+#if CUPTI_PM_SAMPLING // CUPTI PM sampling headers added in CUDA 12.6
+#include "cupti_pmsampling.h"
+#include "cupti_profiler_host.h"
+#include "cupti_profiler_target.h"
+#endif
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -91,7 +97,6 @@ class MockCupti : public xla::profiler::CuptiInterface {
   MOCK_METHOD(CUptiResult, GetGraphExecId,
               (CUgraphExec graph_exec, uint32_t* graph_id), (override));
 
-#if CUPTI_PM_SAMPLING
   // Profiler Host APIs
   MOCK_METHOD(CUptiResult, ProfilerHostInitialize,
       (CUpti_Profiler_Host_Initialize_Params* pParams), (override));
@@ -190,7 +195,6 @@ class MockCupti : public xla::profiler::CuptiInterface {
       (CUpti_PmSampling_GetCounterDataInfo_Params* pParams), (override));
   MOCK_METHOD(CUptiResult, PmSamplingCounterDataGetSampleInfo,
       (CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams), (override));
-#endif // CUPTI_PM_SAMPLING
 
   MOCK_METHOD(CUptiResult, DeviceGetChipName, (CUpti_Device_GetChipName_Params*
       pParams), (override));

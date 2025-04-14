@@ -19,7 +19,6 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_error_manager.h"
 #include "xla/backends/profiler/gpu/cupti_wrapper.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
-#include "xla/backends/profiler/gpu/cupti_interface.h"
 
 
 #include <atomic>
@@ -32,7 +31,8 @@ namespace xla {
 namespace profiler {
 namespace test {
 
-using xla::profiler::CuptiInterface;
+namespace {
+
 using xla::profiler::CuptiTracer;
 using xla::profiler::CuptiTracerCollectorOptions;
 using xla::profiler::CuptiTracerOptions;
@@ -46,12 +46,10 @@ class TestableCuptiTracer : public CuptiTracer {
 };
 
 
-namespace {
-
 std::atomic_uint64_t atomic_total_fp64 = 0;
 std::atomic_uint64_t atomic_total_read = 0;
 std::atomic_uint64_t atomic_total_write = 0;
-bool skip_first = true;
+std::atomic_bool skip_first = true;
 
 void HandleRecords(struct PmSamplingDecodeInfo* info) {
   // Validate some samples were recorded
@@ -62,7 +60,7 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
   double ranges_duration = back.end_timestamp_ns -
       front.start_timestamp_ns;
   double ns_per_sample = ranges_duration / info->num_completed;
-  // First pass may have large initial sample
+  // First pass may have large initial sample duration
   if (skip_first) {
     skip_first = false;
   } else {
@@ -90,11 +88,15 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
 
 TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     // Ensure this is only run on CUPTI > 26 (paired w/ CUDA 12.6)
+    if (CUPTI_API_VERSION < 24) {
+        GTEST_SKIP() << "PM Sampling not supported on this version of CUPTI";
+    }
+
     uint32_t cupti_version = 0;
     cuptiGetVersion(&cupti_version);
-    EXPECT_GE(cupti_version, 24);
+    EXPECT_EQ(CUPTI_API_VERSION, cupti_version);
 
-    if (! CUPTI_PM_SAMPLING || (cupti_version < 24)) {
+    if (cupti_version < 24) {
         GTEST_SKIP() << "PM Sampling not supported on this version of CUPTI";
     }
 
@@ -102,8 +104,8 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
     CuptiTracerCollectorOptions collector_options;
     collector_options.num_gpus = CuptiTracer::NumGpus();
-    auto start_walltime_ns = absl::GetCurrentTimeNanos();
-    auto start_gputime_ns = CuptiTracer::GetTimestamp();
+    uint64_t start_walltime_ns = absl::GetCurrentTimeNanos();
+    uint64_t start_gputime_ns = CuptiTracer::GetTimestamp();
     auto collector = CreateCuptiCollector(collector_options, start_walltime_ns,
         start_gputime_ns);
 
@@ -151,7 +153,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
 }
 
-}  // namespace
+}
 
 }  // namespace test
 }  // namespace profiler

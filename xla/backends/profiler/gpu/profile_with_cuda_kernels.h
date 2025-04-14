@@ -13,7 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#pragma once
+#ifndef XLA_BACKENDS_PROFILER_GPU_PROFILE_WITH_CUDA_KERNELS_H_
+#define XLA_BACKENDS_PROFILER_GPU_PROFILE_WITH_CUDA_KERNELS_H_
 
 #include <vector>
 
@@ -27,3 +28,5 @@ std::vector<double> SimpleAddSubWithProfiler(int num_elements);
 }  // namespace test
 }  // namespace profiler
 }  // namespace xla
+
+#endif // XLA_BACKENDS_PROFILER_GPU_PROFILE_WITH_CUDA_KERNELS_H_

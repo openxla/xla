@@ -30,15 +30,17 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "cupti_interface.h"
 #include "cupti_tracer.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
-#include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
 #include "xla/tsl/profiler/utils/per_thread.h"
@@ -46,6 +48,12 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/logging.h"
+
+#if CUPTI_API_VERSION >= 24 // CUPTI API 24 (CUDA 12.6) introduced PM sampling
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
+#endif
 
 namespace xla {
 namespace profiler {
@@ -56,6 +64,13 @@ using tsl::Env;
 using tsl::profiler::AnnotationStack;
 
 static thread_local int internalCuCall = 0;
+
+// Switch to constexpr instead of macro where possible
+#if CUPTI_API_VERSION >= 24 // CUPTI API 24 (CUDA 12.6) introduced PM sampling
+constexpr bool kCuptiPmSamplingSupported = true;
+#else
+constexpr bool kCuptiPmSamplingSupported = false;
+#endif
 
 // Temporary disable cupti api tracing for this thread during the life scope of
 // this class. Used for the API calls that initiated by us.
@@ -101,9 +116,9 @@ inline void LogIfError(const absl::Status& status) {
       cupti_interface_->GetResultString(status, &errstr);                   \
       LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
       if (status == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {                  \
-        return tsl::errors::PermissionDenied("CUPTI needs root access!");   \
+        return absl::PermissionDeniedError("CUPTI needs root access");      \
       } else {                                                              \
-        return tsl::errors::Internal("CUPTI call error", errstr);           \
+        return absl::UnknownError(absl::StrCat("CUPTI error ", errstr));    \
       }                                                                     \
     }                                                                       \
   } while (false)
@@ -114,7 +129,7 @@ inline void LogIfError(const absl::Status& status) {
     if (ABSL_PREDICT_FALSE(status != cudaSuccess)) {                        \
       const char* errstr = cudaGetErrorName(status);                        \
       LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      return tsl::errors::Internal("CUDA call error", errstr);              \
+      return absl::UnknownError(absl::StrCat("CUDA error ", errstr));       \
     }                                                                       \
   } while (false)
 
@@ -125,16 +140,8 @@ inline void LogIfError(const absl::Status& status) {
       const char* errstr = "";                                              \
       cuGetErrorName(status, &errstr);                                      \
       LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      return tsl::errors::Internal("CUDA driver call error", errstr);       \
+      return absl::UnknownError(absl::StrCat("CUDA driver error", errstr)); \
     }                                                                       \
-  } while (false)
-
-#define RETURN_IF_ABSL_ERROR(expr)          \
-  do {                                      \
-    absl::Status status = (expr);           \
-    if (ABSL_PREDICT_FALSE(!status.ok())) { \
-      return status;                        \
-    }                                       \
   } while (false)
 
 size_t Bytes2D(const CUDA_MEMCPY2D* p) { return p->Height * p->WidthInBytes; }
@@ -1103,7 +1110,7 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
   EnableActivityTracing().IgnoreError();
   tsl::profiler::AnnotationStack::Enable(true);
 
-  if (CUPTI_PM_SAMPLING) {
+  if (kCuptiPmSamplingSupported) {
     if (option_->pm_sampling_config->enable_pm_sampling) {
       TF_RETURN_IF_ERROR(EnablePMSampling());
     }
@@ -1113,7 +1120,7 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
 }
 
 void CuptiTracer::Disable() {
-  if (CUPTI_PM_SAMPLING) {
+  if (kCuptiPmSamplingSupported) {
     if (option_ && option_->pm_sampling_config->enable_pm_sampling) {
       DisablePMSampling().IgnoreError();
     }
@@ -1254,25 +1261,32 @@ absl::Status CuptiTracer::DisableApiTracing() {
   return absl::OkStatus();
 }
 
-// CUPTI params struct definitions are very long, macro it for convenience, ie:
-// CUpti_Struct_Type var = { CUpti_Struct_Type_STRUCT_SIZE };
-// Many strucs also have a pPriv field which must be null
+// CUPTI params struct definitions are very long, macro it for convenience
+// They all have a struct_size field which must be set to type_STRUCT_SIZE
+// Many strucs also have a pPriv field which must be null, ie:
+// CUpti_Struct_Type var = { CUpti_Struct_Type_STRUCT_SIZE, .pPriv = nullptr }
 #define DEF_SIZED_PRIV_STRUCT(type, name) \
-  type name = {.structSize = type##_STRUCT_SIZE, .pPriv = nullptr};
+  type name = {.structSize = type##_STRUCT_SIZE, .pPriv = nullptr}
 
-#define ERROR_IF_PM_SAMPLING_NOT_SUPPORTED() \
-  if (!CUPTI_PM_SAMPLING) return tsl::errors::FailedPrecondition("PM Sampling "\
-      "not supported on this version of CUPTI");
+// Predefine some common error strings
+const char * kCuptiPmSamplingUnsupportedStr =
+    "PM sampling not supported on this version of CUPTI";
+const absl::Status kCuptiPmSamplingUnsupportedError =
+    absl::UnimplementedError(kCuptiPmSamplingUnsupportedStr);
+
 // Constructor provides all configuration needed to set up sampling on a
 // single device
-PmSamplingDevice::PmSamplingDevice(int device_id, struct PmSamplingConfig* config)
-    : cupti_interface_(GetCuptiInterface()),
-    device_id_(device_id),
-    config_(config) {
-  if (! CUPTI_PM_SAMPLING) {
-    LOG(ERROR) << "PM Sampling not supported on this device";
+PmSamplingDevice::PmSamplingDevice(int device_id,
+                                   struct PmSamplingConfig* config)
+    : device_id_(device_id),
+    config_(config),
+    cupti_interface_(GetCuptiInterface()) {
+  // Dead-code-eliminate this if pm sampling is not supported
+  if (! kCuptiPmSamplingSupported) {
+    LOG(ERROR) << kCuptiPmSamplingUnsupportedStr;
     return;
   }
+
   // Provide some defaults for metrics and handler
   if (config_->metrics.size() == 0) {
     config_->metrics = default_metrics_;
@@ -1288,19 +1302,22 @@ PmSamplingDevice::PmSamplingDevice(int device_id, struct PmSamplingConfig* confi
 
 // Fetch chip name for this device
 absl::Status PmSamplingDevice::GetChipName() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  // Dead-code-eliminate this if pm sampling is not supported
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_Device_GetChipName_Params, p);
   p.deviceIndex = device_id_;
   RETURN_IF_CUPTI_ERROR(DeviceGetChipName(&p));
 
-  chipName_ = strdup(p.pChipName);
+  chipName_ = std::string(p.pChipName);
 
   return absl::OkStatus();
 }
 
 // Test for device support for PM sampling
 absl::Status PmSamplingDevice::DeviceSupported() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   CUdevice cuDevice;
   RETURN_IF_CUDA_DRIVER_ERROR(cuDeviceGet(&cuDevice, device_id_));
 
@@ -1311,8 +1328,7 @@ absl::Status PmSamplingDevice::DeviceSupported() {
   RETURN_IF_CUPTI_ERROR(ProfilerDeviceSupported(&p));
 
   if (p.isSupported != CUPTI_PROFILER_CONFIGURATION_SUPPORTED) {
-    return tsl::errors::FailedPrecondition("Device does not support pm "
-        "sampling");
+    return absl::FailedPreconditionError("Device does not support pm sampling");
   }
 
   return absl::OkStatus();
@@ -1321,7 +1337,8 @@ absl::Status PmSamplingDevice::DeviceSupported() {
 // Get counter availability image size, set the image to that size,
 // then initialize it
 absl::Status PmSamplingDevice::CreateCounterAvailabilityImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterAvailability_Params, p);
   p.deviceIndex = device_id_;
   RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterAvailability(&p));
@@ -1337,10 +1354,11 @@ absl::Status PmSamplingDevice::CreateCounterAvailabilityImage() {
 
 // Create profiler host object
 absl::Status PmSamplingDevice::CreatProfilerHostObj() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_Initialize_Params, p);
   p.profilerType = CUPTI_PROFILER_TYPE_PM_SAMPLING;
-  p.pChipName = chipName_;
+  p.pChipName = chipName_.c_str();
   p.pCounterAvailabilityImage = counter_availability_image_.data();
   RETURN_IF_CUPTI_ERROR(ProfilerHostInitialize(&p));
 
@@ -1351,7 +1369,8 @@ absl::Status PmSamplingDevice::CreatProfilerHostObj() {
 
 // Register metrics, resize config image, and initialize it
 absl::Status PmSamplingDevice::CreateConfigImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, pm);
   pm.pHostObject = host_obj_;
   pm.ppMetricNames = config_->metrics.data();
@@ -1376,10 +1395,11 @@ absl::Status PmSamplingDevice::CreateConfigImage() {
 
 // Return number of passes
 size_t PmSamplingDevice::NumPasses() {
-  if (! CUPTI_PM_SAMPLING) {
-    LOG(ERROR) << "PM Sampling not supported on this version of CUPTI";
+  if (! kCuptiPmSamplingSupported) {
+    LOG(ERROR) << kCuptiPmSamplingUnsupportedStr;
     return 0;
   }
+
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_GetNumOfPasses_Params, p);
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
@@ -1393,7 +1413,8 @@ size_t PmSamplingDevice::NumPasses() {
 // Initialize profiler APIs - required before PM sampler specific calls.
 // No visible side effects.
 absl::Status PmSamplingDevice::InitializeProfilerAPIs() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Initialize_Params, p);
   RETURN_IF_CUPTI_ERROR(ProfilerInitialize(&p));
 
@@ -1402,7 +1423,8 @@ absl::Status PmSamplingDevice::InitializeProfilerAPIs() {
 
 // Create pm sampling object (initializes pm sampling APIs)
 absl::Status PmSamplingDevice::CreatePmSamplerObject() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Enable_Params, p);
   p.deviceIndex = device_id_;
   RETURN_IF_CUPTI_ERROR(PmSamplingEnable(&p));
@@ -1414,22 +1436,24 @@ absl::Status PmSamplingDevice::CreatePmSamplerObject() {
 
 // Resize and initialize counter data image
 absl::Status PmSamplingDevice::CreateCounterDataImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
-  DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataSize_Params, ps);
-  ps.pPmSamplingObject = sampling_obj_;
-  ps.numMetrics = config_->metrics.size();
-  ps.pMetricNames = config_->metrics.data();
-  ps.maxSamples = config_->max_samples;
-  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataSize(&ps));
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
 
-  counter_data_image_.resize(ps.counterDataSize);
+  DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataSize_Params, p);
+  p.pPmSamplingObject = sampling_obj_;
+  p.numMetrics = config_->metrics.size();
+  p.pMetricNames = config_->metrics.data();
+  p.maxSamples = config_->max_samples;
+  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataSize(&p));
+
+  counter_data_image_.resize(p.counterDataSize);
 
   return InitializeCounterDataImage();
 }
 
 // Sets several pm sampling configuration items
 absl::Status PmSamplingDevice::SetConfig() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_SetConfig_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   p.configSize = config_image_.size();
@@ -1444,77 +1468,88 @@ absl::Status PmSamplingDevice::SetConfig() {
 
 // Start recording pm sampling data
 absl::Status PmSamplingDevice::StartSampling() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Start_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   RETURN_IF_CUPTI_ERROR(PmSamplingStart(&p));
+
   return absl::OkStatus();
 }
 
 // Stop recording pm sampling data
 absl::Status PmSamplingDevice::StopSampling() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Stop_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   RETURN_IF_CUPTI_ERROR(PmSamplingStop(&p));
+
   return absl::OkStatus();
 }
 
 // Disable pm sampling
 absl::Status PmSamplingDevice::DisableSampling() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Disable_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   RETURN_IF_CUPTI_ERROR(PmSamplingDisable(&p));
+
   return absl::OkStatus();
 }
 
 // Fetches data from hw buffer, fills in counter data image
 absl::Status PmSamplingDevice::FillCounterDataImage(
-    PmSamplingDecodeInfo& decodeInfo) {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+    PmSamplingDecodeInfo& decode_info) {
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_DecodeData_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   p.pCounterDataImage = counter_data_image_.data();
   p.counterDataImageSize = counter_data_image_.size();
-  auto ret = cupti_interface_->PmSamplingDecodeData(&p);
+  CUptiResult ret = cupti_interface_->PmSamplingDecodeData(&p);
+
   // If this is CUPTI_ERROR_OUT_OF_MEMORY, hardware buffer is full
   // and session needs to be restarted
   if (ret == CUPTI_ERROR_OUT_OF_MEMORY) {
     LOG(WARNING) << "Profiling::PM Sampling - hardware buffer overflow, must "
-        "restart session";
-  }
-  if (ret != CUPTI_SUCCESS) {
-    return tsl::errors::Internal("CUPTI error during "
-        "cuptiPmSamplingDecodeData");
+        "restart session.  Decrease sample rate or increase decode rate to "
+        " avoid this.";
   }
 
-  decodeInfo.decode_stop_reason = p.decodeStopReason;
-  decodeInfo.overflow_ = p.overflow;
+  if (ret != CUPTI_SUCCESS) {
+    return absl::InternalError("CUPTI error during cuptiPmSamplingDecodeData");
+  }
+
+  decode_info.decode_stop_reason = p.decodeStopReason;
+  decode_info.overflow = p.overflow;
 
   return absl::OkStatus();
 }
 
 // Gets count of samples decoded into counter data image
 absl::Status PmSamplingDevice::GetSampleCounts(
-    PmSamplingDecodeInfo& decodeInfo) {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+    PmSamplingDecodeInfo& decode_info) {
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataInfo_Params, p);
   p.pCounterDataImage = counter_data_image_.data();
   p.counterDataImageSize = counter_data_image_.size();
   RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataInfo(&p));
 
-  decodeInfo.num_samples = p.numTotalSamples;
-  decodeInfo.num_populated = p.numPopulatedSamples;
-  decodeInfo.num_completed = p.numCompletedSamples;
+  decode_info.num_samples = p.numTotalSamples;
+  decode_info.num_populated = p.numPopulatedSamples;
+  decode_info.num_completed = p.numCompletedSamples;
 
   return absl::OkStatus();
 }
 
 // Fill in a single pm sampling record
 absl::Status PmSamplingDevice::GetSample(SamplerRange& sample,
-    size_t index) {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+                                         size_t index) {
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   // First, get the start and end times
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_CounterData_GetSampleInfo_Params, ps);
   ps.pPmSamplingObject = sampling_obj_;
@@ -1544,64 +1579,65 @@ absl::Status PmSamplingDevice::GetSample(SamplerRange& sample,
 
 // Initializes image, then copies this to the backup counter data image
 absl::Status PmSamplingDevice::InitializeCounterDataImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_CounterDataImage_Initialize_Params, p);
   p.pPmSamplingObject = sampling_obj_;
   p.counterDataSize = counter_data_image_.size();
   p.pCounterData = counter_data_image_.data();
   RETURN_IF_CUPTI_ERROR(PmSamplingCounterDataImageInitialize(&p));
 
-  // Stash this in a const vector so it can be restored with deep copy semantics
-  // make_unique will use deep copy
-  p_counter_data_image_backup_ = std::make_unique<const std::vector<uint8_t> >(
-      counter_data_image_);
+  // Stash this in a vector so it can be restored with copy semantics
+  counter_data_image_backup_ = std::vector<uint8_t>(counter_data_image_);
 
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::RestoreCounterDataImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   // Will use copy semantics
-  counter_data_image_ = *p_counter_data_image_backup_;
+  counter_data_image_ = counter_data_image_backup_;
 
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::DestroyCounterAvailabilityImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::DestroyProfilerHostObj() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::DestroyConfigImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::DestroyPmSamplerObject() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::UnInitializeProfilerAPIs() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   // Note: disabling pm sampling object finalizes all of
   // CUPTI, so do not disable here
-  // FIXME: Add CUPTI version test and disable once ordering is changed
+  // TODO: Add CUPTI version test and disable once ordering is changed
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::DestroyCounterDataImage() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
   return absl::OkStatus();
 }
 
 absl::Status PmSamplingDevice::CreateConfig() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   // Get chip name string
   TF_RETURN_IF_ERROR(GetChipName());
 
@@ -1618,9 +1654,10 @@ absl::Status PmSamplingDevice::CreateConfig() {
   TF_RETURN_IF_ERROR(CreateConfigImage());
 
   // Test for single pass configuration or skip
-  if (NumPasses() > 1)
-    return tsl::errors::Internal("Metrics configuration requires more than one "
+  if (NumPasses() > 1) {
+    return absl::InternalError("Metrics configuration requires more than one "
         "pass");
+  }
 
   // Create PM sampler object or skip device
   TF_RETURN_IF_ERROR(CreatePmSamplerObject());
@@ -1633,12 +1670,12 @@ absl::Status PmSamplingDevice::CreateConfig() {
 
 // Constructor, creates worker thread
 PmSamplingDecodeThread::PmSamplingDecodeThread(
-    std::vector< std::shared_ptr<PmSamplingDevice> > devs)
-    : devs_(devs) {
-  if (! CUPTI_PM_SAMPLING) {
+    std::vector<std::shared_ptr<PmSamplingDevice>> devs) : devs_(devs) {
+  if (! kCuptiPmSamplingSupported) {
     LOG(ERROR) << "PM Sampling not supported on this version of CUPTI";
     return;
   }
+
   // Use the minimum decode period specified by any device
   for (auto dev : devs_) {
     if (dev->config_->decode_period < decode_period_)
@@ -1650,65 +1687,61 @@ PmSamplingDecodeThread::PmSamplingDecodeThread(
 
 void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
     PmSamplingDecodeThread* control) {
-  if (! CUPTI_PM_SAMPLING) {
+  if (! kCuptiPmSamplingSupported) {
     LOG(ERROR) << "PM Sampling not supported on this version of CUPTI";
     return;
   }
+
   // Signal that thread is enabled for decoding
   control->ThdIsEnabled();
 
   // Test for exit condition on all devices
-  bool allDevsEndOfRecords = false;
-  int extraAttempts = 0;
+  bool all_devs_end_of_records = false;
+  int extra_attempts = 0;
 
   // When enabled, loop over each device, decoding
   // If an error is encountered, attempt to continue with next iteration
   // instead of exiting thread
-  while (!control->ShouldThdDisable() 
-      || !allDevsEndOfRecords 
-      || (extraAttempts < 2)) {
-    if (VLOG_IS_ON(2)) {
-      LOG(INFO) << "(Profiling::PM Sampling) Top of decode loop";
-    }
+  while ((! control->ShouldThdDisable())
+        || (! all_devs_end_of_records)
+        || (extra_attempts < 2)) {
+    VLOG(2) << "(Profiling::PM Sampling) Top of decode loop";
     // Try a few extra times to decode
-    if (allDevsEndOfRecords == true) extraAttempts++;
+    if (all_devs_end_of_records == true) extra_attempts++;
 
-    allDevsEndOfRecords = true;
+    all_devs_end_of_records = true;
     absl::Time begin = absl::Now();
 
-    size_t decodedSamples = 0;
+    size_t decoded_samples = 0;
 
+    // Each decode period, decode all devices assigned to it
     for (auto dev : control->devs_) {
-      if (VLOG_IS_ON(2)) {
-        LOG(INFO) << "(Profiling::PM Sampling)  Beginning decode for device " <<
-            dev->device_id_;
-      }
+      VLOG(2) << "(Profiling::PM Sampling)  Beginning decode for device " <<
+          dev->device_id_;
 
-      absl::Time startTime = absl::Now();
-      absl::Time fillTime = startTime;
-      absl::Time getCountTime = startTime;
-      absl::Time getSamplesTime = startTime;
-      absl::Time processSamplesTime = startTime;
-      absl::Time initializeImageTime = startTime;
+      absl::Time start_time = absl::Now();
+      absl::Time fill_time = start_time;
+      absl::Time get_count_time = start_time;
+      absl::Time get_samples_time = start_time;
+      absl::Time process_samples_time = start_time;
+      absl::Time initialize_image_time = start_time;
 
       PmSamplingDecodeInfo info{.metrics = dev->config_->metrics};
-      if (auto ret = dev->FillCounterDataImage(info); !ret.ok()) continue;
-      fillTime = absl::Now();
-      if (auto ret = dev->GetSampleCounts(info); !ret.ok()) continue;
-      getCountTime = absl::Now();
+      if (! dev->FillCounterDataImage(info).ok()) continue;
+      fill_time = absl::Now();
+      if (! dev->GetSampleCounts(info).ok()) continue;
+      get_count_time = absl::Now();
 
       // Track whether this device reached end of records
       if (info.decode_stop_reason !=
           CUPTI_PM_SAMPLING_DECODE_STOP_REASON_END_OF_RECORDS) {
-        allDevsEndOfRecords = false;
+        all_devs_end_of_records = false;
       } else {
-        if (VLOG_IS_ON(2)) {
-          LOG(INFO) << "(Profiling::PM Sampling)   End of records for device "
-              << dev->device_id_;
-        }
+        VLOG(2) << "(Profiling::PM Sampling)   End of records for device " <<
+            dev->device_id_;
       }
 
-      if (info.overflow_) {
+      if (info.overflow) {
         LOG(WARNING) << "Profiling::PM Sampling - hardware buffer overflow on "
             "device " << dev->device_id_ << ", sample data has been lost";
       }
@@ -1721,23 +1754,21 @@ void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
       }
 
       if (info.num_completed == 0) {
-        if (VLOG_IS_ON(3)) {
-          LOG(INFO) << "(Profiling::PM Sampling)   FillCounterDataImage took "
-              << (fillTime - startTime);
-          LOG(INFO) << "(Profiling::PM Sampling)   GetSampleCounts took " <<
-              (getCountTime - fillTime);
-        }
+        VLOG(3) << "(Profiling::PM Sampling)   FillCounterDataImage took " <<
+            (fill_time - start_time);
+        VLOG(3) << "(Profiling::PM Sampling)   GetSampleCounts took " <<
+            (get_count_time - fill_time);
         continue;
       }
 
-      decodedSamples += info.num_completed;
+      decoded_samples += info.num_completed;
 
       info.sampler_ranges.resize(info.num_completed);
 
       // Set each sample's info, reset samples that error
       // (should not happen)
       for (size_t i = 0; i < info.num_completed; i++) {
-        if (auto ret = dev->GetSample(info.sampler_ranges[i], i); !ret.ok()) {
+        if (! dev->GetSample(info.sampler_ranges[i], i).ok()) {
           LOG(WARNING) << "Profiling::PM Sampling - Error decoding pm sample";
           info.sampler_ranges[i].range_index = 0;
           info.sampler_ranges[i].start_timestamp_ns = 0;
@@ -1754,7 +1785,7 @@ void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
         }
       }
 
-      getSamplesTime = absl::Now();
+      get_samples_time = absl::Now();
 
       // info now contains a list of samples and metrics,
       // hand off to process or store elsewhere
@@ -1762,28 +1793,26 @@ void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
         dev->config_->process_samples(&info);
       }
 
-      processSamplesTime = absl::Now();
+      process_samples_time = absl::Now();
 
-      if (auto ret = dev->InitializeCounterDataImage(); !ret.ok()) {
+      if (! dev->RestoreCounterDataImage().ok()) {
         LOG(WARNING) << "Profiling::PM Sampling - Error resetting counter data "
             "image";
       }
 
-      initializeImageTime = absl::Now();
+      initialize_image_time = absl::Now();
 
-      if (VLOG_IS_ON(3)) {
-        LOG(INFO) << "(Profiling::PM Sampling)   FillCounterDataImage took " <<
-            (fillTime - startTime);
-        LOG(INFO) << "(Profiling::PM Sampling)   GetSampleCounts took " <<
-            (getCountTime - fillTime);
-        LOG(INFO) << "(Profiling::PM Sampling)   vector resize & getSample for "
-            << info.num_completed << " samples took " << (getSamplesTime -
-            getCountTime);
-        LOG(INFO) << "(Profiling::PM Sampling)   external processing of "
-            "samples took " << (processSamplesTime - getSamplesTime);
-        LOG(INFO) << "(Profiling::PM Sampling)   RestoreCounterDataImage took "
-            << (initializeImageTime - processSamplesTime);
-      }
+      VLOG(3) << "(Profiling::PM Sampling)   FillCounterDataImage took " <<
+          (fill_time - start_time);
+      VLOG(3) << "(Profiling::PM Sampling)   GetSampleCounts took " <<
+          (get_count_time - fill_time);
+      VLOG(3) << "(Profiling::PM Sampling)   vector resize & getSample for " <<
+          info.num_completed << " samples took " << (get_samples_time -
+          get_count_time);
+      VLOG(3) << "(Profiling::PM Sampling)   external processing of samples "
+          "took " << (process_samples_time - get_samples_time);
+      VLOG(3) << "(Profiling::PM Sampling)   RestoreCounterDataImage took " <<
+          (initialize_image_time - process_samples_time);
     }
 
     // Sleep until start of next period,
@@ -1791,18 +1820,14 @@ void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
     absl::Time end = absl::Now();
     absl::Duration elapsed = end - begin;
     if (elapsed < control->decode_period_) {
-      if (VLOG_IS_ON(2)) {
-        LOG(INFO) << "(Profiling::PM Sampling)   decoded " << decodedSamples <<
-            ", took " << elapsed << ", sleeping for " <<
-            (control->decode_period_ - elapsed);
-      }
+      VLOG(2) << "(Profiling::PM Sampling)   decoded " << decoded_samples <<
+          ", took " << elapsed << ", sleeping for " <<
+          (control->decode_period_ - elapsed);
       absl::SleepFor(control->decode_period_ - elapsed);
     } else {
-      if (VLOG_IS_ON(2)) {
-        LOG(INFO) << "(Profiling::PM Sampling)   decoded " << decodedSamples <<
-            ", took " << elapsed << ", decode period is " <<
-            control->decode_period_;
-      }
+      VLOG(2) << "(Profiling::PM Sampling)   decoded " << decoded_samples <<
+          ", took " << elapsed << ", decode period is " <<
+          control->decode_period_;
       LOG(WARNING) << "Profiling::PM Sampling - decode thread took longer than "
           "configured period to complete a single decode pass.  When this "
           "happens, hardware buffer may overflow and lose sample data.  Reduce "
@@ -1814,24 +1839,19 @@ void PmSamplingDecodeThread::ThdFuncDecodeUntilDisabled(
     }
   }
 
-  if (VLOG_IS_ON(2)) {
-      LOG(INFO) << "(Profiling::PM Sampling) Exited decode loop";
-      LOG(INFO) << "(Profiling::PM Sampling)  Looped conditions: ShouldDisable="
-          << control->ShouldThdDisable() << ", allDevsEndOfRecords=" <<
-          allDevsEndOfRecords;
-  }
+  VLOG(2) << "(Profiling::PM Sampling) Exited decode loop";
 
   // Signal thread decoding is disabled
   control->ThdIsDisabled();
 }
 
 // Control lifecycle of decode thread
-void PmSamplingDecodeThread::ThdFunc(
-    PmSamplingDecodeThread* control) {
-  if (! CUPTI_PM_SAMPLING) {
+void PmSamplingDecodeThread::ThdFunc(PmSamplingDecodeThread* control) {
+  if (! kCuptiPmSamplingSupported) {
     LOG(ERROR) << "PM Sampling not supported on this version of CUPTI";
     return;
   }
+
   // Space allowed for initialization here
 
   control->ThdIsInitialized();
@@ -1852,14 +1872,15 @@ void PmSamplingDecodeThread::ThdFunc(
 }
 
 absl::Status CuptiTracer::EnablePMSampling() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
   if (pm_sampling_enabled_) return absl::OkStatus();
 
   // PM sampling has to be enabled on individual devices
-  for (int devIdx = 0; devIdx < num_gpus_; devIdx++) {
+  for (int dev_idx = 0; dev_idx < num_gpus_; dev_idx++) {
     // Create a new PM sampling instance for this device
     std::shared_ptr<PmSamplingDevice> dev = std::make_shared<PmSamplingDevice>(
-        devIdx, option_->pm_sampling_config);
+        dev_idx, option_->pm_sampling_config);
 
     // Create all configuration needed for this device, or skip device on error
     if (!dev->CreateConfig().ok()) continue;
@@ -1885,7 +1906,7 @@ absl::Status CuptiTracer::EnablePMSampling() {
     end = std::min(end, option_->pm_sampling_config->devices.end());
 
     // Slice for this decode thread
-    std::vector< std::shared_ptr<PmSamplingDevice> > slice(begin, end);
+    std::vector<std::shared_ptr<PmSamplingDevice>> slice(begin, end);
 
     // Create worker thread for this slice
     auto thd = std::make_unique<PmSamplingDecodeThread>(slice);
@@ -1894,16 +1915,16 @@ absl::Status CuptiTracer::EnablePMSampling() {
 
   // Wait for signal that all threads are ready
   for (auto& thd : option_->pm_sampling_config->threads) {
-    while (!(thd->IsThdInitialized()));
+    while (! thd->IsThdInitialized());
   }
 
   // Start sampling on all devices before enabling decoding, otherwise first
   // sample contains accumulated results to this point
   for (auto& dev : option_->pm_sampling_config->devices) {
-    if (auto ret = dev->StartSampling(); !ret.ok()) {
+    if (! dev->StartSampling().ok()) {
       LOG(WARNING) << "Profiling::PM Sampling - failed to start on device " <<
           dev->device_id_;
-      // FIXME: What is appropriate behavior if start thread fails?
+      // TODO: What is appropriate behavior if start thread fails?
       // Most likely should delete the sampler for this device but this would
       // need to be communicated to the decoder thread.  Should be safe to do
       // nothing, as there will just be no data to decode
@@ -1917,7 +1938,7 @@ absl::Status CuptiTracer::EnablePMSampling() {
 
   // Wait for signal that decode thread is enabled
   for (auto& thd : option_->pm_sampling_config->threads) {
-    while (!(thd->IsThdEnabled()));
+    while (! thd->IsThdEnabled());
   }
 
   pm_sampling_enabled_ = true;
@@ -1926,12 +1947,13 @@ absl::Status CuptiTracer::EnablePMSampling() {
 }
 
 absl::Status CuptiTracer::DisablePMSampling() {
-  ERROR_IF_PM_SAMPLING_NOT_SUPPORTED();
-  if (!pm_sampling_enabled_) return absl::OkStatus();
+  if (! kCuptiPmSamplingSupported) return kCuptiPmSamplingUnsupportedError;
+
+  if (! pm_sampling_enabled_) return absl::OkStatus();
 
   // Stop sampling on all devices
   for (auto& dev : option_->pm_sampling_config->devices) {
-    if (auto ret = dev->StopSampling(); !ret.ok()) {
+    if (! dev->StopSampling().ok()) {
       LOG(WARNING) << "Profiling::PM Sampling - failed to stop on device " <<
           dev->device_id_;
     }
@@ -1946,8 +1968,8 @@ absl::Status CuptiTracer::DisablePMSampling() {
   }
 
   // Wait for signal that decode thread is disabled
-  for (auto& thd : option_->pm_sampling_config->threads) {
-    while (!(thd->IsThdDisabled()));
+  for (const auto& thd : option_->pm_sampling_config->threads) {
+    while (! thd->IsThdDisabled());
   }
 
   // Tell threads to exit
@@ -1957,7 +1979,7 @@ absl::Status CuptiTracer::DisablePMSampling() {
 
   // Threads will soon exit, ready to join
   for (auto& thd : option_->pm_sampling_config->threads) {
-    while (!(thd->IsThdExiting()));
+    while (! thd->IsThdExiting());
     // Destroy decode thread (joins thread)
     thd.reset();
   }
@@ -1965,7 +1987,7 @@ absl::Status CuptiTracer::DisablePMSampling() {
 
   // Disable sampling on all devices
   for (auto& dev : option_->pm_sampling_config->devices) {
-    if (auto ret = dev->DisableSampling(); !ret.ok()) {
+    if (! dev->DisableSampling().ok()) {
       LOG(WARNING) << "Profiling::PM Sampling - failed to disable on device " <<
           dev->device_id_;
     }

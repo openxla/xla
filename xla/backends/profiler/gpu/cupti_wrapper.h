@@ -19,9 +19,14 @@ limitations under the License.
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cupti_interface.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
+#if CUPTI_PM_SAMPLING // CUPTI PM sampling headers added in CUDA 12.6
+#include "cupti_pmsampling.h"
+#include "cupti_profiler_host.h"
+#include "cupti_profiler_target.h"
+#endif
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "xla/backends/profiler/gpu/cupti_interface.h"
 
 namespace xla {
 namespace profiler {

@@ -22,7 +22,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_target.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/types.h"
@@ -33,6 +32,7 @@ limitations under the License.
 #define CUPTI_PM_SAMPLING 1
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #else
 #define CUPTI_PM_SAMPLING 0
 #endif
