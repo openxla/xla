@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/support.h"
 
-#include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
@@ -275,44 +274,13 @@ bool IsInTritonNestedGemmFusion(const HloInstruction& hlo) {
 }
 
 absl::Status CheckSupportedCheckDotDimensions(const HloDotInstruction& dot) {
-  const Shape& lhs_shape = dot.operand(0)->shape();
-  const Shape& rhs_shape = dot.operand(1)->shape();
   const DotDimensionNumbers& dim_numbers = dot.dot_dimension_numbers();
-  TF_ASSIGN_OR_RETURN(
-      std::vector<int64_t> lhs_non_contracting_dims,
-      GetNonContractingDims(lhs_shape, dim_numbers.lhs_batch_dimensions(),
-                            dim_numbers.lhs_contracting_dimensions()));
-  TF_ASSIGN_OR_RETURN(
-      std::vector<int64_t> rhs_non_contracting_dims,
-      GetNonContractingDims(rhs_shape, dim_numbers.rhs_batch_dimensions(),
-                            dim_numbers.rhs_contracting_dimensions()));
-  if (lhs_non_contracting_dims.size() > 1 ||
-      rhs_non_contracting_dims.size() > 1) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Multiple non-contracting dimensions are not supported, got LHS: [",
-        absl::StrJoin(lhs_non_contracting_dims, ","), "], RHS: [",
-        absl::StrJoin(rhs_non_contracting_dims, ","), "]"));
-  }
   // Only checking one side of bach and contracting dimensions, since they must
   // be the same for left and right.
-  if (dim_numbers.lhs_batch_dimensions_size() > 0) {
-    return absl::UnimplementedError(
-        absl::StrCat("Batch dimensions are not supported yet, got ",
-                     absl::StrJoin(dim_numbers.lhs_batch_dimensions(), ",")));
-  }
   if (dim_numbers.lhs_contracting_dimensions_size() != 1) {
     return absl::UnimplementedError(absl::StrCat(
         "Exactly one contracting dimension is supported, got ",
         absl::StrJoin(dim_numbers.lhs_contracting_dimensions(), ",")));
-  }
-  if (dim_numbers.lhs_contracting_dimensions(0) != 1 ||
-      dim_numbers.rhs_contracting_dimensions(0) != 0) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Only lhs_contracting_dimensions=1 (got ",
-        absl::StrJoin(dim_numbers.lhs_contracting_dimensions(), ","),
-        ") and  rhs_contracting_dimensions=0 (got ",
-        absl::StrJoin(dim_numbers.rhs_contracting_dimensions(), ","),
-        ") are supported."));
   }
   return absl::OkStatus();
 }
@@ -339,6 +307,48 @@ bool IsSupportedDotAlgorithm(PrecisionConfig::Algorithm algorithm) {
   }
 
   return false;
+}
+
+CodegenDecision AreTypesSupportedByAlgUnsetDot(
+    PrimitiveType input_type, PrimitiveType result_type,
+    const se::GpuComputeCapability& gpu_version) {
+  if (input_type == F64 && result_type != F64) {
+    return CodegenDecision::Forbid(
+        "Dot operation only supports F64 result type for F64 input type.");
+  }
+
+  if (input_type == F8E4M3FN || result_type == F8E4M3FN) {
+    if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+        cuda_cc && !cuda_cc->IsAtLeastHopper()) {
+      return CodegenDecision::Forbid(
+          "Dot operation for F8E4M3FN is not supported before Hopper.");
+    }
+  }
+
+  auto supported_float_types = {BF16, F16, F32, F64, F8E5M2, F8E4M3FN};
+  if (absl::c_linear_search(supported_float_types, input_type)) {
+    return CodegenDecision::Allow();
+  }
+
+  if (input_type == S8 && result_type == S32) {
+    return CodegenDecision::Allow();
+  }
+
+  auto partially_supported_signed_types = {S8, S16, S32, S64};
+  if (absl::c_linear_search(partially_supported_signed_types, input_type)) {
+    if (absl::c_linear_search(partially_supported_signed_types, result_type)) {
+      return CodegenDecision::Forbid(
+          "Dot operation does not support these signed integer types.");
+    }
+    if (primitive_util::IsFloatingPointType(result_type)) {
+      return CodegenDecision::Forbid(
+          "Dot operation does not support floating point input and signed "
+          "integer result types.");
+    }
+    return CodegenDecision::Allow();
+  }
+
+  return CodegenDecision::Forbid("Unsupported types.");
 }
 
 // Checks whether the conversions generated during the lowering of the relevant
@@ -421,9 +431,9 @@ CodegenDecision IsTritonSupportedDot(
   }
 
   // TODO(b/393299275): add support tests for mixed types.
-  if (result_type != lhs_type || result_type != rhs_type) {
+  if (lhs_type != rhs_type) {
     return CodegenDecision::Forbid(
-        "Dot operation only supports same types for the result, lhs and rhs.");
+        "Dot operation only supports same types for lhs and rhs.");
   }
 
   absl::Status status = CheckSupportedCheckDotDimensions(dot);
@@ -440,10 +450,12 @@ CodegenDecision IsTritonSupportedDot(
                      PrecisionConfig::Algorithm_Name(algorithm)));
   }
 
-  if (algorithm == PrecisionConfig::ALG_UNSET &&
-      !internal::IsResultTypeSupportedByAlgUnsetDot(result_type, gpu_version)) {
-    return CodegenDecision::Forbid(
-        "Unsupported result type for dot algorithm ALG_UNSET.");
+  if (algorithm == PrecisionConfig::ALG_UNSET) {
+    if (CodegenDecision decision =
+            AreTypesSupportedByAlgUnsetDot(lhs_type, result_type, gpu_version);
+        !decision) {
+      return decision;
+    }
   }
 
   if (CodegenDecision conversion_decision =
@@ -617,17 +629,12 @@ CodegenDecision IsTritonSupportedInstructionImpl(
 namespace internal {
 bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
   switch (opcode) {
-    case HloOpcode::kAddDependency:
-    case HloOpcode::kAfterAll:
-    case HloOpcode::kCholesky:
     case HloOpcode::kConvolution:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCopyStart:
-    case HloOpcode::kCustomCall:
     case HloOpcode::kDynamicReshape:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
-    case HloOpcode::kFft:
     case HloOpcode::kGather:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kInfeed:
@@ -652,19 +659,6 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     default:
       return false;
   }
-}
-
-bool IsResultTypeSupportedByAlgUnsetDot(
-    PrimitiveType result_type, const se::GpuComputeCapability& gpu_version) {
-  std::vector<PrimitiveType> supported_types = {BF16, F16, F32, F64, F8E5M2};
-
-  if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version)) {
-    if (cuda_cc->IsAtLeastHopper()) {
-      supported_types.push_back(F8E4M3FN);
-    }
-  }
-
-  return absl::c_linear_search(supported_types, result_type);
 }
 
 }  // namespace internal

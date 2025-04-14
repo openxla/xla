@@ -493,8 +493,15 @@ class PartitionedHlo {
       absl::Span<const int64_t> left_padded_dims = {},
       absl::Span<const int64_t> skipped_dims = {}) const;
 
+  // Same as PadWithValue with zero as the pad value.
   PartitionedHlo PadWithZero(absl::Span<const int64_t> left_padded_dims = {},
                              absl::Span<const int64_t> skipped_dims = {}) const;
+
+  // PadWithZero consider all dimensions except the skipped dimensions.
+  // PadWithZeroOnSpecifiedDims considers only the specified dimensions.
+  PartitionedHlo PadWithZeroOnSpecifiedDims(
+      absl::Span<const int64_t> dims,
+      absl::Span<const int64_t> left_padded_dims = {}) const;
 
   // Returns the SPMD instruction.
   HloInstruction* hlo() const { return hlo_; }
@@ -620,6 +627,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandlePad(HloInstruction* hlo) override;
   absl::Status HandleParameter(HloInstruction* hlo) override;
   absl::Status HandlePartitionId(HloInstruction* hlo) override;
+  absl::Status HandleRaggedDot(HloInstruction* hlo) override;
   absl::Status HandleReduce(HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(HloInstruction* hlo) override;
   absl::Status HandleReshape(HloInstruction* hlo) override;

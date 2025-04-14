@@ -223,7 +223,6 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -263,24 +262,9 @@ xla_cc_test(
         ":hlo_instruction_utils",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_query",
-        "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
-)
-
-cc_library(
-    name = "hlo_reachability",
-    hdrs = ["hlo_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_reachability"],
-)
-
-cc_library(
-    name = "hlo_dfs_reachability",
-    hdrs = ["hlo_dfs_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_dfs_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_dfs_reachability"],
 )
 
 cc_library(
@@ -331,7 +315,6 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/log:globals",
         "@com_google_googletest//:gtest",
     ],
 )

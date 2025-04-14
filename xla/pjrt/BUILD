@@ -85,10 +85,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "abstract_tracked_device_buffer",
+    srcs = ["abstract_tracked_device_buffer.cc"],
+    hdrs = ["abstract_tracked_device_buffer.h"],
+    deps = [
+        ":pjrt_client",
+        ":pjrt_future",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
     name = "tracked_device_buffer",
     srcs = ["tracked_device_buffer.cc"],
     hdrs = ["tracked_device_buffer.h"],
     deps = [
+        ":abstract_tracked_device_buffer",
         ":event_pool",
         ":pjrt_client",
         ":pjrt_common",
@@ -438,6 +455,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -483,12 +501,18 @@ cc_library(
     srcs = ["stream_executor_executable.cc"],
     hdrs = ["stream_executor_executable.h"],
     deps = [
+        ":host_memory_spaces",
         ":pjrt_common",
         ":pjrt_executable",
         ":stream_executor_executable_proto_cc",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/client:local_client",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
+        "//xla/service:executable",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -504,6 +528,7 @@ cc_library(
     hdrs = ["pjrt_stream_executor_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
+        ":abstract_tracked_device_buffer",
         ":event_pool",
         ":host_callback",
         ":host_memory_spaces",
@@ -517,6 +542,7 @@ cc_library(
         ":pjrt_future",
         ":pjrt_stream_executor_device_description",
         ":semaphore",
+        ":stream_executor_executable",
         ":tracked_device_buffer",
         ":transpose",
         ":utils",
@@ -559,6 +585,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -595,7 +622,6 @@ xla_cc_test(
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/testlib:test",
-        "//xla/pjrt/profiling:device_time_measurement",
         "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
@@ -606,7 +632,6 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -899,8 +924,6 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1155,6 +1178,17 @@ cc_library(
         ":pjrt_device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "async_work_runner",
+    hdrs = ["async_work_runner.h"],
+    deps = [
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
     ],
 )

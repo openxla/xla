@@ -1,4 +1,5 @@
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -35,8 +36,6 @@ xla_cc_test(
         "//xla/service:compiler",
         "//xla/service/cpu:cpu_aot_compilation_result",
         "//xla/service/cpu:test_header_helper",
-        "//xla/tsl/platform:status_matchers",
-        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -431,6 +430,28 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "onednn_matmul_benchmark_test",
+    srcs = ["onednn_matmul_benchmark_test.cc"],
+    copts = tsl_copts(),
+    fail_if_no_test_linked = False,  # NOLINT=This contains benchmarks only, no tests.
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service/cpu:onednn_util",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_cc_test(
     name = "tanh_benchmark_test",
     srcs = ["tanh_benchmark_test.cc"],
     fail_if_no_test_linked = False,  # NOLINT=This contains benchmarks only, no tests.
@@ -470,7 +491,6 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
     ],
 )
 

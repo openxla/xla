@@ -213,11 +213,7 @@ class Shape {
   // Returns a span to indicate whether each dimension is dynamic.
   // Precondition: this is an array shape.
   absl::Span<const bool> dynamic_dimensions() const {
-    if (auto* const state = if_array_state()) {
-      return state->dynamic_dimensions;
-    }
-    // TODO(b/404276923): ensure that this is never called on non-array shapes.
-    return {};
+    return array_state().dynamic_dimensions;
   }
   absl::Span<bool> mutable_dynamic_dimensions() {
     return absl::MakeSpan(array_state().dynamic_dimensions);
@@ -492,7 +488,7 @@ class Shape {
       if (kIsLayoutSensitive) {
         h = H::combine(std::move(h), state->layout);
       }
-      return std::move(h);
+      return h;
     }
     return H::combine(std::move(h), s.element_type_);
   }

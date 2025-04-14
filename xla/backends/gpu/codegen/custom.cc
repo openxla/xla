@@ -111,10 +111,10 @@ absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
   }
 
   // Walk through ShapeIndex to find the real starting point.
-  auto* start = const_cast<HloInstruction*>(&start_instr);
+  const auto* start = &start_instr;
   for (auto idx : shape_idx) {
     CHECK(start->shape().IsTuple());
-    start = const_cast<HloInstruction*>(start->operand(idx));
+    start = start->operand(idx);
   }
 
   if (const auto* param = DynCast<HloParameterInstruction>(start)) {
@@ -1053,14 +1053,11 @@ CollectSliceArgumentMetadataForCollectives(
   SliceDataForCollectives slice_data(num_args);
   std::optional<HloInstruction*> while_op =
       GetParentWhileOp(fusion_instr, call_graph);
-  VLOG(0) << "Collecting while op data";
   if (while_op != std::nullopt) {
     CHECK(while_op.value() != nullptr)
         << "GetParentWhileOp is not expected to return nullptr.";
     slice_data.init_module = ExtractWhileInitModule(*while_op);
-    VLOG(0) << "Extracted init module";
     slice_data.update_module = ExtractWhileUpdateModule(*while_op);
-    VLOG(0) << "Extracted update module";
   }
   slice_data.can_compute_indvar_on_host = (slice_data.init_module != nullptr &&
                                            slice_data.update_module != nullptr);

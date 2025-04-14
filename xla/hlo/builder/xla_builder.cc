@@ -764,8 +764,10 @@ absl::StatusOr<XlaComputation> XlaBuilder::Build(
           remove_dynamic_dimension(shape->mutable_tuple_shapes(i));
         }
       }
-      for (int64_t i = 0; i < shape->dimensions_size(); ++i) {
-        shape->set_dynamic_dimension(i, false);
+      if (shape->IsArray()) {
+        for (int64_t i = 0; i < shape->dimensions_size(); ++i) {
+          shape->set_dynamic_dimension(i, false);
+        }
       }
     };
     for (size_t index = 0; index < instructions_.size(); ++index) {
@@ -811,7 +813,7 @@ absl::StatusOr<XlaComputation> XlaBuilder::Build(
   this->embedded_.clear();
   this->parameter_numbers_.clear();
 
-  return std::move(computation);
+  return computation;
 }
 
 /* static */ absl::Status XlaBuilder::PopulateInputOutputAliasAndBufferDonor(
@@ -2286,7 +2288,7 @@ absl::StatusOr<HloInstructionProto> XlaBuilder::DynamicConvInstruction(
   if (precision_config != nullptr) {
     *instr.mutable_precision_config() = *precision_config;
   }
-  return std::move(instr);
+  return instr;
 }
 
 XlaOp XlaBuilder::DynamicConvInputGrad(
@@ -4743,7 +4745,7 @@ absl::StatusOr<XlaComputation> XlaBuilder::BuildConstantSubGraph(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "Constant computation:\n" << module->DebugString();
   }
-  return std::move(computation);
+  return computation;
 }
 
 std::unique_ptr<XlaBuilder> XlaBuilder::CreateSubBuilder(

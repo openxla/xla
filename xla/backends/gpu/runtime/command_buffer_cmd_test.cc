@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "absl/functional/function_ref.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"  // IWYU pragma: keep
 
 namespace xla::gpu {
@@ -57,8 +59,12 @@ static se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-// Give a short aliases to execution threads.
+// Give a short alias to execution thread.
 static constexpr auto s0 = ExecutionStreamId(0);
+
+// Give a short alias to synchronization mode.
+static constexpr auto serialize =
+    CommandBufferCmdSequence::SynchronizationMode::kSerialize;
 
 // A command buffer cmd for testing automatic barriers insertion by the command
 // buffer cmd sequence. We never execute this command, we need it only to pass
@@ -70,10 +76,10 @@ struct TestOnlyCommandBufferCmd : public CommandBufferCmd {
                          execution_stream_id),
         buffer_usage(buffer_usage) {}
 
-  absl::StatusOr<RecordedCommands> Record(const Thunk::ExecuteParams&,
-                                          const RecordParams&,
-                                          se::CommandBuffer*) override {
-    return RecordedCommands{};
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
+      se::CommandBuffer*) override {
+    return nullptr;
   }
 
   BufferUseVector buffers() override { return buffer_usage; }
@@ -87,13 +93,55 @@ class FakeCmd : public CommandBufferCmd {
       : CommandBufferCmd(CommandBufferCmdType::kTracedCommandBufferCmd,
                          execution_stream_id) {}
 
-  absl::StatusOr<RecordedCommands> Record(const Thunk::ExecuteParams&,
-                                          const RecordParams&,
-                                          se::CommandBuffer*) override {
-    return RecordedCommands{};
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
+      se::CommandBuffer*) override {
+    return nullptr;
   }
   BufferUseVector buffers() override { return BufferUseVector{}; }
 };
+
+TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
+  struct StateA : public CommandBufferCmd::State {
+    int32_t value = 0;
+  };
+
+  struct StateB : public CommandBufferCmd::State {
+    float value = 0;
+  };
+
+  // We need a fake command buffer pointer to use as a key.
+  auto* cmd =
+      tsl::safe_reinterpret_cast<CommandBufferCmd*>(std::intptr_t{0x1234567});
+  auto* command_buffer =
+      tsl::safe_reinterpret_cast<se::CommandBuffer*>(std::intptr_t{0x1234567});
+
+  CommandBufferCmd::StateManager state_manager;
+
+  // Create a state of type StateA.
+  auto* stateA0 = state_manager.GetOrNull<StateA>(cmd, command_buffer);
+  ASSERT_EQ(stateA0, nullptr);
+
+  auto* stateA1 = state_manager.GetOrCreate<StateA>(cmd, command_buffer);
+  ASSERT_EQ(stateA1->value, 0);
+  stateA1->value += 42;
+
+  auto* stateA2 = state_manager.GetOrCreate<StateA>(cmd, command_buffer);
+  ASSERT_EQ(stateA2->value, 42);
+  ASSERT_EQ(stateA1, stateA2);
+
+  // StateB has a different type, and has no connection to StateA created above.
+  auto* stateB0 = state_manager.GetOrNull<StateB>(cmd, command_buffer);
+  ASSERT_EQ(stateB0, nullptr);
+
+  auto* stateB1 = state_manager.GetOrCreate<StateB>(cmd, command_buffer);
+  ASSERT_EQ(stateB1->value, 0);
+  stateB1->value += 42.0;
+
+  auto* stateB2 = state_manager.GetOrCreate<StateB>(cmd, command_buffer);
+  ASSERT_EQ(stateB2->value, 42.0);
+  ASSERT_EQ(stateB1, stateB2);
+}
 
 TEST(CommandBufferCmdTest, SerializeExecution) {
   BufferAllocation alloc0(/*index=*/0, /*size=*/1024, /*color=*/0);
@@ -105,10 +153,10 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
   auto use0 = BufferUse(slice0, BufferUse::kRead);
   auto use1 = BufferUse(slice1, BufferUse::kRead);
 
-  CommandBufferCmdSequence commands(
-      CommandBufferCmdSequence::SynchronizationMode::kSerialize);
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   // TODO(ezhulenev): Check that commands correctly infer dependencies.
 }
@@ -123,9 +171,10 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   auto use0 = BufferUse(slice0, BufferUse::kRead);
   auto use1 = BufferUse(slice1, BufferUse::kRead);
 
-  CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   // TODO(ezhulenev): Check that commands correctly infer dependencies.
 }
@@ -140,9 +189,10 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   auto use0 = BufferUse(slice0, BufferUse::kWrite);
   auto use1 = BufferUse(slice1, BufferUse::kWrite);
 
-  CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   // TODO(ezhulenev): Check that commands correctly infer dependencies.
 }
@@ -159,10 +209,11 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   auto use1 = BufferUse(slice0, BufferUse::kRead);
   auto use2 = BufferUse(slice1, BufferUse::kWrite);
 
-  CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use2});
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  builder.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use2});
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   // TODO(ezhulenev): Check that commands correctly infer dependencies.
 }
@@ -189,8 +240,9 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   // Prepare commands sequence for constructing command buffer.
-  CommandBufferCmdSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_b, slice_a, byte_length);
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_b, slice_a, byte_length);
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(executor);
@@ -242,10 +294,11 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   auto args_access = {BufferUse::kRead, MemoryAccess::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
-  CommandBufferCmdSequence commands;
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  CommandBufferCmdSequence::Builder builder;
+  builder.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+                             LaunchDimensions(1, 4),
+                             /*shmem_bytes=*/0);
+  CommandBufferCmdSequence commands = std::move(builder).Build(serialize);
 
   // Initialize command sequence and load device kernels.
   TF_ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> fatbin,
@@ -277,28 +330,6 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
-}
-
-TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
-  struct TestState : public CommandBufferCmd::State {
-    int32_t value = 0;
-  };
-
-  // We need a fake command buffer pointer to use as a key.
-  CommandBufferCmd* cmd = reinterpret_cast<CommandBufferCmd*>(0x1234567);
-
-  CommandBufferCmd::StateManager state_manager;
-
-  auto* state0 = state_manager.GetOrNull<TestState>(cmd);
-  ASSERT_EQ(state0, nullptr);
-
-  auto* state1 = state_manager.GetOrCreate<TestState>(cmd);
-  ASSERT_EQ(state1->value, 0);
-  state1->value += 42;
-
-  auto* state2 = state_manager.GetOrCreate<TestState>(cmd);
-  ASSERT_EQ(state2->value, 42);
-  ASSERT_EQ(state1, state2);
 }
 
 TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {

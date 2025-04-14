@@ -607,6 +607,7 @@ cc_library(
     deps = [
         ":bit_pattern",
         ":device_memory",
+        ":dnn",
         ":kernel",
         ":launch_dim",
         "//xla/tsl/platform:errors",
@@ -920,7 +921,6 @@ alias(
         "gpu",
         "rocm-only",
     ] + if_google([
-        # TODO(b/360374983): Remove this tag once the target can be built without --config=rocm.
         "manual",
     ]),
 )

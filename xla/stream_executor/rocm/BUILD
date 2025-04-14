@@ -824,8 +824,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":amdhipblaslt_plugin",
+        ":buffer_comparator_kernel_rocm",
         ":hipfft_plugin",
+        ":make_batch_pointers_kernel_rocm",
         ":miopen_plugin",
+        ":ragged_all_to_all_kernel_rocm",
         ":rocblas_plugin",
         ":rocm_helpers",
         ":rocm_platform",
@@ -1072,4 +1075,71 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:casts",
     ],
+)
+
+rocm_library(
+    name = "buffer_comparator_kernel_rocm",
+    srcs = [
+        "buffer_comparator_kernel_rocm.cu.cc",
+        "//xla/stream_executor/gpu:buffer_comparator_kernel_lib.cu.h",
+    ],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_platform_id",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/gpu:buffer_comparator_kernel",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/platform:initialize",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+    alwayslink = 1,
+)
+
+rocm_library(
+    name = "make_batch_pointers_kernel_rocm",
+    srcs = ["make_batch_pointers_kernel_rocm.cu.cc"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_platform_id",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/gpu:make_batch_pointers_kernel",
+        "//xla/stream_executor/platform:initialize",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+    alwayslink = 1,
+)
+
+rocm_library(
+    name = "ragged_all_to_all_kernel_rocm",
+    srcs = [
+        "ragged_all_to_all_kernel_rocm.cc",
+        "//xla/stream_executor/gpu:ragged_all_to_all_kernel_lib.cu.h",
+    ],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_platform_id",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/gpu:ragged_all_to_all_kernel",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+    alwayslink = 1,
 )

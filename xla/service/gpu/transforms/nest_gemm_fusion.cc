@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -61,20 +62,22 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tools/hlo_extractor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
 namespace {
-// Fuses the given instructions together. The instructions are expected to be
-// passed in def-before-use order.  The resulting fusion has a single root
-// instruction, which is the last instructions in the input span.  We only
-// replace the uses of the root in 'consumer', and leave other users alone.
-absl::Status FuseInstructionsForConsumer(
-    absl::Span<HloInstruction* const> instructions, HloInstruction& consumer) {
-  HloComputation::Builder builder(instructions.back()->name());
+
+// Creates a fusion for instructions starting from 'root' and returns it.
+absl::StatusOr<HloInstruction*> FuseInstructionsFromRoot(HloInstruction& root) {
+  std::vector<HloInstruction*> instructions =
+      root.parent()->MakeInstructionPostOrderFrom(root);
+
+  HloComputation::Builder builder(root.name());
 
   absl::flat_hash_map<const HloInstruction*, HloInstruction*>
       old_to_new_mapping;
@@ -108,27 +111,37 @@ absl::Status FuseInstructionsForConsumer(
     old_to_new_mapping[instruction] = builder.AddInstruction(
         instruction->CloneWithNewOperands(instruction->shape(), new_operands));
   }
-
-  HloInstruction* old_root = instructions.back();
-  old_to_new_mapping[old_root]->MarkAsRoot();
+  old_to_new_mapping[&root]->MarkAsRoot();
 
   HloComputation* computation =
-      old_root->GetModule()->AddComputationAndUnifyNamesAndIds(
-          builder.Build(), /*is_entry=*/false);
+      root.GetModule()->AddComputationAndUnifyNamesAndIds(builder.Build(),
+                                                          /*is_entry=*/false);
   HloInstruction* fusion =
-      old_root->parent()->AddInstruction(HloInstruction::CreateFusion(
-          old_root->shape(), HloInstruction::FusionKind::kCustom, parameters,
+      root.parent()->AddInstruction(HloInstruction::CreateFusion(
+          root.shape(), HloInstruction::FusionKind::kCustom, parameters,
           computation));
   fusion->GetModule()->SetAndUniquifyInstrName(fusion, "block_fusion");
 
+  return fusion;
+}
+
+// Fuses the instructions starting from 'root' for 'consumer'. Other users of
+// 'root' are not affected. Annotates fusion with `kTritonNestedGemmFusionKind`.
+absl::Status FuseInstructionsForConsumer(HloInstruction& root,
+                                         HloInstruction& consumer) {
+  CHECK(absl::c_count(consumer.operands(), &root) != 0)
+      << "Consumer " << consumer.ToString() << " does not use root "
+      << root.ToString();
+
+  TF_ASSIGN_OR_RETURN(HloInstruction * fusion, FuseInstructionsFromRoot(root));
+
   TF_ASSIGN_OR_RETURN(auto gpu_config,
                       fusion->backend_config<GpuBackendConfig>());
-  FusionBackendConfig& backend_config =
-      *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonNestedGemmFusionKind));
+  gpu_config.mutable_fusion_backend_config()->set_kind(
+      std::string(kTritonNestedGemmFusionKind));
   TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
-  for (int64_t operand_index : consumer.OperandIndices(old_root)) {
+  for (int64_t operand_index : consumer.OperandIndices(&root)) {
     TF_RETURN_IF_ERROR(consumer.ReplaceOperandWith(operand_index, fusion));
   }
 
@@ -163,7 +176,7 @@ absl::Status AnnotateDotOperandNestedFusionImpl(
   // We have a single contracting dimension, and a single non-contracting
   // dimension. All the other output tile sizes are set to 1.
   std::vector<int64_t> output_tile_sizes(
-      dot.operand(0)->shape().dimensions_size(), 1);
+      dot.operand(0)->shape().dimensions().size(), 1);
   output_tile_sizes[contracting_dimensions[0]] = contracting_dim_size;
   output_tile_sizes[non_contracting_dimensions[0]] = non_contracting_dim_size;
 
@@ -173,12 +186,12 @@ absl::Status AnnotateDotOperandNestedFusionImpl(
   block_level_parameters.num_ctas = config.num_ctas;
   block_level_parameters.num_stages = config.num_stages;
 
-  TF_ASSIGN_OR_RETURN(auto backend_config,
+  TF_ASSIGN_OR_RETURN(auto gpu_config,
                       nested_fusion.backend_config<GpuBackendConfig>());
-  *backend_config.mutable_fusion_backend_config()
+  *gpu_config.mutable_fusion_backend_config()
        ->mutable_block_level_fusion_config() =
       block_level_parameters.ToBlockLevelFusionConfig();
-  TF_RETURN_IF_ERROR(nested_fusion.set_backend_config(backend_config));
+  TF_RETURN_IF_ERROR(nested_fusion.set_backend_config(gpu_config));
 
   return absl::OkStatus();
 }
@@ -215,10 +228,12 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
   SymbolicTileAnalysisOrError analysis_or =
       SymbolicTileAnalysis::AnalyzeComputation(*computation, ctx);
   if (std::holds_alternative<FusionDecision>(analysis_or)) {
+    std::unique_ptr<HloModule> extracted_computation_module =
+        ExtractModule(computation->FusionInstruction());
     return absl::InternalError(
         absl::StrCat("Failed to analyze the computation (",
                      std::get<FusionDecision>(analysis_or).Explain(),
-                     "): ", computation->ToString()));
+                     "): ", extracted_computation_module->ToString()));
   }
 
   auto& analysis = std::get<SymbolicTileAnalysis>(analysis_or);
@@ -243,7 +258,8 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
 
   VLOG(3) << "FindOutputTileSizesForEpilogue: dot shape: "
           << dot->shape().ToString();
-  auto expected_dot_tile_sizes = get_tile_sizes(dot->shape().dimensions_size());
+  auto expected_dot_tile_sizes =
+      get_tile_sizes(dot->shape().dimensions().size());
   if (VLOG_IS_ON(2)) {
     std::ostringstream oss;
     for (const auto& size : expected_dot_tile_sizes) {
@@ -256,7 +272,8 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
 
   // Try all permutations of the dot tile sizes to see if any of them satisfy
   // the constraints of the analysis and map to the given config of the dot.
-  int64_t out_rank = computation->root_instruction()->shape().dimensions_size();
+  int64_t out_rank =
+      computation->root_instruction()->shape().dimensions().size();
   VLOG(3) << "FindOutputTileSizesForEpilogue: computation root shape: "
           << computation->root_instruction()->shape().ToString();
   auto output_tile_sizes = get_tile_sizes(out_rank);
@@ -294,6 +311,20 @@ absl::StatusOr<TritonGemmConfig> GetTritonGemmConfig(
   return TritonGemmConfig::FromProto(backend_config.triton_gemm_config());
 }
 
+// Constructs nested fusion nodes for the operands of `concatenate` instructions
+// and annotates them with `kTritonNestedGemmFusionKind`.
+absl::Status FuseAndAnnotateConcatOperands(HloComputation* computation) {
+  for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
+    if (instr->opcode() != HloOpcode::kConcatenate) {
+      continue;
+    }
+    for (HloInstruction* operand : instr->mutable_operands()) {
+      TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(*operand, *instr));
+    }
+  }
+  return absl::OkStatus();
+}
+
 // Transforms a fusion into an equivalent nested fusion if it has a single dot.
 // Returns ok if the transformation was successful.
 absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
@@ -304,18 +335,20 @@ absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
 
   HloComputation* computation = fusion->called_computation();
 
+  // First, create nested fusions for the operands of `concatenate` instructions
+  // if they exist.
+  TF_RETURN_IF_ERROR(FuseAndAnnotateConcatOperands(computation));
+
   // Left-hand side of the dot.
-  TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(
-      computation->MakeInstructionPostOrderFrom(*dot->mutable_operand(0)),
-      *dot));
+  TF_RETURN_IF_ERROR(
+      FuseInstructionsForConsumer(*dot->mutable_operand(0), *dot));
   TF_RETURN_IF_ERROR(AnnotateDotLhsNestedFusion(
       *::xla::Cast<HloFusionInstruction>(dot->mutable_operand(0)), *dot,
       config));
 
   // Right-hand side of the dot.
-  TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(
-      computation->MakeInstructionPostOrderFrom(*dot->mutable_operand(1)),
-      *dot));
+  TF_RETURN_IF_ERROR(
+      FuseInstructionsForConsumer(*dot->mutable_operand(1), *dot));
   TF_RETURN_IF_ERROR(AnnotateDotRhsNestedFusion(
       *::xla::Cast<HloFusionInstruction>(dot->mutable_operand(1)), *dot,
       config));
@@ -522,6 +555,7 @@ absl::StatusOr<ReshapeBroadcastOutputParams> CalculateBroadcastOutputReshape(
 // outside of the computation.
 // Returns the new shapes of affected instructions in order of traversal from
 // users to producers.
+// Assumes that the bitcast does not covert the type of the operand.
 absl::StatusOr<std::vector<std::pair<HloInstruction*, Shape>>>
 PlanHoistBitcastToCallers(const HloInstruction* bitcast) {
   // Check that all producers only affect the bitcast. If there are any
@@ -530,15 +564,24 @@ PlanHoistBitcastToCallers(const HloInstruction* bitcast) {
   // producers downward.
   HloInstructionSet producers = GetProducerSet(bitcast);
   TF_RETURN_IF_ERROR(VerifyIsClosedProducerSet(producers, bitcast));
+  if (bitcast->shape().element_type() !=
+      bitcast->operand(0)->shape().element_type()) {
+    return absl::UnimplementedError(
+        absl::StrCat("Hoisting bitcast with type conversion is not supported: ",
+                     bitcast->ToString()));
+  }
   HloInstructionMap<Shape> to_update;
 
   auto set_shape = [&](const absl::Span<HloInstruction* const> instructions,
                        const Shape& shape) -> absl::Status {
     for (HloInstruction* instruction : instructions) {
       auto it = to_update.find(instruction);
+      // Only update the dimensions keeping the type intact.
+      Shape updated_shape = ShapeUtil::MakeShape(
+          instruction->shape().element_type(), shape.dimensions());
       if (it == to_update.end()) {
-        to_update.emplace(instruction, shape);
-      } else if (it->second != shape) {
+        to_update.emplace(instruction, updated_shape);
+      } else if (it->second != updated_shape) {
         return absl::FailedPreconditionError(absl::StrCat(
             "Conflicting shape assignment for ", instruction->ToString(),
             " got ", it->second.ToString(), " and ", shape.ToString()));
@@ -751,10 +794,12 @@ class NestGemmFusionVisitor : public DfsHloRewriteVisitor {
     // switch the track. Thus it is on us to make sure that the generic emitter
     // will be able to handle the result. That is an early check to make sure
     // that that nesting did not produce an unsupported HLO.
-    if (!IsTritonSupportedComputation(*computation, compute_capability_)) {
-      return absl::InternalError(absl::StrCat("Computation of fusion ",
-                                              fusion->ToString(),
-                                              " is not supported by Triton."));
+    CodegenDecision can_codegen_computation =
+        IsTritonSupportedComputation(*computation, compute_capability_);
+    if (!can_codegen_computation) {
+      return absl::InternalError(absl::StrCat(
+          "Computation of fusion ", fusion->ToString(),
+          " is not supported by Triton: ", can_codegen_computation.Explain()));
     }
     return absl::OkStatus();
   }

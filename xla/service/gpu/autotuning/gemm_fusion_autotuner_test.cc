@@ -614,7 +614,7 @@ ENTRY e {
 })";
 
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: f16[3,55,20]
+; CHECK: f{{(16|32)}}[3,55,20]
 ; CHECK: {"block_m":16,"block_n":64,"block_k":32,"split_k":3,"num_stages":1,"num_warps":2,"num_ctas":1}
 ; CHECK: f16[55,20]{1,0} {{(reduce|fusion)}}
 )");
@@ -1787,6 +1787,25 @@ ENTRY e {
 // CHECK-SAME: block_m
 )");
   EXPECT_TRUE(RunAndCompare(hlo, ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
+}
+
+TEST_F(DynamicSearchSpaceAutotunerTest, UsesSplitKForSmallOuterDimensions) {
+  const std::string hlo = R"(
+HloModule module
+ENTRY e {
+  x = s8[32,16384] parameter(0)
+  c = f16[32,16384] convert(x)
+  y = f16[16384,32] parameter(1)
+  ROOT out = f16[32,32] dot(c, y),
+                lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  CheckTritonAutotuning(hlo, R"(
+// CHECK: ENTRY
+// CHECK: __triton_gemm
+// CHECK-NOT: "split_k":"1"
+// CHECK: ROOT
+)");
 }
 
 }  // namespace

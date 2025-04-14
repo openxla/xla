@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 
-#include <ostream>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
@@ -37,17 +35,10 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 using ::testing::ElementsAre;
-using ::testing::Not;
-using ::tsl::testing::IsOk;
 using ::tsl::testing::IsOkAndHolds;
 using ::tsl::testing::StatusIs;
 
 namespace xla {
-
-// Gtest hook to pretty-print an HloInstruction.
-static void PrintTo(const HloInstruction& hlo, std::ostream* os) {
-  *os << hlo.ToString();
-}
 
 namespace gpu {
 namespace {
@@ -281,8 +272,7 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
               IsOkAndHolds(true));
@@ -317,8 +307,7 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
               IsOkAndHolds(true));
@@ -350,8 +339,7 @@ ENTRY entry {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
               IsOkAndHolds(true));
@@ -385,8 +373,7 @@ ENTRY entry_computation {
         }
       }
     }
-}
-)";
+})";
   // Note: block sizes were 16,16,32, but that now fails to satisfy constraints.
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
@@ -419,13 +406,52 @@ ENTRY entry_computation {
         }
       }
     }
-}
-)";
+})";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  // TODO(b/393299275): rhs_contracting_dims={0} is not currently supported.
   EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
-              Not(IsOk()));
+              IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(NestGemmFusionTest, ConcatenationsAreHoistedWithinNestedGemmFusions) {
+  absl::string_view hlo = R"(
+HloModule t
+
+triton_gemm {
+  parameter_0 = f32[2,3,10]{2,1,0} parameter(0)
+  parameter_1 = f32[2,10,128]{2,1,0} parameter(1)
+  parameter_2 = f32[2,10,256]{2,1,0} parameter(2)
+  concatenate = f32[2,10,384]{2,1,0} concatenate(parameter_1, parameter_2), dimensions={2}
+  ROOT dot = f32[2,3,384]{2,1,0} dot(parameter_0, concatenate),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  parameter_0 = f32[2,3,10]{2,1,0} parameter(0)
+  parameter_1 = f32[2,10,128]{2,1,0} parameter(1)
+  parameter_2 = f32[2,10,256]{2,1,0} parameter(2)
+  ROOT dot = f32[2,3,384]{2,1,0} fusion(parameter_0, parameter_1, parameter_2),
+    kind=kCustom, calls=triton_gemm,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":64,"block_k":32,
+                         "split_k":1,"num_stages":1,"num_warps":2,
+                         "num_ctas":1}}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+              IsOkAndHolds(true));
+  TF_ASSERT_OK(verifier().Run(module.get()).status());
+  HloComputation* fusion_computation = module->entry_computation()
+                                           ->root_instruction()
+                                           ->fused_instructions_computation();
+  HloInstruction* dot_lhs;
+  HloInstruction* dot_rhs;
+  EXPECT_THAT(
+      fusion_computation->root_instruction(),
+      GmockMatch(match::Dot(match::Fusion(&dot_lhs), match::Fusion(&dot_rhs))));
+  EXPECT_THAT(dot_rhs->fused_instructions_computation()->root_instruction(),
+              GmockMatch(match::Concatenate(match::Fusion(), match::Fusion())));
 }
 
 TEST_F(NestGemmFusionTest, UnsupportedComputationsAreRejected) {
@@ -460,9 +486,7 @@ ENTRY e {
   EXPECT_THAT(result, StatusIs(absl::StatusCode::kInternal)) << result.status();
 }
 
-// TODO(b/393299275): correctly hoist bitcast through compare.
-// Fails with: "... [Unknown]: Expected comparison type UNSIGNED.".
-TEST_F(NestGemmFusionTest, DISABLED_BitcastsAreHoistedPastCompare) {
+TEST_F(NestGemmFusionTest, BitcastsAreHoistedPastCompare) {
   absl::string_view hlo = R"(
 HloModule t
 

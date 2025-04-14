@@ -171,6 +171,7 @@ gpu_only_cc_library(
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:dnn",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
@@ -851,5 +852,37 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "buffer_comparator_kernel",
+    hdrs = ["buffer_comparator_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+exports_files([
+    "buffer_comparator_kernel_lib.cu.h",
+    "ragged_all_to_all_kernel_lib.cu.h",
+])
+
+cc_library(
+    name = "make_batch_pointers_kernel",
+    hdrs = ["make_batch_pointers_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "ragged_all_to_all_kernel",
+    hdrs = ["ragged_all_to_all_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
     ],
 )

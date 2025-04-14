@@ -38,9 +38,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 
-#if CUDNN_VERSION >= 8100
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
-#endif  // CUDNN_VERSION >= 8100
 
 namespace stream_executor {
 namespace gpu {
@@ -55,7 +53,6 @@ using BatchDescriptorSlice = absl::Span<const dnn::BatchDescriptor>;
 template <typename T>
 using DeviceMemorySlice = absl::Span<const DeviceMemory<T>* const>;
 
-#if CUDNN_VERSION >= 8100
 class CudnnGraph : public dnn::DnnGraph {
  public:
   explicit CudnnGraph(cudnn_frontend::graph::Graph&& graph)
@@ -78,14 +75,22 @@ class CudnnGraph : public dnn::DnnGraph {
     current_dropout_rng_offset_[local_device_ordinal] +=
         dropout_rng_offset_increment_;
   }
+  absl::StatusOr<bool> SupportsExplicitCommandBufferConstruction()
+      const override;
+  absl::Status PopulateOrUpdateRawCommandBuffer(
+      Stream&, absl::Span<DeviceMemoryBase> operands, RawCommandBufferHandle,
+      bool do_update) override;
 
  private:
   cudnn_frontend::graph::Graph graph_;
   int64_t dropout_rng_seed_;
   mutable std::vector<int64_t> current_dropout_rng_offset_;
   int64_t dropout_rng_offset_increment_ = 0;
+  using VariantPack = std::unordered_map<int64_t, void*>;
+  VariantPack PackOperands(
+      absl::Span<DeviceMemoryBase> operands, DeviceMemoryBase& workspace,
+      std::optional<int64_t> local_device_ordinal = std::nullopt) const;
 };
-#endif  // CUDNN_VERSION >= 8100
 
 // cudnn-library based DNN support. For details on overridden interface
 // functions, see dnn.h.
@@ -555,11 +560,9 @@ class CudnnSupport : public dnn::DnnSupport {
 
   void NotifyStreamDestroyed(Stream* stream) override;
 
-#if CUDNN_VERSION >= 8100
   // Loads complete graph from its serialized representation.
   absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
       Stream& stream, absl::string_view serialized_data) const override;
-#endif  // CUDNN_VERSION >= 8100
 
  private:
   // Uses cuDNN handle for execution.
