@@ -673,18 +673,9 @@ absl::StatusOr<Decision> CreateDotFusion(
     return Decision::Deny(is_supported.Explain());
   }
 
-  // Verify sparse dot constraints.
+  // Verify not sparse.
   if (dot.sparse_operands()) {
-    const SparsityDescriptor& descriptor = dot.sparsity().front();
-    if (dot.sparse_operands() != 1 || descriptor.index() != 0) {
-      return InvalidArgument("Sparsity is only supported on left operand");
-    }
-    if (descriptor.type() != SparsityType::SPARSITY_STRUCTURED_N_M ||
-        descriptor.n() != 2 || descriptor.m() != 4) {
-      return InvalidArgument("Only 2:4 structured sparsity is supported");
-    }
-    // DotDimensionSorter pass makes sure the sparse dimension is minor.
-    CHECK_EQ(descriptor.dimension(), dot.operand(0)->shape().rank() - 1);
+    return InvalidArgument("Sparsity is not supported");
   }
 
   TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
@@ -738,7 +729,8 @@ absl::StatusOr<Decision> CreateDotFusion(
 
   const PrecisionConfig::Algorithm algorithm =
       dot.precision_config().algorithm();
-  if (algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6 ||
+  if (algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X9 ||
+      algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6 ||
       algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3 ||
       algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32 ||
       algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32 ||
@@ -805,14 +797,9 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     // If a GEMM requiring padding for cuBLAS is encountered here this
     // happened because earlier ShouldTritonHandleGEMM() accepted it and padding
     // was skipped. Accept it ignoring profitability checks.
-    // TODO(rocm): check ROCM padding requirements.
-    if (std::holds_alternative<se::CudaComputeCapability>(gpu_version_)) {
-      if (!CublasRequiresPadding(
-              *Cast<HloDotInstruction>(dot),
-              std::get<se::CudaComputeCapability>(gpu_version_)) &&
-          !decision.WantToFuse()) {
-        return absl::OkStatus();
-      }
+    if (!CublasRequiresPadding(*Cast<HloDotInstruction>(dot), gpu_version_) &&
+        !decision.WantToFuse()) {
+      return absl::OkStatus();
     }
 
     HloComputation* computation =

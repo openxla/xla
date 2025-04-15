@@ -48,13 +48,15 @@ limitations under the License.
 #include "Eigen/Core"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
+#include "xla/tsl/platform/errors.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/bfloat16.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/errors.h"  // IWYU pragma: keep
-#include "tsl/platform/logging.h"
 #include "tsl/platform/ml_dtypes.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -159,7 +161,8 @@ class ScopedLoggingTimer {
 template <typename T>
 absl::Span<const uint8_t> CastToByteSlice(absl::Span<const T> slice) {
   return absl::Span<const uint8_t>(
-      reinterpret_cast<const uint8_t*>(slice.data()), slice.size() * sizeof(T));
+      tsl::safe_reinterpret_cast<const uint8_t*>(slice.data()),
+      slice.size() * sizeof(T));
 }
 
 // Casts a byte slice to a non-byte type T, checking that the original slice
@@ -167,7 +170,7 @@ absl::Span<const uint8_t> CastToByteSlice(absl::Span<const T> slice) {
 template <typename T>
 absl::Span<const T> CastByteSlice(absl::Span<const uint8_t> slice) {
   CHECK_EQ(0, slice.size() % sizeof(T));
-  return absl::Span<const T>(reinterpret_cast<const T*>(slice.data()),
+  return absl::Span<const T>(tsl::safe_reinterpret_cast<const T*>(slice.data()),
                              slice.size() / sizeof(T));
 }
 
@@ -252,8 +255,8 @@ absl::Status AppendStatus(absl::Status prior, absl::string_view context);
   /*Deduction guide to make variadic arguments play nice with default */ \
   /* absl::SourceLocation argument. */                                   \
   template <typename... Args>                                            \
-  error_type(const absl::FormatSpec<Args...>& format,                    \
-             Args&&...) -> error_type<Args...>;
+  error_type(const absl::FormatSpec<Args...>& format, Args&&...)         \
+      -> error_type<Args...>;
 
 #if defined(PLATFORM_GOOGLE)
 #define XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(error_type)               \
@@ -846,12 +849,15 @@ absl::Status EraseElementFromVector(std::vector<T>* container, const T& value) {
   return absl::OkStatus();
 }
 
-// Takes a sequence of unpacked n-bit values, such that every byte stores one
-// value in the low-order bits, and packs them so every byte stores as many
-// which will fit. `output` should have ceil((input.size()*kBitsPerElement)/8)
-// bytes. The high-order bits of each byte in `input` are ignored.
+// Takes a sequence of unpacked kBitsPerElement-bit values (kBitsPerElement must
+// be between 1 and 7), such that every byte stores one value in the low-order
+// bits, and packs them so every byte stores as many which will fit. `output`
+// should have at least ceil((input.size()*kBitsPerElement)/8.0) bytes. The
+// high-order bits of each byte in `input` are ignored.
 template <size_t kBitsPerElement>
 void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  static_assert(1 <= kBitsPerElement);
+  static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
   const size_t aligned_inputs = input.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_inputs; ++i) {
@@ -859,21 +865,24 @@ void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
     for (size_t j = 0; j < kElementsPerByte; ++j) {
       byte |=
           (input[i * kElementsPerByte + j] & LsbMask<uint8_t>(kBitsPerElement))
-          << (kBitsPerElement * (kElementsPerByte - j - 1));
+          << (kBitsPerElement * j);
     }
     output[i] = byte;
   }
-  if (size_t remainder = input.size() % kElementsPerByte; remainder != 0) {
+  if (const size_t remainder = input.size() % kElementsPerByte;
+      remainder != 0) {
     char byte = 0;
     for (size_t j = 0; j < remainder; ++j) {
       byte |= (input[aligned_inputs * kElementsPerByte + j] &
                LsbMask<uint8_t>(kBitsPerElement))
-              << (kBitsPerElement * (kElementsPerByte - j - 1));
+              << (kBitsPerElement * j);
     }
     output[aligned_inputs] = byte;
   }
 }
 
+// Same as above, but takes the number of bits per element as an argument.
+// `bits_per_element` must be 2 or 4, or this function will crash.
 inline void PackIntN(int bits_per_element, absl::Span<const char> input,
                      absl::Span<char> output) {
   if (bits_per_element == 2) {
@@ -885,33 +894,48 @@ inline void PackIntN(int bits_per_element, absl::Span<const char> input,
   }
 }
 
+// Same as above, but takes the number of bits per element, a pointer to the
+// source data, and the size of the data in bytes. Returns a unique pointer to
+// the packed data.
+inline std::unique_ptr<char[]> PackIntN(int bits_per_element, const char* data,
+                                        size_t size) {
+  size_t packed_size = size * bits_per_element / 8;
+  auto buffer = std::make_unique<char[]>(packed_size);
+  auto src = absl::MakeSpan(data, size);
+  auto dst = absl::MakeSpan(buffer.get(), packed_size);
+  PackIntN(bits_per_element, src, dst);
+  return buffer;
+}
+
 // Takes a sequence of packed values, such that every byte stores multiple
 // values, and unpacks them so every byte stores one value in the low-order
 // bits. `input` should have
-// ceil(output.size()*8/kBitsPerElement) bytes. The high-order bits in each
-// output are zero.
+// ceil(output.size()*8.0/kBitsPerElement) bytes. kBitsPerElement must be
+// between 1 and 7. ßThe high-order bits in each output are zero.
 template <size_t kBitsPerElement>
 void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  static_assert(1 <= kBitsPerElement);
+  static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
   const size_t aligned_outputs = output.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_outputs; ++i) {
     const char byte = input[i];
     for (int j = 0; j < kElementsPerByte; ++j) {
       output[i * kElementsPerByte + j] =
-          (byte >> (kBitsPerElement * (kElementsPerByte - j - 1))) &
-          LsbMask<uint8_t>(kBitsPerElement);
+          (byte >> (kBitsPerElement * j)) & LsbMask<uint8_t>(kBitsPerElement);
     }
   }
   if (size_t remainder = output.size() % kElementsPerByte; remainder != 0) {
     const char byte = input[aligned_outputs];
     for (size_t j = 0; j < remainder; ++j) {
       output[aligned_outputs * kElementsPerByte + j] =
-          (byte >> (kBitsPerElement * (kElementsPerByte - j - 1))) &
-          LsbMask<uint8_t>(kBitsPerElement);
+          (byte >> (kBitsPerElement * j)) & LsbMask<uint8_t>(kBitsPerElement);
     }
   }
 }
 
+// Same as above, but takes the number of bits per element as an argument.
+// `bits_per_element` must be 2 or 4, or this function will crash.
 inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
                        absl::Span<char> output) {
   if (bits_per_element == 2) {
@@ -921,6 +945,19 @@ inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
   } else {
     LOG(FATAL) << "Invalid bits_per_element: " << bits_per_element;
   }
+}
+
+// Same as above, but takes the number of bits per element, a pointer to the
+// source data, and the size of the data in bytes. Returns a unique pointer to
+// the unpacked data.
+inline std::unique_ptr<char[]> UnpackIntN(int bits_per_element,
+                                          const char* data, size_t size) {
+  size_t unpacked_size = size * 8 / bits_per_element;
+  auto buffer = std::make_unique<char[]>(unpacked_size);
+  auto src = absl::MakeSpan(data, size);
+  auto dst = absl::MakeSpan(buffer.get(), unpacked_size);
+  UnpackIntN(bits_per_element, src, dst);
+  return buffer;
 }
 
 // Returns a container with `sorted_ids_to_remove` elements removed.
@@ -951,6 +988,8 @@ inline bool HloPredicateFalse(const HloInstruction*) { return false; }
 
 using Vector2 = std::array<int64_t, 2>;
 using Vector3 = std::array<int64_t, 3>;
+
+std::string PrintAllFields(const tsl::protobuf::Message& message);
 
 }  // namespace xla
 

@@ -162,18 +162,19 @@ TEST(SocketBulkTransportFactoryTest, SendAndRecvWithFactory) {
                            packet_size);
 
   SocketAddress addr;
+  SocketAddress addrv4 = SocketAddress::Parse("0.0.0.0:0").value();
   auto status_or =
-      CreateSocketBulkTransportFactory({addr, addr}, allocator, uallocator);
+      CreateSocketBulkTransportFactory({addr, addrv4}, allocator, uallocator);
   ASSERT_TRUE(status_or.ok()) << status_or.status();
   auto factory = status_or.value();
   status_or =
-      CreateSocketBulkTransportFactory({addr, addr}, allocator, uallocator);
+      CreateSocketBulkTransportFactory({addr, addrv4}, allocator, uallocator);
   ASSERT_TRUE(status_or.ok()) << status_or.status();
   auto factory2 = status_or.value();
 
   std::unique_ptr<BulkTransportInterface> bulk_transporta;
   std::unique_ptr<BulkTransportInterface> bulk_transportb;
-  {
+  for (size_t i = 0; i < 4; ++i) {
     auto init_res = factory->InitBulkTransport();
     bulk_transporta = std::move(init_res.bulk_transport);
     auto recv_res = factory2->RecvBulkTransport(init_res.request);

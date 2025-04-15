@@ -13,9 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter_legacy_matmul.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -39,7 +41,8 @@ absl::Status EmitMatMul(EmitterLocOpBuilder& builder,
                         absl::string_view libdevice_path,
                         const se::DeviceDescription& device_info,
                         const HloFusionInstruction* fusion,
-                        mlir::triton::FuncOp fn, const BlockLevelParameters&) {
+                        mlir::FunctionOpInterface fn,
+                        const BlockLevelParameters&) {
   return absl::UnimplementedError("not supported for this build configuration");
 }
 

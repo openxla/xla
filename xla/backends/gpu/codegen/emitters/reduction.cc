@@ -17,6 +17,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -30,6 +31,8 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -61,6 +64,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/reduction_utils.h"
+#include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -786,55 +790,74 @@ RowReductionFusion::RowReductionFusion(const HloFusionAnalysis& analysis)
     : ReductionFusion(analysis) {
   CHECK(reduction_dimensions_.is_row_reduction);
   Vector3 shape = reduction_dimensions_.dimensions;
-  constexpr int64_t kMinorReducedElementsPerThread = 16;
+  int64_t kMinorReducedElementsPerThread = 8;
 
-  int64_t num_threads_kept = 1;
-  int64_t num_threads_reduced = [&] {
-    int64_t max_block_size = MinThreadsXRowReduction();
-    return std::min(max_block_size,
-                    RoundUpTo(CeilOfRatio(shape[kRowMinorReduced],
-                                          kMinorReducedElementsPerThread),
-                              WarpSize()));
-  }();
+  do {
+    kMinorReducedElementsPerThread *= 2;
+    int64_t num_threads_kept = 1;
+    // Number of threads doing the reduction.
+    int64_t num_threads_reduced = [&] {
+      int64_t max_block_size = MinThreadsXRowReduction();
+      return std::min(max_block_size,
+                      RoundUpTo(CeilOfRatio(shape[kRowMinorReduced],
+                                            kMinorReducedElementsPerThread),
+                                WarpSize()));
+    }();
 
-  // If we're limited by the size of the x dimension, add additional parallelism
-  // in the y dimension. The code generator doesn't currently support
-  // parallelizing the z dimension (major reduced dimensions). The general
-  // recommendation is to use between 128 and 512 threads, so we just go for
-  // 256. See https://forums.developer.nvidia.com/t/55529
-  constexpr int64_t kThreadsPerBlockTarget = 256;
-  if (num_threads_reduced * 2 <= kThreadsPerBlockTarget) {
-    int64_t kept_size = reduction_dimensions_.dimensions[kRowKept];
-    // Increase the size of the y dimension as long as there's remaining
-    // parallelism.
-    if (kept_size * num_threads_reduced <= kThreadsPerBlockTarget) {
-      num_threads_kept = kept_size;
-    } else {
-      num_threads_kept = kThreadsPerBlockTarget / num_threads_reduced;
+    // If we're limited by the size of the x dimension, add additional
+    // parallelism in the y dimension. The code generator doesn't currently
+    // support parallelizing the z dimension (major reduced dimensions). The
+    // general recommendation is to use between 128 and 512 threads, so we just
+    // go for 256. See https://forums.developer.nvidia.com/t/55529
+    constexpr int64_t kThreadsPerBlockTarget = 256;
+    if (num_threads_reduced * 2 <= kThreadsPerBlockTarget) {
+      int64_t kept_size = reduction_dimensions_.dimensions[kRowKept];
+      // Increase the size of the y dimension as long as there's remaining
+      // parallelism.
+      if (kept_size * num_threads_reduced <= kThreadsPerBlockTarget) {
+        num_threads_kept = kept_size;
+      } else {
+        num_threads_kept = kThreadsPerBlockTarget / num_threads_reduced;
+      }
     }
-  }
 
-  int vector_size = GetVectorSizeForMlir(analysis, /*minor_dim=*/shape.back(),
-                                         num_threads_reduced);
-  num_threads_ = {num_threads_kept, num_threads_reduced};
-  // TODO(jreiffers): Get rid of `vector_size` in here.
-  input_shape_ = {shape[0], shape[1], shape[2] / vector_size, vector_size};
-  // TODO(jreiffers): Tighten ranges based on constraints when simplifying
-  // instead of using min here. For example, based on
-  //
-  //   s1 in [0, 127]
-  //   d0 floordiv 32 + s1 * 32 in [0, 63]
-  //
-  // Tighten the bound of s1 to [0, 1].
-  int minor_reduced_tile_size =
-      std::min(kMinorReducedElementsPerThread / vector_size,
-               CeilOfRatio(input_shape_[2], num_threads_[1]));
+    int vector_size = GetVectorSizeForMlir(analysis, /*minor_dim=*/shape.back(),
+                                           num_threads_reduced);
+    num_threads_ = {num_threads_kept, num_threads_reduced};
+    // TODO(jreiffers): Get rid of `vector_size` in here.
+    input_shape_ = {shape[0], shape[1], shape[2] / vector_size, vector_size};
+    // TODO(jreiffers): Tighten ranges based on constraints when simplifying
+    // instead of using min here. For example, based on
+    //
+    //   s1 in [0, 127]
+    //   d0 floordiv 32 + s1 * 32 in [0, 63]
+    //
+    // Tighten the bound of s1 to [0, 1].
+    int minor_reduced_tile_size =
+        std::min(kMinorReducedElementsPerThread / vector_size,
+                 CeilOfRatio(input_shape_[2], num_threads_[1]));
 
-  tile_sizes_per_thread_ = {shape[0], minor_reduced_tile_size, vector_size};
-  tile_sizes_per_block_ = {num_threads_kept,
-                           minor_reduced_tile_size * num_threads_reduced};
-  num_blocks_ = {CeilOfRatio(input_shape_[1], tile_sizes_per_block_[0]),
-                 CeilOfRatio(input_shape_[2], tile_sizes_per_block_[1])};
+    tile_sizes_per_thread_ = {shape[0], minor_reduced_tile_size, vector_size};
+    tile_sizes_per_block_ = {num_threads_kept,
+                             minor_reduced_tile_size * num_threads_reduced};
+    num_blocks_ = {CeilOfRatio(input_shape_[1], tile_sizes_per_block_[0]),
+                   CeilOfRatio(input_shape_[2], tile_sizes_per_block_[1])};
+    /* ROCm hipModuleLaunchKernel limitation
+     * https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___module.html#ga2e4de5937aa8171e9eda16c881ed0674
+     */
+  } while (xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "rocm" &&
+           kMinorReducedElementsPerThread < 65536 &&
+           ((Product(num_blocks_) * Product(num_threads_)) >
+            std::numeric_limits<uint32_t>::max()));
+
+  VLOG(3) << absl::StrFormat(
+      "RowReductionFusion::RowReductionFusion selected parameters: num_threads "
+      "= [%s], tile_sizes_per_thread = [%s], tile_sizes_per_block = [%s], "
+      "num_blocks = [%s]",
+      absl::StrJoin(num_threads_, ","),
+      absl::StrJoin(tile_sizes_per_thread_, ","),
+      absl::StrJoin(tile_sizes_per_block_, ","),
+      absl::StrJoin(num_blocks_, ","));
 }
 
 IndexingMap RowReductionFusion::ComputeReductionInputIndexing(
@@ -940,6 +963,8 @@ std::unique_ptr<ReductionFusion> MultiRowReductionFusion::TryCreate(
   // This emitter only supports reductions where the reduced dimension is a
   // power of 2.
   if (shape[kRowMinorReduced] & (shape[kRowMinorReduced] - 1)) {
+    VLOG(3) << "MultiRowReductionFusion::TryCreate shape[kRowMinorReduced] = "
+            << shape[kRowMinorReduced] << " is not a power of 2";
     return nullptr;
   }
 
@@ -970,12 +995,19 @@ std::unique_ptr<ReductionFusion> MultiRowReductionFusion::TryCreate(
   // a bit on the high side, but remember that we also have very small inputs
   // or outputs.
   if (largest_input_or_output_bits >= 32) {
+    VLOG(3) << "MultiRowReductionFusion::TryCreate limiting vector size to 16 "
+               "bytes as largest_input_or_output_bits is "
+            << largest_input_or_output_bits;
     vector_size = std::min(128 / largest_input_or_output_bits, vector_size);
   }
 
   // The reduced dimension must fit into a single warp.
   const int64_t warp_size = analysis.device_info().threads_per_warp();
   if (shape[kRowMinorReduced] > warp_size * vector_size) {
+    VLOG(3) << "MultiRowReductionFusion::TryCreate reduced dimension "
+            << shape[kRowMinorReduced] << " is larger than warp size "
+            << warp_size << " * vector size " << vector_size
+            << ". Will not use multi-row reduction";
     return nullptr;
   }
 
@@ -994,9 +1026,15 @@ std::unique_ptr<ReductionFusion> MultiRowReductionFusion::TryCreate(
   // Check again that the reduced dimension fits after potentially reducing the
   // vector size.
   if (shape[kRowMinorReduced] > warp_size * vector_size) {
+    VLOG(3) << "MultiRowReductionFusion::TryCreate reduced dimension "
+            << shape[kRowMinorReduced] << " is larger than warp size "
+            << warp_size << " * vector size " << vector_size
+            << ". Will not use multi-row reduction";
     return nullptr;
   }
 
+  VLOG(3) << "MultiRowReductionFusion::TryCreate selected vector_size = "
+          << vector_size;
   return std::make_unique<MultiRowReductionFusion>(analysis, vector_size);
 }
 

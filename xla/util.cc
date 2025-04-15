@@ -24,6 +24,7 @@ limitations under the License.
 #include <iterator>
 #include <limits>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -47,11 +48,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/platform/stacktrace.h"
 
 namespace xla {
@@ -348,8 +350,8 @@ void LogLines(absl::LogSeverity sev, absl::string_view text, const char* fname,
 }
 
 int64_t Product(absl::Span<const int64_t> xs) {
-  return std::accumulate(xs.begin(), xs.end(), static_cast<int64_t>(1),
-                         std::multiplies<int64_t>());
+  return absl::c_accumulate(xs, static_cast<int64_t>(1),
+                            std::multiplies<int64_t>());
 }
 
 std::vector<int64_t> ElemwiseProduct(absl::Span<const int64_t> a,
@@ -513,6 +515,33 @@ std::string SanitizeFileName(std::string file_name) {
 bool DistinctNumbersAreConsecutiveIfSorted(absl::Span<const int64_t> seq) {
   return *absl::c_max_element(seq) - *absl::c_min_element(seq) ==
          seq.size() - 1;
+}
+
+std::string PrintAllFields(const tsl::protobuf::Message& message) {
+  tsl::protobuf::TextFormat::Printer tsl_printer;
+  const tsl::protobuf::Reflection* reflection = message.GetReflection();
+  std::stringstream result;
+  std::string buffer;
+  const tsl::protobuf::Descriptor* descriptor = message.GetDescriptor();
+  for (int i = 0; i < descriptor->field_count(); ++i) {
+    const tsl::protobuf::FieldDescriptor* field = descriptor->field(i);
+    if (field->is_repeated()) {
+      result << field->name() << ": [";
+      for (int j = 0; j < reflection->FieldSize(message, field); ++j) {
+        if (j > 0) {
+          result << ", ";
+        }
+        tsl_printer.PrintFieldValueToString(message, field, j, &buffer);
+        result << buffer;
+      }
+      result << "]\n";
+    } else {
+      result << field->name() << ": ";
+      tsl_printer.PrintFieldValueToString(message, field, -1, &buffer);
+      result << buffer << "\n";
+    }
+  }
+  return result.str();
 }
 
 }  // namespace xla

@@ -83,26 +83,6 @@ tsl_cc_test(
 )
 
 cc_library(
-    name = "criticality",
-    compatible_with = get_compatible_with_portable(),
-    textual_hdrs = ["criticality.h"],
-    deps = tf_platform_deps("criticality"),
-)
-
-tsl_cc_test(
-    name = "criticality_test",
-    size = "small",
-    srcs = [
-        "criticality_test.cc",
-    ],
-    deps = [
-        ":criticality",
-        "@com_google_googletest//:gtest_main",
-        "@xla//xla/tsl/platform:test",
-    ],
-)
-
-cc_library(
     name = "denormal",
     srcs = ["denormal.cc"],
     hdrs = ["denormal.h"],
@@ -364,7 +344,6 @@ filegroup(
         "coding.h",
         "context.h",
         "cpu_info.h",
-        "criticality.h",
         "env.h",
         "errors.h",
         "file_statistics.h",
@@ -440,7 +419,6 @@ filegroup(
         "context.h",
         "cpu_info.cc",
         "cpu_info.h",
-        "criticality.h",
         "demangle.h",
         "denormal.cc",
         "denormal.h",
@@ -550,7 +528,6 @@ exports_files(
         "context.h",
         "cpu_info.cc",
         "cpu_info.h",
-        "criticality.h",
         "cuda_root_path.h",
         "demangle.h",
         "env.h",
@@ -764,6 +741,7 @@ tsl_cc_test(
     srcs = [
         "stacktrace_handler_test.cc",
     ],
+    linkstatic = False,  # In the OSS build, static linking affects the stacktrace.
     tags = ["no_windows"],
     deps = [
         ":stacktrace",
@@ -884,9 +862,9 @@ cc_library(
     hdrs = ["ml_dtypes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@ml_dtypes//:float8",
-        "@ml_dtypes//:intn",
-        "@ml_dtypes//:mxfloat",
+        "@ml_dtypes_py//ml_dtypes:float8",
+        "@ml_dtypes_py//ml_dtypes:intn",
+        "@ml_dtypes_py//ml_dtypes:mxfloat",
     ],
 )
 
@@ -998,6 +976,7 @@ tsl_cc_test(
     srcs = [
         "stacktrace_test.cc",
     ],
+    linkstatic = False,  # In the OSS build, static linking affects the stacktrace.
     tags = ["no_windows"],
     deps = [
         ":stacktrace",

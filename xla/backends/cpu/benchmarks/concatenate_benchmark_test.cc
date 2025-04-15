@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
+#include "xla/backends/cpu/benchmarks/multi_benchmark_config.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/shape.h"
@@ -32,8 +33,9 @@ limitations under the License.
 
 namespace xla::cpu {
 
-static void BM_ConcatenateTwoR3F32(benchmark::State& state) {
-  auto disable_parallel_backend = !static_cast<bool>(state.range(0));
+static void BM_ConcatenateTwoR3F32(benchmark::State& state,
+                                   HloBenchmarkOptions options) {
+  bool disable_parallel_backend = !static_cast<bool>(state.range(0));
   int64_t dims[3] = {state.range(1), state.range(2), state.range(3)};
   Shape shape = ShapeUtil::MakeShape(F32, dims);
   int64_t axis = state.range(4);
@@ -57,17 +59,18 @@ static void BM_ConcatenateTwoR3F32(benchmark::State& state) {
   auto p0 = *LiteralUtil::CreateRandomLiteral<F32>(shape, &engine, 1.0f, 0.1f);
   auto p1 = *LiteralUtil::CreateRandomLiteral<F32>(shape, &engine, 1.0f, 0.1f);
 
+  options.disable_parallel_task_assigner = disable_parallel_backend;
+
   std::vector<const Literal*> args = {&p0, &p1};
-  CHECK_OK(RunHloBenchmark(
-      state, hlo, args,
-      {{"$shape_repr", absl::StrJoin(dims, "x")},
-       {"$shape", absl::StrJoin(dims, ",")},
-       {"$out_shape", absl::StrJoin(out_dims, ",")},
-       {"$axis", absl::StrCat(axis)}},
-      /*disable_parallel_task_assigner=*/disable_parallel_backend));
+  CHECK_OK(RunHloBenchmark(state, hlo, args,
+                           {{"$shape_repr", absl::StrJoin(dims, "x")},
+                            {"$shape", absl::StrJoin(dims, ",")},
+                            {"$out_shape", absl::StrJoin(out_dims, ",")},
+                            {"$axis", absl::StrCat(axis)}},
+                           options));
 }
 
-BENCHMARK(BM_ConcatenateTwoR3F32)
+XLA_CPU_BENCHMARK(BM_ConcatenateTwoR3F32)
     ->MeasureProcessCPUTime()
     ->ArgNames({"parallel", "batch", "width", "height", "axis"})
     // Fast Concat (memcpy, no parallelism)

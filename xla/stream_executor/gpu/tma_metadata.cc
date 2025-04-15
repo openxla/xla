@@ -64,15 +64,17 @@ absl::Status ValidateRank(llvm::ArrayRef<uint64_t> global_dims,
                           llvm::ArrayRef<uint32_t> element_strides,
                           TmaDescriptor::TmaInterleave interleave) {
   int rank = global_dims.size();
-  if (global_strides.size() != rank || box_dims.size() != rank ||
-      element_strides.size() != rank) {
-    return absl::FailedPreconditionError(
-        "global_dims, global_strides, box_dims and "
-        "element_strides must have the same rank");
-  }
   if (rank < kMinRank || rank > kMaxRank) {
     return absl::InvalidArgumentError(
         absl::StrFormat("unsupported rank for TMA: %d. Must be 1-5", rank));
+  }
+  if (element_strides.size() != rank || box_dims.size() != rank) {
+    return absl::FailedPreconditionError(
+        "global_dims, box_dims and element_strides must have the same rank");
+  }
+  if (global_strides.size() != rank - 1) {
+    return absl::FailedPreconditionError(
+        "global_strides must have a rank of: rank(global_dims) - 1.");
   }
   if (interleave != TmaDescriptor::TmaInterleave::kNone && rank < 3) {
     return absl::FailedPreconditionError(
@@ -222,7 +224,7 @@ TmaDescriptor::TmaDescriptor(llvm::ArrayRef<uint64_t> global_dims,
                              TmaSwizzle swizzle, TmaL2Promotion l2_promotion,
                              TmaFloatOobFill float_oob_fill)
     : element_size_(element_size),
-      rank_(global_dims.size()),
+      num_dimensions_(global_dims.size()),
       global_dims_(global_dims.begin(), global_dims.end()),
       global_strides_(global_strides.begin(), global_strides.end()),
       box_dims_(box_dims.begin(), box_dims.end()),
@@ -238,7 +240,7 @@ std::string TmaDescriptor::ToString() const {
       "global_strides: {%s}, box_dims: {%s}, element_strides: {%s}, "
       "interleave: %d, swizzle: %d, l2_promotion: %d, "
       "float_oob_fill: %d}",
-      element_size_, rank_, absl::StrJoin(global_dims_, ","),
+      element_size_, num_dimensions_, absl::StrJoin(global_dims_, ","),
       absl::StrJoin(global_strides_, ","), absl::StrJoin(box_dims_, ","),
       absl::StrJoin(element_strides_, ","), interleave_, swizzle_,
       l2_promotion_, float_oob_fill_);

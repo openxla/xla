@@ -1,5 +1,22 @@
 # PJRT C API changelog
 
+## 0.68
+
+* Changed the type of ``topology`` in
+  ``PJRT_TopologyDescription_PlatformName_Args`` and
+  ``PJRT_TopologyDescription_GetDeviceDescriptions_Args`` from
+  ``PJRT_TopologyDescription*`` to ``const PJRT_TopologyDescription*``.
+
+## 0.67
+* Added ``PJRT_Client_DmaMap`` and ``PJRT_Client_DmaUnmap``.
+
+## 0.66
+* Added ``memory`` field of type ``PJRT_Memory *`` in ``PJRT_Client_CreateViewOfDeviceBuffer_Args``.
+  The new field should be preferred over ``device``, which is now deprecated.
+
+## 0.65
+* Added ``PJRT_Triton_Extension``.
+
 ## 0.64
 * Added ``context`` field of type ``PJRT_ExecuteContext *`` in ``PJRT_ExecuteOptions``.
 

@@ -1,6 +1,6 @@
-// RUN: xla-translate --print-sugar=false -hlo-text-to-mlir-hlo -hlo-import-all-computations %s -o - | FileCheck %s
-// RUN: xla-translate --print-sugar=false -hlo-text-to-mlir-hlo %s -o - | FileCheck %s -check-prefix=NO_DEAD_FUNCTION
-// RUN: xla-translate --print-sugar=false -hlo-text-to-mlir-hlo -hlo-import-all-computations -hlo-flatten-computation-args-result %s -o - | FileCheck %s -check-prefix=FLATTEN-CHECK
+// RUN: xla-translate --print-sugar=false -hlo-text-to-mlir-hlo -hlo-flatten-computation-args-result=false -hlo-import-all-computations %s -o - | FileCheck %s
+// RUN: xla-translate --print-sugar=false -hlo-text-to-mlir-hlo -hlo-flatten-computation-args-result=false %s -o - | FileCheck %s -check-prefix=NO_DEAD_FUNCTION
+// RUN: hlo-translate --print-sugar=false -hlo-to-mlir -emit-mhlo %s | FileCheck %s -check-prefix=FLATTEN-CHECK
 
 // CHECK: #[[$DC:.*]] = #sparse_tensor.encoding<{ map = (d0, d1) -> (d0 : dense, d1 : compressed), posWidth = 32, crdWidth = 32 }>
 // CHECK: #[[$CSS:.*]] = #sparse_tensor.encoding<{ map = (d0, d1, d2) -> (d0 : compressed(nonunique), d1 : singleton(nonunique, nonordered), d2 : singleton(nonordered)), posWidth = 32, crdWidth = 32 }>
@@ -1179,6 +1179,17 @@ add {
   // CHECK-SAME:  outfeed_config = "foobar"
   // CHECK-SAME: mhlo.sharding = "{maximal device=0}"
   ROOT %outfeed.3 = token[] outfeed(s32[3] %Arg_0.1, token[] %Arg_1.2), outfeed_config="foobar", sharding={maximal device=0}
+}
+
+// CHECK-LABEL:  func private @test_outfeed_with_multiple_shardings
+// TODO(b/260756663): Disallow this mhlo.token to have mismatched sharding.
+%test_outfeed_with_multiple_shardings (Arg_0.1: s32[3], Arg_1.2: token[]) -> token[] {
+  %Arg_0.1 = s32[3] parameter(0)
+  %Arg_1.2 = token[] parameter(1)
+  // CHECK-NEXT:  "mhlo.outfeed"
+  // CHECK-SAME:  outfeed_config = "foobar"
+  // CHECK-SAME{LITERAL}:  mhlo.sharding = "{{maximal device=1}, {maximal device=1}}"
+  ROOT %outfeed.3 = token[] outfeed(s32[3] %Arg_0.1, token[] %Arg_1.2), outfeed_config="foobar", sharding={{maximal device=1}, {maximal device=1}}
 }
 
 // CHECK-LABEL:  func private @test_outfeed_with_empty_data

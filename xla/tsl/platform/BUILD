@@ -39,6 +39,7 @@ package(
 
 exports_files(
     [
+        "criticality.h",
         "subprocess.h",
         "env_time.h",
         "crash_analysis.h",
@@ -68,13 +69,17 @@ exports_files(
 bzl_library(
     name = "rules_cc_bzl",
     srcs = ["rules_cc.bzl"],
-    deps = tf_platform_alias("rules_cc_bzl"),
+    deps = tf_platform_alias("rules_cc_bzl") + [
+        "//xla/tsl:package_groups_bzl",
+    ],
 )
 
 bzl_library(
     name = "build_config_root_bzl",
     srcs = ["build_config_root.bzl"],
-    deps = tf_platform_alias("build_config_root_bzl"),
+    deps = tf_platform_alias("build_config_root_bzl") + [
+        "//xla/tsl:package_groups_bzl",
+    ],
 )
 
 filegroup(
@@ -117,6 +122,7 @@ filegroup(
     name = "lib_hdrs",
     srcs = [
         "crash_analysis.h",
+        "criticality.h",
         "dynamic_annotations.h",
         "env.h",
         "errors.h",
@@ -163,6 +169,7 @@ filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
         "byte_order.h",
+        "criticality.h",
         "dynamic_annotations.h",
         "env.cc",
         "env.h",
@@ -382,14 +389,12 @@ cc_library(
     srcs = ["errors.cc"],
     hdrs = ["errors.h"],
     deps = [
-        "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:macros",
-        "//xla/tsl/platform:status",
-        "@com_google_absl//absl/base:core_headers",
+        ":logging",
+        ":macros",
+        ":status",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
-        "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
     ],
 )
@@ -402,6 +407,47 @@ tsl_cc_test(
         ":errors",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "file_system_helper",
+    srcs = [
+        "file_system.h",
+        "file_system_helper.cc",
+    ],
+    hdrs = ["file_system_helper.h"],
+    deps = [
+        ":env",
+        ":errors",
+        ":file_statistics",
+        ":macros",
+        ":status",
+        ":statusor",
+        ":types",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:cord",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:str_util",
+        "@tsl//tsl/platform:stringpiece",
+    ],
+)
+
+tsl_cc_test(
+    name = "file_system_helper_test",
+    size = "small",
+    srcs = ["file_system_helper_test.cc"],
+    deps = [
+        ":file_system_helper",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -562,12 +608,12 @@ tsl_cc_test(
     srcs = ["statusor_test.cc"],
     deps = [
         ":statusor",
+        ":test_main",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "@com_google_absl//absl/base:config",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -581,7 +627,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:net",
         "@tsl//tsl/platform:path",
@@ -769,4 +815,24 @@ cc_library(
     name = "stack_frame",
     hdrs = ["stack_frame.h"],
     compatible_with = get_compatible_with_portable(),
+)
+
+cc_library(
+    name = "criticality",
+    compatible_with = get_compatible_with_portable(),
+    textual_hdrs = ["criticality.h"],
+    deps = tf_platform_deps("criticality"),
+)
+
+tsl_cc_test(
+    name = "criticality_test",
+    size = "small",
+    srcs = [
+        "criticality_test.cc",
+    ],
+    deps = [
+        ":criticality",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
+    ],
 )

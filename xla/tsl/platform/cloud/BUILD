@@ -35,6 +35,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
     ],
@@ -439,6 +440,7 @@ tsl_cc_test(
     name = "curl_http_request_test",
     size = "small",
     srcs = ["curl_http_request_test.cc"],
+    shuffle_tests = False,
     deps = [
         ":curl_http_request",
         "//xla/tsl/lib/core:status_test_util",

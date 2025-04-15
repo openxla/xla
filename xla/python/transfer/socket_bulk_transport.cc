@@ -40,7 +40,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/python/transfer/event_loop.h"
 #include "xla/python/transfer/streaming.h"
-#include "tsl/platform/env.h"
+#include "xla/tsl/platform/env.h"
 
 namespace aux {
 
@@ -137,10 +137,13 @@ absl::Status ZeroCopySendAckTable::HandleSocketErrors(int fd) {
     return absl::ErrnoToStatus(errno, "Unknown error while handling acks.");
   }
   for (auto* cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-    if (cmsg->cmsg_level != SOL_IPV6 || cmsg->cmsg_type != IPV6_RECVERR) {
+    if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVERR) {
+    } else if (cmsg->cmsg_level == SOL_IPV6 &&
+               cmsg->cmsg_type == IPV6_RECVERR) {
+    } else {
       return absl::InternalError(
           absl::StrCat("Unknown cmsg level: ", cmsg->cmsg_level,
-                       " type: ", cmsg->cmsg_type, " ", SOL_IPV6));
+                       " type: ", cmsg->cmsg_type));
     }
     auto* err = reinterpret_cast<struct sock_extended_err*>(CMSG_DATA(cmsg));
     if (err->ee_origin != SO_EE_ORIGIN_ZEROCOPY) {
@@ -627,10 +630,7 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
     auto bulk_transport = std::make_unique<SocketBulkTransport>(
         thread_states_, send_work_queues_);
     for (auto& listener : listeners_) {
-      auto& tmp = listener->addr();
-      auto address = absl::string_view(reinterpret_cast<const char*>(&tmp),
-                                       sizeof(SocketAddress));
-      result.request.add_bulk_transport_address(address.data(), address.size());
+      result.request.add_bulk_transport_address(listener->addr().ToString());
     }
     result
         .start_bulk_transport = [conns = bulk_transport->connections(),
@@ -638,14 +638,13 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
                                     const SocketTransferEstablishBulkTransport&
                                         remote_bulk_transport_info) {
       uint64_t next_id = remote_bulk_transport_info.bulk_transport_uuid(0);
-      next_id = 0;
       for (uint64_t i = 0;
            i < remote_bulk_transport_info.bulk_transport_address_size(); ++i) {
         uint64_t uuid = next_id + i;
-        SocketAddress addr;
-        memcpy(&addr,
-               remote_bulk_transport_info.bulk_transport_address(i).data(),
-               sizeof(SocketAddress));
+        SocketAddress addr =
+            SocketAddress::Parse(
+                remote_bulk_transport_info.bulk_transport_address(i))
+                .value();
         int cfd =
             socket(addrs[i].address().sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
         CHECK_EQ(bind(cfd, reinterpret_cast<const struct sockaddr*>(&addrs[i]),
@@ -681,10 +680,7 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
     auto bulk_transport = std::make_unique<SocketBulkTransport>(
         thread_states_, send_work_queues_);
     for (auto& listener : listeners_) {
-      auto& tmp = listener->addr();
-      auto address = absl::string_view(reinterpret_cast<const char*>(&tmp),
-                                       sizeof(SocketAddress));
-      result.request.add_bulk_transport_address(address.data(), address.size());
+      result.request.add_bulk_transport_address(listener->addr().ToString());
     }
     uint64_t next_uuid =
         recv_state_->AllocateUUIDs(bulk_transport->connections());
@@ -702,7 +698,7 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
     result->addrs_ = addrs;
     for (auto& addr : addrs) {
       auto listener_or = SocketListener::Listen(
-          SocketAddress(addr),
+          addr,
           [state = result->recv_state_](int sockfd, const SocketAddress& addr) {
             uint64_t uuid;
             if (recv(sockfd, &uuid, sizeof(uuid), 0) != sizeof(uuid)) {
@@ -759,7 +755,7 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
 
 absl::StatusOr<std::shared_ptr<BulkTransportFactory>>
 CreateSocketBulkTransportFactory(std::vector<SocketAddress> addrs,
-                                 SlabAllocator allocator,
+                                 std::optional<SlabAllocator> allocator,
                                  SlabAllocator unpinned_allocator) {
   size_t num_connections = addrs.size();
 

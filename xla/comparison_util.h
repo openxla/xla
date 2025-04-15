@@ -22,13 +22,14 @@ limitations under the License.
 #include <ostream>
 #include <string>
 
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/primitive_util.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
@@ -187,7 +188,7 @@ class Comparison {
 
   template <typename T>
   inline bool Compare(const T a, const T b) const {
-    DCHECK(primitive_util::IsCanonicalRepresentation<T>(primitive_type_));
+    DCHECK(primitive_util::CanRepresent<T>(primitive_type_));
     if constexpr (is_specialized_floating_point_v<T>) {
       if (IsTotalOrder()) {
         //  -NaN < -Inf < -Finite < -0 < +0 < +Finite < +Inf < +NaN

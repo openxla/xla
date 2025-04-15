@@ -1,5 +1,7 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -17,6 +19,7 @@ package_group(
 td_library(
     name = "xla_td_files",
     srcs = glob(["*.td"]),
+    compatible_with = get_compatible_with_portable(),
     includes = ["."],
     deps = [
         "@llvm-project//mlir:BuiltinDialectTdFiles",
@@ -30,17 +33,12 @@ td_library(
 
 gentbl_cc_library(
     name = "xla_dialect_inc_gen",
+    compatible_with = get_compatible_with_portable(),
     strip_include_prefix = ".",
-    tbl_outs = [
-        (
-            ["-gen-dialect-decls"],
-            "xla_dialect.h.inc",
-        ),
-        (
-            ["-gen-dialect-defs"],
-            "xla_dialect.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "xla_dialect.h.inc": ["-gen-dialect-decls"],
+        "xla_dialect.cc.inc": ["-gen-dialect-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "xla_dialect.td",
     deps = [":xla_td_files"],
@@ -48,17 +46,12 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "xla_ops_inc_gen",
+    compatible_with = get_compatible_with_portable(),
     strip_include_prefix = ".",
-    tbl_outs = [
-        (
-            ["-gen-op-decls"],
-            "xla_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "xla_ops.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "xla_ops.h.inc": ["-gen-op-decls"],
+        "xla_ops.cc.inc": ["-gen-op-defs"],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "xla_ops.td",
     deps = [":xla_td_files"],
@@ -66,29 +59,18 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "xla_attrs_inc_gen",
+    compatible_with = get_compatible_with_portable(),
     strip_include_prefix = ".",
-    tbl_outs = [
-        (
-            ["-gen-enum-decls"],
-            "xla_enums.h.inc",
-        ),
-        (
-            ["-gen-enum-defs"],
-            "xla_enums.cc.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-decls",
-            ],
-            "xla_attrs.h.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-defs",
-            ],
-            "xla_attrs.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "xla_enums.h.inc": ["-gen-enum-decls"],
+        "xla_enums.cc.inc": ["-gen-enum-defs"],
+        "xla_attrs.h.inc": [
+            "-gen-attrdef-decls",
+        ],
+        "xla_attrs.cc.inc": [
+            "-gen-attrdef-defs",
+        ],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "xla_attrs.td",
     deps = [":xla_td_files"],
@@ -106,6 +88,7 @@ cc_library(
         ":xla_attrs_inc_gen",
         ":xla_dialect_inc_gen",
         ":xla_ops_inc_gen",
+        "//xla/codegen/emitters:type_util",
         "//xla/hlo/analysis:indexing_analysis",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -131,13 +114,18 @@ xla_test(
     deps = [
         ":xla",
         "//xla/hlo/analysis:indexing_analysis",
-        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/mlir/utils:error_util",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:test",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
     ],
 )

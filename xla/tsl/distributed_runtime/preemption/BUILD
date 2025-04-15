@@ -7,6 +7,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
         "//xla/tsl:internal",
+        "//third_party/py/jax:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -79,7 +80,6 @@ tsl_cc_test(
         "//xla/tsl/distributed_runtime/coordination:coordination_client",
         "//xla/tsl/distributed_runtime/coordination:coordination_service",
         "//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
-        "//xla/tsl/distributed_runtime/coordination:coordination_service_impl",
         "//xla/tsl/distributed_runtime/rpc:async_service_interface",
         "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
         "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",

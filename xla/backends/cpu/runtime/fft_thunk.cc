@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
@@ -65,7 +65,6 @@ absl::StatusOr<std::unique_ptr<FftThunk>> FftThunk::Create(
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> FftThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
   TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(input_shape_.layout()));
   TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(output_shape_.layout()));
 
@@ -92,7 +91,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> FftThunk::Execute(
 
   // Args have been computed, make the call.
   if (is_multi_thread_eigen_) {
-    __xla_cpu_runtime_DuccFft(nullptr,
+    __xla_cpu_runtime_DuccFft(params.intra_op_threadpool,
                               reinterpret_cast<float*>(output_data.opaque()),
                               reinterpret_cast<float*>(input_data.opaque()),
                               fft_type_, is_double_precision_, fft_rank,

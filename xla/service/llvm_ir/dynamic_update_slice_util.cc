@@ -45,8 +45,8 @@ limitations under the License.
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace llvm_ir {
@@ -130,7 +130,7 @@ static absl::Status EmitDynamicUpdateSliceInPlaceImpl(
   const Shape& output_shape = output_array.GetShape();
 
   // Read start indices from start_indices_generator.
-  const int64_t rank = output_shape.rank();
+  const int64_t rank = output_shape.dimensions_size();
   std::vector<llvm::Value*> start_multi_index(rank);
   for (int64_t i = 0; i < rank; ++i) {
     TF_ASSIGN_OR_RETURN(start_multi_index[i], start_indices_generator(i));

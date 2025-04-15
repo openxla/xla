@@ -47,15 +47,15 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/base64.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -249,6 +249,7 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
   auto& entry = *results->add_results();
   entry.set_device(std::string(k.GetModelStr()));
   entry.set_hlo(std::string(k.GetHlo()));
+  entry.set_version(k.GetVersion());
   *entry.mutable_result() = *res;
 }
 }  // namespace
@@ -269,14 +270,18 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
 }
 
 /*static*/ absl::Status AutotunerUtil::LoadAutotuneResults(
-    const AutotuneResults& results) {
+    const AutotuneResults& results, bool allow_override) {
   absl::MutexLock lock(&autotune_cache_mu);
   for (const AutotuneResults::Entry& result : results.results()) {
-    if (auto [it, inserted] = autotune_cache.emplace(
-            AutotuneCacheKey(result.device(), result.hlo()), result.result());
-        !inserted) {
-      return absl::InternalError(absl::StrCat(
-          "Duplicate autotuning result for ", it->first.ToString()));
+    AutotuneCacheKey key(result.device(), result.hlo(), result.version());
+    if (allow_override) {
+      autotune_cache.insert_or_assign(key, result.result());
+    } else {
+      if (auto [it, inserted] = autotune_cache.emplace(key, result.result());
+          !inserted) {
+        return absl::InternalError(absl::StrCat(
+            "Duplicate autotuning result for ", it->first.ToString()));
+      }
     }
   }
   return absl::OkStatus();
@@ -292,7 +297,6 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
   return autotune_cache.empty();
 }
 
-namespace {
 std::string ToCanonicalString(const HloInstruction* instr) {
   auto options = HloPrintOptions::Canonical();
   if (instr->opcode() != HloOpcode::kFusion) {
@@ -312,8 +316,6 @@ std::string ToCanonicalString(const HloInstruction* instr) {
   // of the HLO computation proto instead.
   return instr->called_computations()[0]->ToString(options);
 }
-
-}  // namespace
 
 AutotuneCacheKey::AutotuneCacheKey(absl::string_view model_str,
                                    const HloInstruction& instr)
@@ -476,7 +478,7 @@ bool IsTextProtoPath(absl::string_view file_path) {
 }  // anonymous namespace
 
 /*static*/ absl::Status AutotunerUtil::LoadAutotuneResults(
-    absl::string_view data, bool as_textproto) {
+    absl::string_view data, bool as_textproto, bool allow_override) {
   AutotuneResults results;
   // The cast here is necessary for MacOS builds.
   bool parse_success =
@@ -493,7 +495,8 @@ bool IsTextProtoPath(absl::string_view file_path) {
         kVersion, results.version()));
   }
 
-  TF_RETURN_IF_ERROR(LoadAutotuneResults(results));
+  AddVersionToAutotuneResults(results);
+  TF_RETURN_IF_ERROR(LoadAutotuneResults(results, allow_override));
   return absl::OkStatus();
 }
 
@@ -565,6 +568,15 @@ bool IsTextProtoPath(absl::string_view file_path) {
 /*static*/ void AutotunerUtil::ClearCacheStats() {
   absl::MutexLock lock(&autotune_cache_mu);
   autotune_cache_stats = CacheStats();
+}
+
+void AddVersionToAutotuneResults(AutotuneResults& results) {
+  for (auto& result : *results.mutable_results()) {
+    if (result.version() == 0) {
+      // Set to current version if we don't have one specified.
+      result.set_version(AutotuneCacheKey::kCurrentVersion);
+    }
+  }
 }
 
 }  // namespace gpu

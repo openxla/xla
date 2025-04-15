@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
 
@@ -71,7 +70,6 @@ DotThunk::DotThunk(Info info, DotDimensionNumbers dot_dimensions,
 
 tsl::AsyncValueRef<DotThunk::ExecuteEvent> DotThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   TF_ASSIGN_OR_RETURN(
       se::DeviceMemoryBase lhs_data,
@@ -135,15 +133,19 @@ tsl::AsyncValueRef<DotThunk::ExecuteEvent> DotThunk::Execute(
   int64_t n = dot_canonical_dims_.n;
   int64_t k = dot_canonical_dims_.k;
 
-  bool transpose_lhs = !dot_canonical_dims_.lhs_canonical;
-  bool transpose_rhs = !dot_canonical_dims_.rhs_canonical;
+  // Decide if a transpose is required based on an XOR of the canonical and
+  // column major flags.
+  bool transpose_lhs = (dot_canonical_dims_.lhs_canonical !=
+                        dot_canonical_dims_.lhs_column_major);
+  bool transpose_rhs = (dot_canonical_dims_.rhs_canonical !=
+                        dot_canonical_dims_.rhs_column_major);
 
-  CHECK_EQ(dot_canonical_dims_.lhs_column_major,
-           dot_canonical_dims_.rhs_column_major);
-  if (!dot_canonical_dims_.lhs_column_major) {
+  if (!dot_canonical_dims_.output_column_major) {
     std::swap(m, n);
     std::swap(lhs, rhs);
     std::swap(transpose_lhs, transpose_rhs);
+    transpose_lhs = !transpose_lhs;
+    transpose_rhs = !transpose_rhs;
   }
 
   PrimitiveType element_type = dot_shape_.lhs_matmul_shape.element_type();
@@ -170,6 +172,9 @@ tsl::AsyncValueRef<DotThunk::ExecuteEvent> DotThunk::Execute(
   };
 
   switch (element_type) {
+    case BF16:
+      dispatch(bfloat16{});  // Enable Eigen BF16 kernel for fallback.
+      break;
     case F16:
       dispatch(half{});
       break;

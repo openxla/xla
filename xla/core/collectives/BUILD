@@ -31,12 +31,14 @@ cc_library(
 
 cc_library(
     name = "collectives",
+    srcs = ["collectives.cc"],
     hdrs = ["collectives.h"],
     deps = [
         ":clique_id",
         ":clique_key",
         ":communicator",
         ":rank_id",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
@@ -50,6 +52,7 @@ cc_library(
         ":collectives",
         "//xla:util",
         "//xla/service:platform_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -59,7 +62,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

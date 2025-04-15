@@ -63,13 +63,13 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {
@@ -2640,45 +2640,6 @@ TEST_F(HloEvaluatorPreciseReduceTest, AddReductionPrecisionTest) {
   LiteralTestUtil::ExpectR0Equal<float>(kNumElements, result);
 }
 
-// Reducing many numbers should be fast because it doesn't create
-// intermediate Literals; the microbenchmark should finish in < 1 msec.
-void BM_ReducePrecisely(::testing::benchmark::State& state) {
-  HloComputation::Builder b("BM_ReducePrecisely");
-  HloModuleConfig config;
-  config.set_debug_options(GetDebugOptionsFromFlags());
-  HloModule module("BM_ReducePrecisely", config);
-
-  constexpr int kNumElements = 1 << 25;  // float += 1 saturates at 1<<24
-  std::vector<float> v(kNumElements, 1.0f);
-  HloInstruction* arg_instruction = b.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR1<float>(v)));
-  auto init_value = b.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0.f)));
-
-  HloComputation::Builder add_computation("add");
-  Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
-  auto param_lhs = add_computation.AddInstruction(
-      HloInstruction::CreateParameter(0, scalar_shape, "lhs"));
-  auto param_rhs = add_computation.AddInstruction(
-      HloInstruction::CreateParameter(1, scalar_shape, "rhs"));
-  add_computation.AddInstruction(HloInstruction::CreateBinary(
-      scalar_shape, HloOpcode::kAdd, param_lhs, param_rhs));
-  auto add_func = module.AddEmbeddedComputation(add_computation.Build());
-
-  HloInstruction* reduce_instruction = b.AddInstruction(
-      HloInstruction::CreateReduce(scalar_shape, arg_instruction, init_value,
-                                   /*dimensions_to_reduce=*/{0}, add_func));
-  module.AddEntryComputation(b.Build());
-
-  // Benchmark loop
-  for (auto s : state) {
-    HloEvaluator hlo_eval;
-    hlo_eval.Evaluate(reduce_instruction).value();
-  }
-}
-
-BENCHMARK(BM_ReducePrecisely);
-
 TEST_P(HloEvaluatorBf16Test, ReduceAdd) {
   HloComputation::Builder b(TestName());
 
@@ -3351,10 +3312,10 @@ TEST_P(HloEvaluatorBf16Test, EvaluateWithSubstitutions) {
   HloEvaluator evaluator;
   Literal param0_literal = LiteralUtil::CreateR1<float>({1, 2, 3, 4});
   Literal square_literal = LiteralUtil::CreateR1<float>({10, 20, 30, 40});
-  TF_ASSERT_OK_AND_ASSIGN(
-      Literal result,
-      evaluator.EvaluateWithSubstitutions(
-          add, {{param0, &param0_literal}, {square, &square_literal}}));
+  TF_ASSERT_OK_AND_ASSIGN(Literal result,
+                          evaluator.Evaluate(add, {}, false,
+                                             {{param0, &param0_literal},
+                                              {square, &square_literal}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR1<float>({11, 22, 33, 44}), result));
 }
@@ -3376,10 +3337,11 @@ TEST_F(HloEvaluatorTest, EvaluateWithSubstitutionsRecursive) {
   HloInstruction* param = module->entry_computation()->parameter_instruction(0);
   TF_ASSERT_OK_AND_ASSIGN(
       auto result,
-      evaluator_.EvaluateWithSubstitutions(
+      evaluator_.Evaluate(
           /*instruction=*/module->entry_computation()->root_instruction(),
-          /*substitutions=*/{{param, &param_value}},
-          /*recursively_evaluate_nonconstant_operands=*/true));
+          /*precomputed_analyses=*/{},
+          /*recursively_evaluate_nonconstant_operands=*/true,
+          /*substitutions=*/{{param, &param_value}}));
   EXPECT_EQ(result, LiteralUtil::CreateR0(PrimitiveType::S32, 1 + 2 + 3));
 }
 
@@ -3401,10 +3363,11 @@ TEST_F(HloEvaluatorTest,
   HloInstruction* param = module->entry_computation()->parameter_instruction(0);
   TF_ASSERT_OK_AND_ASSIGN(
       Literal result,
-      evaluator_.EvaluateWithSubstitutions(
+      evaluator_.Evaluate(
           /*instruction=*/module->entry_computation()->root_instruction(),
-          /*substitutions=*/{{param, &param_value}},
-          /*recursively_evaluate_nonconstant_operands=*/true));
+          /*precomputed_analyses=*/{},
+          /*recursively_evaluate_nonconstant_operands=*/true,
+          /*substitutions=*/{{param, &param_value}}));
   EXPECT_EQ(result, LiteralUtil::CreateR0(PrimitiveType::S32, 4 + 1 + 2 + 1));
 }
 
@@ -3428,9 +3391,27 @@ TEST_P(HloEvaluatorBf16Test, EvaluateWithSubstitutionsWithConstantOperand) {
   Literal square_literal = LiteralUtil::CreateR1<float>({10, 20, 30, 40});
   TF_ASSERT_OK_AND_ASSIGN(
       Literal result,
-      evaluator.EvaluateWithSubstitutions(add, {{square, &square_literal}}));
+      evaluator.Evaluate(add, {}, false, {{square, &square_literal}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR1<float>({11, 22, 33, 44}), result));
+}
+
+// Check that EvaluateWithSubstitutions works if the thing we're evaluating is
+// being substituted.
+TEST_P(HloEvaluatorBf16Test, EvaluateSubstitutedInstruction) {
+  HloComputation::Builder b(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {4});
+
+  HloInstruction* param =
+      b.AddInstruction(HloInstruction::CreateParameter(0, shape, "param0"));
+
+  HloEvaluator evaluator;
+  Literal literal = LiteralUtil::CreateR1<float>({10, 20, 30, 40});
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result,
+      evaluator.Evaluate(param, {}, false, {{param, &literal}}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR1<float>({10, 20, 30, 40}), result));
 }
 
 TEST_F(HloEvaluatorTest, EvaluateWithSubstitutionsLiteralBase) {
@@ -3448,8 +3429,9 @@ TEST_F(HloEvaluatorTest, EvaluateWithSubstitutionsLiteralBase) {
   BorrowingLiteral literal(reinterpret_cast<const char*>(int64_values),
                            literal_shape);
   HloEvaluator evaluator;
-  TF_ASSERT_OK_AND_ASSIGN(Literal result, evaluator.EvaluateWithSubstitutions(
-                                              square, {{param0, &literal}}));
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result,
+      evaluator.Evaluate(square, {}, false, {{param0, &literal}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int64_t>({1, 4, 9}),
                                      result));
 }
@@ -4676,7 +4658,7 @@ ENTRY main {
   size = s32[] parameter(0)
 
   data = s32[4] parameter(1)
-  
+
   data_dynamic = s32[<=4] set-dimension-size(data, size), dimensions={0}
 
   sum = s32[<=4] add(data_dynamic, data)
@@ -6046,7 +6028,7 @@ TEST_F(PatternMatchParseWhileLoopTest, CopiedLoopCond) {
       %copy.0 = s32[] copy(s32[] %gte.0)
       %loop_bound = s32[] constant(5)
       %result = pred[] compare(%gte.0, %loop_bound), direction=LT
-      ROOT %copy.1 = pred[] copy(pred[] %result) 
+      ROOT %copy.1 = pred[] copy(pred[] %result)
     }
 
     %while_body {
@@ -6249,6 +6231,95 @@ TEST(EvalErrorTest, Payload) {
   EXPECT_EQ(internal::ParseEvalErrorDetail(s),
             internal::EvalErrorDetail::kDynamicValueDependence);
 }
+
+//===----------------------------------------------------------------------===//
+// Perfrormance benchmarks below.
+//===----------------------------------------------------------------------===//
+
+// Reducing many numbers should be fast because it doesn't create
+// intermediate Literals; the microbenchmark should finish in < 1 msec.
+void BM_ReducePrecisely(::testing::benchmark::State& state) {
+  HloComputation::Builder b("BM_ReducePrecisely");
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsFromFlags());
+  HloModule module("BM_ReducePrecisely", config);
+
+  constexpr int kNumElements = 1 << 25;  // float += 1 saturates at 1<<24
+  std::vector<float> v(kNumElements, 1.0f);
+  HloInstruction* arg_instruction = b.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR1<float>(v)));
+  auto init_value = b.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0.f)));
+
+  HloComputation::Builder add_computation("add");
+  Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
+  auto param_lhs = add_computation.AddInstruction(
+      HloInstruction::CreateParameter(0, scalar_shape, "lhs"));
+  auto param_rhs = add_computation.AddInstruction(
+      HloInstruction::CreateParameter(1, scalar_shape, "rhs"));
+  add_computation.AddInstruction(HloInstruction::CreateBinary(
+      scalar_shape, HloOpcode::kAdd, param_lhs, param_rhs));
+  auto add_func = module.AddEmbeddedComputation(add_computation.Build());
+
+  HloInstruction* reduce_instruction = b.AddInstruction(
+      HloInstruction::CreateReduce(scalar_shape, arg_instruction, init_value,
+                                   /*dimensions_to_reduce=*/{0}, add_func));
+  module.AddEntryComputation(b.Build());
+
+  // Benchmark loop
+  for (auto s : state) {
+    HloEvaluator hlo_eval;
+    hlo_eval.Evaluate(reduce_instruction).value();
+  }
+}
+
+BENCHMARK(BM_ReducePrecisely);
+
+static void BM_UnaryOp(benchmark::State& state) {
+  int64_t d = state.range(0);
+
+  std::unique_ptr<HloInstruction> input =
+      HloInstruction::CreateConstant(LiteralUtil::CreateFull({d, d}, 1.0f));
+
+  std::unique_ptr<HloInstruction> unary = HloInstruction::CreateUnary(
+      ShapeUtil::MakeShape(F32, {d, d}), HloOpcode::kExp, input.get());
+
+  HloEvaluator evaluator;
+  for (auto s : state) {
+    CHECK_OK(evaluator.Evaluate(unary.get()).status());
+  }
+}
+
+BENCHMARK(BM_UnaryOp)
+    ->MeasureProcessCPUTime()
+    ->Arg(64)
+    ->Arg(128)
+    ->Arg(512)
+    ->Arg(1024);
+
+static void BM_BinaryOp(benchmark::State& state) {
+  int64_t d = state.range(0);
+
+  std::unique_ptr<HloInstruction> lhs =
+      HloInstruction::CreateConstant(LiteralUtil::CreateFull({d, d}, 1.0f));
+  std::unique_ptr<HloInstruction> rhs =
+      HloInstruction::CreateConstant(LiteralUtil::CreateFull({d, d}, 2.0f));
+
+  std::unique_ptr<HloInstruction> binary = HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(F32, {d, d}), HloOpcode::kAdd, lhs.get(), rhs.get());
+
+  HloEvaluator evaluator;
+  for (auto s : state) {
+    CHECK_OK(evaluator.Evaluate(binary.get()).status());
+  }
+}
+
+BENCHMARK(BM_BinaryOp)
+    ->MeasureProcessCPUTime()
+    ->Arg(64)
+    ->Arg(128)
+    ->Arg(512)
+    ->Arg(1024);
 
 }  // namespace
 }  // namespace xla

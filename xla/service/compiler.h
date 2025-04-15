@@ -27,6 +27,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -72,7 +73,7 @@ class AotCompilationResult {
   }
 
   virtual absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, const se::StreamExecutor* executor) const {
+      Compiler* compiler, const se::StreamExecutor* executor) const&& {
     return Unimplemented("LoadExecutable unimplemented.");
   }
 
@@ -292,7 +293,8 @@ class Compiler {
 
   // Returns the compiler singleton pointer if it is available for the given
   // platform, or an error status if it is not.
-  static absl::StatusOr<Compiler*> GetForPlatform(const se::Platform* platform);
+  static absl::StatusOr<std::unique_ptr<Compiler>> GetForPlatform(
+      const se::Platform* platform);
 
   // Returns a function that computes the size in bytes of the logical
   // buffer that contains a shape.
@@ -321,6 +323,11 @@ class Compiler {
   // compilation stages.
   virtual std::unique_ptr<MetricsHookInterface> CreateMetricsHook(
       absl::string_view filename_prefix) const;
+
+  virtual absl::StatusOr<std::unique_ptr<Executable>> DeserializeExecutable(
+      const absl::string_view serialized) const {
+    return Unimplemented("DeserializeExecutable unimplemented");
+  }
 
  private:
   // Mutex that guards the platform-compiler map.

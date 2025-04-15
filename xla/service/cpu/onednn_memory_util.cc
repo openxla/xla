@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
 
 #include "xla/service/cpu/onednn_memory_util.h"
 
@@ -53,7 +53,7 @@ struct MemrefInfoPOD {
 MemrefInfoHandler CreateMemrefFromShape(const Shape& shape, void* const buf) {
   MemrefInfoHandler result(new MemrefInfoPOD);
   result->dtype = shape.element_type();
-  result->rank = shape.rank();
+  result->rank = shape.dimensions_size();
   auto dimensions = shape.dimensions();
   std::copy(dimensions.begin(), dimensions.end(),
             absl::MakeSpan(result->dims).begin());
@@ -76,8 +76,8 @@ MemrefInfoHandler CreateMemrefInfoFromLiteral(const Literal* literal) {
 std::pair<std::vector<int64_t>, std::vector<int64_t>> GetDimsStrides(
     const Shape& shape) {
   // oneDNN handles scalar as a vector of size 1.
-  const bool is_scalar = shape.rank() == 0;
-  int64_t rank = is_scalar ? 1 : shape.rank();
+  const bool is_scalar = shape.dimensions_size() == 0;
+  int64_t rank = is_scalar ? 1 : shape.dimensions_size();
   std::vector<int64_t> strides(rank);
   std::vector<int64_t> scalar_shape(1, 1);
   absl::Span<const int64_t> dimensions =
@@ -99,7 +99,7 @@ StackAlloca GetAllocaAndEmitMemrefInfo(llvm::IRBuilderBase& builder,
                                        const llvm_ir::IrArray& ir_array) {
   const Shape& shape = ir_array.GetShape();
   // oneDNN handles scalar as a vector of size 1.
-  int64_t rank = shape.rank() == 0 ? 1 : shape.rank();
+  int64_t rank = shape.dimensions_size() == 0 ? 1 : shape.dimensions_size();
   auto [dims, strides] = GetDimsStrides(shape);
 
   // Type of struct
@@ -222,4 +222,4 @@ Shape MemDescToXlaShapeFlattened(const dnnl::memory::desc& md) {
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL

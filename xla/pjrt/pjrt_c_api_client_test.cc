@@ -80,7 +80,7 @@ TEST(PjRtCApiClientTest, IsDynamicDimension) {
           data0.data(), shape0.element_type(), shape0.dimensions(),
           /*byte_strides=*/std::nullopt,
           PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
-          client->addressable_devices()[0]));
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
   std::vector<int32_t> data1{2};
   Shape shape1 = ShapeUtil::MakeShape(S32, {});
   TF_ASSERT_OK_AND_ASSIGN(
@@ -89,7 +89,7 @@ TEST(PjRtCApiClientTest, IsDynamicDimension) {
           data1.data(), shape1.element_type(), shape1.dimensions(),
           /*byte_strides=*/std::nullopt,
           PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
-          client->addressable_devices()[0]));
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
   XlaBuilder builder("DynamicReshape");
   auto inp_0 = Parameter(&builder, 0, shape0, "input0");
   auto inp_1 = Parameter(&builder, 1, shape1, "input1");
@@ -98,7 +98,7 @@ TEST(PjRtCApiClientTest, IsDynamicDimension) {
       DynamicReshape(inp_0, {inp_1, inp_1}, {2, 3}, dims_are_dynamic);
   auto computation = builder.Build(reshaped).value();
   std::unique_ptr<PjRtLoadedExecutable> executable =
-      client->Compile(computation, CompileOptions()).value();
+      client->CompileAndLoad(computation, CompileOptions()).value();
   ExecuteOptions execute_options;
   execute_options.non_donatable_input_indices = {0};
   std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results =
@@ -111,6 +111,29 @@ TEST(PjRtCApiClientTest, IsDynamicDimension) {
 
   EXPECT_THAT(is_dynamic_dimension,
               ::testing::ElementsAreArray(dims_are_dynamic));
+  EXPECT_EQ(result_buffer->on_device_shape(),
+            ShapeUtil::MakeShape(S32, {2, 3}, {false, true}));
+  EXPECT_EQ(*result_buffer->logical_on_device_shape(),
+            ShapeUtil::MakeShape(S32, {2, 2}, {false, true}));
+}
+
+TEST(PjRtCApiClientTest, OnDeviceShape) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  std::vector<int32_t> data{1, 2, 3, 4, 5, 6};
+  for (PrimitiveType t : {F32, F16, S8, BF16}) {
+    Shape shape = ShapeUtil::MakeShape(t, {3, 2});
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto buffer,
+        client->BufferFromHostBuffer(
+            data.data(), shape.element_type(), shape.dimensions(),
+            /*byte_strides=*/std::nullopt,
+            PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+            client->memory_spaces()[0], /*device_layout=*/nullptr));
+    EXPECT_EQ(buffer->on_device_shape(), shape);
+    EXPECT_EQ(*buffer->logical_on_device_shape(), shape);
+  }
 }
 
 TEST(PjRtCApiClientTest, PlatformId) {
@@ -134,7 +157,7 @@ TEST(PjRtCApiClientTest, NonEmptyExecutableFingerprint) {
   builder.SetUpAlias({}, 0, {});
   auto computation = builder.Build(sum).value();
   std::unique_ptr<PjRtLoadedExecutable> executable =
-      client->Compile(computation, CompileOptions()).value();
+      client->CompileAndLoad(computation, CompileOptions()).value();
 
   PjRtCApiClient* c_client = dynamic_cast<PjRtCApiClient*>(client.get());
   ASSERT_NE(c_client, nullptr);
@@ -158,8 +181,9 @@ TEST(PjRtCApiClientTest, CreateBuffersForAsyncHostToDeviceWithShape) {
       /*minor_to_major=*/{1, 0, 2});
   std::vector<xla::Shape> host_shapes = {host_shape};
   auto status_or_transfer_manager = client->CreateBuffersForAsyncHostToDevice(
-      absl::MakeSpan(host_shapes), client->addressable_devices()[0]);
-  EXPECT_FALSE(status_or_transfer_manager.ok());
+      absl::MakeSpan(host_shapes), client->memory_spaces()[0]);
+  EXPECT_TRUE(status_or_transfer_manager.ok())
+      << status_or_transfer_manager.status();
 }
 
 TEST(PjRtClientTest, CreateViewAndCopyToDeviceAsyncExternalCpuOnly) {
@@ -175,14 +199,14 @@ TEST(PjRtClientTest, CreateViewAndCopyToDeviceAsyncExternalCpuOnly) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto buffer,
       client->CreateViewOfDeviceBuffer(
-          data_ptr, shape, client->addressable_devices()[0],
+          data_ptr, shape, client->memory_spaces()[0],
           /*on_delete_callback=*/[data = std::move(data)]() mutable {
             (void)data;
           }));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtBuffer> result,
-      buffer->CopyToDevice(client->addressable_devices()[1]));
+      buffer->CopyToMemorySpace(client->memory_spaces()[1]));
   buffer.reset();
   ASSERT_TRUE(result);
   TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
@@ -214,7 +238,7 @@ TEST(PjRtClientTest, CompileUsesStableHloVersion) {
     return PJRT_Client_Compile_Orig(args);
   };
   std::unique_ptr<PjRtLoadedExecutable> executable =
-      client->Compile(*module, CompileOptions()).value();
+      client->CompileAndLoad(*module, CompileOptions()).value();
   const_cast<PJRT_Api*>(c_api)->PJRT_Client_Compile = PJRT_Client_Compile_Orig;
 }
 
@@ -286,7 +310,7 @@ TEST(PjRtCApiClientTest, ForwardExecuteContext) {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   TF_ASSERT_OK_AND_ASSIGN(
       auto executable,
-      client->Compile(XlaComputation(hlo_module->ToProto()), {}));
+      client->CompileAndLoad(XlaComputation(hlo_module->ToProto()), {}));
 
   ExecuteContext context;
   TF_ASSERT_OK(context.ffi_context().Emplace<MemsetValue>(42.0f));

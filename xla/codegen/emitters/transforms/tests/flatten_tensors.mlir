@@ -196,6 +196,16 @@ func.func @index_switch(%arg0: tensor<2x3xf32>, %arg1: tensor<2x3xf32>,
 
 // -----
 
+func.func @cpu_load(%arg0: !xla_cpu.call_frame) -> tensor<10x10x4xf32> {
+  %0 = xla_cpu.load %arg0, 0 : tensor<10x10x4xf32>
+  return %0 : tensor<10x10x4xf32>
+}
+// CHECK-LABEL: func.func @cpu_load
+// CHECK-SAME: -> tensor<400xf32>
+// CHECK-NOT:  builtin.unrealized_conversion_cast
+
+// -----
+
 func.func @constant() -> tensor<2x3xf32> {
    %cst = arith.constant dense<[
     [-3.000000e+00, 2.000000e+00, 1.000000e+00],
@@ -229,6 +239,24 @@ func.func @vector_extract(%arg0: vector<2x3xf32>, %arg1: index) -> f32 {
 // CHECK-SAME:      %[[SRC:.*]]: vector<6xf32>, %[[I:.*]]: index) -> f32 {
 // CHECK:        %[[INDEX:.*]] = xla.apply_indexing #[[$MAP]](%[[I]])
 // CHECK:        vector.extract %[[SRC]][%[[INDEX]]] : f32 from vector<6xf32>
+
+// -----
+
+func.func @vector_transfer_read(%arg0: tensor<64x66xbf16>, %i: index, %j: index)
+    -> vector<2xbf16> {
+  %cst = arith.constant 0.0 : bf16
+  %v = vector.transfer_read %arg0[%i, %j], %cst {in_bounds = [true]}
+    : tensor<64x66xbf16>, vector<2xbf16>
+  func.return %v : vector<2xbf16>
+}
+// CHECK: #[[$MAP:.+]] = #xla.indexing_map<"(d0, d1) -> (d0 * 66 + d1)
+// CHECK-SAME: domain: d0 in [0, 63], d1 in [0, 65]
+
+// CHECK-LABEL: func.func @vector_transfer_read(
+// CHECK-SAME:      %[[SRC:.*]]: tensor<4224xbf16>,
+// CHECK-SAME:      %[[I:.*]]: index, %[[J:.*]]: index)
+// CHECK:        %[[INDEX:.*]] = xla.apply_indexing #[[$MAP]](%[[I]], %[[J]])
+// CHECK:        vector.transfer_read %[[SRC]][%[[INDEX]]]
 
 // -----
 

@@ -40,8 +40,8 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/map_util.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -80,7 +80,7 @@ namespace xla {
     }
   }
   TF_RETURN_IF_ERROR(schedule.Verify());
-  return std::move(schedule);
+  return schedule;
 }
 
 absl::StatusOr<HloScheduleProto> HloSchedule::ToProto() const {
@@ -96,7 +96,7 @@ absl::StatusOr<HloScheduleProto> HloSchedule::ToProto() const {
       proto_sequence.add_instruction_ids(id);
     }
   }
-  return std::move(proto);
+  return proto;
 }
 
 void HloSchedule::set_sequence(const HloComputation* computation,

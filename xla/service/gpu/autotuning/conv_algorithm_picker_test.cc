@@ -37,10 +37,10 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla::gpu {
 namespace {
@@ -143,7 +143,7 @@ ENTRY main {
 
 TEST_F(GpuConvAlgorithmPickerTest, SetAlgorithmGraphConvF8) {
   if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::HOPPER)) {
+          se::CudaComputeCapability::kHopper)) {
     GTEST_SKIP() << "FP8 convolutions require Hopper or newer architecture.";
   }
   constexpr absl::string_view kHlo = R"(

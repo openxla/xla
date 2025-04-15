@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -68,6 +69,12 @@ class FusionDecision {
   FusionDecision(bool condition, absl::string_view explanation) {
     if (!condition) {
       explanation_ = std::string(explanation);
+    }
+  }
+
+  explicit FusionDecision(absl::Status status) {
+    if (!status.ok()) {
+      explanation_ = status.message();
     }
   }
 
@@ -276,11 +283,6 @@ class InstructionFusion : public HloModulePass {
       std::function<bool(const HloInstruction& instruction)> is_expensive) {
     is_expensive_ = is_expensive;
   }
-
-  // Whether multi-output fusion would introduce a cycle into the HLO graph.
-  bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
-                                     HloInstruction* consumer,
-                                     const HloReachabilityMap& reachability);
 
   FusionConfigCollection config_collection_mode() {
     return config_collection_mode_;

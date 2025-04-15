@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
+load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "cc_library", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 # copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
@@ -69,6 +69,7 @@ tf_proto_library(
         # copybara:uncomment "@com_google_protobuf//:any",
         "//xla:xla_data_proto",
         "//xla/pjrt:execute_options_proto",
+        "//xla/python/ifrt:array_spec_proto",
         "//xla/python/ifrt:attribute_map_proto",
         "//xla/python/ifrt:dtype_proto",
         "//xla/python/ifrt:execute_options_proto",
@@ -88,7 +89,10 @@ tf_proto_library(
     create_grpc_library = True,
     create_java_proto = False,
     create_kotlin_proto = False,
-    protodeps = [":ifrt_service_proto"],
+    protodeps = [
+        ":ifrt_service_proto",
+        "//xla/python/ifrt:attribute_map_proto",
+    ],
 )
 
 cc_library(
@@ -170,6 +174,7 @@ ifrt_proxy_cc_test(
 cc_library(
     name = "common_serdes",
     deps = [
+        "//xla/python/ifrt:custom_call_program_serdes",
         "//xla/python/ifrt:plugin_program_serdes",
         "//xla/python/ifrt/hlo:hlo_program_serdes",
         "//xla/python/ifrt/ir:ifrt_ir_program_serdes",
@@ -229,6 +234,7 @@ cc_library(
 #     srcs = ["ifrt_proxy.bzl"],
 #     parse_tests = False,
 #     visibility = ["//visibility:private"],
+#     deps = ["//xla/tsl:package_groups_bzl"],
 # )
 #
 # bzl_library(

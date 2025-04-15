@@ -19,6 +19,7 @@ add_public_tablegen_target(StablehloExtensionPassesIncGen)
 add_mlir_dialect_library(StablehloExtensionPasses
   PARTIAL_SOURCES_INTENDED
   chlo_recompose_ops.cpp
+  chlo_preserve_high_level_ops.cpp
   stablehlo_canonicalize_dynamism.cpp
   stablehlo_refine_shapes.cpp
   sdy_refine_shapes.cpp
@@ -36,6 +37,7 @@ add_mlir_dialect_library(StablehloExtensionPasses
   StablehloExtensionOps
   StablehloBase
   StablehloOps
+  StablehloOptimizationPasses
   StablehloPasses
   StablehloTypeInference
 )

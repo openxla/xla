@@ -59,10 +59,10 @@ static HloInstruction* PadInstruction(HloInstruction* instr,
   HloComputation* comp = instr->parent();
 
   const Shape& shape = instr->shape();
-  PaddingConfig pad_config = MakeNoPaddingConfig(shape.rank());
+  PaddingConfig pad_config = MakeNoPaddingConfig(shape.dimensions_size());
 
   bool added_padding = false;
-  for (int64_t dim = 0; dim < shape.rank(); ++dim) {
+  for (int64_t dim = 0; dim < shape.dimensions_size(); ++dim) {
     if (shape.dimensions(dim) == new_shape.dimensions(dim)) {
       continue;
     }
@@ -512,7 +512,7 @@ absl::StatusOr<bool> CudnnPadForConvolutions::Run(
       }
       changed |= local_changed;
     }
-    if (compute_capability_.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+    if (compute_capability_.IsAtLeast(se::CudaComputeCapability::kVolta)) {
       for (HloCustomCallInstruction* conv : GetRelevantConvs(comp)) {
         TF_ASSIGN_OR_RETURN(
             bool local_changed,

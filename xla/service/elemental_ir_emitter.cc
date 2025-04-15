@@ -3252,7 +3252,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalConcatenate(
     llvm_ir::IrArray::Index operand_index(source_index.GetType());
     // If we are concatenating the fastest varying dimension, we can reuse the
     // linear index.
-    if (source_index.linear() != nullptr && operand->shape().rank() > 1 &&
+    if (source_index.linear() != nullptr &&
+        operand->shape().dimensions_size() > 1 &&
         concat_dim == operand->shape().layout().minor_to_major(0)) {
       llvm::Value* linear_without_concat_dim = b_->CreateUDiv(
           source_index.linear(), source_index.GetConstantWithIndexType(
@@ -3342,7 +3343,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDynamicSlice(
     const llvm_ir::IrArray::Index& index) {
   // Emit IR to read dynamic start indices from hlo->operand(1).
   const HloInstruction* input_hlo = hlo->operand(0);
-  const int64_t rank = input_hlo->shape().rank();
+  const int64_t rank = input_hlo->shape().dimensions_size();
   // Use the same index type for all tensor accesses in the same kernel.
   llvm::Type* index_type = index.GetType();
   std::vector<llvm::Value*> slice_start_multi_index(rank);
@@ -3512,7 +3513,7 @@ ElementalIrEmitter::EmitElementalDynamicUpdateSlice(
   const HloInstruction* update_hlo = hlo->operand(1);
   const HloInstruction* start_hlo = hlo->operand(2);
   // Calculate slice start/end indices.
-  const int64_t rank = input_hlo->shape().rank();
+  const int64_t rank = input_hlo->shape().dimensions_size();
   std::vector<llvm::Value*> slice_start_multi_index(rank);
   std::vector<llvm::Value*> slice_limit_multi_index(rank);
   // Slice intersection gathers (ANDs) conditions on all ranks for which
@@ -3743,8 +3744,10 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
   // There are rhs_dims - 1 - num_batch_dims non-contracting dimensions for the
   // rhs operand. We can assume they have the same relative order as in the
   // output.
-  DCHECK_EQ(hlo->shape().rank(), lhs_dims + rhs_dims - 2 - num_batch_dims);
-  for (int64_t i = lhs_dims - 1, j = 0; i < hlo->shape().rank(); ++i, ++j) {
+  DCHECK_EQ(hlo->shape().dimensions_size(),
+            lhs_dims + rhs_dims - 2 - num_batch_dims);
+  for (int64_t i = lhs_dims - 1, j = 0; i < hlo->shape().dimensions_size();
+       ++i, ++j) {
     // Skip the positions which have already been filled with contracting
     // dimension and batch dimensions.
     while (j < rhs_dims && rhs_multi_index[j] != nullptr) {
@@ -3905,7 +3908,7 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
         auto* iota = Cast<HloIotaInstruction>(hlo);
         PrimitiveType element_type = iota->shape().element_type();
         IrArray::Index elem_index =
-            iota->shape().rank() > 1
+            iota->shape().dimensions_size() > 1
                 ? target_index.SourceIndexOfBroadcast(
                       iota->shape(),
                       ShapeUtil::MakeShapeWithDescendingLayout(
@@ -4123,7 +4126,11 @@ llvm::Value* ElementalIrEmitter::EmitMulAdd(llvm::Value* lhs, llvm::Value* rhs,
     return InsertValue(next_accumulator,
                        FAdd(EmitExtractImag(accumulator), product_imag), {1});
   } else if (primitive_util::IsFloatingPointType(primitive_type)) {
-    return FAdd(accumulator, FPCast(FMul(lhs, rhs), accumulator->getType()));
+    llvm::FastMathFlags reassoc_flag = b_->getFastMathFlags();
+    reassoc_flag.setAllowReassoc(true);
+
+    llvm::Value* cast_mul = FPCast(FMul(lhs, rhs), accumulator->getType());
+    return b_->CreateFAddFMF(accumulator, cast_mul, reassoc_flag);
   } else if (primitive_type == PRED) {
     return Or(accumulator, And(lhs, rhs));
   }

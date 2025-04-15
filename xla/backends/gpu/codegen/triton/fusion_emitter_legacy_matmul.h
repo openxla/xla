@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -27,7 +28,6 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/stream_executor/device_description.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu {
 
@@ -43,7 +43,8 @@ absl::Status EmitMatMul(EmitterLocOpBuilder& builder,
                         absl::string_view libdevice_path,
                         const se::DeviceDescription& device_info,
                         const HloFusionInstruction* fusion,
-                        mlir::triton::FuncOp fn, const BlockLevelParameters&);
+                        mlir::FunctionOpInterface fn,
+                        const BlockLevelParameters&);
 
 }  // namespace xla::gpu
 

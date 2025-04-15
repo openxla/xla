@@ -45,6 +45,19 @@ namespace {
   if (!hloValue.has_value()) return {};                              \
   return mhlo::Name##Attr::get(attr.getContext(), hloValue.value())
 
+mhlo::ResultAccuracyMode convertResultAccuracyMode(
+    stablehlo::ResultAccuracyMode mode) {
+  switch (mode) {
+    case stablehlo::ResultAccuracyMode::DEFAULT:
+      return mhlo::ResultAccuracyMode::DEFAULT;
+    case stablehlo::ResultAccuracyMode::HIGHEST:
+      return mhlo::ResultAccuracyMode::HIGHEST;
+    case stablehlo::ResultAccuracyMode::TOLERANCE:
+      return mhlo::ResultAccuracyMode::TOLERANCE;
+    default:
+      return {};
+  }
+}
 Attribute convertAttr(Attribute stablehloAttr) {
   // StableHLO uses DenseArray for some attributes, MHLO is in the process
   // of integrating this change. In the meantime, convert DenseArray to
@@ -140,6 +153,20 @@ Attribute convertAttr(Attribute stablehloAttr) {
   if (auto attr = mlir::dyn_cast<stablehlo::TransposeAttr>(stablehloAttr)) {
     RETURN_CONVERTED_ENUM_ATTR(Transpose);
   }
+  if (auto attr =
+          mlir::dyn_cast<stablehlo::ResultAccuracyModeAttr>(stablehloAttr)) {
+    RETURN_CONVERTED_ENUM_ATTR(ResultAccuracyMode);
+  }
+  if (auto attr =
+          mlir::dyn_cast<stablehlo::ResultAccuracyAttr>(stablehloAttr)) {
+    mhlo::ResultAccuracyModeAttr modeAttr = mhlo::ResultAccuracyModeAttr::get(
+        attr.getContext(),
+        convertResultAccuracyMode(attr.getMode().getValue()));
+
+    return mhlo::ResultAccuracyAttr::get(attr.getContext(), attr.getAtol(),
+                                         attr.getRtol(), attr.getUlps(),
+                                         modeAttr);
+  }
   if (stablehloAttr.getDialect().getNamespace() ==
       stablehlo::StablehloDialect::getDialectNamespace()) {
     // Our guiding principle is to support all StableHLO functionality in MHLO.
@@ -166,7 +193,7 @@ Attribute convertAttr(Attribute stablehloAttr) {
 #undef RETURN_CONVERTED_ENUM_ATTR
 
 // Convert array of enum strings to array of enum attrs
-//   ["PACKED_NIBBLE"] --> [#mhlo<precision PACKED_NIBBLE>]
+//   ["HIGHEST"] --> [#mhlo<precision HIGHEST>]
 Attribute decodePrecisionConfig(Attribute stablehloAttr) {
   auto arrayAttr = mlir::dyn_cast<ArrayAttr>(stablehloAttr);
   if (!arrayAttr) return {};
@@ -221,10 +248,10 @@ LogicalResult convertFuncToStablehloRegion(Operation* op, func::FuncOp funcOp,
 //
 // Example:
 //  %0 = stablehlo.custom_call @mhlo.dot {
-//    mhlo.attributes = {precision_config = ["PACKED_NIBBLE"]}}
+//    mhlo.attributes = {precision_config = ["HIGHEST"]}}
 //  ==>
 //   %0 = "mhlo.dot"(%arg0, %arg1) {
-//     precision_config = [#mhlo<precision PACKED_NIBBLE>] } ...
+//     precision_config = [#mhlo<precision HIGHEST>] } ...
 LogicalResult rewriteCustomCallAsMhloOp(stablehlo::CustomCallOp stablehloOp,
                                         ConversionPatternRewriter& rewriter,
                                         const TypeConverter* typeConverter,

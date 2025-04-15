@@ -36,7 +36,7 @@ limitations under the License.
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Support/LogicalResult.h"
 #include "xla/python/ifrt/ir/sharding_param.pb.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace ifrt {
@@ -274,8 +274,8 @@ ShardingParam::LocalShapeFromGlobalShape(
     if (global_shape[i] % num_shards[i] != 0) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Global shape is not divisible by the number of shards in dimension ",
-          i, ". Global size: ", global_shape[i],
-          ", number of shards: ", num_shards[i], "."));
+          i, ". Global shape: [", absl::StrJoin(global_shape, ","),
+          "], number of shards: ", num_shards[i], "."));
     }
     local_shape.push_back(global_shape[i] / num_shards[i]);
   }

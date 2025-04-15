@@ -17,12 +17,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
-#include <utility>
 #include <vector>
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -58,32 +54,21 @@ namespace {
 
 using llvm::ArrayRef;
 using mlir::AffineExpr;
-using mlir::AffineMap;
-using mlir::Block;
 using mlir::DenseI64ArrayAttr;
 using mlir::failure;
-using mlir::getAffineConstantExpr;
-using mlir::getAffineDimExpr;
-using mlir::getAffineSymbolExpr;
 using mlir::Location;
 using mlir::LogicalResult;
 using mlir::MLIRContext;
 using mlir::OpAsmParser;
 using mlir::OpAsmPrinter;
-using mlir::OpBuilder;
 using mlir::OperationState;
 using mlir::ParseResult;
-using mlir::PatternRewriter;
 using mlir::RankedTensorType;
-using mlir::Region;
 using mlir::SmallVector;
 using mlir::success;
 using mlir::Type;
 using mlir::TypeRange;
-using mlir::Value;
 using mlir::ValueRange;
-
-namespace arith = mlir::arith;
 
 }  // namespace
 

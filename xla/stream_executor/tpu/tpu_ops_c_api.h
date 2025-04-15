@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
+#include "absl/status/statusor.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/libtftpu.h"
 
@@ -290,9 +291,9 @@ typedef struct InitializeHostForDistributedTpuOp_DoWork_Params {
 TFTPU_CAPI_EXPORT void InitializeHostForDistributedTpuOp_DoWork(
     InitializeHostForDistributedTpuOp_DoWork_Params* params);
 
-TFTPU_CAPI_EXPORT void SetGlobalTPUArrayOp_DoWork(
-    const size_t tpu_topology_size, const char* tpu_topology,
-    TF_Status* status);
+TFTPU_CAPI_EXPORT void SetGlobalTPUArrayOp_DoWork(size_t tpu_topology_size,
+                                                  const char* tpu_topology,
+                                                  TF_Status* status);
 
 TFTPU_CAPI_EXPORT void DisconnectDistributedTpuChipsOp_DoWork(
     int32_t* number_of_chips_output, TF_Status* status);
@@ -434,6 +435,11 @@ TFTPU_CAPI_EXPORT int TpuTopology_AvailableCoreCount(
 
 // Returns the number of cores per Chip.
 TFTPU_CAPI_EXPORT int TpuTopology_AvailableCoresPerChip(
+    TpuCoreTypeEnum tpu_core_type);
+
+// Returns the number of cores per Chip or -1 if the TPU system is not
+// available.
+TFTPU_CAPI_EXPORT absl::StatusOr<int> TpuTopology_MaybeAvailableCoresPerChip(
     TpuCoreTypeEnum tpu_core_type);
 
 // Recycle unused service port.
@@ -802,6 +808,7 @@ struct TfTpu_OpsApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuCompile_ShouldTpuCompileOpIgnoreCancellation);
   TFTPU_ADD_FN_IN_STRUCT(TpuTopology_AvailableCoreCount);
   TFTPU_ADD_FN_IN_STRUCT(TpuTopology_AvailableCoresPerChip);
+  TFTPU_ADD_FN_IN_STRUCT(TpuTopology_MaybeAvailableCoresPerChip);
   TFTPU_ADD_FN_IN_STRUCT(TpuNetUtil_RecycleUnusedPort);
   TFTPU_ADD_FN_IN_STRUCT(TpuCompile_CreateCompilationCacheKey);
   TFTPU_ADD_FN_IN_STRUCT(TpuCompile_DestroyCompilationCacheKey);

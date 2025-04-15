@@ -27,21 +27,227 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+namespace stablehlo {
+
+mlir::stablehlo::GatherDimensionNumbersAttr ConvertGatherDimensionNumbers(
+    const xla::GatherDimensionNumbers& dnums, mlir::Builder* builder) {
+  std::vector<int64_t> offset_dims(dnums.offset_dims().begin(),
+                                   dnums.offset_dims().end());
+  std::vector<int64_t> collapsed_slice_dims(
+      dnums.collapsed_slice_dims().begin(), dnums.collapsed_slice_dims().end());
+  std::vector<int64_t> operand_batching_dims(
+      dnums.operand_batching_dims().begin(),
+      dnums.operand_batching_dims().end());
+  std::vector<int64_t> start_indices_batching_dims(
+      dnums.start_indices_batching_dims().begin(),
+      dnums.start_indices_batching_dims().end());
+  std::vector<int64_t> start_index_map(dnums.start_index_map().begin(),
+                                       dnums.start_index_map().end());
+  return mlir::stablehlo::GatherDimensionNumbersAttr::get(
+      builder->getContext(), offset_dims, collapsed_slice_dims,
+      operand_batching_dims, start_indices_batching_dims, start_index_map,
+      dnums.index_vector_dim());
+}
+
+mlir::stablehlo::ScatterDimensionNumbersAttr ConvertScatterDimensionNumbers(
+    const xla::ScatterDimensionNumbers& dnums, mlir::Builder* builder) {
+  std::vector<int64_t> update_window_dims(dnums.update_window_dims().begin(),
+                                          dnums.update_window_dims().end());
+  std::vector<int64_t> inserted_window_dims(
+      dnums.inserted_window_dims().begin(), dnums.inserted_window_dims().end());
+  std::vector<int64_t> input_batching_dims(dnums.input_batching_dims().begin(),
+                                           dnums.input_batching_dims().end());
+  std::vector<int64_t> scatter_indices_batching_dims(
+      dnums.scatter_indices_batching_dims().begin(),
+      dnums.scatter_indices_batching_dims().end());
+  std::vector<int64_t> scatter_dims_to_operand_dims(
+      dnums.scatter_dims_to_operand_dims().begin(),
+      dnums.scatter_dims_to_operand_dims().end());
+  return mlir::stablehlo::ScatterDimensionNumbersAttr::get(
+      builder->getContext(), update_window_dims, inserted_window_dims,
+      input_batching_dims, scatter_indices_batching_dims,
+      scatter_dims_to_operand_dims, dnums.index_vector_dim());
+}
+
+mlir::NamedAttribute ConvertChannelHandle(const ChannelHandle& channel,
+                                          mlir::Builder* builder) {
+  return builder->getNamedAttr(
+      "channel_handle",
+      mlir::stablehlo::ChannelHandleAttr::get(
+          builder->getContext(), channel.handle(), channel.type()));
+}
+
+mlir::NamedAttribute ConvertChannelHandle(std::optional<int64_t> channel_id,
+                                          mlir::Builder* builder) {
+  ChannelHandle channel_handle;
+  if (channel_id) channel_handle.set_handle(*channel_id);
+  return stablehlo::ConvertChannelHandle(channel_handle, builder);
+}
+
+absl::StatusOr<mlir::stablehlo::CustomCallApiVersion>
+ConvertCustomCallApiVersion(xla::CustomCallApiVersion api_version) {
+  switch (api_version) {
+    case xla::CustomCallApiVersion::API_VERSION_UNSPECIFIED:
+      return mlir::stablehlo::CustomCallApiVersion::API_VERSION_UNSPECIFIED;
+    case xla::CustomCallApiVersion::API_VERSION_ORIGINAL:
+      return mlir::stablehlo::CustomCallApiVersion::API_VERSION_ORIGINAL;
+    case xla::CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
+      return mlir::stablehlo::CustomCallApiVersion::
+          API_VERSION_STATUS_RETURNING;
+    case xla::CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
+      return mlir::stablehlo::CustomCallApiVersion::
+          API_VERSION_STATUS_RETURNING_UNIFIED;
+    case xla::CustomCallApiVersion::API_VERSION_TYPED_FFI:
+      return mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI;
+    default:
+      return InvalidArgument("Unknown CustomCallApiVersion enum value #%d (%s)",
+                             api_version,
+                             xla::CustomCallApiVersion_Name(api_version));
+  }
+}
+
+mlir::stablehlo::DotAlgorithmAttr ConvertDotAlgorithm(
+    const PrecisionConfig::Algorithm algorithm, mlir::Builder* builder) {
+  mlir::Type lhs, rhs, accum;
+  int64_t lhsComponentCount = 1, rhsComponentCount = 1,
+          numPrimitiveOperations = 1;
+  bool allowImpreciseAccumulation = false;
+  switch (algorithm) {
+    case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32: {
+      lhs = rhs = builder->getType<mlir::Float8E5M2Type>();
+      accum = builder->getF32Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM: {
+      lhs = rhs = builder->getType<mlir::Float8E5M2Type>();
+      accum = builder->getF32Type();
+      allowImpreciseAccumulation = true;
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_F16_F16_F16: {
+      lhs = rhs = accum = builder->getF16Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_F16_F16_F32: {
+      lhs = rhs = builder->getF16Type();
+      accum = builder->getF32Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_BF16: {
+      lhs = rhs = accum = builder->getBF16Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_F32: {
+      lhs = rhs = builder->getBF16Type();
+      accum = builder->getF32Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3: {
+      lhs = rhs = builder->getBF16Type();
+      accum = builder->getF32Type();
+      numPrimitiveOperations = 3;
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6: {
+      lhs = rhs = builder->getBF16Type();
+      accum = builder->getF32Type();
+      numPrimitiveOperations = 6;
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_TF32_TF32_F32: {
+      lhs = rhs = builder->getTF32Type();
+      accum = builder->getF32Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3: {
+      lhs = rhs = builder->getTF32Type();
+      accum = builder->getF32Type();
+      numPrimitiveOperations = 3;
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_F32_F32_F32: {
+      lhs = rhs = accum = builder->getF32Type();
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_F64_F64_F64: {
+      lhs = rhs = accum = builder->getF64Type();
+      break;
+    }
+    default:
+      // Unset, sentinels
+      return mlir::stablehlo::DotAlgorithmAttr{};
+  }
+  return mlir::stablehlo::DotAlgorithmAttr::get(
+      builder->getContext(), lhs, rhs, accum, lhsComponentCount,
+      rhsComponentCount, numPrimitiveOperations, allowImpreciseAccumulation);
+}
+
+mlir::stablehlo::DotDimensionNumbersAttr ConvertDotDimensionNumbers(
+    const DotDimensionNumbers& dnums, mlir::Builder* builder) {
+  auto arrayref = [](absl::Span<const int64_t> array) {
+    return llvm::ArrayRef<int64_t>{array.data(), array.size()};
+  };
+  return mlir::stablehlo::DotDimensionNumbersAttr::get(
+      builder->getContext(), arrayref(dnums.lhs_batch_dimensions()),
+      arrayref(dnums.rhs_batch_dimensions()),
+      arrayref(dnums.lhs_contracting_dimensions()),
+      arrayref(dnums.rhs_contracting_dimensions()));
+}
+
+mlir::ArrayAttr ConvertOutputOperandAliasing(
+    const std::vector<std::pair<
+        xla::ShapeIndex, std::pair<int64_t, xla::ShapeIndex>>>& aliasInfo,
+    mlir::Builder* builder) {
+  auto arrayref = [](absl::Span<const int64_t> array) {
+    return llvm::ArrayRef<int64_t>{array.data(), array.size()};
+  };
+  std::vector<mlir::Attribute> attrs;
+  for (auto& [output_tuple_idx, operand_idx] : aliasInfo) {
+    auto attr = mlir::stablehlo::OutputOperandAliasAttr::get(
+        builder->getContext(), arrayref(output_tuple_idx), operand_idx.first,
+        arrayref(operand_idx.second));
+    attrs.push_back(attr);
+  }
+  return builder->getArrayAttr(attrs);
+}
+
+mlir::ArrayAttr ConvertPrecisionConfig(const PrecisionConfig* config,
+                                       mlir::Builder* builder) {
+  if (!config) return {};
+
+  // TODO(b/129709049) The HLO text format elides this in the all DEFAULT
+  // case and the parser sticks it in. Maybe we should too.
+  llvm::SmallVector<mlir::Attribute, 4> operand_precision_attrs;
+
+  for (auto prec : config->operand_precision()) {
+    operand_precision_attrs.push_back(mlir::stablehlo::PrecisionAttr::get(
+        builder->getContext(), mlir::stablehlo::symbolizePrecision(
+                                   PrecisionConfig_Precision_Name(prec))
+                                   .value()));
+  }
+  return builder->getArrayAttr(operand_precision_attrs);
+}
+
+}  // namespace stablehlo
 
 mlir::ArrayAttr ConvertPrecisionConfig(const PrecisionConfig* config,
                                        mlir::Builder* builder) {
@@ -109,12 +315,12 @@ mlir::mhlo::DotAlgorithmAttr ConvertDotAlgorithm(
   bool allowImpreciseAccumulation = false;
   switch (algorithm) {
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32: {
-      lhs = rhs = builder->getFloat8E5M2Type();
+      lhs = rhs = builder->getType<mlir::Float8E5M2Type>();
       accum = builder->getF32Type();
       break;
     }
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM: {
-      lhs = rhs = builder->getFloat8E5M2Type();
+      lhs = rhs = builder->getType<mlir::Float8E5M2Type>();
       accum = builder->getF32Type();
       allowImpreciseAccumulation = true;
       break;
@@ -288,23 +494,14 @@ absl::StatusOr<mlir::mhlo::Transpose> ConvertTranspose(
 
 absl::StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
     xla::CustomCallApiVersion api_version) {
-  switch (api_version) {
-    case xla::CustomCallApiVersion::API_VERSION_UNSPECIFIED:
-      return mlir::mhlo::CustomCallApiVersion::API_VERSION_UNSPECIFIED;
-    case xla::CustomCallApiVersion::API_VERSION_ORIGINAL:
-      return mlir::mhlo::CustomCallApiVersion::API_VERSION_ORIGINAL;
-    case xla::CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
-      return mlir::mhlo::CustomCallApiVersion::API_VERSION_STATUS_RETURNING;
-    case xla::CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
-      return mlir::mhlo::CustomCallApiVersion::
-          API_VERSION_STATUS_RETURNING_UNIFIED;
-    case xla::CustomCallApiVersion::API_VERSION_TYPED_FFI:
-      return mlir::mhlo::CustomCallApiVersion::API_VERSION_TYPED_FFI;
-    default:
-      return InvalidArgument("Unknown CustomCallApiVersion enum value #%d (%s)",
-                             api_version,
-                             xla::CustomCallApiVersion_Name(api_version));
-  }
+  TF_ASSIGN_OR_RETURN(auto stablehlo_api_version,
+                      stablehlo::ConvertCustomCallApiVersion(api_version));
+  auto mhlo_api_version = mlir::mhlo::symbolizeCustomCallApiVersion(
+      mlir::stablehlo::stringifyCustomCallApiVersion(stablehlo_api_version));
+  if (!mhlo_api_version.has_value())
+    return InvalidArgument("Unknown CustomCallApiVersion enum value #%d",
+                           api_version);
+  return mhlo_api_version.value();
 }
 
 mlir::NamedAttribute ConvertChannelHandle(const ChannelHandle& channel,
@@ -314,6 +511,7 @@ mlir::NamedAttribute ConvertChannelHandle(const ChannelHandle& channel,
       mlir::mhlo::ChannelHandleAttr::get(builder->getContext(),
                                          channel.handle(), channel.type()));
 }
+
 mlir::NamedAttribute ConvertChannelHandle(std::optional<int64_t> channel_id,
                                           mlir::Builder* builder) {
   ChannelHandle channel_handle;
@@ -404,6 +602,27 @@ absl::StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(
     const Shape shape, mlir::Builder* builder) {
   if (!shape.IsTuple()) return InvalidArgument("Expected shape to be Tuple");
   return ExtractLayoutsFromShapes(shape.tuple_shapes(), builder);
+}
+
+mlir::mhlo::ResultAccuracyAttr ConvertResultAccuracy(
+    const ResultAccuracy& result_accuracy, mlir::Builder* builder) {
+  if (result_accuracy.has_tolerance()) {
+    return mlir::mhlo::ResultAccuracyAttr::get(
+        builder->getContext(),
+        llvm::APFloat(result_accuracy.tolerance().atol()),
+        llvm::APFloat(result_accuracy.tolerance().rtol()),
+        result_accuracy.tolerance().ulps(),
+        // Explicitly set the mode to TOLERANCE since ResultAccuracy has no
+        // TOLERANCE enum.
+        mlir::mhlo::ResultAccuracyModeAttr::get(
+            builder->getContext(), mlir::mhlo::ResultAccuracyMode::TOLERANCE));
+  }
+  return mlir::mhlo::ResultAccuracyAttr::get(
+      builder->getContext(), llvm::APFloat(0.0), llvm::APFloat(0.0), 0,
+      mlir::mhlo::ResultAccuracyModeAttr::get(
+          builder->getContext(),
+          mlir::mhlo::symbolizeResultAccuracyMode(result_accuracy.mode())
+              .value()));
 }
 
 }  // namespace xla

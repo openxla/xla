@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -35,19 +36,20 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla::cpu {
 
@@ -91,9 +93,13 @@ TEST(JitCompilerTest, Compile) {
     thread_pool.Schedule(std::move(task));
   };
 
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(llvm::TargetOptions(), IrCompiler::Options(),
+                         IrCompiler::CompilationHooks());
+
   TF_ASSERT_OK_AND_ASSIGN(
       auto compiler,
-      JitCompiler::Create(llvm::TargetOptions(), std::move(options),
+      JitCompiler::Create(std::move(options), std::move(ir_compiler),
                           std::move(task_runner)));
 
   constexpr absl::string_view add_in_place_ir = R"(
@@ -179,13 +185,17 @@ TEST(JitCompilerTest, ExternalDefinitionGenerator) {
   llvm::orc::ThreadSafeContext tsc(std::move(context));
 
   JitCompiler::Options options;
-  options.definition_generator = [](llvm::TargetMachine*) {
+  options.definition_generator = [](const llvm::DataLayout& data_layout) {
     return std::make_unique<ExternalDefinitionGenerator>();
   };
 
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(llvm::TargetOptions(), IrCompiler::Options(),
+                         IrCompiler::CompilationHooks());
+
   TF_ASSERT_OK_AND_ASSIGN(
       auto compiler,
-      JitCompiler::Create(llvm::TargetOptions(), std::move(options),
+      JitCompiler::Create(std::move(options), std::move(ir_compiler),
                           /*task_runner=*/nullptr));
 
   constexpr absl::string_view call_external_fn_ir = R"(

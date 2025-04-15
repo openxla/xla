@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/executable.pb.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/local_service_utils.h"
@@ -80,22 +81,17 @@ absl::Status IsValidTopologyAndClientForCompile(
     return absl::InvalidArgumentError(
         "SE:GPU compiler requires a GPU PjRtClient.");
   }
-  TF_ASSIGN_OR_RETURN(auto client_topology, client->GetTopologyDescription());
-
-  if (!IsSameTopology(topology, *client_topology)) {
-    return absl::UnimplementedError(
-        "SE:GPU compiler requires the topology same as the one in the client.");
-  }
   return absl::OkStatus();
 }
 
-absl::StatusOr<xla::Compiler*> GetCompilerForDefaultGpuPlatform() {
+absl::StatusOr<std::unique_ptr<xla::Compiler>>
+GetCompilerForDefaultGpuPlatform() {
   TF_ASSIGN_OR_RETURN(stream_executor::Platform * platform,
                       PlatformUtil::GetPlatform("gpu"));
   return Compiler::GetForPlatform(platform);
 }
 
-absl::StatusOr<xla::Compiler*> GetCompilerForPlatform(
+absl::StatusOr<std::unique_ptr<xla::Compiler>> GetCompilerForPlatform(
     std::optional<stream_executor::Platform::Id> platform_id) {
   if (!platform_id.has_value()) {
     return GetCompilerForDefaultGpuPlatform();
@@ -162,7 +158,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
       HloModule::CreateFromProto(hlo_module_proto, *hlo_config));
   UpdateEntryComputationLayout(
       hlo_module.get(), std::bind(&Compiler::DefaultDeviceShapeRepresentation,
-                                  gpu_compiler, std::placeholders::_1));
+                                  gpu_compiler.get(), std::placeholders::_1));
   DumpHloModuleIfEnabled(*hlo_module, kBeforeOptimizationsDumpName);
   Compiler::CompileOptions opts;
   opts.target_config = options.target_config;
@@ -176,21 +172,16 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   const int num_partitions = hlo_module->config().num_partitions();
   const std::string name = hlo_module->name();
   const std::string fingerprint = hlo_module->GetFingerprint128();
-  const int num_outputs = hlo_module->result_shape().IsTuple()
-                              ? hlo_module->result_shape().tuple_shapes_size()
-                              : 1;
   auto unique_module_group =
       std::make_unique<HloModuleGroup>(std::move(hlo_module));
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<AotCompilationResult>> aot_results,
       gpu_compiler->CompileAheadOfTime(std::move(unique_module_group),
                                        aot_options));
-  std::vector<std::vector<absl::string_view>> output_memory_kinds(1);
-  output_memory_kinds[0].resize(num_outputs,
-                                StreamExecutorGpuHbmMemorySpace::kKind);
   return std::make_unique<StreamExecutorExecutable>(
       std::move(input_options), std::move(aot_results), num_replicas,
-      num_partitions, name, fingerprint, std::move(output_memory_kinds));
+      num_partitions, name, fingerprint,
+      /*default_memory_kind=*/StreamExecutorGpuHbmMemorySpace::kKind);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>

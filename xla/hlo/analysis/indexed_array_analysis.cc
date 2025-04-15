@@ -16,10 +16,14 @@ limitations under the License.
 #include "xla/hlo/analysis/indexed_array_analysis.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
@@ -1019,7 +1023,7 @@ bool CanFoldDotIntoIndexedArray(
     absl::Span<const int64_t> contracting_dims,
     absl::Span<const int64_t> batch_dims) {
   std::optional<int64_t> non_contracting_non_batch_dim =
-      GetOnlyNonContractingNonBatchDim(indexed_array->shape().rank(),
+      GetOnlyNonContractingNonBatchDim(indexed_array->shape().dimensions_size(),
                                        contracting_dims, batch_dims);
   if (!non_contracting_non_batch_dim.has_value()) {
     VLOG(3) << tag << ": multiple or no non-contracting non-batch dimensions";
@@ -1032,7 +1036,7 @@ bool CanFoldDotIntoIndexedArray(
     return false;
   }
 
-  int64_t indexed_array_rank = indexed_array->shape().rank();
+  int64_t indexed_array_rank = indexed_array->shape().dimensions_size();
   if (indexed_array->source_dim() < (indexed_array_rank - 2)) {
     // This restriction can be lifted by inserting reshape nodes.
     VLOG(3) << tag
@@ -1060,7 +1064,7 @@ IndexedArrayAnalysis::ComputeArrayForDotWithIndexedLhs(
     return nullptr;
   }
 
-  int64_t lhs_rank = lhs->shape().rank();
+  int64_t lhs_rank = lhs->shape().dimensions_size();
   DotDimensionNumbers new_dim_numbers = dim_numbers;
   new_dim_numbers.set_lhs_contracting_dimensions(
       0, lhs->source_dim() == (lhs_rank - 1) ? (lhs_rank - 2) : (lhs_rank - 1));
@@ -1095,7 +1099,7 @@ IndexedArrayAnalysis::ComputeArrayForDotWithIndexedRhs(
     return nullptr;
   }
 
-  int64_t rhs_rank = rhs->shape().rank();
+  int64_t rhs_rank = rhs->shape().dimensions_size();
 
   DotDimensionNumbers new_dim_numbers = dim_numbers;
   new_dim_numbers.set_rhs_contracting_dimensions(

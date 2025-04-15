@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -37,6 +39,7 @@ limitations under the License.
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -85,8 +88,11 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/emitters/type_util.h"
+#include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace_instrumentation.h"
@@ -99,6 +105,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/llvm_gpu_backend/ptx_version_util.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
@@ -106,10 +113,10 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -196,6 +203,52 @@ bool Needs64BitIndices(const HloComputation* computation) {
   return false;
 }
 
+absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
+                             mlir::PassManager& pm,
+                             absl::string_view entry_function_name) {
+  bool should_dump_mlir_passes =
+      DumpingEnabledForHloModule(hlo_module) &&
+      DumpingEnabledForHloPass("mlir-fusion-emitter",
+                               hlo_module.config().debug_options());
+
+  std::string mlir_passes_dump_result;
+  llvm::raw_string_ostream log_stream(mlir_passes_dump_result);
+  mlir::interpreter::MlirCompilationTrace trace;
+
+  if (should_dump_mlir_passes) {
+    module.getContext()->disableMultithreading();
+
+    auto print_always = [](mlir::Pass*, mlir::Operation*) { return true; };
+    pm.enableIRPrinting(/*shouldPrintBeforePass=*/print_always,
+                        /*shouldPrintAfterPass=*/print_always,
+                        /*printModuleScope=*/true,
+                        /*printAfterOnlyOnChange=*/false,
+                        /*printAfterOnlyOnFailure=*/true, log_stream,
+                        /*opPrintingFlags=*/{});
+    pm.printAsTextualPipeline(log_stream);
+    log_stream.write("\n\n", 2);
+
+    pm.addInstrumentation(
+        std::make_unique<mlir::interpreter::MlirCompilerTraceInstrumentation>(
+            trace));
+  }
+
+  tsl::StatusScopedDiagnosticHandler diagnostic_handler(module.getContext());
+  (void)pm.run(module);
+
+  if (should_dump_mlir_passes) {
+    DumpPerModuleProtobufToFile(
+        hlo_module, trace, hlo_module.config().debug_options(),
+        absl::StrCat(entry_function_name, ".mlir-trace"));
+
+    DumpToFileInDirOrStdout(
+        hlo_module, "", absl::StrCat(entry_function_name, ".mlir-passes.log"),
+        mlir_passes_dump_result);
+  }
+
+  return diagnostic_handler.consumeStatus();
+}
+
 }  // namespace
 
 Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
@@ -260,7 +313,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
               AnnotateFunctionAsGpuKernel(module.get(), kernel_func, &builder);
               TF_RETURN_IF_ERROR(AnnotateKernelLaunchDimensions(
                   ir_emitter_context.gpu_device_info(), launch_dims,
-                  kernel_name, module.get()));
+                  kernel_func, module.get()));
 
               // Use override flag because libdevice functions can be present in
               // both.
@@ -293,13 +346,6 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitterBase::CreateLLVMModule(
     const se::DeviceDescription& device, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
-  HloModule* hlo_module = fusion.GetModule();
-  std::unique_ptr<mlir::interpreter::MlirCompilationTrace> trace = nullptr;
-  if (DumpingEnabledForHloModule(*hlo_module) &&
-      DumpingEnabledForHloPass("mlir-fusion-emitter",
-                               hlo_module->config().debug_options())) {
-    trace = std::make_unique<mlir::interpreter::MlirCompilationTrace>();
-  }
   TF_ASSIGN_OR_RETURN(
       auto module, CreateMLIRModule(mlir_context, fusion, entry_function_name,
                                     buffer_assignment));
@@ -308,13 +354,9 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitterBase::CreateLLVMModule(
   AddXlaGpuOpsOptimizationPasses(pm);
   AddLoopTransformationPasses(pm, device);
   AddLoweringPasses(pm, device);
-  auto pipeline_status = RunPassPipeline(module.get(), pm, trace.get());
-  if (trace) {
-    DumpPerModuleProtobufToFile(
-        *hlo_module, *trace, hlo_module->config().debug_options(),
-        absl::StrCat(entry_function_name, ".mlir-trace"));
-  }
-  TF_RETURN_IF_ERROR(pipeline_status);
+
+  auto pipeline_status = RunPassPipeline(module.get(), *fusion.GetModule(), pm,
+                                         entry_function_name);
 
   auto llvm_module = mlir::translateModuleToLLVMIR(module.get(), llvm_context);
   TF_RET_CHECK(llvm_module != nullptr)
@@ -410,6 +452,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
       mlir::ArrayAttr::get(&context, arg_attrs),
       /*res_attrs=*/mlir::ArrayAttr{});
   entry_func->setAttr("xla.entry", mlir::UnitAttr::get(&context));
+  SetBackendKind(&context, entry_func, BackendKind::kGpu);
 
   TF_RETURN_IF_ERROR(EmitMlir(module.get(), entry_func, fusion));
   return module;
@@ -553,37 +596,18 @@ EmitterBase::EmitEpilogue(
   return results_per_root;
 }
 
-absl::Status EmitterBase::RunPassPipeline(
-    mlir::ModuleOp module, mlir::PassManager& pm,
-    mlir::interpreter::MlirCompilationTrace* trace) const {
-  if (VLOG_IS_ON(5)) {
-    module.getContext()->disableMultithreading();
-    pm.enableIRPrinting();
-  }
-  if (trace) {
-    module.getContext()->disableMultithreading();
-    pm.addInstrumentation(
-        std::make_unique<mlir::interpreter::MlirCompilerTraceInstrumentation>(
-            *trace));
-  }
-
-  tsl::StatusScopedDiagnosticHandler diagnostic_handler(module.getContext());
-  (void)pm.run(module);
-  return diagnostic_handler.consumeStatus();
-}
-
 void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
-  pm.addNestedPass<FuncOp>(CreateSimplifyArithPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addPass(CreateEraseDeadFunctionsPass());
+  pm.addPass(emitters::CreateEraseDeadFunctionsPass());
   pm.addPass(mlir::createCSEPass());
 }
 
 void AddLoopTransformationPasses(mlir::OpPassManager& pm,
                                  const se::DeviceDescription& device) {
   pm.addNestedPass<FuncOp>(
-      CreateLowerXlaGpuToScfPass(device.threads_per_warp()));
+      emitters::CreateLowerXlaToScfPass(device.threads_per_warp()));
   pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());
   pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
     // CSE after inlining because inlining can introduce duplicates.
@@ -592,19 +616,19 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<FuncOp>(CreatePeelLoopsPass());
-  pm.addNestedPass<FuncOp>(CreateLowerXlaGpuLoopsToScfPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateLowerXlaLoopsToScfPass());
   pm.addPass(mlir::mhlo::createConvertToSignlessPass());
-  pm.addPass(CreatePropagateSliceIndicesPass());
+  pm.addPass(emitters::CreatePropagateSliceIndicesPass());
   pm.addPass(emitters::CreateFlattenTensorsPass());
   // We need LICM before unswitching loops, because our loop unswitcher only
   // detects for loops with a single if inside them.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<FuncOp>(CreateUnswitchLoopsPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateUnswitchLoopsPass());
   // We need LICM again after unswitching, because that can introduce new
   // opportunities for LICM. This would not be necessary if LICM also moved
   // instructions over ifs.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<FuncOp>(CreateVectorizeLoadsAndStoresPass(device));
+  pm.addNestedPass<FuncOp>(emitters::CreateVectorizeLoadsAndStoresPass(device));
   pm.addNestedPass<FuncOp>(CreateOptimizeLoopsPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
@@ -612,18 +636,18 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
 
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device) {
-  pm.addNestedPass<FuncOp>(CreateConvertPureCallOpsPass());
+  pm.addNestedPass<FuncOp>(emitters::CreateConvertPureCallOpsPass());
   pm.addPass(emitters::CreateLowerTensorsPass(device));
   pm.addPass(mlir::createConvertComplexToStandardPass());
-  pm.addPass(CreateMergePointersToSameSlicePass());
+  pm.addPass(emitters::CreateMergePointersToSameSlicePass());
 
   // LowerTensors creates new affine.apply ops. Fold and CSE them so
   // simplify-affine has maximally folded expressions to work with.
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addNestedPass<FuncOp>(CreateSimplifyArithPass());
-  pm.addPass(CreateSimplifyAffinePass());
-
+  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass());
+  pm.addPass(emitters::CreateSimplifyAffinePass());
+  pm.addPass(CreateConvertIndexTypePass());
   // simplify-affine lowers most affine.apply ops, but if it can't prove a
   // division or modulo is unsigned, affine.apply ops will remain.
   pm.addPass(mlir::createLowerAffinePass());
@@ -633,14 +657,28 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCSEPass());
 
   // This pass has to run before `ExpandFloatOpsPass`.
-  auto maybe_convert_fp8 = MaybeCreateConvertFloatNvidiaPass(device);
-  if (maybe_convert_fp8.has_value()) {
-    pm.addPass(std::move(*maybe_convert_fp8));
+  if (auto* cc = std::get_if<se::CudaComputeCapability>(
+          &device.gpu_compute_capability())) {
+    se::SemanticVersion ptx_version =
+        nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
+            device.runtime_version());
+
+    // FP8 conversion intrinsics are available on sm89 since ptx 8.1
+    // Older ptx versions only support FP8 conversion for sm90
+    if ((ptx_version >= se::SemanticVersion(8, 1, 0) && cc->IsAtLeast(8, 9)) ||
+        (ptx_version >= se::SemanticVersion(7, 8, 0) && cc->IsAtLeast(9, 0))) {
+      pm.addPass(CreateConvertFloatNvidiaPass());
+    }
+  } else if (auto* cc = std::get_if<se::RocmComputeCapability>(
+                 &device.gpu_compute_capability())) {
+    if (cc->has_fp8_support()) {
+      pm.addPass(CreateConvertFloatAMDPass(*cc));
+    }
   }
 
   pm.addPass(emitters::CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
-  pm.addPass(mlir::createConvertSCFToCFPass());
+  pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(emitters::CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }

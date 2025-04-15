@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/random/uniform_int_distribution.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -37,12 +38,12 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/bitmap.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/status.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/ml_dtypes.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {
@@ -113,6 +114,16 @@ Literal CreateScalar(PrimitiveType primitive_type, Args... args) {
 template <PrimitiveType kType>
 struct ZeroProvider {
   NativeT<kType> operator()() const { return static_cast<NativeT<kType>>(0); }
+};
+
+// Use template specialization for the E8M0 type, as it has no zero
+// representation, so static_cast<> returns NaN. The actual zero-like value
+// is 2^-127.
+template <>
+struct ZeroProvider<F8E8M0FNU> {
+  NativeT<F8E8M0FNU> operator()() const {
+    return Eigen::numext::bit_cast<NativeT<F8E8M0FNU>>('\0');
+  }
 };
 
 template <PrimitiveType kType>
@@ -323,7 +334,7 @@ void PopulateWithFloatingPointData(
                                "max_bits_of_precision for floating points.";
     CHECK(!no_duplicates) << "Cannot set both no_duplicates and "
                              "max_bits_of_precision for floating points.";
-    std::uniform_int_distribution<int64_t> generator(
+    absl::uniform_int_distribution<int64_t> generator(
         -(1 << *max_bits_of_precision), 1 << *max_bits_of_precision);
     for (FloatT& value : literal->data<FloatT>()) {
       int64_t temp = generator(*engine);
@@ -391,7 +402,7 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
     std::shuffle(literal->data<IntT>().begin(), literal->data<IntT>().end(),
                  *engine);
   } else {
-    std::uniform_int_distribution<RngT<IntT>> generator(
+    absl::uniform_int_distribution<RngT<IntT>> generator(
         static_cast<RngT<IntT>>(min), static_cast<RngT<IntT>>(max));
     for (IntT& value : literal->data<IntT>()) {
       value = static_cast<IntT>(generator(*engine));
@@ -732,7 +743,7 @@ absl::StatusOr<Literal> MakeFakeLiteral(
             return absl::OkStatus();
           }
           if constexpr (primitive_type_constant == PRED) {
-            std::uniform_int_distribution<int> generator(0, 1);
+            absl::uniform_int_distribution<int> generator(0, 1);
             TF_CHECK_OK(literal.Populate<bool>(
                 [&](absl::Span<const int64_t> /*indices*/) {
                   return generator(*engine);

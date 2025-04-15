@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_device_list.h"
@@ -48,9 +49,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/status.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/status.h"
 
 namespace xla {
 
@@ -645,8 +646,6 @@ class HloRecvDoneInstruction : public HloSendRecvInstruction {
 
 class HloCollectiveInstruction : public HloChannelInstruction {
  public:
-  // TODO(b/316622399): Remove usages of this method and replace with
-  // device_list()->replica_groups().
   const std::vector<ReplicaGroup>& replica_groups() const {
     return device_list_.replica_groups();
   }
@@ -675,13 +674,6 @@ class HloCollectiveInstruction : public HloChannelInstruction {
       HloOpcode opcode, const Shape& shape,
       absl::Span<HloInstruction* const> operands,
       const CollectiveDeviceList& collective_device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id);
-
-  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
-  explicit HloCollectiveInstruction(
-      HloOpcode opcode, const Shape& shape,
-      absl::Span<HloInstruction* const> operands,
-      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id);
 
   HloInstructionProto ToProto() const override;
@@ -716,6 +708,7 @@ class HloAllGatherInstruction : public HloCollectiveInstruction {
 
   // Same as HloAllReduceInstruction::use_global_device_ids.
   bool use_global_device_ids() const { return use_global_device_ids_; }
+  void set_use_global_device_ids(bool value) { use_global_device_ids_ = value; }
 
   // The dimension on which data from different participants are concatenated.
   int64_t all_gather_dimension() const { return all_gather_dimension_; }
@@ -758,14 +751,6 @@ class HloAllReduceInstructionBase : public HloCollectiveInstruction {
       absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
-
-  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
-  explicit HloAllReduceInstructionBase(
-      HloOpcode opcode, const Shape& shape,
-      absl::Span<HloInstruction* const> operands,
-      HloComputation* reduce_computation,
-      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool use_global_device_ids);
 
   // Returns true if the ids in the ReplicaGroup config represent a global id of
@@ -2222,6 +2207,26 @@ class HloCustomCallInstruction : public HloCallableInstruction {
     return hlo->opcode() == HloOpcode::kCustomCall;
   }
 
+  class PerInstructionStorage {
+    // Abstract class for per-instruction storage.
+   public:
+    virtual ~PerInstructionStorage() = default;
+  };
+
+  void SetPerInstructionStorage(
+      std::unique_ptr<PerInstructionStorage> per_instruction_storage) {
+    absl::MutexLock lock(&per_instruction_storage_mutex_);
+    if (per_instruction_storage_ != nullptr) {
+      LOG(WARNING) << "Not Overwriting existing per-instruction storage.";
+      return;
+    }
+    per_instruction_storage_ = std::move(per_instruction_storage);
+  }
+
+  const PerInstructionStorage* GetPerInstructionStorage() const {
+    return per_instruction_storage_.get();
+  }
+
  protected:
   std::string default_called_computation_name() const override {
     return "custom_call_computation";
@@ -2266,6 +2271,9 @@ class HloCustomCallInstruction : public HloCallableInstruction {
   // TODO(b/189822916): Remove this field when all clients are migrated to the
   // status-returning API.
   CustomCallApiVersion api_version_;
+
+  absl::Mutex per_instruction_storage_mutex_;
+  std::unique_ptr<PerInstructionStorage> per_instruction_storage_ = nullptr;
 };
 
 class HloPadInstruction : public HloInstruction {
@@ -2630,12 +2638,12 @@ class HloRaggedDotInstruction : public HloInstruction {
   // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes'.
   // The `dimension_numbers` are for specifying:
   //   - batch and contracting dims for 'lhs'/'rhs' (as in HloDotInstruction),
-  //   - exactly one 'lhs' ragged dimension, and
+  //   - exactly one 'lhs' ragged dimension,
   //   - up to one 'rhs' group dimension.
   // The op takes on one of three modes, based on the kind of the ragged dim:
-  // 1. [b,m,k], [g,b,k,n], [g] -> [b,m,n], where the ragged dimension is the
+  // 1. [b,m,k], [g,b,k,n], [b,g] -> [b,m,n], where the ragged dimension is the
   //    non-contracting dimension (m) of the 'lhs'.
-  // 2. [b,m,k], [b,k,n], [g] -> [g,b,m,n], where the ragged dimension is the
+  // 2. [b,m,k], [b,k,n], [b,g] -> [g,b,m,n], where the ragged dimension is the
   //    contracting dimension (k) of the 'lhs' and 'rhs'.
   // 3. [b,m,k], [b,k,n], [g] -> [b,m,n], where the ragged dimension is the
   //    batch dimension (b) of the 'lhs' and 'rhs'.

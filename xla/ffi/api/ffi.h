@@ -32,6 +32,7 @@ limitations under the License.
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>  // NOLINT
 #include <numeric>
 #include <optional>
 #include <ostream>
@@ -57,10 +58,16 @@ using TypeId = XLA_FFI_TypeId;  // NOLINT
 enum class DataType : uint8_t {
   INVALID = XLA_FFI_DataType_INVALID,
   PRED = XLA_FFI_DataType_PRED,
+  S1 = XLA_FFI_DataType_S1,
+  S2 = XLA_FFI_DataType_S2,
+  S4 = XLA_FFI_DataType_S4,
   S8 = XLA_FFI_DataType_S8,
   S16 = XLA_FFI_DataType_S16,
   S32 = XLA_FFI_DataType_S32,
   S64 = XLA_FFI_DataType_S64,
+  U1 = XLA_FFI_DataType_U1,
+  U2 = XLA_FFI_DataType_U2,
+  U4 = XLA_FFI_DataType_U4,
   U8 = XLA_FFI_DataType_U8,
   U16 = XLA_FFI_DataType_U16,
   U32 = XLA_FFI_DataType_U32,
@@ -86,10 +93,16 @@ enum class DataType : uint8_t {
 // Create aliases in ::xla::ffi namespace for all DataTypes, for consistency
 // with xla that defines PrimitiveType enums in ::xla namespace.
 inline constexpr DataType PRED = DataType::PRED;
+inline constexpr DataType S1 = DataType::S1;
+inline constexpr DataType S2 = DataType::S2;
+inline constexpr DataType S4 = DataType::S4;
 inline constexpr DataType S8 = DataType::S8;
 inline constexpr DataType S16 = DataType::S16;
 inline constexpr DataType S32 = DataType::S32;
 inline constexpr DataType S64 = DataType::S64;
+inline constexpr DataType U1 = DataType::U1;
+inline constexpr DataType U2 = DataType::U2;
+inline constexpr DataType U4 = DataType::U4;
 inline constexpr DataType U8 = DataType::U8;
 inline constexpr DataType U16 = DataType::U16;
 inline constexpr DataType U32 = DataType::U32;
@@ -122,7 +135,13 @@ constexpr size_t ByteWidth(DataType dtype) {
       return 0;
     case DataType::PRED:
       return 1;
+    case DataType::S1:
+    case DataType::S2:
+    case DataType::S4:
     case DataType::S8:
+    case DataType::U1:
+    case DataType::U2:
+    case DataType::U4:
     case DataType::U8:
     case DataType::F8E5M2:
     case DataType::F8E4M3:
@@ -322,10 +341,14 @@ class ErrorOr : public Expected<T, Error> {
 // A promise to complete execution with a success or an error.
 class Promise;
 
+// A promise that completes when a specific number of count downs have occurred.
+class CountDownPromise;
+
 // A future that becomes available when a corresponding promise is completed.
 class Future {
  public:
   explicit Future(const Promise& promise);
+  explicit Future(const CountDownPromise& promise);
 
   Future(Future&&) = default;
   Future& operator=(Future&&) = default;
@@ -377,6 +400,9 @@ class Promise {
  public:
   Promise() : data_(std::make_shared<Future::Data>()) {}
 
+  Promise(const Promise&) = default;
+  Promise& operator=(const Promise&) = default;
+
   Promise(Promise&&) = default;
   Promise& operator=(Promise&&) = default;
 
@@ -391,10 +417,82 @@ class Promise {
   std::shared_ptr<Future::Data> data_;
 };
 
+// A simple implementation of `tsl::CountDownAsyncValueRef` that is compatible
+// with `ffi::Future`.
+class CountDownPromise {
+ public:
+  CountDownPromise() = default;
+
+  CountDownPromise(Promise promise, int64_t count)
+      : state_(std::make_shared<State>(std::move(promise), count)) {
+    assert(count > 0 && "Count must be positive");
+  }
+
+  explicit CountDownPromise(int64_t count)
+      : CountDownPromise(Promise(), count) {}
+
+  // Drops the count by `count` and returns true if the underlying promise
+  // became available.
+  bool CountDown(size_t count, const Error& error = Error::Success()) {
+    assert(state_->count.load() >= count && "Invalid count down value");
+
+    if (XLA_FFI_PREDICT_FALSE(!error.success())) {
+      const std::lock_guard<std::mutex> lock(state_->mutex);
+      state_->is_error.store(true, std::memory_order_release);
+      state_->error = error;
+    }
+
+    bool is_complete =
+        state_->count.fetch_sub(count, std::memory_order_acq_rel) == count;
+    if (XLA_FFI_PREDICT_FALSE(is_complete)) {
+      bool is_error = state_->is_error.load(std::memory_order_acquire);
+      if (XLA_FFI_PREDICT_FALSE(is_error)) {
+        auto take_error = [&] {
+          const std::lock_guard<std::mutex> lock(state_->mutex);
+          return state_->error;
+        };
+        state_->promise.SetError(take_error());
+        return true;
+      } else {
+        state_->promise.SetAvailable();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Drops the count by `1` and returns true if the underlying promise became
+  // available.
+  bool CountDown(Error error = Error::Success()) { return CountDown(1, error); }
+
+ private:
+  friend class Future;
+
+  struct State {
+    State(Promise promise, int64_t count)
+        : promise(std::move(promise)), count(count), is_error(false) {}
+
+    Promise promise;
+    std::atomic<int64_t> count;
+    std::atomic<bool> is_error;
+
+    std::mutex mutex;
+    Error error;
+  };
+
+  std::shared_ptr<State> state_;
+
+  const Promise& AsPromise() const { return state_->promise; }
+};
+
 inline Future::Future(const Promise& promise) : data_(promise.data_) {
   assert(data_.use_count() == 2 &&
          "Promise can be used to create at most one Future");
 }
+
+inline Future::Future(const CountDownPromise& promise)
+    : Future(promise.AsPromise()) {}
 
 template <typename F>
 void Future::OnReady(F&& f) {
@@ -1329,6 +1427,35 @@ inline ThreadPool::ThreadPool(const XLA_FFI_Api* api,
     : api_(api), ctx_(ctx), diagnostic_(diagnostic) {}
 
 //===----------------------------------------------------------------------===//
+// Context decoding for FFI internals
+//===----------------------------------------------------------------------===//
+
+struct FfiApi {};
+struct FfiExecutionContext {};
+
+template <>
+struct CtxDecoding<FfiApi> {
+  using Type = const XLA_FFI_Api*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    return api;
+  }
+};
+
+template <>
+struct CtxDecoding<FfiExecutionContext> {
+  using Type = XLA_FFI_ExecutionContext*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    return ctx;
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // Type Registration
 //===----------------------------------------------------------------------===//
 
@@ -1424,6 +1551,76 @@ struct CtxDecoding<State<T>> {
     }
 
     return static_cast<Type>(args.state);
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// RunId
+//===----------------------------------------------------------------------===//
+
+struct RunId {
+  int64_t run_id;
+};
+
+// Context decoding for RunId (unique identifier of a logical execution).
+//
+// Example: Ffi::Bind().Ctx<RunId>()
+//                     .To([](RunId run_id) { ... });
+template <>
+struct CtxDecoding<RunId> {
+  using Type = RunId;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    XLA_FFI_RunId_Get_Args args;
+    args.struct_size = XLA_FFI_ExecutionContext_Get_Args_STRUCT_SIZE;
+    args.extension_start = nullptr;
+    args.ctx = ctx;
+    args.run_id = 0;
+
+    if (XLA_FFI_Error* err = api->XLA_FFI_RunId_Get(&args); err) {
+      diagnostic.Emit("Failed to get run id from execution context: ")
+          << internal::GetErrorMessage(api, err);
+      internal::DestroyError(api, err);
+      return std::nullopt;
+    }
+
+    return RunId{args.run_id};
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// DeviceOrdinal
+//===----------------------------------------------------------------------===//
+
+struct DeviceOrdinal {};
+
+// Context decoding for DeviceOrdinal.
+//
+// Example: Ffi::Bind().Ctx<DeviceOrdinal>()
+//                     .To([](int32_t device_ordinal) { ... });
+template <>
+struct CtxDecoding<DeviceOrdinal> {
+  using Type = int32_t;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    XLA_FFI_DeviceOrdinal_Get_Args args;
+    args.struct_size = XLA_FFI_ExecutionContext_Get_Args_STRUCT_SIZE;
+    args.extension_start = nullptr;
+    args.ctx = ctx;
+    args.device_ordinal = 0;
+
+    if (XLA_FFI_Error* err = api->XLA_FFI_DeviceOrdinal_Get(&args); err) {
+      diagnostic.Emit("Failed to get device ordinal from execution context: ")
+          << internal::GetErrorMessage(api, err);
+      internal::DestroyError(api, err);
+      return std::nullopt;
+    }
+
+    return args.device_ordinal;
   }
 };
 

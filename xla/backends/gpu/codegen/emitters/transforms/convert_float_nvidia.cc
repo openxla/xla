@@ -31,12 +31,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
-#include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/semantic_version.h"
 
-#ifdef GOOGLE_CUDA
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
-#endif
 
 namespace xla {
 namespace gpu {
@@ -66,7 +61,8 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
     using FloatValue = mlir::TypedValue<mlir::FloatType>;
     auto src = mlir::cast<FloatValue>(op.getOperand());
     auto dst_ty = mlir::cast<mlir::FloatType>(op.getType());
-    if (!dst_ty.isFloat8E4M3FN() && !dst_ty.isFloat8E5M2()) {
+    if (!llvm::isa<mlir::Float8E4M3FNType>(dst_ty) &&
+        !llvm::isa<mlir::Float8E5M2Type>(dst_ty)) {
       return rewriter.notifyMatchFailure(op, "unsupported float conversion");
     }
 
@@ -77,7 +73,7 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
 
   Value EmitTruncToF8Intrinsic(Value value, mlir::FloatType to_ty,
                                mlir::ImplicitLocOpBuilder& b) const {
-    assert(to_ty.isFloat8E4M3FN() || to_ty.isFloat8E5M2());
+    assert((llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(to_ty)));
 
     ml::CallIntrinsicOp cvtOp;
     if (value.getType() == b.getF16Type()) {
@@ -86,8 +82,9 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
           b.create<ml::UndefOp>(ml::getFixedVectorType(value.getType(), 2));
       vec = b.create<ml::InsertElementOp>(vec, value,
                                           b.create<ma::ConstantIntOp>(0, 8));
-      auto cvtIntr = to_ty.isFloat8E4M3FN() ? "llvm.nvvm.f16x2.to.e4m3x2.rn"
-                                            : "llvm.nvvm.f16x2.to.e5m2x2.rn";
+      auto cvtIntr = llvm::isa<mlir::Float8E4M3FNType>(to_ty)
+                         ? "llvm.nvvm.f16x2.to.e4m3x2.rn"
+                         : "llvm.nvvm.f16x2.to.e5m2x2.rn";
       cvtOp = b.create<ml::CallIntrinsicOp>(b.getIntegerType(16),
                                             b.getStringAttr(cvtIntr),
                                             mlir::ValueRange{vec});
@@ -99,8 +96,9 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
       } else if (value.getType() != f32_ty) {
         value = b.create<ma::TruncFOp>(f32_ty, value);
       }
-      auto cvtIntr = to_ty.isFloat8E4M3FN() ? "llvm.nvvm.ff.to.e4m3x2.rn"
-                                            : "llvm.nvvm.ff.to.e5m2x2.rn";
+      auto cvtIntr = llvm::isa<mlir::Float8E4M3FNType>(to_ty)
+                         ? "llvm.nvvm.ff.to.e4m3x2.rn"
+                         : "llvm.nvvm.ff.to.e5m2x2.rn";
       cvtOp = b.create<ml::CallIntrinsicOp>(b.getIntegerType(16),
                                             b.getStringAttr(cvtIntr),
                                             mlir::ValueRange{value, value});
@@ -192,7 +190,8 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
     using FloatValue = mlir::TypedValue<mlir::FloatType>;
     auto src = mlir::cast<FloatValue>(op.getOperand());
     auto dst_ty = mlir::cast<mlir::FloatType>(op.getType());
-    if (!src.getType().isFloat8E4M3FN() && !src.getType().isFloat8E5M2()) {
+    if (!llvm::isa<mlir::Float8E4M3FNType>(src.getType()) &&
+        !llvm::isa<mlir::Float8E5M2Type>(src.getType())) {
       return rewriter.notifyMatchFailure(op, "unsupported float conversion");
     }
 
@@ -203,7 +202,8 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
 
   Value EmitExtFromF8Intrinsic(Value value, mlir::FloatType to_ty,
                                mlir::ImplicitLocOpBuilder& b) const {
-    assert(value.getType().isFloat8E4M3FN() || value.getType().isFloat8E5M2());
+    assert((llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(
+        value.getType())));
 
     // Extend the smaller type to the FP16 type using the intrinsic, and then
     // to the destination type. In the case of BF16 go through the intermediate
@@ -211,7 +211,7 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
     Value input = b.create<ml::ZExtOp>(
         b.getIntegerType(16),
         b.create<ma::BitcastOp>(b.getIntegerType(8), value));
-    auto cvtIntr = value.getType().isFloat8E4M3FN()
+    auto cvtIntr = llvm::isa<mlir::Float8E4M3FNType>(value.getType())
                        ? "llvm.nvvm.e4m3x2.to.f16x2.rn"
                        : "llvm.nvvm.e5m2x2.to.f16x2.rn";
     mlir::FloatType f16_ty = b.getF16Type();
@@ -251,24 +251,6 @@ class ConvertFloatNvidiaPass
 
 std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass() {
   return std::make_unique<ConvertFloatNvidiaPass>();
-}
-
-std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
-    const se::DeviceDescription& device_description) {
-#ifdef GOOGLE_CUDA
-  se::SemanticVersion ptx_version =
-      nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
-          device_description.runtime_version());
-  se::CudaComputeCapability cc = device_description.cuda_compute_capability();
-
-  // FP8 conversion intrinsics are available on sm89 since ptx 8.1
-  // Older ptx versions only support FP8 conversion for sm90
-  if ((ptx_version >= se::SemanticVersion(8, 1, 0) && cc.IsAtLeast(8, 9)) ||
-      (ptx_version >= se::SemanticVersion(7, 8, 0) && cc.IsAtLeast(9, 0))) {
-    return CreateConvertFloatNvidiaPass();
-  }
-#endif
-  return std::nullopt;
 }
 
 }  // namespace gpu

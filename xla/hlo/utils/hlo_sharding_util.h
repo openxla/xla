@@ -52,6 +52,7 @@ struct FormattingStep {
   std::optional<Shape> reverse_input_shape;
   HloOpcode formatting_opcode;
   HloInstruction* padding_value;
+  std::optional<absl::Span<const int64_t>> xpose_permutation;
 };
 
 struct GatherScatterDims {
@@ -543,8 +544,8 @@ Shape TileLeafShape(const HloSharding& sharding, const Shape& shape);
 // DetermineArgumentLayoutsFromCompileOptions() in
 // tensorflow/compiler/xla/pjrt/utils.h.
 absl::Status CanonicalizeLayoutAfterShardingPropagation(
-    HloModule* module, bool update_output_layout,
-    bool update_parameters_layout);
+    HloModule* module, const std::vector<bool>& update_output_layout,
+    const std::vector<bool>& update_parameters_layout);
 
 // Returns true iff the specified hlo or sharding has a spatially partitioned
 // sharding (tiled or replicated) that can be propagated by sharding

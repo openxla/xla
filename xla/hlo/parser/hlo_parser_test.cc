@@ -37,25 +37,27 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
-#include "xla/protobuf_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -65,12 +67,12 @@ namespace m = ::xla::match;
 using ::absl::string_view;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
+using ::tsl::proto_testing::EqualsProto;
 
 struct TestData {
   std::string test_name;
   std::string module_string;
   int64_t replica_count = 1;
-  bool enable_verification = true;
 };
 
 std::string TestDataToString(const ::testing::TestParamInfo<TestData>& data) {
@@ -2791,6 +2793,18 @@ ENTRY test {
   // clang-format on
 }
 
+absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+    absl::string_view name, absl::string_view hlo_text,
+    const HloModuleConfig& config) {
+  auto verified_module = std::make_unique<VerifiedHloModule>(
+      std::string(name), config,
+      /*verifier_layout_sensitive=*/false,
+      /*allow_mixed_precision_in_hlo_verifier=*/true,
+      ShapeUtil::ByteSizeOfElements);
+  TF_RETURN_IF_ERROR(verified_module->ParseHloStringAndVerifyModule(hlo_text));
+  return verified_module;
+}
+
 // The test class for those tests defined above which round-trip through the
 // parser and ToString is templatized on two bool parameters:
 //
@@ -2809,28 +2823,31 @@ class HloParameterizedParserTest
     : public ::testing::Test,
       public ::testing::WithParamInterface<TestData> {
  protected:
-  // Expects "ToString(ParseHloModule(std::string)) == string", that is, parses
-  // the string, asserts that it succeeded, stringifies the parsed module, and
-  // checks that it equals the original string.
+  absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+      absl::string_view hlo_text) {
+    HloModuleConfig config;
+    config.set_replica_count(GetParam().replica_count);
+    return xla::ParseAndReturnVerifiedModule(
+        ::testing::UnitTest::GetInstance()->current_test_info()->name(),
+        hlo_text, config);
+  }
+
+  // Expects "ToString(ParseHloModule(ToString(ParseHloModule(std::string)))) ==
+  // string", that is, parses the string, asserts that it succeeded, stringifies
+  // the parsed module, parses this string to ensure that the default ToString()
+  // version is parsable, then stringifies the newly parsed module with
+  // appropriate options for original tests, and checks that it equals the
+  // original string.
   void ExpectEqual() {
     VLOG(3) << "Running HloParameterizedParserTest with short_form = "
             << short_form << ", proto_round_trip = " << proto_round_trip;
-    std::unique_ptr<HloModule> module;
     const std::string& original = GetParam().module_string;
-    HloModuleConfig config;
-    config.set_replica_count(GetParam().replica_count);
-    if (GetParam().enable_verification) {
-      auto verified_module = std::make_unique<VerifiedHloModule>(
-          GetParam().test_name, config,
-          /*verifier_layout_sensitive=*/false,
-          /*allow_mixed_precision_in_hlo_verifier=*/true,
-          ShapeUtil::ByteSizeOfElements);
-      TF_ASSERT_OK(verified_module->ParseHloStringAndVerifyModule(original));
-      module = std::move(verified_module);
-    } else {
-      TF_ASSERT_OK_AND_ASSIGN(module,
-                              ParseAndReturnUnverifiedModule(original, config));
-    }
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(original));
+    TF_ASSERT_OK_AND_ASSIGN(
+        module, ParseAndReturnVerifiedModule(module->ToString(
+                    HloPrintOptions().set_print_large_constants(true))));
+
     if (proto_round_trip) {
       TF_ASSERT_OK_AND_ASSIGN(module, HloModule::CreateFromProto(
                                           module->ToProto(), module->config()));
@@ -2838,15 +2855,16 @@ class HloParameterizedParserTest
     if (short_form) {
       EXPECT_EQ(original, module->ToString(HloPrintOptions::ShortParsable()));
     } else {
-      EXPECT_EQ(
-          original,
-          module->ToString(HloPrintOptions().set_print_large_constants(true)));
+      EXPECT_EQ(original,
+                module->ToString(HloPrintOptions()
+                                     .set_print_operand_shape(true)
+                                     .set_print_large_constants(true)));
     }
     for (HloComputation* computation : module->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
         if (instr->opcode() == HloOpcode::kWhile) {
-          EXPECT_EQ(instr->while_body()->WhileCallInstruction(), instr);
-          EXPECT_TRUE(instr->while_body()->IsWhileBodyComputation());
+          EXPECT_EQ(instr->while_body()->GetUniqueCaller(HloOpcode::kWhile),
+                    instr);
         }
       }
     }
@@ -2883,13 +2901,10 @@ INSTANTIATE_TEST_SUITE_P(HloParserTestSuccessInstantiation,
 class HloNonRoundtripParserTest
     : public ::testing::TestWithParam<NonRoundtripTestData> {};
 TEST_P(HloNonRoundtripParserTest, Run) {
-  auto module = std::make_unique<VerifiedHloModule>(
-      GetParam().test_name, HloModuleConfig{},
-      /*verifier_layout_sensitive=*/false,
-      /*allow_mixed_precision_in_hlo_verifier=*/true,
-      ShapeUtil::ByteSizeOfElements);
-  TF_ASSERT_OK(
-      module->ParseHloStringAndVerifyModule(GetParam().input_module_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(GetParam().test_name,
+                                                GetParam().input_module_string,
+                                                HloModuleConfig()));
   EXPECT_EQ(absl::StripAsciiWhitespace(GetParam().output_module_string),
             absl::StripAsciiWhitespace(
                 module->ToString(HloPrintOptions::ShortParsable())));
@@ -2906,16 +2921,11 @@ class HloParserTest : public ::testing::Test {
     EXPECT_TRUE(absl::StrContains(s, expected))
         << "'" << s << "' does not contain '" << expected << "'";
   }
-  absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
-  ParseAndReturnVerifiedModule(absl::string_view hlo_text) {
-    auto module = std::make_unique<VerifiedHloModule>(
+  absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
+      absl::string_view hlo_text) {
+    return xla::ParseAndReturnVerifiedModule(
         ::testing::UnitTest::GetInstance()->current_test_info()->name(),
-        HloModuleConfig(),
-        /*verifier_layout_sensitive=*/false,
-        /*allow_mixed_precision_in_hlo_verifier=*/true,
-        ShapeUtil::ByteSizeOfElements);
-    TF_RETURN_IF_ERROR(module->ParseHloStringAndVerifyModule(hlo_text));
-    return std::move(module);
+        hlo_text, HloModuleConfig());
   }
 };
 
@@ -3524,8 +3534,36 @@ ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
 })";
 
   absl::StatusOr<std::unique_ptr<HloModule>> module =
-      ParseAndReturnUnverifiedModule(
-          original, {}, HloParserOptions().set_fill_missing_layouts(false));
+      ParseAndReturnUnverifiedModule(original, {},
+                                     HloParserOptions()
+                                         .set_fill_missing_layouts(false)
+                                         .set_keep_module_auto_layouts(false));
+  TF_ASSERT_OK(module.status());
+  // Do not set the default layout.
+  EXPECT_FALSE(module.value()->entry_computation_layout().AnyLayoutSet());
+}
+
+TEST_F(HloParserTest, EntryComputationLayoutDefinedThroughAutoLayout) {
+  const std::string original = R"(
+HloModule layout_defined, entry_computation_layout={(f32[8,16,256]) -> f32[8,16]}
+
+add_F32.v3 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
+  input = f32[8,16,256]{0,1,2} parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce = f32[8,16]{0,1} reduce(input, constant), dimensions={2}, to_apply=add_F32.v3
+})";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module =
+      ParseAndReturnUnverifiedModule(original, {},
+                                     HloParserOptions()
+                                         .set_fill_missing_layouts(true)
+                                         .set_keep_module_auto_layouts(true));
   TF_ASSERT_OK(module.status());
   // Do not set the default layout.
   EXPECT_FALSE(module.value()->entry_computation_layout().AnyLayoutSet());
@@ -3548,8 +3586,10 @@ ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
 })";
 
   absl::StatusOr<std::unique_ptr<HloModule>> module =
-      ParseAndReturnUnverifiedModule(
-          original, {}, HloParserOptions().set_fill_missing_layouts(true));
+      ParseAndReturnUnverifiedModule(original, {},
+                                     HloParserOptions()
+                                         .set_fill_missing_layouts(true)
+                                         .set_keep_module_auto_layouts(false));
   TF_ASSERT_OK(module.status());
   EXPECT_THAT(module.value()
                   ->entry_computation_layout()
@@ -3576,8 +3616,10 @@ ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
 })";
 
   absl::StatusOr<std::unique_ptr<HloModule>> module =
-      ParseAndReturnUnverifiedModule(
-          original, {}, HloParserOptions().set_fill_missing_layouts(true));
+      ParseAndReturnUnverifiedModule(original, {},
+                                     HloParserOptions()
+                                         .set_fill_missing_layouts(true)
+                                         .set_keep_module_auto_layouts(false));
   TF_ASSERT_OK(module.status());
   EXPECT_THAT(module.value()
                   ->entry_computation_layout()
@@ -4111,7 +4153,7 @@ TEST_F(HloParserTest, ParseUnknownSharding) {
 
 TEST_F(HloParserTest, ParseFrontendAttributes) {
   const std::string original =
-      R"({attr_a="test_a",attr_b="b",attr_c="s64",attr_d="a/b"})";
+      R"({attr_a="test_a",attr_b="b",attr_c={type="s64"},attr_d="a=\"b/c\""})";
   TF_ASSERT_OK_AND_ASSIGN(FrontendAttributes frontend_attributes,
                           ParseFrontendAttributes(original));
   EXPECT_EQ(FrontendAttributesToString(frontend_attributes), original);
@@ -5790,8 +5832,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyMode) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyModeError) {
@@ -5827,8 +5868,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyRtol) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalResultAccuracyInvalidName) {
@@ -5872,9 +5912,9 @@ TEST_F(HloParserTest, TranscendentalAccuracyNoConfig) {
                           ParseAndReturnUnverifiedModule(hlo_string));
   ResultAccuracy default_result_accuracy;
   default_result_accuracy.set_mode(ResultAccuracy::DEFAULT);
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(
+  EXPECT_THAT(
       module->entry_computation()->root_instruction()->result_accuracy(),
-      default_result_accuracy));
+      EqualsProto(default_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyInvalidOp) {
@@ -5883,13 +5923,83 @@ HloModule bitcast_to_smaller
 
 ENTRY main {
   p = s32[10] parameter(0)
-  ROOT out = s8[10,4] bitcast-convert(p), result_accuracy={tolerance={rtol=0.5, atol=1.0, ulps=2}
+  ROOT out = s8[10,4] bitcast-convert(p), result_accuracy={tolerance={rtol=0.5, atol=1.0, ulps=2}}
 }
 )";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
   EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "error: unexpected attribute \"result_accuracy\"");
+}
+
+TEST_F(HloParserTest,
+       AsyncInstructionWithAttributesShouldPropagateToWrappedInstruction) {
+  const char* hlo = R"(
+  HloModule test
+  ENTRY main {
+    a = s32[] parameter(0), origin={{"v1"}}
+    b = s32[] parameter(1), origin={{"v2"}}
+    add-start = ((s32[], s32[]), s32[], s32[]) add-start(a, b),
+                metadata={op_type="add" op_name="sample name" source_file="path/to/test.cc" source_line=68},
+                backend_config="foo\" bar",
+                frontend_attributes={attr_a="test_a",attr_b="b"},
+                statistics={visualizing_index=1,stat-1=33,stat-2=44}
+    ROOT add-done = s32[] add-done(add-start), origin={{"v3"}}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  // Check the wrapped instruction.
+  HloInstruction* wrapped_instr =
+      m->entry_computation()->root_instruction()->async_wrapped_instruction();
+  EXPECT_EQ(wrapped_instr->metadata().op_name(), "sample name");
+  EXPECT_EQ(wrapped_instr->metadata().op_type(), "add");
+  EXPECT_EQ(wrapped_instr->metadata().source_file(), "path/to/test.cc");
+  EXPECT_EQ(wrapped_instr->metadata().source_line(), 68);
+  EXPECT_EQ(wrapped_instr->raw_backend_config_string(), "foo\" bar");
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().size(), 2);
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().at("attr_a"), "test_a");
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().at("attr_b"), "b");
+  EXPECT_EQ(wrapped_instr->statistics_viz().stat_index_to_visualize(), 1);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics_size(), 2);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(0).stat_name(),
+            "stat-1");
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(0).stat_val(), 33);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_name(),
+            "stat-2");
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_val(), 44);
+  EXPECT_EQ(OriginalValueToString(*wrapped_instr->original_value()),
+            "{\"v3\"}");
+  // Check the async-start and async-done instructions.
+  HloInstruction* async_done = m->entry_computation()->root_instruction();
+  HloInstruction* async_start = async_done->async_chain_start();
+  EXPECT_THAT(async_start->metadata(), EqualsProto(wrapped_instr->metadata()));
+  EXPECT_EQ(async_start->raw_backend_config_string(),
+            wrapped_instr->raw_backend_config_string());
+  EXPECT_THAT(async_start->frontend_attributes(),
+              EqualsProto(wrapped_instr->frontend_attributes()));
+  EXPECT_THAT(async_start->statistics_viz(),
+              EqualsProto(wrapped_instr->statistics_viz()));
+  EXPECT_EQ(OriginalValueToString(*async_done->original_value()),
+            OriginalValueToString(*wrapped_instr->original_value()));
+}
+
+TEST_F(HloParserTest, ResultAccuracyToProto) {
+  const char* const hlo_string = R"(
+  HloModule exponential_hw
+
+  ENTRY exponential_hw {
+    %exponent = f32[] parameter(0)
+    ROOT %exponential = f32[] exponential(f32[] %exponent), result_accuracy={tolerance={rtol=0.5, atol=1.0, ulps=2}}
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+  HloInstruction* exp_hlo_instruction =
+      module->entry_computation()->root_instruction();
+  HloInstructionProto exp_hlo_inst_proto = exp_hlo_instruction->ToProto();
+  EXPECT_TRUE(exp_hlo_inst_proto.has_result_accuracy());
+  EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().rtol(), 0.5);
+  EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().atol(), 1.0);
 }
 
 }  // namespace

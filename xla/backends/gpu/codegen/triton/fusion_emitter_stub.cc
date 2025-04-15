@@ -31,7 +31,9 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
+#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
@@ -70,7 +72,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
-    const HloModuleConfig& hlo_config, absl::string_view hlo_module_name,
+    absl::string_view kernel_name, const HloModule& hlo_module,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
@@ -91,7 +93,7 @@ llvm::SmallVector<mlir::Value, 3> ComputeDelinearizedTileIndex(
   return {};
 }
 
-absl::StatusOr<MakeTensorPtrOpAndBoundaryChecks> CreateMakeTensorPtrOp(
+absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
     EmitterLocOpBuilder& b, mlir::ValueRange tile_multi_index,
     const TiledHloInstruction& tiled_hlo, mlir::Value parent_base_ptr) {
   return absl::UnimplementedError("not supported for this build configuration");

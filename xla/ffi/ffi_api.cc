@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
@@ -53,9 +54,9 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -84,6 +85,7 @@ struct XLA_FFI_ExecutionContext {
 
   using BackendContext = std::variant<std::monostate, CpuContext, GpuContext>;
 
+  xla::RunId run_id = {};
   int32_t device_ordinal = -1;
   BackendContext backend_context = {};
 
@@ -121,6 +123,7 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
   };
 
   return XLA_FFI_ExecutionContext{
+      options.run_id,
       options.device_ordinal,
       std::visit(BackendVisitor{}, options.backend_options),
       options.called_computation,
@@ -617,19 +620,52 @@ static XLA_FFI_Error* XLA_FFI_Stream_Get(XLA_FFI_Stream_Get_Args* args) {
   return nullptr;
 }
 
+static XLA_FFI_Error* XLA_FFI_RunId_Get(XLA_FFI_RunId_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_RunId_Get", XLA_FFI_RunId_Get_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  args->run_id = args->ctx->run_id.ToInt();
+
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_DeviceOrdinal_Get(
+    XLA_FFI_DeviceOrdinal_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_DeviceOrdinal_Get", XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->device_ordinal = args->ctx->device_ordinal;
+  return nullptr;
+}
+
 static XLA_FFI_Error* XLA_FFI_TypeId_Register(
     XLA_FFI_TypeId_Register_Args* args) {
   XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "XLA_FFI_ExecutionContext_Get_Args",
       XLA_FFI_ExecutionContext_Get_Args_STRUCT_SIZE, args->struct_size));
 
-  auto type_id = TypeIdRegistry::RegisterExternalTypeId(
-      std::string_view(args->name.ptr, args->name.len));
-  if (!type_id.ok()) {
-    return new XLA_FFI_Error{std::move(type_id).status()};
+  absl::string_view type_name(args->name.ptr, args->name.len);
+  TypeIdRegistry::TypeId type_id(args->type_id->type_id);
+
+  // If type_id is unknown, we are registering a new type and XLA will assign a
+  // unique type id to it.
+  if (type_id == TypeIdRegistry::kUnknownTypeId) {
+    auto assigned_type_id = TypeIdRegistry::AssignExternalTypeId(type_name);
+    if (!assigned_type_id.ok()) {
+      return new XLA_FFI_Error{std::move(assigned_type_id).status()};
+    }
+
+    args->type_id->type_id = assigned_type_id->value();
+    return nullptr;
   }
 
-  args->type_id->type_id = type_id->value();
+  // If type_id is set, we are relying on the caller-provided unique type id.
+  if (auto status = TypeIdRegistry::RegisterExternalTypeId(type_name, type_id);
+      !status.ok()) {
+    return new XLA_FFI_Error{std::move(status)};
+  }
+
   return nullptr;
 }
 
@@ -842,6 +878,10 @@ static int32_t XLA_FFI_INTERNAL_DeviceOrdinal_Get(
   return ctx->device_ordinal;
 }
 
+static int64_t XLA_FFI_INTERNAL_RunId_Get(XLA_FFI_ExecutionContext* ctx) {
+  return ctx->run_id.ToInt();
+}
+
 static void* XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get(
     XLA_FFI_ExecutionContext* ctx) {
   if (auto* gpu = std::get_if<XLA_FFI_ExecutionContext::GpuContext>(
@@ -889,6 +929,7 @@ static XLA_FFI_InternalApi internal_api = {
     XLA_FFI_INTERNAL_Future_Forward,
     XLA_FFI_INTERNAL_Stream_Get,
     XLA_FFI_INTERNAL_DeviceOrdinal_Get,
+    XLA_FFI_INTERNAL_RunId_Get,
     XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get,
     XLA_FFI_INTERNAL_CalledComputation_Get,
     XLA_FFI_INTERNAL_ExecutionContext_Get,
@@ -925,6 +966,8 @@ static XLA_FFI_Api api = {
     XLA_FFI_Future_Create,
     XLA_FFI_Future_SetAvailable,
     XLA_FFI_Future_SetError,
+    XLA_FFI_RunId_Get,
+    XLA_FFI_DeviceOrdinal_Get,
 };
 
 const XLA_FFI_Api* GetXlaFfiApi() { return &api; }

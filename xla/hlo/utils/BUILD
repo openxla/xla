@@ -2,9 +2,10 @@
 #   Implementation of XLA’s HLO utilities used for higher-level transformations.
 
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_test",
 )
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -106,6 +107,7 @@ cc_library(
     hdrs = [
         "hlo_sharding_util.h",
     ],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":hlo_container_util",
         "//xla:array",
@@ -167,10 +169,12 @@ cc_library(
         "//xla:literal",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -220,6 +224,7 @@ xla_cc_test(
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/service:pattern_matcher",
         "//xla/tests:hlo_test_base",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",

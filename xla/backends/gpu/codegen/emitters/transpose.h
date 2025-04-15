@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/shape.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {

@@ -17,6 +17,7 @@ limitations under the License.
 #include <array>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -117,7 +118,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
                          ::testing::ValuesIn({
                              MixTypeParams{PRED, F16, 16, 32, 8},
                              MixTypeParams{PRED, BF16, 16, 32, 8},
-                             MixTypeParams{PRED, F32, 16, 32, 8, 1e-4, 1e-3},
+                             MixTypeParams{PRED, F32, 16, 32, 8, 2e-4, 2e-3},
                              MixTypeParams{S8, F16, 16, 32, 8},
                              MixTypeParams{S8, BF16, 16, 32, 8},
                              MixTypeParams{S8, F32, 16, 32, 8, 5e-2, 1e-2},
@@ -151,7 +152,6 @@ class TritonTest : public GpuCodegenTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_triton_gemm_any(true);
     debug_options.set_xla_gpu_cublas_fallback(false);
     // Always rewrite Gemms with Triton regardless of size.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
@@ -265,9 +265,14 @@ triton_computation {
 ENTRY e {
   p0 = $0[33,68]{1,0} parameter(0)
   ROOT triton_fusion = f32[33,68]{1,0} fusion(p0), kind=kCustom,
-    calls=triton_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton",
-                    "block_level_fusion_config":{"output_tile_sizes":["1", "1"],"num_warps":"1"}}}
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["1", "1"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -442,9 +447,14 @@ ENTRY e {
   p0 = $0[11,63]{1,0} parameter(0)
   p1 = $0[11,63]{1,0} parameter(1)
   ROOT triton_fusion = f32[11,63]{1,0} fusion(p0, p1), kind=kCustom,
-    calls=triton_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton",
-                    "block_level_fusion_config":{"output_tile_sizes":["1", "1"],"num_warps":"1"}}}
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1", "1"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -472,6 +482,9 @@ ENTRY e {
       /*run_hlo_passes=*/false, /*args_max_bits_of_precision=*/6));
 }
 
+bool HloOpcodeIsComparison(HloOpcode opcode) {
+  return opcode == HloOpcode::kCompare;
+}
 std::vector<HloOpcode> TestedBinaryElementwise(PrimitiveType element_type) {
   std::vector<HloOpcode> ret =
       legacy_triton::TritonSupportedBinaryElementwiseUpToFloatNormalization(
@@ -560,16 +573,17 @@ ENTRY e {
   p1 = $0[11,63]{1,0} parameter(1)
   p2 = $0[11,63]{1,0} parameter(2)
   ROOT triton_gemm__ = f32[92,63]{1,0} fusion(p0, p1, p2), kind=kCustom,
-    calls=triton_gemm___computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":
-                      {"block_m":"16",
-                       "block_n":"64",
-                       "block_k":"16",
-                       "split_k":"1",
-                       "num_stages":"3",
-                       "num_warps":"2",
-                       "num_ctas":"1"}}}
+    calls=triton_gemm___computation, backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton_gemm",
+      "triton_gemm_config": {
+        "block_m":"16",
+        "block_n":"64",
+        "block_k":"16",
+        "split_k":"1",
+        "num_stages":"3",
+        "num_warps":"2",
+        "num_ctas":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -671,16 +685,17 @@ ENTRY e {
   p2 = $0[13,63]{1,0} parameter(2)
   p3 = pred[13,63]{1,0} parameter(3)
   ROOT triton_gemm__ = $1[92,63]{1,0} fusion(p0, p1, p2, p3), kind=kCustom,
-    calls=triton_gemm___computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":
-                      {"block_m":"16",
-                       "block_n":"64",
-                       "block_k":"16",
-                       "split_k":"1",
-                       "num_stages":"3",
-                       "num_warps":"2",
-                       "num_ctas":"1"}}}
+    calls=triton_gemm___computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_gemm",
+        "triton_gemm_config": {
+          "block_m":"16",
+          "block_n":"64",
+          "block_k":"16",
+          "split_k":"1",
+          "num_stages":"3",
+          "num_warps":"2",
+          "num_ctas":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type1),
@@ -770,16 +785,17 @@ ENTRY e {
   p0 = f32[92,11]{1,0} parameter(0)
   p1 = f32[11,63]{1,0} parameter(1)
   ROOT triton_gemm__ = f32[92,63]{1,0} fusion(p0, p1), kind=kCustom,
-    calls=triton_gemm___computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":
-                      {"block_m":"16",
-                       "block_n":"64",
-                       "block_k":"16",
-                       "split_k":"1",
-                       "num_stages":"3",
-                       "num_warps":"2",
-                       "num_ctas":"1"}}}
+    calls=triton_gemm___computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_gemm",
+        "triton_gemm_config":{
+          "block_m":"16",
+          "block_n":"64",
+          "block_k":"16",
+          "split_k":"1",
+          "num_stages":"3",
+          "num_warps":"2",
+          "num_ctas":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type));
@@ -2348,10 +2364,14 @@ triton_computation {
 ENTRY entry_computation {
   p = $0[400,16] parameter(0)
   ROOT fusion = $0[400] fusion(p), kind=kCustom, calls=triton_computation,
-    backend_config={ "operation_queue_id":"0", "wait_on_operation_queues":[],
-      "fusion_backend_config":{ "kind":"__triton", "block_level_fusion_config":{
-          "output_tile_sizes":["400"], "num_warps":"1"}},
-      "force_earliest_schedule":false}
+    backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["400"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type));

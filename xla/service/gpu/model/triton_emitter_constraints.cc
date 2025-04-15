@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
@@ -29,13 +30,16 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/model/affine_map_evaluator.h"
+#include "xla/service/gpu/model/constraint_expression.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
@@ -45,6 +49,10 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+using ::mlir::AffineExpr;
+using ::mlir::AffineMap;
+using ::mlir::MLIRContext;
 
 // Triton enforces that all tensors in the program have less than 1048576
 // elements, otherwise it will fail to compile.
@@ -71,18 +79,16 @@ TritonEmitterConstraints::DeriveCustomConstraints(
 
   for (const auto& instruction : instructions) {
     const HloInstruction* hlo = instruction->hlo();
+    // Don't consider operands to the fusion computation for constraints.
+    if (!fusion_adaptor.ContainsInstruction(hlo)) {
+      continue;
+    }
+
     // Construct custom constraints for parameters of bitcasts and reshapes
-    // within `instructions`. If the operation's parameter is not part of
-    // `instructions`, then the bitcast/reshape node is an operand of the
-    // fusion computation, and there is no need to add constraints.
+    // within `instructions`.
     if (hlo->opcode() == HloOpcode::kReshape ||
         hlo->opcode() == HloOpcode::kBitcast) {
-      if (!fusion_adaptor.ContainsInstruction(hlo)) {
-        continue;
-      }
-
-      mlir::MLIRContext* ctx =
-          instruction->symbolic_tile().size_map().getContext();
+      MLIRContext* ctx = instruction->symbolic_tile().size_map().getContext();
 
       IndexingMap reshape_indexing_map =
           *ComputeOutputToInputIndexing(hlo, /*output_id=*/0, ctx)
@@ -104,6 +110,55 @@ TritonEmitterConstraints::DeriveCustomConstraints(
       result.push_back(
           CustomConstraints{instruction->symbolic_tile().size_map(),
                             std::move(reshape_constraints)});
+      continue;
+    }
+
+    // Construct emitter-specific constraints for concatenates. This allows
+    // filtering for tile sizes that divide the concatenated dimension for all
+    // the operands exactly.
+    if (hlo->opcode() == HloOpcode::kConcatenate) {
+      AffineMap size_map = instruction->symbolic_tile().size_map();
+      MLIRContext* ctx = size_map.getContext();
+      int concatenate_dimension_index = hlo->concatenate_dimension();
+      AffineExpr concatenate_dimension_map_parameter =
+          mlir::getAffineDimExpr(concatenate_dimension_index, ctx);
+
+      // Check that each operand's concatenation dimension is divisible by the
+      // tile size along this dimension.
+      ConstraintExpression divisibility_constraints =
+          ConstraintExpression::GetAlwaysSatisfied();
+
+      for (const HloInstruction* operand : hlo->operands()) {
+        AffineExpr operand_concat_dimension = mlir::getAffineConstantExpr(
+            operand->shape().dimensions(concatenate_dimension_index), ctx);
+        ConstraintExpression::Constraint divisibility_constraint{
+            operand_concat_dimension % concatenate_dimension_map_parameter,
+            Interval{0, 0}};
+        divisibility_constraints =
+            divisibility_constraints && divisibility_constraint;
+      }
+
+      result.push_back(
+          CustomConstraints{size_map, std::move(divisibility_constraints)});
+
+      AffineMap identity_map =
+          AffineMap::getMultiDimIdentityMap(size_map.getNumDims(), ctx);
+
+      // Check that the offset along the contracting dimension is 0.
+      ConstraintExpression::Constraint offset_constraint{
+          instruction->symbolic_tile().offset_map().getResult(
+              concatenate_dimension_index),
+          Interval{0, 0}};
+      result.push_back(CustomConstraints{
+          identity_map, ConstraintExpression(offset_constraint)});
+
+      // Check that the stride along the contracting dimension is 1.
+      ConstraintExpression::Constraint stride_constraint{
+          instruction->symbolic_tile().stride_map().getResult(
+              concatenate_dimension_index),
+          Interval{1, 1}};
+      result.push_back(CustomConstraints{
+          identity_map, ConstraintExpression(stride_constraint)});
     }
   }
 
@@ -116,21 +171,33 @@ TritonEmitterConstraints::GetBuilder(
   return [=](const std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>&
                  instructions,
              const HloFusionAdaptor& fusion_adaptor) {
-    llvm::DenseSet<mlir::AffineMap> unique_tile_size_maps;
+    llvm::DenseSet<AffineMap> unique_tile_size_maps;
+    llvm::SmallVector<mlir::AffineMap, 2> size_maps;
+    auto roots = fusion_adaptor.GetRoots();
     for (const auto& tiled_hlo_instruction : instructions) {
       unique_tile_size_maps.insert(
           tiled_hlo_instruction->symbolic_tile().size_map());
+      // TODO(b/365727080): We should also enforce this for single-output
+      // fusions.
+      if (roots.size() > 1 &&
+          absl::c_any_of(roots, [&tiled_hlo_instruction](
+                                    const HloInstructionAdaptor& instr) {
+            return &instr.instruction() == tiled_hlo_instruction->hlo();
+          })) {
+        size_maps.push_back(tiled_hlo_instruction->symbolic_tile().size_map());
+      }
     }
 
     std::vector<CustomConstraints> custom_constraints =
         DeriveCustomConstraints(instructions, fusion_adaptor);
 
-    llvm::SmallVector<mlir::AffineMap, 4> tile_size_maps(
+    llvm::SmallVector<AffineMap, 4> tile_size_maps(
         unique_tile_size_maps.begin(), unique_tile_size_maps.end());
 
     return std::unique_ptr<TritonEmitterConstraints>(
         absl::WrapUnique(new TritonEmitterConstraints(
-            std::move(tile_size_maps), std::move(custom_constraints),
+            std::move(tile_size_maps), std::move(size_maps),
+            std::move(custom_constraints),
             /*root_shape=*/instructions.back()->hlo()->shape(),
             device_description)));
   };
@@ -152,9 +219,11 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
   }
 
   int64_t num_tiles = 1;
-  for (auto [dim_size, tile_size] :
-       llvm::zip(root_shape_.dimensions(), tile_parameters)) {
-    num_tiles *= (dim_size + tile_size - 1) / tile_size;
+  if (root_shape_.IsArray()) {
+    for (auto [dim_size, tile_size] :
+         llvm::zip(root_shape_.dimensions(), tile_parameters)) {
+      num_tiles *= (dim_size + tile_size - 1) / tile_size;
+    }
   }
 
   // Number of blocks will exceed the hardware limit. This limitation comes from
@@ -176,6 +245,19 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
                           /*dim_values=*/tile_parameters);
     if (!custom_constraint.constraints.IsSatisfiedBy(
             GetPaddedTileSizes(transformed_tile_parameters))) {
+      return false;
+    }
+  }
+  for (const auto& size_map : size_maps_) {
+    llvm::SmallVector<int64_t> transformed_tile_parameters =
+        EvaluateAffineMap(size_map,
+                          /*dim_values=*/tile_parameters);
+    // For multi-output fusions, we require that the propagated tile sizes for
+    // potential root tiles are powers of 2.
+    // TODO(b/365727080): Technically we should also enforce this for fusions
+    // with just one root.
+    if (GetPaddedTileSizes(transformed_tile_parameters) !=
+        transformed_tile_parameters) {
       return false;
     }
   }

@@ -148,6 +148,8 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
                                const absl::Status& error) override;
   std::vector<CoordinatedTaskStateInfo> GetTaskState(
       const std::vector<CoordinatedTask>& task) override;
+  std::vector<CoordinatedTaskStateInfo> GetJobState(
+      absl::string_view job) override;
   absl::Status InsertKeyValue(std::string_view key,
                               std::string_view value) override;
   absl::Status InsertKeyValue(std::string_view key, std::string_view value,
@@ -317,7 +319,7 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   // Returns whether the clients are polling for error from the service. If the
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
-  bool IsClientPollingForError() const;
+  bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   class ErrorPollingState {
    public:
@@ -365,11 +367,11 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
 
     explicit TaskState(absl::string_view task) { task_name_ = task; }
 
-    CoordinatedTaskState GetState() { return state_; }
-    absl::Status GetStatus() { return status_; }
-    bool IsRecoverable() { return recoverable_; }
+    CoordinatedTaskState GetState() const { return state_; }
+    absl::Status GetStatus() const { return status_; }
+    bool IsRecoverable() const { return recoverable_; }
     void SetRecoverable(bool recoverable) { recoverable_ = recoverable; }
-    uint64_t GetTaskIncarnation() { return task_incarnation_; }
+    uint64_t GetTaskIncarnation() const { return task_incarnation_; }
     void SetTaskIncarnation(uint64_t task_incarnation) {
       task_incarnation_ = task_incarnation;
     }
@@ -447,6 +449,9 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   // be refreshed, for example, after a task has failed.
   void RefreshAliveness() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
+  static CoordinatedTaskStateInfo CreateTaskStateInfo(
+      const CoordinatedTask& task, const TaskState& state);
+
   std::unique_ptr<CoordinationClientCache> client_cache_;
   Env& env_;
   const uint64_t service_incarnation_ = random::New64();
@@ -458,10 +463,6 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   // silently if configured. This is useful when we know that a task can
   // immediately resume work upon re-connecting to the service.
   bool allow_new_incarnation_to_reconnect_ = false;
-  // Whether the agents are polling for error from the service. It will be set
-  // to true when the service sees the first error polling request. Once set to
-  // true, the value will never change back to false, so no mutex is needed.
-  bool client_polling_for_error_ = false;
   std::function<DeviceInfo(const DeviceInfo& devices)>
       post_aggregate_device_fn_;
 
@@ -494,6 +495,10 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
 
   absl::flat_hash_set<std::string> recoverable_jobs_;
 
+  // Whether the agents are polling for error from the service. It will be set
+  // to true when the service sees the first error polling request. Once set to
+  // true, the value will never change back to false.
+  bool client_polling_for_error_ ABSL_GUARDED_BY(state_mu_) = false;
   ErrorPollingState error_polling_state_ ABSL_GUARDED_BY(state_mu_);
 
   absl::CondVar check_staleness_thread_cv_;
@@ -1098,26 +1103,46 @@ absl::Status CoordinationServiceStandaloneImpl::ReportTaskError(
   return absl::OkStatus();
 }
 
+CoordinatedTaskStateInfo CoordinationServiceStandaloneImpl::CreateTaskStateInfo(
+    const CoordinatedTask& task, const TaskState& state) {
+  CoordinatedTaskStateInfo info;
+  info.set_state(state.GetState());
+  info.set_incarnation(state.GetTaskIncarnation());
+  absl::Status error = state.GetStatus();
+  *info.mutable_task() = task;
+  info.set_error_code(error.raw_code());
+  info.set_error_message(std::string(error.message()));
+  if (!error.ok()) {
+    *info.mutable_error_payload()->mutable_source_task() = task;
+    info.mutable_error_payload()->set_is_reported_error(false);
+  }
+  return info;
+}
+
 std::vector<CoordinatedTaskStateInfo>
 CoordinationServiceStandaloneImpl::GetTaskState(
     const std::vector<CoordinatedTask>& tasks) {
   std::vector<CoordinatedTaskStateInfo> states_info;
+  states_info.reserve(tasks.size());
+
+  absl::MutexLock l(&state_mu_);
   for (const auto& task : tasks) {
-    const std::string task_name = GetTaskName(task);
-    auto& state_info = states_info.emplace_back();
-    absl::Status error;
-    {
-      absl::MutexLock l(&state_mu_);
-      state_info.set_state(cluster_state_[task_name]->GetState());
-      error = cluster_state_[task_name]->GetStatus();
+    states_info.push_back(
+        CreateTaskStateInfo(task, *cluster_state_[GetTaskName(task)]));
+  }
+  return states_info;
+}
+
+std::vector<CoordinatedTaskStateInfo>
+CoordinationServiceStandaloneImpl::GetJobState(absl::string_view job_name) {
+  absl::MutexLock l(&state_mu_);
+  std::vector<CoordinatedTaskStateInfo> states_info;
+  for (const auto& [name, task_state] : cluster_state_) {
+    const CoordinatedTask task = GetTaskFromName(name);
+    if (task.job_name() != job_name) {
+      continue;
     }
-    *state_info.mutable_task() = task;
-    state_info.set_error_code(error.raw_code());
-    state_info.set_error_message(std::string(error.message()));
-    if (!error.ok()) {
-      *state_info.mutable_error_payload()->mutable_source_task() = task;
-      state_info.mutable_error_payload()->set_is_reported_error(false);
-    }
+    states_info.push_back(CreateTaskStateInfo(task, *cluster_state_[name]));
   }
   return states_info;
 }
@@ -2141,8 +2166,9 @@ void CoordinationServiceStandaloneImpl::CompleteShutdownAfterBarrier(
 }
 }  // namespace
 
-std::unique_ptr<CoordinationServiceInterface> EnableCoordinationService(
-    Env* env, const CoordinationServiceConfig& config,
+std::unique_ptr<CoordinationServiceInterface>
+CoordinationServiceInterface::EnableCoordinationService(
+    Env* env, const tensorflow::CoordinationServiceConfig& config,
     std::unique_ptr<CoordinationClientCache> cache) {
   return std::make_unique<CoordinationServiceStandaloneImpl>(env, config,
                                                              std::move(cache));
@@ -2178,8 +2204,5 @@ void CoordinationServiceStandaloneImpl::SendErrorPollingResponseOrFailAllTasks(
 bool CoordinationServiceStandaloneImpl::IsClientPollingForError() const {
   return client_polling_for_error_;
 }
-
-// Register standalone coordination service implementation.
-REGISTER_COORDINATION_SERVICE("standalone", EnableCoordinationService);
 
 }  // namespace tsl

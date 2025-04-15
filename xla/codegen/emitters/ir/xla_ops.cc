@@ -269,9 +269,10 @@ LogicalResult ApplyIndexingOp::verify() {
   auto affine_map = getIndexingMapAttr().getIndexingMap().GetAffineMap();
   unsigned num_variables = affine_map.getNumDims() + affine_map.getNumSymbols();
   if (getOperands().size() != num_variables) {
-    return emitOpError(
-        "operand count must match the number of dimensions and symbols in the "
-        "affine map");
+    return emitOpError(absl::StrCat(
+        "operand count ", getOperands().size(),
+        " does not match the sum of dimensions ", affine_map.getNumDims(),
+        " and symbols ", affine_map.getNumSymbols(), " in the affine map"));
   }
   if (!getIndexingMap().GetConstraints().empty()) {
     return emitOpError("apply indexing op cannot have any constraints");
@@ -1108,6 +1109,21 @@ std::optional<IndexingMap> parseChainOfStringsAsIndexingMap(
 void LoopOp::getCanonicalizationPatterns(mlir::RewritePatternSet& results,
                                          MLIRContext* context) {
   results.add<FoldConstantDimensions, SimplifyLoopOfApplyIndexing>(context);
+}
+
+void SetBackendKind(mlir::MLIRContext* context, mlir::func::FuncOp fn,
+                    xla::BackendKind backend_kind) {
+  fn->setAttr(xla::BackendKindAttr::name,
+              xla::BackendKindAttr::get(context, backend_kind));
+}
+
+std::optional<xla::BackendKind> GetBackendKind(mlir::func::FuncOp fn) {
+  auto backend_attr =
+      fn->getAttrOfType<xla::BackendKindAttr>(xla::BackendKindAttr::name);
+  if (!backend_attr) {
+    return std::nullopt;
+  }
+  return backend_attr.getValue();
 }
 
 }  // namespace xla

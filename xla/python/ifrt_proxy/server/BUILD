@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
+load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "cc_library", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -27,6 +27,7 @@ cc_library(
         ":host_buffer",
         ":ifrt_backend",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt_proxy/common:grpc_credentials",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
@@ -67,6 +68,7 @@ cc_library(
         ":ifrt_backend",
         ":version",
         "//xla/pjrt/distributed:util",
+        "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_proto_cc",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
@@ -98,6 +100,7 @@ ifrt_proxy_cc_test(
         ":grpc_service_impl",
         ":host_buffer",
         ":version",
+        "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt_proxy/client:grpc_host_buffer",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
@@ -126,6 +129,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt:program_serdes",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
@@ -136,6 +140,7 @@ cc_library(
         "//xla/python/ifrt_proxy/common:proto_util",
         "//xla/python/ifrt_proxy/common:types",
         "//xla/python/ifrt_proxy/common:types_proto_cc",
+        "//xla/python/ifrt_proxy/common:versions",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:env",
@@ -145,6 +150,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -178,7 +184,9 @@ ifrt_proxy_cc_test(
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
+        "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt:mock",
+        "//xla/python/ifrt:program_serdes",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
         "//xla/python/ifrt_proxy/common:array_util",
@@ -223,7 +231,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )
 

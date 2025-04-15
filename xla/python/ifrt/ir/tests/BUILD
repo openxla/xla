@@ -1,5 +1,5 @@
 load("//xla:lit.bzl", "lit_test_suite")
-load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 package_group(
@@ -32,6 +32,7 @@ xla_cc_binary(
     testonly = True,
     srcs = ["ifrt-opt.cc"],
     deps = [
+        "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
@@ -61,6 +62,7 @@ xla_cc_binary(
     srcs = ["ifrt-translate.cc"],
     deps = [
         "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_proto_cc",
         "//xla/python/ifrt/ir",
         "//xla/python/ifrt/ir:ifrt_ir_program",
         "//xla/python/ifrt/ir:ifrt_ir_program_serdes",  # build_cleaner: keep
@@ -84,7 +86,7 @@ cc_library(
     testonly = True,
     srcs = ["executable_impl_test_base.cc"],
     hdrs = ["executable_impl_test_base.h"],
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         "//xla:status_macros",
         "//xla/mlir/utils:error_util",
@@ -98,6 +100,8 @@ cc_library(
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -108,8 +112,6 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -117,7 +119,7 @@ cc_library(
     name = "executable_impl_test_lib",
     testonly = True,
     srcs = ["executable_impl_test_lib.cc"],
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":executable_impl_test_base",
         "//xla/pjrt:pjrt_executable",
@@ -131,13 +133,13 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
     alwayslink = True,
 )

@@ -233,8 +233,13 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
   }
 
   if (fusion_backend_config_.kind() == kTritonFusionKind ||
-      fusion_backend_config_.kind() == kTritonGemmFusionKind) {
+      fusion_backend_config_.kind() == kTritonGemmFusionKind ||
+      fusion_backend_config_.kind() == kTritonNestedGemmFusionKind) {
     return EmitterFusionKind::kTriton;
+  }
+
+  if (fusion_backend_config_.kind() == kDynamicMemcpyFusionKind) {
+    return EmitterFusionKind::kDynamicMemcpy;
   }
 
   if (fusion_backend_config_.kind() == kCuDnnFusionKind) {
@@ -250,6 +255,9 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
         IsInputFusibleNonStridedSlices(fusion_roots_) &&
         AllSliceInputsAreCompatible(fusion_roots_)) {
       return EmitterFusionKind::kInputSlices;
+    }
+    if (fusion_roots_[0].opcode() == HloOpcode::kScatter) {
+      return EmitterFusionKind::kScatter;
     }
     return EmitterFusionKind::kLoop;
   }

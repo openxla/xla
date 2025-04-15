@@ -20,7 +20,9 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -62,12 +64,32 @@ class PjrtCApiTestBase : public ::testing::Test {
 
   std::string BuildSingleDeviceCompileOptionStr();
 
+  static constexpr absl::string_view kExecutableName = "operation";
+
+  xla::XlaComputation CreateAddOneComputation();
+
+  std::unique_ptr<PJRT_LoadedExecutable, PJRT_LoadedExecutableDeleter>
+  create_executable(const PJRT_Api* c_api, PJRT_Client* client);
+
+  std::unique_ptr<PJRT_LoadedExecutable, PJRT_LoadedExecutableDeleter>
+  create_executable(const PJRT_Api* c_api, PJRT_Client* client,
+                    const xla::XlaComputation& computation);
+
+  std::unique_ptr<PJRT_Executable, PJRT_ExecutableDeleter> GetExecutable(
+      PJRT_LoadedExecutable* loaded_executable, const PJRT_Api* api);
+
   absl::Span<PJRT_Device* const> GetClientAddressableDevices() const;
 
   PJRT_Client_BufferFromHostBuffer_Args CreateBufferFromHostBufferArgs(
       const std::vector<float>& data, const xla::Shape& shape,
       xla::PjRtClient::HostBufferSemantics host_buffer_semantics,
       PJRT_Device* device = nullptr);
+
+  std::pair<std::unique_ptr<PJRT_Buffer, ::pjrt::PJRT_BufferDeleter>,
+            xla::PjRtFuture<>>
+  create_buffer_from_data(const std::vector<float>& float_data,
+                          const xla::Shape& shape,
+                          PJRT_Device* device = nullptr);
 
   std::pair<std::unique_ptr<PJRT_Buffer, ::pjrt::PJRT_BufferDeleter>,
             xla::PjRtFuture<>>

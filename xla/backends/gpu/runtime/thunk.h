@@ -116,64 +116,66 @@ class Thunk {
   static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
-    kDynamicSlice,
+    // # go/keep-sorted start
+    kAllGather,
+    kAllGatherDone,
+    kAllGatherStart,
+    kAllReduce,
+    kAllReduceDone,
+    kAllReduceStart,
+    kAllToAll,
+    kAllToAllDone,
+    kAllToAllStart,
     kCholesky,
+    kCollectiveBroadcast,
+    kCollectiveBroadcastDone,
+    kCollectiveBroadcastStart,
+    kCollectivePermute,
+    kCollectivePermuteDone,
+    kCollectivePermuteStart,
+    kCommandBuffer,
     kConditional,
     kConvolution,
     kConvolutionReorder,
     kCopy,
     kCopyDone,
-    kCommandBuffer,
+    kCuDnn,
     kCubSort,
     kCublasLtMatmul,
     kCustomCall,
     kCustomKernel,
+    kDynamicSlice,
     kFft,
     kGemm,
+    kGroupDone,
+    kGroupStart,
+    kHostRecv,
+    kHostRecvDone,
+    kHostSend,
+    kHostSendDone,
     kInfeed,
     kKernel,
     kMemset32BitValue,
     kMemzero,
-    kNcclAllGather,
-    kNcclAllGatherStart,
-    kNcclAllGatherDone,
-    kNcclAllReduce,
-    kNcclAllReduceStart,
-    kNcclAllReduceDone,
-    kNcclCollectiveBroadcast,
-    kNcclCollectiveBroadcastStart,
-    kNcclCollectiveBroadcastDone,
-    kNcclCollectivePermute,
-    kNcclCollectivePermuteStart,
-    kNcclCollectivePermuteDone,
-    kNcclGroupStart,
-    kNcclGroupDone,
-    kNcclReduceScatter,
-    kNcclReduceScatterStart,
-    kNcclReduceScatterDone,
-    kNcclAllToAll,
-    kNcclAllToAllStart,
-    kNcclAllToAllDone,
-    kNcclRaggedAllToAll,
-    kNcclRaggedAllToAllStart,
-    kNcclRaggedAllToAllDone,
-    kNcclSend,
-    kNcclSendDone,
-    kNcclRecv,
-    kNcclRecvDone,
     kNorm,
     kOutfeed,
     kPartitionId,
+    kRaggedAllToAll,
+    kRaggedAllToAllDone,
+    kRaggedAllToAllStart,
     kRecv,
     kRecvDone,
+    kReduceScatter,
+    kReduceScatterDone,
+    kReduceScatterStart,
     kReplicaId,
-    kSequential,
     kSend,
     kSendDone,
+    kSequential,
     kTriangularSolve,
-    kWhile,
     kWaitForStreams,
-    kCuDnn
+    kWhile
+    // go/keep-sorted end
   };
 
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
@@ -205,8 +207,7 @@ class Thunk {
   class ResourceRequestsInterface {
    public:
     virtual ~ResourceRequestsInterface() = default;
-    virtual absl::Status AddClique(const GpuCliqueKey& clique_key,
-                                   int32_t num_local_participants) = 0;
+    virtual absl::Status AddClique(const GpuCliqueKey& clique_key) = 0;
   };
 
   //===--------------------------------------------------------------------===//
@@ -224,13 +225,10 @@ class Thunk {
     absl::StatusOr<Communicator*> GetComm(const GpuCliqueKey& clique_key,
                                           RankId rank) const;
 
-    // Returns the number of communicators in a collective clique. Returns error
-    // if we do not have an acquired clique for a given key.
-    absl::StatusOr<size_t> num_communicators(
+    // Returns whether peer device memory access is possible between all devices
+    // in the clique.
+    absl::StatusOr<bool> peer_access_enabled(
         const GpuCliqueKey& clique_key) const;
-
-    // Returns whether the clique is a local clique.
-    absl::StatusOr<bool> is_local_clique(const GpuCliqueKey& clique_key) const;
 
     bool empty() const { return cliques_map_.empty(); }
 
@@ -424,23 +422,6 @@ class Thunk {
   };
 
   //===--------------------------------------------------------------------===//
-  // CleanupParams
-  //===--------------------------------------------------------------------===//
-
-  // Parameters passed to Cleanup. Before returning from executable execution,
-  // thunks may need to clean up any resource allocated or registered through
-  // runtime APIs.
-  struct CleanupParams {
-    se::StreamExecutor* executor = nullptr;
-
-    // Parameters for executing collective operations.
-    CollectiveExecuteParams* collective_params = nullptr;
-
-    // Collective cliques acquired based on resource requests.
-    CollectiveCliques* collective_cliques = nullptr;
-  };
-
-  //===--------------------------------------------------------------------===//
 
   Thunk(Kind kind, ThunkInfo thunk_info)
       : kind_(kind),
@@ -480,14 +461,6 @@ class Thunk {
   //
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
-
-  // Cleans up any resources after thunk execution.
-  //
-  // This may be called multiple times. Its main purpose is to free up
-  // any resources occupied after initialization and execution.
-  virtual absl::Status Cleanup(const CleanupParams& params) {
-    return absl::OkStatus();
-  }
 
   static absl::string_view KindToString(Thunk::Kind kind);
 

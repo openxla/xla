@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -46,13 +46,12 @@ class DeviceTest : public testing::TestWithParam<DeviceTestParam> {
   // Returns `DeviceList` containing devices at given indexes (not ids) within
   // `client.devices()`.
   // REQUIRES: 0 <= device_indices[i] < num_devices
-  tsl::RCReference<DeviceList> GetDevices(absl::Span<const int> device_indices);
+  DeviceListRef GetDevices(absl::Span<const int> device_indices);
 
   // Returns `DeviceList` containing devices at given indexes (not ids) within
   // `client.addressable_devices()`.
   // REQUIRES: 0 <= device_indices[i] < num_addressable_devices
-  tsl::RCReference<DeviceList> GetAddressableDevices(
-      absl::Span<const int> device_indices);
+  DeviceListRef GetAddressableDevices(absl::Span<const int> device_indices);
 
  private:
   std::shared_ptr<Client> client_;

@@ -4,7 +4,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 # Description:
 #   A tool for reducing a HLO module that produces incorrect results.
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_binary",
     "xla_cc_test",
 )
@@ -81,11 +81,11 @@ cc_library(
         ":hlo_bisect_state",
         "//xla:error_spec",
         "//xla:literal",
-        "//xla:protobuf_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:dump",
+        "//xla/service:hlo_module_util",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_proto_util",
         "//xla/service:hlo_runner",
