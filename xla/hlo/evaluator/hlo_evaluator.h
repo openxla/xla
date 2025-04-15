@@ -543,24 +543,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
     EvaluationState* state_;
   };
 
-  static Literal CreateLiteral(const Shape& shape) {
-    // If the shape (and all subshapes, if it is a tuple) have a layout, we can
-    // just use it directly.
-    if (LayoutUtil::HasLayout(shape)) {
-      return Literal(shape);
-    }
-
-    // Otherwise, set all missing layouts in `shape` to the default.
-    Shape shape_copy = shape;
-    ShapeUtil::ForEachMutableLeafShape(
-        &shape_copy, [](Shape* subshape, const ShapeIndex& index) {
-          if (!subshape->has_layout()) {
-            LayoutUtil::SetToDefaultLayout(subshape);
-          }
-        });
-    return Literal(shape_copy);
-  }
-
   template <typename ReturnT, typename NativeT, typename UnaryOp>
   static absl::StatusOr<Literal> ElementWiseUnaryOpImpl(
       const HloInstruction* instruction, UnaryOp&& unary_op,
@@ -572,7 +554,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
     const auto* operand = instruction->operand(0);
     TF_RET_CHECK(ShapeUtil::SameDimensions(shape, operand->shape()));
 
-    Literal result = CreateLiteral(shape);
+    Literal result = Literal(shape);
     TF_RETURN_IF_ERROR(
         result.PopulateLinearParallel<ReturnT>([&](int64_t linear_index, int) {
           return unary_op(operand_literal.GetLinear<NativeT>(linear_index));
