@@ -109,8 +109,6 @@ class IotaTileAssignment {
 
   void Print(Printer* printer) const;
 
-  std::string ToString() const;
-
   // Materializes array representation of IotaTileAssignment.
   Array<int64_t> ToArray() const;
 
@@ -213,10 +211,6 @@ class TileAssignment {
 
   void Each(
       absl::FunctionRef<void(absl::Span<const int64_t>, int64_t)> f) const;
-
-  absl::Status EachStatus(
-      absl::FunctionRef<absl::Status(absl::Span<const int64_t>, int64_t)> f)
-      const;
 
   // Returns a tile assignment reshaped to the given dimensions.
   // REQUIRES: new shape has the same number of elements.
