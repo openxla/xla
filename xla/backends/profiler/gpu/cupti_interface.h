@@ -40,6 +40,56 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
+// Provide safe types if CUPTI pm sampling headers are not present
+#if CUPTI_PM_SAMPLING == 0
+typedef void CUpti_Profiler_Host_Initialize_Params;
+typedef void CUpti_Profiler_Host_Deinitialize_Params;
+typedef void CUpti_Profiler_Host_GetSupportedChips_Params;
+typedef void CUpti_Profiler_Host_GetBaseMetrics_Params;
+typedef void CUpti_Profiler_Host_GetSubMetrics_Params;
+typedef void CUpti_Profiler_Host_GetMetricProperties_Params;
+typedef void CUpti_Profiler_Host_GetRangeName_Params;
+typedef void CUpti_Profiler_Host_EvaluateToGpuValues_Params;
+typedef void CUpti_Profiler_Host_ConfigAddMetrics_Params;
+typedef void CUpti_Profiler_Host_GetConfigImageSize_Params;
+typedef void CUpti_Profiler_Host_GetConfigImage_Params;
+typedef void CUpti_Profiler_Host_GetNumOfPasses_Params;
+typedef void CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params;
+
+typedef void CUpti_Profiler_Initialize_Params;
+typedef void CUpti_Profiler_DeInitialize_Params;
+typedef void CUpti_Profiler_CounterDataImage_CalculateSize_Params;
+typedef void CUpti_Profiler_CounterDataImage_Initialize_Params;
+typedef void CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params;
+typedef void CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params;
+typedef void CUpti_Profiler_BeginSession_Params;
+typedef void CUpti_Profiler_EndSession_Params;
+typedef void CUpti_Profiler_SetConfig_Params;
+typedef void CUpti_Profiler_UnsetConfig_Params;
+typedef void CUpti_Profiler_BeginPass_Params;
+typedef void CUpti_Profiler_EndPass_Params;
+typedef void CUpti_Profiler_EnableProfiling_Params;
+typedef void CUpti_Profiler_DisableProfiling_Params;
+typedef void CUpti_Profiler_IsPassCollected_Params;
+typedef void CUpti_Profiler_FlushCounterData_Params;
+typedef void CUpti_Profiler_PushRange_Params;
+typedef void CUpti_Profiler_PopRange_Params;
+typedef void CUpti_Profiler_GetCounterAvailability_Params;
+typedef void CUpti_Profiler_DeviceSupported_Params;
+
+typedef void CUpti_PmSampling_SetConfig_Params;
+typedef void CUpti_PmSampling_Enable_Params;
+typedef void CUpti_PmSampling_Disable_Params;
+typedef void CUpti_PmSampling_Start_Params;
+typedef void CUpti_PmSampling_Stop_Params;
+typedef void CUpti_PmSampling_DecodeData_Params;
+typedef void CUpti_PmSampling_GetCounterAvailability_Params;
+typedef void CUpti_PmSampling_GetCounterDataSize_Params;
+typedef void CUpti_PmSampling_CounterDataImage_Initialize_Params;
+typedef void CUpti_PmSampling_GetCounterDataInfo_Params;
+typedef void CUpti_PmSampling_CounterData_GetSampleInfo_Params;
+#endif
+
 // Provides a wrapper interface to every single CUPTI API function. This class
 // is needed to create an easy mock object for CUPTI API calls. All member
 // functions are defined in the following order: activity related APIs, callback
