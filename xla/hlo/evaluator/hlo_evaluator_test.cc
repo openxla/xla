@@ -4828,6 +4828,44 @@ TEST_F(HloEvaluatorTest, PreserveMOFusionOutputLayout) {
       absl::c_equal(args[0].data<float>(), actual_literals[0].data<float>()));
 }
 
+TEST_F(HloEvaluatorTest, ConvolutionWithNestedFusionWithoutLayout) {
+  // This is a regression test for a case where missing layouts weren't handled
+  // correctly
+  const absl::string_view hlo_text = R"(
+    copy_fusion {
+      p0 = f32[16,4] parameter(0)
+      ROOT copy = f32[16,4] copy(p0)
+    }
+
+    conv_fusion {
+      p0 = f32[8,16] parameter(0)
+      p1 = f32[16,4] parameter(1)
+      p1_copy = f32[16,4] fusion(p1), kind=kLoop, calls=copy_fusion
+      ROOT conv = f32[8,4] convolution(p0, p1_copy), dim_labels=bf_io->bf
+    }
+
+    ENTRY main {
+      p0 = f32[8,16] parameter(0)
+      p1 = f32[16,4] parameter(1)
+      ROOT fusion.2 = f32[8,4] fusion(p0, p1), kind=kOutput, calls=conv_fusion
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+
+  // Layout assignment would clear the layout on the copy fusion. We do it
+  // manually to avoid the dependency.
+  auto* conv_fusion = m_->GetComputationWithName("conv_fusion");
+  auto* p1_copy = conv_fusion->GetInstructionWithName("p1_copy");
+  p1_copy->mutable_shape()->clear_layout();
+
+  auto args = MakeFakeArguments(m_.get()).value();
+  absl::Status evaluate_status = Evaluate({&args[0], &args[1]}).status();
+  // Just verify this executes correctly. We are testing for issues around the
+  // handling of missing layouts here, which will cause the entire evaluation
+  // to fail.
+  EXPECT_IS_OK(evaluate_status);
+}
+
 // Tests that custom_calls fail to evaluate when no handler is specified.
 TEST_F(HloEvaluatorTest, EvaluateCustomCall_NoHandler) {
   const absl::string_view hlo_text = R"(
