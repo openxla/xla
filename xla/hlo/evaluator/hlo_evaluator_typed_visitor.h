@@ -1023,8 +1023,8 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     auto rhs = conv->operand(1);
     const auto& window = conv->window();
     Shape result_shape = GetShapeWithLayout(conv->shape());
-    const Shape& lhs_shape = lhs->shape();
-    const Shape& rhs_shape = rhs->shape();
+    Shape lhs_shape = GetShapeWithLayout(lhs->shape());
+    Shape rhs_shape = GetShapeWithLayout(rhs->shape());
 
     TF_CHECK_OK(ShapeUtil::ValidateShape(lhs_shape));
     TF_CHECK_OK(ShapeUtil::ValidateShape(rhs_shape));
