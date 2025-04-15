@@ -3392,13 +3392,13 @@ absl::Status HloEvaluator::HandleCall(const HloInstruction* call) {
 absl::Status HloEvaluator::HandleFusion(const HloInstruction* fusion) {
   auto* computation = fusion->fused_instructions_computation();
 
-  const auto& operands = fusion->operands();
   std::unique_ptr<HloEvaluator> embedded_evaluator =
       CreateEmbedded(max_loop_iterations_);
   embedded_evaluator->set_dynamic_dimension_inference(
       dynamic_dimension_inference_);
 
   absl::flat_hash_map<const HloInstruction*, const LiteralBase*> substitutions;
+  const auto& operands = fusion->operands();
   for (int i = 0; i < operands.size(); ++i) {
     substitutions[computation->parameter_instruction(i)] =
         &GetEvaluatedLiteralFor(operands[i]);
