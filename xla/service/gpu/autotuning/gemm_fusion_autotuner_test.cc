@@ -370,6 +370,10 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
           VLOG(5) << m->ToString();
           const HloInstruction* dot_fusion =
               m->entry_computation()->root_instruction();
+          // Split-K rewriting may introduce a convert and / or a reduce op.
+          if (dot_fusion->opcode() == HloOpcode::kConvert) {
+            dot_fusion = dot_fusion->operand(0);
+          }
           if (dot_fusion->opcode() == HloOpcode::kReduce) {
             dot_fusion = dot_fusion->operand(0);
           }
@@ -385,18 +389,6 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
                      0);
           }
         });
-  }
-};
-
-class GemmFusionAutotunerTestWithMorePreciseReduction
-    : public GemmFusionAutotunerTest {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        GemmFusionAutotunerTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(
-        true);
-    return debug_options;
   }
 };
 
@@ -548,31 +540,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTest, SelectsSplitK) {
-  // Shapes with K >> M, N have to force split-K configurations.
-  const std::string kHloText = R"(
-HloModule t
-
-ENTRY e {
-  p0 = s8[7,8192] parameter(0)
-  p0c = f16[7,8192] convert(p0)
-  p1 = f16[8192,18] parameter(1)
-  ROOT dot.0 = f16[7,18] dot(p0c, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  MatchOptimizedHlo(kHloText, R"(
-; CHECK: reduce
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: kCustom
-; CHECK-NEXT: kLoop
-)");
-
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1, /*arel=*/0.5}));
-}
-
-TEST_F(GemmFusionAutotunerTestWithMorePreciseReduction, SelectsSplitK) {
   // Shapes with K >> M, N have to force split-K configurations.
   constexpr absl::string_view kHloText = R"(
 HloModule t
