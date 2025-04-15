@@ -107,7 +107,11 @@ class GpuCompilerTest : public HloTestBase {
         ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
   }
 
-  // Like GetOptimizedModule, but also runs the backend.
+  // Like GetOptimizedModule, but also runs the backend. This is important for
+  // tests that need to verify behavior of passes that run in RunBackend. The
+  // former function will only run the passes in RunHloPasses.
+  // This returns the module and the executable because the latter owns the
+  // former.
   absl::StatusOr<std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>>
   GetOptimizedModuleForExecutable(absl::string_view hlo,
                                   const HloModuleConfig& config) {
@@ -1583,6 +1587,9 @@ class PassOrderTest : public GpuCompilerTest {
   }
 
  protected:
+  // Compiles a dummy module with the given configuration, running all passes,
+  // including the ones in RunBackend. This is important because otherwise, we
+  // might miss some passes when verifying pass order.
   void CompileModule(const HloModuleConfig& config) {
     constexpr absl::string_view constant_module = R"(
         ENTRY main {
@@ -1593,6 +1600,7 @@ class PassOrderTest : public GpuCompilerTest {
         GetOptimizedModuleForExecutable(constant_module, config));
   }
 
+  // Owns the optimized_module_ below.
   std::unique_ptr<OpaqueExecutable> compiled_executable_ = nullptr;
   const HloModule* optimized_module_ = nullptr;
 };
