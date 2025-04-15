@@ -981,7 +981,7 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  builder.Emplace<CublasLtCmd>(
+  commands.Emplace<CublasLtCmd>(
       s0, 
       CublasLtMatmulThunk(nullptr,
         config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a,
