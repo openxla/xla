@@ -48,7 +48,20 @@ def ConvertFloatNvidiaPass : Pass<"xla-gpu-convert-float-nvidia", "mlir::ModuleO
 
 def ConvertFloatAMDPass : Pass<"xla-gpu-convert-float-amd", "mlir::ModuleOp"> {
   let summary = "Convert floating point types using AMDGCN intrinsics.";
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+    "mlir::arith::ArithDialect",
+  ];
+  let options = [
+    Option<"gpu_device_info_", "gpu_device_info", "std::string", /*default=*/"",
+           "Serialized stream_executor::GPUDeviceInfo proto.">,
+  ];
+  let constructor = "CreateConvertFloatAMDPass()";
+}
 
+def LowerXlaGpuToScfPass :
+   Pass<"xla-gpu-lower-xla-gpu-to-scf", "mlir::func::FuncOp"> {
+  let summary = "Lowers xla_gpu to SCF.";
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
     "mlir::arith::ArithDialect",

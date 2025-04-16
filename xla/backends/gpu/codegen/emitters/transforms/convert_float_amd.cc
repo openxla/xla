@@ -125,7 +125,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
 
     size_t pos;
     auto insert = mlir::dyn_cast<vector::InsertOp>(op->use_begin()->getOwner());
-    if (!insert || insert.getValueToStore() != op->getResult(0) ||
+    if (!insert || insert.getSource() != op->getResult(0) ||
         !matchPos(insert, &pos) || !insert.getDest().hasOneUse()) {
       return std::nullopt;
     }
@@ -156,10 +156,12 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
 
     mlir::Value input;
     mlir::Operation* to_match = vector.getDefiningOp();
+    llvm::APInt dummy;
     while (mlir::matchPattern(to_match, mlir::m_Op<vector::InsertOp>(
                                             mlir::m_Op<arith::TruncFOp>(
                                                 mlir::matchers::m_Any(&input)),
-                                            mlir::matchers::m_Any(&vector))) &&
+                                            mlir::matchers::m_Any(&vector),
+                                            mlir::m_ConstantInt(&dummy))) &&
            matchPos(mlir::cast<vector::InsertOp>(to_match), &pos) &&
            vector.hasOneUse()) {
       if (!addInput(input, pos)) {
@@ -174,7 +176,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
             insert->use_begin()->getOwner(),
             mlir::m_Op<vector::InsertOp>(
                 mlir::m_Op<arith::TruncFOp>(mlir::matchers::m_Any(&input)),
-                mlir::matchers::m_Val(insert->getResult(0)))) &&
+                mlir::matchers::m_Val(insert->getResult(0)),mlir::m_ConstantInt(&dummy))) &&
         matchPos(mlir::cast<vector::InsertOp>(insert->use_begin()->getOwner()),
                  &pos) &&
         input.getType() == value.getType()) {
@@ -221,7 +223,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
 
     size_t num_chunks = (num_elements + 2) / 4;
 
-    mlir::Type chunks_ty = mlir::VectorType::get(num_chunks, i32_ty);
+    mlir::Type chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
     mlir::Value chunks = b.create<LLVM::UndefOp>(chunks_ty);
     bool pos = false;
     for (size_t i = 0; i < inputs.size() / 2; i++) {
@@ -241,10 +243,10 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
           .create<mlir::UnrealizedConversionCastOp>(
               to_ty,
               mlir::ValueRange{b.create<LLVM::BitcastOp>(
-                  mlir::VectorType::get(num_elements, i8_ty),
+                  LLVM::getFixedVectorType(i8_ty, num_elements),
                   b.create<LLVM::ExtractElementOp>(
                       b.create<LLVM::BitcastOp>(
-                          mlir::VectorType::get(2, b.getI16Type()), chunks),
+                          LLVM::getFixedVectorType(b.getI16Type(), 2), chunks),
                       b.create<LLVM::ConstantOp>(i32_ty, 0)))})
           .getResult(0);
     }
@@ -252,7 +254,7 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
     return b
         .create<mlir::UnrealizedConversionCastOp>(
             to_ty, mlir::ValueRange{b.create<LLVM::BitcastOp>(
-                       mlir::VectorType::get(num_elements, i8_ty), chunks)})
+                       LLVM::getFixedVectorType(i8_ty, num_elements), chunks)})
         .getResult(0);
   }
 
@@ -435,24 +437,24 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     assert(num_elements == 2 || num_elements % 4 == 0);
 
     size_t num_chunks = (num_elements + 2) / 4;
-    mlir::Type chunks_ty = mlir::VectorType::get(num_chunks, i32_ty);
+    mlir::Type chunks_ty = LLVM::getFixedVectorType(i32_ty, num_chunks);
     mlir::Value chunks;
 
     if (num_elements == 2) {
       chunks = b.create<LLVM::BitcastOp>(
           chunks_ty,
           b.create<LLVM::InsertElementOp>(
-              b.create<LLVM::UndefOp>(mlir::VectorType::get(2, i16_ty)),
+              b.create<LLVM::UndefOp>(LLVM::getFixedVectorType(i16_ty, 2)),
               b.create<LLVM::BitcastOp>(
                   i16_ty, b.create<mlir::UnrealizedConversionCastOp>(
-                               mlir::VectorType::get(num_elements, i8_ty),
+                               LLVM::getFixedVectorType(i8_ty, num_elements),
                                mlir::ValueRange{value})
                               .getResult(0)),
               zero_cst));
     } else {
       chunks = b.create<LLVM::BitcastOp>(
           chunks_ty, b.create<mlir::UnrealizedConversionCastOp>(
-                          mlir::VectorType::get(num_elements, i8_ty),
+                          LLVM::getFixedVectorType(i8_ty, num_elements),
                           mlir::ValueRange{value})
                          .getResult(0));
     }
@@ -461,7 +463,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     mlir::StringAttr cvtIntr = b.getStringAttr(
         isFp8(value.getType().getElementType()) ? "llvm.amdgcn.cvt.pk.f32.fp8"
                                                 : "llvm.amdgcn.cvt.pk.f32.bf8");
-    mlir::Type result_ty = mlir::VectorType::get(2, f32_ty);
+    mlir::Type result_ty = LLVM::getFixedVectorType(f32_ty, 2);
     LLVM::FastmathFlagsAttr flags =
         LLVM::FastmathFlagsAttr::get(b.getContext(), LLVM::FastmathFlags::ninf);
     for (size_t i = 0; i < num_elements / 2; i++) {
@@ -480,7 +482,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     }
 
     if (to_ty.isF16()) {
-      result_ty = mlir::VectorType::get(2, b.getF16Type());
+      result_ty = LLVM::getFixedVectorType(b.getF16Type(), 2);
       cvtIntr = b.getStringAttr("llvm.amdgcn.cvt.pkrtz");
       for (size_t i = 0; i < num_elements / 2; i++) {
         LLVM::CallIntrinsicOp cvtOp = b.create<LLVM::CallIntrinsicOp>(
@@ -513,7 +515,7 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
     // Emulate anyext
     mlir::Value input = b.create<LLVM::BitcastOp>(
         i32_ty, b.create<LLVM::InsertElementOp>(
-                    b.create<LLVM::UndefOp>(mlir::VectorType::get(4, i8_ty)),
+                    b.create<LLVM::UndefOp>(LLVM::getFixedVectorType(i8_ty, 4)),
                     b.create<mlir::UnrealizedConversionCastOp>(
                          i8_ty, mlir::ValueRange{value})
                         .getResult(0),

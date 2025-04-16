@@ -38,6 +38,12 @@ std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
     const std::string& gpu_device_info = "");
 std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
     const se::RocmComputeCapability& cc);
+std::unique_ptr<mlir::Pass> CreateConvertPureCallOpsPass();
+std::unique_ptr<mlir::Pass> CreateEraseDeadFunctionsPass();
+std::unique_ptr<mlir::Pass> CreateExpandFloatOpsPass();
+std::unique_ptr<mlir::Pass> CreateFlattenTensorsPass();
+std::unique_ptr<mlir::Pass> CreateLowerTensorsPass(
+    const std::string& gpu_device_info = "");
 std::unique_ptr<mlir::Pass> CreateConvertIndexTypePass();
 std::unique_ptr<mlir::Pass> CreateOptimizeLoopsPass();
 std::unique_ptr<mlir::Pass> CreateFuseLoopsPass();
