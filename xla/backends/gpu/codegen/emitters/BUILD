@@ -69,6 +69,7 @@ cc_library(
         "//xla/service/gpu:kernel_arguments",
         "//xla/service/gpu:kernel_reuse_cache",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/llvm_gpu_backend:ptx_version_util",
         "//xla/service/gpu:target_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",

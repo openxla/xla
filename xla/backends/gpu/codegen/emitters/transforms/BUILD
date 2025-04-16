@@ -53,6 +53,7 @@ cc_library(
     name = "passes",
     srcs = [
         "convert_float_nvidia.cc",
+        "convert_float_amd.cc",
         "convert_xla_gpu_pure_call_ops.cc",
         "erase_dead_functions.cc",
         "expand_float_ops.cc",
