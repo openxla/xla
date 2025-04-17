@@ -1,0 +1,21 @@
+diff --git a/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp b/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
+index d28210513556..3aa4e7de71d5 100644
+--- a/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
++++ b/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
+@@ -21388,14 +21388,14 @@ public:
+         ReduxWidth =
+             getFloorFullVectorNumberOfElements(TTI, ScalarTy, ReduxWidth);
+         VectorType *Tp = getWidenedType(ScalarTy, ReduxWidth);
+-        NumParts = ::getNumberOfParts(TTI, Tp);
++        NumParts = TTI.getNumberOfParts(Tp);
+         NumRegs =
+             TTI.getNumberOfRegisters(TTI.getRegisterClassForType(true, Tp));
+         while (NumParts > NumRegs) {
+           assert(ReduxWidth > 0 && "ReduxWidth is unexpectedly 0.");
+           ReduxWidth = bit_floor(ReduxWidth - 1);
+           VectorType *Tp = getWidenedType(ScalarTy, ReduxWidth);
+-          NumParts = ::getNumberOfParts(TTI, Tp);
++          NumParts = TTI.getNumberOfParts(Tp);
+           NumRegs =
+               TTI.getNumberOfRegisters(TTI.getRegisterClassForType(true, Tp));
+         }
