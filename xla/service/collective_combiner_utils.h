@@ -139,7 +139,7 @@ absl::StatusOr<bool> CombineInstructionsByKey(
           });
       if (is_reachable) {
         VLOG(1) << "Instruction is reachable.";
-        break;
+        continue;
       }
 
       VLOG(1) << "Adding instruction to set.";
