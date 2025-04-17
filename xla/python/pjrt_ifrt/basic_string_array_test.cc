@@ -33,12 +33,9 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "xla/layout.h"
 #include "xla/pjrt/pjrt_future.h"
-#include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
@@ -47,9 +44,9 @@ limitations under the License.
 #include "xla/python/ifrt/test_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -69,7 +66,7 @@ using ::tsl::testing::StatusIs;
 // user-supplied buffers and on_done_with_buffer callback by means of the
 // factory method: `BasicStringArray::Create`. Uses the first device from the
 // `client->addressable_devices()`.
-absl::StatusOr<tsl::RCReference<BasicStringArray>> CreateTestArray(
+absl::StatusOr<tsl::RCReference<Array>> CreateTestArray(
     Client* client, Future<BasicStringArray::Buffers> buffers,
     BasicStringArray::OnDoneWithBuffer on_done_with_buffer) {
   Shape shape({1});
@@ -122,46 +119,6 @@ CreateNonReadyTestArray(
                                                std::move(on_done_with_buffer)));
 
   return std::make_pair(std::move(array), std::move(buffers_promise));
-}
-
-/////////////////////////////////////////////////////////////////////////////
-//
-// Tests related to BasicStringArrayLayout.
-//
-
-TEST(BasicStringArrayLayoutTest, Serialize) {
-  BasicStringArrayLayout layout;
-  // Seerialize currently has no state to serialize, and so the returned value
-  // should be an empty string.
-  EXPECT_TRUE(layout.Serialize().empty());
-}
-
-TEST(BasicStringArrayLayoutTest, ToString) {
-  BasicStringArrayLayout layout;
-  auto output_str = layout.ToString();
-  EXPECT_THAT(output_str, HasSubstr("major-to-minor"));
-}
-
-TEST(BasicStringArrayLayoutTest, Equality) {
-  BasicStringArrayLayout layout_1;
-
-  // In the equality comparisons below, use the PjRtLayout interface for the
-  // second object so we can avoid the error: `ambiguity is between a regular
-  // call to this operator and a call with the argument order reversed`.
-
-  // Any two BasicStringArrayLayouts are equal.
-  BasicStringArrayLayout layout_2;
-  const PjRtLayout& layout_3 = layout_2;
-  EXPECT_EQ(layout_1, layout_3);
-
-  // In the next test, EXPECT_NE is not used because the version of EXCEPT_NE
-  // available in the open sourced libraries requires the operator `!=` to be
-  // overloaded.
-
-  // Non-BasicStringArrayLayouts are not equal to BasicStringArrayLayouts.
-  xla::PjRtXlaLayout layout_6((xla::Layout()));
-  const PjRtLayout& layout_7 = layout_6;
-  EXPECT_FALSE(layout_7 == layout_1);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -362,7 +319,7 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
   // MakeArrayFromHostBuffer should check and fail if the sharding is not a
   // SingleDeviceSharding.
   std::shared_ptr<const Sharding> opaque_sharding =
-      OpaqueSharding::Create(BasicDeviceList::Create({device}), MemoryKind());
+      OpaqueSharding::Create(client->MakeDeviceList({device}), MemoryKind());
   EXPECT_THAT(client->MakeArrayFromHostBuffer(
                   data, DType(DType::kString), shape,
                   /*byte_strides=*/std::nullopt, opaque_sharding,
@@ -373,8 +330,7 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
   // MakeArrayFromHostBuffer should check and fail if the requested
   // HostBufferSemantics is not supported.
   for (Client::HostBufferSemantics host_buffer_semantics :
-       {Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
-        Client::HostBufferSemantics::kImmutableZeroCopy,
+       {Client::HostBufferSemantics::kImmutableZeroCopy,
         Client::HostBufferSemantics::kMutableZeroCopy}) {
     SCOPED_TRACE(
         absl::StrCat("host_buffer_semantics: ", host_buffer_semantics));
@@ -443,7 +399,7 @@ absl::StatusOr<tsl::RCReference<Array>> MakeShardedStringTestArray(
   }
 
   std::shared_ptr<const Sharding> sharding = ConcreteEvenSharding::Create(
-      BasicDeviceList::Create({devices[0], devices[1]}), MemoryKind(),
+      client->MakeDeviceList({devices[0], devices[1]}), MemoryKind(),
       Shape({2, 1}), Shape({1}), is_fully_replicated);
 
   std::vector<tsl::RCReference<Array>> arrays;
@@ -484,7 +440,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest, FailsWithNonStringArrays) {
   auto devices = client->addressable_devices();
   ASSERT_GE(devices.size(), 2);
   std::shared_ptr<const Sharding> opaque_sharding = OpaqueSharding::Create(
-      BasicDeviceList::Create({devices[0], devices[1]}), MemoryKind());
+      client->MakeDeviceList({devices[0], devices[1]}), MemoryKind());
 
   std::vector<tsl::RCReference<Array>> arrays(2);
   TF_ASSERT_OK_AND_ASSIGN(
@@ -505,7 +461,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
   auto devices = client->addressable_devices();
   ASSERT_GE(devices.size(), 2);
   std::shared_ptr<const Sharding> opaque_sharding = OpaqueSharding::Create(
-      BasicDeviceList::Create({devices[0], devices[1]}), MemoryKind());
+      client->MakeDeviceList({devices[0], devices[1]}), MemoryKind());
 
   std::vector<tsl::RCReference<Array>> arrays(2);
   const std::vector<std::string> per_shard_contents({"abc", "def"});
@@ -528,7 +484,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
   auto devices = client->addressable_devices();
   ASSERT_GE(devices.size(), 2);
   std::shared_ptr<const Sharding> opaque_sharding = OpaqueSharding::Create(
-      BasicDeviceList::Create({devices[0], devices[1]}), MemoryKind());
+      client->MakeDeviceList({devices[0], devices[1]}), MemoryKind());
 
   // Make two non-ready single device sharded arrays.
   std::vector<tsl::RCReference<Array>> arrays;
@@ -578,7 +534,7 @@ TEST(AssembleArrayFromSingleDeviceArraysTest,
   auto devices = client->addressable_devices();
   ASSERT_GE(devices.size(), 2);
   std::shared_ptr<const Sharding> opaque_sharding = OpaqueSharding::Create(
-      BasicDeviceList::Create({devices[0], devices[1]}), MemoryKind());
+      client->MakeDeviceList({devices[0], devices[1]}), MemoryKind());
 
   // Make two non-ready single device sharded arrays.
   std::vector<tsl::RCReference<Array>> arrays;
@@ -638,7 +594,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays,
 
   TF_ASSERT_OK_AND_ASSIGN(auto disassembled_arrays,
                           array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy));
+                              ArrayCopySemantics::kAlwaysCopy,
+                              SingleDeviceShardSemantics::kAddressableShards));
 
   ASSERT_EQ(disassembled_arrays.size(), 1);
   auto basic_string_array =
@@ -660,7 +617,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays, ShardedArrayDisassembleSuccess) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto disassembled_arrays,
                           array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy));
+                              ArrayCopySemantics::kAlwaysCopy,
+                              SingleDeviceShardSemantics::kAddressableShards));
 
   ASSERT_EQ(disassembled_arrays.size(), 2);
 
@@ -686,9 +644,10 @@ TEST(DisassembleArrayIntoSingleDeviceArrays, FailsIfTheArrayHasBeenDeleted) {
 
   array->Delete();
 
-  EXPECT_THAT(
-      array->DisassembleIntoSingleDeviceArrays(ArrayCopySemantics::kAlwaysCopy),
-      StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(array->DisassembleIntoSingleDeviceArrays(
+                  ArrayCopySemantics::kAlwaysCopy,
+                  SingleDeviceShardSemantics::kAddressableShards),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 TEST(CopyTest, SuccessSingleDeviceShardedArray) {
@@ -708,7 +667,7 @@ TEST(CopyTest, SuccessSingleDeviceShardedArray) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto new_arrays,
       client->CopyArrays(absl::MakeSpan(arrays),
-                         BasicDeviceList::Create({devices[1]}), MemoryKind(),
+                         client->MakeDeviceList({devices[1]}), MemoryKind(),
                          ArrayCopySemantics::kAlwaysCopy));
 
   auto new_basic_string_array =
@@ -734,7 +693,7 @@ TEST(CopyTest, SuccessMultiDeviceShardedArray) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto new_arrays,
       client->CopyArrays(absl::MakeSpan(arrays),
-                         BasicDeviceList::Create({devices[2], devices[3]}),
+                         client->MakeDeviceList({devices[2], devices[3]}),
                          MemoryKind(), ArrayCopySemantics::kAlwaysCopy));
 
   auto new_basic_string_array =
@@ -761,7 +720,7 @@ TEST(CopyTest, FailsAfterDeletion) {
   arrays[0]->Delete();
 
   EXPECT_THAT(client->CopyArrays(absl::MakeSpan(arrays),
-                                 BasicDeviceList::Create({devices[1]}),
+                                 client->MakeDeviceList({devices[1]}),
                                  MemoryKind(), ArrayCopySemantics::kAlwaysCopy),
               StatusIs(absl::StatusCode::kFailedPrecondition));
 }
@@ -780,7 +739,7 @@ TEST(CopyTest, FailsWithDifferentNumbersDevices) {
 
   EXPECT_THAT(
       client->CopyArrays(absl::MakeSpan(arrays),
-                         BasicDeviceList::Create({devices[0], devices[1]}),
+                         client->MakeDeviceList({devices[0], devices[1]}),
                          MemoryKind(), ArrayCopySemantics::kAlwaysCopy),
       StatusIs(absl::StatusCode::kInvalidArgument));
 }
@@ -801,7 +760,7 @@ TEST(CopyTest, NonReadySourceArraySuccessfullyBecomesReadyAfterCopy) {
   auto promise = std::move(ret.second);
 
   TF_ASSERT_OK(client->CopyArrays(
-      absl::MakeSpan(arrays), BasicDeviceList::Create({devices[1]}),
+      absl::MakeSpan(arrays), client->MakeDeviceList({devices[1]}),
       MemoryKind(), ArrayCopySemantics::kAlwaysCopy));
 
   absl::Notification done_readying_single_device_arrays;
@@ -839,7 +798,7 @@ TEST(CopyTest, NonReadySourceArrayFailsToBecomeReadyAfterCopy) {
   auto promise = std::move(ret.second);
 
   TF_ASSERT_OK(client->CopyArrays(
-      absl::MakeSpan(arrays), BasicDeviceList::Create({devices[1]}),
+      absl::MakeSpan(arrays), client->MakeDeviceList({devices[1]}),
       MemoryKind(), ArrayCopySemantics::kAlwaysCopy));
 
   absl::Notification done_readying_single_device_arrays;
@@ -907,19 +866,6 @@ TEST(FullyReplicatedShardTest, SuccessMultiDeviceShardedArray) {
   EXPECT_THAT(replicated_buffers[0], ElementsAre(kReplicatedContents));
 }
 
-TEST(FullyReplicatedShardTest, FailsWithNonFullyReplicatedArrays) {
-  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
-
-  // Make a BasicStringArray with two shards - not fully replicated.
-  const std::vector<std::string> per_shard_contents({"abc", "def"});
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto array, MakeShardedStringTestArray(client.get(), per_shard_contents,
-                                             /*is_fully_replicated=*/false));
-
-  EXPECT_THAT(array->FullyReplicatedShard(ArrayCopySemantics::kAlwaysCopy),
-              StatusIs(absl::StatusCode::kFailedPrecondition));
-}
-
 TEST(FullyReplicatedShardTest, FailsAfterDeletion) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
@@ -948,13 +894,6 @@ TEST(LayoutTest, Success) {
       CreateTestArray(client.get(),
                       Future<BasicStringArray::Buffers>(std::move(buffers)),
                       std::move(on_done_with_buffer)));
-
-  // The number of dimensions for the testArray should be 1. Typical usage of
-  // BasicStringArrayLayout does not require an accessor to retrieve the number
-  // of dimensions. Instead of adding a test only method, we could just check
-  // the serialized layout.
-  TF_ASSERT_OK_AND_ASSIGN(auto layout, array->layout());
-  EXPECT_TRUE(layout->Serialize().empty());
 }
 
 TEST(LayoutTest, FailsAfterDeletion) {
@@ -969,8 +908,6 @@ TEST(LayoutTest, FailsAfterDeletion) {
                       std::move(on_done_with_buffer)));
 
   array->Delete();
-
-  EXPECT_THAT(array->layout(), StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 /////////////////////////////////////////////////////////////////////////////

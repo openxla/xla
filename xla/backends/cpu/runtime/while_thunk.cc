@@ -19,10 +19,14 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/base/optimization.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -33,9 +37,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -62,8 +64,6 @@ WhileThunk::WhileThunk(Info info, BufferAllocation::Slice cond_buffer,
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> WhileThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   VLOG(3) << absl::StreamFormat(
       "While: #trip_count=%s",
       trip_count_.has_value() ? absl::StrCat(*trip_count_) : "unknown");

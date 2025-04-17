@@ -21,7 +21,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/profiler/utils/tf_op_utils.h"
 
@@ -52,6 +51,8 @@ const absl::string_view kSyscallsPlaneName = "Syscalls";
 
 const absl::string_view kStepLineName = "Steps";
 const absl::string_view kSparseCoreStepLineName = "Sparse Core Steps";
+const absl::string_view kSparseCoreModuleLineName = "Sparse Core Modules";
+const absl::string_view kSparseCoreOpLineName = "Sparse Core Ops";
 const absl::string_view kTensorFlowNameScopeLineName = "Framework Name Scope";
 const absl::string_view kTensorFlowOpLineName = "Framework Ops";
 const absl::string_view kXlaModuleLineName = "XLA Modules";
@@ -61,6 +62,8 @@ const absl::string_view kKernelLaunchLineName = "Launch Stats";
 const absl::string_view kSourceLineName = "Source code";
 const absl::string_view kHostOffloadOpLineName = "Host Offload Ops";
 const absl::string_view kCounterEventsLineName = "_counters_";
+const absl::string_view kTensorCoreSyncFlagLineName = "Tensor Core Sync Flag";
+const absl::string_view kSparseCoreSyncsLineName = "Sparse Core Syncs";
 
 const absl::string_view kDeviceVendorNvidia = "Nvidia";
 const absl::string_view kDeviceVendorAMD = "AMD";
@@ -285,6 +288,8 @@ const StatTypeMap& GetStatTypeMap() {
        {"bytes_transferred", kBytesTransferred},
        {"queue", kDmaQueue},
        {"dcn_collective_info", kDcnCollectiveInfo},
+       {"all_reduce_id", kAllReduceId},
+       {"all_reduce_unique_id", kAllReduceUniqueId},
        // Performance counter related.
        {"Raw Value", kRawValue},
        {"Scaled Value", kScaledValue},
@@ -373,6 +378,8 @@ const MegaScaleStatTypeMap& GetMegaScaleStatTypeMap() {
        {"num_actions", kMegaScaleNumActions},
        {"collective_type", kMegaScaleCollectiveType},
        {"input_size", kMegaScaleInputSize},
+       {"send_channel_id", kMegaScaleSendChannelId},
+       {"recv_channel_id", kMegaScaleRecvChannelId},
        {"slack_us", kMegaScaleSlackUs},
        {"action_type", kMegaScaleActionType},
        {"start_end_type", kMegaScaleStartEndType},

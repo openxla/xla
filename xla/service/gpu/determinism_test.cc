@@ -126,6 +126,9 @@ class DeterminismTest : public GpuCodegenTest {
       return backend().default_stream_executor()->AsDnn();
     });
     EXPECT_CALL(executor, device_ordinal).WillRepeatedly([]() { return 0; });
+    EXPECT_CALL(executor, SynchronizeAllActivity).WillRepeatedly([&]() -> bool {
+      return true;
+    });
 
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                             ParseAndReturnVerifiedModule(hlo_string));
@@ -178,7 +181,6 @@ ENTRY e {
     debug_options_.set_xla_gpu_enable_triton_gemm(false);
   }
 
-  debug_options_.set_xla_gpu_triton_fusion_level(0);
   MatchOptimizedHlo(kHloText, R"(; CHECK: custom_call_target="__cublas$gemm")",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText);
@@ -223,6 +225,7 @@ TEST_F(DeterminismTest, ExcludingNonDeterministicOpsDoesNotDisableAutotuning) {
   }
 
   debug_options_.set_xla_gpu_cublas_fallback(false);
+  debug_options_.set_xla_gpu_cudnn_gemm_fusion_level(0);
   ASSERT_TRUE(debug_options_.xla_gpu_exclude_nondeterministic_ops());
   ASSERT_FALSE(debug_options_.xla_gpu_deterministic_ops());
   AutotunerUtil::ClearAutotuneResults();

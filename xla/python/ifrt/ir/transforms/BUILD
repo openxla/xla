@@ -3,22 +3,17 @@ load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla/python/ifrt:friends"],
+    default_visibility = ["//xla/python/ifrt:users"],
     licenses = ["notice"],
 )
 
 gentbl_cc_library(
     name = "passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=IfrtIr",
-            ],
-            "passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=IfrtIr",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     deps = [
@@ -33,6 +28,7 @@ cc_library(
         "ifrt_atom_programs_to_vhlo_pass.cc",
         "ifrt_compile_and_propagate_shardings_pass.cc",
         "ifrt_compile_atom_program_pass.cc",
+        "ifrt_dump_atom_programs_pass.cc",
         "ifrt_duplicated_callee_elimination_pass.cc",
         "ifrt_legalize_to_vifrt_pass.cc",
         "ifrt_lower_atom_program_metadata_to_xla_pass.cc",
@@ -87,6 +83,8 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -112,10 +110,9 @@ cc_library(
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -143,10 +140,13 @@ cc_library(
         "//xla/python/ifrt/ir",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
     ],
 )

@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -39,8 +40,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -80,6 +79,13 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
           new_control_predecessor->AddControlDependencyTo(new_hlo_pointer));
     }
 
+    // The newly inlined instructions should honor the control predecessors of
+    // the previous call instruction.
+    for (HloInstruction* control_predecessor : call_->control_predecessors()) {
+      TF_RETURN_IF_ERROR(control_predecessor->AddControlDependencyTo(
+          /*instruction=*/new_hlo_pointer));
+    }
+
     return absl::OkStatus();
   }
 
@@ -98,7 +104,15 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     TF_ASSIGN_OR_RETURN(HloInstruction * new_root, Resolve(root));
     VLOG(1) << "Replacing all uses of " << call_->ToString()
             << " with new root " << new_root->ToString();
-    return outer_->ReplaceInstruction(call_, new_root);
+    // We must relay the control dependencies from this call instruction to the
+    // successors too after inlining. The will now depend on the newly inlined
+    // root.
+    return outer_
+        ->ReplaceInstruction(
+            /*old_instruction=*/call_, /*new_instruction=*/new_root,
+            /*preserve_sharding=*/false, /*relay_control_dependency=*/true,
+            /*remove_unused_operands=*/true)
+        .status();
   }
 
   CallInliner::InlinedInstructionMap ConsumeInstructionMap() {
@@ -161,15 +175,12 @@ bool InlineComposites(
              instruction->frontend_attributes().map().at("composite.name"));
 }
 
-bool InlineStreamAnnotation(HloInstruction* instruction) {
-  if (instruction->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_experimental_stream_annotation()) {
-    if (instruction->frontend_attributes().map().contains(
-            kXlaStreamAnnotationAttr)) {
-      return false;
-    }
+// Introduces a specific attribute so that the frontend has the direct
+// control over inlining specific calls.
+bool InlineInstruction(HloInstruction* instruction) {
+  auto it = instruction->frontend_attributes().map().find("inlineable");
+  if (it != instruction->frontend_attributes().map().end()) {
+    return it->second == "true";
   }
   return true;
 }
@@ -223,12 +234,19 @@ CallInliner::Inline(HloInstruction* call) {
 }
 
 bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
-  return instruction->opcode() == HloOpcode::kCall &&
-         !instruction->has_backend_config() &&
-         !instruction->parent()->IsAsyncComputation() &&
-         InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_) &&
-         InlineStreamAnnotation(instruction);
+  bool prerequisite = instruction->opcode() == HloOpcode::kCall &&
+                      !instruction->has_backend_config() &&
+                      !instruction->parent()->IsAsyncComputation();
+  if (!prerequisite) {
+    return false;
+  }
+  if (!InlineInstruction(instruction)) {
+    // Always prioritize user's explicit requests after fulfilling the
+    // prerequisites.
+    return false;
+  }
+  return InlineUnderShardy(instruction) &&
+         InlineComposites(instruction, composites_to_preserve_);
 }
 
 absl::StatusOr<bool> CallInliner::Run(
@@ -244,6 +262,7 @@ absl::StatusOr<bool> CallInliner::Run(
             node.computation()->execution_thread(), execution_threads)) {
       return absl::OkStatus();
     }
+    bool did_node_mutate = false;
     VLOG(1) << "Visiting node: " << node.ToString();
     for (HloInstruction* instruction :
          node.computation()->MakeInstructionPostOrder()) {
@@ -266,10 +285,20 @@ absl::StatusOr<bool> CallInliner::Run(
               TF_RETURN_IF_ERROR(isolator.UpdateDomains(inlined_inst).status());
             }
           }
+          did_node_mutate = true;
           did_mutate = true;
         }
       }
     }
+    if (did_node_mutate && uniquify_channel_ids_) {
+      int unique_channel_id = 1;
+      for (HloInstruction* instruction : node.computation()->instructions()) {
+        if (dynamic_cast<HloChannelInstruction*>(instruction)) {
+          instruction->set_channel_id(unique_channel_id++);
+        }
+      }
+    }
+
     return absl::OkStatus();
   }));
   if (did_mutate) {

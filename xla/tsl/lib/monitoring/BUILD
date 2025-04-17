@@ -10,6 +10,7 @@ package(
     default_visibility = internal_visibility([
         "//learning/brain/google/data:__subpackages__",
         "//learning/brain/google/monitoring:__subpackages__",
+        # copybara:uncomment "//learning/infra/mira/experimental/orbax_model:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
         "//tensorflow/core:__pkg__",
         # tensorflow/core/platform:monitoring depends on this package
@@ -27,7 +28,8 @@ package(
         "//xla/tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
         "//tensorflow_serving/model_servers:__subpackages__",
-        # tensorflow/python/profiler/internal depends on this package
+        # xprof depends on this package
+        "//third_party/xprof:__subpackages__",
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     licenses = ["notice"],
@@ -39,13 +41,13 @@ cc_library(
     deps = [
         ":collection_registry",
         ":metric_def",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -57,12 +59,12 @@ cc_library(
     deps = [
         ":collection_registry",
         ":metric_def",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -74,15 +76,15 @@ cc_library(
         ":collection_registry",
         ":metric_def",
         "//xla/tsl/lib/histogram",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:histogram_proto_cc",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -92,7 +94,7 @@ cc_library(
         "types.h",
     ],
     deps = [
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -102,9 +104,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
+        "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:histogram_proto_cc",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -117,15 +119,15 @@ cc_library(
         ":collected_metrics",
         ":metric_def",
         ":types",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:histogram_proto_cc",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -165,14 +167,14 @@ cc_library(
         ":collection_registry",
         ":metric_def",
         ":test_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -184,14 +186,14 @@ cc_library(
         ":collection_registry",
         ":metric_def",
         ":types",
+        "//xla/tsl/platform:env_time",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:env_time",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -203,12 +205,12 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:histogram_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -218,8 +220,8 @@ cc_library(
         "timed.h",
     ],
     deps = [
-        "@tsl//tsl/platform:env_time",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:env_time",
+        "//xla/tsl/platform:types",
     ],
 )
 

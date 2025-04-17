@@ -33,29 +33,13 @@ limitations under the License.
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {
 
 namespace {
-
-int64_t ComputeMessageSize(const HloInstruction& instr,
-                           HloCostAnalysis::ShapeSizeFunction fun) {
-  int64_t msg_size = 0;
-  ShapeUtil::ForEachSubshape(
-      instr.shape(),
-      [&msg_size, &fun](const Shape& subshape, const ShapeIndex&) {
-        if (subshape.IsArray()) {
-          msg_size += fun(subshape);
-        }
-      });
-  return msg_size;
-}
 
 int GetNumGpus(const HloInstruction& instr) {
   const HloInstruction* i = &instr;
@@ -75,6 +59,26 @@ int GetNumGpus(const HloInstruction& instr) {
     const HloInstruction& instr, const se::DeviceDescription& gpu_device_info,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     const SolGPUCostModel::Config& sol_flags) {
+  GpuHloCostAnalysis analysis(
+      GpuHloCostAnalysis::Options{shape_size_fn,
+                                  /*per_second_rates=*/{},
+                                  /*min_latencies_seconds=*/{},
+                                  /*count_multiple_input_accesses=*/true},
+      gpu_device_info);
+
+  CHECK_OK(instr.parent()->Accept(&analysis));
+
+  return SolLatencyEstimator::ComputeCollectiveTime(
+      instr, gpu_device_info, shape_size_fn, sol_flags, analysis);
+}
+
+/*static*/ absl::Duration SolLatencyEstimator::ComputeCollectiveTime(
+    const HloInstruction& instr, const se::DeviceDescription& gpu_device_info,
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+    const SolGPUCostModel::Config& sol_flags,
+    const GpuHloCostAnalysis& analysis) {
+  // TODO(b/390095346): This is incorrect way of determining how many nodes
+  // participate in a collective.
   const int num_nodes = GetNumGpus(instr) / sol_flags.gpus_per_node;
   if (num_nodes == 1) {
     VLOG(8) << "Returning only kernel launch overhead for a single node.";
@@ -86,26 +90,43 @@ int GetNumGpus(const HloInstruction& instr) {
     return absl::ZeroDuration();
   }
   SolGPUCostModel sol_model(sol_flags);
-  const int64_t msg_size = ComputeMessageSize(instr, shape_size_fn);
+  const int64_t msg_size = analysis.BytesTransferred(instr);
 
+  // TODO(b/385111575): We should call just `.exec_time` but we need to better
+  // (more granularly) model bytes accessed (input + output) for collectives.
+  absl::Duration result = absl::Seconds(1.0f * analysis.bytes_accessed(instr) /
+                                        gpu_device_info.memory_bandwidth());
   switch (instr.opcode()) {
     case HloOpcode::kAllGather:
     case HloOpcode::kAllGatherStart: {
-      return sol_model.RingLatency(msg_size, num_nodes,
-                                   SolGPUCostModel::CollectiveType::kAllGather);
+      result += sol_model.RingLatency(
+          msg_size, num_nodes, SolGPUCostModel::CollectiveType::kAllGather);
+      break;
     }
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart: {
-      return sol_model.RingLatency(msg_size, num_nodes,
-                                   SolGPUCostModel::CollectiveType::kAllReduce);
+      result += GpuPerformanceModel::EstimateRunTimeForInstruction(
+                    &instr, gpu_device_info, &analysis, /*config=*/{})
+                    .compute_time;
+      result += sol_model.RingLatency(
+          msg_size, num_nodes, SolGPUCostModel::CollectiveType::kAllReduce);
+      break;
     }
     case HloOpcode::kReduceScatter: {
-      return sol_model.RingLatency(
+      result += GpuPerformanceModel::EstimateRunTimeForInstruction(
+                    &instr, gpu_device_info, &analysis, {})
+                    .compute_time;
+      result += sol_model.RingLatency(
           msg_size, num_nodes, SolGPUCostModel::CollectiveType::kReduceScatter);
+      break;
     }
     case HloOpcode::kAsyncStart: {
       if (instr.async_wrapped_opcode() == HloOpcode::kReduceScatter) {
-        return sol_model.RingLatency(
+        result += GpuPerformanceModel::EstimateRunTimeForInstruction(
+                      instr.async_wrapped_instruction(), gpu_device_info,
+                      &analysis, {})
+                      .compute_time;
+        result += sol_model.RingLatency(
             msg_size, num_nodes,
             SolGPUCostModel::CollectiveType::kReduceScatter);
       }
@@ -113,18 +134,19 @@ int GetNumGpus(const HloInstruction& instr) {
     }
     case HloOpcode::kRecv:
     case HloOpcode::kSend: {
-      return sol_model.RingLatency(msg_size, num_nodes,
-                                   SolGPUCostModel::CollectiveType::kSendRecv);
+      result += sol_model.RingLatency(
+          msg_size, num_nodes, SolGPUCostModel::CollectiveType::kSendRecv);
+      break;
     }
     // note: AllToAll is not yet supported in XLA
     default: {
       LOG(WARNING)
           << "[SoL] Runtime estimate for " << instr.name()
           << " not implemented. Returning only the kernel launch time.";
-      return GpuPerformanceModelBase::kNcclKernelLaunchOverhead;
+      result += GpuPerformanceModelBase::kNcclKernelLaunchOverhead;
     }
   }
-  return GpuPerformanceModelBase::kNcclKernelLaunchOverhead;
+  return result;
 }
 
 LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
@@ -136,8 +158,9 @@ LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
   }
 
   if (IsAsyncPair(from, target)) {
-    double coll_time = absl::ToDoubleMicroseconds(ComputeCollectiveTime(
-        from.GetInstr(), gpu_info_, shape_size_function_, sol_flags_));
+    double coll_time = absl::ToDoubleMicroseconds(
+        ComputeCollectiveTime(from.GetInstr(), gpu_info_, shape_size_function_,
+                              sol_flags_, *cost_analysis_));
     VLOG(10) << "[SoL] Analytical estimator calculated latency between "
              << from.GetInstr().name() << " and " << target.GetInstr().name()
              << " to be: " << coll_time << " us.";

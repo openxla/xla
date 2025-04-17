@@ -38,9 +38,9 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/service/computation_placer.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -120,8 +120,7 @@ absl::StatusOr<std::unique_ptr<Executable>> PjRtCompiler::Compile(
       auto executable,
       PjRtCompile(xla_compile_options->compile_options,
                   xla_program->mlir_module, *pjrt_topology->description()));
-  return PjRtExecutable::Create(std::move(executable),
-                                std::move(xla_compile_options));
+  return PjRtExecutable::Create(std::move(executable));
 }
 
 absl::StatusOr<std::unique_ptr<LoadedExecutable>>
@@ -137,8 +136,9 @@ PjRtCompiler::DeserializeLoadedExecutable(
   }
   TF_ASSIGN_OR_RETURN(
       auto pjrt_loaded_executable,
-      client_->pjrt_client()->DeserializeExecutable(
-          serialized, std::move(xla_deserialize_options->compile_options)));
+      client_->pjrt_client()->LoadSerializedExecutable(
+          serialized, std::move(xla_deserialize_options->compile_options),
+          xla::LoadOptions()));
   return PjRtLoadedExecutable::Create(
       client_,
       std::shared_ptr<xla::PjRtLoadedExecutable>(

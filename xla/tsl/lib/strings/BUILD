@@ -14,11 +14,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//xla/tsl/lib/gtl:inlined_vector",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:protobuf",
     ],
 )

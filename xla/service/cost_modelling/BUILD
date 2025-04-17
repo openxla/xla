@@ -2,7 +2,7 @@
 #   A common directory for cost modelling related code.
 
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_test",
 )
 load("//xla/tsl:tsl.bzl", "internal_visibility")
@@ -41,11 +41,22 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "op_cost_test_utils",
+    testonly = True,
+    hdrs = ["op_cost_test_utils.h"],
+    deps = [
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 xla_cc_test(
     name = "op_cost_test",
     srcs = ["op_cost_test.cc"],
     deps = [
         ":op_cost",
+        ":op_cost_test_utils",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -54,10 +65,10 @@ xla_cc_test(
         "//xla/service:platform_util",
         "//xla/tests:hlo_runner_agnostic_test_base",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )

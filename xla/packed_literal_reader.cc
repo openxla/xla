@@ -15,12 +15,16 @@ limitations under the License.
 
 #include "xla/packed_literal_reader.h"
 
+#include <cstdint>
+#include <cstring>
 #include <limits>
-#include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/base/casts.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
@@ -28,11 +32,11 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/file_system.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 

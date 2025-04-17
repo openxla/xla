@@ -82,7 +82,7 @@ void PrintSubexpression(HloInstruction* inst, int depth) {
 bool IsConstantScalarInt(const HloInstruction* inst) {
   return inst->opcode() == HloOpcode::kConstant &&
          ShapeUtil::IsEffectiveScalar(inst->shape()) &&
-         inst->shape().IsInteger();
+         inst->shape().AreAllLeavesIntegers();
 }
 
 bool IsNotContainedInLoop(const HloInstruction& while_hlo,
@@ -512,6 +512,8 @@ absl::StatusOr<bool> HloControlFlowFlattening::Run(
           changed = true;
         }
       } else if (remove_comm_ && IsCollective(instruction) &&
+                 (instruction->opcode() != HloOpcode::kSend &&
+                  instruction->opcode() != HloOpcode::kRecv) &&
                  !instruction->parent()->IsFusionComputation() &&
                  (instruction->opcode() != HloOpcode::kAsyncStart &&
                   instruction->opcode() != HloOpcode::kAsyncUpdate)) {

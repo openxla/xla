@@ -37,6 +37,7 @@
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/dtype.h"
@@ -45,15 +46,16 @@
 #include "xla/python/ifrt/mock.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/ifrt_proxy/client/client.h"
 #include "xla/python/ifrt_proxy/client/registry.h"
 #include "xla/python/ifrt_proxy/server/grpc_server.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -74,7 +76,9 @@ class MockArrayTest : public testing::Test {
         absl::StrCat("localhost:", tsl::testing::PickUnusedPortOrDie());
     TF_ASSERT_OK_AND_ASSIGN(
         server_, GrpcServer::CreateFromIfrtClientFactory(
-                     address, [this] { return CreateMockBackend(); }));
+                     address, [this](AttributeMap initialization_data) {
+                       return CreateMockBackend();
+                     }));
     TF_ASSERT_OK_AND_ASSIGN(client_,
                             CreateClient(absl::StrCat("grpc://", address)));
   }
@@ -120,7 +124,8 @@ class MockArrayTest : public testing::Test {
                 std::optional<absl::Span<const int64_t>> byte_strides,
                 std::shared_ptr<const Sharding> sharding,
                 Client::HostBufferSemantics semantics,
-                std::function<void()> on_done_with_host_buffer)
+                std::function<void()> on_done_with_host_buffer,
+                tsl::RCReference<UserContext> user_context)
                 -> absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> {
               TF_ASSIGN_OR_RETURN(
                   auto delegated,

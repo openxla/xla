@@ -40,6 +40,7 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
+#include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -226,6 +227,7 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
   IrCompiler::Options ir_compiler_options{
       /*optimization_level=*/llvm::CodeGenOptLevel::Default,
       /*optimize_for_size=*/options::OptimizeForSizeRequested(config),
+      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(config),
       /*disable_expensive_passes=*/
       debug_options.xla_llvm_disable_expensive_passes(),
@@ -233,19 +235,15 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
   };
 
   // Definition generator to link with XLA:CPU host runtime symbols.
-  JitCompiler::DefinitionGenerator definition_generator =
-      [](llvm::TargetMachine* target_machine) {
-        return std::make_unique<RuntimeSymbolGenerator>(
-            target_machine->createDataLayout());
+  ExecutionEngine::DefinitionGenerator definition_generator =
+      [](const llvm::DataLayout& data_layout) {
+        return std::make_unique<RuntimeSymbolGenerator>(data_layout);
       };
 
   // Options for orchestrating the JIT compilation process.
   JitCompiler::Options jit_compiler_options{
-      std::move(ir_compiler_options),
-      {},
       /*num_dylibs=*/1,
       /*definition_generator=*/std::move(definition_generator),
-      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
   };
 
   llvm::TargetOptions target_options;
@@ -259,23 +257,25 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
     thread_pool->Schedule(std::move(task));
   };
 
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(target_options, std::move(ir_compiler_options),
+                         IrCompiler::CompilationHooks());
+
   TF_ASSIGN_OR_RETURN(
       JitCompiler jit_compiler,
-      JitCompiler::Create(target_options, std::move(jit_compiler_options),
-                          compilation_task_runner));
-
-  auto scheduler =
-      debug_options.xla_cpu_enable_concurrency_optimized_scheduler()
-          ? BFSMemoryScheduler
-          : DFSMemoryScheduler;
-
+      JitCompiler::Create(std::move(jit_compiler_options),
+                          std::move(ir_compiler), compilation_task_runner));
   auto buffer_size_bytes_function = [](const BufferValue& buffer) {
     return CpuExecutable::ShapeSizeBytes(buffer.shape());
   };
-  TF_ASSIGN_OR_RETURN(
-      HloSchedule schedule,
-      ScheduleModule(&module, buffer_size_bytes_function,
-                     ComputationSchedulerToModuleScheduler(scheduler)));
+  auto scheduler =
+      debug_options.xla_cpu_enable_concurrency_optimized_scheduler()
+          ? std::unique_ptr<ModuleSchedulerAlgorithm>(
+                std::make_unique<BFScheduler>(buffer_size_bytes_function))
+          : std::make_unique<DFSMemoryScheduler>(buffer_size_bytes_function);
+
+  TF_ASSIGN_OR_RETURN(HloSchedule schedule,
+                      ScheduleModule(&module, *scheduler));
   TF_RETURN_IF_ERROR(module.set_schedule(schedule));
 
   auto memory_alignment = [](LogicalBuffer::Color) {

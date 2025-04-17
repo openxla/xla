@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -52,7 +53,7 @@ class TfAllocatorAdapter : public DeviceMemoryAllocator {
   TfAllocatorAdapter(tsl::Allocator *wrapped, Stream *stream);
 
   // Constructor for the cases where `stream` can not be provided.
-  TfAllocatorAdapter(tsl::Allocator *wrapped, Platform *platform);
+  TfAllocatorAdapter(tsl::Allocator *wrapped, const Platform *platform);
 
   ~TfAllocatorAdapter() override;
 
@@ -201,7 +202,7 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
 
 // Creates a status with a payload indicating an error while allocating `size`
 // bytes of memory.
-absl::Status MemoryAllocationError(uint64_t size);
+absl::Status MemoryAllocationError(uint64_t size, bool is_host_mem);
 
 // Checks whether the status is a memory allocation error.
 bool IsMemoryAllocationError(absl::Status status);

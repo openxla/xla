@@ -20,13 +20,13 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/float_support.h"
-#include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
 
@@ -68,8 +68,8 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
           PrimitiveType,
           stream_executor::CudaComputeCapability::CudaComputeCapabilities>;
       for (auto [type, cc] :
-           {TypeAndCC(F8E4M3FN, se::CudaComputeCapability::AMPERE),
-            TypeAndCC(F8E5M2, se::CudaComputeCapability::HOPPER)}) {
+           {TypeAndCC(F8E4M3FN, se::CudaComputeCapability::kAmpere),
+            TypeAndCC(F8E5M2, se::CudaComputeCapability::kHopper)}) {
         if (LowPrecisionType() == type) {
           auto* cuda_compute_capability =
               std::get_if<se::CudaComputeCapability>(&compute_capability_);

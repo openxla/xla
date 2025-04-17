@@ -32,18 +32,17 @@ limitations under the License.
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
+#include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/ir_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/runtime/copy_thunk.h"
-#include "xla/service/gpu/runtime/send_recv_thunk.h"
-#include "xla/service/gpu/runtime/sequential_thunk.h"
-#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape_util.h"
@@ -89,8 +88,9 @@ class IrEmitterUnnested : public IrEmitter {
       IrEmitterContext* ir_emitter_context);
 
   // Transfers the ownship of thunk_sequence_ out.
-  std::unique_ptr<SequentialThunk> ConsumeThunkSequence() {
-    return std::make_unique<SequentialThunk>(Thunk::ThunkInfo{},
+  std::unique_ptr<SequentialThunk> ConsumeThunkSequence(
+      Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo{}) {
+    return std::make_unique<SequentialThunk>(thunk_info,
                                              std::move(thunk_sequence_));
   }
 
@@ -126,6 +126,7 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCholeskyThunk(const HloInstruction* instr);
   absl::Status EmitCustomCallThunk(const HloCustomCallInstruction* instr);
   absl::Status EmitFftThunk(const HloFftInstruction* instr);
+  absl::Status EmitAsyncComputation(const HloInstruction* instr);
   absl::Status EmitFusion(const HloFusionInstruction* instr);
   absl::Status EmitCopy(const HloInstruction* instr);
   absl::Status EmitAsyncCustomCallStart(const HloInstruction* instr);
@@ -146,13 +147,14 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitRecvThunk(const HloRecvInstruction* instr);
   absl::Status EmitRecvDoneThunk(const HloRecvDoneInstruction* instr);
 
-  template <typename NcclThunkType, typename HloInstType>
-  absl::Status EmitNcclThunk(Thunk::Kind kind,
-                             const HloInstruction* async_start,
-                             const HloInstType* inst,
-                             std::optional<bool> use_global_device_ids);
+  template <typename CollectiveThunkType, typename HloInstType>
+  absl::Status EmitCollectiveThunk(Thunk::Kind kind,
+                                   const HloInstruction* async_start,
+                                   const HloInstType* inst,
+                                   std::optional<bool> use_global_device_ids);
 
-  absl::Status EmitNcclAsyncDone(Thunk::Kind kind, const HloInstruction* instr);
+  absl::Status EmitCollectiveAsyncDone(Thunk::Kind kind,
+                                       const HloInstruction* instr);
 
   template <typename ThunkType>
   absl::Status EmitReplicaOrPartitionId(const HloInstruction* instr);
@@ -166,7 +168,7 @@ class IrEmitterUnnested : public IrEmitter {
 
   absl::Status EmitHloInstruction(const HloInstruction* instr);
 
-  absl::Status EmitNcclGroupStartThunk(const HloInstruction* instr);
+  absl::Status EmitCollectiveGroupStartThunk(const HloInstruction* instr);
 
   absl::Status EmitTargetElementLoop(
       const HloInstruction& hlo,
@@ -324,13 +326,14 @@ class IrEmitterUnnested : public IrEmitter {
   ThunkSequence scoped_thunk_sequence_;
   bool emit_group_thunks_ = false;
 
-  // Container for async send/recv events shared by send/recv thunks.
-  std::shared_ptr<SendRecvAsyncEvents> send_recv_events_;
+  // Container for async host send/recv events shared by host send/recv thunks.
+  std::shared_ptr<HostSendRecvAsyncEvents> send_recv_events_;
 
   // Container for async copy-start/copy-done events.
   std::shared_ptr<CopyThunk::AsyncEvents> copy_events_;
 
-  GpuElementalIrEmitter elemental_emitter_;
+  // Cache to store the call_graph.
+  std::unique_ptr<CallGraph> call_graph_;
 };
 
 }  // namespace gpu

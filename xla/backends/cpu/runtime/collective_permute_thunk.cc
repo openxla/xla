@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -33,19 +34,17 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/collectives_interface.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -63,7 +62,7 @@ CollectivePermuteThunk::CollectivePermuteThunk(
     Info info, OpParams op_params, OpBuffers op_buffers,
     OpResources op_resources,
     absl::Span<const SourceTargetPair> source_target_pairs)
-    : CollectiveThunk(Kind::kCollectivePermute, std::move(info),
+    : CollectiveThunk(CollectiveKind::kCollectivePermute, std::move(info),
                       std::move(op_params), std::move(op_buffers),
                       std::move(op_resources)),
       source_target_pairs_(source_target_pairs.begin(),
@@ -71,8 +70,6 @@ CollectivePermuteThunk::CollectivePermuteThunk(
 
 tsl::AsyncValueRef<CollectivePermuteThunk::ExecuteEvent>
 CollectivePermuteThunk::Execute(const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   TF_ASSIGN_OR_RETURN(OpDeviceMemory data, GetOpDeviceMemory(params));
 
   Thunk::CollectiveExecuteParams* collective_params = params.collective_params;

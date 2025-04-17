@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -99,11 +100,6 @@ class Executable : public llvm::RTTIExtends<Executable, llvm::RTTIRoot> {
   // differ for different implementations and platforms.
   virtual absl::StatusOr<AttributeMap> GetCostAnalysis() const = 0;
 
-  // Returns the compile options used to compile this executable.
-  // TODO(phawkins): consider removing this API and having the client remember
-  // the compile options used to create the executable.
-  virtual const CompileOptions* GetCompileOptions() const = 0;
-
   static char ID;  // NOLINT
 };
 
@@ -126,6 +122,11 @@ struct ExecuteOptions {
   // If true, populate `ExecuteResult::status`. Otherwise, the status is left as
   // an invalid future.
   bool fill_status = false;
+
+  // Execution stream ID identifies the series of executions that must be
+  // executed in program order.  Executions with different execution stream IDs
+  // may be executed in any order and concurrently.
+  int64_t execution_stream_id = 0;
 
   // Custom execution options specific to the runtime. The user and the runtime
   // are responsible for ensuring version compatibility.
@@ -184,6 +185,13 @@ class LoadedExecutable
   // Returns a list of parameter Sharding.
   virtual std::optional<std::vector<OpSharding>> GetParameterShardings()
       const = 0;
+
+  // Returns the indices of parameters that will be donated whenever `Execute`
+  // gets called, provided they are not present in
+  // `execute_options.non_donatable_input_indices`.
+  virtual absl::StatusOr<absl::Span<const int>> GetDonatableInputIndices()
+      const = 0;
+
   // Returns a list of output OpSharding.
   virtual std::optional<std::vector<OpSharding>> GetOutputShardings() const = 0;
   // Returns a list of parameter layouts.
@@ -239,7 +247,7 @@ class LoadedExecutable
   // API).
   virtual absl::StatusOr<ExecuteResult> Execute(
       absl::Span<tsl::RCReference<Array>> args, const ExecuteOptions& options,
-      std::optional<tsl::RCReference<DeviceList>> devices) = 0;
+      std::optional<DeviceListRef> devices) = 0;
 
   // Deletes the executable from the devices. The operation may be asynchronous.
   // The returned future will have the result of the deletion on the devices.

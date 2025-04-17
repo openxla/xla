@@ -22,7 +22,9 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -35,16 +37,17 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/ValueRange.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/mlir/utils/type_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -69,6 +72,25 @@ template <typename CppType>
     }
     return ::mlir::DenseElementsAttr::getFromRawBuffer(type,
                                                        packed_padded_data);
+  } else if constexpr (std::is_same_v<CppType, tsl::float4_e2m1fn>) {
+    // DenseElementsAttr::get() does not support being passed an array of
+    // tsl::float4_e2m1fn. So convert each element to APFloat first.
+    auto data_span = literal.data<CppType>();
+    std::vector<llvm::APFloat> apfloats;
+    apfloats.reserve(literal.element_count());
+    for (size_t i = 0; i < literal.element_count(); i++) {
+      llvm::APFloat apfloat{static_cast<float>(data_span[i])};
+      bool losesInfo;
+      llvm::APFloat::opStatus status =
+          apfloat.convert(llvm::APFloat::Float4E2M1FN(),
+                          llvm::APFloat::rmNearestTiesToEven, &losesInfo);
+      CHECK_EQ(status, llvm::APFloat::opOK)
+          << "Failed to convert " << data_span[i] << " to Float4E2M1FN APFloat";
+      CHECK(!losesInfo) << "Lost info when converting " << data_span[i]
+                        << " to Float4E2M1FN APFloat";
+      apfloats.push_back(apfloat);
+    }
+    return ::mlir::DenseElementsAttr::get(type, apfloats);
   } else {
     auto data_span = literal.data<CppType>();
     return ::mlir::DenseElementsAttr::get(
@@ -93,7 +115,7 @@ absl::StatusOr<AffineMap> GetPermutationIfAvailable(const Shape& shape,
     return Internal("Permutations for dynamic shapes are not yet supported");
   }
   int64_t accumulated_stride = 1;
-  llvm::SmallVector<int64_t, 4> strides(shape.rank(), 1);
+  llvm::SmallVector<int64_t, 4> strides(shape.dimensions().size(), 1);
   for (int64_t dim : LayoutUtil::MinorToMajor(shape)) {
     strides[dim] = accumulated_stride;
     accumulated_stride *= shape.dimensions(dim);
@@ -153,6 +175,23 @@ mlir::DenseIntElementsAttr CreateDenseIntElementsAttrFromVector(
       vector);
 }
 
+namespace {
+bool HasMhloTokenType(mlir::TypeRange types) {
+  bool use_mhlo = false;
+  for (auto type : types) {
+    if (!use_mhlo) {
+      type.walk([&](mlir::Type type) {
+        use_mhlo |= llvm::isa<mlir::mhlo::TokenType>(type);
+        if (use_mhlo) return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
+      });
+    }
+  }
+  return use_mhlo;
+}
+
+}  // namespace
+
 mlir::Value CreateTupleValue(mlir::OpBuilder* func_builder, mlir::Location loc,
                              mlir::ValueRange& flatten_values,
                              mlir::Type type) {
@@ -169,7 +208,11 @@ mlir::Value CreateTupleValue(mlir::OpBuilder* func_builder, mlir::Location loc,
     flatten_sub_values.push_back(
         CreateTupleValue(func_builder, loc, flatten_values, child_type));
 
-  return func_builder->create<mlir::mhlo::TupleOp>(loc, flatten_sub_values)
+  if (HasMhloTokenType(mlir::TypeRange(flatten_sub_values))) {
+    return func_builder->create<mlir::mhlo::TupleOp>(loc, flatten_sub_values)
+        .getResult();
+  }
+  return func_builder->create<mlir::stablehlo::TupleOp>(loc, flatten_sub_values)
       .getResult();
 }
 
@@ -182,10 +225,12 @@ mlir::Operation* CreateTupleFromOpResults(mlir::OpBuilder* func_builder,
   mlir::ValueRange flattened_results_ref(op->getResults());
   auto result =
       CreateTupleValue(func_builder, loc, flattened_results_ref, type);
-  auto defining_tuple_op = result.getDefiningOp<mlir::mhlo::TupleOp>();
-  assert(defining_tuple_op && "builder didn't return the right type");
-  auto tupleOp = defining_tuple_op.getOperation();
-  return tupleOp;
+  mlir::Operation* tuple_op = result.getDefiningOp<mlir::mhlo::TupleOp>();
+  if (!tuple_op) {
+    tuple_op = result.getDefiningOp<mlir::stablehlo::TupleOp>();
+  }
+  assert(tuple_op && "builder didn't return the right type");
+  return tuple_op;
 }
 
 mlir::Operation* WrapVariadicResultsInTuple(mlir::OpBuilder* builder,

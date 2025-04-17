@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
 
 #include <utility>
 #include <string>
@@ -21,13 +21,13 @@ limitations under the License.
 
 #include "absl/strings/str_replace.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
 #include "tsl/platform/cpu_info.h"
@@ -63,6 +63,17 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:     "onednn_matmul_config":{
     ; CHECK-DAG:       "fusions":{
     ; CHECK-DAG:         "ops":["BINARY_ADD"]
+    ; CHECK-DAG:     }
+    ; CHECK-DAG:   }
+    ; CHECK:     }
+    )";
+  const char* fused_matmul_sum_ = R"(
+    ; CHECK:     custom_call_target="__onednn$matmul",
+    ; CHECK:       backend_config={
+    ; CHECK-DAG:     "outer_dimension_partitions":[],
+    ; CHECK-DAG:     "onednn_matmul_config":{
+    ; CHECK-DAG:       "fusions":{
+    ; CHECK-DAG:         "ops":["SUM"]
     ; CHECK-DAG:     }
     ; CHECK-DAG:   }
     ; CHECK:     }
@@ -280,7 +291,51 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter1) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_binary_add_);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_sum_);
+}
+
+TEST_F(MatmulTest, SimpleTestF32Add2Dots) {
+  const char* matmul_module_str = R"(
+  HloModule matmul.biasadd.test.f32
+
+  ENTRY matmul.biasadd.test.f32 {
+    arg0.1 = f32[32,32,40,30] parameter(0)
+    arg0.2 = f32[32,32,30,40] parameter(1)
+    arg0.3 = f32[32,32,40,40] parameter(2)
+    arg0.4 = f32[32,32,40,40] parameter(3)
+    dot.7 = f32[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1},
+       lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    dot.8 = f32[32,32,40,40] dot(arg0.3, arg0.4), lhs_batch_dims={0,1},
+       lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    ROOT add.10 = f32[32,32,40,40] add(dot.7, dot.8)
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_sum_);
+}
+
+TEST_F(MatmulTest, SimpleTestF16Add2Dots) {
+  if (!IsSupportedType(PrimitiveType::F16)) {
+    GTEST_SKIP() << "CPU does not support F16.";
+  }
+
+  const char* matmul_module_str = R"(
+  HloModule matmul.biasadd.test.f16
+
+  ENTRY matmul.biasadd.test.f16 {
+    arg0.1 = f16[32,64,128] parameter(0)
+    arg0.2 = f16[32,128,64] parameter(1)
+    arg0.3 = f16[32,64,64] parameter(2)
+    arg0.4 = f16[32,64,64] parameter(3)
+    dot.7 = f16[32,64,64] dot(arg0.1, arg0.2), lhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+    dot.8 = f16[32,64,64] dot(arg0.3, arg0.4), lhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+    ROOT add.10 = f16[32,64,64] add(dot.7, dot.8)
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-2}));
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_sum_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2) {
@@ -1667,4 +1722,4 @@ TEST_F(MatmulTest, SimpleTestF32WithAddFusion_2) {
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL

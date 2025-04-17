@@ -33,6 +33,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/dynamic_dimension_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -42,11 +45,8 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/dynamic_dimension_inference.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/llvm_irgen_test_base.h"
 #include "xla/tests/test_macros.h"
@@ -74,7 +74,7 @@ OpDynamismSupport OpHasDynamismSupport(HloInstruction* hlo) {
   return OpDynamismSupport::kNoSupport;
 }
 
-absl::Status CustomCallDynamicDimensionInference(
+bool CustomCallDynamicDimensionInference(
     HloInstruction* hlo, DynamicDimensionInference* inferencer) {
   if (hlo->custom_call_target() == "OpWithDynamicLowering") {
     if (hlo->shape().IsTuple()) {
@@ -82,15 +82,17 @@ absl::Status CustomCallDynamicDimensionInference(
       HloInstruction* dynamic_size =
           inferencer->GetDynamicSize(hlo->mutable_operand(0), {1}, 0);
       inferencer->SetDynamicSize(hlo, {1}, 0, dynamic_size);
+      return true;
     } else {
       // Use the operand's dynamic size as output dynamic size.
       HloInstruction* dynamic_size =
           inferencer->GetDynamicSize(hlo->mutable_operand(0), {}, 0);
       inferencer->SetDynamicSize(hlo, {}, 0, dynamic_size);
+      return true;
     }
   }
 
-  return absl::OkStatus();
+  return false;
 }
 
 class DynamicPadderTest : public HloTestBase {
@@ -685,7 +687,7 @@ ENTRY main {
   };
   auto custom_call_handler = [](HloInstruction* hlo,
                                 DynamicDimensionInference* inference) {
-    return absl::OkStatus();
+    return false;
   };
   TF_ASSERT_OK(
       RunPadder(

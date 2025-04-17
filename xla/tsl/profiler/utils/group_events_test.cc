@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/tsl/profiler/utils/group_events.h"
 
+#include <cstdint>
 #include <optional>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/tf_xplane_visitor.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_test_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
@@ -137,6 +138,7 @@ TEST(GroupEventsTest, GroupTensorFlowLoopTest) {
   constexpr int64_t kStepId = 0;
   constexpr int64_t kIterNum = 10;
   constexpr int64_t kCorrelationId = 100;
+  constexpr int64_t kRawValue = 10;
 
   XSpace space;
   XPlaneBuilder host_plane_builder(GetOrCreateHostXPlane(&space));
@@ -166,11 +168,20 @@ TEST(GroupEventsTest, GroupTensorFlowLoopTest) {
   CreateXEvent(&device_plane_builder, &stream, "matmul", 200, 300,
                {{StatType::kCorrelationId, kCorrelationId}});
 
+  auto sync_flag_line = device_plane_builder.GetOrCreateLine(1);
+  sync_flag_line.SetName(kTensorCoreSyncFlagLineName);
+  CreateXEvent(&device_plane_builder, &sync_flag_line, "SyncWait", 200, 300,
+               {{StatType::kRawValue, kRawValue}});
+
   EventForest event_forest;
   GroupTfEvents(&space, &event_forest);
   const GroupMetadataMap& group_metadata_map =
       event_forest.GetGroupMetadataMap();
   XPlaneVisitor device_plane_visitor = CreateTfXPlaneVisitor(device_plane);
+  EXPECT_EQ(device_plane->lines(1).events(0).stats_size(), 1);
+  EXPECT_EQ(device_plane_visitor.GetStatType(
+                device_plane->lines(1).events(0).stats(0).metadata_id()),
+            StatType::kRawValue);
   EXPECT_EQ(device_plane->lines(0).events(0).stats_size(), 3);
   EXPECT_EQ(device_plane_visitor.GetStatType(
                 device_plane->lines(0).events(0).stats(1).metadata_id()),

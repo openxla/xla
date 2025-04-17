@@ -273,7 +273,8 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   // BitcastConvert is only layout-preserving if it doesn't change the rank.
   absl::Status HandleBitcastConvert(HloInstruction* hlo) override {
     // If the rank isn't changing this is just an unary op.
-    if (hlo->shape().rank() == hlo->operand(0)->shape().rank()) {
+    if (hlo->shape().dimensions_size() ==
+        hlo->operand(0)->shape().dimensions_size()) {
       return HandleElementwiseUnary(hlo);
     }
 
@@ -429,7 +430,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     // 'scatter_indices'. So we require that there is just a single
     // 'scatter' dimension. This is ensured by the ScatterSimplifier pass.
     const auto& dims = scatter->scatter_dimension_numbers();
-    if (scatter->scatter_updates().front()->shape().rank() -
+    if (scatter->scatter_updates().front()->shape().dimensions_size() -
             dims.update_window_dims_size() >
         1) {
       return FailedPrecondition(
@@ -515,15 +516,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  // For bitcasting transposes, converts:
-  //
-  // A{I} -> bitcast[S]{L} -> transpose{L2}
-  //
-  // Into:
-  //
-  // A{I} -> bitcast{L2}
-  //
-  // For non-bitcasting ones, converts:
+  // Converts:
   //
   // A{I} -> bitcast[S0]{L} -> transpose[S]{L2}
   //
@@ -547,25 +540,28 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     auto normalized_shape = Normalize(s);
     VLOG(3) << "Input transpose: " << hlo->ToString();
 
-    if (!ShapeUtil::TransposeIsBitcast(s, operand_s, hlo->dimensions())) {
-      auto l0_perm =
-          InversePermutation(ToTransposeDimensions(operand_s.layout()));
-      auto l_perm = ToTransposeDimensions(s.layout());
+    auto l0_perm =
+        InversePermutation(ToTransposeDimensions(operand_s.layout()));
+    auto l_perm = ToTransposeDimensions(s.layout());
 
-      auto t = ComposePermutations(l0_perm, hlo->dimensions());
-      auto dimensions = ComposePermutations(t, l_perm);
-      auto normalized_transpose = hlo->AddInstruction(
+    auto t = ComposePermutations(l0_perm, hlo->dimensions());
+    auto dimensions = ComposePermutations(t, l_perm);
+    HloInstruction* normalized_transpose;
+
+    if (IsIdentityPermutation(dimensions)) {
+      // If we're dealing with an identity transposition, there's no need to
+      // actually create the transpose.
+      normalized_transpose = a0;
+    } else {
+      normalized_transpose = hlo->AddInstruction(
           HloInstruction::CreateTranspose(normalized_shape, a0, dimensions));
       SetVisited(*normalized_transpose);
       VLOG(3) << "Generated normalized physical transpose: "
               << normalized_transpose->ToString();
-      auto bc_to_orig = MakeBitcastHlo(normalized_transpose, s);
-      TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, bc_to_orig));
-    } else {
-      auto bc_to_orig = MakeBitcastHlo(a0, s, &hlo->metadata());
-      TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, bc_to_orig));
     }
-    return absl::OkStatus();
+
+    auto bc_to_orig = MakeBitcastHlo(normalized_transpose, s);
+    return ReplaceInstruction(hlo, bc_to_orig);
   }
 
   // Converts a purely physical copy into a physical+logical transposition.

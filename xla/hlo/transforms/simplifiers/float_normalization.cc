@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -39,9 +40,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -217,6 +215,9 @@ absl::Status FloatNormalizationVisitor::ChangeOutputTypeThenInsertConvertBack(
       hlo->mutable_shape(), [&](Shape* subshape, const xla::ShapeIndex& index) {
         if (subshape->element_type() == from) {
           subshape->set_element_type(to);
+          if (subshape->has_layout() && from == F4E2M1FN) {
+            subshape->mutable_layout()->set_element_size_in_bits(0);
+          }
         }
       });
   float_normalization_->UpdateLayout(hlo->mutable_shape());
@@ -459,6 +460,10 @@ absl::Status FloatNormalizationVisitor::HandleMultipleOutputs(
 }
 
 absl::Status FloatNormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
+  if (ABSL_PREDICT_FALSE(float_support_->ShouldSkipInstruction(*hlo))) {
+    return absl::OkStatus();
+  }
+
   int high_prec_count = 0;
   int low_prec_count = 0;
 
@@ -588,6 +593,8 @@ absl::Status FloatNormalizationVisitor::DefaultAction(HloInstruction* hlo) {
       hlo->opcode() == HloOpcode::kWhile ||            //
       hlo->opcode() == HloOpcode::kConditional ||      //
       hlo->opcode() == HloOpcode::kBitcastConvert ||   //
+      hlo->opcode() == HloOpcode::kAsyncStart ||       //
+      hlo->opcode() == HloOpcode::kAsyncDone ||        //
       hlo->HasSideEffectNoRecurse()) {
     return absl::OkStatus();
   }

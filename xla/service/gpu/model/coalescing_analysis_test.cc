@@ -24,11 +24,11 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/codegen/fusion_emitter.h"
+#include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/fusions/fusion_emitter.h"
-#include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
@@ -532,7 +532,8 @@ class CoalescingForTiledHloTest : public CoalescingTest {
             tile_sizes, /*constraints_are_known_satisfied=*/true,
             /*compute_all_tile_offset_indexing_maps=*/true);
 
-    const TiledHloInstruction* tiled_hlo_root = tiled_hlo_computation.GetRoot();
+    const TiledHloInstruction* tiled_hlo_root =
+        tiled_hlo_computation.GetRoots()[0];
     std::vector<bool> result;
     for (const TiledHloInstruction* operand : tiled_hlo_root->operands()) {
       result.push_back(IsTiledReadCoalescedHeuristic(*operand, device_info_));
@@ -553,7 +554,8 @@ class CoalescingForTiledHloTest : public CoalescingTest {
             tile_sizes, /*constraints_are_known_satisfied=*/true,
             /*compute_all_tile_offset_indexing_maps=*/true);
 
-    const TiledHloInstruction* tiled_hlo_root = tiled_hlo_computation.GetRoot();
+    const TiledHloInstruction* tiled_hlo_root =
+        tiled_hlo_computation.GetRoots()[0];
     std::vector<double> result;
     for (const TiledHloInstruction* operand : tiled_hlo_root->operands()) {
       result.push_back(BandwidthUtilizationRateHeuristicForTiledMemoryAccess(

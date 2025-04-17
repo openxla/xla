@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/ffi/execution_state.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 
@@ -55,6 +56,11 @@ class CustomCallThunk final : public Thunk {
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;
+
+  const std::string& target_name() const { return target_name_; }
+  const OpBuffers& op_buffers() const { return op_buffers_; }
+  const CustomCallApiVersion& api_version() const { return api_version_; }
+  const std::string& backend_config() const { return backend_config_; }
 
  private:
   CustomCallThunk(Info info, absl::string_view target_name,

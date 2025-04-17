@@ -30,12 +30,13 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/FPEnv.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
@@ -52,16 +53,18 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/literal.h"
+#include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/target_util.h"
-#include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
@@ -74,12 +77,12 @@ namespace {
 
 // Return whether the given shape is rank 2 excluding the batch dimensions.
 bool IsRank2(const Shape& shape, int64_t batch_dimensions_size) {
-  return shape.rank() == batch_dimensions_size + 2;
+  return shape.dimensions().size() == batch_dimensions_size + 2;
 }
 
 // Return whether the given shape is rank 1 excluding the batch dimensions.
 bool IsRank1(const Shape& shape, int64_t batch_dimensions_size) {
-  return shape.rank() == batch_dimensions_size + 1;
+  return shape.dimensions().size() == batch_dimensions_size + 1;
 }
 
 }  // namespace
@@ -431,6 +434,69 @@ std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
   return std::nullopt;
 }
 
+TransposeSpec GetTransposeSpec(const HloTransposeInstruction* transpose) {
+  auto inv_permutation = InversePermutation(transpose->dimensions());
+  auto& output_shape = transpose->shape();
+  llvm::SmallVector<int64_t, 3> canonical_output_shape =
+      llvm::to_vector<3>(output_shape.dimensions());
+  llvm::SmallVector<int64_t, 3> canonical_permutation =
+      llvm::to_vector<3>(transpose->dimensions());
+
+  // If the last dimension is transposed, add a size-1 B dimension.
+  if (canonical_permutation.back() != canonical_output_shape.size() - 1) {
+    canonical_permutation.push_back(output_shape.dimensions_size());
+    canonical_output_shape.push_back(1);
+  }
+  int64_t dim_t1 = -1;
+  int64_t dim_t2 = -1;
+  for (int64_t i = canonical_permutation.size() - 1; i >= 0; --i) {
+    if (canonical_permutation[i] != i) {
+      dim_t2 = canonical_permutation[i];
+      dim_t1 = i;
+      break;
+    }
+  }
+  // Insert size-1 A dimension if necessary.
+  auto rank = canonical_output_shape.size();
+  if (canonical_permutation[rank - 3] != rank - 3) {
+    canonical_output_shape.insert(canonical_output_shape.begin() + dim_t1, 1);
+    for (auto& p : canonical_permutation) {
+      if (p > rank - 3) p++;
+    }
+    canonical_permutation.insert(canonical_permutation.begin() + dim_t1,
+                                 dim_t1);
+  }
+  auto canonical_inv_permutation = InversePermutation(canonical_permutation);
+  auto canonical_input_shape =
+      Permute(canonical_output_shape, canonical_inv_permutation);
+  return TransposeSpec{
+      transpose,
+      llvm::to_vector<3>(transpose->dimensions()),
+      llvm::to_vector<3>(inv_permutation),
+      canonical_output_shape,
+      canonical_permutation,
+      llvm::to_vector<3>(canonical_inv_permutation),
+      llvm::to_vector<3>(canonical_input_shape),
+  };
+}
+
+std::string TransposeSpec::ToString() const {
+  return absl::Substitute(R"(
+transpose: $0
+canonical_input_shape: $1
+canonical_output_shape: $2
+canonical_permutation: $3
+canonical_inv_permutation: $4
+[T2, A, T1, B] = [$5, $6, $7, $8]
+)",
+                          transpose->ToString(),
+                          absl::StrJoin(canonical_input_shape, ","),
+                          absl::StrJoin(canonical_output_shape, ","),
+                          absl::StrJoin(canonical_permutation, ","),
+                          absl::StrJoin(canonical_inv_permutation, ","),
+                          dim_T2(), dim_A(), dim_T1(), dim_B());
+}
+
 bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count) {
   // Number of operands should be in range [1, allowed_operand_count].
   if (instr->operand_count() == 0 ||
@@ -636,6 +702,153 @@ absl::StatusOr<std::string> GetProtoFingerprint(
   std::string result;
   TF_RET_CHECK(tsl::SerializeToStringDeterministic(proto, &result));
   return absl::WebSafeBase64Escape(result);
+}
+
+std::optional<std::string> GetCustomFusionConfigName(
+    const HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return std::nullopt;
+  }
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return std::nullopt;
+  }
+  const FusionBackendConfig& fusion_backend_config =
+      backend_config->fusion_backend_config();
+  if (!fusion_backend_config.has_custom_fusion_config()) {
+    return std::nullopt;
+  }
+  return fusion_backend_config.custom_fusion_config().name();
+}
+
+bool IsDynamicSliceFusion(const HloInstruction* instr) {
+  std::optional<std::string> name = GetCustomFusionConfigName(instr);
+  return name == kDynamicSliceFusionWithStaticAddressComputationConfigName ||
+         name == kDynamicSliceFusionWithDynamicAddressComputationConfigName;
+}
+
+bool IsDynamicMemcpyFusion(const HloInstruction* instr) {
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  return backend_config.ok() &&
+         backend_config->fusion_backend_config().kind() ==
+             kDynamicMemcpyFusionKind;
+}
+
+std::optional<InductionVariableFunctionalDependency>
+ResolveFunctionalDependencyOnInductionVariable(
+    absl::Span<const HloInstruction* const> call_stack,
+    const HloInstruction* parameter) {
+  if (call_stack.empty()) {
+    return std::nullopt;
+  }
+
+  VLOG(5) << "Looking for defining while loop of " << parameter->name();
+
+  // Walk up the call stack, tracking the origin of `parameter`.
+  const HloInstruction* argument = parameter;
+  auto call_stack_it = call_stack.rbegin();
+  auto call_stack_end = call_stack.rend();
+  for (; call_stack_it != call_stack_end &&
+         argument->opcode() == HloOpcode::kParameter &&
+         ((*call_stack_it)->opcode() == HloOpcode::kFusion ||
+          (*call_stack_it)->opcode() == HloOpcode::kAsyncStart ||
+          (*call_stack_it)->opcode() == HloOpcode::kCall);
+       ++call_stack_it) {
+    argument = (*call_stack_it)->operand(argument->parameter_number());
+  }
+
+  if (call_stack_it == call_stack_end) {
+    return std::nullopt;
+  }
+
+  VLOG(5) << "Arrived at " << argument->name() << " in "
+          << (*call_stack_it)->name();
+
+  // Find a unique parameter and a gte in the transitive dependencies of
+  // `argument`.
+  const HloInstruction* unique_param = nullptr;
+  const HloInstruction* unique_gte = nullptr;
+  absl::flat_hash_set<const HloInstruction*> seen{argument};
+  std::queue<const HloInstruction*> queue;
+  queue.push(argument);
+  while (!queue.empty()) {
+    const auto* instruction = queue.front();
+    queue.pop();
+
+    if (instruction->opcode() == HloOpcode::kCustomCall ||
+        instruction->HasSideEffect()) {
+      VLOG(5) << "Found an unsafe operation.";
+      return std::nullopt;
+    }
+
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      if (unique_param || !instruction->shape().IsTuple()) {
+        VLOG(5) << "Failed to match parameters.";
+        return std::nullopt;
+      }
+      unique_param = instruction;
+    }
+
+    if (instruction->opcode() == HloOpcode::kGetTupleElement) {
+      if (unique_gte) {
+        VLOG(5) << "Found non-unique GTEs.";
+        return std::nullopt;
+      }
+      unique_gte = instruction;
+    }
+
+    for (auto* operand : instruction->operands()) {
+      if (seen.insert(operand).second) {
+        queue.push(operand);
+      }
+    }
+  }
+
+  if (!unique_param || !unique_gte || unique_gte->operand(0) != unique_param) {
+    VLOG(5) << "Did not find a parameter or GTE or they don't match.";
+    return std::nullopt;
+  }
+
+  VLOG(5) << "Parameter and GTE: " << unique_param->name() << ", "
+          << unique_gte->name();
+
+  // Continue walking up through call instructions.
+  while (call_stack_it != call_stack_end &&
+         (*call_stack_it)->opcode() == HloOpcode::kCall &&
+         unique_param->opcode() == HloOpcode::kParameter) {
+    unique_param = (*call_stack_it)->operand(unique_param->parameter_number());
+    ++call_stack_it;
+  }
+
+  // Find the while loop for 'unique_param'.
+  auto while_instr_it = std::find_if(
+      call_stack_it, call_stack_end, [&](const HloInstruction* instr) {
+        return instr->opcode() == HloOpcode::kWhile &&
+               unique_param == instr->while_body()->parameter_instruction(0);
+      });
+
+  if (while_instr_it == call_stack_end) {
+    VLOG(5) << "Did not find a while loop.";
+    return std::nullopt;
+  }
+
+  auto config =
+      (*while_instr_it)->backend_config<xla::WhileLoopBackendConfig>();
+  if (!config.ok() || !config->has_known_induction_variable() ||
+      unique_gte->tuple_index() !=
+          config->known_induction_variable().tuple_index()) {
+    VLOG(5) << "Failed to verify that the offset depends on the induction "
+               "variable.";
+    return std::nullopt;
+  }
+
+  VLOG(5) << "While loop for " << parameter->name() << ": "
+          << (*while_instr_it)->name();
+  return InductionVariableFunctionalDependency{argument, *while_instr_it,
+                                               unique_gte};
 }
 
 }  // namespace gpu

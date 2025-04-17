@@ -13,25 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-
 #include <utility>
 
 #include "absl/strings/str_replace.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
 #include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace cpu {
+
+#if defined(INTEL_MKL)
 
 class ConvolutionTest : public HloTestBase,
                         public ::testing::WithParamInterface<PrimitiveType> {
@@ -72,9 +72,7 @@ class ConvolutionTest : public HloTestBase,
   ConvolutionTest() {
     dtype_ = GetParam();
     atol_ = rtol_ = (dtype_ == F32) ? 1e-4 : 1e-2;
-    // TODO(intel-tf): Set default value of user_scratchpad to true after
-    // enabling feature
-    user_scratchpad_ = false;
+    user_scratchpad_ = true;
     weights_prepacked_ = false;
     dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
   }
@@ -104,7 +102,7 @@ class ConvolutionTest : public HloTestBase,
     std::ostringstream stream;
     std::for_each(
         fused_ops.begin(), fused_ops.end(),
-        [&](const absl::string_view& arg) { stream << "\"" << arg << "\","; });
+        [&](absl::string_view arg) { stream << "\"" << arg << "\","; });
     std::string fusions = stream.str();
     if (fused_ops.size() > 0) {
       fusions.pop_back();
@@ -170,6 +168,23 @@ TEST_P(ConvolutionTest, Simple2DTest1) {
   RunCompareAndMatchOptimizedHlo(outline, {});
 }
 
+TEST_P(ConvolutionTest, SimpleScalarTest) {
+  const absl::string_view outline = R"(
+  HloModule convolution.test
+
+  ENTRY convolution.test {
+    arg.0 = $dtype[1,22,22,1] parameter(0)
+    arg.1 = $dtype[1] parameter(1)
+    reshape.1 = $dtype[1,1,1,1] reshape(arg.1)
+    convolution.0 = $dtype[1,14,14,1] convolution(arg.0, reshape.1),
+          window={size=1x1 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    tuple.0 = ($dtype[1,14,14,1]) tuple(convolution.0)
+    ROOT gte.0 = $dtype[1,14,14,1] get-tuple-element(tuple.0), index=0
+  })";
+
+  RunCompareAndMatchOptimizedHlo(outline, {});
+}
+
 TEST_P(ConvolutionTest, Simple3DTest1) {
   const absl::string_view outline = R"(
   HloModule convolution.test
@@ -196,6 +211,22 @@ TEST_P(ConvolutionTest, Conv3DWithBiasTest) {
     bias = $dtype[64] parameter(2)
     broadcasted_bias = $dtype[15,4,5,5,64] broadcast(bias), dimensions={4}
     ROOT add = $dtype[15,4,5,5,64] add(conv, broadcasted_bias)
+})";
+
+  RunCompareAndMatchOptimizedHlo(outline, {"BIAS"});
+}
+
+TEST_P(ConvolutionTest, Conv2DWithSmallBiasTest) {
+  const absl::string_view outline = R"(
+  HloModule convolution.test.with.constant.bias
+  ENTRY convolution.test.with.bias {
+    arg.0 = $dtype[1,10,10,32] parameter(0)
+    arg.1 = $dtype[10,10,32,64] parameter(1)
+    conv = $dtype[1,1,1,64] convolution(arg.0, arg.1),
+          window={size=10x10}, dim_labels=b01f_01io->b01f
+    bias = $dtype[64] constant({...})
+    broadcasted_bias = $dtype[1,1,1,64] broadcast(bias), dimensions={3}
+    ROOT add = $dtype[1,1,1,64] add(conv, broadcasted_bias)
 })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BIAS"});
@@ -312,6 +343,25 @@ TEST_P(ConvolutionTest, ToeplitzConstrcutionTest) {
   })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BINARY_ADD"});
+}
+
+TEST_P(ConvolutionTest, Conv2DWithSumTest) {
+  const absl::string_view outline = R"(
+  HloModule convolution.test.with.sum
+  ENTRY convolution.test.with.sum {
+    arg0.1 = $dtype[1,22,22,1] parameter(0)
+    arg0.2 = $dtype[1,11,11,1] parameter(1)
+    constant.3 = $dtype[] constant(1)
+    broadcast.4 = $dtype[8,8,1,1] broadcast(constant.3), dimensions={}
+    convolution.0 = $dtype[1,11,11,1] convolution(arg0.1, broadcast.4),
+          window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    ROOT add.10 = $dtype[1,11,11,1] add(convolution.0, arg0.2)
+  })";
+
+  // Optimized HLO must match "SUM" only for precisions that support Elementwise
+  // Add operations
+  RunCompareAndMatchOptimizedHlo(outline,
+                                 {(dtype_ == BF16) ? "BINARY_ADD" : "SUM"});
 }
 
 TEST_P(ConvolutionTest, Conv2DWithBiasAndTanhTest) {
@@ -603,7 +653,10 @@ INSTANTIATE_TEST_SUITE_P(
       return test_name;
     });
 
+#endif  // INTEL_MKL
+
+// Ensure at least one test case is linked to avoid test failures.
+TEST(Dummy, Test) {}
+
 }  // namespace cpu
 }  // namespace xla
-
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3

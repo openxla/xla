@@ -21,9 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
@@ -32,7 +35,6 @@ limitations under the License.
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/runtime/sequential_thunk.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -66,10 +68,9 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
                        absl::string_view cache_file_path);
 
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
-    HloModule* hlo_module, llvm::LLVMContext* llvm_context,
+    const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
-    const std::string& platform_name, se::Platform::Id platform_id,
-    const se::DeviceDescription& gpu_device_info,
+    const se::Platform* platform, const se::DeviceDescription& device_desc,
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
     const BufferValue::SizeFunction& buffer_size_bytes_function,
     bool split_constants_module = false);

@@ -44,7 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/variant_visitor.h"
+#include "xla/service/overload.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -109,7 +109,17 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      return config.enabled_commands.contains(DebugOptions::FUSION);
+      // We currently only support static address computations in command
+      // buffers.
+      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
+        bool is_static_ds_fusion =
+            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
+            kDynamicSliceFusionWithStaticAddressComputationConfigName;
+        return is_static_ds_fusion && config.enabled_commands.contains(
+                                          DebugOptions::DYNAMIC_SLICE_FUSION);
+      } else {
+        return config.enabled_commands.contains(DebugOptions::FUSION);
+      }
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
         hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
@@ -136,7 +146,17 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      return config.enabled_commands.contains(DebugOptions::FUSION);
+      // We currently only support static address computations in command
+      // buffers.
+      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
+        bool is_static_ds_fusion =
+            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
+            kDynamicSliceFusionWithStaticAddressComputationConfigName;
+        return is_static_ds_fusion && config.enabled_commands.contains(
+                                          DebugOptions::DYNAMIC_SLICE_FUSION);
+      } else {
+        return config.enabled_commands.contains(DebugOptions::FUSION);
+      }
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
         hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
@@ -241,9 +261,11 @@ static bool IsCommand(const HloInstruction* hlo,
     if (backend_config.kind() == kCuDnnFusionKind) {
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
-    const auto& custom_config = backend_config.custom_fusion_config();
-    if ((custom_config.name() == "address_computation") ||
-        (custom_config.name() == "dynamic_address_computation")) {
+    if (IsDynamicMemcpyFusion(fusion)) {
+      // Dynamic memcpy fusions do not yet have a command implementation.
+      return false;
+    }
+    if (IsDynamicSliceFusion(fusion)) {
       auto fusion_analysis =
           HloFusionAnalysis::Create(*hlo, config.device_description);
       const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
@@ -254,7 +276,10 @@ static bool IsCommand(const HloInstruction* hlo,
           });
       const HloInstruction* hero = &hero_adaptor->instruction();
 
-      if (custom_config.name() == "address_computation") {
+      const absl::string_view& config_name =
+          backend_config.custom_fusion_config().name();
+      if (config_name ==
+          kDynamicSliceFusionWithStaticAddressComputationConfigName) {
         return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
       } else {
         // DynamicSliceFusionRewriter currently only rewrites for dynamic slice
@@ -380,7 +405,9 @@ CommandBufferScheduling::CollectCommandBufferSequences(
         const FusionBackendConfig& backend_config =
             gpu_config->fusion_backend_config();
         const auto& custom_config = backend_config.custom_fusion_config();
-        if (custom_config.name() != "dynamic_address_computation") return true;
+        if (custom_config.name() !=
+            kDynamicSliceFusionWithDynamicAddressComputationConfigName)
+          return true;
 
         auto* fused_computation = fusion->called_computation();
         return !absl::c_any_of(
@@ -853,7 +880,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
     erase(kRequireConditionals);  // on-device control flow
   };
 
-  std::visit(VariantVisitor{erase_cuda, erase_rocm},
+  std::visit(Overload{erase_cuda, erase_rocm},
              device_description_.gpu_compute_capability());
 
   auto order = module->MakeComputationPostOrder();
@@ -864,7 +891,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
   for (HloComputation* comp : order) {
     // Skip special computations that do not have lowering to thunks.
     if (comp->IsFusionComputation() || comp->IsAsyncComputation() ||
-        comp->IsCustomCallComputation())
+        !comp->caller_instructions(HloOpcode::kCustomCall).empty())
       continue;
 
     // Skip computations that already part of command buffers.

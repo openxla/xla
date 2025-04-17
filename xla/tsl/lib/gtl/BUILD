@@ -32,6 +32,9 @@ package(
         "//xla/tsl/distributed_runtime/rpc:__pkg__",
         "//xla/tsl/profiler/utils:__pkg__",
         "//tensorflow/core/profiler/convert:__pkg__",
+        # xprof /convert and /utils uses map_util and top_n
+        "//third_party/xprof/convert:__pkg__",
+        "//third_party/xprof/utils:__pkg__",
     ]),
     licenses = ["notice"],
 )
@@ -41,7 +44,10 @@ package(
 cc_library(
     name = "compactptrset",
     hdrs = ["compactptrset.h"],
-    deps = [":flatset"],
+    deps = [
+        ":flatset",
+        "//xla/tsl/util:safe_reinterpret_cast",
+    ],
 )
 
 cc_library(
@@ -49,9 +55,9 @@ cc_library(
     hdrs = ["flatmap.h"],
     deps = [
         ":flatrep",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -59,8 +65,8 @@ cc_library(
     name = "flatrep",
     hdrs = ["flatrep.h"],
     deps = [
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/base:prefetch",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -69,9 +75,9 @@ cc_library(
     hdrs = ["flatset.h"],
     deps = [
         ":flatrep",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -79,10 +85,10 @@ cc_library(
     name = "inlined_vector",
     hdrs = ["inlined_vector.h"],
     deps = [
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -90,8 +96,8 @@ cc_library(
     name = "int_type",
     hdrs = ["int_type.h"],
     deps = [
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -222,10 +228,10 @@ tsl_cc_test(
         ":int_type",
         ":iterator_range",
         ":map_util",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
     ],
 )

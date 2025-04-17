@@ -16,15 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_H_
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include "absl/container/btree_map.h"
 #include "absl/status/status.h"
-#include "absl/strings/str_format.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/core/collectives/clique.h"
 #include "xla/core/collectives/clique_id.h"
@@ -40,15 +37,13 @@ class LockableGpuClique;
 class GpuClique : public Clique {
  public:
   GpuClique(
-      GpuCliqueKey key, std::optional<CliqueId> id,
-      absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators);
-
-  // Returns true if clique is local: all communicators belong to current
-  // process. Non-local cliques spans multiple processes (typically hosts).
-  bool IsLocal() const { return num_communicators() == key_.devices().size(); }
+      GpuCliqueKey key, std::optional<CliqueIds> ids,
+      absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
+      bool peer_access_enabled);
 
   const GpuCliqueKey& key() const { return key_; }
-  const std::optional<CliqueId>& id() const { return id_; }
+  const std::optional<CliqueIds>& ids() const { return ids_; }
+  bool peer_access_enabled() const { return peer_access_enabled_; }
 
   std::string DebugString() const final;
   absl::Status HealthCheck() const final;
@@ -62,7 +57,11 @@ class GpuClique : public Clique {
   };
 
   GpuCliqueKey key_;
-  std::optional<CliqueId> id_;
+  std::optional<CliqueIds> ids_;
+
+  // True if peer device memory access is possible between all local devices in
+  // the clique.
+  bool peer_access_enabled_;
 };
 
 // A lockable version of GpuClique that guarantees exclusive access to the
@@ -70,8 +69,9 @@ class GpuClique : public Clique {
 class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
  public:
   LockableGpuClique(
-      GpuCliqueKey clique_key, std::optional<CliqueId> clique_id,
-      absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators);
+      GpuCliqueKey clique_key, std::optional<CliqueIds> clique_ids,
+      absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
+      bool peer_access_enabled);
 
   std::string DebugString() const;
 

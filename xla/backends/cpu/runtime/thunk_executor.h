@@ -19,44 +19,26 @@ limitations under the License.
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <new>
 #include <queue>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/fixed_array.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/runtime/execution_graph.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 
 namespace xla::cpu {
-
-namespace internal {
-// Clang does not allow defining a nested struct with member initializer, as
-// a workaround we define a struct in internal namespace and create an alias.
-struct ThunkExecutorOptions {
-  // If all thunks in a sequence use buffers of size less than or equal to the
-  // given threshold, we mark execution as sequential, as concurrency overheads
-  // will likely dominate the overall execution time.
-  size_t execute_sequential_buffer_threshold = 512;
-
-  // If thunk sequence length is less than or equal to the given threshold, we
-  // mark execution as sequential, as concurrency overheads will likely dominate
-  // the overall execution time.
-  size_t execute_sequential_num_thunks_threshold = 8;
-
-  // Use priority ready queue to execute nodes according to their priority. By
-  // default we use FIFO ready queue.
-  bool use_priority_ready_queue = false;
-};
-}  // namespace internal
 
 // A dataflow-style (run when ready) executor for a ThunkSequence that depends
 // on buffer uses to build a DAG defining execution order. At run time executes
@@ -66,26 +48,33 @@ class ThunkExecutor {
   using BufferUses = Thunk::BufferUses;
   using ResourceUses = Thunk::ResourceUses;
   using ExecuteEvent = Thunk::ExecuteEvent;
-  using Options = internal::ThunkExecutorOptions;
-
-  // Nodes identified by their index in the captured ThunkSequence.
-  using NodeId = int64_t;
-
-  static constexpr NodeId kInvalidNodeId = std::numeric_limits<NodeId>::min();
 
   ThunkExecutor(ThunkExecutor&&) = default;
   ThunkExecutor& operator=(ThunkExecutor&&) = default;
 
-  static absl::StatusOr<ThunkExecutor> Create(
-      ThunkSequence thunk_sequence, const Options& options = Options());
+  struct Options {
+    enum class ReadyQueueType { kFifo, kLifo, kPriority };
 
-  // NodeDef defines an execution order for all thunks in a sequence.
-  struct NodeDef {
-    NodeId id = kInvalidNodeId;
-    int64_t priority = 0;
-    std::vector<NodeId> in_edges;
-    std::vector<NodeId> out_edges;
+    // If all thunks in a sequence use buffers of size less than or equal to the
+    // given threshold, we mark execution as sequential, as concurrency
+    // overheads will likely dominate the overall execution time.
+    size_t execute_sequential_buffer_threshold = 512;
+
+    // If thunk sequence length is less than or equal to the given threshold, we
+    // mark execution as sequential, as concurrency overheads will likely
+    // dominate the overall execution time.
+    size_t execute_sequential_num_thunks_threshold = 8;
+
+    // The type of a queue for ready thunks.
+    ReadyQueueType ready_queue_type = ReadyQueueType::kFifo;
   };
+
+  static absl::StatusOr<ThunkExecutor> Create(ThunkSequence thunk_sequence,
+                                              const Options& options);
+
+  static absl::StatusOr<ThunkExecutor> Create(ThunkSequence thunk_sequence) {
+    return Create(std::move(thunk_sequence), Options());
+  }
 
   // Executes the thunk sequence using the prepared dataflow graph. Executor
   // uses runner to execute ready tasks concurrently. If runner is not provided,
@@ -95,11 +84,7 @@ class ThunkExecutor {
   // If any of the thunks failed, the event will be in error state.
   tsl::AsyncValueRef<ExecuteEvent> Execute(const Thunk::ExecuteParams& params);
 
-  absl::Span<const NodeDef> nodes_defs() const { return nodes_defs_; }
-  const NodeDef& node_def(NodeId id) const { return nodes_defs_[id]; }
-
-  absl::Span<const NodeId> source() const { return source_; }
-  absl::Span<const NodeId> sink() const { return sink_; }
+  const ThunkSequence& thunk_sequence() const { return thunk_sequence_; }
 
   BufferUses buffer_uses() const { return thunk_sequence_.buffer_uses(); }
   ResourceUses resource_uses() const { return thunk_sequence_.resource_uses(); }
@@ -107,6 +92,10 @@ class ThunkExecutor {
   std::string ToString() const;
 
   bool is_sequential() const { return is_sequential_; }
+
+  // We use underlying execution graph nodes to index into the thunk sequence.
+  using NodeId = ExecutionGraph::NodeId;
+  using NodeDef = ExecutionGraph::NodeDef;
 
   // A ready queue that executes nodes in FIFO order.
   class FifoReadyQueue {
@@ -126,6 +115,25 @@ class ThunkExecutor {
    private:
     absl::InlinedVector<NodeId, 8> queue_;
     size_t head_ = 0;
+  };
+
+  // A ready queue that executes nodes in LIFO order.
+  class LifoReadyQueue {
+   public:
+    explicit LifoReadyQueue(absl::Span<const NodeId> ready_nodes);
+
+    void Push(NodeId id);
+
+    NodeId Pop();
+    LifoReadyQueue PopHalf();
+
+    size_t Size() const;
+    bool Empty() const;
+
+    LifoReadyQueue CreateEmptyReadyQueue() const;
+
+   private:
+    absl::InlinedVector<NodeId, 8> queue_;
   };
 
   // A ready queue that executes nodes sorted by NodeDef priority.
@@ -177,7 +185,7 @@ class ThunkExecutor {
       explicit Node(const NodeDef& node_def);
 
       alignas(kAtomicAlignment) std::atomic<int64_t> counter;
-      const std::vector<NodeId>* out_edges;
+      absl::Span<const NodeId> out_edges;
     };
 
     static_assert(std::is_trivially_destructible_v<Node>,
@@ -185,15 +193,22 @@ class ThunkExecutor {
 
     // We use indirection via NodeStorage to be able to allocate uninitialized
     // memory and do not pay the cost of default initializing all nodes.
-    using NodeStorage = std::aligned_storage_t<sizeof(Node), alignof(Node)>;
+    struct NodeStorage {
+      alignas(Node) std::byte data[sizeof(Node)];
+    };
 
     ExecuteState(ThunkExecutor* executor, Thunk::TaskRunner* runner);
 
-    Node& node(NodeId id) { return *reinterpret_cast<Node*>(&nodes[id]); }
+    Node& node(NodeId id) {
+      DCHECK_LT(id, nodes.size()) << "Node id is out of bounds";
+      return *reinterpret_cast<Node*>(&nodes.data()[id]);
+    }
 
     ThunkExecutor* executor;
     Thunk::TaskRunner* runner;
 
+    // Note: using alignas(Node) here instead of in NodeStorage does not work:
+    // `nodes` would be aligned, but not its elements.
     absl::FixedArray<NodeStorage> nodes;
     tsl::AsyncValueRef<ExecuteEvent> execute_event;
 
@@ -208,10 +223,16 @@ class ThunkExecutor {
     absl::Status abort_status ABSL_GUARDED_BY(abort_mutex);
   };
 
-  ThunkExecutor(ThunkSequence thunk_sequence, std::vector<NodeDef> nodes_defs,
+  ThunkExecutor(ThunkSequence thunk_sequence, ExecutionGraph execution_graph,
                 const Options& options);
 
-  // Executes thunks sequentially starting from the first thunk in the sequence.
+  // Executes given `thunk` with `params` and adds tracing annotation to capture
+  // start and end events for profiling.
+  static tsl::AsyncValueRef<ExecuteEvent> TracedExecute(
+      Thunk& thunk, const Thunk::ExecuteParams& params);
+
+  // Executes thunks sequentially starting from the first thunk in the
+  // sequence.
   tsl::AsyncValueRef<ExecuteEvent> ExecuteSequential(
       const Thunk::ExecuteParams& params);
 
@@ -240,25 +261,15 @@ class ThunkExecutor {
                        tsl::AsyncValuePtr<Thunk::ExecuteEvent> node_event,
                        ExecuteState::Node& node, ReadyQueue& ready_queue);
 
-  // Runs a transitive reduction on the NodeDef graph to remove redundant edges,
-  // and updates nodes priorities. Returns the number of removed edges.
-  //
-  // See: https://en.wikipedia.org/wiki/Transitive_reduction
-  int64_t RunTransitiveReductionAndUpdatePriorities();
-
   ThunkSequence thunk_sequence_;
+  ExecutionGraph execution_graph_;
   Options options_;
 
   int64_t num_thunks_;
 
-  std::vector<NodeDef> nodes_defs_;
-
-  std::vector<NodeId> source_;
-  std::vector<NodeId> sink_;
-
-  // If NodeDef graph dependency structure is sequential and does not have any
-  // opportunities for executing thunks concurrently, we skip the expensive
-  // async execution and simply run thunks in the `thunk_sequence_` one by one.
+  // In addition to the execution graph sequential ordering property, we use
+  // heuristics to use sequential execution for sequences of small thunks where
+  // async execution overhead will likely dominate the overall execution time.
   bool is_sequential_;
 };
 

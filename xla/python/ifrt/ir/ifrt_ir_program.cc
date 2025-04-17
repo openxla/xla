@@ -26,12 +26,14 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
+#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/ir/ifrt_ir_compile_options.pb.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

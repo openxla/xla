@@ -22,6 +22,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/hash/hash_testing.h"
 #include "llvm/Support/Casting.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/device_test_util.h"
@@ -31,9 +32,9 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -204,12 +205,19 @@ TEST_P(SingleDeviceShardingTest, Disassemble) {
   }
 }
 
-TEST_P(OpaqueShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(
-      OpaqueSharding::Create(tsl::RCReference<DeviceList>(), MemoryKind()), "");
+TEST_P(SingleDeviceShardingTest, Hash) {
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      *SingleDeviceSharding::Create(GetDevices({0})->devices().front(),
+                                    MemoryKind()),
+      *SingleDeviceSharding::Create(GetDevices({1})->devices().front(),
+                                    MemoryKind()),
+  }));
+}
 
-  EXPECT_DEATH(
-      OpaqueSharding::Create(BasicDeviceList::Create({}), MemoryKind()), "");
+TEST_P(OpaqueShardingTest, CreateWithBadDeviceList) {
+  EXPECT_DEATH(OpaqueSharding::Create(DeviceListRef(), MemoryKind()), "");
+
+  EXPECT_DEATH(OpaqueSharding::Create(GetDevices({}), MemoryKind()), "");
 }
 
 TEST_P(OpaqueShardingTest, IsFullyReplicated) {
@@ -304,13 +312,20 @@ TEST_P(OpaqueShardingTest, IndexDomainsFails) {
           HasSubstr("OpaqueSharding does not have index domain information")));
 }
 
+TEST_P(OpaqueShardingTest, Hash) {
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      *OpaqueSharding::Create(GetDevices({0, 1}), MemoryKind()),
+      *OpaqueSharding::Create(GetDevices({2, 3}), MemoryKind()),
+  }));
+}
+
 TEST_P(ConcreteShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(ConcreteSharding::Create(tsl::RCReference<DeviceList>(),
-                                        MemoryKind(), Shape({}), {Shape({})}),
+  EXPECT_DEATH(ConcreteSharding::Create(DeviceListRef(), MemoryKind(),
+                                        Shape({}), {Shape({})}),
                "");
 
-  EXPECT_DEATH(ConcreteSharding::Create(BasicDeviceList::Create({}),
-                                        MemoryKind(), Shape({}), {Shape({})}),
+  EXPECT_DEATH(ConcreteSharding::Create(GetDevices({}), MemoryKind(), Shape({}),
+                                        {Shape({})}),
                "");
 }
 
@@ -442,44 +457,37 @@ TEST_P(ConcreteShardingTest, WithDeviceAssignment) {
 TEST_P(ConcreteShardingTest, Disassemble) {
   auto device_list = GetDevices({0, 1, 2, 3, 4, 5});
   std::vector<Shape> shard_shapes;
-  shard_shapes.reserve(2);
-  shard_shapes.push_back(Shape({3}));
-  shard_shapes.push_back(Shape({7}));
+  shard_shapes.reserve(4);
   shard_shapes.push_back(Shape({3}));
   shard_shapes.push_back(Shape({7}));
   shard_shapes.push_back(Shape({3}));
   shard_shapes.push_back(Shape({7}));
   std::shared_ptr<const Sharding> sharding = ConcreteSharding::Create(
-      device_list, MemoryKind(), Shape({30}), shard_shapes);
+      device_list, MemoryKind(), Shape({20}), shard_shapes);
 
   {
-    TF_ASSERT_OK_AND_ASSIGN(auto disassembled,
-                            sharding->Disassemble(Shape({30})));
-    ASSERT_THAT(disassembled, SizeIs(6));
-    for (int i = 0; i < 6; ++i) {
-      const auto& [shape, sharding] = disassembled[i];
-      EXPECT_EQ(shape, shard_shapes[i]);
-      EXPECT_EQ(*sharding, *SingleDeviceSharding::Create(
-                               device_list->devices()[i], MemoryKind()));
-    }
+    EXPECT_THAT(
+        sharding->Disassemble(Shape({20})),
+        StatusIs(
+            tsl::error::INVALID_ARGUMENT,
+            HasSubstr("SingleDeviceShardSemantics::kAllShards was requested, "
+                      "but the ConcreteSharding contains non-addressable "
+                      "devices. Saw 6 devices, with 4 addressable devices")));
+  }
+  {
+    EXPECT_THAT(
+        sharding->Disassemble(Shape({20}),
+                              SingleDeviceShardSemantics::kAllShards),
+        StatusIs(
+            tsl::error::INVALID_ARGUMENT,
+            HasSubstr("SingleDeviceShardSemantics::kAllShards was requested, "
+                      "but the ConcreteSharding contains non-addressable "
+                      "devices. Saw 6 devices, with 4 addressable devices")));
   }
   {
     TF_ASSERT_OK_AND_ASSIGN(
         auto disassembled,
-        sharding->Disassemble(Shape({30}),
-                              SingleDeviceShardSemantics::kAllShards));
-    ASSERT_THAT(disassembled, SizeIs(6));
-    for (int i = 0; i < 6; ++i) {
-      const auto& [shape, sharding] = disassembled[i];
-      EXPECT_EQ(shape, shard_shapes[i]);
-      EXPECT_EQ(*sharding, *SingleDeviceSharding::Create(
-                               device_list->devices()[i], MemoryKind()));
-    }
-  }
-  {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto disassembled,
-        sharding->Disassemble(Shape({30}),
+        sharding->Disassemble(Shape({20}),
                               SingleDeviceShardSemantics::kAddressableShards));
     // The first 4 devices are addressable.
     ASSERT_THAT(disassembled, SizeIs(4));
@@ -496,7 +504,7 @@ TEST_P(ConcreteShardingTest, DisassembleDynamicShape) {
   auto device_list = GetDevices({0, 1, 2, 3, 4, 5});
   TF_ASSERT_OK_AND_ASSIGN(
       DynamicShape dynamic_shape,
-      DynamicShape::Create(Shape({30}), BoundedDynamicShapeTag({true})));
+      DynamicShape::Create(Shape({20}), BoundedDynamicShapeTag({true})));
   TF_ASSERT_OK_AND_ASSIGN(
       DynamicShape shard_dynamic_shape0,
       DynamicShape::Create(Shape({3}), BoundedDynamicShapeTag({true})));
@@ -509,45 +517,35 @@ TEST_P(ConcreteShardingTest, DisassembleDynamicShape) {
   TF_ASSERT_OK_AND_ASSIGN(
       DynamicShape shard_dynamic_shape3,
       DynamicShape::Create(Shape({7}), BoundedDynamicShapeTag({true})));
-  TF_ASSERT_OK_AND_ASSIGN(
-      DynamicShape shard_dynamic_shape4,
-      DynamicShape::Create(Shape({3}), BoundedDynamicShapeTag({true})));
-  TF_ASSERT_OK_AND_ASSIGN(
-      DynamicShape shard_dynamic_shape5,
-      DynamicShape::Create(Shape({7}), BoundedDynamicShapeTag({true})));
   std::vector<DynamicShape> shard_dynamic_shapes{
-      std::move(shard_dynamic_shape0), std::move(shard_dynamic_shape1),
-      std::move(shard_dynamic_shape2), std::move(shard_dynamic_shape3),
-      std::move(shard_dynamic_shape4), std::move(shard_dynamic_shape5),
+      std::move(shard_dynamic_shape0),
+      std::move(shard_dynamic_shape1),
+      std::move(shard_dynamic_shape2),
+      std::move(shard_dynamic_shape3),
   };
   auto sharding = ConcreteSharding::Create(device_list, MemoryKind(),
                                            dynamic_shape, shard_dynamic_shapes);
-  EXPECT_THAT(sharding->Disassemble(Shape({30})),
+  EXPECT_THAT(sharding->Disassemble(Shape({20})),
               StatusIs(tsl::error::INVALID_ARGUMENT,
                        HasSubstr("ConcreteSharding holds dynamic shape")));
   {
-    TF_ASSERT_OK_AND_ASSIGN(auto disassembled,
-                            sharding->Disassemble(DynamicShape(dynamic_shape)));
-    ASSERT_THAT(disassembled, SizeIs(6));
-    for (int i = 0; i < 6; ++i) {
-      const auto& [dynamic_shape, sharding] = disassembled[i];
-      EXPECT_EQ(dynamic_shape, shard_dynamic_shapes[i]);
-      EXPECT_EQ(*sharding, *SingleDeviceSharding::Create(
-                               device_list->devices()[i], MemoryKind()));
-    }
+    EXPECT_THAT(
+        sharding->Disassemble(DynamicShape(dynamic_shape)),
+        StatusIs(
+            tsl::error::INVALID_ARGUMENT,
+            HasSubstr("SingleDeviceShardSemantics::kAllShards was requested, "
+                      "but the ConcreteSharding contains non-addressable "
+                      "devices. Saw 6 devices, with 4 addressable devices")));
   }
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto disassembled,
+    EXPECT_THAT(
         sharding->Disassemble(DynamicShape(dynamic_shape),
-                              SingleDeviceShardSemantics::kAllShards));
-    ASSERT_THAT(disassembled, SizeIs(6));
-    for (int i = 0; i < 6; ++i) {
-      const auto& [dynamic_shape, sharding] = disassembled[i];
-      EXPECT_EQ(dynamic_shape, shard_dynamic_shapes[i]);
-      EXPECT_EQ(*sharding, *SingleDeviceSharding::Create(
-                               device_list->devices()[i], MemoryKind()));
-    }
+                              SingleDeviceShardSemantics::kAllShards),
+        StatusIs(
+            tsl::error::INVALID_ARGUMENT,
+            HasSubstr("SingleDeviceShardSemantics::kAllShards was requested, "
+                      "but the ConcreteSharding contains non-addressable "
+                      "devices. Saw 6 devices, with 4 addressable devices")));
   }
   {
     TF_ASSERT_OK_AND_ASSIGN(
@@ -594,14 +592,26 @@ TEST_P(ConcreteShardingTest, IndexDomainsFails) {
                                  "domain information")));
 }
 
+TEST_P(ConcreteShardingTest, Hash) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto dynamic_shape,
+      DynamicShape::Create(Shape({30}), BoundedDynamicShapeTag({true})));
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      *ConcreteSharding::Create(GetDevices({0, 1}), MemoryKind(), Shape({30}),
+                                {Shape({10}), Shape({20})}),
+      *ConcreteSharding::Create(GetDevices({0, 1}), MemoryKind(), dynamic_shape,
+                                {dynamic_shape, dynamic_shape}),
+  }));
+}
+
 TEST_P(ConcreteEvenShardingTest, CreateWithBadDeviceList) {
-  EXPECT_DEATH(ConcreteEvenSharding::Create(tsl::RCReference<DeviceList>(),
-                                            MemoryKind(), Shape({}), Shape({}),
+  EXPECT_DEATH(ConcreteEvenSharding::Create(DeviceListRef(), MemoryKind(),
+                                            Shape({}), Shape({}),
                                             /*is_fully_replicated=*/true),
                "");
 
-  EXPECT_DEATH(ConcreteEvenSharding::Create(BasicDeviceList::Create({}),
-                                            MemoryKind(), Shape({}), Shape({}),
+  EXPECT_DEATH(ConcreteEvenSharding::Create(GetDevices({}), MemoryKind(),
+                                            Shape({}), Shape({}),
                                             /*is_fully_replicated=*/true),
                "");
 }
@@ -787,18 +797,29 @@ TEST_P(ConcreteEvenShardingTest, IndexDomainsFails) {
               "ConcreteEvenSharding does not have index domain information")));
 }
 
+TEST_P(ConcreteEvenShardingTest, Hash) {
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      *ConcreteEvenSharding::Create(GetDevices({0, 1}), MemoryKind(),
+                                    Shape({30}), Shape({30}),
+                                    /*is_fully_replicated=*/true),
+      *ConcreteEvenSharding::Create(GetDevices({2, 3}), MemoryKind(),
+                                    Shape({30}), Shape({15}),
+                                    /*is_fully_replicated=*/false),
+  }));
+}
+
 TEST_P(ShardingParamShardingTest, CreateWithBadDeviceList) {
   ShardingParam param{/*dim_shards=*/{2, 3},
                       {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}}};
-  EXPECT_DEATH(ShardingParamSharding::Create(
-                   param, tsl::RCReference<DeviceList>(), MemoryKind())
-                   .value(),
-               "");
+  EXPECT_DEATH(
+      ShardingParamSharding::Create(param, DeviceListRef(), MemoryKind())
+          .value(),
+      "");
 
-  EXPECT_DEATH(ShardingParamSharding::Create(param, BasicDeviceList::Create({}),
-                                             MemoryKind())
-                   .value(),
-               "");
+  EXPECT_DEATH(
+      ShardingParamSharding::Create(param, GetDevices({}), MemoryKind())
+          .value(),
+      "");
 }
 
 TEST_P(ShardingParamShardingTest, CreateFailsWhenDeviceCountNotMatch) {
@@ -1144,6 +1165,21 @@ TEST_P(ShardingParamShardingTest, IndexDomainWithReplication) {
                             IndexDomain(Index({0, 0}), Shape({3, 6})),
                             IndexDomain(Index({3, 0}), Shape({3, 6}))));
   }
+}
+
+TEST_P(ShardingParamShardingTest, Hash) {
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      *ShardingParamSharding::Create(
+           ShardingParam{/*dim_shards=*/{2, 3},
+                         {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}}},
+           GetDevices({0, 1, 2, 3, 4, 5}), MemoryKind())
+           .value(),
+      *ShardingParamSharding::Create(
+           ShardingParam{/*dim_shards=*/{2, 3},
+                         {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}}},
+           GetDevices({3, 4, 5, 0, 1, 2}), MemoryKind())
+           .value(),
+  }));
 }
 
 INSTANTIATE_TEST_SUITE_P(NumDevices, SingleDeviceShardingTest,

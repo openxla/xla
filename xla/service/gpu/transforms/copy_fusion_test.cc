@@ -19,9 +19,10 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {

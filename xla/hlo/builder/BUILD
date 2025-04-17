@@ -1,7 +1,7 @@
 # Description:
 #   XLA builder libraries.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -46,8 +46,8 @@ xla_cc_test(
     srcs = ["padding_test.cc"],
     deps = [
         ":padding",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -111,6 +111,29 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "value_inference_test",
+    srcs = ["value_inference_test.cc"],
+    deps = [
+        ":value_inference",
+        ":xla_builder",
+        ":xla_computation",
+        "//xla:comparison_util",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/builder/lib:arithmetic",
+        "//xla/hlo/builder/lib:prng",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 cc_library(
     name = "xla_builder",
     srcs = ["xla_builder.cc"],
@@ -167,15 +190,16 @@ xla_cc_test(
         "//xla:comparison_util",
         "//xla:debug_options_flags",
         "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:pattern_matcher_gmock",
+        "//xla/hlo/testlib:test",
+        "//xla/hlo/testlib:test_helpers",
         "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -183,8 +207,8 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )

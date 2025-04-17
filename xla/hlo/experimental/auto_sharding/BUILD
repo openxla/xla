@@ -1,7 +1,7 @@
 # Automatic sharding annotation
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
+load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
@@ -33,6 +33,7 @@ cc_library(
     deps = [
         ":auto_sharding_cost_graph",
         ":auto_sharding_device_mesh",
+        ":auto_sharding_iopddl",
         ":auto_sharding_option",
         ":auto_sharding_solver",
         ":auto_sharding_strategy",
@@ -176,7 +177,6 @@ cc_library(
     hdrs = ["auto_sharding_cost_graph.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
-        ":auto_sharding_device_mesh",
         ":auto_sharding_strategy",
         ":matrix",
         "//xla:shape_util",
@@ -195,9 +195,7 @@ cc_library(
     hdrs = ["auto_sharding_option.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
-        ":auto_sharding_device_mesh",
         ":auto_sharding_util",
-        "//xla:array",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
@@ -400,6 +398,7 @@ xla_cc_test(
         "//xla/service:buffer_value",
         "//xla/service:hlo_value",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -409,8 +408,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -429,13 +427,61 @@ xla_cc_test(
         ":auto_sharding_proto_cc",
         ":auto_sharding_solver",  # build_cleaner: keep
         ":auto_sharding_strategy",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ] + if_google(["@com_google_ortools//ortools/linear_solver:linear_solver_scip"]),
+)
+
+cc_library(
+    name = "iopddl_lib",
+    srcs = [
+        "iopddl.cc",
+        "solver.cc",
+    ],
+    hdrs = [
+        "iopddl.h",
+        "solver.h",
+    ],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_test(
+    # CC_TEST_OK=tests imported from the IOPDDL library.
+    name = "iopddl_test",
+    srcs = ["iopddl_test.cc"],
+    data = ["example.json"],
+    deps = [
+        ":iopddl_lib",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "auto_sharding_iopddl",
+    srcs = ["auto_sharding_iopddl.cc"],
+    hdrs = ["auto_sharding_iopddl.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        ":iopddl_lib",
+        "//xla/hlo/experimental/auto_sharding:auto_sharding_proto_cc",
+        "//xla/hlo/experimental/auto_sharding:auto_sharding_strategy",
+        "@com_google_absl//absl/log:check",
+    ],
 )

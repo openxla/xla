@@ -348,6 +348,10 @@ class SpmdPartitioner : public HloModulePass {
     return execution_threads_;
   }
 
+  // Update module's parameter and output sharding information, based on the
+  // sharding information of the module's parameters and outptuts.
+  static void RecordInputsOutputsSharding(HloModule* module);
+
  protected:
   // This is the internal implementation for AllGatherShards(), returns a pair
   // of hlo instructions whose first element is the result of the all-gather
@@ -489,8 +493,15 @@ class PartitionedHlo {
       absl::Span<const int64_t> left_padded_dims = {},
       absl::Span<const int64_t> skipped_dims = {}) const;
 
+  // Same as PadWithValue with zero as the pad value.
   PartitionedHlo PadWithZero(absl::Span<const int64_t> left_padded_dims = {},
                              absl::Span<const int64_t> skipped_dims = {}) const;
+
+  // PadWithZero consider all dimensions except the skipped dimensions.
+  // PadWithZeroOnSpecifiedDims considers only the specified dimensions.
+  PartitionedHlo PadWithZeroOnSpecifiedDims(
+      absl::Span<const int64_t> dims,
+      absl::Span<const int64_t> left_padded_dims = {}) const;
 
   // Returns the SPMD instruction.
   HloInstruction* hlo() const { return hlo_; }
@@ -498,8 +509,8 @@ class PartitionedHlo {
   // Returns the sharding of the SPMD instruction.
   const HloSharding& sharding() const { return hlo_->sharding(); }
 
-  // Returns the rank of the SPMD instruction.
-  const int64_t rank() const { return base_shape_.rank(); }
+  // Returns the SPMD instruction's number of dimensions.
+  int64_t num_dimensions() const { return base_shape_.dimensions().size(); }
 
   // Original full shape of the data.
   const Shape& base_shape() const { return base_shape_; }
@@ -514,6 +525,8 @@ class PartitionedHlo {
       bool force_mask_in_compact = false);
 
   const PartitioningState& state() const { return state_; }
+
+  void AddReshardCache(const HloSharding& sharding, const PartitionedHlo& phlo);
 
   // Helper function to replicate the data on all devices. Could only modify
   // the reshard cache.
@@ -543,6 +556,13 @@ class PartitionedHlo {
   // Helper function to reshard the tensor using AllToAll (instead of the
   // default of Replicate followed by Slice).
   PartitionedHlo ReshardWithAllToAll(
+      const HloSharding& target,
+      absl::Span<const std::pair<int64_t, int64_t>> source_target_dims,
+      bool try_multiple_source_target_dims = true) const;
+
+  // Called by ReshardWithAllToAll if try_multiple_source_target_dims is true.
+  // Try to handle multiple source and target dims in a single AllToAll.
+  PartitionedHlo TryMultipleSourceTargetDims(
       const HloSharding& target,
       absl::Span<const std::pair<int64_t, int64_t>> source_target_dims) const;
 
@@ -582,10 +602,17 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   SpmdPartitioningVisitor(const SpmdPartitioningVisitor& src);
 
   absl::Status DefaultAction(HloInstruction* hlo) override;
+
   absl::Status HandleAllReduce(HloInstruction* hlo) override;
+  absl::Status HandleBitcastConvert(HloInstruction* hlo) override;
   absl::Status HandleBroadcast(HloInstruction* hlo) override;
   absl::Status HandleCall(HloInstruction* hlo) override;
+  absl::Status HandleCholesky(HloInstruction* hlo) override;
+  absl::Status HandleCollectivePermute(HloInstruction* hlo) override;
+  absl::Status HandleConcatenate(HloInstruction* hlo) override;
+  absl::Status HandleConditional(HloInstruction* hlo) override;
   absl::Status HandleConstant(HloInstruction* hlo) override;
+  absl::Status HandleConvolution(HloInstruction* hlo) override;
   absl::Status HandleCustomCall(HloInstruction* hlo) override;
   absl::Status HandleDot(HloInstruction* hlo) override;
   absl::Status HandleDynamicSlice(HloInstruction* hlo) override;
@@ -594,27 +621,26 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandleGather(HloInstruction* hlo) override;
   absl::Status HandleGetTupleElement(HloInstruction* hlo) override;
   absl::Status HandleInfeed(HloInstruction* hlo) override;
+  absl::Status HandleIota(HloInstruction* hlo) override;
   absl::Status HandleOptimizationBarrier(HloInstruction* hlo) override;
   absl::Status HandleOutfeed(HloInstruction* hlo) override;
   absl::Status HandlePad(HloInstruction* hlo) override;
   absl::Status HandleParameter(HloInstruction* hlo) override;
+  absl::Status HandlePartitionId(HloInstruction* hlo) override;
+  absl::Status HandleRaggedDot(HloInstruction* hlo) override;
   absl::Status HandleReduce(HloInstruction* hlo) override;
-  absl::Status HandleReverse(HloInstruction* hlo) override;
-  absl::Status HandleWhile(HloInstruction* hlo) override;
-  absl::Status HandleConditional(HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(HloInstruction* hlo) override;
-  absl::Status HandleSelectAndScatter(HloInstruction* hlo) override;
-  absl::Status HandleTuple(HloInstruction* hlo) override;
+  absl::Status HandleReshape(HloInstruction* hlo) override;
+  absl::Status HandleReverse(HloInstruction* hlo) override;
   absl::Status HandleRng(HloInstruction* hlo) override;
-  absl::Status HandleConvolution(HloInstruction* hlo) override;
-  absl::Status HandleConcatenate(HloInstruction* hlo) override;
   absl::Status HandleScatter(HloInstruction* hlo) override;
+  absl::Status HandleSelectAndScatter(HloInstruction* hlo) override;
   absl::Status HandleSlice(HloInstruction* hlo) override;
   absl::Status HandleSort(HloInstruction* hlo) override;
   absl::Status HandleTranspose(HloInstruction* hlo) override;
-  absl::Status HandleReshape(HloInstruction* hlo) override;
-  absl::Status HandleIota(HloInstruction* hlo) override;
-  absl::Status HandlePartitionId(HloInstruction* hlo) override;
+  absl::Status HandleTriangularSolve(HloInstruction* hlo) override;
+  absl::Status HandleTuple(HloInstruction* hlo) override;
+  absl::Status HandleWhile(HloInstruction* hlo) override;
 
   // Implementation of dot partitioning given DotGeneralDimsMapping.
   absl::Status HandleDotHelper(
@@ -627,6 +653,11 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
 
   // Common handle for elementwise HLOs.
   absl::Status HandleElementwise(HloInstruction* hlo);
+
+  // All dimensions in the hlo are element-wise except that we replicate
+  // `dims_to_replicate`.
+  absl::Status HandleElementwiseWithDimsToReplicate(
+      HloInstruction* hlo, absl::Span<const int64_t> dims_to_replicate);
 
   // Common handle for HLOs that runs on a single device.
   absl::Status HandleSingleDevice(const HloInstruction* hlo);

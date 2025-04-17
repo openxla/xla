@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/nccl_communicator.h"
@@ -114,18 +115,17 @@ static absl::StatusOr<ncclUniqueId> AsNcclUniqueId(const CliqueId& clique_id) {
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-NcclCollectives::CreateCommunicators(int32_t nranks,
-                                     const CliqueKey& clique_key,
-                                     const std::optional<CliqueId>& clique_id,
+NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
+                                     const std::optional<CliqueIds>& clique_ids,
                                      absl::Span<const DeviceRank> ranks,
                                      const Collectives::Config& config) {
-  // With NCCL backend we rely on host to exchange unique clique id.
-  if (!clique_id.has_value()) {
+  // With NCCL backend we rely on host to exchange unique clique ids.
+  if (!clique_ids.has_value() || clique_ids->data().empty()) {
     return InvalidArgument("CliqueId is required to create NCCL communicators");
   }
 
   VLOG(1) << "Initialize NCCL communicator for " << ranks.size() << " devices"
-          << "; fingerprint(id)=" << clique_id->fingerprint();
+          << "; fingerprint(id)=" << clique_ids->fingerprint();
 
   TF_ASSIGN_OR_RETURN(auto* gpu_config, TryCast(&config));
   ncclConfig_t comm_config = AsNcclConfig(*gpu_config);
@@ -136,18 +136,24 @@ NcclCollectives::CreateCommunicators(int32_t nranks,
   comm_handles.resize(ranks.size(), nullptr);
   comms.reserve(ranks.size());
 
+  if (clique_ids->data().size() != 1) {
+    return InvalidArgument(
+        "CliqueIds size must be 1 for NCCL communicator initialization");
+  }
+
   TF_RETURN_IF_ERROR(GroupStart());
   for (size_t i = 0; i < ranks.size(); ++i) {
     VLOG(1) << "Initialize NCCL communicator for rank #" << ranks[i].rank
-            << " of " << nranks
-            << "; fingerprint(id)=" << clique_id->fingerprint();
+            << " of " << clique_key.num_devices()
+            << "; fingerprint(id)=" << clique_ids->fingerprint()
+            << "; size(id)=" << clique_ids->data().size();
     TF_ASSIGN_OR_RETURN(auto* device, TryCast(ranks[i].device));
     auto activate_context = device->stream_executor()->Activate();
 
-    TF_ASSIGN_OR_RETURN(auto nccl_unique_id, AsNcclUniqueId(*clique_id));
-    XLA_NCCL_RETURN_IF_ERROR(
-        ncclCommInitRankConfig(&comm_handles[i], nranks, nccl_unique_id,
-                               ranks[i].rank.value(), &comm_config));
+    TF_ASSIGN_OR_RETURN(auto nccl_unique_id, AsNcclUniqueId(clique_ids->at(0)));
+    XLA_NCCL_RETURN_IF_ERROR(ncclCommInitRankConfig(
+        &comm_handles[i], clique_key.num_devices(), nccl_unique_id,
+        ranks[i].rank.value(), &comm_config));
   }
   TF_RETURN_IF_ERROR(GroupEnd());
 
@@ -221,6 +227,33 @@ absl::Status NcclCollectives::GroupEnd() {
   return XLA_NCCL_STATUS(ncclGroupEnd());
 }
 
+absl::StatusOr<void*> NcclCollectives::Allocate(uint64_t bytes) {
+  void* ptr = nullptr;
+  ncclResult_t res = ncclMemAlloc(&ptr, bytes);
+  if (res != ncclSuccess) {
+    return absl::InternalError(absl::StrFormat(
+        "failed to allocate %s (%llu bytes) from device collective memory: %s, "
+        "Last NCCL warning(error) log entry (may be unrelated): %s",
+        tsl::strings::HumanReadableNumBytes(bytes), bytes,
+        ncclGetErrorString(res), ncclGetLastError(nullptr)));
+  }
+  VLOG(2) << "Allocated collective memory " << ptr << " of " << bytes
+          << " bytes";
+  return ptr;
+}
+
+absl::Status NcclCollectives::Deallocate(void* location) {
+  ncclResult_t res = ncclMemFree(location);
+  if (res != ncclSuccess) {
+    return absl::InternalError(absl::StrFormat(
+        "failed to free device collective memory at %p; result: %s, Last NCCL "
+        "warning(error) log entry (may be unrelated): %s",
+        location, ncclGetErrorString(res), ncclGetLastError(nullptr)));
+  }
+
+  VLOG(2) << "Deallocated collective memory " << location;
+  return absl::OkStatus();
+}
 }  // namespace xla::gpu
 
 XLA_COLLECTIVES_REGISTER("gpu", "nccl", 1,

@@ -20,9 +20,9 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -83,8 +83,11 @@ class Timespan {
 
   // Expands the timespan to include other.
   void ExpandToInclude(const Timespan& other) {
-    *this = FromEndPoints(std::min(begin_ps(), other.begin_ps()),
-                          std::max(end_ps(), other.end_ps()));
+    if (other.Empty()) return;
+    *this = this->Empty()
+                ? other
+                : FromEndPoints(std::min(begin_ps(), other.begin_ps()),
+                                std::max(end_ps(), other.end_ps()));
   }
 
   // Compares timespans by their begin time (ascending), duration (descending)

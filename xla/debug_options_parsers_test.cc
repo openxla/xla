@@ -20,13 +20,15 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "xla/debug_options_flags.h"
 #include "xla/parse_flags_from_env.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace {
@@ -95,6 +97,34 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(GetUppercaseStringSetterTestCases()),
     UppercaseStringSetterTest::Name);
 
+TEST(FuelTest, FuelPassCountsAreSeparate) {
+  tsl::setenv("XLA_FLAGS", "--xla_fuel=ABC=1,PQR=2", /*overwrite=*/true);
+  // Parse flags from the environment variable.
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+
+  EXPECT_TRUE(ConsumeFuel("ABC"));
+  EXPECT_FALSE(ConsumeFuel("ABC"));
+
+  EXPECT_TRUE(ConsumeFuel("PQR"));
+  EXPECT_TRUE(ConsumeFuel("PQR"));
+  EXPECT_FALSE(ConsumeFuel("PQR"));
+}
+
+TEST(FuelTest,
+     PassFuelIsSetReturnsTrueOnExplicitlyFueledPassesAndFalseOtherwise) {
+  tsl::setenv("XLA_FLAGS", "--xla_fuel=ABC=1,PQR=2", /*overwrite=*/true);
+  // Parse flags from the environment variable.
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+
+  EXPECT_TRUE(PassFuelIsSet("ABC"));
+  EXPECT_FALSE(PassFuelIsSet("MNO"));
+  EXPECT_TRUE(PassFuelIsSet("PQR"));
+  EXPECT_FALSE(PassFuelIsSet("XYZ"));
+}
 }  // namespace
 }  // namespace xla
 

@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -61,11 +62,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -1224,8 +1225,11 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
       absl::c_copy(alloc_proto.parameter_shape_index(),
                    std::back_inserter(shape_idx_vals));
       ShapeIndex shape_index(shape_idx_vals);
+      const bool parameter_has_alias =
+          module->input_output_alias_config().ParameterHasAlias(
+              alloc_proto.parameter_number(), shape_index);
       allocation->set_entry_computation_parameter(
-          alloc_proto.parameter_number(), shape_index, false);
+          alloc_proto.parameter_number(), shape_index, parameter_has_alias);
     }
 
     // Process each logical buffer assigned to the current allocation and create

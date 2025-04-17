@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/array3d.h"
 #include "xla/client/local_client.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/matrix.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -687,8 +688,8 @@ XLA_TYPED_TEST(DotOperationTestForBatchMatMul, DISABLED_ON_TPU(Types)) {
   auto y = Parameter(&builder, 1, ShapeUtil::MakeShapeWithType<T>({2, 2, 2, 2}),
                      "y");
 
-  auto x_flat = Reshape(x, {0, 1, 2, 3}, {4, 2, 2});
-  auto y_flat = Reshape(y, {0, 1, 2, 3}, {4, 2, 2});
+  auto x_flat = Reshape(x, {4, 2, 2});
+  auto y_flat = Reshape(y, {4, 2, 2});
 
   // Slice batches into individual matrices and multiply them.
   std::vector<XlaOp> out_slices;
@@ -697,16 +698,16 @@ XLA_TYPED_TEST(DotOperationTestForBatchMatMul, DISABLED_ON_TPU(Types)) {
   for (int i = 0; i < n; ++i) {
     // Slice off individual matrices and reshape to 2D tensors.
     auto x_slice = Slice(x_flat, {i, 0, 0}, {i + 1, 2, 2}, {1, 1, 1});
-    x_slice = Reshape(x_slice, {0, 1, 2}, {2, 2});
+    x_slice = Reshape(x_slice, {2, 2});
     auto y_slice = Slice(y_flat, {i, 0, 0}, {i + 1, 2, 2}, {1, 1, 1});
-    y_slice = Reshape(y_slice, {0, 1, 2}, {2, 2});
+    y_slice = Reshape(y_slice, {2, 2});
 
     auto out = Dot(x_slice, y_slice);
-    out = Reshape(out, {0, 1}, {1, 2, 2});
+    out = Reshape(out, {1, 2, 2});
     out_slices.push_back(out);
   }
   auto out_flat = ConcatInDim(&builder, out_slices, 0);
-  Reshape(out_flat, {0, 1, 2}, {2, 2, 2, 2});
+  Reshape(out_flat, {2, 2, 2, 2});
 
   auto x_data = this->client_
                     ->TransferToServer(LiteralUtil::CreateR4FromArray4D<T>(
@@ -2046,36 +2047,6 @@ ENTRY SmallIntegerDot {
   arg0 = s4[20,2] parameter(0)
   arg1 = s4[2,20] parameter(1)
   ROOT dot = s4[20,20] dot(arg0, arg1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-)";
-
-  EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{0, 0}));
-}
-
-XLA_TEST_F(DotOperationTextTest, DISABLED_ON_GPU(PackedNibbleDot)) {
-  absl::string_view hlo_string =
-      R"(
-HloModule SmallIntegerDot
-
-ENTRY SmallIntegerDot {
-  arg0 = s8[20,55] parameter(0)
-  arg1 = s8[55,20] parameter(1)
-  ROOT dot = s32[20,20] dot(arg0, arg1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, operand_precision={PACKED_NIBBLE, PACKED_NIBBLE}
-}
-)";
-
-  EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{0, 0}));
-}
-
-XLA_TEST_F(DotOperationTextTest, UnsignedPackedNibbleDot) {
-  absl::string_view hlo_string =
-      R"(
-HloModule SmallIntegerDot
-
-ENTRY SmallIntegerDot {
-  arg0 = u8[3,11,21] parameter(0)
-  arg1 = u8[55,21,3] parameter(1)
-  ROOT dot = u32[3,11,55] dot(arg0, arg1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={2}, rhs_contracting_dims={1}, operand_precision={PACKED_NIBBLE, PACKED_NIBBLE}
 }
 )";
 

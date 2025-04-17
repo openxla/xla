@@ -264,10 +264,24 @@ PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     PJRT_Client_CreateViewOfDeviceBuffer_Args* args);
 PJRT_Error* PJRT_Client_CreateBuffersForAsyncHostToDevice(
     PJRT_Client_CreateBuffersForAsyncHostToDevice_Args* args);
+PJRT_Error* PJRT_Client_DmaMap(PJRT_Client_DmaMap_Args* args);
+PJRT_Error* PJRT_Client_DmaUnmap(PJRT_Client_DmaUnmap_Args* args);
 PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Destroy(
     PJRT_AsyncHostToDeviceTransferManager_Destroy_Args* args);
 PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
     PJRT_AsyncHostToDeviceTransferManager_TransferData_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer(
+    PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Device(
+    PJRT_AsyncHostToDeviceTransferManager_Device_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferCount(
+    PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferSize(
+    PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_SetBufferError(
+    PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_AddMetadata(
+    PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args* args);
 PJRT_Error* PJRT_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args);
 PJRT_Error* PJRT_DeviceDescription_ProcessIndex(
     PJRT_DeviceDescription_ProcessIndex_Args* args);
@@ -460,6 +474,12 @@ PJRT_TopologyDescription* CreateWrapperDeviceTopology(
 // from cpp_client's devices. The returned client is owned by the caller and
 // should be destroyed with PJRT_Client_Destroy.
 PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client);
+
+// Searches `client` for a PJRT_Memory* that wraps a provided
+// `xla::PjRtMemorySpace *` (`cpp_memory`). If a match is found, that
+// PJRT_Memory* is returned. Otherwise, returns nullptr.
+PJRT_Memory* PJRT_Client_FindMemoryWrapper(xla::PjRtMemorySpace* cpp_memory,
+                                           PJRT_Client* client);
 
 // Helper functions for converting C key-value store callbacks to C++ callbacks.
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(

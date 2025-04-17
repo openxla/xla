@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,16 +46,17 @@ limitations under the License.
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CodeGen.h"
+#include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/cpu_function_runtime.h"
-#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -86,10 +88,6 @@ class MemoryDependencyAnalyzer {
 
   // Returns alias scope for the given buffer slice.
   llvm::MDNode* GetAliasScope(BufferAllocation::Slice slice) {
-    if (slice.allocation() == nullptr) {
-      return nullptr;
-    }
-
     auto it = alias_scopes_.find(slice);
     return it == alias_scopes_.end() ? nullptr
                                      : llvm::MDNode::get(context_, it->second);
@@ -106,11 +104,13 @@ class MemoryDependencyAnalyzer {
     return scopes.empty() ? nullptr : llvm::MDNode::get(context_, scopes);
   };
 
-  bool ResultContainsSlice(BufferAllocation::Slice slice) {
-    if (slice.allocation() == nullptr) {
-      return false;
+  bool ResultsOverlapWithSlice(BufferAllocation::Slice slice) {
+    for (const BufferAllocation::Slice& result_slice : result_slices_) {
+      if (result_slice.OverlapsWith(slice)) {
+        return true;
+      }
     }
-    return result_slices_.contains(slice);
+    return false;
   }
 
  private:
@@ -181,8 +181,7 @@ absl::Status VerifyKernelArgumentsNonOverlapping(
 }
 
 // Check that all kernel results are unique and coming from non-overlapping
-// slices. We rely on this property to create LLVM `!alias.scope` for each
-// kernel result buffer and to construct `!noalias` metadata for arguments.
+// slices.
 absl::Status VerifyKernelResultsNonOverlapping(
     absl::Span<const KernelApiIrBuilder::KernelParameter> results) {
   for (size_t i = 0; i < results.size(); ++i) {
@@ -245,49 +244,57 @@ absl::Status VerifyKernelParameters(
 absl::StatusOr<BufferAllocation::Slice> GetUniqueSlice(
     const BufferAssignment* buffer_assignment,
     const HloInstruction* instruction, const ShapeIndex& index) {
-  if (buffer_assignment == nullptr) {
-    return BufferAllocation::Slice{};
-  }
-
   return buffer_assignment->GetUniqueSlice(instruction, index);
 }
 
+}  // namespace
+
 absl::StatusOr<std::vector<KernelApiIrBuilder::KernelParameter>>
-GetKernelArgumentsParameters(const HloInstruction* instruction,
-                             const BufferAssignment* buffer_assignment) {
-  std::vector<KernelApiIrBuilder::KernelParameter> arguments;
+KernelApiIrBuilder::GetKernelArgumentsParameters(
+    const HloInstruction* instruction,
+    const BufferAssignment* buffer_assignment) {
+  std::vector<KernelParameter> arguments;
 
   for (HloInstruction* operand : instruction->operands()) {
     for (auto& indexed : ShapeUtil::GetLeafShapes(operand->shape())) {
       TF_ASSIGN_OR_RETURN(
           BufferAllocation::Slice slice,
           GetUniqueSlice(buffer_assignment, operand, indexed.index));
-      arguments.push_back(
-          KernelApiIrBuilder::KernelParameter{indexed.shape, slice});
+      arguments.push_back(KernelParameter{indexed.shape, slice});
     }
   }
   return arguments;
 }
 
 absl::StatusOr<std::vector<KernelApiIrBuilder::KernelParameter>>
-GetKernelResultsParameters(const HloInstruction* instruction,
-                           const BufferAssignment* buffer_assignment) {
-  std::vector<KernelApiIrBuilder::KernelParameter> results;
+KernelApiIrBuilder::GetKernelResultsParameters(
+    const HloInstruction* instruction,
+    const BufferAssignment* buffer_assignment) {
+  std::vector<KernelParameter> results;
   for (auto& indexed : ShapeUtil::GetLeafShapes(instruction->shape())) {
     TF_ASSIGN_OR_RETURN(
         BufferAllocation::Slice slice,
         GetUniqueSlice(buffer_assignment, instruction, indexed.index));
-    results.push_back(
-        KernelApiIrBuilder::KernelParameter{indexed.shape, slice});
+    results.push_back(KernelParameter{indexed.shape, slice});
   }
   return results;
 }
 
-}  // namespace
+auto KernelApiIrBuilder::Options::FromHloModuleConfig(
+    const HloModuleConfig& config) -> Options {
+  return KernelApiIrBuilder::Options{
+      config.debug_options().xla_llvm_enable_invariant_load_metadata(),
+      config.debug_options().xla_cpu_prefer_vector_width(),
+      config.debug_options()
+          .xla_cpu_generate_unique_c_style_kernel_entry_points()};
+}
 
 KernelApiIrBuilder::KernelApiIrBuilder(llvm::LLVMContext& context,
-                                       Options options)
-    : context_(context), options_(std::move(options)) {
+                                       Options options,
+                                       BufferValidation buffer_validation)
+    : context_(context),
+      options_(std::move(options)),
+      buffer_validation_(buffer_validation) {
   thread_dim_ty_ = KernelThreadDimTy(context_);
   thread_ty_ = KernelThreadTy(context_);
   arg_ty_ = KernelArgTy(context_);
@@ -304,15 +311,15 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
   TF_ASSIGN_OR_RETURN(std::vector<KernelParameter> results,
                       GetKernelResultsParameters(instr, buffer_assignment));
 
-  bool compute_alias_metadata = buffer_assignment != nullptr;
-  return EmitKernelPrototype(module, absl::StrCat(instr->name(), suffix),
-                             arguments, results, compute_alias_metadata);
+  TF_ASSIGN_OR_RETURN(std::string name, GetKernelName(instr, suffix));
+
+  return EmitKernelPrototype(module, name, arguments, results);
 }
 
 auto KernelApiIrBuilder::EmitKernelPrototype(
     llvm::Module& module, absl::string_view name,
     absl::Span<const KernelParameter> arguments,
-    absl::Span<const KernelParameter> results, bool compute_alias_metadata)
+    absl::Span<const KernelParameter> results)
     -> absl::StatusOr<KernelPrototype> {
   CHECK(&module.getContext() == &context_) << "Module context mismatch";
 
@@ -328,13 +335,11 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
             << result.slice.ToString();
   }
 
-  if (compute_alias_metadata) {
+  if (buffer_validation_ == BufferValidation::kDisjoint) {
     TF_RETURN_IF_ERROR(VerifyKernelParameters(arguments, results));
   }
 
-  MemoryDependencyAnalyzer memory_dependency_analyzer(
-      context_, name,
-      compute_alias_metadata ? results : absl::Span<const KernelParameter>{});
+  MemoryDependencyAnalyzer memory_dependency_analyzer(context_, name, results);
 
   llvm::IRBuilder<> b(context_);
 
@@ -367,7 +372,7 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
 
     // If a buffer slice is not a part of result set, then it must be invariant
     // (read-only).
-    if (!memory_dependency_analyzer.ResultContainsSlice(argument.slice)) {
+    if (!memory_dependency_analyzer.ResultsOverlapWithSlice(argument.slice)) {
       ir_argument.MarkInvariantOverWholeProgram(&context_);
       invariant_arguments.insert(i);
     }
@@ -400,14 +405,14 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
   b.CreateRet(
       llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)));
 
-  absl::InlinedVector<BufferUse, 8> buffer_uses;
-  if (compute_alias_metadata) {
-    for (const KernelParameter& argument : arguments) {
-      buffer_uses.push_back(BufferUse::Read(argument.slice));
-    }
-    for (const KernelParameter& result : results) {
-      buffer_uses.push_back(BufferUse::Write(result.slice));
-    }
+  absl::InlinedVector<BufferAllocation::Slice, 8> argument_buffers;
+  for (const KernelParameter& argument : arguments) {
+    argument_buffers.push_back(argument.slice);
+  }
+
+  absl::InlinedVector<BufferAllocation::Slice, 8> result_buffers;
+  for (const KernelParameter& result : results) {
+    result_buffers.push_back(result.slice);
   }
 
   return KernelPrototype{function,
@@ -417,7 +422,25 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
                          std::move(ir_arguments),
                          std::move(ir_results),
                          std::move(invariant_arguments),
-                         std::move(buffer_uses)};
+                         std::move(argument_buffers),
+                         std::move(result_buffers)};
+}
+
+absl::StatusOr<std::string> KernelApiIrBuilder::GetKernelName(
+    const HloInstruction* instr, absl::string_view suffix) const {
+  if (options_.generate_unique_c_style_kernel_entry_points) {
+    return ConvertToCName(
+        absl::StrCat(instr->GetModule()->name(), "_", instr->name(), suffix));
+  } else {
+    return absl::StrCat(instr->name(), suffix);
+  }
+}
+
+std::unique_ptr<llvm::Module> KernelApiIrBuilder::CreateModule(
+    absl::string_view name, llvm::LLVMContext& context) {
+  constexpr absl::string_view kXlaModuleIdentifier = "__compute_module";
+  return std::make_unique<llvm::Module>(
+      absl::StrCat(kXlaModuleIdentifier, "_", name), context);
 }
 
 auto KernelApiIrBuilder::EmitKernelThreadDims(llvm::IRBuilderBase& builder,
@@ -476,8 +499,11 @@ llvm_ir::IrArray KernelApiIrBuilder::EmitKernelArgument(
 
   // All buffers pointers passed to host kernels are expected to be
   // dereferenceable.
-  llvm_ir::SetDereferenceableMetadataForLoad(data,
-                                             ShapeUtil::ByteSizeOf(shape));
+  const llvm::Module* llvm_module = builder.GetInsertBlock()->getModule();
+  const llvm::DataLayout& data_layout = llvm_module->getDataLayout();
+  int64_t pointer_size = data_layout.getTypeStoreSize(builder.getPtrTy());
+  int64_t byte_size = ShapeUtil::ByteSizeOf(shape, pointer_size);
+  llvm_ir::SetDereferenceableMetadataForLoad(data, byte_size);
 
   // All buffers pointers passed to host kernels are expected to be invariant
   // over the whole program. Note the metadata is attached only to loading
@@ -495,6 +521,11 @@ llvm::Function* KernelApiIrBuilder::EmitKernelFunction(llvm::Module& module,
   llvm::Function* function = llvm::Function::Create(
       kernel_function_ty_, llvm::GlobalValue::ExternalLinkage, name, module);
 
+  SetKernelFunctionAttributes(function);
+  return function;
+}
+
+void KernelApiIrBuilder::SetKernelFunctionAttributes(llvm::Function* function) {
   // We use external linkage because we'll be resolving this function from the
   // XLA runtime.
   function->setCallingConv(llvm::CallingConv::C);
@@ -511,8 +542,6 @@ llvm::Function* KernelApiIrBuilder::EmitKernelFunction(llvm::Module& module,
   // Always keep a frame pointer for the host kernel so we can see them in all
   // performance profiling tools.
   function->addFnAttr("frame-pointer", "all");
-
-  return function;
 }
 
 }  // namespace xla::cpu

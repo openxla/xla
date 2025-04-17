@@ -120,9 +120,7 @@ struct CompileOptions {
   absl::Status ApplyOptionFromString(
       const tsl::protobuf::FieldDescriptor* field, const std::string& value);
 
-  static absl::StatusOr<
-      std::vector<std::pair<std::string, CompileOptions::OptionOverride>>>
-  LoadEnvOptionOverrides(
+  static absl::StatusOr<EnvironmentOptionOverrides> LoadEnvOptionOverrides(
       const google::protobuf::Map<std::string, xla::OptionOverrideProto>&
           env_option_overrides);
 
@@ -258,6 +256,9 @@ struct ExecuteOptions {
   // Currently it is only applied to CPU implementations
   enum class ExecutionMode { kDefault = 0, kSynchronous, kAsynchronous };
   ExecutionMode execution_mode = ExecutionMode::kDefault;
+
+  // If not null, measure the execution profile and store it.
+  ExecutionProfile* execution_profile = nullptr;
 
   // A set of indices denoting the input buffers that should not be donated.
   // An input buffer may be non-donable, for example, if it is referenced more

@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,9 +28,12 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/ffi/ffi_api.h"
@@ -47,9 +51,11 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -211,11 +217,14 @@ bool IsValueFunctionOfLoopInductionVariable(const HloInstruction& value,
   }
   const HloInstruction* update = while_body->root_instruction()->operand(
       *loop_induction_variable_tuple_idx);
+  const HloInstruction* indvar_init =
+      while_op->operand(0)->operand(*loop_induction_variable_tuple_idx);
 
   // The `update` instruction and `value` should only depend on the induction
   // variable.
   return IsOnlyDependentOn(/*consumer=*/update, /*producer=*/indvar) &&
-         IsOnlyDependentOn(/*consumer=*/&value, /*producer=*/indvar);
+         IsOnlyDependentOn(/*consumer=*/&value, /*producer=*/indvar) &&
+         IsOnlyDependentOn(indvar_init, nullptr);
 }
 
 // This returns true for the constants that are handled in the dynamic slice
@@ -506,8 +515,9 @@ absl::StatusOr<HloInstruction*> CreateFusionInstruction(
       *gpu_config.mutable_fusion_backend_config();
   backend_config.set_kind("__custom_fusion");
   CustomFusionConfig config;
-  config.set_name(dynamic ? "dynamic_address_computation"
-                          : "address_computation");
+  config.set_name(std::string(
+      dynamic ? kDynamicSliceFusionWithDynamicAddressComputationConfigName
+              : kDynamicSliceFusionWithStaticAddressComputationConfigName));
   *backend_config.mutable_custom_fusion_config() = config;
   TF_RETURN_IF_ERROR(fusion->set_backend_config(std::move(gpu_config)));
 
@@ -529,8 +539,7 @@ absl::StatusOr<bool> DynamicSliceFusionRewriter::Run(
   for (HloComputation* computation : module->computations()) {
     if (computation->IsFusionComputation()) continue;
     for (HloInstruction* instr : computation->instructions()) {
-      if ((HloPredicateIsOp<HloOpcode::kReduceScatter>(instr) &&
-           instr->shape().IsArray()) ||
+      if ((HloPredicateIsOp<HloOpcode::kReduceScatter>(instr)) ||
           IsLegacyCublasMatmul(*instr) || IsCustomCall(instr, platform_name_)) {
         UseDefDataflowPaths sliced_operand_paths =
             GetSlicedOperandPaths(instr, call_graph.get());

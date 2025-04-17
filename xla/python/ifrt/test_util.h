@@ -34,8 +34,8 @@ limitations under the License.
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -61,13 +61,14 @@ void AssertPerShardData(
     tsl::RCReference<Array> actual, DType expected_dtype,
     Shape expected_per_shard_shape,
     absl::Span<const absl::Span<const ElementT>> expected_per_shard_data,
-    tsl::RCReference<DeviceList> expected_device_list) {
+    DeviceListRef expected_device_list) {
   ASSERT_EQ(actual->dtype(), expected_dtype);
   EXPECT_THAT(GetDeviceIds(actual->sharding().devices()),
               testing::ElementsAreArray(GetDeviceIds(expected_device_list)));
   TF_ASSERT_OK_AND_ASSIGN(auto actual_per_shard_arrays,
                           actual->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy));
+                              ArrayCopySemantics::kAlwaysCopy,
+                              SingleDeviceShardSemantics::kAddressableShards));
   ASSERT_EQ(actual_per_shard_arrays.size(), expected_per_shard_data.size());
   for (int i = 0; i < actual_per_shard_arrays.size(); ++i) {
     SCOPED_TRACE(absl::StrCat("Shard ", i));
@@ -86,12 +87,12 @@ void AssertPerShardData(
 
 // Helper function that makes `DeviceList` containing devices at given
 // indexes (not ids) within `client.devices()`.
-absl::StatusOr<tsl::RCReference<DeviceList>> GetDevices(
-    Client* client, absl::Span<const int> device_indices);
+absl::StatusOr<DeviceListRef> GetDevices(Client* client,
+                                         absl::Span<const int> device_indices);
 
 // Helper function that makes `DeviceList` containing devices at given
 // indexes (not ids) within `client.addressable_devices()`.
-absl::StatusOr<tsl::RCReference<DeviceList>> GetAddressableDevices(
+absl::StatusOr<DeviceListRef> GetAddressableDevices(
     Client* client, absl::Span<const int> device_indices);
 
 }  // namespace test_util

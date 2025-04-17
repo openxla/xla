@@ -15,14 +15,17 @@ limitations under the License.
 
 #include "xla/hlo/analysis/hlo_liveness_analysis.h"
 
+#include <memory>
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 

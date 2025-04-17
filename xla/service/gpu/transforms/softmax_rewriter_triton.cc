@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusion_pipeline.h"
-#include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -461,7 +461,8 @@ FusionDecision ShouldFuseReduction(const HloInstruction& reduce,
   }
 
   if (reduce.dimensions().size() != 1 ||
-      reduce.dimensions(0) != reduce.operand(0)->shape().rank() - 1) {
+      reduce.dimensions(0) !=
+          reduce.operand(0)->shape().dimensions().size() - 1) {
     return FusionDecision::Forbid(
         "The reductions in the diamond must reduce 1 dimension and that "
         "dimension must be the last dimension of the operand.");
@@ -545,7 +546,7 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
   producer = reduce->mutable_operand(0);
 
   if (absl::c_linear_search(broadcast->dimensions(),
-                            broadcast->shape().rank() - 1)) {
+                            broadcast->shape().dimensions().size() - 1)) {
     return FusionDecision::Forbid(
         "Broadcast is not along the reduction dimension.");
   }
@@ -594,7 +595,7 @@ SoftmaxRewriterTriton::FindAllFusibleNormalizationDiamonds(
 
   for (HloComputation* comp :
        module.MakeNonfusionComputations(execution_threads)) {
-    if (comp->IsCustomCallComputation()) {
+    if (!comp->caller_instructions(HloOpcode::kCustomCall).empty()) {
       continue;
     }
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {

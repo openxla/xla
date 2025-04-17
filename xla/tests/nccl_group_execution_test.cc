@@ -18,8 +18,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
-#include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -27,7 +25,9 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -101,7 +101,10 @@ XLA_TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
 
   )";
   const int64_t kNumReplicas = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -120,6 +123,50 @@ XLA_TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
   EXPECT_EQ(results[1].ToStringWithoutShapeOneline(), "( 1000, 0 )");
   EXPECT_EQ(results[2].ToStringWithoutShapeOneline(), "( 1000, 0 )");
   EXPECT_EQ(results[3].ToStringWithoutShapeOneline(), "( 0, 2000 )");
+}
+
+XLA_TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
+  const absl::string_view kModuleStr = R"(
+  HloModule module_main, entry_computation_layout={()->(u32[], u32[])}, num_partitions=4
+
+  bidirectional_ring {
+    a = u32[] parameter(0)
+    start = (u32[], u32[]) collective-permute-start(a), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+    done = u32[] collective-permute-done(start)
+    start.1 = (u32[], u32[]) collective-permute-start(a), source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+    done.1 = u32[] collective-permute-done(start.1)
+    ROOT tuple = (u32[], u32[]) tuple(done, done.1)
+  }
+
+  ENTRY main {
+    id = u32[] replica-id()
+    async-comm-start = ((u32[]), (u32[], u32[])) async-start(id), calls=bidirectional_ring,
+      frontend_attributes={_collectives_group=""}
+   ROOT async-comm-done = (u32[], u32[]) async-done(async-comm-start)
+  }
+
+  )";
+  const int64_t kNumReplicas = 4;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
+                        kNumReplicas,
+                        /*run_hlo_passes=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  EXPECT_EQ(results[0].ToStringWithoutShapeOneline(), "( 3, 1 )");
+  EXPECT_EQ(results[1].ToStringWithoutShapeOneline(), "( 0, 2 )");
+  EXPECT_EQ(results[2].ToStringWithoutShapeOneline(), "( 1, 3 )");
+  EXPECT_EQ(results[3].ToStringWithoutShapeOneline(), "( 2, 0 )");
 }
 
 }  // namespace

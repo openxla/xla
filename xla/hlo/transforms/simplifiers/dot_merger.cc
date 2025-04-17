@@ -134,7 +134,7 @@ absl::StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
   HloDotInstruction* dot_a = Cast<HloDotInstruction>(a);
   HloDotInstruction* dot_b = Cast<HloDotInstruction>(b);
   if (!absl::c_equal(dot_a->sparsity(), dot_b->sparsity(),
-                     protobuf_util::ProtobufEquals)) {
+                     protobuf_util::HaveSameSerialization)) {
     VLOG(3) << "Can't merge dots because they have mismatching sparsity "
                "descriptors:\n"
             << "\t" << a->ToString() << "\n"
@@ -170,7 +170,7 @@ absl::StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
            dnums.rhs_batch_dimensions_size());
   std::set<int64_t> used_dims;
   int64_t shared_op_num_non_contracting_dims =
-      shared_op->shape().rank() - dnums.lhs_batch_dimensions_size();
+      shared_op->shape().dimensions_size() - dnums.lhs_batch_dimensions_size();
   if (lhs_same) {
     shared_op_num_non_contracting_dims -=
         dnums.lhs_contracting_dimensions_size();
@@ -186,7 +186,7 @@ absl::StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
     used_dims.insert(dnums.lhs_batch_dimensions().begin(),
                      dnums.lhs_batch_dimensions().end());
   }
-  if (used_dims.size() + 1 != diff_op_a->shape().rank()) {
+  if (used_dims.size() + 1 != diff_op_a->shape().dimensions_size()) {
     VLOG(3)
         << "Can't merge dots because the different operands don't have exactly "
            "one non-contracting dimension:\n"

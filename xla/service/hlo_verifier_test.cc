@@ -102,44 +102,6 @@ class HloVerifierTestLayoutFusion : public HloTestBase {
                     /*allow_mixed_precision_in_hlo_verifier=*/false) {}
 };
 
-TEST_F(HloVerifierTest, NullInstructionParent) {
-  HloComputation::Builder builder(TestName());
-  const Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
-  HloInstruction* param = builder.AddInstruction(
-      HloInstruction::CreateParameter(0, scalar_shape, "param"));
-  HloInstruction* negate = builder.AddInstruction(
-      HloInstruction::CreateUnary(scalar_shape, HloOpcode::kNegate, param));
-  auto module = CreateUnverifiedModule();
-  module->AddEntryComputation(builder.Build());
-
-  TF_ASSERT_OK(verifier().Run(module.get()).status());
-
-  negate->set_parent(nullptr);
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(), HasSubstr("has a null parent pointer"));
-}
-
-TEST_F(HloVerifierTest, NullComputationParent) {
-  HloComputation::Builder builder(TestName());
-  const Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
-  HloInstruction* param = builder.AddInstruction(
-      HloInstruction::CreateParameter(0, scalar_shape, "param"));
-  builder.AddInstruction(
-      HloInstruction::CreateUnary(scalar_shape, HloOpcode::kNegate, param));
-  auto module = CreateUnverifiedModule();
-  HloComputation* computation = module->AddEntryComputation(builder.Build());
-
-  TF_ASSERT_OK(verifier().Run(module.get()).status());
-
-  computation->set_parent(nullptr);
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(), HasSubstr("has a null parent pointer"));
-}
-
 TEST_F(HloVerifierTest, DifferentOperandParents) {
   HloComputation::Builder builder(TestName());
   const Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
@@ -225,7 +187,10 @@ TEST_F(HloVerifierTest, CheckCallThreadMismatch) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
 
-  auto status = verifier().Run(module.get()).status();
+  auto status =
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
+          .Run(module.get())
+          .status();
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("mycall top_apply computation execution thread does "
@@ -850,6 +815,41 @@ TEST_F(HloVerifierTestLayoutSensitive, ConcatWithLayoutChangeNotAllowed) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Instruction shouldn't change layouts"));
+}
+
+TEST_F(HloVerifierTestLayoutSensitive,
+       ScatterIgnoreElementSizeForLayoutComparison) {
+  const char* const kScatterHlo = R"(
+    HloModule module
+    overwrite {
+      %p0 = s4[] parameter(0)
+      ROOT %p1 = s4[] parameter(1)
+    }
+
+    scatter {
+      %operand = s4[2048, 2048]{1,0:E(4)}  parameter(0)
+      %update = s4[32, 16, 32]{2,1,0} parameter(1)
+      %iota = s32[8, 4]{1,0} iota(), iota_dimension=0
+      %indices = s32[32, 1]{1,0} reshape(%iota)
+
+      ROOT %scatter = s4[2048, 2048]{1,0:E(4)} scatter(
+          s4[2048, 2048]{1,0} %operand,
+          s32[32, 1]{1,0} %indices,
+          s4[32, 16, 32]{2,1,0} %update
+        ),
+        update_window_dims={1,2},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        unique_indices=false,
+        indices_are_sorted=true,
+        to_apply=overwrite
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(kScatterHlo));
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok());
 }
 
 TEST_F(HloVerifierTestLayoutSensitive, BitcastNeedsSameNumberOfElements) {
@@ -2263,8 +2263,14 @@ TEST_F(HloVerifierTest, FusionNestedComputationThreadVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
+
+  auto status =
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
+          .Run(module.get())
+          .status();
+  ASSERT_FALSE(status.ok());
   EXPECT_THAT(
-      verifier().Run(module.get()).status().message(),
+      status.message(),
       HasSubstr("crs0 top_apply computation execution thread does not match "
                 "(parallel_thread vs main)"));
 }
@@ -2316,8 +2322,7 @@ TEST_F(HloVerifierTest, ChannelVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
-  EXPECT_THAT(verifier().Run(module.get()).status().message(),
-              HasSubstr("used for different types of channel instructions"));
+  TF_ASSERT_OK(verifier().Run(module.get()));
 }
 
 TEST_F(HloVerifierTest, ChannelVerifierPartiallyPipelinedAsyncRecv) {
@@ -2518,8 +2523,7 @@ TEST_F(HloVerifierTest, CollectiveChannelVerifier) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(kModuleStr));
-  EXPECT_THAT(verifier().Run(module.get()).status().message(),
-              HasSubstr("used for different types of channel instructions"));
+  TF_ASSERT_OK(verifier().Run(module.get()));
 }
 
 TEST_F(HloVerifierTestLayoutSensitive, CollectivePermuteStartAndDone) {
@@ -2530,6 +2534,25 @@ TEST_F(HloVerifierTestLayoutSensitive, CollectivePermuteStartAndDone) {
     p0 = f32[2,3]{1,0:S(1)} parameter(0)
     collective-permute-start.1 = (f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)}, u32[], u32[]) collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
     ROOT collective-permute-done.1 = f32[2,3]{1,0:S(1)} collective-permute-done(collective-permute-start.1)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(kModuleStr));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
+TEST_F(HloVerifierTestLayoutSensitive, CombinedCollectivePermuteStartAndDone) {
+  const char* const kModuleStr = R"(
+  HloModule Module
+
+  ENTRY CollectivePermuteStartAndDone {
+    p0 = f32[2,3]{1,0:S(1)} parameter(0)
+    p1 = f32[2,3]{1,0:S(1)} parameter(1)
+    collective-permute-start.1 = ((f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)}), (f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)})) collective-permute-start(p0, p1), source_target_pairs={{0,1},{1,0}}, channel_id=1
+    collective-permute-done.1 = (f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)}) collective-permute-done(collective-permute-start.1)
+    ROOT get-tuple-element.1 = f32[2,3]{1,0:S(1)} get-tuple-element((f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)}) collective-permute-done.1), index=1
   }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
@@ -2764,9 +2787,9 @@ TEST_F(HloVerifierTest, ReduceScatterInvalidScatterDim) {
 
   auto status = verifier().Run(module.get()).status();
   ASSERT_FALSE(status.ok());
-  EXPECT_THAT(
-      status.message(),
-      HasSubstr("ars->scatter_dimension() < ars->operand(i)->shape().rank()"));
+  EXPECT_THAT(status.message(),
+              HasSubstr("ars->scatter_dimension() < "
+                        "ars->operand(i)->shape().dimensions_size()"));
 }
 
 TEST_F(HloVerifierTest, ReduceScatterNonUniformGroups) {
@@ -2984,8 +3007,7 @@ TEST_F(HloVerifierTest, VerifyCustomCallThread) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
   auto status =
-      HloVerifier{
-          HloVerifierOpts{}.VerifyCustomCallNestedComputationThreadName()}
+      HloVerifier{HloVerifierOpts{}.VerifyCallNestedComputationThreadName()}
           .Run(module.get())
           .status();
   ASSERT_FALSE(status.ok());
@@ -3620,6 +3642,22 @@ ENTRY entry_computation {
   EXPECT_TRUE(status.ok()) << status;
 }
 
+TEST_F(HloVerifierTest, BatchedRaggedDotNonContracting) {
+  static const char* const kRaggedDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  a = f32[19,11,5] parameter(0)
+  b = f32[3,19,5,7] parameter(1)
+  c = u32[19,3] parameter(2)
+  ROOT dot = f32[19,11,7] ragged-dot(a, b, c), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={1}, rhs_contracting_dims={2}, lhs_ragged_dims={1}, rhs_group_dims={0}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kRaggedDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok()) << status;
+}
+
 TEST_F(HloVerifierTest, UnaryOpWithResultAccuracy) {
   constexpr absl::string_view hlo_string = R"(
   HloModule exponential_hw
@@ -3647,6 +3685,129 @@ ENTRY %entry_computation {
 
   auto status = verifier().Run(module.get()).status();
   EXPECT_FALSE(status.ok());
+}
+
+TEST_F(HloVerifierTest, RaggedAllToAllWithRank1OffsetsSizes) {
+  const std::string hlo_string = R"(
+  HloModule RaggedAllToAllWithRank1OffsetsSizes
+    ENTRY main {
+      input = bf16[4,1024,4096] parameter(0)
+      output = bf16[4,1024,4096] parameter(1)
+      input_offsets = s32[64] parameter(2)
+      send_sizes = s32[64] parameter(3)
+      output_offsets = s32[64] parameter(4)
+      recv_sizes = s32[64] parameter(5)
+      ROOT ra2a = bf16[4,1024,4096] ragged-all-to-all(input, output, input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}}
+    }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok()) << status;
+}
+
+TEST_F(HloVerifierTest, RaggedAllToAllWithRank2OffsetsSizes) {
+  const std::string hlo_string = R"(
+  HloModule RaggedAllToAllWithRank2OffsetsSizes
+    ENTRY main {
+      input = bf16[4,1024,4096] parameter(0)
+      output = bf16[4,1024,4096] parameter(1)
+      input_offsets = s32[64,16] parameter(2)
+      send_sizes = s32[64,16] parameter(3)
+      output_offsets = s32[64,16] parameter(4)
+      recv_sizes = s32[64,16] parameter(5)
+      ROOT ra2a = bf16[4,1024,4096] ragged-all-to-all(input, output, input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}}
+    }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok()) << status;
+}
+
+TEST_F(HloVerifierTest, RaggedAllToAllWithInvalidOffsetsRanks) {
+  const std::string hlo_string = R"(
+  HloModule RaggedAllToAllWithInvalidOffsetsRanks
+    ENTRY main {
+      input = bf16[4,1024,4096] parameter(0)
+      output = bf16[4,1024,4096] parameter(1)
+      input_offsets = s32[64,16,8] parameter(2)
+      send_sizes = s32[64,16,8] parameter(3)
+      output_offsets = s32[64,16,8] parameter(4)
+      recv_sizes = s32[64,16,8] parameter(5)
+      ROOT ra2a = bf16[4,1024,4096] ragged-all-to-all(input, output, input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}}
+    }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_FALSE(status.ok()) << status;
+  EXPECT_THAT(status.message(),
+              HasSubstr("RaggedAllToAll operand 2 must be rank 1 or 2"));
+}
+
+TEST_F(HloVerifierTest, RaggedAllToAllWithRank2OffsetsShapes) {
+  const std::string hlo_string = R"(
+  HloModule RaggedAllToAllWithRank2OffsetsShapes
+    ENTRY main {
+      input = bf16[4,1024,4096] parameter(0)
+      output = bf16[4,1024,4096] parameter(1)
+      input_offsets = s32[64,16] parameter(2)
+      send_sizes = s32[64] parameter(3)
+      output_offsets = s32[64,16] parameter(4)
+      recv_sizes = s32[64] parameter(5)
+      ROOT ra2a = bf16[4,1024,4096] ragged-all-to-all(input, output, input_offsets, send_sizes, output_offsets, recv_sizes), replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}}
+    }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_FALSE(status.ok()) << status;
+  EXPECT_THAT(status.message(),
+              HasSubstr("RaggedAllToAll operands have different shapes"));
+}
+
+TEST_F(HloVerifierTest, NoHostMemorySpaceShape) {
+  constexpr absl::string_view hlo_no_host_memory_space_shape = R"(
+HloModule hlo_no_host_memory_space
+ENTRY main {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT z = f32[] add(f32[] x, f32[] y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(
+                                           hlo_no_host_memory_space_shape));
+
+  auto status = HloVerifier{HloVerifierOpts{}.VerifyNoHostMemorySpace()}
+                    .Run(module.get())
+                    .status();
+  ASSERT_TRUE(status.ok());
+}
+
+TEST_F(HloVerifierTest, NegativeHostMemorySpaceShape) {
+  constexpr absl::string_view hlo_with_host_memory_space_shape = R"(
+HloModule custom_call_bitcast_module
+ENTRY main {
+  param.1 = bf16[8,1,64]{2,0,1} parameter(0)
+  custom-call.2 = bf16[8,1,64]{2,0,1} custom-call(param.1), custom_call_target="MoveToHost"
+  ROOT bitcast.3 = bf16[8,1,64]{2,1,0:S(5)} bitcast(custom-call.2)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(
+                                           hlo_with_host_memory_space_shape));
+
+  auto status = HloVerifier{HloVerifierOpts{}.VerifyNoHostMemorySpace()}
+                    .Run(module.get())
+                    .status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Instruction shouldn't have the layout of host memory space"));
 }
 
 }  // namespace

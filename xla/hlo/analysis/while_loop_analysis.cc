@@ -48,13 +48,35 @@ limitations under the License.
 #include "xla/service/value_range.h"
 #include "xla/shape_util.h"
 #include "xla/tools/hlo_extractor.h"
-#include "tsl/platform/status.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
 using std::nullopt;
 using std::optional;
 namespace m = match;
+
+namespace {
+
+// Traces through a chain of copy instructions and a GTE-tuple pair until a
+// non-copy or a non-GTE-tuple pair is found.
+const HloInstruction* TraceThroughCopyAndGteTupleChain(
+    const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kGetTupleElement &&
+      instr->operand(0)->opcode() == HloOpcode::kTuple) {
+    return TraceThroughCopyAndGteTupleChain(
+        instr->operand(0)->operand(instr->tuple_index()));
+  }
+  if (instr->opcode() == HloOpcode::kCopy ||
+      instr->opcode() == HloOpcode::kCopyStart ||
+      instr->opcode() == HloOpcode::kCopyDone) {
+    return TraceThroughCopyAndGteTupleChain(instr->operand(0));
+  }
+
+  return instr;
+}
+}  // namespace
 
 // Finds and returns the non-constant operand in instr, if there is only one
 // such operand.
@@ -177,7 +199,7 @@ static std::optional<int64_t> GetUniqueGTEDependenceIndex(
       [](const HloInstruction* inst) -> ReplaceType {
         return ReplaceType::kReplaceParam;
       },
-      /*cross_computation=*/false, /*inline_calls_and_fusions=*/false,
+      /*cross_computation=*/false, /*inline_calls_and_fusions=*/true,
       /*run_verifier=*/false);
   HloComputation* entry = extracted->entry_computation();
 
@@ -426,7 +448,8 @@ optional<int64_t> GetLoopInductionVarTupleIdx(const HloInstruction* while_op) {
     return nullopt;
   }
   const HloInstruction* while_body_inc;
-  while_body_inc = while_body_root->operand(*indvar_tuple_idx);
+  while_body_inc = TraceThroughCopyAndGteTupleChain(
+      while_body_root->operand(*indvar_tuple_idx));
   auto* while_body_param = while_body->parameter_instruction(0);
   optional<int64_t> while_body_indvar_tuple_idx =
       GetUniqueGTEDependenceIndex(while_body_inc, while_body_param);
@@ -613,10 +636,19 @@ optional<Range> MatchTrivialLoopRange(const HloInstruction* while_op) {
 
   // We also need to round the bound down so that the difference between bound
   // and init_value is a multiple of the step size.
-  while_cond_bound_val.value() =
-      (while_cond_bound_val.value() - indvar_init_val.value()) /
-          trip_count_step * trip_count_step +
-      indvar_init_val.value();
+  // We want to round down the expression
+  // (while_cond_bound_val.value() - indvar_init_val.value()) to a multiple of
+  // trip_count_step by adjusting the bound value. We need to be careful not to
+  // run into overflows.
+  int64_t bound_value_remainder =
+      while_cond_bound_val.value() % trip_count_step;
+  int64_t init_value_remainder = indvar_init_val.value() % trip_count_step;
+  int64_t remainder =
+      (bound_value_remainder - init_value_remainder) % trip_count_step;
+  if (remainder < 0) {
+    remainder += trip_count_step;
+  }
+  while_cond_bound_val.value() -= remainder;
 
   const int64_t init_bitwidth =
       primitive_util::BitWidth(indvar_init.shape().element_type());
@@ -654,10 +686,11 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
   // number.
   auto* while_body = while_op->while_body();
   auto* while_body_indvar_update =
-      while_body->root_instruction()->mutable_operand(indvar_tuple_idx);
+      const_cast<HloInstruction*>(TraceThroughCopyAndGteTupleChain(
+          while_body->root_instruction()->mutable_operand(indvar_tuple_idx)));
   auto* while_body_indvar = NonConstantOperand(while_body_indvar_update);
   if (while_body_indvar == nullptr ||
-      while_body_indvar !=
+      TraceThroughCopyAndGteTupleChain(while_body_indvar) !=
           hlo_query::GetUniqueGteInstruction(
               while_body->parameter_instruction(0), indvar_tuple_idx)) {
     return std::nullopt;
@@ -666,7 +699,7 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
   int64_t trip_count_step = 0;
   if (!Match(while_body_indvar_update,
              m::AddAnyOrder(m::Op().Is(while_body_indvar),
-                            m::Op(&trip_count_increase_step_instr)))) {
+                            m::Constant(&trip_count_increase_step_instr)))) {
     if (trip_count_increase_step_instr == nullptr) {
       VLOG(2) << "Pattern-match failed: induction variable is not getting "
                  "updated by an add operation: "
@@ -806,7 +839,9 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
   HloEvaluator evaluator(/*max_loop_iterations=*/0);
   auto* while_init = while_op->operand(0);
   auto* indvar_init = while_init->operand(*indvar_tuple_idx);
-  absl::StatusOr<Literal> indvar_init_result = evaluator.Evaluate(indvar_init);
+  absl::StatusOr<Literal> indvar_init_result =
+      evaluator.Evaluate(TraceThroughCopyAndGteTupleChain(indvar_init));
+  VLOG(2) << "indvar_init_result: " << indvar_init_result.status();
   if (!indvar_init_result.ok()) {
     VLOG(2) << "Couldn't evaluate induction variable init, "
             << indvar_init_result.status() << ", " << indvar_init->ToString();
@@ -844,8 +879,8 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
 
   for (int64_t trip_count = 0; trip_count != max_brute_force_iters + 1;
        ++trip_count) {
-    absl::StatusOr<Literal> result = evaluator.EvaluateWithSubstitutions(
-        while_cond_root, {{while_cond_indvar, &indvar_iter_val}});
+    absl::StatusOr<Literal> result = evaluator.Evaluate(
+        while_cond_root, {}, false, {{while_cond_indvar, &indvar_iter_val}});
     if (!result.ok()) {
       VLOG(2) << "Couldn't evaluate while cond: " << result.status();
       return nullopt;
@@ -858,8 +893,8 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
     // Calculate the value of the induction variable after one iteration of the
     // loop, and check whether the while condition is true with this new value.
     absl::StatusOr<Literal> indvar_next_result =
-        evaluator.EvaluateWithSubstitutions(
-            while_body_indvar_update, {{while_body_indvar, &indvar_iter_val}});
+        evaluator.Evaluate(while_body_indvar_update, {}, false,
+                           {{while_body_indvar, &indvar_iter_val}});
     if (!indvar_next_result.ok()) {
       VLOG(2) << "Couldn't evaluate induction variable update: "
               << indvar_next_result.status();

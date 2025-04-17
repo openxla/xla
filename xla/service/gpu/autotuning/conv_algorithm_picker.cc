@@ -66,14 +66,14 @@ limitations under the License.
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 #include "third_party/gpus/cudnn/cudnn.h"  // IWYU pragma: keep
@@ -83,7 +83,7 @@ limitations under the License.
 #else
 #include "third_party/gpus/cudnn/cudnn_ops_infer.h"
 #endif  // CUDNN_VERSION >= 90000
-#include "xla/service/gpu/buffer_comparator.h"
+#include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #endif
 
@@ -824,8 +824,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
         blas_version, runtime_arguments.canonical_hlo.value());
   }
 
-  const bool cudnn_frontend_enabled =
-      debug_options.xla_gpu_enable_cudnn_frontend();
+  const bool cudnn_frontend_enabled = true;
   bool allow_tf32 = true;
   // TODO(b/284371623): Properly set allow_tf32 even if instr==nullptr, which is
   // the case when running an AOT compiled executable with runtime autotuning.

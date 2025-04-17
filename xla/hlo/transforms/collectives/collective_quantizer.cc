@@ -15,10 +15,23 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collective_quantizer.h"
 
+#include <algorithm>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_replication_analysis.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -193,7 +206,7 @@ std::optional<ConversionSubgraph> IsSupportedDequantization(
                        ScalarBroadcast(&subgraph.scale_bcast))))) {
     subgraph.unaries = {candidate_subgraph.begin() + 2,
                         candidate_subgraph.end()};
-  } else if (candidate_subgraph.size() > 0 &&
+  } else if (!candidate_subgraph.empty() &&
              Match(candidate_subgraph[0], m::Convert(&subgraph.convert))) {
     subgraph.unaries = {candidate_subgraph.begin() + 1,
                         candidate_subgraph.end()};
@@ -265,8 +278,7 @@ std::optional<ConversionSubgraph> IsSupportedQuantization(
                                     ScalarBroadcast(&subgraph.scale_bcast)),
                           ScalarBroadcast(m::Constant())))))) {
     subgraph.unaries = {ops.begin(), ops.end() - 3};
-  } else if (ops.size() > 0 &&
-             Match(ops.back(), m::Convert(&subgraph.convert))) {
+  } else if (!ops.empty() && Match(ops.back(), m::Convert(&subgraph.convert))) {
     subgraph.unaries = {ops.begin(), ops.end() - 1};
   } else {
     VLOG(5) << "Did not find type conversion or quantization pattern.";

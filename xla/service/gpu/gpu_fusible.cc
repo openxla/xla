@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
@@ -508,17 +509,28 @@ static int64_t SharedMemoryUsageNoCache(
              IsReductionFromOrToContiguousDimensions(instr, device_info)) {
     ReductionDimensions reduction_info =
         GetReductionKindAndContiguousComponents(instr);
-    int64_t primitive_size = ShapeUtil::ByteSizeOfPrimitiveType(
-        instr.operand(0)->shape().element_type());
-    int num_variadic =
-        instr.shape().IsTuple() ? instr.shape().tuple_shapes_size() : 1;
+    int64_t primitive_size_sum = 0;
+    // Variadic reductions will allocate one shared memory buffer for each
+    // input. They all have the same shape, so we can just sum up the primitive
+    // sizes of the inputs.
+    for (int i = 0; i < instr.operand_count() / 2; ++i) {
+      primitive_size_sum += ShapeUtil::ByteSizeOfPrimitiveType(
+          instr.operand(i)->shape().element_type());
+    }
+
     if (reduction_info.is_row_reduction) {
-      // __shared__[32] is used for row reduction.
-      return 32 * primitive_size * num_variadic;
+      // In row reductions, we write at most one element per warp to shared
+      // memory, regardless of whether the reduction is vectorized or not. We
+      // have at most 32 warps for a single row. We could tighten this estimate,
+      // but it doesn't really matter. Row reductions are very unlikely to ever
+      // run out of shared memory budget.
+      return 32 * primitive_size_sum;
     } else {
-      // __shared__[4][32][33] cache is used for column reduction ("4" comes
-      // from potential x-tiling).
-      return 4 * 32 * 33 * primitive_size * num_variadic;
+      // The shape of the cache for column reductions is 32x(vector_size * 32 +
+      // 1). We don't know the actual vector size here, so we assume the
+      // maximum.
+      constexpr int kMaxVectorSize = 4;
+      return 32 * (kMaxVectorSize * 32 + 1) * primitive_size_sum;
     }
   } else if (auto tr = GetDescriptionForTiledTransposeEmitter(instr)) {
     // Tile size for transposition.
@@ -818,6 +830,8 @@ std::vector<const HloInstruction*> GetFusionRoots(
 }
 
 bool IsGenericTritonFusion(const HloInstruction& instr) {
+  // Note that we don't accept kTritonNestedGemmFusionKind here as they should
+  // not be fused with anything else.
   return instr.opcode() == HloOpcode::kFusion &&
          instr.fusion_kind() == HloInstruction::FusionKind::kCustom &&
          instr.backend_config<GpuBackendConfig>().ok() &&
@@ -839,12 +853,19 @@ bool MayPreventVectorization(const HloFusionAdaptor& fusion) {
       case HloOpcode::kConcatenate:
         return node.instruction().operand_count() >
                kMaxConcatArgumentsForUnrolling;
-      case HloOpcode::kReduce:
-        return node.instruction().shape().tuple_shapes_size() > 1;
+      case HloOpcode::kReduce: {
+        const Shape& shape = node.instruction().shape();
+        return shape.IsTuple() && shape.tuple_shapes_size() > 1;
+      }
       default:
         return false;
     }
   });
+}
+
+bool IsStreamAnnotatedComputation(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kCall &&
+         instr->frontend_attributes().map().contains(kXlaStreamAnnotationAttr);
 }
 
 std::vector<HloComputation*> GetFusibleComputations(
@@ -857,6 +878,7 @@ std::vector<HloComputation*> GetFusibleComputations(
       // Don't fuse within called computations, unless they are for control
       // flow. See also fusion_wrapper.cc, which does the same.
       if (HloInstruction::MightHaveCalledComputations(instr->opcode()) &&
+          !IsStreamAnnotatedComputation(instr) &&
           instr->opcode() != HloOpcode::kWhile &&
           instr->opcode() != HloOpcode::kConditional &&
           // No need to add fusion computations, just check the flag.

@@ -35,12 +35,12 @@ cc_library(
     hdrs = ["snappy_inputbuffer.h"],
     deps = [
         "//xla/tsl/lib/io:inputstream_interface",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -50,12 +50,12 @@ cc_library(
     srcs = ["snappy_outputbuffer.cc"],
     hdrs = ["snappy_outputbuffer.h"],
     deps = [
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -66,8 +66,8 @@ cc_library(
     hdrs = ["snappy_inputstream.h"],
     deps = [
         "//xla/tsl/lib/io:inputstream_interface",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:platform_port",
     ],
     alwayslink = True,
@@ -77,7 +77,7 @@ cc_library(
     name = "snappy_compression_options",
     hdrs = ["snappy_compression_options.h"],
     deps = [
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -93,9 +93,9 @@ tsl_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/lib/io:inputbuffer",
         "//xla/tsl/lib/io:random_inputstream",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:env_impl",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )

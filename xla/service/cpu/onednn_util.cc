@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#if defined(INTEL_MKL)
 
 #include "xla/service/cpu/onednn_util.h"
 
@@ -67,6 +67,9 @@ dnnl::post_ops PopulateOneDnnPostOps(
       case OneDnnFusionConfig::SIGMOID:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_logistic, 0.f, 0.f);
         break;
+      case OneDnnFusionConfig::SUM:
+        post_ops.append_sum();
+        break;
       case OneDnnFusionConfig::BIAS: {
         *bias_md = fused_mds.at(fused_operand_idx);
         if (fused_operands_ref) {
@@ -113,4 +116,4 @@ dnnl::post_ops PopulateOneDnnPostOps(
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // INTEL_MKL

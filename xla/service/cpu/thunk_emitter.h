@@ -25,17 +25,18 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-#include "xla/backends/cpu/codegen/llvm_ir_kernel_spec.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
-#include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/codegen/kernel_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/ir_emitter2.h"
 #include "xla/service/hlo_module_config.h"
@@ -197,6 +198,9 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitXnnFusionThunk(
       const HloInstruction* instruction);
 
+  absl::StatusOr<ThunkSequence> EmitOneDnnFusionThunk(
+      const HloInstruction* instruction);
+
   // Returns the list of buffer allocation slices assigned to the given
   // instruction that will be passed to the host kernel as arguments: a
   // flattened list of all the leaf buffers for all operands and result. We do
@@ -220,8 +224,7 @@ class ThunkEmitter {
       std::optional<uint64_t> min_alignment = std::nullopt);
 
   static absl::StatusOr<ThunkSequence> MakeKernelThunkSequence(
-      const HloInstruction* instruction,
-      std::unique_ptr<LlvmIrKernelSpec> kernel_spec,
+      const HloInstruction* instruction, const KernelSpec& kernel_spec,
       std::optional<uint64_t> min_alignment = std::nullopt);
 
   IrEmitter2& ir_emitter_;

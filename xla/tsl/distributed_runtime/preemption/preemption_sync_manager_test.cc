@@ -34,10 +34,10 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/rpc/async_service_interface.h"
 #include "xla/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
 #include "xla/tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
 
 namespace tsl {
 namespace {
@@ -143,14 +143,14 @@ class PreemptionSyncManagerTest : public ::testing::Test {
         /*thread_options=*/{}, /*name=*/"CoordinationServiceHandleRPCsLoop",
         [service = coord_rpc_service_.get()]() { service->HandleRPCsLoop(); }));
   }
-  std::unique_ptr<CoordinationServiceInterface> EnableCoordinationService() {
+  std::unique_ptr<CoordinationService> EnableCoordinationService() {
     CoordinationServiceConfig config;
     config.set_service_type("standalone");
     CoordinatedJob* job = config.mutable_coordinated_job_list()->Add();
     job->set_name(kJobName);
     job->set_num_tasks(2);
-    return CoordinationServiceInterface::EnableCoordinationService(
-        Env::Default(), config, /*cache=*/nullptr);
+    return CoordinationService::Create(Env::Default(), config,
+                                       /*cache=*/nullptr);
   }
   void InitializeAndConnectCoordinationAgents() {
     std::unique_ptr<CoordinationClient> coord_client =
@@ -175,7 +175,7 @@ class PreemptionSyncManagerTest : public ::testing::Test {
   }
 
   // Coordination service.
-  std::unique_ptr<CoordinationServiceInterface> coord_service_;
+  std::unique_ptr<CoordinationService> coord_service_;
   std::unique_ptr<::grpc::Server> grpc_server_;
   std::unique_ptr<thread::ThreadPool> coord_compute_pool_;
   std::unique_ptr<AsyncServiceInterface> coord_rpc_service_;

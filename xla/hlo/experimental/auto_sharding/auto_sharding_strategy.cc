@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -64,6 +65,43 @@ limitations under the License.
 namespace xla {
 namespace spmd {
 
+void EnumerateHelper(std::function<void(const DimMap&)> split_func,
+                     int tensor_rank, int current_mesh_dim_idx,
+                     const std::vector<int>& unassigned_mesh_dims,
+                     const DimMap& current_dim_map,
+                     bool allow_mixed_mesh_shape) {
+  if (current_mesh_dim_idx == unassigned_mesh_dims.size()) {
+    split_func(current_dim_map);
+    return;
+  }
+  // Current mesh dim is not assigned to any tensor dim
+  EnumerateHelper(split_func, tensor_rank, current_mesh_dim_idx + 1,
+                  unassigned_mesh_dims, current_dim_map,
+                  allow_mixed_mesh_shape);
+
+  for (int i = 0; i < tensor_rank; ++i) {
+    DimMap updated_dim_map = current_dim_map;
+    if (!updated_dim_map[i].empty() && !allow_mixed_mesh_shape) {
+      continue;
+    }
+    updated_dim_map[i].insert(unassigned_mesh_dims[current_mesh_dim_idx]);
+    EnumerateHelper(split_func, tensor_rank, current_mesh_dim_idx + 1,
+                    unassigned_mesh_dims, updated_dim_map,
+                    allow_mixed_mesh_shape);
+  }
+}
+
+// Map tensor dims from [0, tensor_shape.dimensions_size() - 1] to (atmost one
+// or more, depending on the value of allow_mixed_mesh_shape) mesh dims.
+void Enumerate(std::function<void(const DimMap&)> split_func,
+               int64_t tensor_rank,
+               const std::vector<int>& unassigned_mesh_dims,
+               bool allow_mixed_mesh_shape) {
+  EnumerateHelper(split_func, tensor_rank, /*current_mesh_dim_idx=*/0,
+                  unassigned_mesh_dims,
+                  /*current_dim_map=*/{}, allow_mixed_mesh_shape);
+}
+
 bool LeafVectorsAreConsistent(const std::vector<ShardingStrategy>& one,
                               const std::vector<ShardingStrategy>& two) {
   if (one.size() != two.size()) return false;
@@ -95,14 +133,14 @@ ComputeSliceShardingAndCommunicationCostFromOperand(
 
   CHECK(old_shape.IsArray());
 
-  std::vector<int64_t> tensor_to_mesh_dim =
-      GetTensorDimToMeshDim(new_shape.rank(), input_spec, device_mesh,
-                            /* consider_reverse_device_meshes */ true);
+  std::vector<int64_t> tensor_to_mesh_dim = GetTensorDimToMeshDim(
+      new_shape.dimensions().size(), input_spec, device_mesh,
+      /* consider_reverse_device_meshes */ true);
 
   std::vector<int64_t> mesh_dims_for_communication;
   std::vector<int64_t> tensor_dims;
   std::vector<int64_t> mesh_dims;
-  for (size_t i = 0; i < new_shape.rank(); ++i) {
+  for (size_t i = 0; i < new_shape.dimensions().size(); ++i) {
     if (tensor_to_mesh_dim[i] == -1) {
       continue;
     }

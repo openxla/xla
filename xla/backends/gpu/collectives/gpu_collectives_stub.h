@@ -50,7 +50,7 @@ class GpuCollectivesStub : public GpuCollectives {
   }
 
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  CreateCommunicators(int32_t, const CliqueKey&, const std::optional<CliqueId>&,
+  CreateCommunicators(const CliqueKey&, const std::optional<CliqueIds>&,
                       absl::Span<const DeviceRank>,
                       const Collectives::Config&) final {
     return UnimplementedError();
@@ -64,6 +64,11 @@ class GpuCollectivesStub : public GpuCollectives {
 
   absl::Status GroupStart() final { return UnimplementedError(); }
   absl::Status GroupEnd() final { return UnimplementedError(); }
+  absl::StatusOr<void*> Allocate(uint64_t bytes) final {
+    return UnimplementedError();
+  }
+
+  absl::Status Deallocate(void* buffer) final { return UnimplementedError(); }
 
  protected:
   static absl::Status UnimplementedError() {

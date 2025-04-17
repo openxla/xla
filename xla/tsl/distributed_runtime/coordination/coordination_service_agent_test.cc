@@ -31,11 +31,11 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {
@@ -51,28 +51,6 @@ using ::testing::SetArgPointee;
 using ::testing::UnorderedPointwise;
 using ::testing::WithArgs;
 using ::tsl::testing::StatusIs;
-
-// TODO(b/229726259) Switch to OSS version after it's available.
-// Simple implementation of a proto matcher comparing string representations.
-class ProtoStringMatcher {
- public:
-  explicit ProtoStringMatcher(const tsl::protobuf::Message& expected)
-      : expected_(expected.DebugString()) {}
-
-  template <typename Message>
-  bool MatchAndExplain(const Message& p,
-                       ::testing::MatchResultListener*) const {
-    return p.DebugString() == expected_;
-  }
-
-  void DescribeTo(std::ostream* os) const { *os << expected_; }
-  void DescribeNegationTo(std::ostream* os) const {
-    *os << "not equal to expected message: " << expected_;
-  }
-
- private:
-  const std::string expected_;
-};
 
 MATCHER(KvEq, "simple KeyValueEntry matcher") {
   const KeyValueEntry& kv0 = std::get<0>(arg);
@@ -145,6 +123,9 @@ class TestCoordinationClient : public CoordinationClient {
   MOCK_METHOD(void, GetTaskStateAsync,
               (const GetTaskStateRequest*, GetTaskStateResponse*,
                StatusCallback),
+              (override));
+  MOCK_METHOD(void, GetJobStateAsync,
+              (const GetJobStateRequest*, GetJobStateResponse*, StatusCallback),
               (override));
   MOCK_METHOD(void, HeartbeatAsync,
               (CallOptions*, const HeartbeatRequest*, HeartbeatResponse*,

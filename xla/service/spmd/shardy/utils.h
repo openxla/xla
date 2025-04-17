@@ -22,13 +22,17 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/string_view.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
+#include "stablehlo/dialect/StablehloOps.h"
 
 namespace xla {
 namespace sdy {
@@ -46,14 +50,13 @@ mlir::DictionaryAttr getFuncArgFrontendAttrs(mlir::func::FuncOp funcOp,
 // `name` already exists, it will be overwritten. Note that `value` will be
 // turned into a `StringAttr`.
 void setFrontendAttribute(mlir::Operation* op, mlir::StringRef name,
-                          mlir::Attribute value, bool escapeAttr = true);
+                          mlir::Attribute value);
 
 // Adds `name` into the argument at `argNum`'s frontend attributes of `funcOp`
 // with value `value`. If `name` already exists, it will be overwritten. Note
 // that `value` will be turned into a `StringAttr`.
 void setFrontendAttribute(mlir::func::FuncOp funcOp, mlir::StringRef name,
-                          mlir::Attribute value, int64_t argNum,
-                          bool escapeAttr = true);
+                          mlir::Attribute value, int64_t argNum);
 
 // Remove `attributeName` from the frontend attributes of `op`.
 void removeFrontendAttribute(mlir::Operation* op,
@@ -77,13 +80,16 @@ template <typename AttrTy>
 AttrTy parseStringAttr(mlir::DictionaryAttr dictAttr,
                        llvm::StringRef attrName) {
   if (mlir::Attribute stringAttr = dictAttr.get(attrName)) {
-    std::string value;
+    std::string unescapedValue;
     std::string error;
-    CHECK(absl::CUnescape(mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
-                          &value, &error))
+    llvm::StringRef escapedValue =
+        mlir::cast<mlir::StringAttr>(stringAttr).getValue();
+    CHECK(absl::CUnescape(
+        absl::string_view(escapedValue.data(), escapedValue.size()),
+        &unescapedValue, &error))
         << error;
     return mlir::cast<AttrTy>(
-        mlir::parseAttribute(value, stringAttr.getContext()));
+        mlir::parseAttribute(unescapedValue, stringAttr.getContext()));
   }
   return nullptr;
 }
@@ -100,6 +106,15 @@ std::optional<AttrTy> tryGetFrontendAttr(mlir::Operation* op,
   }
   return std::nullopt;
 }
+
+// Builds a new `stablehlo.custom_call` with the same operands and attributes
+// as `op` but with new `resultTypes`.
+mlir::stablehlo::CustomCallOp cloneCustomCallWithNewResultTypes(
+    mlir::stablehlo::CustomCallOp op, mlir::TypeRange resultTypes,
+    mlir::IRRewriter& rewriter);
+
+// Whether `op` is a Python callback custom call.
+bool isPythonCallbackCustomCall(mlir::stablehlo::CustomCallOp op);
 
 }  // namespace sdy
 }  // namespace xla

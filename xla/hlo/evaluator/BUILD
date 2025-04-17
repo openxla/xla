@@ -1,7 +1,7 @@
 # Description:
 #   XLA evaluator implementation.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -37,6 +37,7 @@ cc_library(
         "hlo_evaluator_typed_visitor_int4.cc",
         "hlo_evaluator_typed_visitor_int64.cc",
         "hlo_evaluator_typed_visitor_int8.cc",
+        "hlo_evaluator_typed_visitor_mxfloat.cc",
         "hlo_evaluator_typed_visitor_uint16.cc",
         "hlo_evaluator_typed_visitor_uint32.cc",
         "hlo_evaluator_typed_visitor_uint64.cc",
@@ -55,7 +56,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:tuple_points_to_analysis",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_query",
         "//xla/service:call_graph",
         "//xla/service:compilation_environments",
         "//xla/service:dynamic_dimension_inference",
@@ -66,14 +66,21 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service/cpu:runtime_single_threaded_matmul",
         "//xla/tsl/lib/core:bitmap",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:endian",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",
@@ -84,13 +91,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -113,7 +115,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",  # fixdeps: keep
     ],
 )
 
@@ -132,14 +133,15 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:permutation_util",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:tuple_points_to_analysis",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
         "//xla/hlo/transforms/simplifiers:hlo_element_type_converter",
         "//xla/service:call_graph",
         "//xla/service:dynamic_dimension_inference",
@@ -147,6 +149,11 @@ xla_cc_test(
         "//xla/service:shape_inference",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",  # fixdeps: keep
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:endian",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -156,10 +163,5 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",  # fixdeps: keep
     ],
 )

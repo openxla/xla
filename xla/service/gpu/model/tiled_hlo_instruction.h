@@ -43,6 +43,8 @@ namespace gpu {
 // where (d0, d1, ...) is the tile multi-index.
 class TiledHloInstruction {
  public:
+  virtual ~TiledHloInstruction() = default;
+
   // Creates an instance of TiledHloInstruction. Returns an error if any of the
   // following preconditions is not met:
   // * Number of tile sizes, strides should match HLO shape rank.
@@ -86,7 +88,7 @@ class TiledHloInstruction {
   // The number of tile offsets is equal to the rank of the tiled hlo.
   //
   // The indexing map is not computed by default.
-  absl::StatusOr<const IndexingMap> tile_offsets_indexing() const {
+  absl::StatusOr<IndexingMap> tile_offsets_indexing() const {
     if (!tile_offsets_indexing_.has_value()) {
       return absl::FailedPreconditionError(
           "tile_offsets_indexing was not computed. It is likely that "
@@ -140,7 +142,7 @@ inline bool operator==(const TiledHloInstruction& lhs,
 
   if (lhs.operands().empty() && rhs.operands().empty()) {
     // Tile offsets indexing is guaranteed to be computed only if tile sizes are
-    // different and the instruction has no operands.
+    // the same and the instruction has no operands.
     return lhs.tile_offsets_indexing() == rhs.tile_offsets_indexing();
   }
 

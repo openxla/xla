@@ -39,6 +39,7 @@ namespace xla {
 // performed on an HloModule.
 constexpr char kBeforeOptimizationsDumpName[] = "before_optimizations";
 constexpr char kAfterOptimizationsDumpName[] = "after_optimizations";
+constexpr char kNonDefaultDebugOptionsDumpSuffix[] = "debug_options";
 
 class BufferAssignment;
 class HloSnapshot;
@@ -126,6 +127,9 @@ std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, const BufferAssignment& buffer_assn,
     absl::string_view name);
 
+std::vector<std::string> DumpHloModuleProtoIfEnabled(
+    const HloModuleProto& module_proto, absl::string_view name);
+
 // Dumps the given HLO module after running one HLO pass and before running
 // another, if that's enabled. Returns the full file paths of all dumps of the
 // module, or an empty vector if nothing was dumped.
@@ -193,6 +197,17 @@ absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
                                   const std::string& directory,
                                   const std::string& file_name,
                                   std::string* full_path = nullptr);
+
+void DumpHloConfigIfEnabled(const HloModule& module);
+
+// Dumps the non-default debug options to a file in the xla_dump_to directory
+// specified by the module's DebugOptions.
+void DumpNonDefaultDebugOptions(const HloModule& module,
+                                absl::string_view suffix);
+
+// Returns the non-default debug options as a string. The default debug options
+// are received from DefaultDebugOptionsIgnoringFlags().
+std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options);
 
 }  // namespace xla
 

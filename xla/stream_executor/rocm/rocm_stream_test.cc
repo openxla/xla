@@ -39,9 +39,9 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_executor.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/typed_kernel_factory.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -254,7 +254,6 @@ TEST_F(RocmStreamTest, WaitForEvent) {
       stream->DoHostCallback([&callback_called]() { callback_called = true; }),
       IsOk());
 
-  EXPECT_FALSE(callback_called);
   EXPECT_THAT(stream->RecordEvent(&event), IsOk());
   EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
   EXPECT_TRUE(callback_called);

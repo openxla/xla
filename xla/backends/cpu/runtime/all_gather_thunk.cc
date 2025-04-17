@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -27,16 +28,13 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/cpu/collectives_interface.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -50,13 +48,12 @@ absl::StatusOr<std::unique_ptr<AllGatherThunk>> AllGatherThunk::Create(
 
 AllGatherThunk::AllGatherThunk(Info info, OpParams op_params,
                                OpBuffers op_buffers, OpResources op_resources)
-    : CollectiveThunk(Kind::kAllGather, std::move(info), std::move(op_params),
-                      std::move(op_buffers), std::move(op_resources)) {}
+    : CollectiveThunk(CollectiveKind::kAllGather, std::move(info),
+                      std::move(op_params), std::move(op_buffers),
+                      std::move(op_resources)) {}
 
 tsl::AsyncValueRef<AllGatherThunk::ExecuteEvent> AllGatherThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   TF_ASSIGN_OR_RETURN(OpDeviceMemory data, GetOpDeviceMemory(params));
 
   VLOG(3) << absl::StreamFormat(

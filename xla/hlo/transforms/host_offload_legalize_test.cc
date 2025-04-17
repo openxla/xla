@@ -26,9 +26,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/host_memory_offload_annotations.h"
+#include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -61,9 +61,8 @@ class HostOffloadLegalizeTest : public HloHardwareIndependentTestBase {
     for (const HloComputation* computation : module->computations()) {
       for (const HloInstruction* instruction : computation->instructions()) {
         if (instruction->IsCustomCall(
-                {host_memory_offload_annotations::kMoveToHostCustomCallTarget,
-                 host_memory_offload_annotations::
-                     kMoveToDeviceCustomCallTarget})) {
+                {memory_annotations::kMoveToHostCustomCallTarget,
+                 memory_annotations::kMoveToDeviceCustomCallTarget})) {
           return true;
         }
       }
@@ -243,7 +242,7 @@ ENTRY main.24 {
   const HloInstruction* custom_call =
       module->entry_computation()->root_instruction()->operand(0);
   EXPECT_TRUE(custom_call->IsCustomCall(
-      host_memory_offload_annotations::kMoveToDeviceCustomCallTarget));
+      memory_annotations::kMoveToDeviceCustomCallTarget));
   EXPECT_EQ(custom_call->users()[0]->opcode(), HloOpcode::kCopy);
   EXPECT_EQ(custom_call->shape().layout(),
             LayoutUtil::MakeLayout({3, 2, 1, 0}));
@@ -289,7 +288,7 @@ ENTRY main.24 {
   const HloInstruction* custom_call =
       module->entry_computation()->root_instruction()->operand(0);
   EXPECT_TRUE(custom_call->IsCustomCall(
-      host_memory_offload_annotations::kMoveToDeviceCustomCallTarget));
+      memory_annotations::kMoveToDeviceCustomCallTarget));
   EXPECT_EQ(custom_call->users()[0]->opcode(), HloOpcode::kCopy);
   EXPECT_EQ(custom_call->shape().layout(),
             LayoutUtil::MakeLayout({3, 2, 1, 0}));
@@ -606,12 +605,36 @@ ENTRY main {
   HloInstruction* custom_call = FindInstruction(module.get(), "custom_call");
   EXPECT_TRUE(custom_call->IsRoot());
   EXPECT_TRUE(custom_call->IsCustomCall(
-      host_memory_offload_annotations::kMoveToHostCustomCallTarget));
+      memory_annotations::kMoveToHostCustomCallTarget));
   const HloInstruction* copy = custom_call->operand(0);
   ASSERT_EQ(copy->opcode(), HloOpcode::kCopy);
   const HloInstruction* param = copy->operand(0);
   EXPECT_EQ(copy->opcode(), HloOpcode::kCopy);
   EXPECT_EQ(param->opcode(), HloOpcode::kParameter);
+}
+
+// Check that HostOffloadLegalize doesn't crash when the base operand of the
+// dynamic-update-slice is a parameter.
+TEST_F(HostOffloadLegalizeTest, NoCrashBaseIsStreamed) {
+  const std::string& hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(f32[8,512,64]{1,2,0:T(8,128)S(5)}, f32[1,512,64]{1,2,0:T(8,128)}, s32[]{:T(128)})->f32[8,512,64]{1,2,0:T(8,128)S(5)}}
+
+ENTRY main {
+  param1 = f32[8,512,64]{1,2,0:T(8,128)S(5)} parameter(0)
+  param2 = f32[1,512,64]{1,2,0:T(8,128)} parameter(1)
+  custom_call = f32[1,512,64]{1,2,0:T(8,128)S(5)} custom-call(param2), custom_call_target="MoveToHost"
+  param3 = s32[]{:T(128)} parameter(2)
+  constant = s32[]{:T(128)} constant(0)
+  ROOT dynamic-update-slice = f32[8,512,64]{1,2,0:T(8,128)} dynamic-update-slice(param1, param2, param3, constant, constant)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+
+  ASSERT_FALSE(changed);
 }
 
 }  // namespace

@@ -78,33 +78,12 @@ bool IsOpcodeAnyOf(const HloInstruction* instr) {
   return (instr->opcode() == op) || ((instr->opcode() == rest) || ...);
 }
 
-namespace internal {
-
-// An interface to abstract away the difference between single instruction
-// fusion and fused computations.
-class HloFusionInstructionAdaptor {
- public:
-  virtual ~HloFusionInstructionAdaptor() = default;
-  virtual bool ContainsInstruction(const HloInstruction* instruction) const = 0;
-  // If it is a regular multi-output fusion, the order of the returned roots
-  // matches the order of the tuple elements of the tuple root of the fusion
-  // computation. We do not deduplicate fusion roots.
-  virtual absl::InlinedVector<HloInstructionAdaptor, 2> GetRoots() const = 0;
-  virtual absl::InlinedVector<const HloInstruction*, 2> GetParameters()
-      const = 0;
-  virtual const HloInstruction& FusionInstruction() const = 0;
-  virtual absl::InlinedVector<HloInstructionAdaptor, 2>
-  MakeInstructionPostOrder() const = 0;
-  virtual void ForEach(
-      const std::function<void(HloInstructionAdaptor)>& fn) const = 0;
-  virtual std::string ToString() const = 0;
-};
-
-}  // namespace internal
+class HloFusionInstructionAdaptor;
 
 // Treats a set of HloInstructions as if they were fused.
 class HloFusionAdaptor {
  public:
+  ~HloFusionAdaptor();
   bool ContainsInstruction(HloInstructionAdaptor instruction) const;
   bool ContainsInstruction(const HloInstruction* instruction) const;
   absl::InlinedVector<HloInstructionAdaptor, 2> GetRoots() const;
@@ -120,20 +99,25 @@ class HloFusionAdaptor {
   static std::unique_ptr<HloFusionAdaptor> ForInstruction(
       const HloInstruction* instruction);
   static std::unique_ptr<HloFusionAdaptor> ForProducerConsumer(
-      const HloInstruction* producer, const HloInstruction* consumer);
+      const HloInstruction* producer, const HloInstruction* consumer,
+      bool with_extra_outputs = false);
   static std::unique_ptr<HloFusionAdaptor> ForComputation(
       const HloComputation* computation);
 
  private:
   HloFusionAdaptor() = default;
+  explicit HloFusionAdaptor(bool with_extra_outputs);
   HloFusionAdaptor(const HloFusionAdaptor&) = delete;
   HloFusionAdaptor& operator=(const HloFusionAdaptor&) = delete;
 
   void AddInstruction(const HloInstruction* instruction);
   void AddComputation(const HloComputation* computation);
 
-  absl::InlinedVector<std::unique_ptr<internal::HloFusionInstructionAdaptor>, 2>
+  absl::InlinedVector<std::unique_ptr<HloFusionInstructionAdaptor>, 2>
       fusion_instructions_;
+  // Whether extra fusion roots should be created for producer consumer fusions
+  // where producer roots have extra usages outside the fusion.
+  bool with_extra_outputs_ = false;
 };
 
 enum class TraversalResult {

@@ -1,6 +1,6 @@
-load("//xla:pytype.default.bzl", "pytype_strict_library")
-load("//xla:strict.default.bzl", "py_strict_test")
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:py_strict.bzl", "py_strict_test")
+load("//xla:pytype.bzl", "pytype_strict_library")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -23,23 +23,32 @@ cc_library(
     srcs = ["kernel_runner.cc"],
     hdrs = ["kernel_runner.h"],
     deps = [
+        "//xla:xla_proto_cc",
+        "//xla/backends/cpu/codegen:cpu_features",
+        "//xla/backends/cpu/codegen:execution_engine",
+        "//xla/backends/cpu/codegen:fusion_compiler",
+        "//xla/backends/cpu/codegen:ir_compiler",
         "//xla/backends/cpu/codegen:jit_compiler",
-        "//xla/backends/cpu/codegen:llvm_ir_kernel_spec",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:kernel",
         "//xla/backends/cpu/runtime:kernel_c_api",
+        "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_ir_kernel_source",
+        "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/testlib:kernel_runner",
+        "//xla/service:hlo_module_config",
+        "//xla/service/cpu:cpu_options",
         "//xla/service/cpu:runtime_symbol_generator",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Target",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
+        "@llvm-project//llvm:ir_headers",
     ],
 )
 
@@ -52,15 +61,20 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:test",
-        "//xla/codegen:kernel_spec",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/codegen:jit_compiler",
+        "//xla/codegen:kernel_definition",
         "//xla/codegen/testlib:kernel_runner",
+        "//xla/hlo/testlib:test",
         "//xla/runtime:buffer_use",
+        "//xla/service:hlo_module_config",
         "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -71,7 +85,7 @@ cc_library(
     hdrs = ["llvm_ir_kernel_emitter.h"],
     deps = [
         "//xla:util",
-        "//xla/backends/cpu/codegen:llvm_ir_kernel_spec",
+        "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_emitter",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_ir_kernel_source",
@@ -87,6 +101,28 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "mlir_kernel_emitter",
+    srcs = ["mlir_kernel_emitter.cc"],
+    hdrs = ["mlir_kernel_emitter.h"],
+    deps = [
+        "//xla/backends/cpu/codegen:fusion_compiler",
+        "//xla/codegen:kernel_definition",
+        "//xla/codegen:kernel_emitter",
+        "//xla/codegen:kernel_spec",
+        "//xla/codegen:mlir_kernel_source",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
 tsl_pybind_extension(
     name = "_extension",
     testonly = 1,
@@ -95,21 +131,29 @@ tsl_pybind_extension(
     deps = [
         ":kernel_runner",
         ":llvm_ir_kernel_emitter",
+        ":mlir_kernel_emitter",
         # placeholder for index annotation deps  # buildcleaner: keep
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:IR",
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
-        "//xla/backends/cpu/codegen:elemental_kernel_emitter",
+        "//xla/backends/cpu/codegen:computation_kernel_emitter",
+        "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/backends/cpu/codegen:jit_compiler",
-        "//xla/backends/cpu/codegen:llvm_ir_kernel_spec",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/codegen/dot:dot_kernel_emitter",
+        "//xla/backends/cpu/codegen/elemental:concatenate_kernel_emitter",
+        "//xla/backends/cpu/codegen/elemental:elemental_kernel_emitter",
+        "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_emitter",
-        "//xla/codegen:kernel_spec",
+        "//xla/codegen:llvm_ir_kernel_source",
+        "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/testlib:kernel_runner",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
         "//xla/service/cpu:cpu_compiler_pure",
         "//xla/stream_executor:launch_dim",
     ],
@@ -120,8 +164,8 @@ pytype_strict_library(
     testonly = 1,
     srcs = [
         "__init__.py",
+        "utilities.py",
     ],
-    srcs_version = "PY3",
     deps = [
         ":_extension",
         "//xla/codegen/testlib",  # buildcleaner: keep
@@ -133,14 +177,20 @@ xla_cc_test(
     srcs = ["llvm_ir_kernel_emitter_test.cc"],
     deps = [
         ":llvm_ir_kernel_emitter",
+        "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_ir_kernel_source",
         "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
         "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//llvm:JITLink",
+        "@llvm-project//llvm:ir_headers",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -148,8 +198,6 @@ py_strict_test(
     name = "kernel_runner_test_py",
     srcs = ["kernel_runner_test.py"],
     main = "kernel_runner_test.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = [
         "no_oss",
     ],
@@ -165,8 +213,6 @@ py_strict_test(
     name = "elemental_kernel_emitter_test",
     srcs = ["elemental_kernel_emitter_test.py"],
     main = "elemental_kernel_emitter_test.py",
-    python_version = "PY3",
-    srcs_version = "PY3",
     tags = [
         "no_oss",
     ],

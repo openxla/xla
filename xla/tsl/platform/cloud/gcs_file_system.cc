@@ -37,7 +37,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tsl/platform/file_statistics.h"
+#include "xla/tsl/platform/file_statistics.h"
 #include "tsl/platform/strcat.h"
 #ifdef _WIN32
 #include <io.h>  // for _mktemp
@@ -49,8 +49,8 @@ limitations under the License.
 #include "xla/tsl/platform/cloud/google_auth_provider.h"
 #include "xla/tsl/platform/cloud/ram_file_block_cache.h"
 #include "xla/tsl/platform/cloud/time_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/mutex.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/path.h"
@@ -261,7 +261,7 @@ absl::Status GetInt64Value(const Json::Value& parent, const char* name,
     return absl::OkStatus();
   }
   if (result_value.isString() &&
-      strings::safe_strto64(result_value.asCString(), result)) {
+      absl::SimpleAtoi(result_value.asCString(), result)) {
     return absl::OkStatus();
   }
   return errors::Internal(
@@ -1257,7 +1257,7 @@ absl::Status GcsFileSystem::RequestUploadSessionStatus(
     std::vector<int64_t> range_parts;
     for (const std::string& range_str : range_strs) {
       int64_t tmp;
-      if (strings::safe_strto64(range_str, &tmp)) {
+      if (absl::SimpleAtoi(range_str, &tmp)) {
         range_parts.push_back(tmp);
       } else {
         return return_error(gcs_path, "Range header '" + received_range +

@@ -181,8 +181,7 @@ ENTRY main {
 
   CheckLayoutNormalization(hlo, R"(
 // CHECK: [[bitcast_0:%[^ ]+]] = f32[1,5,4,3]{3,2,1,0} bitcast([[p_1:%[^ ]+]])
-// CHECK: [[transpose_2:%[^ ]+]] = f32[1,5,4,3]{3,2,1,0} transpose([[bitcast_0]]), dimensions={0,1,2,3}
-// CHECK: [[abs_3:%[^ ]+]] = f32[1,5,4,3]{3,2,1,0} abs([[transpose_2]])
+// CHECK: [[abs_3:%[^ ]+]] = f32[1,5,4,3]{3,2,1,0} abs([[bitcast_0]])
 )");
 }
 
@@ -583,14 +582,15 @@ HloModule module
 
 ENTRY main {
   p = f32[5,4]{0,1} parameter(0)
-  c = f32[5,4]{0,1} constant({...})
+  c = f32[5,4]{0,1} constant({{1,2,3,4},{5,6,7,8},{9,10,11,12},{13,14,15,16},{17,18,19,20}})
   ROOT o = f32[5,4]{0,1} add(p, c)
 }
 )";
   CheckLayoutNormalization(hlo, R"(
 // CHECK: [[p_0:%[^ ]+]] = f32[5,4]{0,1} parameter(0)
 // CHECK-NEXT: [[bitcast_1:%[^ ]+]] = f32[4,5]{1,0} bitcast([[p_0]])
-// CHECK-NEXT: [[constant_2:%[^ ]+]] = f32[4,5]{1,0} constant({...})
+// CHECK-NEXT: [[constant_2:%[^ ]+]] = f32[4,5]{1,0} constant(
+// CHECK-SAME{LITERAL}:                { { 1, 5, 9, 13, 17 }, { 2, 6, 10, 14, 18 }, { 3, 7, 11, 15, 19 }, { 4, 8, 12, 16, 20 } })
 // CHECK-NEXT: [[add_3:%[^ ]+]] = f32[4,5]{1,0} add([[bitcast_1]], [[constant_2]])
 // CHECK-NEXT: ROOT [[bitcast_3_4:%[^ ]+]] = f32[5,4]{0,1} bitcast([[add_3]])
   )");
@@ -601,7 +601,7 @@ TEST_F(LayoutNormalizationTest, ConstantAvoidRevisitOfUser) {
 HloModule module
 
 ENTRY main {
-  c = f32[5,4]{0,1} constant({...})
+  c = f32[5,4]{0,1} constant({{1,2,3,4},{5,6,7,8},{9,10,11,12},{13,14,15,16},{17,18,19,20}})
   s = f32[5,4]{0,1} sine(c)
   t = f32[5,4]{0,1} tanh(s)
   ROOT o = f32[5,4]{0,1} add(s, t)
@@ -611,7 +611,8 @@ ENTRY main {
   // run into a CHECK failure, because the constant was normalized in-place and
   // therefore would not be revisited.
   CheckLayoutNormalization(hlo, R"(
-// CHECK: [[constant_2:%[^ ]+]] = f32[4,5]{1,0} constant({...})
+// CHECK: [[constant_2:%[^ ]+]] = f32[4,5]{1,0} constant(
+// CHECK-SAME{LITERAL}:           { { 1, 5, 9, 13, 17 }, { 2, 6, 10, 14, 18 }, { 3, 7, 11, 15, 19 }, { 4, 8, 12, 16, 20 } })
 // CHECK-NEXT: [[sine:%[^ ]+]] = f32[4,5]{1,0} sine([[constant_2]])
 // CHECK-NEXT: [[bitcast_1:%[^ ]+]] = f32[5,4]{0,1} bitcast([[sine]])
 // CHECK-NEXT: [[bitcast_2:%[^ ]+]] = f32[4,5]{1,0} bitcast([[bitcast_1]])
@@ -934,6 +935,23 @@ ENTRY main {
 
   CheckLayoutNormalization(hlo, R"(
 // CHECK: pred[10]{0} compare({{.*}})
+)");
+}
+
+TEST_F(LayoutNormalizationTest, RegressionJaxB25759) {
+  const char* hlo = R"(
+HloModule repro
+
+ENTRY main {
+  p0 = f32[2,3,2,2]{2,1,3,0} parameter(0)
+  p1 = f32[2,2,2,3] parameter(1)
+  transpose = f32[2,3,2,2]{2,1,3,0} transpose(p1), dimensions={0,3,1,2}
+  ROOT multiply = f32[2,3,2,2]{2,1,3,0} multiply(p0, transpose)
+})";
+
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: %[[TRANSPOSE:.*]] = f32[2,2,3,2]{3,2,1,0} transpose
+// CHECK: multiply({{.*}}, %[[TRANSPOSE]])
 )");
 }
 

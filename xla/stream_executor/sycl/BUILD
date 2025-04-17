@@ -5,7 +5,7 @@ load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
 )
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
@@ -52,12 +52,13 @@ cc_library(
 xla_cc_test(
     name = "sycl_platform_test",
     srcs = if_sycl_is_configured(["sycl_platform_test.cc"]),
+    fail_if_no_test_linked = False,  # NOLINT=If not building with SYCL, we don't have any tests linked.
     deps = if_sycl_is_configured([
         ":sycl_platform",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ]) + [
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

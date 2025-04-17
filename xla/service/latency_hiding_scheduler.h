@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/ptrvec.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/map_util.h"
 #include "xla/service/hlo_buffer.h"
@@ -54,6 +55,8 @@ limitations under the License.
 #include "xla/xla.pb.h"
 
 namespace xla {
+
+inline constexpr int64_t kInvalidAnnotation = -1;
 
 struct CanonicalAsyncOp {
   HloOpcode outer;  // kAsyncStart or kAsyncDone
@@ -82,6 +85,7 @@ enum class ResourceType {
   kRecvHost,
   kCollectiveBroadcast,
   kNumResources,
+  kRaggedAllToAll,
   kTargetDefinedResourceTypeBegin,
 };
 
@@ -125,6 +129,7 @@ struct SchedulerConfig {
   int64_t collective_broadcast_overlap_limit = 1;
   int64_t collective_permute_overlap_limit = 1;
   int64_t all_to_all_overlap_limit = 1;
+  int64_t ragged_all_to_all_overlap_limit = 1;
   int64_t all_gather_overlap_limit = 1;
   int64_t all_reduce_overlap_limit = 1;
   int64_t reduce_scatter_overlap_limit = 1;
@@ -239,6 +244,11 @@ class AsyncTracker {
   virtual int64_t GetNumResourcesPerInstruction(
       int64_t resource_type, const HloInstruction& instr) const;
 
+  // Returns a map of number of resources used per resource type by this
+  // instruction.
+  virtual absl::flat_hash_map<int64_t, int64_t> GetNumResourcesPerInstruction(
+      const HloInstruction& instr) const;
+
   // Sets the maximum allowed number of instances for each resource
   virtual void SetConcurrentResourceLimits(
       absl::flat_hash_map<int64_t, int64_t>& max_concurrent_resource) const;
@@ -325,8 +335,14 @@ class AsyncTracker {
 class SchedulerCore {
  public:
   virtual absl::Status InitializeScheduler(const HloModule* module) = 0;
+
+  virtual absl::Status CaptureScheduleProto() = 0;
+
+  virtual absl::StatusOr<ScheduleProto> GetCapturedScheduleProto() = 0;
+
   virtual absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) = 0;
+
   virtual ~SchedulerCore() = default;
   virtual int64_t GetMemoryPeak() = 0;
   virtual void SetMemoryLimit(uint64_t new_limit) = 0;
@@ -342,12 +358,10 @@ class AnnotationTracker {
       absl::flat_hash_set<int64_t> annotations;
       for (const HloInstruction* instr : comp->instructions()) {
         if (auto annotation = GetAnnotation(instr)) {
-          // LegalizeSchedulingAnnotations pass should have made sure that the
-          // same annotation id is not used in multiple computations.
           if (annotations.insert(annotation.value()).second) {
             comp_annotation_map_[comp].push_back(annotation.value());
           }
-          annotations_[annotation.value()].push_back(instr);
+          annotations_[annotation.value()][comp].push_back(instr);
         }
       }
     }
@@ -366,48 +380,24 @@ class AnnotationTracker {
     return std::nullopt;
   }
   std::vector<const HloInstruction*> GetInstructions(
-      const int64_t annotation) const {
-    return annotations_.at(annotation);
-  }
-  int64_t GetNumInstructions(const int64_t annotation) {
-    return annotations_[annotation].size();
-  }
-  void FindAnnotationRoots(const int64_t annotation) {
-    absl::flat_hash_set<const HloInstruction*> seen_instructions(
-        annotations_[annotation].begin(), annotations_[annotation].end());
-    for (const HloInstruction* instr : annotations_.at(annotation)) {
-      bool has_annotated_user = false;
-      for (HloInstruction* user : instr->users()) {
-        if (seen_instructions.contains(user)) {
-          has_annotated_user = true;
-          break;
-        }
-      }
-      if (!has_annotated_user) {
-        VLOG(3) << "Annotation: " << annotation << ", root: " << instr->name();
-        annotation_roots_[annotation].push_back(instr);
-      }
+      const HloComputation* comp, const int64_t annotation) const {
+    if (annotation == kInvalidAnnotation) {
+      return {};
     }
+    return annotations_.at(annotation).at(comp);
   }
-  int64_t GetNumRootInstructions(const int64_t annotation) {
-    if (!annotation_roots_.contains(annotation)) {
-      FindAnnotationRoots(annotation);
-    }
-    return annotation_roots_[annotation].size();
-  }
-  std::vector<const HloInstruction*> GetRootInstructions(
-      const int64_t annotation) {
-    if (!annotation_roots_.contains(annotation)) {
-      FindAnnotationRoots(annotation);
-    }
-    return annotation_roots_[annotation];
+  int64_t GetNumInstructions(const HloComputation* comp,
+                             const int64_t annotation) {
+    return annotations_[annotation][comp].size();
   }
   void PrintAnnotationSets(int64_t level) const {
-    for (const auto& [annotation, instrs] : annotations_) {
-      VLOG(level) << "Annotation " << annotation << " has " << instrs.size()
-                  << " instructions";
-      for (const HloInstruction* instr : instrs) {
-        VLOG(level) << "  " << instr->name();
+    for (const auto& [annotation, comp_instr_vector] : annotations_) {
+      for (const auto& [comp, instrs] : comp_instr_vector) {
+        VLOG(level) << "Annotation " << annotation << " has " << instrs.size()
+                    << " instructions in computation " << comp->name();
+        for (const HloInstruction* instr : instrs) {
+          VLOG(level) << "  " << instr->name();
+        }
       }
     }
   }
@@ -416,9 +406,14 @@ class AnnotationTracker {
   const HloModule* module_;
   absl::flat_hash_map<const HloComputation*, std::vector<int64_t>>
       comp_annotation_map_;
-  absl::flat_hash_map<int64_t, std::vector<const HloInstruction*>> annotations_;
-  absl::flat_hash_map<int64_t, std::vector<const HloInstruction*>>
-      annotation_roots_;
+  absl::flat_hash_map<int64_t,
+                      absl::flat_hash_map<const HloComputation*,
+                                          std::vector<const HloInstruction*>>>
+      annotations_;
+  absl::flat_hash_map<int64_t,
+                      absl::flat_hash_map<const HloComputation*,
+                                          std::vector<const HloInstruction*>>>
+      annotation_successors_;
 };
 
 // Represents an edge between two nodes in the schedule graph.
@@ -437,6 +432,7 @@ class HloEdge {
   }
   const HloGraphNode& Target() const { return *target_; }
   HloGraphNode& Target() { return *target_; }
+  HloGraphNode* TargetPtr() { return target_; }
   std::string ToString() const;
 
  private:
@@ -459,6 +455,49 @@ class HloGraphNode {
   // Nullptr is not a valid value for 'i'.
   explicit HloGraphNode(const HloInstruction* i, int64_t original_position)
       : instr_(i), original_position_(original_position) {}
+
+  static void UpdateOrAddDependency(HloGraphNode* from, HloGraphNode* to,
+                                    LatencyEstimator::TimeCost latency) {
+    auto update_latency_if_edge_exists =
+        [&](absl::Span<HloEdge> edges, HloGraphNode* to,
+            LatencyEstimator::TimeCost latency) {
+          auto it = absl::c_find_if(
+              edges, [&](HloEdge edge) { return &edge.Target() == to; });
+          if (it != edges.end()) {
+            it->SetLatency(latency);
+            return true;
+          }
+          return false;
+        };
+    if (!update_latency_if_edge_exists(from->GetSuccessors(), to, latency)) {
+      from->successors_.push_back(HloEdge(latency, to));
+      from->outdegree_++;
+    }
+    if (!update_latency_if_edge_exists(to->GetPredecessors(), from, latency)) {
+      to->predecessors_.push_back(HloEdge(latency, from));
+      to->indegree_++;
+    }
+  }
+
+  static void UpdateOrAddDependency(HloGraphNode* from, HloGraphNode* to,
+                                    const LatencyEstimator* latency_estimator) {
+    UpdateOrAddDependency(from, to,
+                          latency_estimator->GetLatencyBetween(*from, *to));
+  }
+
+  static void AddDependency(HloGraphNode* from, HloGraphNode* to,
+                            LatencyEstimator::TimeCost latency) {
+    to->predecessors_.push_back(HloEdge(latency, from));
+    to->indegree_++;
+    from->successors_.push_back(HloEdge(latency, to));
+    from->outdegree_++;
+  }
+
+  static void AddDependency(HloGraphNode* from, HloGraphNode* to,
+                            const LatencyEstimator* latency_estimator) {
+    AddDependency(from, to, latency_estimator->GetLatencyBetween(*from, *to));
+  }
+
   const HloInstruction& GetInstr() const { return *instr_; }
   bool IsScheduled() const { return scheduled_; }
   int32_t GetIndegree() const { return indegree_; }
@@ -514,11 +553,43 @@ class HloGraphNode {
   bool DoesOccupyShareableResource(int64_t resource) const {
     return absl::c_linear_search(occupied_shareable_resources_, resource);
   }
-  bool DoesReleaseResource(ResourceType res) const {
+  bool DoesReleaseResource(int64_t res) const {
     return absl::c_any_of(resources_, [res](const ResourcePair& resource) {
       return resource.second == ResourceUsageType::kResourceRelease &&
-             resource.first == ResourceTypeToIndex(res);
+             resource.first == res;
     });
+  }
+  bool DoesReleaseResource(ResourceType res) const {
+    return DoesReleaseResource(ResourceTypeToIndex(res));
+  }
+  bool DoesOccupyResource(int64_t res) const {
+    return absl::c_any_of(resources_, [res](const ResourcePair& resource) {
+      return resource.second == ResourceUsageType::kResourceOccupy &&
+             resource.first == res;
+    });
+  }
+  bool DoesOccupyResource(ResourceType res) const {
+    return DoesOccupyResource(ResourceTypeToIndex(res));
+  }
+  // Returns the net resources used by the node. For a while loop, it computes
+  // the net resources used by the instructions in the while body. Otherwise, it
+  // returns the readily-available resources vector.
+  ResourcesVector GetNetResources() const {
+    if (GetInstr().opcode() != HloOpcode::kWhile) {
+      return resources_;
+    }
+    ResourcesVector result;
+    for (const auto& [resource, usage] : resources_) {
+      if (usage == ResourceUsageType::kResourceOccupy &&
+          !DoesReleaseResource(resource)) {
+        result.push_back(std::make_pair(resource, usage));
+      }
+      if (usage == ResourceUsageType::kResourceRelease &&
+          !DoesOccupyResource(resource)) {
+        result.push_back(std::make_pair(resource, usage));
+      }
+    }
+    return result;
   }
   std::optional<ResourceUsageType> UsesResourceType(ResourceType res) const {
     int64_t res_type = ResourceTypeToIndex(res);
@@ -538,11 +609,12 @@ class HloGraphNode {
     return std::nullopt;
   }
   std::vector<int64_t> GetShareableResourcesOnEdge(const HloEdge& edge) const {
-    HloGraphNode node = edge.Target();
+    HloGraphNode to = edge.Target();
     std::vector<int64_t> resources;
     absl::c_for_each(released_shareable_resources_,
-                     [&node, &resources](const int64_t resource) {
-                       if (node.DoesOccupyShareableResource(resource)) {
+                     [this, &to, &resources](const int64_t resource) {
+                       if (to.DoesOccupyShareableResource(resource) &&
+                           this->DoesReleaseResource(resource)) {
                          resources.push_back(resource);
                        }
                      });
@@ -563,7 +635,7 @@ class HloGraphNode {
   int64_t GetOriginalPosition() const { return original_position_; }
   int64_t GetAnnotation() const { return annotation_; }
   absl::Status SetAnnotation(int64_t annotation) {
-    TF_RET_CHECK(annotation_ == -1)
+    TF_RET_CHECK(annotation_ == kInvalidAnnotation)
         << "Instruction " << instr_->name()
         << " has an existing annotation: " << annotation_;
     annotation_ = annotation;
@@ -651,7 +723,7 @@ class HloGraphNode {
   // Nums hops to closest selective resource occupier.
   int64_t num_hops_to_closest_selective_resource_occupier_ =
       std::numeric_limits<int64_t>::max();
-  int64_t annotation_ = -1;
+  int64_t annotation_ = kInvalidAnnotation;
 };
 
 // Schedule graph that can be used to drive scheduling
@@ -989,14 +1061,20 @@ class DefaultSchedulerCore : public SchedulerCore {
     std::vector<HloGraphNode*> selective_resource_releasers;
     // Similar to ready set, but only contains the no-op instructions.
     ReadyQueueSet nop_set;
-    // Number of nodes that are ready to be scheduled with the given annotation.
-    absl::flat_hash_map<int64_t, int64_t> ready_num_nodes_with_annotation;
+    // Number of {scheduled, all} nodes that are a successor for the given
+    // annotation.
+    struct NumSuccessorsForAnnotation {
+      int64_t scheduled = 0;
+      int64_t all = 0;
+    };
+    absl::flat_hash_map<int64_t, NumSuccessorsForAnnotation>
+        num_successors_for_annotation;
     // List of annotations that are ready to be scheduled.
     absl::InlinedVector<int64_t, 2> ready_annotations;
     // List of annotated nodes that are ready to be scheduled.
     ReadyQueueSet annotation_ready;
     // Annotation that is currently being scheduled.
-    int64_t ongoing_annotation = -1;
+    int64_t ongoing_annotation = kInvalidAnnotation;
     // Reference to this scheduler run configuration.
     const SchedulerConfig& config;
     SchedulingState(const HloInstructionSequence* instr_sequence,
@@ -1034,7 +1112,23 @@ class DefaultSchedulerCore : public SchedulerCore {
         post_processing_fn_(post_processing_fn),
         scheduling_instruction_crosses_overlap_limit_(
             scheduling_instruction_crosses_overlap_limit) {}
+
   absl::Status InitializeScheduler(const HloModule* module) override;
+
+  absl::Status CaptureScheduleProto() override {
+    schedule_proto_ = ScheduleProto();
+    *schedule_proto_->mutable_hlo_module() = module_->ToProto();
+
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<ScheduleProto> GetCapturedScheduleProto() override {
+    if (!schedule_proto_.has_value()) {
+      return absl::FailedPreconditionError("Schedule proto not captured.");
+    }
+    return schedule_proto_.value();
+  }
+
   absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) override;
   static bool AddOccupierToResource(
@@ -1053,6 +1147,15 @@ class DefaultSchedulerCore : public SchedulerCore {
   int64_t GetRerunTimes() override { return config_.rerun; }
   bool SchedulingAnnotationCrossesOverlapLimit(
       const SchedulingState& sched_state, int64_t annotation);
+  absl::flat_hash_map<int64_t, int64_t> GetNumResourcesNeededForAnnotation(
+      const SchedulingState& sched_state, int64_t annotation);
+  int64_t GetNumSuccessorsForAnnotation(const SchedulingState& sched_state,
+                                        int64_t annotation) const;
+
+  ScheduleProto::ComputationScheduleProto ComputationScheduleToProto(
+      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+      const LatencyEstimator& estimator,
+      const std::vector<HloInstruction*>& instructions);
 
  protected:
   virtual void LogInstruction(const HloInstruction* instr) const;
@@ -1060,9 +1163,9 @@ class DefaultSchedulerCore : public SchedulerCore {
   absl::Status AnnotatedSchedulingStep(
       HloGraphNode* node,
       DefaultSchedulerCore::SchedulingState* sched_state) const;
-  // Schedules all of the nodes in the given annotation.
+  // Schedules all of the nodes with the given annotation in computation.
   absl::Status ScheduleAnnotation(
-      int64_t annotation,
+      const HloComputation* computation, int64_t annotation,
       DefaultSchedulerCore::SchedulingState* sched_state) const;
   // Update node that has been scheduled.
   virtual absl::StatusOr<HloGraphNode::TimeCost> ScheduleNode(
@@ -1074,10 +1177,6 @@ class DefaultSchedulerCore : public SchedulerCore {
   virtual absl::StatusOr<HloGraphNode*> FindAndExtractBestNodeAvailable(
       SchedulingState& sched_state,
       DefaultSchedulerCore::ShouldSkipNodeFunction should_skip_node);
-  void DumpLatencyHidingSchedule(
-      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
-      const std::vector<HloInstruction*>& instructions,
-      int cycles_per_microsecond, const DebugOptions& debug_options);
 
   HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   std::unique_ptr<ModulePressureState> module_pressure_state_;
@@ -1090,6 +1189,8 @@ class DefaultSchedulerCore : public SchedulerCore {
   PostProcessingFn post_processing_fn_ = nullptr;
   OverlapLimitRule scheduling_instruction_crosses_overlap_limit_ = nullptr;
   std::unique_ptr<AnnotationTracker> annotation_tracker_;
+  std::optional<ScheduleProto> schedule_proto_;
+  const HloModule* module_ = nullptr;
 };
 
 // A scheduler oriented to hiding latencies of operations that can run in
@@ -1103,11 +1204,23 @@ class LatencyHidingScheduler : public HloModulePass {
     double collective_broadcast_wasted_cycles = 0;
     double collective_permute_wasted_cycles = 0;
     double all_to_all_wasted_cycles = 0;
+    double ragged_all_to_all_wasted_cycles = 0;
     double reduce_scatter_wasted_cycles = 0;
     double send_wasted_cycles = 0;
     double recv_wasted_cycles = 0;
     double total_cycles = 0;
     int64_t memory_pressure_peak = 0;
+
+    double GetTotalWastedCycles() const {
+      return all_gather_wasted_cycles + all_reduce_wasted_cycles +
+             collective_broadcast_wasted_cycles +
+             collective_permute_wasted_cycles + all_to_all_wasted_cycles +
+             ragged_all_to_all_wasted_cycles + reduce_scatter_wasted_cycles +
+             send_wasted_cycles + recv_wasted_cycles;
+    }
+
+    ScheduleProto::SchedulerStatisticsProto ToProto() const;
+    std::string ToString() const;
   };
 
   LatencyHidingScheduler(
@@ -1130,9 +1243,7 @@ class LatencyHidingScheduler : public HloModulePass {
       const LatencyEstimator* latency_estimator,
       const AsyncTracker* async_tracker,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes);
-  // Returns a string representation of the scheduler statistics object.
-  static std::string SchedulerStatisticsString(
-      const SchedulerStatistics& sched_stats);
+
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(
       HloModule* module,

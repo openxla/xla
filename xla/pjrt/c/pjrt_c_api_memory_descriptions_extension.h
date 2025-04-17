@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_MEMORY_DESCRIPTIONS_EXTENSION_H_
 #define XLA_PJRT_C_PJRT_C_API_MEMORY_DESCRIPTIONS_EXTENSION_H_
 
+#include <stddef.h>
+
 #include "xla/pjrt/c/pjrt_c_api.h"
 
 #ifdef __cplusplus
@@ -28,7 +30,7 @@ extern "C" {
 // non-default memories in AOT computations (as opposed to the
 // physically-present memories associated with a PJRT_Client).
 
-#define PJRT_API_MEMORY_DESCRIPTIONS_EXTENSION_VERSION 0
+#define PJRT_API_MEMORY_DESCRIPTIONS_EXTENSION_VERSION 1
 
 typedef struct PJRT_MemoryDescription PJRT_MemoryDescription;
 
@@ -38,9 +40,11 @@ struct PJRT_DeviceDescription_MemoryDescriptions_Args {
   PJRT_DeviceDescription* device_description;
   const PJRT_MemoryDescription* const* memory_descriptions;  // out
   size_t num_memory_descriptions;                            // out
+  // Index into memory_descriptions. -1 if there's no default:
+  size_t default_memory_index;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceDescription_MemoryDescriptions_Args,
-                          num_memory_descriptions);
+                          default_memory_index);
 
 // Returns all memory descriptions attached to this device.
 // The memories are in no particular order.
@@ -65,9 +69,7 @@ typedef PJRT_Error* PJRT_MemoryDescription_Kind(
     PJRT_MemoryDescription_Kind_Args* args);
 
 typedef struct PJRT_MemoryDescriptions_Extension {
-  size_t struct_size;
-  PJRT_Extension_Type type;
-  PJRT_Extension_Base* next;
+  PJRT_Extension_Base base;
   PJRT_DeviceDescription_MemoryDescriptions*
       PJRT_DeviceDescription_MemoryDescriptions;
   PJRT_MemoryDescription_Kind* PJRT_MemoryDescription_Kind;

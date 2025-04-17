@@ -18,40 +18,84 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "mhlo/transforms/passes.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Types.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/dialect/Register.h"
+#include "stablehlo/transforms/Passes.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_module_importer.h"
 #include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/hlo/translate/mhlo_to_hlo/module_attributes_exporter.h"
 #include "xla/mlir/utils/error_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/errors.h"
+
+#define DEBUG_TYPE "xla-translate"
 
 namespace xla {
 
 namespace {
+
+bool isBoundedDynamic(mlir::Type type) {
+  LLVM_DEBUG(llvm::dbgs() << "isBoundedDynamic: " << type << "\n");
+  if (!llvm::isa<mlir::RankedTensorType>(type)) {
+    return false;
+  }
+  auto encoding = llvm::cast<mlir::RankedTensorType>(type).getEncoding();
+  return encoding && llvm::isa<mlir::mhlo::TypeExtensionsAttr>(encoding);
+}
+
+bool hasBoundedDynamism(mlir::ModuleOp module) {
+  bool has_bounded_dynamism = false;
+  module->walk([&](mlir::Operation* op) {
+    auto results = op->getResultTypes();
+    has_bounded_dynamism |= llvm::any_of(results, isBoundedDynamic);
+    if (has_bounded_dynamism) {
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+  return has_bounded_dynamism;
+}
+
 absl::Status MhloToStablehlo(mlir::ModuleOp module) {
+  LLVM_DEBUG(llvm::dbgs() << "MHLO to StableHLO\n");
   auto context = module.getContext();
   mlir::PassManager pm(context);
   mlir::BaseScopedDiagnosticHandler diag_handler(context);
-  pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
+  mlir::mhlo::HloLegalizeToStablehloPassOptions options;
+  options.allow_xla_features_ = true;
+  bool has_bounded_dynamism = hasBoundedDynamism(module);
+  if (has_bounded_dynamism) {
+    // Need to converge program to MHLO before StableHLO in the presence of
+    // bounded dynamism.
+    pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
+  }
+  pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass(options));
   if (failed(pm.run(module))) {
     return diag_handler.ConsumeStatus();
   }
@@ -63,16 +107,24 @@ absl::Status MhloToStablehlo(mlir::ModuleOp module) {
 absl::Status StablehloToMhlo(mlir::ModuleOp module, bool run_canonicalizer) {
   mlir::MLIRContext* context = module->getContext();
   mlir::PassManager pm(context);
-  pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
+  // CHLO -> MHLO for high level ops (TopK, Erf, RaggedDot, etc.)
+  // CHLO -> StableHLO otherwise
   pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::mhlo::createChloLegalizeToHloPass());
+      mlir::stablehlo_ext::createChloRecomposeOpsPass());
+  pm.addPass(mlir::createSymbolDCEPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::mhlo::createChloLegalizeToHighLevelMhloPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::stablehlo::createChloLegalizeToStablehloPass());
+  pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
   if (run_canonicalizer) {
     pm.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
   }
   // In order to export to XLA, we must sink constants to control flow
   // regions, since XLA uses functional control flow.
   pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::mhlo::createSinkConstantsToControlFlowPass());
+      mlir::stablehlo_ext::createSinkConstantsToControlFlowPass());
+
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(context);
   if (failed(pm.run(module))) {
     VLOG(1) << "MHLO->HLO lowering passes failed. Module:\n" << module;
@@ -85,44 +137,28 @@ absl::Status StablehloToMhlo(mlir::ModuleOp module, bool run_canonicalizer) {
   return absl::OkStatus();
 }
 
-}  // namespace
+absl::Status ConvertStablehloToHloProtoInternal(mlir::ModuleOp module,
+                                                xla::HloProto* hlo_proto,
+                                                bool use_tuple_args,
+                                                bool return_tuple,
+                                                bool run_canonicalizer) {
+  if (!module) return absl::InvalidArgumentError("Module is null");
 
-void RegisterMlirToHloDependentDialects(mlir::DialectRegistry& registry) {
-  mlir::stablehlo::registerAllDialects(registry);
-  mlir::func::registerAllExtensions(registry);
-  mlir::mhlo::registerAllMhloDialects(registry);
-  registry.insert<mlir::tensor::TensorDialect, mlir::arith::ArithDialect,
-                  mlir::shape::ShapeDialect>();
+  TF_RETURN_IF_ERROR(StablehloToMhlo(module, run_canonicalizer));
+
+  mlir::MlirToHloConversionOptions options;
+  options.return_tuple = return_tuple;
+  options.use_tuple_args = use_tuple_args;
+  TF_RETURN_IF_ERROR(mlir::ConvertMlirHloToHlo(module, hlo_proto, options));
+  return absl::OkStatus();
 }
 
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
-    mlir::MLIRContext& ctx, const xla::HloModule* hlo_module) {
-  mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
-      llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  TF_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
-                                       /*import_all_computation=*/true,
-                                       /*flatten_computation_args_result=*/true)
-                         .Import(*hlo_module));
-  TF_RETURN_IF_ERROR(MhloToStablehlo(mlir_module.get()));
-  return std::move(mlir_module);
-}
-
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
-    mlir::MLIRContext& ctx, const xla::HloModuleProto* hlo_module_proto) {
-  mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
-      llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  TF_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
-                                       /*import_all_computation=*/true,
-                                       /*flatten_computation_args_result=*/true)
-                         .Import(*hlo_module_proto));
-  TF_RETURN_IF_ERROR(MhloToStablehlo(mlir_module.get()));
-  return std::move(mlir_module);
-}
-
-absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertStablehloToHlo(
-    mlir::ModuleOp module) {
+absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertStablehloToHloInternal(
+    mlir::ModuleOp module, bool use_tuple_args, bool return_tuple) {
   xla::HloProto hlo_proto;
-  TF_RETURN_IF_ERROR(ConvertStablehloToHloProto(module, &hlo_proto));
+  TF_RETURN_IF_ERROR(ConvertStablehloToHloProtoInternal(
+      module, &hlo_proto, use_tuple_args, return_tuple,
+      /*run_canonicalizer=*/true));
 
   // Create default config and modify config with values stored
   // in MLIR module attributes
@@ -137,17 +173,63 @@ absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertStablehloToHlo(
   return xla::HloModule::CreateFromProto(module_proto, config.value());
 }
 
+}  // namespace
+
+void RegisterMlirToHloDependentDialects(mlir::DialectRegistry& registry) {
+  mlir::stablehlo::registerAllDialects(registry);
+  mlir::func::registerAllExtensions(registry);
+  mlir::mhlo::registerAllMhloDialects(registry);
+  registry.insert<mlir::tensor::TensorDialect, mlir::arith::ArithDialect,
+                  mlir::shape::ShapeDialect, mlir::ub::UBDialect>();
+}
+
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
+    mlir::MLIRContext& ctx, const xla::HloModule* hlo_module) {
+  mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
+      llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
+  TF_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
+                                       /*import_all_computation=*/true,
+                                       /*flatten_computation_args_result=*/true,
+                                       /*emit_stablehlo=*/false)
+                         .Import(*hlo_module));
+  TF_RETURN_IF_ERROR(MhloToStablehlo(mlir_module.get()));
+  return mlir_module;
+}
+
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
+    mlir::MLIRContext& ctx, const xla::HloModuleProto* hlo_module_proto) {
+  mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
+      llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
+  TF_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
+                                       /*import_all_computation=*/true,
+                                       /*flatten_computation_args_result=*/true,
+                                       /*emit_stablehlo=*/false)
+                         .Import(*hlo_module_proto));
+  TF_RETURN_IF_ERROR(MhloToStablehlo(mlir_module.get()));
+  return mlir_module;
+}
+
+absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertStablehloToHlo(
+    mlir::ModuleOp module) {
+  return ConvertStablehloToHloInternal(module,
+                                       /*use_tuple_args=*/false,
+                                       /*return_tuple=*/false);
+}
+
+absl::StatusOr<std::unique_ptr<xla::HloModule>>
+ConvertStablehloToHloWithOptions(mlir::ModuleOp module, bool use_tuple_args,
+                                 bool return_tuple) {
+  return ConvertStablehloToHloInternal(module, use_tuple_args, return_tuple);
+}
+
 absl::Status ConvertStablehloToHloProto(mlir::ModuleOp module,
                                         xla::HloProto* hlo_proto) {
   if (!module) return absl::InvalidArgumentError("Module is null");
 
-  TF_RETURN_IF_ERROR(StablehloToMhlo(module, /*run_canonicalizer=*/true));
-
-  mlir::MlirToHloConversionOptions options;
-  options.return_tuple = false;
-  options.use_tuple_args = false;
-  TF_RETURN_IF_ERROR(mlir::ConvertMlirHloToHlo(module, hlo_proto, options));
-  return absl::OkStatus();
+  return ConvertStablehloToHloProtoInternal(module, hlo_proto,
+                                            /*use_tuple_args=*/false,
+                                            /*return_tuple=*/false,
+                                            /*run_canonicalizer=*/true);
 }
 
 absl::Status ConvertStablehloWithManyArgsToHloProto(mlir::ModuleOp module,
@@ -155,17 +237,12 @@ absl::Status ConvertStablehloWithManyArgsToHloProto(mlir::ModuleOp module,
                                                     bool use_tuple_args) {
   if (!module) return absl::InvalidArgumentError("Module is null");
 
-  TF_RETURN_IF_ERROR(StablehloToMhlo(module, /*run_canonicalizer=*/false));
-
-  mlir::MlirToHloConversionOptions options;
-  options.return_tuple = false;
-  options.use_tuple_args = use_tuple_args;
-  // Remove attributes introduced by `import_all_computation=true` at
-  // ConvertHloToStablehlo.
+  // TODO: Why are we removing attributes.
   module->removeAttr("mhlo.xla_entry_computation_parameter_layouts");
   module->removeAttr("mhlo.xla_entry_computation_parameter_tiles");
-  TF_RETURN_IF_ERROR(mlir::ConvertMlirHloToHlo(module, hlo_proto, options));
-  return absl::OkStatus();
+  return ConvertStablehloToHloProtoInternal(module, hlo_proto, use_tuple_args,
+                                            /*return_tuple=*/false,
+                                            /*run_canonicalizer=*/false);
 }
 
 }  // namespace xla

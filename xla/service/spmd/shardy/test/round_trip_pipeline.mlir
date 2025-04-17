@@ -41,7 +41,7 @@ func.func @main(
 // -----
 
 // Test that a sharding on the result of a function is kept around. Due to how
-// MHLO->HLO conversion works discarding any frontend attributes on the function
+// StableHLO->HLO conversion works discarding any frontend attributes on the function
 // results, we copy the sharding to a temporary custom call before discarding it
 // after the round-trip.
 
@@ -86,7 +86,7 @@ func.func @main(
 // -----
 
 // Test that a result sharding whose value is the function argument. Due to how
-// MHLO->HLO conversion works discarding any frontend attributes on the function
+// StableHLO->HLO conversion works discarding any frontend attributes on the function
 // results, we copy the sharding to a temporary custom call before discarding it
 // after the round-trip.
 
@@ -226,6 +226,15 @@ func.func @main(%arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
   // CHECK: sdy.sharding_group %arg0 group_id=13 : tensor<8x16xf32>
   sdy.sharding_group %arg0 group_id=13 : tensor<8x16xf32>
   return %arg0 : tensor<8x16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func @main
+func.func @main(%arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  // CHECK: sdy.propagation_barrier %arg0 allowed_direction=BACKWARD : tensor<8x16xf32>
+  %r = sdy.propagation_barrier %arg0 allowed_direction=BACKWARD : tensor<8x16xf32>
+  return %r : tensor<8x16xf32>
 }
 
 // -----

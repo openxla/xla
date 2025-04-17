@@ -65,7 +65,7 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
   TF_RET_CHECK(shape.has_layout());
 
   std::vector<int64_t> minor_to_major;
-  for (size_t i = 0; i < shape.rank();) {
+  for (size_t i = 0; i < shape.dimensions().size();) {
     // The GeMM output always has its layout set such that the batch, row, and
     // col dim groups are each laid out physically sequentially. GeMM operands
     // must, therefore, be laid out similarly.
@@ -112,7 +112,7 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
 
 // Returns the matrix layout for a logical shape (batch, rows, columns).
 /*static*/ absl::StatusOr<MatrixLayout> MatrixLayout::For(const Shape& shape) {
-  TF_RET_CHECK(shape.rank() == 3);
+  TF_RET_CHECK(shape.dimensions().size() == 3);
   TF_RET_CHECK(shape.has_layout());
 
   int64_t batch_size = shape.dimensions(0);
@@ -130,6 +130,13 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
     case 012:  // (B,R,C) (major-to-minor)
       break;
     case 021:  // (B,C,R)
+      if (num_cols == 1) {
+        // If rhs operand has no non-contracting dims, guarantee bias vector
+        // length will still match matrix D rows with HIPBLASLT_EPILOGUE_BIAS
+        // epilogue
+        // (https://rocm.docs.amd.com/projects/hipBLASLt/en/latest/datatypes.html).
+        break;
+      }
       order = Order::kColumnMajor;
       leading_dim_stride = num_rows;
       break;
@@ -168,10 +175,10 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
     size_t rhs_num_batch_dims, size_t rhs_num_col_dims) {
   size_t num_batch_dims = std::max(lhs_num_batch_dims, rhs_num_batch_dims);
 
-  TF_RET_CHECK(shape.rank() ==
+  TF_RET_CHECK(shape.dimensions().size() ==
                num_batch_dims + lhs_num_row_dims + rhs_num_col_dims);
 
-  std::vector<int64_t> dims(shape.rank());
+  std::vector<int64_t> dims(shape.dimensions().size());
   absl::c_iota(dims, 0);
 
   auto batch_dims = absl::Span<const int64_t>(dims).first(num_batch_dims);
@@ -293,10 +300,10 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
   int64_t num_batch_dims =
       std::max(lhs_batch_dims.size(), rhs_batch_dims.size());
 
-  TF_RET_CHECK(output_shape.rank() ==
+  TF_RET_CHECK(output_shape.dimensions().size() ==
                num_batch_dims + lhs_row_dims.size() + rhs_col_dims.size());
 
-  std::vector<int64_t> output_dims(output_shape.rank());
+  std::vector<int64_t> output_dims(output_shape.dimensions().size());
   absl::c_iota(output_dims, 0);
 
   auto output_batch_dims =

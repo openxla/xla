@@ -32,20 +32,24 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/service/lockable.h"
-#include "tsl/platform/logging.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace xla::gpu {
 
 GpuClique::GpuClique(
-    GpuCliqueKey key, std::optional<CliqueId> id,
-    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators)
-    : Clique(std::move(communicators)), key_(key), id_(id) {}
+    GpuCliqueKey key, std::optional<CliqueIds> ids,
+    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
+    bool peer_access_enabled)
+    : Clique(std::move(communicators)),
+      key_(key),
+      ids_(ids),
+      peer_access_enabled_(peer_access_enabled) {}
 
 std::string GpuClique::DebugString() const {
-  std::string out =
-      absl::StrFormat("key: %s; fingerprint(id): %d; size: %d; communicators: ",
-                      key_.ToString(), id_.has_value() ? id_->fingerprint() : 0,
-                      num_communicators());
+  std::string out = absl::StrFormat(
+      "key: %s; fingerprint(id): %d; size: %d; communicators: ",
+      key_.ToString(), ids_.has_value() ? ids_->fingerprint() : 0,
+      num_communicators());
   int32_t cnt = 0;
   ForEachComm([&](RankId rank, Communicator* comm) {
     if (cnt++) absl::StrAppend(&out, ", ");
@@ -70,9 +74,11 @@ std::string GpuClique::LockableName::ToString(const GpuClique& clique) {
 }
 
 LockableGpuClique::LockableGpuClique(
-    GpuCliqueKey clique_key, std::optional<CliqueId> clique_id,
-    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators)
-    : Lockable(std::move(clique_key), clique_id, std::move(communicators)) {}
+    GpuCliqueKey clique_key, std::optional<CliqueIds> clique_ids,
+    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
+    bool peer_access_enabled)
+    : Lockable(std::move(clique_key), clique_ids, std::move(communicators),
+               peer_access_enabled) {}
 
 absl::Status LockableGpuClique::HealthCheck() const {
   return value().HealthCheck();

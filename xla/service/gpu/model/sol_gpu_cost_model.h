@@ -24,16 +24,21 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-inline constexpr absl::string_view kSplitMaskWorldLevel = "0x0";
 
+// Speed-of-Light (SoL) analytical cost model for NCCL collectives.
 class SolGPUCostModel {
-  // Speed-of-Light (SoL) analytical cost model for NCCL collectives.
  public:
+  static constexpr absl::string_view kSplitMaskWorldLevel = "0x0";
+
+  static constexpr absl::string_view kSplitMaskNonRailAligned = "0x7";
+
   // Tunable system configuration, see
   // xla_gpu_analytical_latency_estimator_options
   struct Config {
     absl::Duration nccl_op_launch_time;
-    double nic_speed_gbps;  // it's GBytes/s, not Gbit/s (ex: 40Gb/s = 5GB/s)
+    // it's GBytes/s, not Gbit/s (ex: 40Gb/s = 5GB/s)
+    // GBytes per second = 10^9 bytes per second
+    double nic_speed_gbps;
     absl::Duration chunk_prep_time;
     absl::Duration rtt;
     int64_t gpus_per_node;

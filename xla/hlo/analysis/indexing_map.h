@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
@@ -290,6 +291,9 @@ class IndexingMap {
   const std::vector<Variable>& GetDimVars() const { return dim_vars_; }
   int64_t GetDimVarsCount() const { return dim_vars_.size(); }
 
+  // Rename a dimension variable. Index must valid.
+  void RenameDimVar(int64_t id, absl::string_view new_name);
+
   // Getters for range vars.
   const Variable& GetRangeVar(int64_t id) const { return range_vars_[id]; }
   const std::vector<Variable>& GetRangeVars() const { return range_vars_; }
@@ -481,6 +485,12 @@ std::vector<IndexingMap::Variable> DimVarsFromGPUGrid(
 
 std::vector<IndexingMap::Variable> RangeVarsFromTensorSizes(
     absl::Span<const int64_t> tensor_sizes);
+
+// Creates a new indexing map that is the same as `map` but with the range
+// variables at `range_var_indices` converted to the new dimensions variables at
+// and added to the end of dimension variables list.
+IndexingMap ConvertRangeVariablesToDimensions(
+    const IndexingMap& map, llvm::ArrayRef<int64_t> range_var_indices);
 
 }  // namespace xla
 

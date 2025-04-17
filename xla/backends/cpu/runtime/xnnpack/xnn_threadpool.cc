@@ -19,11 +19,12 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 
 #include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "pthreadpool.h"
-#include "xla/backends/cpu/runtime/xnnpack/parallel_loop_runner.h"
+#include "xla/backends/cpu/runtime/parallel_loop_runner.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -40,7 +41,7 @@ limitations under the License.
 //
 // At link time `pthreadpool` symbols resolved to our own implementation. This
 // is a temporary hack around the fact that it's impossible to customize
-// `pthreadpool` implementation at run time. The downsize is that it's
+// `pthreadpool` implementation at run time. The downside is that it's
 // impossible to have two `pthreadpool` implementations linked into the same
 // binary.
 //
@@ -153,7 +154,7 @@ static void DestroyCustomPthreadpool(pthreadpool_t threadpool) {  // NOLINT
 
 static size_t GetThreadsCount(pthreadpool_t threadpool) {  // NOLINT
   if (ABSL_PREDICT_FALSE(threadpool == nullptr)) {
-    return 0;
+    return 1;
   }
 
   return Cast(threadpool)->runner()->num_threads();
@@ -172,7 +173,7 @@ static void Parallelize1D(  // NOLINT
   ParallelLoopRunner::Task1D task = [function, context](size_t offset) {
     (*function)(context, offset);
   };
-  Cast(threadpool)->runner()->Parallelize(range, task);
+  Cast(threadpool)->runner()->Parallelize(range, std::move(task));
 }
 
 static void Parallelize1DTile1D(  // NOLINT
@@ -189,7 +190,22 @@ static void Parallelize1DTile1D(  // NOLINT
                                                               size_t extent) {
     (*function)(context, offset, extent);
   };
-  Cast(threadpool)->runner()->Parallelize(range, tile, task);
+  Cast(threadpool)->runner()->Parallelize(range, tile, std::move(task));
+}
+
+static void Parallelize1DTile1DDynamic(  // NOLINT
+    pthreadpool_t threadpool, pthreadpool_task_1d_tile_1d_dynamic_t function,
+    void* context, size_t range, size_t tile, uint32_t flags) {
+  if (ABSL_PREDICT_FALSE(threadpool == nullptr)) {
+    function(context, 0, range);
+    return;
+  }
+
+  ParallelLoopRunner::Task1DTile1DDynamic task =
+      [function, context](size_t offset, size_t count) {
+        (*function)(context, offset, count);
+      };
+  Cast(threadpool)->runner()->ParallelizeDynamic(range, tile, std::move(task));
 }
 
 static void Parallelize2DTile1D(pthreadpool_t threadpool,  // NOLINT
@@ -209,7 +225,29 @@ static void Parallelize2DTile1D(pthreadpool_t threadpool,  // NOLINT
       [function, context](size_t offset_i, size_t offset_j, size_t extent_j) {
         (*function)(context, offset_i, offset_j, extent_j);
       };
-  Cast(threadpool)->runner()->Parallelize(range_i, range_j, tile_j, task);
+  Cast(threadpool)
+      ->runner()
+      ->Parallelize(range_i, range_j, tile_j, std::move(task));
+}
+
+static void Parallelize2DTile1DDynamic(  // NOLINT
+    pthreadpool_t threadpool, pthreadpool_task_2d_tile_1d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t tile_j,
+    uint32_t flags) {
+  if (ABSL_PREDICT_FALSE(threadpool == nullptr)) {
+    for (size_t i = 0; i < range_i; i++) {
+      function(context, i, 0, range_j);
+    }
+    return;
+  }
+
+  ParallelLoopRunner::Task2DTile1DDynamic task =
+      [function, context](size_t offset_i, size_t offset_j, size_t extent_j) {
+        (*function)(context, offset_i, offset_j, extent_j);
+      };
+  Cast(threadpool)
+      ->runner()
+      ->ParallelizeDynamic(range_i, range_j, tile_j, std::move(task));
 }
 
 static void Parallelize3DTile2D(pthreadpool_t threadpool,  // NOLINT
@@ -236,7 +274,29 @@ static void Parallelize3DTile2D(pthreadpool_t threadpool,  // NOLINT
       };
   Cast(threadpool)
       ->runner()
-      ->Parallelize(range_i, range_j, range_k, tile_j, tile_k, task);
+      ->Parallelize(range_i, range_j, range_k, tile_j, tile_k, std::move(task));
+}
+
+static void Parallelize3DTile2DDynamic(  // NOLINT
+    pthreadpool_t threadpool, pthreadpool_task_3d_tile_2d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t range_k,
+    size_t tile_j, size_t tile_k, uint32_t flags) {
+  if (ABSL_PREDICT_FALSE(threadpool == nullptr)) {
+    for (size_t i = 0; i < range_i; i++) {
+      function(context, i, 0, 0, range_j, range_k);
+    }
+    return;
+  }
+
+  ParallelLoopRunner::Task3DTile2DDynamic task =
+      [function, context](size_t offset_i, size_t offset_j, size_t offset_k,
+                          size_t count_j, size_t count_k) {
+        (*function)(context, offset_i, offset_j, offset_k, count_j, count_k);
+      };
+  Cast(threadpool)
+      ->runner()
+      ->ParallelizeDynamic(range_i, range_j, range_k, tile_j, tile_k,
+                           std::move(task));
 }
 
 }  // namespace xla::cpu
@@ -282,6 +342,13 @@ extern "C" void pthreadpool_parallelize_1d_tile_1d(
                                 flags);
 }
 
+extern "C" void pthreadpool_parallelize_1d_tile_1d_dynamic(
+    pthreadpool_t threadpool, pthreadpool_task_1d_tile_1d_dynamic_t function,
+    void* context, size_t range, size_t tile, uint32_t flags) {
+  xla::cpu::Parallelize1DTile1DDynamic(threadpool, function, context, range,
+                                       tile, flags);
+}
+
 extern "C" void pthreadpool_parallelize_2d(pthreadpool_t threadpool,
                                            pthreadpool_task_2d_t function,
                                            void* context, size_t range_i,
@@ -301,6 +368,14 @@ extern "C" void pthreadpool_parallelize_2d_tile_1d(
     uint32_t flags) {
   xla::cpu::Parallelize2DTile1D(threadpool, function, context, range_i, range_j,
                                 tile_j, flags);
+}
+
+extern "C" void pthreadpool_parallelize_2d_tile_1d_dynamic(
+    pthreadpool_t threadpool, pthreadpool_task_2d_tile_1d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t tile_j,
+    uint32_t flags) {
+  xla::cpu::Parallelize2DTile1DDynamic(threadpool, function, context, range_i,
+                                       range_j, tile_j, flags);
 }
 
 extern "C" void pthreadpool_parallelize_2d_tile_1d_with_uarch(
@@ -325,11 +400,26 @@ extern "C" void pthreadpool_parallelize_2d_tile_2d(
   LOG(FATAL) << "Not implemented";
 }
 
+extern "C" void pthreadpool_parallelize_2d_tile_2d_dynamic(
+    pthreadpool_t threadpool, pthreadpool_task_2d_tile_2d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t tile_i, size_t tile_j,
+    uint32_t flags) {
+  LOG(FATAL) << "Not implemented";
+}
+
 extern "C" void pthreadpool_parallelize_2d_tile_2d_with_uarch(
     pthreadpool_t threadpool, pthreadpool_task_2d_tile_2d_with_id_t function,
     void* context, uint32_t default_uarch_index, uint32_t max_uarch_index,
     size_t range_i, size_t range_j, size_t tile_i, size_t tile_j,
     uint32_t flags) {
+  LOG(FATAL) << "Not implemented";
+}
+
+extern "C" void pthreadpool_parallelize_2d_tile_2d_dynamic_with_uarch(
+    pthreadpool_t threadpool,
+    pthreadpool_task_2d_tile_2d_dynamic_with_id_t function, void* context,
+    uint32_t default_uarch_index, uint32_t max_uarch_index, size_t range_i,
+    size_t range_j, size_t tile_i, size_t tile_j, uint32_t flags) {
   LOG(FATAL) << "Not implemented";
 }
 
@@ -380,11 +470,28 @@ extern "C" void pthreadpool_parallelize_3d_tile_2d(
                                 range_k, tile_j, tile_k, flags);
 }
 
+extern "C" void pthreadpool_parallelize_3d_tile_2d_dynamic(
+    pthreadpool_t threadpool, pthreadpool_task_3d_tile_2d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t range_k,
+    size_t tile_j, size_t tile_k, uint32_t flags) {
+  xla::cpu::Parallelize3DTile2DDynamic(threadpool, function, context, range_i,
+                                       range_j, range_k, tile_j, tile_k, flags);
+}
+
 extern "C" void pthreadpool_parallelize_3d_tile_2d_with_uarch(
     pthreadpool_t threadpool, pthreadpool_task_3d_tile_2d_with_id_t function,
     void* context, uint32_t default_uarch_index, uint32_t max_uarch_index,
     size_t range_i, size_t range_j, size_t range_k, size_t tile_j,
     size_t tile_k, uint32_t flags) {
+  LOG(FATAL) << "Not implemented";
+}
+
+extern "C" void pthreadpool_parallelize_3d_tile_2d_dynamic_with_uarch(
+    pthreadpool_t threadpool,
+    pthreadpool_task_3d_tile_2d_dynamic_with_id_t function, void* context,
+    uint32_t default_uarch_index, uint32_t max_uarch_index, size_t range_i,
+    size_t range_j, size_t range_k, size_t tile_j, size_t tile_k,
+    uint32_t flags) {
   LOG(FATAL) << "Not implemented";
 }
 
@@ -415,6 +522,13 @@ extern "C" void pthreadpool_parallelize_4d_tile_2d_with_uarch(
     void* context, uint32_t default_uarch_index, uint32_t max_uarch_index,
     size_t range_i, size_t range_j, size_t range_k, size_t range_l,
     size_t tile_k, size_t tile_l, uint32_t flags) {
+  LOG(FATAL) << "Not implemented";
+}
+
+extern "C" void pthreadpool_parallelize_4d_tile_2d_dynamic(
+    pthreadpool_t threadpool, pthreadpool_task_4d_tile_2d_dynamic_t function,
+    void* context, size_t range_i, size_t range_j, size_t range_k,
+    size_t range_l, size_t tile_k, size_t tile_l, uint32_t flags) {
   LOG(FATAL) << "Not implemented";
 }
 

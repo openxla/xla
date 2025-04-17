@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -26,7 +26,6 @@ package_group(
 filegroup(
     name = "device_mem_allocator_headers",
     srcs = [
-        "device_host_allocator.h",
         "device_mem_allocator.h",
     ],
     visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
@@ -44,6 +43,7 @@ cc_library(
     srcs = ["tf_allocator_adapter.cc"],
     hdrs = ["tf_allocator_adapter.h"],
     deps = [
+        "//xla:shape_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:memory_allocation",
@@ -68,20 +68,50 @@ cc_library(
 cc_library(
     name = "device_mem_allocator",
     hdrs = [
-        "device_host_allocator.h",
         "device_mem_allocator.h",
     ],
     deps = [
-        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:device_id",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
+)
+
+cc_library(
+    name = "stream_executor_allocator",
+    srcs = ["stream_executor_allocator.cc"],
+    hdrs = [
+        "stream_executor_allocator.h",
+    ],
+    deps = [
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/framework:allocator",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_allocator_test",
+    srcs = ["stream_executor_allocator_test.cc"],
+    deps = [
+        ":stream_executor_allocator",
+        "//xla/stream_executor:generic_memory_allocation",
+        "//xla/stream_executor:generic_memory_allocator",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ] + if_google([
+        "//xla/tsl/framework:allocator",
+    ]),
 )
 
 xla_cc_test(
@@ -102,10 +132,10 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ] + if_google([
         "//xla/tsl/framework:allocator",
     ]),
