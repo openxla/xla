@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/scoped_update_mode.h"
@@ -391,6 +392,23 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
       "Failed to set memcpy d2d node params");
 }
 
+absl::Status CudaCommandBuffer::PopulateDnnGraphNode(
+    dnn::DnnGraph& dnn_graph, Stream& stream,
+    absl::Span<DeviceMemoryBase> operands) {
+  return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
+                                                    false);
+}
+
+absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
+    dnn::DnnGraph& dnn_graph, Stream& stream,
+    absl::Span<DeviceMemoryBase> operands, GraphNodeHandle node_handle) {
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphChildGraphNodeGetGraph(ToCudaGraphHandle(node_handle), &graph_)));
+  is_owned_graph_ = false;
+  return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
+                                                    true);
+}
+
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
     absl::Span<const GraphNodeHandle> dependencies,
     const CommandBuffer& nested) {
@@ -511,30 +529,6 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
                         "Failed to set CUDA graph kernel node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateBarrierNode(
-    absl::Span<const GraphNodeHandle> dependencies) {
-  if (parent_->GetDeviceDescription().driver_version() <
-      SemanticVersion(12, 4, 0)) {
-    // Instead of empty nodes we create no-op kernel nodes as barriers because
-    // CUDA 12.3 does not support empty nodes inside conditional command
-    // buffers.
-    TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
-    return CreateKernelNode(dependencies, ThreadDim{1, 1, 1}, BlockDim{1, 1, 1},
-                            **noop, KernelArgsPackedArray<0>());
-  }
-
-  VLOG(2) << "Add empty node to a graph " << graph_
-          << "; deps: " << dependencies.size();
-
-  CUgraphNode barrier_handle = nullptr;
-  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphAddEmptyNode(&barrier_handle, graph_, deps.data(), deps.size()),
-      "Failed to add empty node to a CUDA graph"));
-
-  return FromCudaGraphHandle(barrier_handle);
-}
-
 absl::Status CudaCommandBuffer::Trace(
     Stream* stream, absl::AnyInvocable<absl::Status()> function) {
 #if CUDA_VERSION < 12030
@@ -588,23 +582,13 @@ absl::Status CudaCommandBuffer::Trace(
 #endif
 }
 
-absl::Status CudaCommandBuffer::SetNodeExecutionEnabled(
-    GraphNodeHandle node_handle, bool enabled) {
-  // Node is enabled if value != 0, otherwise the node is disabled.
-  unsigned value = enabled ? 1 : 0;
-  VLOG(2) << "Set CUDA executable graph " << exec_ << " node " << node_handle
-          << " enabled flag to " << value;
-  return cuda::ToStatus(
-      cuGraphNodeSetEnabled(exec_, ToCudaGraphHandle(node_handle), value),
-      "Failed to set CUDA graph node enabled flag");
-}
-
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   VLOG(3) << "Launch command buffer executable graph " << exec_
           << " on a stream: " << stream;
   return cuda::ToStatus(cuGraphLaunch(exec_, AsGpuStreamValue(stream)),
                         "Failed to launch CUDA graph");
 }
+
 absl::StatusOr<size_t> CudaCommandBuffer::GetNodeCount() const {
   size_t num_nodes;
   TF_RETURN_IF_ERROR(
@@ -621,8 +605,7 @@ absl::Status CudaCommandBuffer::PrepareFinalization() {
   }
 
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
-  TF_RETURN_IF_ERROR(
-      CommandBuffer::Launch(*noop, ThreadDim(), BlockDim(), {}).status());
+  TF_RETURN_IF_ERROR(CreateLaunch(*noop, ThreadDim(), BlockDim(), {}).status());
 
   return absl::OkStatus();
 }
@@ -728,31 +711,5 @@ absl::Status CudaCommandBuffer::CheckCanBeUpdated() {
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<GraphNodeHandle>>
-CudaCommandBuffer::GetNodeDependencies(GraphNodeHandle node) {
-  VLOG(2) << "Get CUDA graph node " << node << " dependencies";
-
-  std::vector<CUgraphNode> dependencies;
-
-  size_t num_dependencies = 0;
-  TF_RETURN_IF_ERROR(
-      cuda::ToStatus(cuGraphNodeGetDependencies(ToCudaGraphHandle(node),
-                                                nullptr, &num_dependencies),
-                     "Failed to get CUDA graph node depedencies size"));
-
-  dependencies.resize(num_dependencies, nullptr);
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphNodeGetDependencies(ToCudaGraphHandle(node), dependencies.data(),
-                                 &num_dependencies),
-      "Failed to get CUDA graph node depedencies"));
-
-  std::vector<GraphNodeHandle> result;
-  result.reserve(dependencies.size());
-  absl::c_transform(
-      dependencies, std::back_inserter(result),
-      static_cast<GraphNodeHandle (*)(CUgraphNode)>(&FromCudaGraphHandle));
-
-  return result;
-}
 
 }  // namespace stream_executor::gpu

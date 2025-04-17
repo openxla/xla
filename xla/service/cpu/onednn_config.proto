@@ -36,7 +36,7 @@ message OneDnnOptimizationConfig {
 }
 
 message OneDnnFusionConfig {
-  // These enum needs to be mapped to oneDNN enum for post_op algorithm.
+  // This enum needs to be mapped to oneDNN enum for post_op algorithm.
   // TODO(intel-tf): Add kinds supported by oneDNN.
   enum FusionKind {
     UNDEFINED = 0;
@@ -50,7 +50,8 @@ message OneDnnFusionConfig {
     ELU = 8;
     RELU6 = 9;
     SIGMOID = 10;
-    SWISH = 11;
+    SUM = 11;  // This represents in-place accumulation.
+    SWISH = 12;
   }
   repeated FusionKind ops = 1;
   // To avoid protobuf failures for specific decimal values,

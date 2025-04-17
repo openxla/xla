@@ -106,34 +106,33 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
     bool cross_partition_spmd,
     const absl::flat_hash_map<const HloInstruction*, ShapeTree<HloReplication>>&
         hlo_replication,
-    bool support_partial_replication) {
-  const auto merge_operand_replication = [&hlo_replication](
-                                             const HloInstruction* inst) {
-    HloReplication replication = HloReplication::ReplicatedOnAllDevices();
-    for (auto operand : inst->operands()) {
-      auto operand_it = hlo_replication.find(operand);
-      if (operand_it == hlo_replication.end()) {
-        replication = replication.Merge(HloReplication::UniqueOnAllDevices());
-      } else {
-        replication = replication.Merge(operand_it->second.element({}));
-      }
-    }
-    return replication;
-  };
-
-  if (hlo->opcode() == HloOpcode::kAllReduce ||
-      hlo->opcode() == HloOpcode::kAllGather) {
-    // All-reduce/all-gather returns same values across partitions/replicas as
-    // long as its operands are replicated.
-    HloReplication replication = merge_operand_replication(hlo);
-    if (replication.IsReplicatedOnAllDevices()) {
-      return replication;
-    }
-    if (!hlo->channel_id().has_value()) {
-      // This is cross-replica-only.
-      if (cross_partition_spmd) {
+    bool support_partial_replication,
+    const absl::flat_hash_map<const HloInstruction*,
+                              std::optional<HloReplication>*>&
+        replica_group_dedup_map,
+    absl::flat_hash_map<std::pair<HloReplication, HloReplication>,
+                        HloReplication>& replication_merge_map) {
+  const auto merge_operand_replication =
+      [&hlo_replication, &replication_merge_map](const HloInstruction* inst) {
+        HloReplication replication = HloReplication::ReplicatedOnAllDevices();
+        for (auto operand : inst->operands()) {
+          auto operand_it = hlo_replication.find(operand);
+          if (operand_it == hlo_replication.end()) {
+            replication = MergeReplications(
+                replication, HloReplication::UniqueOnAllDevices(),
+                replication_merge_map);
+          } else {
+            replication =
+                MergeReplications(replication, operand_it->second.element({}),
+                                  replication_merge_map);
+          }
+        }
         return replication;
-      }
+      };
+
+  auto calculate_all_reduce_all_gather_replication = [&](const HloInstruction*
+                                                             hlo) {
+    if (!hlo->channel_id().has_value()) {
       if (hlo->replica_groups().empty() || hlo->replica_groups().size() == 1) {
         return HloReplication::ReplicatedOnAllDevices();
       }
@@ -148,9 +147,8 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
           device_sets_per_replica[0].push_back(device_set);
         }
         return HloReplication::PartiallyReplicated(device_sets_per_replica);
-      } else {
-        return HloReplication::UniqueOnAllDevices();
       }
+      return HloReplication::UniqueOnAllDevices();
     } else {
       bool global_id;
       if (hlo->opcode() == HloOpcode::kAllReduce) {
@@ -172,7 +170,7 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
         // replica groups must contain every device, the size of the set is the
         // number of partitions or replicas.
         bool fully_replicated = true;
-        for (auto device_sets : device_sets_per_replica) {
+        for (const auto& device_sets : device_sets_per_replica) {
           fully_replicated &=
               device_sets.size() == 1 &&
               (*device_sets.begin()).size() ==
@@ -191,10 +189,38 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
       }
       if (hlo->replica_groups().empty() || hlo->replica_groups().size() == 1) {
         return HloReplication::ReplicatedOnAllDevices();
-      } else {
-        return HloReplication::UniqueOnAllDevices();
       }
+      return HloReplication::UniqueOnAllDevices();
     }
+  };
+
+  if (hlo->opcode() == HloOpcode::kAllReduce ||
+      hlo->opcode() == HloOpcode::kAllGather) {
+    // All-reduce/all-gather returns same values across partitions/replicas as
+    // long as its operands are replicated.
+    HloReplication replication = merge_operand_replication(hlo);
+    if (replication.IsReplicatedOnAllDevices()) {
+      return replication;
+    }
+    // This is cross-replica-only.
+    if (!hlo->channel_id().has_value() && cross_partition_spmd) {
+      return replication;
+    }
+
+    // To save compile time on very large replica groups, check first if the
+    // replica group dedup map has an entry already populated with the
+    // replication and if so return that.
+    auto unique_replication_it = replica_group_dedup_map.find(hlo);
+    if (unique_replication_it == replica_group_dedup_map.end()) {
+      VLOG(1) << "No dedup entry for " << hlo->name();
+      return calculate_all_reduce_all_gather_replication(hlo);
+    }
+    std::optional<HloReplication>* unique_replication =
+        unique_replication_it->second;
+    if (!unique_replication->has_value()) {
+      *unique_replication = calculate_all_reduce_all_gather_replication(hlo);
+    }
+    return **unique_replication;
   }
   if (hlo->HasSideEffectNoRecurse()) {
     return HloReplication::UniqueOnAllDevices();
@@ -305,15 +331,15 @@ bool HloReplicationAnalysis::ComputeHloReplicationOnComputation(
             return true;
           }
           bool updated = false;
-          it->second.ForEachMutableElement(
-              [&](const ShapeIndex& index, HloReplication* element) {
-                HloReplication new_replication =
-                    element->Merge(to_combine.element(index));
-                if (!element->Equal(new_replication)) {
-                  *element = std::move(new_replication);
-                  updated = true;
-                }
-              });
+          it->second.ForEachMutableElement([&](const ShapeIndex& index,
+                                               HloReplication* element) {
+            HloReplication new_replication = MergeReplications(
+                *element, to_combine.element(index), replication_merge_map_);
+            if (!element->Equal(new_replication)) {
+              *element = std::move(new_replication);
+              updated = true;
+            }
+          });
           return updated;
         };
     // Assigns or combines source's shape tree to dest. Returns if anything is
@@ -452,7 +478,8 @@ bool HloReplicationAnalysis::ComputeHloReplicationOnComputation(
               *shape_tree.mutable_element(index) =
                   DetermineHloInstructionIsReplicated(
                       inst, index, cross_partition_spmd_, hlo_replication_,
-                      support_partial_replication_);
+                      support_partial_replication_, replica_group_dedup_map_,
+                      replication_merge_map_);
             });
         changed |= assign_or_combine_shapetree(std::move(shape_tree), inst);
       }
@@ -521,6 +548,57 @@ absl::Status HloReplicationAnalysis::ComputeHloReplication() {
   return absl::OkStatus();
 }
 
+void HloReplicationAnalysis::BuildReplicaGroupDedupMap() {
+  std::vector<std::vector<const HloInstruction*>> dedupable_instructions;
+  for (const HloComputation* computation :
+       module_->MakeNonfusionComputations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAllReduce ||
+          instruction->opcode() == HloOpcode::kAllGather) {
+        auto dedupable_it = absl::c_find_if(
+            dedupable_instructions,
+            [&](const std::vector<const HloInstruction*>& insts) {
+              const HloInstruction* other = insts.at(0);
+              auto use_global_device_ids = [&](const HloInstruction* inst) {
+                if (inst->opcode() == HloOpcode::kAllReduce) {
+                  return Cast<HloAllReduceInstruction>(inst)
+                      ->use_global_device_ids();
+                }
+                return Cast<HloAllGatherInstruction>(inst)
+                    ->use_global_device_ids();
+              };
+              // The existence of channel ids, global device ids and the replica
+              // groups can affect whether the instruction is replicated. So
+              // include these in the dedup cache key.
+              return instruction->channel_id().has_value() ==
+                         other->channel_id().has_value() &&
+                     use_global_device_ids(instruction) ==
+                         use_global_device_ids(other) &&
+                     absl::c_equal(
+                         instruction->replica_groups(), other->replica_groups(),
+                         [](const ReplicaGroup& a, const ReplicaGroup& b) {
+                           return absl::c_equal(a.replica_ids(),
+                                                b.replica_ids());
+                         });
+            });
+        if (dedupable_it == dedupable_instructions.end()) {
+          dedupable_instructions.push_back({instruction});
+        } else {
+          dedupable_it->push_back(instruction);
+        }
+      }
+    }
+  }
+
+  unique_replications_.reserve(dedupable_instructions.size());
+  for (auto& insts : dedupable_instructions) {
+    unique_replications_.push_back(std::nullopt);
+    for (const HloInstruction* inst : insts) {
+      replica_group_dedup_map_[inst] = &unique_replications_.back();
+    }
+  }
+}
+
 bool HloReplicationAnalysis::HloInstructionIsReplicatedAt(
     const HloInstruction* inst, const ShapeIndex& index) const {
   auto it = hlo_replication_.find(inst);
@@ -572,6 +650,7 @@ HloReplicationAnalysis::Run(const HloModule* module, bool cross_partition_spmd,
   auto analysis = absl::WrapUnique(new HloReplicationAnalysis(
       module, cross_partition_spmd, loops_known_with_same_iterations,
       /*support_partial_replication=*/false));
+  analysis->BuildReplicaGroupDedupMap();
   TF_RETURN_IF_ERROR(analysis->ComputeHloReplication());
   return analysis;
 }
@@ -583,6 +662,7 @@ HloReplicationAnalysis::RunWithPartialReplication(const HloModule* module,
   auto analysis = absl::WrapUnique(
       new HloReplicationAnalysis(module, cross_partition_spmd, &empty,
                                  /*support_partial_replication=*/true));
+  analysis->BuildReplicaGroupDedupMap();
   TF_RETURN_IF_ERROR(analysis->ComputeHloReplication());
   return analysis;
 }
@@ -594,10 +674,12 @@ HloReplicationAnalysis::HloReplication::HloReplication(
     HloReplicationAnalysis::HloReplication::State state,
     absl::Span<const std::vector<int64_t>> device_set_root_per_replica)
     : state_(state),
-      device_set_root_per_replica_(device_set_root_per_replica.begin(),
-                                   device_set_root_per_replica.end()) {
+      device_set_root_per_replica_(
+          std::make_shared<std::vector<std::vector<int64_t>>>(
+              device_set_root_per_replica.begin(),
+              device_set_root_per_replica.end())) {
   CHECK(state == State::kPartiallyReplicated ||
-        device_set_root_per_replica_.empty());
+        device_set_root_per_replica_->empty());
 }
 
 HloReplicationAnalysis::HloReplication
@@ -656,13 +738,13 @@ HloReplicationAnalysis::HloReplication::Merge(
           bool unique_on_all_devices = true;
           std::vector<std::vector<std::vector<int64_t>>>
               device_sets_per_replica;
-          CHECK_EQ(device_set_root_per_replica_.size(),
-                   other.device_set_root_per_replica_.size());
-          for (int i = 0; i < device_set_root_per_replica_.size(); ++i) {
+          CHECK_EQ(device_set_root_per_replica_->size(),
+                   other.device_set_root_per_replica_->size());
+          for (int i = 0; i < device_set_root_per_replica_->size(); ++i) {
             const std::vector<int64_t>& my_device_set_root =
-                device_set_root_per_replica_[i];
+                device_set_root_per_replica_->at(i);
             const std::vector<int64_t>& other_device_set_root =
-                other.device_set_root_per_replica_[i];
+                other.device_set_root_per_replica_->at(i);
             absl::flat_hash_map<int64_t, std::vector<int64_t>>
                 value_to_device_set;
             size_t num_devices = my_device_set_root.size();
@@ -689,19 +771,32 @@ HloReplicationAnalysis::HloReplication::Merge(
   }
 }
 
+HloReplicationAnalysis::HloReplication::HloReplication(
+    const std::pair<HloReplication, HloReplication>& merge_pair) {
+  auto merged_replication = merge_pair.first.Merge(merge_pair.second);
+  state_ = merged_replication.state_;
+  device_set_root_per_replica_ =
+      std::move(merged_replication.device_set_root_per_replica_);
+}
+
 bool HloReplicationAnalysis::HloReplication::Equal(
     const HloReplication& other) const {
   if (state_ != other.state_) {
     return false;
   }
-  for (int i = 0; i < device_set_root_per_replica_.size(); ++i) {
-    if (device_set_root_per_replica_[i] !=
-        other.device_set_root_per_replica_[i]) {
+  for (int i = 0; i < device_set_root_per_replica_->size(); ++i) {
+    if (device_set_root_per_replica_->at(i) !=
+        other.device_set_root_per_replica_->at(i)) {
       return false;
     }
   }
 
   return true;
+}
+
+bool HloReplicationAnalysis::HloReplication::operator==(
+    const HloReplicationAnalysis::HloReplication& rhs) const {
+  return Equal(rhs);
 }
 
 bool HloReplicationAnalysis::HloReplication::IsReplicatedOnAllDevices() const {
@@ -715,7 +810,8 @@ bool HloReplicationAnalysis::HloReplication::IsUniqueOnAllDevices() const {
 bool HloReplicationAnalysis::HloReplication::IsReplicatedWithinSubgroup(
     absl::Span<const int64_t> device_ids) const {
   if (device_ids.empty()) return true;
-  for (std::vector<int64_t> device_set_roots : device_set_root_per_replica_) {
+  for (const std::vector<int64_t>& device_set_roots :
+       *device_set_root_per_replica_) {
     if (!absl::c_all_of(device_ids,
                         [&device_ids, &device_set_roots](int device_id) {
                           return device_set_roots[device_id] ==
@@ -736,12 +832,12 @@ std::string HloReplicationAnalysis::HloReplication::ToString() const {
     case State::kPartiallyReplicated:
       std::ostringstream oss;
       oss << "PartiallyReplicated{";
-      for (int k = 0; k < device_set_root_per_replica_.size(); ++k) {
+      for (int k = 0; k < device_set_root_per_replica_->size(); ++k) {
         if (k > 0) {
           oss << ", ";
         }
         oss << absl::StrCat(
-            "{", absl::StrJoin(device_set_root_per_replica_[k], ","), "}");
+            "{", absl::StrJoin(device_set_root_per_replica_->at(k), ","), "}");
       }
       oss << "}";
       return oss.str();

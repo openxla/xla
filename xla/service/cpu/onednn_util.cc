@@ -70,6 +70,9 @@ dnnl::post_ops PopulateOneDnnPostOps(
       case OneDnnFusionConfig::SWISH:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_swish, 1.0f, 0.0f);
         break;
+      case OneDnnFusionConfig::SUM:
+        post_ops.append_sum();
+        break;
       case OneDnnFusionConfig::BIAS: {
         *bias_md = fused_mds.at(fused_operand_idx);
         if (fused_operands_ref) {

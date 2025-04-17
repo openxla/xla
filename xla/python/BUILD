@@ -153,6 +153,7 @@ cc_library(
     deps = [
         "//xla:debug_options_flags",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
@@ -189,6 +190,23 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ],
+)
+
+cc_library(
+    name = "debug_callback_partitioner",
+    srcs = ["debug_callback_partitioner.cc"],
+    hdrs = ["debug_callback_partitioner.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_sharding",
+        "//xla/service:custom_call_sharding_helper",
+        "//xla/service/spmd:spmd_partitioner",
+        "@com_google_absl//absl/status",
+    ],
+    # Always register 'DebugCallbackCustomCallPartitioner' custom partitioning handler.
+    alwayslink = 1,
 )
 
 cc_library(

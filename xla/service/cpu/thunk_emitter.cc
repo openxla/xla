@@ -852,10 +852,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
   const HloInstruction* lhs = instruction->operand(0);
   const HloInstruction* rhs = instruction->operand(1);
 
-  TF_RETURN_IF_ERROR(ElementTypesSameAndSupported(
-      *instruction, /*operands=*/{lhs, rhs},
-      /*supported_types=*/
-      {PRED, S8, U8, S16, U16, S32, U32, S64, U64, F16, F32, F64, C64, C128}));
+  TF_RETURN_IF_ERROR(
+      ElementTypesSameAndSupported(*instruction, /*operands=*/{lhs, rhs},
+                                   /*supported_types=*/
+                                   {PRED, S8, U8, S16, U16, S32, U32, S64, U64,
+                                    BF16, F16, F32, F64, C64, C128}));
 
   const DotDimensionNumbers& dnums = instruction->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1) {
@@ -940,7 +941,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKThunk(
 
   // Deduce parameters from the result shape and operand shape
   const int64_t input_size = input->shape().dimensions().back();
-  const bool has_batch = result_shape.tuple_shapes(0).dimensions_size() == 2;
+  const bool has_batch = result_shape.tuple_shapes(0).dimensions().size() == 2;
   const int64_t batch_size =
       has_batch ? result_shape.tuple_shapes(0).dimensions(0) : 1;
   const int64_t k = result_shape.tuple_shapes(0).dimensions().back();

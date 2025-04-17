@@ -1,6 +1,5 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -162,16 +161,16 @@ cc_library(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "se_gpu_pjrt_client_test",
     srcs = ["se_gpu_pjrt_client_test.cc"],
-    tags = [
-        "gpu",
+    backend_tags = {"gpu": [
+        "multi_gpu_h100",
         "no_oss",
         "noasan",
         "nomsan",
-        "requires-gpu-nvidia:2",
-    ],
+    ]},
+    backends = ["gpu"],
     deps = [
         ":gpu_topology",
         ":gpu_topology_proto_cc",
@@ -203,13 +202,13 @@ xla_cc_test(
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/pjrt/profiling/test_util:mock_device_time_measurement",
-        "//xla/service:gpu_plugin",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -224,6 +223,7 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -323,9 +323,6 @@ cc_library(
         "//xla/service/gpu:executable_proto_cc",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/stream_executor/rocm:rocm_platform_id",
-        "//xla/stream_executor/sycl:sycl_platform_id",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -413,6 +410,7 @@ xla_test(
         ":gpu_topology",
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler_impl",
+        ":se_gpu_topology_description",
         "//xla:literal",
         "//xla:literal_util",
         "//xla/hlo/builder:xla_computation",
@@ -423,8 +421,9 @@ xla_test(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
-        "//xla/service:platform_util",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -433,8 +432,6 @@ xla_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -456,8 +453,8 @@ xla_test(
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:compiler",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
@@ -466,8 +463,6 @@ xla_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

@@ -273,6 +273,7 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
         definition_events;
     absl::InlinedVector<Shape, 4> device_shapes;
     buffers.reserve(shape_specs.size());
+    buffer_ptrs.reserve(shape_specs.size());
     definition_events.reserve(shape_specs.size());
     device_shapes.reserve(shape_specs.size());
     for (int i = 0; i < shape_specs.size(); ++i) {
@@ -331,6 +332,7 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
             tsl::Env::Default(),
             "TfrtGpuAsyncHostToDeviceTransferManager_h2d_thread")),
         buffer_ptrs_(std::move(buffer_ptrs)),
+        buffer_sizes_(GetBufferSizes(buffers_)),
         definition_events_(std::move(definition_events)),
         device_shapes_(std::move(device_shapes)),
         remaining_buffer_count_(buffers_.size()),
@@ -340,10 +342,6 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
                "TfrtGpuAsyncHostToDeviceTransferManager: this="
             << this << " buffers_.size()=" << buffers_.size();
 
-    buffer_sizes_.reserve(buffers_.size());
-    for (const auto& buffer : buffers_) {
-      buffer_sizes_.push_back(buffer->GetOnDeviceSizeInBytes().value());
-    }
     last_transfer_started_.resize(buffer_ptrs_.size(), false);
   }
 
@@ -360,7 +358,7 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
     }
   }
 
-  size_t buffer_count() const override { return buffers_.size(); };
+  size_t buffer_count() const override { return buffer_sizes_.size(); };
 
   size_t buffer_size(int buffer_index) const override {
     DCHECK_LT(buffer_index, buffer_sizes_.size());
@@ -370,6 +368,7 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
   PjRtDevice* device() const override { return device_; }
 
   std::unique_ptr<PjRtBuffer> RetrieveBuffer(int buffer_index) override {
+    absl::MutexLock l(&mu_);
     DCHECK_LT(buffer_index, buffers_.size());
     return std::move(buffers_[buffer_index]);
   };
@@ -410,7 +409,9 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
     // because it includes linearization that may be slow.
     // TODO(misard) assess if it would be preferable to introduce a heuristic
     // to put the transfer into the calling thread for small literals.
-    auto transfer_h2d = [this, buffer_index, transfer_manager, literal, buffer,
+    auto transfer_h2d = [this, buffer_index, transfer_manager,
+                         literal = std::move(literal),
+                         buffer = std::move(buffer),
                          on_done = std::move(on_done)]() mutable {
       tsl::profiler::TraceMe traceme(
           "TfrtGpuAsyncHostToDeviceTransferManager::TransferLiteralToBuffer::"
@@ -477,33 +478,33 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
     std::unique_ptr<void, std::function<void(void*)>> staging_buffer =
         host_memory_allocator->Allocate(transfer_size);
 
-    absl::ReleasableMutexLock l(&mu_);
-    DCHECK_LT(buffer_index, buffer_ptrs_.size());
-    if (last_transfer_started_[buffer_index]) {
-      return InvalidArgument(
-          "TransferRawData requested for buffer index %d which has "
-          "already been fully transferred",
-          buffer_index);
-    }
-    if (is_last_transfer) {
-      last_transfer_started_[buffer_index] = true;
-    }
-    DCHECK(buffer_ptrs_[buffer_index]);
-    tsl::AsyncValueRef<MaybeOwningGpuMemory>& buffer_memory =
-        buffer_ptrs_[buffer_index];
     se::DeviceMemoryBase sub_buffer;
-    CHECK_LE(offset, buffer_memory->size());
-    CHECK_LE(transfer_size, buffer_memory->size() - offset);
-    if (transfer_size < buffer_memory->size()) {
-      sub_buffer = buffer_memory->buffer().GetByteSlice(offset, transfer_size);
-    } else {
-      sub_buffer = buffer_memory->buffer();
-    }
+    {
+      absl::MutexLock l(&mu_);
+      DCHECK_LT(buffer_index, buffer_ptrs_.size());
+      if (last_transfer_started_[buffer_index]) {
+        return InvalidArgument(
+            "TransferRawData requested for buffer index %d which has "
+            "already been fully transferred",
+            buffer_index);
+      }
+      if (is_last_transfer) {
+        last_transfer_started_[buffer_index] = true;
+      }
+      DCHECK(buffer_ptrs_[buffer_index]);
+      tsl::AsyncValueRef<MaybeOwningGpuMemory>& buffer_memory =
+          buffer_ptrs_[buffer_index];
+      CHECK_LE(offset, buffer_memory->size());
+      CHECK_LE(transfer_size, buffer_memory->size() - offset);
+      if (transfer_size < buffer_memory->size()) {
+        sub_buffer =
+            buffer_memory->buffer().GetByteSlice(offset, transfer_size);
+      } else {
+        sub_buffer = buffer_memory->buffer();
+      }
 
-    ++transfers_in_flight_;
-    // Release the lock before transfer in case transfer or cleanup could be
-    // called on this thread, to avoid deadlock.
-    l.Release();
+      ++transfers_in_flight_;
+    }
 
     auto copy_to_gpu =
         [transfer_size, staging_buffer = std::move(staging_buffer), data,
@@ -546,6 +547,16 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
   void AddTransferMetadata(const TransferMetadata& meta) override {}
 
  private:
+  static absl::InlinedVector<size_t, 4> GetBufferSizes(
+      absl::InlinedVector<std::unique_ptr<PjRtBuffer>, 4>& buffers) {
+    absl::InlinedVector<size_t, 4> buffer_sizes;
+    buffer_sizes.reserve(buffers.size());
+    for (const auto& buffer : buffers) {
+      buffer_sizes.push_back(buffer->GetOnDeviceSizeInBytes().value());
+    }
+    return buffer_sizes;
+  }
+
   void CleanUp(int buffer_index, bool is_last_transfer,
                absl::AnyInvocable<void() &&> on_done) {
     {
@@ -579,7 +590,8 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
   absl::Mutex mu_;
   // The newly created buffers, which will be returned to the caller via
   // Retrieve.
-  absl::InlinedVector<std::unique_ptr<PjRtBuffer>, 4> buffers_;
+  absl::InlinedVector<std::unique_ptr<PjRtBuffer>, 4> buffers_
+      ABSL_GUARDED_BY(mu_);
 
   // Just a single thread, to ensure transfers are ordered. Its lifetime is
   // managed by H2DTransferManager. We assume `h2d_thread` is destructed before
@@ -587,10 +599,11 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
   // threads managed by `client_`.
   std::unique_ptr<WorkerThread> h2d_thread_;
 
-  absl::InlinedVector<tsl::AsyncValueRef<MaybeOwningGpuMemory>, 4> buffer_ptrs_;
+  absl::InlinedVector<tsl::AsyncValueRef<MaybeOwningGpuMemory>, 4> buffer_ptrs_
+      ABSL_GUARDED_BY(mu_);
   // Cached versions of the sizes of all the buffers, so we can return them
   // without acquiring mu_.
-  absl::InlinedVector<size_t, 4> buffer_sizes_;
+  const absl::InlinedVector<size_t, 4> buffer_sizes_;
   // True if the last transfer for a buffer has been initiated. Used to
   // prevent a client initiating another transfer after the last transfer has
   // already been initiated.
@@ -918,7 +931,7 @@ TfrtGpuDevice::TfrtGpuDevice(Options&& options)
   CHECK_OK(executor_->CreateStream().status()) << "Failed to create stream";
 
   se_allocator_ = std::make_unique<se::TfAllocatorAdapter>(
-      allocator_.get(), const_cast<se::Platform*>(executor_->GetPlatform()));
+      allocator_.get(), executor_->GetPlatform());
 }
 
 void TfrtGpuDevice::SetClient(PjRtClient* client) {
@@ -1535,7 +1548,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
       device_shape,
       transfer_manager->ChooseCompactLayoutForShape(device_shape));
 
-  absl::InlinedVector<int64_t, 4> shape_strides(device_shape.dimensions_size());
+  absl::InlinedVector<int64_t, 4> shape_strides(
+      device_shape.dimensions().size());
   TF_RETURN_IF_ERROR(
       ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
@@ -2686,11 +2700,11 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
   // too far, not for correctness. Placing it before the executable launch
   // allows the inputs for the next executable to be fetched even if the
   // launch is delayed.
-  VLOG(0) << "Going to get compute reservation for " << name() << ": "
+  VLOG(1) << "Going to get compute reservation for " << name() << ": "
           << options.launch_id << "; replica: " << replica;
   auto compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
       device->max_inflight_computations_semaphore().ScopedAcquire(1));
-  VLOG(0) << "Got compute reservation for " << name() << ": "
+  VLOG(1) << "Got compute reservation for " << name() << ": "
           << options.launch_id << "; replica: " << replica;
   auto ffi_context =
       options.context != nullptr ? &options.context->ffi_context() : nullptr;
@@ -2717,7 +2731,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
        send_device_memory(std::move(send_device_memory)),
        recv_device_memory(std::move(recv_device_memory)),
        client = client_](std::vector<ExecutionInput> execution_inputs) mutable {
-        VLOG(0) << "execute_fn for " << executable_name << ": " << launch_id
+        VLOG(1) << "execute_fn for " << executable_name << ": " << launch_id
                 << "; replica: " << replica;
         tsl::profiler::TraceMe traceme("execute_fn");
         auto set_error = [&](absl::Status status) {
@@ -2783,7 +2797,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
 
         absl::StatusOr<ExecutionOutput> result_buffer_or_status =
             gpu_executable->RunAsync(std::move(execution_inputs), run_options);
-        VLOG(0) << "Replica " << replica << " partition " << partition
+        VLOG(1) << "Replica " << replica << " partition " << partition
                 << " completed; ok=" << result_buffer_or_status.ok();
 
         if (!result_buffer_or_status.ok()) {

@@ -264,16 +264,14 @@ xla_test(
 )
 
 cc_library(
-    name = "ragged_all_to_all_kernel",
-    srcs = ["ragged_all_to_all_kernel.cc"],
-    hdrs = ["ragged_all_to_all_kernel.h"],
+    name = "all_reduce_kernel",
+    srcs = ["all_reduce_kernel.cc"],
+    hdrs = ["all_reduce_kernel.h"],
     tags = ["gpu"],
     visibility = [":friends"],
     deps = [
-        ":ragged_all_to_all_kernel_gpu",
-        "//xla:shape_util",
+        ":all_reduce_kernel_gpu",
         "//xla:types",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
@@ -282,6 +280,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:typed_kernel_factory",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
@@ -289,9 +288,9 @@ cc_library(
 )
 
 gpu_kernel_library(
-    name = "ragged_all_to_all_kernel_gpu",
-    srcs = ["ragged_all_to_all_kernel.cu.cc"],
-    hdrs = ["ragged_all_to_all_kernel_common.h"],
+    name = "all_reduce_kernel_gpu",
+    srcs = ["all_reduce_kernel.cu.cc"],
+    hdrs = ["all_reduce_kernel_common.h"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",  # build_cleaner: keep
     ]) + if_rocm_is_configured([
@@ -300,11 +299,11 @@ gpu_kernel_library(
 )
 
 xla_test(
-    name = "ragged_all_to_all_kernel_test",
-    srcs = ["ragged_all_to_all_kernel_test.cc"],
+    name = "all_reduce_kernel_test",
+    srcs = ["all_reduce_kernel_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":ragged_all_to_all_kernel",
+        ":all_reduce_kernel",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor:device_memory",
@@ -319,7 +318,6 @@ xla_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
     ],
 )

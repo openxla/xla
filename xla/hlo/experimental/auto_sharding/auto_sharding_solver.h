@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_SOLVER_H_
 #define XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_SOLVER_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,15 +39,12 @@ struct AutoShardingSolverOutput {
   bool operator==(const AutoShardingSolverOutput& other) const;
 };
 
-// Scales down values to reduce the range of costs & coefficients in the solver.
-AutoShardingSolverRequest ScaleRequest(
-    const AutoShardingSolverRequest& request);
-
 // Determines the minimum memory budget required to avoid memory violations.
 double MinimumMemoryBudgetRequired(const AutoShardingSolverRequest& request);
 
 absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
-    const AutoShardingSolverRequest& request);
+    const AutoShardingSolverRequest& request,
+    std::optional<double> overbudget_coeff);
 
 // TODO(fahrbach): Create AutoShardingHeuristicOptions proto with a oneof field.
 // Runs a heuristic specified by one of the following values of `algorithm`:
@@ -101,7 +99,8 @@ struct AutoShardingEvaluation {
 // Evaluates the given solver result w.r.t. the input request, computing various
 // solution quality metrics and validating the consistency of hard constraints.
 AutoShardingEvaluation Evaluate(const AutoShardingSolverRequest& request,
-                                const AutoShardingSolverOutput& result);
+                                const AutoShardingSolverOutput& result,
+                                std::optional<double> overbudget_coeff);
 
 // Computes the objective value of the sharding strategy. If the objective value
 // is infinite or the sharding is infeasible (e.g., violates the peak-memory
