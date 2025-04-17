@@ -349,6 +349,7 @@ TEST_P(ConvolutionTest, ToeplitzConstrcutionTest) {
 TEST_P(ConvolutionTest, Conv2DWithSumTest) {
   const absl::string_view outline = R"(
   HloModule convolution.test.with.sum
+
   ENTRY convolution.test.with.sum {
     arg0.1 = $dtype[1,22,22,1] parameter(0)
     arg0.2 = $dtype[1,11,11,1] parameter(1)
