@@ -620,7 +620,8 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
 
 absl::Status RunSPMDPasses(
     HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
-    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts) {
+    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
+    int64_t slice_size) {
   bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
 #ifndef PLATFORM_GOOGLE
   if (auto_sharding) {
@@ -631,20 +632,22 @@ absl::Status RunSPMDPasses(
   const int64_t num_partitions = hlo_module->config().num_partitions();
   if (num_partitions > 1 && hlo_module->config().use_spmd_partitioning()) {
     HloPassPipeline spmd_pipeline("spmd-partitioner");
-    AddSPMDPasses(hlo_module, layout_insensitive_algsimp_opts,
-                  gpu_target_config.device_description.gpu_compute_capability(),
-                  spmd_pipeline,
+    AddSPMDPasses(
+        hlo_module, layout_insensitive_algsimp_opts,
+        gpu_target_config.device_description.gpu_compute_capability(),
+        spmd_pipeline,
 #ifdef PLATFORM_GOOGLE
-                  [&](HloPassPipeline& pipeline) {
-                    if (auto_sharding) {
-                      spmd_pipeline.AddPass<AutoSharding>(
-                          DefaultAutoShardingOptionFromModuleConfig(
-                              hlo_module->config()));
-                    }
-                  });
+        [&](HloPassPipeline& pipeline) {
+          if (auto_sharding) {
+            spmd_pipeline.AddPass<AutoSharding>(
+                DefaultAutoShardingOptionFromModuleConfig(
+                    hlo_module->config()));
+          }
+        },
 #else
-        std::nullopt);
+        std::nullopt,
 #endif  // PLATFORM_GOOGLE
+        slice_size);
     if (hlo_module->config()
             .debug_options()
             .xla_gpu_unsafe_pipelined_loop_annotator()) {
@@ -1382,7 +1385,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
-                                   layout_insensitive_algsimp_opts));
+                                   layout_insensitive_algsimp_opts,
+                                   options.slice_size));
   TF_RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, stream_exec,
                                            gpu_target_config,
                                            layout_insensitive_algsimp_opts));

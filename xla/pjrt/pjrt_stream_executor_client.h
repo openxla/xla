@@ -433,8 +433,8 @@ class PjRtStreamExecutorClient : public PjRtClient {
 
   // Updates `options` for compilation, and gets the executable extras if
   // `returned_extras` is not null.
-  absl::Status UpdateCompileOptionsInternal(CompileOptions* options,
-                                            ExecutableExtras* returned_extras);
+  virtual absl::Status UpdateCompileOptionsInternal(
+      CompileOptions* options, ExecutableExtras* returned_extras);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
       const XlaComputation& computation,

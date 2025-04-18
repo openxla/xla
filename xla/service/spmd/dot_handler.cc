@@ -1935,7 +1935,6 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
 
   // Hard limit on iteration count based on empirical data (above this amount
   // there's pretty significant overhead).
-  constexpr int64_t kMaxIterations = 32;
   std::optional<WindowedEinsumConfig> e_config = std::nullopt;
   if (!should_skip_windowed_einsum) {
     e_config = GetWindowedEinsumConfiguration(
@@ -1949,8 +1948,9 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
         output_sharding_transposed_to_match_rhs,
         lhs_sharding_transposed_to_match_rhs,
         rhs_sharding_transposed_to_match_lhs, lhs_sharding, rhs_sharding,
-        conv_window, dims_mapping, visitor->call_graph(), kMaxIterations,
-        original_hlo, &lhs, &rhs, create_sharded_dot, b, module, visitor);
+        conv_window, dims_mapping, visitor->call_graph(),
+        options.MaxWindowedEinsumIteration(), original_hlo, &lhs, &rhs,
+        create_sharded_dot, b, module, visitor);
   }
   if (e_config) {
     VLOG(2) << "Emit windowed dot.";

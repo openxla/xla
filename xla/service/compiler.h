@@ -159,6 +159,9 @@ class Compiler {
     std::optional<TargetConfig> target_config;
 
     MultiProcessKeyValueStore key_value_store;
+
+    // The number of devices to compile for in parallel.
+    int64_t slice_size = 0;
   };
 
   virtual ~Compiler() = default;

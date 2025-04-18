@@ -54,7 +54,8 @@ void AddSPMDPasses(
     const se::GpuComputeCapability& compute_capability,
     HloPassPipeline& spmd_pipeline,
     std::optional<const absl::FunctionRef<void(HloPassPipeline&)>>
-        auto_sharding_func) {
+        auto_sharding_func,
+    int64_t slice_size) {
   const int64_t num_partitions = hlo_module->config().num_partitions();
   CHECK_GE(num_partitions, 1);
 
@@ -120,7 +121,8 @@ void AddSPMDPasses(
           .debug_options()
           .xla_gpu_multi_streamed_windowed_einsum(),
       /*skip_checking_windowed_einsum_users=*/true,
-      /*disable_ag_rewrite_for_multiple_consumers=*/true, oper_size_threshold);
+      /*disable_ag_rewrite_for_multiple_consumers=*/true, oper_size_threshold,
+      slice_size);
   spmd_pipeline.AddPass<CollectivePermuteMotion>();
 }
 

@@ -152,6 +152,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>> arguments,
       ExecutableRunOptions run_options) override;
 
+  absl::Status UpdateCompileOptionsInternal(
+      CompileOptions* options, ExecutableExtras* returned_extras) override;
+
  private:
   xla::StreamExecutorGpuTopologyDescription topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
