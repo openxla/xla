@@ -2722,12 +2722,6 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
                                           tsl::profiler::ContextType::kPjRt,
                                           run_id.ToInt());
 
-  if (VLOG_IS_ON(2)) {
-    LOG(INFO) << "ExecuteHelper " << name() << ": " << options.launch_id
-              << "; replica: " << replica << "; partition: " << partition
-              << "; mapped to device ordinal for execution: " << device->id();
-  }
-
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
     CHECK(device_assignment_ != nullptr);
@@ -2746,6 +2740,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
     (*device_assignment)(0, 0) = device->id();
   }
   CHECK_EQ(device->process_index(), client_->process_index());
+
+  if (VLOG_IS_ON(2)) {
+    LOG(INFO) << "ExecuteHelper " << name() << ": " << options.launch_id
+              << "; replica: " << replica << "; partition: " << partition
+              << "; mapped to device ordinal for execution: " << device->id();
+  }
 
   // Handle inputs.
   if (options.arguments_are_tupled) {
