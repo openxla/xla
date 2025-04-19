@@ -183,32 +183,25 @@ ScalarOrTensor Range(EmitterLocOpBuilder& b, int32_t limit) {
   return ScalarOrTensor(b.create<ttir::MakeRangeOp>(type, 0, limit));
 }
 
-ScalarOrTensor EmitParameterExtract(EmitterLocOpBuilder& b,
-                                    mlir::triton::xla::TileOp tile_op) {
+ScalarOrTensor EmitParameterExtract(
+    EmitterLocOpBuilder& b, ir_emitter_triton_internal::TileInfo tile_info,
+    Value parent_base_ptr) {
   // For a pointer to a scalar or a zero-dimensional tensor, load the base
   // pointer directly. This shortcut is necessary because Triton does not
   // support 0-D tensors. Looking for the defining make_tensor_ptr op is
   // sufficient because pointers to 0-D tensors are never modified by e.g.
   // `tt.advance`.
 
-  auto tiled_tensor_type =
-      mlir::dyn_cast<mtx::TiledTensorType>(tile_op.getResult().getType());
-  CHECK(tiled_tensor_type) << "Expected a TiledTensorType\n";
-
-  if (tiled_tensor_type.getTileShape().empty()) {
+  if (tile_info.padded_tile_sizes.empty()) {
     return ScalarOrTensor(
-        b.create<mlir::tensor::ExtractOp>(tile_op.getTensor(), {}));
+        b.create<mlir::tensor::ExtractOp>(parent_base_ptr, {}));
   }
 
-  SmallVector<Value> offsets(
-      tile_op.getTiledTensor().getType().getTileShape().size(),
-      CreateConst(b, b.getIndexType(), 0).UnwrapScalar());
-
   return ScalarOrTensor(b.create<mtx::ExtractOp>(
-      mlir::RankedTensorType::get(
-          tiled_tensor_type.getTileShape(),
-          StorageType(tiled_tensor_type.getElementType())),
-      tile_op.getResult(), offsets));
+      mlir::RankedTensorType::get(tile_info.padded_tile_sizes,
+                                  tile_info.storage_type),
+      parent_base_ptr, tile_info.offsets, tile_info.strides,
+      tile_info.minor_to_major_layout));
 }
 
 absl::StatusOr<ScalarOrTensor> EmitScope(
@@ -1103,11 +1096,13 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     // If the fusion instruction is a user of `hlo`, then `hlo` is an operand
     // to the fusion instruction.
     int64_t arg_index = GetOutermostFusionOperandParameterIndex(fusion, hlo);
-    TF_ASSIGN_OR_RETURN(auto tile_op, ir_emitter_triton_internal::CreateTileOp(
-                                          b, tile_multi_index, tiled_hlo,
-                                          fn.getArgument(arg_index)));
+    TF_ASSIGN_OR_RETURN(
+        auto tile_info,
+        ir_emitter_triton_internal::ConstructTileInfo(
+            b, tile_multi_index, tiled_hlo, fn.getArgument(arg_index)));
 
-    ScalarOrTensor parameter = EmitParameterExtract(b, tile_op);
+    ScalarOrTensor parameter =
+        EmitParameterExtract(b, tile_info, fn.getArgument(arg_index));
 
     // Some types are stored using different types, e.g. i1 is stored in memory
     // as i8. It's important to type checking that we perform a conversion after
@@ -1350,30 +1345,29 @@ SmallVector<Value> CreateIndexValues(EmitterLocOpBuilder& builder,
   return result;
 }
 
-absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
-    EmitterLocOpBuilder& b, ValueRange tile_multi_index,
-    const TiledHloInstruction& tiled_hlo, Value parent_base_ptr) {
-  TF_ASSIGN_OR_RETURN(SmallVector<Value> ptr_offsets,
+absl::StatusOr<TileInfo> ConstructTileInfo(EmitterLocOpBuilder& b,
+                                           ValueRange tile_multi_index,
+                                           const TiledHloInstruction& tiled_hlo,
+                                           Value parent_base_ptr) {
+  TileInfo tile_info;
+  TF_ASSIGN_OR_RETURN(tile_info.offsets,
                       ComputeBasePtrOffset(b, tile_multi_index, tiled_hlo));
 
   // Triton requires that all block dimensions are a power of 2.
-  SmallVector<int64_t> padded_tile_sizes =
-      GetPaddedTileSizes(tiled_hlo.tile_sizes());
+  tile_info.padded_tile_sizes = GetPaddedTileSizes(tiled_hlo.tile_sizes());
+  tile_info.original_shape.assign(tiled_hlo.hlo()->shape().dimensions().begin(),
+                                  tiled_hlo.hlo()->shape().dimensions().end());
 
   const Shape& shape = tiled_hlo.hlo()->shape();
   TF_ASSIGN_OR_RETURN(Type expected_element_type,
                       TritonType(b, shape.element_type()));
-  Type storage_type = StorageType(expected_element_type);
-  auto result_type = mtx::TiledTensorType::get(
-      b.getContext(), padded_tile_sizes,
-      llvm::ArrayRef<int64_t>(shape.dimensions().data(),
-                              shape.dimensions().size()),
-      storage_type);
+  tile_info.storage_type = StorageType(expected_element_type);
 
-  return b.create<mtx::TileOp>(
-      result_type, parent_base_ptr, ptr_offsets,
-      CreateIndexValues(b, tiled_hlo.tile_strides()),
-      llvm::to_vector(LayoutUtil::MinorToMajor(shape)));
+  tile_info.strides = CreateIndexValues(b, tiled_hlo.tile_strides());
+  tile_info.minor_to_major_layout =
+      llvm::to_vector(LayoutUtil::MinorToMajor(shape));
+
+  return tile_info;
 }
 
 }  // namespace ir_emitter_triton_internal
@@ -1463,25 +1457,21 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
 
     CHECK(root->hlo()->shape().IsArray() &&
           !root->hlo()->shape().dimensions().empty());
-    TF_ASSIGN_OR_RETURN(mlir::triton::xla::TileOp tile_op,
-                        ir_emitter_triton_internal::CreateTileOp(
+    TF_ASSIGN_OR_RETURN(auto tile_info,
+                        ir_emitter_triton_internal::ConstructTileInfo(
                             b, tile_multi_index, *root, parent_base_ptr));
 
     // Should not be scalar at this point.
-    auto tiled_tensor_type =
-        mlir::dyn_cast<mtx::TiledTensorType>(tile_op.getResult().getType());
-    CHECK(tiled_tensor_type) << "Expected a tiled tensor type since scalars "
-                                "should've been handled at this point.";
-
-    SmallVector<Value> offsets(
-        tiled_tensor_type.getTileShape().size(),
-        CreateConst(b, b.getIndexType(), 0).UnwrapScalar());
+    CHECK(!tile_info.padded_tile_sizes.empty())
+        << "Unexpected scalar encountered. Expected padded_tile_sizes to be "
+           "non-empty.";
 
     insert_results.push_back(
         b.create<mtx::InsertOp>(
-             mlir::RankedTensorType::get(tiled_tensor_type.getOriginalShape(),
+             mlir::RankedTensorType::get(tile_info.original_shape,
                                          result_storage_type),
-             result.UnwrapTensor(), tile_op.getResult(), offsets)
+             result.UnwrapTensor(), parent_base_ptr, tile_info.offsets,
+             tile_info.strides, tile_info.minor_to_major_layout)
             .getResult());
   }
 
