@@ -2208,6 +2208,8 @@ absl::Status VerifyHloStructure(HloModule* module) {
   // mismatched operand.
   for (const HloComputation* computation : module->computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
+      // LOG(INFO) << "PKK:: Verifying instruction: " <<
+      // instruction->ToString();
       for (int i = 0; i < instruction->operand_count(); ++i) {
         const HloInstruction* operand = instruction->operand(i);
         if (operand == nullptr) {
