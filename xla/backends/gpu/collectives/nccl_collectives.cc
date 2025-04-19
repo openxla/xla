@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/communicator_telemetry.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/global_device_id.h"
@@ -68,7 +69,14 @@ limitations under the License.
 namespace xla::gpu {
 
 static ncclComm_t Cast(const Communicator* comm) {
-  auto* nccl_communicator = tsl::down_cast<const NcclCommunicator*>(comm);
+  const NcclCommunicator* nccl_communicator = nullptr;
+  auto* telemetry_comm = tsl::down_cast<const CommunicatorTelemetry*>(comm);
+  if (telemetry_comm != nullptr) {
+    nccl_communicator = tsl::down_cast<const NcclCommunicator*>(
+        telemetry_comm->GetCommunicator());
+  } else {
+    nccl_communicator = tsl::down_cast<const NcclCommunicator*>(comm);
+  }
   CHECK(nccl_communicator != nullptr) << "Unsupported XLA communicator";
   return nccl_communicator->comm();
 }
@@ -166,7 +174,8 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
   TF_RETURN_IF_ERROR(GroupEnd());
 
   for (ncclComm_t comm_handle : comm_handles) {
-    comms.emplace_back(std::make_unique<NcclCommunicator>(comm_handle));
+    comms.emplace_back(std::make_unique<CommunicatorTelemetry>(
+        std::make_unique<NcclCommunicator>(comm_handle)));
   }
 
   return comms;
@@ -214,8 +223,8 @@ NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
   std::vector<std::unique_ptr<Communicator>> split_comms;
   split_comms.reserve(split_comms_handles.size());
   for (size_t i = 0; i < split_comms_handles.size(); ++i) {
-    split_comms.emplace_back(
-        std::make_unique<NcclCommunicator>(split_comms_handles[i]));
+    split_comms.emplace_back(std::make_unique<CommunicatorTelemetry>(
+        std::make_unique<NcclCommunicator>(split_comms_handles[i])));
   }
   return split_comms;
 #else
