@@ -408,7 +408,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:logging",
         "//xla/tsl/util:safe_reinterpret_cast",
-        "@tsl//tsl/platform:mutex",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
     ],
