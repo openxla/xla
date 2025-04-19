@@ -46,6 +46,13 @@ __global__ void AddI32Ptrs3(Ptrs3<int32_t> ptrs) {
   int index = threadIdx.x + blockIdx.x * blockDim.x;
   ptrs.c[index] = ptrs.a[index] + ptrs.b[index];
 }
+
+__global__ void CopyKernel(const float* src, float* dst, int n) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    dst[idx] = src[idx];
+  }
+}
 }
 
 void* GetAddI32Kernel() { return reinterpret_cast<void*>(&AddI32); }
@@ -55,6 +62,8 @@ void* GetMulI32Kernel() { return reinterpret_cast<void*>(&MulI32); }
 void* GetIncAndCmpKernel() { return reinterpret_cast<void*>(&IncAndCmp); }
 
 void* GetAddI32Ptrs3Kernel() { return reinterpret_cast<void*>(&AddI32Ptrs3); }
+
+void* GetCopyKernel() { return reinterpret_cast<void*>(&CopyKernel); }
 
 }  // namespace internal
 

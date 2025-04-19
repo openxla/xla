@@ -164,7 +164,12 @@ TEST_F(GpuKernelTest, ArrayArgByValue) {
     )";
 
   MultiKernelLoaderSpec spec(/*arity=*/2);
-  spec.AddCudaPtxInMemory(copy_kernel, "copy_kernel");
+  if (executor_->GetPlatform()->id() ==
+      stream_executor::rocm::kROCmPlatformId) {
+    spec.AddInProcessSymbol(internal::GetCopyKernel(), "copy_kernel");
+  } else {
+    spec.AddCudaPtxInMemory(copy_kernel, "copy_kernel");
+  }
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor_->CreateStream());
   TF_ASSERT_OK_AND_ASSIGN(auto kernel, executor_->LoadKernel(spec));
