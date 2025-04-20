@@ -54,7 +54,8 @@ cc_library(
     hdrs = ["blocking_counter.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        ":mutex",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@xla//xla/tsl/platform:logging",
     ],
 )
@@ -182,12 +183,13 @@ cc_library(
     srcs = ["path.cc"],
     hdrs = ["path.h"],
     deps = [
-        ":mutex",
         ":scanner",
         ":str_util",
         ":strcat",
         ":stringpiece",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:types",
     ],
@@ -708,7 +710,8 @@ cc_library(
     srcs = ["random.cc"],
     hdrs = ["random.h"],
     deps = [
-        ":mutex",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
         "@xla//xla/tsl/platform:types",
     ],
 )
@@ -1165,10 +1168,11 @@ tsl_cc_test(
         ":blocking_counter",
         ":random",
         ":unbounded_work_queue",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:env_impl",
         "@xla//xla/tsl/platform:test",
     ],
 )
@@ -1201,8 +1205,8 @@ cc_library(
     name = "refcount",
     hdrs = ["refcount.h"],
     deps = [
-        ":mutex",
-        ":thread_annotations",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
         "@xla//xla/tsl/platform:logging",
     ],
 )
@@ -1322,11 +1326,13 @@ tsl_cc_test(
         "notap",  #TODO(b/245510532) : disabled due to flakiness.
     ],
     deps = [
-        ":mutex",
         ":platform_port",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:env_impl",
+        "@xla//xla/tsl/platform:env_time",
         "@xla//xla/tsl/platform:test",
     ],
 )
