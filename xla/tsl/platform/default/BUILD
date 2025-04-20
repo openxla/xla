@@ -156,6 +156,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
@@ -163,7 +164,6 @@ cc_library(
         "@tsl//tsl/platform:context",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
@@ -192,9 +192,10 @@ cc_library(
         ":env",
         "//xla/tsl/platform:logging",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:load_library",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -296,8 +297,8 @@ cc_library(
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -442,8 +443,9 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:thread_annotations",
     ],
     alwayslink = True,
 )
