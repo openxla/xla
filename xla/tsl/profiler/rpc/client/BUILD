@@ -195,8 +195,8 @@ cc_library(
         "//xla/tsl/profiler/utils:time_utils",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
     ],
 )
