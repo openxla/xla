@@ -48,7 +48,7 @@ void CoordinationServiceRpcHandler::SetAgentInstance(
 }
 
 void CoordinationServiceRpcHandler::SetServiceInstance(
-    CoordinationServiceInterface* service) {
+    CoordinationService* service) {
   absl::MutexLock l(&mu_);
   service_ = service;
 }
@@ -103,6 +103,7 @@ void CoordinationServiceRpcHandler::WaitForAllTasksAsync(
       request->source_task(), request->device_info(),
       [response, service = service_, done = std::move(done)](absl::Status s) {
         if (s.ok()) {
+          service->state_mu_.AssertHeld();
           *response->mutable_device_info() = service->ListClusterDevices();
         }
         done(s);
@@ -184,6 +185,22 @@ void CoordinationServiceRpcHandler::GetTaskStateAsync(
   }
   auto result = service_->GetTaskState(
       {request->source_task().begin(), request->source_task().end()});
+  absl::c_move(result, tsl::protobuf::RepeatedFieldBackInserter(
+                           response->mutable_task_state()));
+  done(absl::OkStatus());
+}
+
+void CoordinationServiceRpcHandler::GetJobStateAsync(
+    const tensorflow::GetJobStateRequest* request,
+    tensorflow::GetJobStateResponse* response, StatusCallback done) {
+  absl::ReaderMutexLock l(&mu_);
+  if (service_ == nullptr) {
+    done(MakeCoordinationError(
+        absl::InternalError("Coordination service is not enabled.")));
+    return;
+  }
+  std::vector<tensorflow::CoordinatedTaskStateInfo> result =
+      service_->GetJobState(request->job_name());
   absl::c_move(result, tsl::protobuf::RepeatedFieldBackInserter(
                            response->mutable_task_state()));
   done(absl::OkStatus());

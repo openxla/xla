@@ -1,4 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,15 +31,11 @@ cc_library(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=Transforms",
-            ],
-            "passes.h.inc",
-        ),
-    ],
+    compatible_with = get_compatible_with_portable(),
+    tbl_outs = {"passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=Transforms",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     visibility = ["//visibility:private"],
@@ -59,6 +57,7 @@ cc_library(
         "simplify_affine.cc",
         "simplify_arith.cc",
         "unswitch_loops.cc",
+        "vectorize_loads_stores.cc",
     ],
     hdrs = ["passes.h"],
     deps = [
@@ -97,6 +96,7 @@ cc_library(
         "@llvm-project//mlir:ComplexToLLVM",
         "@llvm-project//mlir:ControlFlowToLLVM",
         "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:GPUDialect",

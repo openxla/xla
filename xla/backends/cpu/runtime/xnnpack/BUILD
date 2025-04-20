@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -59,15 +59,10 @@ xla_cc_test(
         ":xnn_threadpool",
         "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest",
-        "@eigen_archive//:eigen3",
         "@pthreadpool",
     ],
 )
@@ -104,7 +99,6 @@ xla_cc_test(
     deps = [
         ":xnn_convolution_thunk",
         "//xla:error_spec",
-        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -123,10 +117,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@eigen_archive//:eigen3",
@@ -141,6 +132,7 @@ cc_library(
         ":xnn_fusion_thunk",
         ":xnn_interop",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:dot_lib",
         "//xla/backends/cpu/runtime:thunk",
@@ -162,9 +154,9 @@ xla_cc_test(
     srcs = ["xnn_dot_thunk_test.cc"],
     deps = [
         ":xnn_dot_thunk",
-        "//xla:executable_run_options",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_testlib",
@@ -172,10 +164,10 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -187,10 +179,6 @@ cc_library(
         ":xnn_interop",
         ":xnn_threadpool",
         "//xla:shape_util",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/runtime:dot_lib",
         "//xla/backends/cpu/runtime:object_pool",
         "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:thunk",
@@ -209,15 +197,11 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
         "@pthreadpool",
-        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -227,9 +211,9 @@ xla_cc_test(
     deps = [
         ":xnn_fusion_thunk",
         ":xnn_interop",
-        "//xla:executable_run_options",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_testlib",
@@ -238,7 +222,6 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@XNNPACK",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",

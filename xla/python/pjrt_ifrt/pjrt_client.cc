@@ -56,9 +56,11 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/client_impl_util.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -69,6 +71,7 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/topology.h"
 #include "xla/python/ifrt/tuple.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/basic_string_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
@@ -80,6 +83,8 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
@@ -554,11 +559,11 @@ absl::StatusOr<tsl::RCReference<Array>> MakeStringArrayFromHostBuffer(
           "kImmutableUntilTransferCompletes are not "
           "currently supported for making BasicStringArrays.");
     }
-    if (!llvm::isa<const SingleDeviceSharding>(sharding.get())) {
-      return absl::InvalidArgumentError(
-          absl::StrCat("Only SingleDeviceSharding is supported for making "
-                       "BasicStringArrays: got: ",
-                       sharding->DebugString()));
+    if (!sharding->IsFullyReplicated()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Only fully replicated shardings are supported for making "
+          "BasicStringArrays: got: ",
+          sharding->DebugString()));
     }
     return absl::OkStatus();
   }();
@@ -586,7 +591,7 @@ absl::StatusOr<tsl::RCReference<Array>> MakeStringArrayFromHostBuffer(
 
 absl::StatusOr<tsl::RCReference<Array>>
 AssembleStringArrayFromSingleDeviceStringArrays(
-    Shape shape, std::shared_ptr<const Sharding> sharding,
+    PjRtClient* client, Shape shape, std::shared_ptr<const Sharding> sharding,
     absl::Span<tsl::RCReference<Array>> arrays,
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
@@ -676,12 +681,10 @@ AssembleStringArrayFromSingleDeviceStringArrays(
           "All single device arrays must be BasicStringArrays");
     }
 
-    if (!llvm::isa<SingleDeviceSharding>(basic_string_array->sharding()) &&
-        (basic_string_array->sharding().devices()->size() != 1)) {
+    if (basic_string_array->sharding().devices()->size() != 1) {
       return absl::InvalidArgumentError(
           absl::StrFormat("All single device arrays must have single device "
-                          "sharding. got: %s "
-                          "for shard index: %d",
+                          "sharding. got: %s for shard index: %d",
                           basic_string_array->sharding().DebugString(), i));
     }
 
@@ -692,8 +695,8 @@ AssembleStringArrayFromSingleDeviceStringArrays(
         });
   }
 
-  return BasicStringArray::Create(arrays[0]->client(), std::move(shape),
-                                  std::move(sharding), buffers_future,
+  return BasicStringArray::Create(client, std::move(shape), std::move(sharding),
+                                  buffers_future,
                                   std::move(on_done_with_buffer));
 }
 
@@ -862,7 +865,7 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
   return LookupPjRtDevice(pjrt_device);
 }
 
-tsl::RCReference<DeviceList> PjRtClient::MakeDeviceList(
+DeviceListRef PjRtClient::MakeDeviceList(
     absl::Span<Device* const> devices) const {
   return xla::ifrt::BasicDeviceList::Create(devices);
 }
@@ -888,7 +891,9 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
     std::optional<absl::Span<const int64_t>> byte_strides,
     std::shared_ptr<const Sharding> sharding,
     Client::HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
+    std::function<void()> on_done_with_host_buffer,
+    tsl::RCReference<UserContext> user_context) {
+  // Currently the `user_context` parameter is ignored.
   DCHECK(this);
   if (dtype.kind() == DType::kString) {
     return MakeStringArrayFromHostBuffer(this, data, dtype, shape, byte_strides,
@@ -904,7 +909,14 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto primitive_type, ToPrimitiveType(dtype));
 
-  auto count = std::make_shared<std::atomic<int>>(sharding->devices()->size());
+  absl::Span<xla::ifrt::Device* const> ifrt_addressable_devices =
+      sharding->devices()->AddressableDeviceList()->devices();
+  auto count =
+      std::make_shared<std::atomic<int>>(ifrt_addressable_devices.size());
+  if (ifrt_addressable_devices.empty()) {
+    return InvalidArgument("Cannot copy array to non-addressable device: %s",
+                           sharding->devices()->DebugString());
+  }
   std::function<void()> on_done_with_host_buffer_per_device;
   if (on_done_with_host_buffer) {
     on_done_with_host_buffer_per_device =
@@ -919,8 +931,8 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
   }
 
   PjRtArray::PjRtBuffers buffers;
-  buffers.reserve(sharding->devices()->size());
-  for (xla::ifrt::Device* const device : sharding->devices()->devices()) {
+  buffers.reserve(ifrt_addressable_devices.size());
+  for (xla::ifrt::Device* const device : ifrt_addressable_devices) {
     std::unique_ptr<PjRtBuffer> buffer;
     // If the sharding has memory_kind specified, use a version of
     // `PjRtClient::BufferFromHostBuffer` that accepts `PjRtMemorySpace`.
@@ -940,8 +952,8 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
         return InvalidArgument(
             "Invalid memory kind: %s; available memory kinds: %s",
             *sharding->memory_kind().memory_kind(),
-            absl::StrJoin(sharding->devices()->devices().front()->Memories(),
-                          ", ", [](std::string* out, Memory* ms) {
+            absl::StrJoin(ifrt_addressable_devices.front()->Memories(), ", ",
+                          [](std::string* out, Memory* ms) {
                             absl::StrAppend(out, *ms->Kind().memory_kind());
                           }));
       }
@@ -952,10 +964,6 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
                       tensorflow::down_cast<PjRtMemory*>(memory)->pjrt_memory(),
                       /*device_layout=*/nullptr));
     } else {
-      if (!device->IsAddressable()) {
-        return InvalidArgument("Cannot copy array to non-addressable device %s",
-                               device->DebugString());
-      }
       TF_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
                           tensorflow::down_cast<PjRtDevice*>(device)
                               ->pjrt_device()
@@ -968,32 +976,83 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
     }
     buffers.push_back(std::move(buffer));
   }
+  auto layout = buffers.front()->layout();
   return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
-                           std::move(buffers));
+                           std::move(buffers), std::move(layout));
 }
 
-absl::StatusOr<tsl::RCReference<Array>>
-PjRtClient::AssembleArrayFromSingleDeviceArrays(
-    Shape shape, std::shared_ptr<const Sharding> sharding,
-    absl::Span<tsl::RCReference<Array>> arrays, ArrayCopySemantics semantics) {
-  DCHECK(this);
-  return AssembleArrayFromSingleDeviceArrays(
-      std::move(shape), std::move(sharding), arrays, semantics,
-      SingleDeviceShardSemantics::kAddressableShards);
+absl::StatusOr<std::vector<tsl::RCReference<Array>>>
+PjRtClient::MakeArraysFromHostBufferShards(
+    absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
+    HostBufferSemantics semantics, tsl::RCReference<UserContext> user_context) {
+  return ClientMakeArraysFromHostBufferShards(this, specs, semantics,
+                                              std::move(user_context));
 }
 
-absl::StatusOr<tsl::RCReference<Array>>
-PjRtClient::AssembleArrayFromSingleDeviceArrays(
-    Shape shape, std::shared_ptr<const Sharding> sharding,
-    absl::Span<tsl::RCReference<Array>> arrays,
-    ArrayCopySemantics array_copy_semantics,
-    SingleDeviceShardSemantics single_device_shard_semantics) {
+absl::StatusOr<std::vector<tsl::RCReference<Array>>>
+PjRtClient::MakeErrorArrays(const absl::Status& error,
+                            absl::Span<const ArraySpec> array_specs,
+                            tsl::RCReference<UserContext> user_context) {
+  if (error.ok()) {
+    return absl::InvalidArgumentError("Error status must not be OK");
+  }
   DCHECK(this);
-  DCHECK(!arrays.empty());
-  DType dtype = arrays[0]->dtype();
-  return AssembleArrayFromSingleDeviceArrays(
-      dtype, std::move(shape), std::move(sharding), arrays,
-      array_copy_semantics, single_device_shard_semantics);
+  std::vector<tsl::RCReference<Array>> arrays;
+  arrays.reserve(array_specs.size());
+  for (const auto& array_spec : array_specs) {
+    if (array_spec.dtype.kind() == DType::kString) {
+      TF_ASSIGN_OR_RETURN(
+          arrays.emplace_back(),
+          BasicStringArray::Create(this, array_spec.shape, array_spec.sharding,
+                                   Future<BasicStringArray::Buffers>(error),
+                                   /*on_done_with_buffer=*/[]() {}));
+      continue;
+    }
+
+    TF_ASSIGN_OR_RETURN(auto primitive_type, ToPrimitiveType(array_spec.dtype));
+    absl::Span<xla::ifrt::Device* const> ifrt_addressable_devices =
+        array_spec.sharding->devices()->AddressableDeviceList()->devices();
+    TF_ASSIGN_OR_RETURN(Shape shard_shape,
+                        array_spec.sharding->GetShardShape(array_spec.shape));
+    xla::Shape xla_shape =
+        xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+
+    PjRtArray::PjRtBuffers buffers;
+    buffers.reserve(ifrt_addressable_devices.size());
+    for (xla::ifrt::Device* const device : ifrt_addressable_devices) {
+      std::unique_ptr<PjRtBuffer> buffer;
+      // Find `PjRtMemorySpace` that is associated with the sharding's device
+      // and matches the sharding's memory_kind.
+      Memory* memory = nullptr;
+      for (Memory* ms : device->Memories()) {
+        if (ms->Kind() == array_spec.sharding->memory_kind()) {
+          memory = ms;
+          break;
+        }
+      }
+      if (memory == nullptr) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid memory kind: %s; available memory kinds: %s",
+            *array_spec.sharding->memory_kind().memory_kind(),
+            absl::StrJoin(ifrt_addressable_devices.front()->Memories(), ", ",
+                          [](std::string* out, Memory* ms) {
+                            absl::StrAppend(out, *ms->Kind().memory_kind());
+                          })));
+      }
+      TF_ASSIGN_OR_RETURN(
+          buffers.emplace_back(),
+          pjrt_client_->CreateErrorBuffer(
+              error, xla_shape,
+              tensorflow::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
+    }
+    auto layout = buffers.front()->layout();
+    TF_ASSIGN_OR_RETURN(
+        arrays.emplace_back(),
+        PjRtArray::Create(this, array_spec.dtype, std::move(shard_shape),
+                          array_spec.sharding, std::move(buffers),
+                          std::move(layout)));
+  }
+  return arrays;
 }
 
 absl::StatusOr<tsl::RCReference<Array>>
@@ -1003,7 +1062,8 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
   DCHECK(this);
-  if (llvm::isa<const SingleDeviceSharding>(sharding.get())) {
+  if (!arrays.empty() &&
+      llvm::isa<const SingleDeviceSharding>(sharding.get())) {
     // Assemble with SingleDeviceSharding is No-op.
     if (arrays.size() != 1) {
       return InvalidArgument(
@@ -1012,9 +1072,10 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
           arrays.size());
     }
     return arrays[0];
-  } else if (!llvm::isa<const OpaqueSharding, const ConcreteSharding,
-                        const ConcreteEvenSharding, const ShardingParamSharding,
-                        const HloSharding>(sharding.get())) {
+  } else if (!llvm::isa<const SingleDeviceSharding, const OpaqueSharding,
+                        const ConcreteSharding, const ConcreteEvenSharding,
+                        const ShardingParamSharding, const HloSharding>(
+                 sharding.get())) {
     return InvalidArgument(
         "Only SingleDeviceSharding, OpaqueSharding, ConcreteSharding, "
         "ConcreteEvenSharding, ShardingParamSharding, HloSharding are "
@@ -1036,7 +1097,7 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
   }
   if (dtype.kind() == DType::kString) {
     return AssembleStringArrayFromSingleDeviceStringArrays(
-        shape, sharding, arrays, array_copy_semantics,
+        this, shape, sharding, arrays, array_copy_semantics,
         single_device_shard_semantics);
   }
   PjRtArray::PjRtBuffers buffers;
@@ -1074,14 +1135,28 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
         break;
     }
   }
+  // TODO(yashkatariya): Remove the following logic once layout is plumbed
+  // through.
+  std::shared_ptr<const PjRtLayout> layout;
+  if (dtype.kind() == DType::kToken) {
+    layout = std::make_shared<PjRtLayout>(xla::Layout());
+  } else if (buffers.empty()) {
+    TF_ASSIGN_OR_RETURN(auto shard_shape, sharding->GetShardShape(shape));
+    TF_ASSIGN_OR_RETURN(layout,
+                        GetDefaultLayout(dtype, shard_shape.dims(),
+                                         sharding->devices()->devices().front(),
+                                         sharding->memory_kind()));
+  } else {
+    layout = buffers.front()->layout();
+  }
   return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
-                           std::move(buffers));
+                           std::move(buffers), std::move(layout));
 }
 
 absl::StatusOr<std::vector<tsl::RCReference<Array>>> PjRtClient::CopyArrays(
     absl::Span<tsl::RCReference<Array>> arrays,
-    std::optional<tsl::RCReference<DeviceList>> devices,
-    std::optional<MemoryKind> memory_kind, ArrayCopySemantics semantics) {
+    std::optional<DeviceListRef> devices, std::optional<MemoryKind> memory_kind,
+    ArrayCopySemantics semantics) {
   if (arrays.empty()) {
     return std::vector<tsl::RCReference<Array>>();
   }
@@ -1137,7 +1212,7 @@ absl::StatusOr<tsl::RCReference<Tuple>> PjRtClient::MakeTuple(
 }
 
 absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
-    const tsl::RCReference<xla::ifrt::DeviceList>& devices) const {
+    const xla::ifrt::DeviceListRef& devices) const {
   // TODO(parkers): Consider constructing a sub-slice topology based on the
   // provided devices.
   TF_ASSIGN_OR_RETURN(auto topology, pjrt_client_->GetTopologyDescription());

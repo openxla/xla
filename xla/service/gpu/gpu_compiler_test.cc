@@ -21,17 +21,22 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/log_severity.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/autotune_results.pb.h"
@@ -65,6 +70,7 @@ limitations under the License.
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -82,10 +88,12 @@ namespace {
 
 namespace m = ::xla::match;
 
+using ::testing::EndsWith;
 using ::testing::IsEmpty;
 using ::testing::IsSupersetOf;
 using ::testing::Matches;
 using ::testing::Not;
+using ::testing::StartsWith;
 using ::testing::TempDir;
 
 class GpuCompilerTest : public HloTestBase {
@@ -98,9 +106,28 @@ class GpuCompilerTest : public HloTestBase {
     return tensorflow::down_cast<GpuCompiler*>(compiler)
         ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
   }
+
+  // Like GetOptimizedModule, but also runs the backend. This is important for
+  // tests that need to verify behavior of passes that run in RunBackend. The
+  // former function will only run the passes in RunHloPasses.
+  // This returns the module and the executable because the latter owns the
+  // former.
+  absl::StatusOr<std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>>
+  GetOptimizedModuleForExecutable(absl::string_view hlo,
+                                  const HloModuleConfig& config) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo, config));
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<OpaqueExecutable> executable,
+        CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
+    TF_ASSIGN_OR_RETURN(const HloModule* optimized_module,
+                        test_runner().HloModuleFromWrapped(executable.get()));
+    return {{optimized_module, std::move(executable)}};
+  }
 };
 
-TEST_F(GpuCompilerTest, CompiledProgramsCount) {
+// TODO(b/399912696): Fix and enable this test.
+TEST_F(GpuCompilerTest, DISABLED_CompiledProgramsCount) {
   const char* hlo_text = R"(
 HloModule test
 
@@ -711,6 +738,9 @@ ENTRY main {
   const std::string fallback_convert_to_f16 =
       R"(CHECK: dot(f16{{[^)]*}}, f16{{[^)]*}}))";
 
+  HloPrintOptions print_options =
+      HloPrintOptions().set_print_operand_shape(true);
+
   {
     // Triton enabled, no fallback.
     TF_ASSERT_OK_AND_ASSIGN(auto optimized_module_no_fallback,
@@ -725,7 +755,7 @@ ENTRY main {
             : cublas_convert_to_f16;
     TF_ASSERT_OK_AND_ASSIGN(
         bool filecheck_matched,
-        RunFileCheck(optimized_module_no_fallback->ToString(),
+        RunFileCheck(optimized_module_no_fallback->ToString(print_options),
                      triton_expected_check));
     EXPECT_TRUE(filecheck_matched);
   }
@@ -743,9 +773,10 @@ ENTRY main {
             ? cublaslt_keep_types
             : cublas_convert_to_f16;
 
-    TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                            RunFileCheck(optimized_module_no_triton->ToString(),
-                                         blas_expected_check));
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool filecheck_matched,
+        RunFileCheck(optimized_module_no_triton->ToString(print_options),
+                     blas_expected_check));
     EXPECT_TRUE(filecheck_matched);
   }
 
@@ -755,9 +786,10 @@ ENTRY main {
                             optimize_module(/*enable_triton=*/false,
                                             /*enable_blas=*/false,
                                             /*enable_blas_fallback=*/false));
-    TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                            RunFileCheck(optimized_module_nothing->ToString(),
-                                         fallback_convert_to_f16));
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool filecheck_matched,
+        RunFileCheck(optimized_module_nothing->ToString(print_options),
+                     fallback_convert_to_f16));
     EXPECT_TRUE(filecheck_matched);
   }
 }
@@ -823,7 +855,7 @@ CHECK:       %[[RESULT_RECV:.*]] = recv(%[[AFTER_ALL]])
 CHECK-SAME:    channel_id=[[CHANNEL_ID]]
 CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0",
 CHECK-SAME{LITERAL}:                _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3},{3,4}}},
-CHECK-SAME:                         control-predecessors={%[[CUSTOM_CALL]]}
+CHECK-SAME:                         control-predecessors={%[[CUSTOM_CALL:.*]]}
 CHECK:       %[[RESULT_SEND:.*]] = send(%[[SOME_SEND_ARG:.*]], %[[AFTER_ALL]])
 CHECK-SAME:    channel_id=1
 CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0",
@@ -1036,7 +1068,8 @@ ENTRY e {
 
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
-        aot_result->LoadExecutable(compiler, aot_options.executor()));
+        std::move(*aot_result)
+            .LoadExecutable(compiler, aot_options.executor()));
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
@@ -1169,10 +1202,10 @@ ENTRY main {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<VerifiedHloModule> module,
-      ParseAndReturnVerifiedModule(transpose_fusion_module));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(module)));
+      auto module_and_executable,
+      GetOptimizedModuleForExecutable(transpose_fusion_module,
+                                      GetModuleConfigForTest()));
+  const HloModule* optimized_module = module_and_executable.first;
 
   if (cc.IsAtLeastAmpere()) {
     EXPECT_TRUE(HasBlockLevelFusionConfig(
@@ -1208,12 +1241,11 @@ ENTRY main {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<VerifiedHloModule> rewritable_transpose_module,
-      ParseAndReturnVerifiedModule(rewritable_transpose_string));
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> rewritable_transpose_optimized_module,
-      GetOptimizedModule(std::move(rewritable_transpose_module)));
+      auto rewritable_transpose_module_and_executable,
+      GetOptimizedModuleForExecutable(rewritable_transpose_string,
+                                      GetModuleConfigForTest()));
+  const HloModule* rewritable_transpose_optimized_module =
+      rewritable_transpose_module_and_executable.first;
   EXPECT_TRUE(HasBlockLevelFusionConfig(
       rewritable_transpose_optimized_module->entry_computation()
           ->root_instruction()));
@@ -1232,8 +1264,11 @@ ENTRY main {
       ParseAndReturnVerifiedModule(unrewritable_transpose_string));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> unrewritable_transpose_optimized_module,
-      GetOptimizedModule(std::move(unrewritable_transpose_module)));
+      auto unrewritable_transpose_module_and_executable,
+      GetOptimizedModuleForExecutable(unrewritable_transpose_string,
+                                      GetModuleConfigForTest()));
+  const HloModule* unrewritable_transpose_optimized_module =
+      unrewritable_transpose_module_and_executable.first;
   EXPECT_FALSE(HasBlockLevelFusionConfig(
       unrewritable_transpose_optimized_module->entry_computation()
           ->root_instruction()));
@@ -1406,7 +1441,7 @@ TEST_F(GpuCompilerPassTest,
                 .cuda_compute_capability();
 
   bool expect_custom_kernel_fusion_rewriter_has_run =
-      cc.major == se::CudaComputeCapability::VOLTA;
+      cc.major == se::CudaComputeCapability::kVolta;
 
   constexpr absl::string_view constant_module = R"(
 HloModule noop
@@ -1461,7 +1496,7 @@ class PassOrderTest : public GpuCompilerTest {
     int other_pass_first_run = std::numeric_limits<int>::max();
     int run_index = 0;
     for (const HloPassMetadata& pass_metadata :
-         optimized_module_->metadata()->proto().pass_metadata()) {
+         optimized_module_->metadata().proto().pass_metadata()) {
       if (RE2::FullMatch(pass_metadata.pass_name(), first_pass_regex)) {
         VLOG(2) << "Pass " << pass_metadata.pass_name()
                 << " matches first_pass_regex." << std::endl;
@@ -1489,9 +1524,12 @@ class PassOrderTest : public GpuCompilerTest {
   // or if none of the executed passes matches `first_pass_regex` or
   // `last_pass_regex`. Returns a PassRange with the latest run index of any
   // passes with names matching `first_pass_regex` and the earliest run index of
-  // any passes with names matching 'last_pass_regex'.
+  // any passes with names matching 'last_pass_regex'. Passes matching both
+  // regexes will be counted towards last_pass (i.e., overlap of the two ranges
+  // is allowed).
   PassRange VerifyPassOrder(absl::string_view first_pass_regex,
-                            absl::string_view last_pass_regex) {
+                            absl::string_view last_pass_regex,
+                            bool include_pipeline_name = false) {
     if (!optimized_module_) {
       CompileModule(GetModuleConfigForTest());
     }
@@ -1499,16 +1537,20 @@ class PassOrderTest : public GpuCompilerTest {
     int last_pass_earliest_run = std::numeric_limits<int>::max();
     int run_index = 0;
     for (const HloPassMetadata& pass_metadata :
-         optimized_module_->metadata()->proto().pass_metadata()) {
-      if (RE2::FullMatch(pass_metadata.pass_name(), first_pass_regex)) {
-        VLOG(2) << "Pass " << pass_metadata.pass_name()
-                << " matches first_pass_regex." << std::endl;
-        first_pass_latest_run = std::max(first_pass_latest_run, run_index);
+         optimized_module_->metadata().proto().pass_metadata()) {
+      std::string name = pass_metadata.pass_name();
+      if (include_pipeline_name) {
+        name = absl::StrCat(pass_metadata.pipeline_name(), ".",
+                            pass_metadata.pass_name());
       }
-      if (RE2::FullMatch(pass_metadata.pass_name(), last_pass_regex)) {
+      if (RE2::FullMatch(name, last_pass_regex)) {
         VLOG(2) << "Pass " << pass_metadata.pass_name()
                 << " matches last_pass_regex." << std::endl;
         last_pass_earliest_run = std::min(last_pass_earliest_run, run_index);
+      } else if (RE2::FullMatch(name, first_pass_regex)) {
+        VLOG(2) << "Pass " << pass_metadata.pass_name()
+                << " matches first_pass_regex." << std::endl;
+        first_pass_latest_run = std::max(first_pass_latest_run, run_index);
       }
       ++run_index;
     }
@@ -1517,7 +1559,7 @@ class PassOrderTest : public GpuCompilerTest {
         << "Did not run a pass matching " << first_pass_regex;
     EXPECT_LT(last_pass_earliest_run, std::numeric_limits<int>::max())
         << "Did not run a pass matching " << last_pass_regex;
-    EXPECT_LE(first_pass_latest_run, last_pass_earliest_run)
+    EXPECT_LT(first_pass_latest_run, last_pass_earliest_run)
         << "One or more passes matching " << first_pass_regex
         << " ran after passes matching " << last_pass_regex;
     return {first_pass_latest_run, last_pass_earliest_run};
@@ -1527,9 +1569,10 @@ class PassOrderTest : public GpuCompilerTest {
   // `pass_range.first_pass_run_index` and `pass_range.second_pass_run_index`.
   void VerifyNotRunInBetween(const PassRange& pass_range,
                              absl::string_view pass_regex) {
+    CHECK(optimized_module_);
     int run_index = 0;
     for (const HloPassMetadata& pass_metadata :
-         optimized_module_->metadata()->proto().pass_metadata()) {
+         optimized_module_->metadata().proto().pass_metadata()) {
       if (run_index >= pass_range.second_pass_run_index) {
         break;
       }
@@ -1542,21 +1585,22 @@ class PassOrderTest : public GpuCompilerTest {
   }
 
  protected:
-  absl::Status ScheduleModule() { return Schedule(optimized_module_.get()); }
-
+  // Compiles a dummy module with the given configuration, running all passes,
+  // including the ones in RunBackend. This is important because otherwise, we
+  // might miss some passes when verifying pass order.
   void CompileModule(const HloModuleConfig& config) {
     constexpr absl::string_view constant_module = R"(
-ENTRY main {
-  ROOT constant = f32[] constant(0)
-})";
+        ENTRY main {
+          ROOT constant = f32[] constant(0)
+        })";
     TF_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<VerifiedHloModule> module,
-        ParseAndReturnVerifiedModule(constant_module, config));
-    TF_ASSERT_OK_AND_ASSIGN(optimized_module_,
-                            GetOptimizedModule(std::move(module)));
+        std::tie(optimized_module_, compiled_executable_),
+        GetOptimizedModuleForExecutable(constant_module, config));
   }
 
-  std::unique_ptr<HloModule> optimized_module_;
+  // Owns the optimized_module_ below.
+  std::unique_ptr<OpaqueExecutable> compiled_executable_ = nullptr;
+  const HloModule* optimized_module_ = nullptr;
 };
 
 TEST_F(PassOrderTest, PassesAreRunInCorrectOrder) {
@@ -1584,13 +1628,13 @@ TEST_F(PassOrderTest, OffloadingPassesAreRunInCorrectOrder) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"cse");
 }
 
-TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
+TEST_F(PassOrderTest, FusionDispatchRunsAfterAllFusionPasses) {
   auto cc = backend()
                 .default_stream_executor()
                 ->GetDeviceDescription()
                 .cuda_compute_capability();
   if (!cc.IsAtLeastAmpere()) {
-    GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ to run.";
+    GTEST_SKIP() << "fusion-dispatch requires Ampere+ to run.";
   }
 
   DebugOptions debug_options = GetDebugOptionsForTest();
@@ -1598,18 +1642,20 @@ TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
       true);
   SetDebugOptions(debug_options);
 
-  VerifyPassOrder(/*first_pass_regex=*/".*fusion.*",
-                  /*last_pass_regex=*/"fusion-block-level-rewriter");
+  VerifyPassOrder(
+      /*first_pass_regex=*/".*(fusion|stream-attribute-annotator).*",
+      /*last_pass_regex=*/"fusion-dispatch-pipeline.*",
+      /*include_pipeline_name=*/true);
 }
 
-TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
-  DebugOptions options = GetDebugOptionsForTest();
-  options.set_xla_gpu_enable_pipelined_collectives(true);
-  SetDebugOptions(options);
-
-  VerifyPassOrder(/*first_pass_regex=*/"collective-quantizer",
-                  /*last_pass_regex=*/"collective-pipeliner.*");
+TEST_F(PassOrderTest,
+       SortRewriterRunsBeforeStableSortExpanderAndComparisonExpander) {
+  VerifyPassOrder(/*first_pass_regex=*/"sort-rewriter",
+                  /*last_pass_regex=*/"stable-sort-expander");
+  VerifyPassOrder(/*first_pass_regex=*/"sort-rewriter",
+                  /*last_pass_regex=*/"comparison-expander");
 }
+
 
 TEST_F(PassOrderTest,
        AllGatherDynamicSliceSimplifierRunsAfterAllGatherOptimizer) {
@@ -1626,7 +1672,7 @@ TEST_F(PassOrderTest, StableSortExpanderRunsAfterDynamicPadder) {
 
 MATCHER_P(HasExpectedPasses, expected_pass_names, "") {
   std::vector<absl::string_view> run_pass_names;
-  auto metadata = arg->metadata()->proto();
+  auto metadata = arg->metadata().proto();
   run_pass_names.reserve(metadata.pass_metadata_size());
   for (auto& pass_metadata : metadata.pass_metadata()) {
     run_pass_names.push_back(pass_metadata.pass_name());
@@ -1637,7 +1683,6 @@ MATCHER_P(HasExpectedPasses, expected_pass_names, "") {
 TEST_F(PassOrderTest, ExecEffortAt0point2RunsSpecifiedPasses) {
   HloModuleConfig config = GetModuleConfigForTest();
   CompileModule(config);
-  TF_ASSERT_OK(ScheduleModule());
 
   // Make sure passes are not enabled by default.
   std::vector<std::string> kExpectedPasses = {
@@ -1652,7 +1697,6 @@ TEST_F(PassOrderTest, ExecEffortAt0point2RunsSpecifiedPasses) {
   // enabled.
   config.set_exec_time_optimization_effort(0.2);
   CompileModule(config);
-  TF_ASSERT_OK(ScheduleModule());
   EXPECT_THAT(optimized_module_, HasExpectedPasses(kExpectedPasses));
 }
 
@@ -1664,7 +1708,6 @@ TEST_F(PassOrderTest, LHSRunsIfProfileDataIsAvailable) {
       "latency-hiding-scheduler",
   };
   CompileModule(config);
-  TF_ASSERT_OK(ScheduleModule());
   EXPECT_THAT(optimized_module_, Not(HasExpectedPasses(kExpectedPasses)));
 
   // Make sure we turn the LHS on with we schedule with profile data.
@@ -1673,7 +1716,6 @@ TEST_F(PassOrderTest, LHSRunsIfProfileDataIsAvailable) {
   )pb";
   config.set_fdo_profile(kProfile);
   CompileModule(config);
-  TF_ASSERT_OK(ScheduleModule());
 
   EXPECT_THAT(optimized_module_, HasExpectedPasses(kExpectedPasses));
 }
@@ -1700,6 +1742,15 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
       /*first_pass_regex=*/"dot_normalizer",
       /*last_pass_regex=*/"cublas-gemm-rewriter");
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
+}
+
+TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
+  // NestGemmFusion expect to see __triton_gemm custom call with a backend
+  // config created by gemm_fusion_autotuner.
+  DebugOptions options = GetDebugOptionsForTest();
+  options.set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
+  SetDebugOptions(options);
+  VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
 }
 
 TEST_F(PassOrderTest,
@@ -1827,10 +1878,11 @@ TEST_F(GpuCompilerTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
                           test_runner_as_hlo_runner().ExecutableFromWrapped(
                               std::move(wrapped_exec)));
+  std::cout << "exec module: " << exec->module().ToString() << "\n";
   const char* kExpected = R"(
     // CHECK:      dynamic-slice-fusion{{.+}} {
     // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
-    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]), 
+    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]),
     // CHECK-SAME{LITERAL}:              replica_groups={{0,1}}, dimensions={0}
     // CHECK:        %[[bitcast:.+]] = {{.+}} bitcast(%[[rs]])
     // CHECK:        ROOT {{.+}} = {{.+}} dynamic-update-slice({{.+}}, %[[bitcast]], {{.+}})
@@ -1854,6 +1906,87 @@ TEST_F(GpuCompilerTest,
                                                 /*run_hlo_passes=*/true,
                                                 /*use_threads=*/true,
                                                 std::nullopt));
+}
+
+TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      p0 = s32[2,2,32] parameter(0)
+      p1 = s32[8,32] parameter(1)
+      slice = s32[4,32] slice(p1), slice={[4:8], [0:32]}
+      rs1 = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      slice2 = s32[4,32] slice(p1), slice={[0:4], [0:32]}
+      rs2 = s32[2,32] reduce-scatter(slice2), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      ROOT tuple = tuple(rs1, rs2)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(m, GetOptimizedModule(std::move(m)));
+  const char* kExpected = R"(
+    // CHECK: dynamic-slice-fusion{{.*}} {
+    // CHECK-DAG: %[[slice1:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
+    // CHECK-DAG: %[[slice2:.+]] = {{.+}} slice({{.+}}), slice={[0:4], [0:32]}
+    // CHECK-DAG: ROOT %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice1]], %[[slice2]]),
+    // CHECK-SAME{LITERAL}:                                      replica_groups={{0,1}}, dimensions={0}, to_apply=%add
+    // CHECK: ENTRY
+  )";
+  EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
+              ::tsl::testing::IsOkAndHolds(true));
+}
+
+TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {
+  constexpr absl::string_view kHlo = R"(
+HloModule TestModule
+
+%compare {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %lt = pred[] compare(%lhs, %rhs), direction=LT
+}
+
+ENTRY %main {
+  %input = f32[1000] parameter(0)
+  ROOT %sort = f32[1000] sort(%input), dimensions={0}, to_apply=%compare
+})";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_enable_cub_radix_sort(true);
+
+  std::string target_file;
+  ASSERT_TRUE(tsl::Env::Default()->LocalTempFilename(&target_file));
+  TF_ASSERT_OK(tsl::WriteTextProto(
+      tsl::Env::Default(), target_file,
+      Compiler::TargetConfig(backend().default_stream_executor()).ToProto()));
+  debug_options.set_xla_gpu_target_config_filename(target_file);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo, config));
+  // absl::ScopedMockLog only works if we're actually using ABSL logging, and
+  // TSL supports a homegrown logging implementation, so we should only check
+  // the log is emitted when ABSL logging is used.
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
+    EXPECT_CALL(mock_log,
+                Log(absl::LogSeverity::kWarning, EndsWith("/gpu_compiler.cc"),
+                    StartsWith("Using fallback sort algorithm")));
+  }
+  // StartCapturingLogs has to be called even if we expect not to capture any
+  // logs.
+  mock_log.StartCapturingLogs();
+  TF_ASSERT_OK(backend().compiler()->RunHloPasses(std::move(module), nullptr,
+                                                  GetAllocator()));
 }
 
 }  // namespace

@@ -85,6 +85,7 @@ limitations under the License.
 #include "mlir/Transforms/InliningUtils.h"
 #include "stablehlo/dialect/AssemblyFormat.h"
 #include "stablehlo/dialect/Base.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/dialect/TypeInference.h"
 #include "utils/convert_op_folder.h"
 #include "utils/hlo_utils.h"
@@ -1292,10 +1293,6 @@ LogicalResult SparseDotOp::verify() {
   return success();
 }
 
-// ===----------------------------------------------------------------------===//
-// ExpOp
-//===----------------------------------------------------------------------===//
-
 LogicalResult ResultAccuracyAttr::verify(
     ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError, APFloat atol,
     APFloat rtol, int64_t ulps, ResultAccuracyModeAttr mode) {
@@ -1304,13 +1301,158 @@ LogicalResult ResultAccuracyAttr::verify(
       stringifyResultAccuracyMode(mode.getValue()));
 }
 
+// ===---------------------------------------------------------------------===//
+// CbrtOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CbrtOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// CosineOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CosineOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// ExpOp
+//===----------------------------------------------------------------------===//
+
 LogicalResult ExpOp::verify() {
   if (auto attr = getResultAccuracyAttr()) {
-    if (failed(ResultAccuracyAttr::verify([&] { return emitError(); },
-                                          attr.getAtol(), attr.getRtol(),
-                                          attr.getUlps(), attr.getMode()))) {
-      return failure();
-    }
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// Expm1Op
+//===----------------------------------------------------------------------===//
+
+LogicalResult Expm1Op::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// LogOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LogOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// Log1pOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult Log1pOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// LogisticOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LogisticOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// RsqrtOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult RsqrtOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// SinOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SineOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// SqrtOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SqrtOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// TanOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult TanOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
+  }
+  return success();
+}
+
+// ===---------------------------------------------------------------------===//
+// TanhOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult TanhOp::verify() {
+  if (auto attr = getResultAccuracyAttr()) {
+    return ResultAccuracyAttr::verify([&] { return emitError(); },
+                                      attr.getAtol(), attr.getRtol(),
+                                      attr.getUlps(), attr.getMode());
   }
   return success();
 }
@@ -3331,6 +3473,19 @@ void DynamicReshapeOp::getCanonicalizationPatterns(RewritePatternSet& results,
 // DynamicSliceOp
 //===----------------------------------------------------------------------===//
 
+// Pattern: dynamic_slice(splat_cst, start, end) -> resized_splat_cst
+OpFoldResult DynamicSliceOp::fold(FoldAdaptor adaptor) {
+  auto operands = adaptor.getOperands();
+  if (!operands[0]) return nullptr;
+
+  auto cst_attr = mlir::dyn_cast<DenseElementsAttr>(operands[0]);
+  if (cst_attr && cst_attr.isSplat()) {
+    return cst_attr.resizeSplat(getResult().getType());
+  }
+
+  return nullptr;
+}
+
 namespace {
 // Canonicalizes DynamicSlice ops that can be replaced instead with Slice ops.
 // This canonicalization is applied the case when the `begin` input values are
@@ -3608,12 +3763,6 @@ LogicalResult RecvOp::verify() {
                            isDeviceToDevice, isHostToDevice,
                            getIsHostTransfer(), getResults());
 }
-
-//===----------------------------------------------------------------------===//
-// CopyOp
-//===----------------------------------------------------------------------===//
-
-OpFoldResult CopyOp::fold(FoldAdaptor) { return getOperand(); }
 
 //===----------------------------------------------------------------------===//
 // ReduceWindowOp
@@ -3919,11 +4068,47 @@ static LogicalResult tryFoldOutsideValuesReduction(
   return success();
 }
 
+// Pattern: reduce(args...) ({ return cst1, ..., cstN }) -> cst1, ..., cstN
+static LogicalResult tryFoldEmptyBodyConstantInit(
+    ReduceOp reduceOp, SmallVectorImpl<OpFoldResult>& results) {
+  mlir::Block& bb = reduceOp.getBody().front();
+  if (bb.getOperations().size() > 1) {
+    return failure();
+  }
+
+  auto retOp = mlir::dyn_cast<ReturnOp>(bb.back());
+  if (!retOp) {
+    return failure();
+  }
+
+  for (auto [retOpArg, reduceOpResult] :
+       llvm::zip_equal(retOp.getResults(), reduceOp.getResults())) {
+    auto* cstOp = retOpArg.getDefiningOp();
+    if (!cstOp || !cstOp->hasTrait<mlir::OpTrait::ConstantLike>()) {
+      results.clear();
+      return failure();
+    }
+
+    DenseElementsAttr cstAttr;
+    if (!matchPattern(cstOp, m_Constant(&cstAttr))) {
+      results.clear();
+      return failure();
+    }
+
+    auto resultShapedType =
+        mlir::dyn_cast_or_null<ShapedType>(reduceOpResult.getType());
+    results.push_back(DenseElementsAttr::get(
+        resultShapedType, {cstAttr.getSplatValue<Attribute>()}));
+  }
+  return success();
+}
+
 LogicalResult ReduceOp::fold(FoldAdaptor /*adaptor*/,
                              SmallVectorImpl<OpFoldResult>& results) {
   if (succeeded(tryFoldZeroDimReduction(*this, results))) return success();
   if (succeeded(tryFoldOutsideValuesReduction(*this, results)))
     return success();
+  if (succeeded(tryFoldEmptyBodyConstantInit(*this, results))) return success();
   return failure();
 }
 
@@ -6126,7 +6311,7 @@ LogicalResult ScatterOp::fold(
   // these to be constant: just that we know the type.
   if (updateType == baseType && updateType.hasStaticShape() &&
       baseType.hasStaticShape() && index.isSplat() &&
-      index.getSplatValue<uint32_t>() == 0 &&
+      index.getSplatValue<APInt>().isZero() &&
       llvm::hasSingleElement(getUpdateComputation().front())) {
     foldResults.push_back(getUpdates()[0]);
     return success();
@@ -6379,7 +6564,8 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
     bodyReturnOp->eraseOperand(idx);
 
   WhileOp newWhileOp = rewriter.create<WhileOp>(
-      whileOp.getLoc(), bodyReturnOp->getOperandTypes(), newOperands);
+      whileOp.getLoc(), bodyReturnOp->getOperandTypes(), newOperands,
+      whileOp->getAttrs());
   newWhileOp.getBodyRegion(0).takeBody(whileOp.getBodyRegion(0));
   newWhileOp.getBodyRegion(1).takeBody(whileOp.getBodyRegion(1));
   for (auto results : llvm::zip(resultsToReplace, newWhileOp->getResults()))
@@ -6807,9 +6993,14 @@ Attribute RaggedDotDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
           {"dot_dimension_numbers", "lhs_ragged_dimensions",
            "rhs_group_dimensions"},
           {[&]() {
-             auto result = DotDimensionNumbersAttr::parse(parser, type);
-             if (!result) return ParseResult(failure());
-             dotDimensionNumbers = llvm::cast<DotDimensionNumbersAttr>(result);
+             Attribute attr;
+             if (failed(parser.parseAttribute(attr)))
+               return ParseResult(failure());
+             dotDimensionNumbers =
+                 llvm::dyn_cast<DotDimensionNumbersAttr>(attr);
+             if (!dotDimensionNumbers)
+               parser.emitError(parser.getCurrentLocation(),
+                                "expected #mhlo.dot attribute");
              return ParseResult(success());
            },
            [&]() { return parseDims(parser, lhsRaggedDimensions); },

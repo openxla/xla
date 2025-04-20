@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/platform_util.h"
+#include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
@@ -120,6 +121,7 @@ class GpuOptProvider : public CompiledOptProvider {
   //////////////////////////////////////////////////////////////////////////////
   void RegisterProviderPasses(HloModule& module) override {
     auto device_description = GetDeviceDescription(&module);
+    auto debug_config = module.config().debug_options();
     se::GpuComputeCapability gpu_compute_capability;
     if (device_description.ok()) {
       gpu_compute_capability = device_description->gpu_compute_capability();
@@ -150,6 +152,12 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::TransposeDimensionGrouper>();
     RegisterPass<gpu::WindowedEinsumHandler>();
     // go/keep-sorted end
+    if (debug_config.xla_gpu_experimental_collective_cse_distance_threshold() >
+        0) {
+      RegisterPass<ScheduleAwareCollectiveOpsCSE>(
+          debug_config.xla_gpu_experimental_collective_cse_distance_threshold(),
+          false);
+    }
   }
 
  private:
@@ -169,10 +177,10 @@ class GpuOptProvider : public CompiledOptProvider {
                         GetDeviceDescription(optimized_module));
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         PlatformUtil::GetPlatform(GetPlatformName()));
-    TF_ASSIGN_OR_RETURN(Compiler * compiler,
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
                         Compiler::GetForPlatform(platform));
 
-    auto* gpu_compiler = static_cast<gpu::GpuCompiler*>(compiler);
+    auto* gpu_compiler = static_cast<gpu::GpuCompiler*>(compiler.get());
     if (!optimized_module->has_schedule()) {
       TF_ASSIGN_OR_RETURN(gpu::ScheduleMetadata schedule_metadata,
                           gpu::ScheduleGpuModule(optimized_module,

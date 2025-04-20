@@ -1,5 +1,17 @@
+# Disable Bzlmod for now
+common --noenable_bzlmod
+
+# TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
+common --noincompatible_enable_cc_toolchain_resolution
+
 # Load the TensorFlow bazelrc
 import %workspace%/tensorflow.bazelrc
 import %workspace%/warnings.bazelrc
 
 try-import %workspace%/xla_configure.bazelrc
+
+# absl_nonnull, absl_nullable, and absl_nullability_unknown are not yet present
+# in the version of absl we are using.
+# This can be removed when the absl version used is bumped to commit 48f0f91 or
+# newer, likely after July 2025.
+common --copt=-Dabsl_nonnull='' --copt=-Dabsl_nullable='' --copt=-Dabsl_nullability_unknown=''

@@ -320,6 +320,9 @@ absl::Status AMDGPUTargetModuleLinker(
       fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
     }
   }
+  const int32_t kAbiVersion = 500;
+  module->addModuleFlag(llvm::Module::Error, "amdhsa_code_object_version",
+                        kAbiVersion);
 
   return absl::OkStatus();
 }
@@ -339,9 +342,7 @@ std::string MapGCNArchNameTokenToFeatureStr(const std::string& token,
   if (token == "sramecc+") {
     return "+sramecc";
   } else if (token == "sramecc-") {
-    if (gfx == "gfx90a" || gfx == "gfx940" || gfx == "gfx941" ||
-        gfx == "gfx942")
-      return "";
+    if (gfx == "gfx90a" || gfx == "gfx942") return "";
     return "-sramecc";
   } else if (token == "xnack+") {
     return "+xnack";

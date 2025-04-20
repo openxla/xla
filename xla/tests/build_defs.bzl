@@ -1,11 +1,20 @@
-"""Build rules for XLA testing."""
+"""Build rules for XLA testing. This file is only used for the OSS build."""
 
-load("//xla:xla.bzl", "xla_cc_test")
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "is_rocm_configured",
+)
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:plugin.bzl", "plugins")
+load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
+load("//xla/tsl/platform/default:build_config.bzl", "strict_cc_test")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "is_cuda_configured")
+
+visibility(DEFAULT_LOAD_VISIBILITY)
 
 # Possible backend values for the GPU family.
 NVIDIA_GPU_BACKENDS = [
@@ -191,9 +200,13 @@ def xla_test(
         backend_tags = {},
         backend_args = {},
         backend_kwargs = {},
-        linkstatic = True,
+        # Inside Google, we link statically to catch duplicate main() definitions.
+        # However, this increases the size of the test binary, which breaks Nvidia's build.
+        # Therefore we use dynamic linking outside Google.
+        linkstatic = False,
+        fail_if_no_test_linked = True,
         **kwargs):
-    """Generates cc_test targets for the given XLA backends.
+    """Generates strict_cc_test targets for the given XLA backends.
 
     This rule generates a cc_test target for one or more XLA backends. The arguments
     are identical to cc_test with two additions: 'backends' and 'backend_args'.
@@ -259,10 +272,11 @@ def xla_test(
       backend_args: A dict mapping backend name to list of additional args to
         use for that target.
       backend_kwargs: A dict mapping backend name to list of additional keyword
-        arguments to pass to native.cc_test. Only use for kwargs that don't have a
+        arguments to pass to strict_cc_test. Only use for kwargs that don't have a
         dedicated argument, like setting per-backend flaky or timeout attributes.
       linkstatic: Whether to link the test statically.
-      **kwargs: Additional keyword arguments to pass to native.cc_test.
+      fail_if_no_test_linked: Whether to fail if no test case is linked into the test.
+      **kwargs: Additional keyword arguments to pass to strict_cc_test.
     """
 
     test_names = []
@@ -303,8 +317,16 @@ def xla_test(
             ]
             if backend in NVIDIA_GPU_BACKENDS:
                 this_backend_tags += tf_gpu_tests_tags()
+                backend_deps += [
+                    "//xla/stream_executor/cuda:all_runtime",
+                    "//xla/stream_executor/cuda:stream_executor_cuda",
+                ]
             if backend in AMD_GPU_DEFAULT_BACKENDS:
                 this_backend_tags.append("gpu")
+                backend_deps += [
+                    "//xla/stream_executor/rocm:all_runtime",
+                    "//xla/stream_executor/rocm:stream_executor_rocm",
+                ]
             this_backend_copts.append("-DXLA_TEST_BACKEND_GPU=1")
 
             # TODO: b/382779188 - Remove this when all tests are migrated to PjRt.
@@ -342,10 +364,12 @@ def xla_test(
             deps = deps + backend_deps,
             data = data + this_backend_data,
             linkstatic = linkstatic,
+            fail_if_no_test_linked = fail_if_no_test_linked,
             **this_backend_kwargs
         )
-
-        test_names.append(test_name)
+        if ((backend in NVIDIA_GPU_BACKENDS and is_cuda_configured()) or
+            (backend in AMD_GPU_DEFAULT_BACKENDS and is_rocm_configured())):
+            test_names.append(test_name)
 
     # Notably, a test_suite with `tests = []` is not empty:
     # https://bazel.build/reference/be/general#test_suite_args and the default
@@ -371,14 +395,24 @@ def xla_test(
     if test_names:
         native.test_suite(name = name, tags = tags + ["manual"], tests = test_names)
     else:
-        native.cc_test(name = name, deps = ["@com_google_googletest//:gtest_main"], linkstatic = linkstatic)
+        strict_cc_test(
+            name = name,
+            deps = ["@com_google_googletest//:gtest_main"],
+            linkstatic = linkstatic,
+            # This test is deliberately empty. Its only purpose is to avoid
+            # creating an empty test suite, which would be a problem for
+            # --build_tag_filters (see above). Therefore we don't want to fail
+            # if no test case is linked in.
+            fail_if_no_test_linked = False,
+        )
 
 def xla_test_library(
         name,
         srcs,
         hdrs = [],
         deps = [],
-        backends = []):
+        backends = [],
+        **kwargs):
     """Generates cc_library targets for the given XLA backends.
 
     This rule forces the sources to be compiled for each backend so that the
@@ -412,6 +446,7 @@ def xla_test_library(
       backends: A list of backends to generate libraries for.
         Supported values: "cpu", "gpu". If this list is empty, the
         library will be generated for all supported backends.
+      **kwargs: Additional keyword arguments to pass to native.cc_library.
     """
 
     if not backends:
@@ -439,6 +474,7 @@ def xla_test_library(
             copts = ["-DXLA_TEST_BACKEND_%s=1" % backend.upper()] +
                     this_backend_copts,
             deps = deps + backend_deps,
+            **kwargs
         )
 
 def generate_backend_suites(backends = []):  # buildifier: disable=unnamed-macro

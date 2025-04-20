@@ -1,10 +1,8 @@
 # Tools and utilities that aid in XLA development and usage.
 
-load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("//xla:lit.bzl", "lit_test_suite")
-load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
+load("//xla:py_strict.bzl", "py_strict_binary", "py_strict_library")
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_binary",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -25,13 +23,6 @@ filegroup(
     visibility = ["//xla:internal"],
 )
 
-build_test(
-    name = "hex_floats_to_packed_literal_build_test",
-    targets = [
-        ":hex_floats_to_packed_literal",
-    ],
-)
-
 xla_cc_binary(
     name = "hex_floats_to_packed_literal",
     srcs = ["hex_floats_to_packed_literal.cc"],
@@ -40,18 +31,13 @@ xla_cc_binary(
         "//xla/tsl/lib/io:random_inputstream",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
-    ],
-)
-
-build_test(
-    name = "show_literal_build_test",
-    targets = [
-        ":show_literal",
     ],
 )
 
@@ -69,30 +55,18 @@ xla_cc_binary(
     ],
 )
 
-build_test(
-    name = "convert_computation_build_test",
-    targets = [
-        ":convert_computation",
-    ],
-)
-
 xla_cc_binary(
     name = "convert_computation",
     srcs = ["convert_computation.cc"],
     deps = [
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
-    ],
-)
-
-build_test(
-    name = "hlo_module_metadata_processor_build_test",
-    targets = [
-        ":hlo_module_metadata_processor",
     ],
 )
 
@@ -112,13 +86,6 @@ xla_cc_binary(
     ],
 )
 
-build_test(
-    name = "show_text_literal_build_test",
-    targets = [
-        ":show_text_literal",
-    ],
-)
-
 xla_cc_binary(
     name = "show_text_literal",
     srcs = ["show_text_literal.cc"],
@@ -131,43 +98,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
-    ],
-)
-
-xla_cc_binary(
-    name = "convert",
-    srcs = ["convert.cc"],
-    deps = [
-        "//xla/service:hlo_module_util",
-        "//xla/service:hlo_proto_util",
-        "//xla/tsl/util:command_line_flags",
-        "//xla/tsl/util:fixed_option_set_flag",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
-    ],
-)
-
-lit_test_suite(
-    name = "hlo_convert_tests",
-    srcs = [
-        "tests/convert_to_pbtxt.hlo",
-        "tests/convert_to_text.hlo",
-    ],
-    cfg = "//xla:lit.cfg.py",
-    data = [
-        "tests/convert_to_text.hlo.pb",
-    ],
-    tools = [
-        ":convert",
-        "@llvm-project//llvm:FileCheck",
-    ],
-)
-
-build_test(
-    name = "hlo_proto_to_json_build_test",
-    targets = [
-        ":hlo_proto_to_json",
     ],
 )
 
@@ -227,35 +157,11 @@ xla_cc_binary(
 )
 
 py_strict_library(
+    name = "generate_hlo_test_checks_lib",
+    srcs = ["generate_hlo_test_checks.py"],
+)
+
+py_strict_binary(
     name = "generate_hlo_test_checks",
     srcs = ["generate_hlo_test_checks.py"],
-    srcs_version = "PY3",
-)
-
-py_strict_test(
-    name = "generate_hlo_test_checks_test",
-    srcs = ["generate_hlo_test_checks_test.py"],
-    data = [
-        "generate_hlo_test_checks_test_input.hlo",
-        "generate_hlo_test_checks_test_output.hlo",
-        ":hlo-opt",
-    ],
-    python_version = "PY3",
-    deps = [
-        ":generate_hlo_test_checks",
-        "@absl_py//absl/testing:absltest",
-    ],
-)
-
-# Whereas `:generate_hlo_test_checks_test` checks that the test-generation tool
-# behaves as expected, this test verifies that the expected reference output
-# from that test is itself a passing test.
-lit_test_suite(
-    name = "generate_hlo_test_checks_meta_test",
-    srcs = ["generate_hlo_test_checks_test_output.hlo"],
-    cfg = "//xla:lit.cfg.py",
-    tools = [
-        "//xla/hlo/tools:hlo-opt",
-        "@llvm-project//llvm:FileCheck",
-    ],
 )

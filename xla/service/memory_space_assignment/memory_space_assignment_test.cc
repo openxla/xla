@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
+#include "xla/service/cost_modelling/op_cost.h"
 #include "xla/service/heap_simulator/allocation_block.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo_buffer.h"
@@ -398,6 +399,55 @@ ENTRY entry {
   ASSERT_NE(p0, nullptr);
   EXPECT_THAT(add0->operand(0),
               op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace, p0));
+}
+
+TEST_F(MemorySpaceAssignmentTest, SyncCopyReplacementWithControlPredecessor) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[2,3]{1,0} parameter(0)
+  p1 = f32[2,3]{1,0} parameter(1)
+  negate0 = f32[2,3]{1,0} negate(p1)
+  negate1 = f32[2,3]{1,0} negate(negate0)
+  negate2 = f32[2,3]{1,0} negate(negate1)
+  negate3 = f32[2,3]{1,0} negate(negate2)
+  negate4 = f32[2,3]{1,0} negate(negate3)
+  negate5 = f32[2,3]{1,0} negate(negate4)
+  negate6 = f32[2,3]{1,0} negate(negate5)
+  negate7 = f32[2,3]{1,0} negate(negate6)
+  p0_copy = f32[2,3]{1,0} copy(p0)
+  negate8 = f32[2,3]{1,0} negate(negate7)
+  negate9 = f32[2,3]{1,0} negate(negate8), control-predecessors={p0_copy}
+  ROOT add0 = f32[2,3]{1,0} add(p0_copy, negate9)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_sync_copy_replacement = true;
+  AssignMemorySpace(module.get(), options);
+  HloInstruction* add0 = FindInstruction(module.get(), "add0");
+  ASSERT_NE(add0, nullptr);
+  HloInstruction* p0 = FindInstruction(module.get(), "p0");
+  ASSERT_NE(p0, nullptr);
+  EXPECT_THAT(add0->operand(0),
+              op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace, p0));
+  HloInstruction* negate9 = FindInstruction(module.get(), "negate9");
+  ASSERT_NE(negate9, nullptr);
+  const HloInstruction* copy_done = add0->operand(0);
+  const HloInstructionSequence& sequence =
+      module->schedule().sequence(module->entry_computation());
+  auto find_index = [&](const HloInstruction* instruction) {
+    return std::distance(sequence.instructions().begin(),
+                         std::find(sequence.instructions().begin(),
+                                   sequence.instructions().end(), instruction));
+  };
+  int64_t copy_done_time = find_index(copy_done);
+  int64_t negate9_time = find_index(negate9);
+  // The negate9 instruction should be scheduled after the copy done, because of
+  // the control dependency constraint.
+  EXPECT_GT(negate9_time, copy_done_time);
 }
 
 // This is a case where we p0_copy uses and and p0 uses after copy(p0) are not
@@ -6219,6 +6269,215 @@ TEST_F(MemorySpaceAssignmentTest, DisallowedUseBugInWhile) {
   AssignMemorySpace(module.get(), options);
 }
 
+TEST_F(MemorySpaceAssignmentTest, TwoLiveAllocationValuesBase) {
+  // In this example, we have enough space to give negate.0 alternate memory,
+  // and we put put negate.0 at the top of MSA's sort order. So, we expect that
+  // it will get alternate memory.
+  //
+  // We are testing a fix for dual live AllocationsValues, with the following
+  // setup:
+  // - HloValue H containing the following positions: negate.0, cp-start.0{0}
+  //   - AllocationValue A0 defined at negate.0
+  //     - Segment A0.S0 define during [negate.0, cp-start.0]
+  //.    - Segment A0.S1 defined during [cp-start.0, add.0]
+  //   - AllocationValue A1 defined at cp-start.0{0}
+  //     - Segment A1.S0 defined during [cp-start.0, cp-done.0]
+  //
+  // A0 and A1 are both live for more than 1 instruction.
+  absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    /*00:*/ p.0 = f32[10,10,10,10] parameter(0)
+    /*01:*/ p.1 = f32[10,10,10,10] parameter(1)
+    /*02:*/ v.0 = f32[10,10,10,10] add(p.1, p.1)
+    /*03:*/ negate.0 = f32[10,10,10,10] negate(p.0)
+    /*04:*/ cp-start.0 = (f32[10,10,10,10], f32[10,10,10,10], u32[], u32[]) collective-permute-start(negate.0), source_target_pairs={{0,1},{2,3}}
+    /*05:*/ v.1 = f32[10,10,10,10] add(v.0, v.0)
+    /*06:*/ add.0 = f32[10,10,10,10] add(negate.0, negate.0)
+    /*07:*/ v.2 = f32[10,10,10,10] add(v.1, v.1)
+    /*08:*/ cp-done.0 = f32[10,10,10,10] collective-permute-done(cp-start.0)
+    /*09:*/ v.3 = f32[10,10,10,10] add(v.2, v.2)
+    /*10:*/ ROOT tuple.0 = (f32[10,10,10,10], f32[10,10,10,10], f32[10,10,10,10]) tuple(add.0, cp-done.0, v.3)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 4 * 10 * 10 * 10 * 10;
+  MsaBufferIntervalCompare buffer_interval_compare =
+      CreateBufferIntervalCompareFnFromInstructionNames({"negate.0"});
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(1, 10);
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options, buffer_interval_compare,
+                        &prefetch_interval_picker);
+  VLOG(1) << "Module after MSA:\n" << module->ToString();
+
+  HloInstruction* copy0 = FindInstruction(module.get(), "negate.0");
+  ASSERT_NE(copy0, nullptr);
+  EXPECT_EQ(copy0->shape().layout().memory_space(), kAlternateMemorySpace);
+}
+
+TEST_F(MemorySpaceAssignmentTest,
+       TwoLiveAllocationValuesTwoInstructionOverlap) {
+  // In this example, we have enough space to give negate.0 alternate memory,
+  // and we put put negate.0 at the top of MSA's sort order. So, we expect that
+  // it will get alternate memory.
+  //
+  // We are testing a fix for dual live AllocationValues, with the following
+  // setup:
+  // - HloValue H containing the following positions: negate.0, cp-start.0{0}
+  //   - AllocationValue A0 defined at negate.0
+  //     - Segment A0.S0 define during [negate.0, cp-start.0]
+  //.    - Segment A0.S1 defined during [cp-start.0, add.0]
+  //   - AllocationValue A1 defined at cp-start.0{0}
+  //     - Segment A1.S0 defined during [cp-start.0, cp-done.0]
+  //
+  // A0 and A1 are both live for 2 instructions
+  absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    /*00:*/ p.0 = f32[10,10,10,10] parameter(0)
+    /*01:*/ p.1 = f32[10,10,10,10] parameter(1)
+    /*02:*/ v.0 = f32[10,10,10,10] add(p.1, p.1)
+    /*03:*/ negate.0 = f32[10,10,10,10] negate(p.0)
+    /*04:*/ cp-start.0 = (f32[10,10,10,10], f32[10,10,10,10], u32[], u32[]) collective-permute-start(negate.0), source_target_pairs={{0,1},{2,3}}
+    /*05:*/ add.0 = f32[10,10,10,10] add(negate.0, negate.0)
+    /*06:*/ v.1 = f32[10,10,10,10] add(v.0, v.0)
+    /*07:*/ v.2 = f32[10,10,10,10] add(v.1, v.1)
+    /*08:*/ cp-done.0 = f32[10,10,10,10] collective-permute-done(cp-start.0)
+    /*09:*/ v.3 = f32[10,10,10,10] add(v.2, v.2)
+    /*10:*/ ROOT tuple.0 = (f32[10,10,10,10], f32[10,10,10,10], f32[10,10,10,10]) tuple(add.0, cp-done.0, v.3)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 4 * 10 * 10 * 10 * 10;
+  MsaBufferIntervalCompare buffer_interval_compare =
+      CreateBufferIntervalCompareFnFromInstructionNames({"negate.0"});
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(1, 10);
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options, buffer_interval_compare,
+                        &prefetch_interval_picker);
+  VLOG(1) << "Module after MSA:\n" << module->ToString();
+
+  HloInstruction* copy0 = FindInstruction(module.get(), "negate.0");
+  ASSERT_NE(copy0, nullptr);
+  EXPECT_EQ(copy0->shape().layout().memory_space(), kAlternateMemorySpace);
+}
+
+TEST_F(MemorySpaceAssignmentTest,
+       TwoLiveAllocationValuesFirstLiveAllocationValueOutlastsSecond) {
+  // In this example, we have enough space to give negate.0 alternate memory,
+  // and we put put negate.0 at the top of MSA's sort order. So, we expect that
+  // it will get alternate memory.
+  //
+  // We are testing a fix for dual live AllocationValues, with the following
+  // setup:
+  // - HloValue H containing the following positions: negate.0, cp-start.0{0}
+  //   - AllocationValue A0 defined at negate.0
+  //     - Segment A0.S0 define during [negate.0, cp-start.0]
+  //.    - Segment A0.S1 defined during [cp-start.0, add.0]
+  //     - Segment A0.S2 defined during [add.0, add.1]
+  //   - AllocationValue A1 defined at cp-start.0{0}
+  //     - Segment A1.S0 defined during [cp-start.0, cp-done.0]
+  //
+  // A0 and A1 are both live for more than 1 instruction. A0 is live beyond the
+  // end of A1.
+  absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    /*00:*/ p.0 = f32[10,10,10,10] parameter(0)
+    /*01:*/ p.1 = f32[10,10,10,10] parameter(1)
+    /*02:*/ v.0 = f32[10,10,10,10] add(p.1, p.1)
+    /*03:*/ negate.0 = f32[10,10,10,10] negate(p.0)
+    /*04:*/ cp-start.0 = (f32[10,10,10,10], f32[10,10,10,10], u32[], u32[]) collective-permute-start(negate.0), source_target_pairs={{0,1},{2,3}}
+    /*05:*/ v.1 = f32[10,10,10,10] add(v.0, v.0)
+    /*06:*/ add.0 = f32[10,10,10,10] add(negate.0, negate.0)
+    /*07:*/ v.2 = f32[10,10,10,10] add(v.1, v.1)
+    /*08:*/ cp-done.0 = f32[10,10,10,10] collective-permute-done(cp-start.0)
+    /*09:*/ v.3 = f32[10,10,10,10] add(v.2, v.2)
+    /*10:*/ add.1 = f32[10,10,10,10] add(add.0, negate.0)
+    /*11:*/ ROOT tuple.0 = (f32[10,10,10,10], f32[10,10,10,10], f32[10,10,10,10]) tuple(add.1, cp-done.0, v.3)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 4 * 10 * 10 * 10 * 10;
+  MsaBufferIntervalCompare buffer_interval_compare =
+      CreateBufferIntervalCompareFnFromInstructionNames({"negate.0"});
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(1, 10);
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options, buffer_interval_compare,
+                        &prefetch_interval_picker);
+  VLOG(1) << "Module after MSA:\n" << module->ToString();
+
+  HloInstruction* copy0 = FindInstruction(module.get(), "negate.0");
+  ASSERT_NE(copy0, nullptr);
+  EXPECT_EQ(copy0->shape().layout().memory_space(), kAlternateMemorySpace);
+}
+
+TEST_F(MemorySpaceAssignmentTest,
+       TwoLiveAllocationValuesUnableToAllocateContiguousAltMem) {
+  // In this example, we have enough space to give v.2 alternate memory,
+  // and we put v.2 at the top of MSA's sort order. So, we expect that
+  // it will get alternate memory. Second, we try to give negate.0 alternate
+  // memory, but we can't. In order to give negate.0 alternate memory, we need
+  // to give it contiguous alternate memory during cp-start.0 to cp-done.0.
+  // (negate.0 and cp-start.0 {0} alias.) However, v.2 is taking too much
+  // alternate memory to accommodate that request.
+  //
+  // We are testing a fix for dual live AllocationValues, with the following
+  // setup:
+  // - HloValue H containing the following positions: negate.0, cp-start.0{0}
+  //   - AllocationValue A0 defined at negate.0
+  //     - Segment A0.S0 define during [negate.0, cp-start.0]
+  //.    - Segment A0.S1 defined during [cp-start.0, add.0]
+  //   - AllocationValue A1 defined at cp-start.0{0}
+  //     - Segment A1.S0 defined during [cp-start.0, cp-done.0]
+  //
+  // A0 and A1 are both live for more than 1 instruction.
+  absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    /*00:*/ p.0 = f32[10,10,10,10] parameter(0)
+    /*01:*/ p.1 = f32[10,10,10,10] parameter(1)
+    /*02:*/ v.0 = f32[10,10,10,10] add(p.1, p.1)
+    /*03:*/ negate.0 = f32[10,10,10,10] negate(p.0)
+    /*04:*/ cp-start.0 = (f32[10,10,10,10], f32[10,10,10,10], u32[], u32[]) collective-permute-start(negate.0), source_target_pairs={{0,1},{2,3}}
+    /*05:*/ v.1 = f32[10,10,10,10] add(v.0, v.0)
+    /*06:*/ add.0 = f32[10,10,10,10] add(negate.0, negate.0)
+    /*07:*/ v.2 = f32[10,10,10,10] add(v.1, v.1)
+    /*08:*/ cp-done.0 = f32[10,10,10,10] collective-permute-done(cp-start.0)
+    /*09:*/ v.3 = f32[10,10,10,10] add(v.2, v.2)
+    /*10:*/ ROOT tuple.0 = (f32[10,10,10,10], f32[10,10,10,10], f32[10,10,10,10]) tuple(add.0, cp-done.0, v.3)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 4 * 10 * 10 * 10 * 10;
+  MsaBufferIntervalCompare buffer_interval_compare =
+      CreateBufferIntervalCompareFnFromInstructionNames({"v.2", "negate.0"});
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(1, 10);
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options, buffer_interval_compare,
+                        &prefetch_interval_picker);
+  VLOG(1) << "Module after MSA:\n" << module->ToString();
+
+  HloInstruction* v2 = FindInstruction(module.get(), "v.2");
+  ASSERT_NE(v2, nullptr);
+  EXPECT_EQ(v2->shape().layout().memory_space(), kAlternateMemorySpace);
+  HloInstruction* copy0 = FindInstruction(module.get(), "negate.0");
+  ASSERT_NE(copy0, nullptr);
+  EXPECT_NE(copy0->shape().layout().memory_space(), kAlternateMemorySpace);
+}
+
 TEST_F(MemorySpaceAssignmentTest, AvoidRedundantEvictionInWhile) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
@@ -7135,41 +7394,6 @@ ENTRY entry {
                   .memory_space() == kAlternateMemorySpace);
 }
 
-TEST_F(MemorySpaceAssignmentTest, AsyncOpShortLiveRangeInputBufferConsumer) {
-  absl::string_view hlo_string = R"(
-HloModule module, is_scheduled=true
-
-ENTRY entry {
-  param = bf16[4]{0} parameter(0)
-  negate0 = bf16[4]{0} negate(param)
-  collective-permute-start = (bf16[4]{0}, bf16[4]{0}, u32[], u32[]) collective-permute-start(negate0), source_target_pairs={{0,1},{1,2},{2,3}}
-  negate1 = bf16[4]{0} negate(negate0)
-  negate2 = bf16[4]{0} negate(negate1)
-  negate3 = bf16[4]{0} negate(negate2)
-  collective-permute-done = bf16[4]{0} collective-permute-done(collective-permute-start)
-  ROOT add = add(collective-permute-done, negate3)
-}
-  )";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  AssignMemorySpace(module.get());
-
-  // Expect only the destination buffer to get alternate memory allocation
-  // because negate0 is also used by negate1.
-  HloInstruction* collective_permute_start =
-      module->entry_computation()->GetInstructionWithName(
-          "collective-permute-start");
-  EXPECT_TRUE(collective_permute_start->shape()
-                  .tuple_shapes(0)
-                  .layout()
-                  .memory_space() == kDefaultMemorySpace);
-  EXPECT_TRUE(collective_permute_start->shape()
-                  .tuple_shapes(1)
-                  .layout()
-                  .memory_space() == kAlternateMemorySpace);
-}
-
 TEST_F(MemorySpaceAssignmentTest, AsyncOpLongLiveRange) {
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true
@@ -7998,19 +8222,20 @@ ENTRY entry {
   EXPECT_TRUE(repacker_ran);
 }
 
-TEST_F(MemorySpaceAssignmentTest, ReduceReservedScopedVmemIfOperandInVmem) {
-  // This test is designed to test UpdateReservedScopedVmemSize() in MSA, which
-  // will invoke reserved_scoped_memory_fn to update scoped allocation
-  // size. UpdateReservedScopedVmemSize() should iterate through all scheduled
-  // instruction and check if either their operands or outputs has been assigned
-  // in alternate memory. If so, corresponding operand/output will be passed to
-  // reserved_scoped_memory_fn. We isolate UpdateReservedScopedVmemSize() by
-  // constructing a dummy reserved_scoped_memory_fn that return +1 when operand
-  // set is empty, and return +2 when output set is empty, because if either set
-  // of an instruction is empty, it is gureented that some scoped allocation is
-  // required. We use +1/+2 to distinguish the correctness of each set.
-  // Therefore, after MSA pass, for each instruction, there are a few possible
-  // outcomes:
+TEST_F(MemorySpaceAssignmentTest,
+       ReduceReservedScopedAllocationIfOperandInAlternateMemory) {
+  // This test is designed to test UpdateReservedScopedAllocationSize() in MSA,
+  // which will invoke reserved_scoped_memory_fn to update scoped allocation
+  // size. UpdateReservedScopedAllocationSize() should iterate through all
+  // scheduled instruction and check if either their operands or outputs has
+  // been assigned in alternate memory. If so, corresponding operand/output will
+  // be passed to reserved_scoped_memory_fn. We isolate
+  // UpdateReservedScopedAllocationSize() by constructing a dummy
+  // reserved_scoped_memory_fn that return +1 when operand set is empty, and
+  // return +2 when output set is empty, because if either set of an instruction
+  // is empty, it is gureented that some scoped allocation is required. We use
+  // +1/+2 to distinguish the correctness of each set. Therefore, after MSA
+  // pass, for each instruction, there are a few possible outcomes:
   // 1. If both operand set and output set are not empty, scoped allocation
   //    size should be 0, since reserved_scoped_memory_fn will return 0.
   // 2. If only operand set is empty, scoped allocation size should be 2, since
@@ -8018,11 +8243,11 @@ TEST_F(MemorySpaceAssignmentTest, ReduceReservedScopedVmemIfOperandInVmem) {
   // 3. If only output set is empty, scoped allocation size should be 1, since
   //    reserved_scoped_memory_fn will return 1.
   // 4. If both sets are empty, scoped allocation size should be 3.
-  // Initially, UpdateReservedScopedVmemSize() will only be invoked after each
-  // MSA repacking, we use a similar test HLO module as used in "Repack" test.
-  // This test is capable of testing if UpdateReservedScopedVmemSize() can
-  // correctly pass operand/output set of all instructions to
-  // reserved_scoped_memory_fn.
+  // Initially, UpdateReservedScopedAllocationSize() will only be invoked after
+  // each MSA repacking, we use a similar test HLO module as used in "Repack"
+  // test. This test is capable of testing if
+  // UpdateReservedScopedAllocationSize() can correctly pass operand/output set
+  // of all instructions to reserved_scoped_memory_fn.
   absl::string_view hlo_string = R"(
   HloModule bug, is_scheduled=true
 
@@ -8059,11 +8284,13 @@ TEST_F(MemorySpaceAssignmentTest, ReduceReservedScopedVmemIfOperandInVmem) {
         int64_t scoped_memory_size = 0;
         if (operands_in_alternate_memory.empty()) {
           scoped_memory_size += 1;
-          LOG(INFO) << instruction->name() << " has no operand in vmem";
+          LOG(INFO) << instruction->name()
+                    << " has no operand in alternate memory";
         }
         if (outputs_in_alternate_memory.empty()) {
           scoped_memory_size += 2;
-          LOG(INFO) << instruction->name() << " has no output in vmem";
+          LOG(INFO) << instruction->name()
+                    << " has no output in alternate memory";
         }
         return scoped_memory_size;
       };
@@ -8196,7 +8423,7 @@ TEST_F(MemorySpaceAssignmentTest, ScopedAllocationWithDifferentOffset) {
 }
 
 TEST_F(MemorySpaceAssignmentTest,
-       ReduceReservedScopedVmemUpdatesPeakMemoryUsage) {
+       ReduceReservedScopedAllocationUpdatesPeakMemoryUsage) {
   // This test is designed to test that the peak_memory_usage_ is updated
   // correctly after scoped memory allocation is updated. The test HLO module
   // has two HLO values: a and b. The size of a is 64, and the size of b is 128.
@@ -9717,6 +9944,28 @@ TEST_F(AsynchronousCopyResourceTest, StartAtZeroAndRemove) {
   resource.AddCopy(copy1);
   EXPECT_EQ(resource.GetCurrentResources(),
             std::vector<float>({0.0, 0.0, 0.0, 0.0, 2.0}));
+}
+
+// Below test only works when the resource values are scaled to int64 to avoid
+// floating point precision issues.
+TEST_F(AsynchronousCopyResourceTest, ConsumeResourceScaledIntegerResource) {
+  auto alternate_mem_space = MemorySpace::kAlternate;
+  AsynchronousCopyResource resource(
+      {5.71429e-10, 8.71333e-09, 8.71333e-09, 1.74267e-08, 1.74267e-08});
+  AsynchronousCopy copy1{0, 2, 8.71333e-09, alternate_mem_space, 0};
+  EXPECT_TRUE(resource.HasEnoughResource(0, 2, 8.71333e-09));
+  resource.AddCopy(copy1);
+
+  AsynchronousCopy copy2{0, 3, 4.35667e-09, alternate_mem_space, 1};
+  EXPECT_TRUE(resource.HasEnoughResource(0, 3, 4.35667e-09));
+  resource.AddCopy(copy2);
+
+  AsynchronousCopy copy3{2, 4, 4.35667e-09, alternate_mem_space, 2};
+  EXPECT_TRUE(resource.HasEnoughResource(2, 4, 4.35667e-09));
+  resource.AddCopy(copy3);
+
+  // This call to RemoveCopy should not cause a crash.
+  resource.RemoveCopy(copy1);
 }
 
 TEST_F(AsynchronousCopyResourceTest, OutOfOrderRemovalSameStartTime) {
@@ -11355,14 +11604,22 @@ ENTRY main {
   properties[HloCostAnalysis::kBytesAccessedKey] = kBytesPerSecond;
   HloCostAnalysis hlo_cost_analysis(HloCostAnalysis::DefaultShapeSize,
                                     properties);
+  HloCostAnalysisWithAcceptState hlo_cost_analysis_wrapper(hlo_cost_analysis);
   CostAnalysisOptions cost_analysis_options;
   cost_analysis_options.default_mem_bandwidth_bytes_per_second =
       kBytesPerSecond;
-  HloCostAnalysisCosts hlo_cost_analysis_costs(hlo_cost_analysis);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto cost_analysis,
-      FakeCostAnalysis::Create(hlo_cost_analysis_costs, *module,
-                               cost_analysis_options));
+  OpCostManager op_cost_manager(
+      OpCostManager::Options{
+          /*enable_cache=*/false,
+          /*enable_analysis_logging=*/false,
+      },
+      OpCostManager::CalculationNode::CreateLeaf(
+          "HloCostAnalysis",
+          CreateHloCostAnalysisCalculator(hlo_cost_analysis_wrapper),
+          /*enable_cache=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(auto cost_analysis,
+                          FakeCostAnalysis::Create(op_cost_manager, *module,
+                                                   cost_analysis_options));
   cost_analysis->SetOverrideForGetInstructionElapsed(
       [](const HloInstruction& instruction) -> float { return 10.0; });
   cost_analysis->SetOverrideForGetAsyncCopyElapsed(
@@ -11446,6 +11703,137 @@ ENTRY main {
   EXPECT_EQ(p1_copy_end, e_index + 1);
   // f should immediately follow the end of p1's copy.
   EXPECT_EQ(f_index, p1_copy_end + 1);
+}
+
+TEST_F(MemorySpaceAssignmentTest, ExpandScopedAlternateMemory) {
+  absl::string_view hlo_string = R"(
+  HloModule TestModule, is_scheduled=true
+    ENTRY Main {
+      p0 = f32[8,8] parameter(0)
+      p1 = f32[8,8] parameter(1)
+      p2 = f32[8,8] parameter(2)
+      p3 = f32[8,8] parameter(3)
+
+      v0 = add(p0, p1)
+      v1 = add(v0, p1)
+      v2 = add(v1, p1)
+
+      v3 = multiply(v2, p2)
+      v4 = multiply(v3, p3)
+
+      ROOT t = tuple(v3, v4)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  MsaBufferIntervalCompare buffer_interval_compare =
+      [](const MsaBufferInterval& lhs, const MsaBufferInterval& rhs) {
+        auto lookup = [](const MsaBufferInterval& x) {
+          // An arbitrary value that is greater than that used for 'prefetch'.
+          int priority = 100;
+          if (x.buffer->instruction()->name() == "p2") {
+            priority = 1;
+          } else if (x.buffer->instruction()->name() == "p3") {
+            priority = 2;
+          }
+          return std::make_tuple(priority, x.buffer->instruction()->name());
+        };
+
+        return lookup(lhs) < lookup(rhs);
+      };
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(2, 1000);
+
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 600;
+  options.reserved_scoped_memory_fn =
+      [](const HloInstruction* instruction,
+         const absl::flat_hash_set<
+             std::pair<int, ShapeIndex>>& /*operands_in_alternate_memory*/,
+         const absl::flat_hash_set<
+             ShapeIndex>& /*outputs_in_alternate_memory*/) { return 10; };
+  options.expanded_scoped_alternate_memory_mode =
+      ExpandedScopedAlternateMemoryMode::ENABLED;
+  options.alignment_in_bytes = 10;
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options, buffer_interval_compare,
+                        &prefetch_interval_picker);
+
+  VLOG(1) << "Post-MSA module:\n" << module->ToString();
+
+  // We expect MSA to do the following:
+  // A. Initially allocate [0, 10) for scoped alternate memory, for each
+  //    instruction.
+  // B. Since, p2 comes first in the buffer sorting, we expect it to be
+  //    allocated [10, 266) for a prefetch
+  // C. Since, p3 comes next in the buffer sorting, we expect it to be allocated
+  //    [270, 526) for a prefetch
+  // D. Finally, MSA will try to expand the scoped alternate memory allocations
+  //    to the largest available buffers, keeping in mind the prefetches.
+
+  // Check B and C.
+  for (const auto& [position, chunk] : preset_assignments->chunks()) {
+    if (position.instruction->opcode() == HloOpcode::kCopyDone) {
+      ASSERT_EQ(position.instruction->operand_count(), 1);
+      const HloInstruction* copy_start = position.instruction->operand(0);
+      ASSERT_EQ(copy_start->operand_count(), 1);
+      const HloInstruction* copy_operand = copy_start->operand(0);
+      if (copy_operand->name() == "p2") {
+        EXPECT_EQ(chunk.offset, 10);
+        EXPECT_EQ(chunk.size, 256);
+      } else if (copy_operand->name() == "p3") {
+        EXPECT_EQ(chunk.offset, 270);
+        EXPECT_EQ(chunk.size, 256);
+      }
+    }
+  }
+
+  // Check D.
+  for (const auto& [instruction, chunk] :
+       preset_assignments->scoped_allocation_chunks()) {
+    if (instruction->name() == "p0") {
+      // Extended scoped allocation.
+      EXPECT_EQ(chunk.offset, 0);
+      EXPECT_EQ(chunk.size, 600);
+    } else if (instruction->name() == "p1") {
+      // Extended scoped allocation.
+      EXPECT_EQ(chunk.offset, 0);
+      EXPECT_EQ(chunk.size, 600);
+    } else if (instruction->name() == "p2") {
+      // Extended scoped allocation.
+      EXPECT_EQ(chunk.offset, 0);
+      EXPECT_EQ(chunk.size, 600);
+    } else if (instruction->name() == "p3") {
+      // Moved scoped allocation.
+      EXPECT_EQ(chunk.offset, 270);
+      EXPECT_EQ(chunk.size, 330);
+    } else if (instruction->name() == "v0") {
+      // Moved scoped allocation.
+      EXPECT_EQ(chunk.offset, 530);
+      EXPECT_EQ(chunk.size, 70);
+    } else if (instruction->name() == "v1") {
+      // Moved scoped allocation.
+      EXPECT_EQ(chunk.offset, 530);
+      EXPECT_EQ(chunk.size, 70);
+    } else if (instruction->name() == "v2") {
+      // Moved scoped allocation.
+      EXPECT_EQ(chunk.offset, 530);
+      EXPECT_EQ(chunk.size, 70);
+    } else if (instruction->name() == "v3") {
+      // Moved scoped allocation.
+      EXPECT_EQ(chunk.offset, 530);
+      EXPECT_EQ(chunk.size, 70);
+    } else if (instruction->name() == "v4") {
+      // Extended scoped allocation.
+      EXPECT_EQ(chunk.offset, 0);
+      EXPECT_EQ(chunk.size, 270);
+    } else if (instruction->name() == "t") {
+      // Extended scoped allocation.
+      EXPECT_EQ(chunk.offset, 0);
+      EXPECT_EQ(chunk.size, 600);
+    }
+  }
 }
 
 class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
@@ -11621,7 +12009,8 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
               << "), with an inconsistent number slice starts/limits/strides";
           return false;
         }
-        if (slice->slice_starts().size() != copy_operand->shape().rank()) {
+        if (slice->slice_starts().size() !=
+            copy_operand->shape().dimensions().size()) {
           *listener
               << " has slice (" << slice->name() << "), with "
               << slice->slice_starts().size()

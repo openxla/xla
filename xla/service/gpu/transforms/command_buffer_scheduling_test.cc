@@ -15,11 +15,14 @@ limitations under the License.
 #include "xla/service/gpu/transforms/command_buffer_scheduling.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -34,6 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
@@ -209,7 +213,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByDone) {
       %a = s32[4] parameter(0)
       %start = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       ROOT %done = s32[4]{0} all-reduce-done(s32[4]{0} %start)
     })";
 
@@ -242,7 +246,7 @@ TEST_F(CommandBufferSchedulingTest, AllGatherStartFollowedByDone) {
 
       %start = (s32[2]{0}, s32[4]{0}) all-gather-start(%a),
         channel_id=555, replica_groups={{0,1}}, dimensions={0},
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
 
       ROOT %done = s32[4]{0} all-gather-done(%start)
     })";
@@ -282,7 +286,7 @@ TEST_F(CommandBufferSchedulingTest, ReduceScatterStartFollowedByDone) {
 
       %start = ((s32[4]{0}), s32[2]{0}) reduce-scatter-start(%a),
         channel_id=555, replica_groups={{0,1}}, dimensions={0}, to_apply=add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
 
       ROOT %done = s32[2]{0} reduce-scatter-done(%start)
     })";
@@ -321,7 +325,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
       %a = s32[4] parameter(0)
       %start = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       %bitcast = s32[4] bitcast(s32[4]{0} %a)
       ROOT %done = s32[4]{0} all-reduce-done(s32[4]{0} %start)
     })";
@@ -361,10 +365,10 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedAllReduceStart) {
       %a = s32[4] parameter(0)
       %start1 = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       %start2 = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       %done1 = s32[4]{0} all-reduce-done(s32[4]{0} %start1)
       ROOT %done2 = s32[4]{0} all-reduce-done(s32[4]{0} %start2)
     })";
@@ -418,11 +422,11 @@ TEST_F(CommandBufferSchedulingTest, DoNotCaptureUnmatchedAsyncDone) {
       %b = s32[] parameter(1)
       %start1 = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       %c = s32[] custom-call(), custom_call_target="target"
       %start2 = s32[4]{0} all-reduce-start(s32[4]{0} %a),
         replica_groups={{0,1}}, to_apply=%add,
-        backend_config={"collective_backend_config": {"is_sync":true,"no_parallel_custom_call":false}}
+        backend_config={"collective_backend_config": {"is_sync":true}}
       %done1 = s32[4]{0} all-reduce-done(s32[4]{0} %start1)
       %done2 = s32[4]{0} all-reduce-done(s32[4]{0} %start2)
       %fusion = s32[] fusion(s32[] %b, s32[] %c), kind=kLoop, calls=%fused_computation

@@ -64,6 +64,8 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -177,7 +179,8 @@ inline DeviceAssignment MakeInterpreterDeviceAssignment() {
 }  // namespace
 
 const InterpreterDescription& InterpreterDescription::Singleton() {
-  static const InterpreterDescription* singleton = new InterpreterDescription;
+  static const InterpreterDescription* const singleton =
+      new InterpreterDescription;
   return *singleton;
 }
 
@@ -312,6 +315,7 @@ absl::StatusOr<Literal> InterpreterLoadedExecutable::Evaluate(
     const HloComputation& computation,
     absl::Span<const Literal* const> arg_literals) {
   absl::MutexLock lock(&hlo_evaluator_lock_);
+  hlo_evaluator_->ResetVisitStates();
   return hlo_evaluator_->Evaluate(computation, arg_literals);
 }
 
@@ -333,8 +337,8 @@ absl::StatusOr<Layout> InterpreterClient::GetDefaultLayout(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-InterpreterClient::Compile(const XlaComputation& computation,
-                           CompileOptions options) {
+InterpreterClient::CompileAndLoad(const XlaComputation& computation,
+                                  CompileOptions options) {
   std::vector<const Shape*> argument_layout_pointers;
   const ExecutableBuildOptions& build_options =
       options.executable_build_options;
@@ -356,7 +360,8 @@ InterpreterClient::Compile(const XlaComputation& computation,
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-InterpreterClient::Compile(mlir::ModuleOp module, CompileOptions options) {
+InterpreterClient::CompileAndLoad(mlir::ModuleOp module,
+                                  CompileOptions options) {
   XlaComputation xla_computation;
   const ExecutableBuildOptions& exec_build_options =
       options.executable_build_options;
@@ -368,7 +373,7 @@ InterpreterClient::Compile(mlir::ModuleOp module, CompileOptions options) {
   // If the compile options specify argument layout, then let's
   // fall back to using the options to determine layouts.
   if (options.argument_layouts) {
-    return Compile(xla_computation, options);
+    return CompileAndLoad(xla_computation, options);
   }
 
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,

@@ -19,7 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -29,14 +29,18 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -45,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_indexing_utils.h"
@@ -54,20 +59,25 @@ limitations under the License.
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/instruction_fusion.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/statusor.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/tools/hlo_extractor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
 namespace {
-// Fuses the given instructions together. The instructions are expected to be
-// passed in def-before-use order.  The resulting fusion has a single root
-// instruction, which is the last instructions in the input span.  We only
-// replace the uses of the root in 'consumer', and leave other users alone.
-absl::Status FuseInstructionsForConsumer(
-    absl::Span<HloInstruction* const> instructions, HloInstruction& consumer) {
-  HloComputation::Builder builder(instructions.back()->name());
+
+// Creates a fusion for instructions starting from 'root' and returns it.
+absl::StatusOr<HloInstruction*> FuseInstructionsFromRoot(HloInstruction& root) {
+  std::vector<HloInstruction*> instructions =
+      root.parent()->MakeInstructionPostOrderFrom(root);
+
+  HloComputation::Builder builder(root.name());
 
   absl::flat_hash_map<const HloInstruction*, HloInstruction*>
       old_to_new_mapping;
@@ -101,27 +111,37 @@ absl::Status FuseInstructionsForConsumer(
     old_to_new_mapping[instruction] = builder.AddInstruction(
         instruction->CloneWithNewOperands(instruction->shape(), new_operands));
   }
-
-  HloInstruction* old_root = instructions.back();
-  old_to_new_mapping[old_root]->MarkAsRoot();
+  old_to_new_mapping[&root]->MarkAsRoot();
 
   HloComputation* computation =
-      old_root->GetModule()->AddComputationAndUnifyNamesAndIds(
-          builder.Build(), /*is_entry=*/false);
+      root.GetModule()->AddComputationAndUnifyNamesAndIds(builder.Build(),
+                                                          /*is_entry=*/false);
   HloInstruction* fusion =
-      old_root->parent()->AddInstruction(HloInstruction::CreateFusion(
-          old_root->shape(), HloInstruction::FusionKind::kCustom, parameters,
+      root.parent()->AddInstruction(HloInstruction::CreateFusion(
+          root.shape(), HloInstruction::FusionKind::kCustom, parameters,
           computation));
   fusion->GetModule()->SetAndUniquifyInstrName(fusion, "block_fusion");
 
+  return fusion;
+}
+
+// Fuses the instructions starting from 'root' for 'consumer'. Other users of
+// 'root' are not affected. Annotates fusion with `kTritonNestedGemmFusionKind`.
+absl::Status FuseInstructionsForConsumer(HloInstruction& root,
+                                         HloInstruction& consumer) {
+  CHECK(absl::c_count(consumer.operands(), &root) != 0)
+      << "Consumer " << consumer.ToString() << " does not use root "
+      << root.ToString();
+
+  TF_ASSIGN_OR_RETURN(HloInstruction * fusion, FuseInstructionsFromRoot(root));
+
   TF_ASSIGN_OR_RETURN(auto gpu_config,
                       fusion->backend_config<GpuBackendConfig>());
-  FusionBackendConfig& backend_config =
-      *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonFusionKind));
+  gpu_config.mutable_fusion_backend_config()->set_kind(
+      std::string(kTritonNestedGemmFusionKind));
   TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
-  for (int64_t operand_index : consumer.OperandIndices(old_root)) {
+  for (int64_t operand_index : consumer.OperandIndices(&root)) {
     TF_RETURN_IF_ERROR(consumer.ReplaceOperandWith(operand_index, fusion));
   }
 
@@ -155,19 +175,23 @@ absl::Status AnnotateDotOperandNestedFusionImpl(
 
   // We have a single contracting dimension, and a single non-contracting
   // dimension. All the other output tile sizes are set to 1.
-  std::vector<int64_t> output_tile_sizes(dot.operand(0)->shape().rank(), 1);
+  std::vector<int64_t> output_tile_sizes(
+      dot.operand(0)->shape().dimensions().size(), 1);
   output_tile_sizes[contracting_dimensions[0]] = contracting_dim_size;
   output_tile_sizes[non_contracting_dimensions[0]] = non_contracting_dim_size;
 
   BlockLevelParameters block_level_parameters;
   block_level_parameters.output_tile_sizes = {std::move(output_tile_sizes)};
+  block_level_parameters.num_warps = config.num_warps;
+  block_level_parameters.num_ctas = config.num_ctas;
+  block_level_parameters.num_stages = config.num_stages;
 
-  TF_ASSIGN_OR_RETURN(auto backend_config,
+  TF_ASSIGN_OR_RETURN(auto gpu_config,
                       nested_fusion.backend_config<GpuBackendConfig>());
-  *backend_config.mutable_fusion_backend_config()
+  *gpu_config.mutable_fusion_backend_config()
        ->mutable_block_level_fusion_config() =
       block_level_parameters.ToBlockLevelFusionConfig();
-  TF_RETURN_IF_ERROR(nested_fusion.set_backend_config(backend_config));
+  TF_RETURN_IF_ERROR(nested_fusion.set_backend_config(gpu_config));
 
   return absl::OkStatus();
 }
@@ -199,13 +223,17 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
     HloDotInstruction* dot, const TritonGemmConfig& config,
     mlir::MLIRContext* ctx) {
   HloComputation* computation = dot->parent();
+  VLOG(3) << "FindOutputTileSizesForEpilogue of computation: "
+          << computation->ToString();
   SymbolicTileAnalysisOrError analysis_or =
       SymbolicTileAnalysis::AnalyzeComputation(*computation, ctx);
   if (std::holds_alternative<FusionDecision>(analysis_or)) {
+    std::unique_ptr<HloModule> extracted_computation_module =
+        ExtractModule(computation->FusionInstruction());
     return absl::InternalError(
         absl::StrCat("Failed to analyze the computation (",
                      std::get<FusionDecision>(analysis_or).Explain(),
-                     "): ", computation->ToString()));
+                     "): ", extracted_computation_module->ToString()));
   }
 
   auto& analysis = std::get<SymbolicTileAnalysis>(analysis_or);
@@ -219,7 +247,8 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
   const SymbolicTiledHloInstruction& tiled_dot = **tiled_dot_it;
 
   auto get_tile_sizes = [&](int64_t rank) {
-    CHECK_GE(rank, 2);
+    QCHECK_GE(rank, 2) << "Expected at least rank 2 for the dot, got " << rank
+                       << " in computation " << computation->ToString();
     // We always expect the shape to be [1, ..., block_m, block_n], by
     // construction of GemmFusions.
     llvm::SmallVector<int64_t> tile_sizes(rank - 2, 1);
@@ -227,7 +256,10 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
     return tile_sizes;
   };
 
-  auto expected_dot_tile_sizes = get_tile_sizes(dot->shape().rank());
+  VLOG(3) << "FindOutputTileSizesForEpilogue: dot shape: "
+          << dot->shape().ToString();
+  auto expected_dot_tile_sizes =
+      get_tile_sizes(dot->shape().dimensions().size());
   if (VLOG_IS_ON(2)) {
     std::ostringstream oss;
     for (const auto& size : expected_dot_tile_sizes) {
@@ -240,7 +272,10 @@ absl::StatusOr<llvm::SmallVector<int64_t>> FindOutputTileSizesForEpilogue(
 
   // Try all permutations of the dot tile sizes to see if any of them satisfy
   // the constraints of the analysis and map to the given config of the dot.
-  int64_t out_rank = computation->root_instruction()->shape().rank();
+  int64_t out_rank =
+      computation->root_instruction()->shape().dimensions().size();
+  VLOG(3) << "FindOutputTileSizesForEpilogue: computation root shape: "
+          << computation->root_instruction()->shape().ToString();
   auto output_tile_sizes = get_tile_sizes(out_rank);
   std::sort(output_tile_sizes.begin(), output_tile_sizes.end());
   do {
@@ -276,6 +311,20 @@ absl::StatusOr<TritonGemmConfig> GetTritonGemmConfig(
   return TritonGemmConfig::FromProto(backend_config.triton_gemm_config());
 }
 
+// Constructs nested fusion nodes for the operands of `concatenate` instructions
+// and annotates them with `kTritonNestedGemmFusionKind`.
+absl::Status FuseAndAnnotateConcatOperands(HloComputation* computation) {
+  for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
+    if (instr->opcode() != HloOpcode::kConcatenate) {
+      continue;
+    }
+    for (HloInstruction* operand : instr->mutable_operands()) {
+      TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(*operand, *instr));
+    }
+  }
+  return absl::OkStatus();
+}
+
 // Transforms a fusion into an equivalent nested fusion if it has a single dot.
 // Returns ok if the transformation was successful.
 absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
@@ -286,18 +335,20 @@ absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
 
   HloComputation* computation = fusion->called_computation();
 
+  // First, create nested fusions for the operands of `concatenate` instructions
+  // if they exist.
+  TF_RETURN_IF_ERROR(FuseAndAnnotateConcatOperands(computation));
+
   // Left-hand side of the dot.
-  TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(
-      computation->MakeInstructionPostOrderFrom(*dot->mutable_operand(0)),
-      *dot));
+  TF_RETURN_IF_ERROR(
+      FuseInstructionsForConsumer(*dot->mutable_operand(0), *dot));
   TF_RETURN_IF_ERROR(AnnotateDotLhsNestedFusion(
       *::xla::Cast<HloFusionInstruction>(dot->mutable_operand(0)), *dot,
       config));
 
   // Right-hand side of the dot.
-  TF_RETURN_IF_ERROR(FuseInstructionsForConsumer(
-      computation->MakeInstructionPostOrderFrom(*dot->mutable_operand(1)),
-      *dot));
+  TF_RETURN_IF_ERROR(
+      FuseInstructionsForConsumer(*dot->mutable_operand(1), *dot));
   TF_RETURN_IF_ERROR(AnnotateDotRhsNestedFusion(
       *::xla::Cast<HloFusionInstruction>(dot->mutable_operand(1)), *dot,
       config));
@@ -316,11 +367,15 @@ absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
                       fusion->backend_config<GpuBackendConfig>());
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonFusionKind));
+  backend_config.clear_triton_gemm_config();
+  backend_config.set_kind(std::string(kTritonNestedGemmFusionKind));
 
   BlockLevelParameters block_level_parameters;
   block_level_parameters.output_tile_sizes = {
       std::vector<int64_t>(output_tile_sizes.begin(), output_tile_sizes.end())};
+  block_level_parameters.num_warps = config.num_warps;
+  block_level_parameters.num_ctas = config.num_ctas;
+  block_level_parameters.num_stages = config.num_stages;
 
   *backend_config.mutable_block_level_fusion_config() =
       block_level_parameters.ToBlockLevelFusionConfig();
@@ -337,7 +392,7 @@ size_t GetDotCount(HloComputation* computation) {
 // Returns the set of instructions that are reachable from 'instruction' using
 // the given accessor.
 template <typename T>
-HloInstructionSet GetTransitiveInstructionSet(HloInstruction* instruction,
+HloInstructionSet GetTransitiveInstructionSet(const HloInstruction* instruction,
                                               T (HloInstruction::*get)()
                                                   const) {
   std::deque<HloInstruction*> worklist;
@@ -357,11 +412,11 @@ HloInstructionSet GetTransitiveInstructionSet(HloInstruction* instruction,
 }
 
 // Returns the set of producers reachable from 'instruction'.
-HloInstructionSet GetProducerSet(HloInstruction* instruction) {
+HloInstructionSet GetProducerSet(const HloInstruction* instruction) {
   return GetTransitiveInstructionSet(instruction, &HloInstruction::operands);
 }
 // Returns the set of consumers reachable from 'instruction'.
-HloInstructionSet GetConsumerSet(HloInstruction* instruction) {
+HloInstructionSet GetConsumerSet(const HloInstruction* instruction) {
   return GetTransitiveInstructionSet(instruction, &HloInstruction::users);
 }
 
@@ -370,7 +425,7 @@ HloInstructionSet GetConsumerSet(HloInstruction* instruction) {
 // either in the set itself or the root.
 template <typename T>
 absl::Status VerifyIsClosedInstructionSet(const HloInstructionSet& instructions,
-                                          HloInstruction* root,
+                                          const HloInstruction* root,
                                           T (HloInstruction::*get)() const) {
   for (HloInstruction* instruction : instructions) {
     for (HloInstruction* reachable : (instruction->*get)()) {
@@ -388,59 +443,244 @@ absl::Status VerifyIsClosedInstructionSet(const HloInstructionSet& instructions,
 }
 
 absl::Status VerifyIsClosedProducerSet(const HloInstructionSet& instructions,
-                                       HloInstruction* root) {
+                                       const HloInstruction* root) {
   return VerifyIsClosedInstructionSet(instructions, root,
                                       &HloInstruction::users);
 }
 absl::Status VerifyIsClosedConsumerSet(const HloInstructionSet& instructions,
-                                       HloInstruction* root) {
+                                       const HloInstruction* root) {
   return VerifyIsClosedInstructionSet(instructions, root,
                                       &HloInstruction::operands);
 }
 
-// Returns true if it's safe to hoist a bitcast past the given instruction.
-bool IsSafeToHoistPast(HloInstruction* instruction) {
+bool IsSafeToSinkBitcastBelow(HloInstruction* instruction) {
   switch (instruction->opcode()) {
     case HloOpcode::kParameter:
     case HloOpcode::kConstant:
     case HloOpcode::kBitcast:
+      // TODO(b/393299275): Support sinking through broadcast.
       return true;
     default:
       return instruction->IsElementwise();
   }
 }
 
+// Parameters to rewrite a broadcast + reshape as reshape + broadcast.
+struct ReshapeBroadcastOutputParams {
+  std::vector<int64_t> new_broadcast_dim_map;
+  Shape new_operand_shape;
+};
+
+// Returns parameters to rewrite a broadcast + reshape as reshape + broadcast.
+//
+// Example:
+//
+// b = T[...] broadcast(operand)
+// c = T[target_dims] reshape(b)
+//
+// to
+//
+// d = [new operand shape] reshape(operand)
+// c = T[target_dims] broadcast(d), dimensions={broadcast dims parameter}.
+//
+// Assumes that:
+// - broadcast does not transpose dimensions (checked by hlo_verifier);
+// - reshape does not mix operand and broadcast dimensions (checks);
+absl::StatusOr<ReshapeBroadcastOutputParams> CalculateBroadcastOutputReshape(
+    const HloBroadcastInstruction* broadcast,
+    absl::Span<const int64_t> target_dims) {
+  // The rewrite works by splitting the broadcast output dimensions and the
+  // target dimensions into groups of equal size. Every group is then associated
+  // with either the operand or added broadcast dimensions. A group coming from
+  // the operand is used to construct the new operand shape.
+  auto broadcast_dims = broadcast->shape().dimensions();
+  QCHECK_EQ(broadcast->dimensions().size(),
+            broadcast->operands()[0]->shape().dimensions().size())
+      << absl::StrCat("Broadcast 'dimensions' parameter size ",
+                      broadcast->dimensions().size(),
+                      " does not the match the operand rank ",
+                      broadcast->operands()[0]->shape().dimensions().size());
+  if (Product(broadcast_dims) != Product(target_dims)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Broadcast shape dimensions product ", Product(broadcast_dims), " (",
+        broadcast->shape().ToString(),
+        ") does not match target shape dimensions product ",
+        Product(target_dims), " (", absl::StrJoin(target_dims, ","), ")"));
+  }
+  if (!LayoutUtil::IsMonotonicWithDim0Major(broadcast->shape().layout())) {
+    // TODO(b/393299275): do we need to support non-default layouts?
+    return absl::UnimplementedError(
+        absl::StrCat("Not-default layouts for broadcast is not supported yet: ",
+                     broadcast->shape().layout().ToString()));
+  }
+  std::vector<bool> output_dim_from_operand(broadcast_dims.size(), false);
+  for (const int64_t i : broadcast->dimensions()) {
+    output_dim_from_operand[i] = true;
+  }
+  ReshapeBroadcastOutputParams result;
+  std::vector<int64_t> new_operand_dims;
+  absl::InlinedVector<std::pair<int64_t, int64_t>, 8> factors =
+      CommonFactors(broadcast_dims, target_dims);
+  for (int64_t i = 0; i + 1 < factors.size(); ++i) {
+    bool has_broadcasted_dim = false;
+    bool has_operand_dim = false;
+    auto [broadcast_from, target_from] = factors[i];
+    auto [broadcast_to, target_to] = factors[i + 1];
+    for (int64_t j = broadcast_from; j < broadcast_to; ++j) {
+      has_operand_dim |= output_dim_from_operand[j];
+      has_broadcasted_dim |= !output_dim_from_operand[j];
+    }
+    if (!has_operand_dim) {
+      // Group of dimensions is coming from the broadcast, skip it as it will
+      // be simply introduced by the new broadcast.
+      continue;
+    }
+    if (has_broadcasted_dim) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Cannot reshape broadcast for ", broadcast->ToString(),
+                       " as it mixes operand and broadcast dimensions."));
+    }
+    // Update the expected operand shape.
+    for (int64_t j = target_from; j < target_to; ++j) {
+      result.new_broadcast_dim_map.push_back(new_operand_dims.size());
+      new_operand_dims.push_back(target_dims[j]);
+    }
+  }
+  result.new_operand_shape = ShapeUtil::MakeShape(
+      broadcast->operand(0)->shape().element_type(), new_operand_dims);
+  return std::move(result);
+}
+
+// Simulates a rewrite of all producers of a given bitcast, moving the bitcast
+// outside of the computation.
+// Returns the new shapes of affected instructions in order of traversal from
+// users to producers.
+// Assumes that the bitcast does not covert the type of the operand.
+absl::StatusOr<std::vector<std::pair<HloInstruction*, Shape>>>
+PlanHoistBitcastToCallers(const HloInstruction* bitcast) {
+  // Check that all producers only affect the bitcast. If there are any
+  // other users: refuse the hoisting.
+  // It is possible to support more cases by sinking the bitcast from such
+  // producers downward.
+  HloInstructionSet producers = GetProducerSet(bitcast);
+  TF_RETURN_IF_ERROR(VerifyIsClosedProducerSet(producers, bitcast));
+  if (bitcast->shape().element_type() !=
+      bitcast->operand(0)->shape().element_type()) {
+    return absl::UnimplementedError(
+        absl::StrCat("Hoisting bitcast with type conversion is not supported: ",
+                     bitcast->ToString()));
+  }
+  HloInstructionMap<Shape> to_update;
+
+  auto set_shape = [&](const absl::Span<HloInstruction* const> instructions,
+                       const Shape& shape) -> absl::Status {
+    for (HloInstruction* instruction : instructions) {
+      auto it = to_update.find(instruction);
+      // Only update the dimensions keeping the type intact.
+      Shape updated_shape = ShapeUtil::MakeShape(
+          instruction->shape().element_type(), shape.dimensions());
+      if (it == to_update.end()) {
+        to_update.emplace(instruction, updated_shape);
+      } else if (it->second != updated_shape) {
+        return absl::FailedPreconditionError(absl::StrCat(
+            "Conflicting shape assignment for ", instruction->ToString(),
+            " got ", it->second.ToString(), " and ", shape.ToString()));
+      }
+    }
+    return absl::OkStatus();
+  };
+  TF_RETURN_IF_ERROR(set_shape(bitcast->operands(), bitcast->shape()));
+  std::vector<std::pair<HloInstruction*, Shape>> result;
+  // We want to visit instructions in order from users to producers: we
+  // hoist the bitcast upwards and having a valid HLO at every rewrite step
+  // helps a lot.
+  // A simple DFS or BFS over operands will not work in non-tree situations when
+  // there are multiple users of the same producer. Instead of writing a custom
+  // traversal we can simply walk the post-order (producers before users)
+  // list backward and only update the instructions affected.
+  // TODO(b/393299275): use MakeInstructionPostOrderFrom(bitcast) - that should
+  // be slightly more efficient.
+  auto use_before_def = bitcast->parent()->MakeInstructionPostOrder();
+  absl::c_reverse(use_before_def);
+  for (HloInstruction* instruction : use_before_def) {
+    auto it = to_update.find(instruction);
+    if (it == to_update.end()) {
+      // Not affected.
+      continue;
+    }
+    Shape& shape = it->second;
+    // TODO(b/393299275): check that the type of the instruction shape type
+    // matches the target shape.
+    result.emplace_back(instruction, shape);
+    VLOG(2) << absl::StrCat("updating the shape of ", instruction->ToString(),
+                            " from ", instruction->shape().ToString(), " to ",
+                            shape.ToString());
+    switch (instruction->opcode()) {
+      case HloOpcode::kParameter:
+      case HloOpcode::kConstant:
+        // No operands.
+        break;
+      case HloOpcode::kBitcast:
+        // Other bitcast will be hoisted separately so we don't need to update
+        // its operand.
+        break;
+      case HloOpcode::kBroadcast: {
+        TF_ASSIGN_OR_RETURN(ReshapeBroadcastOutputParams params,
+                            CalculateBroadcastOutputReshape(
+                                Cast<HloBroadcastInstruction>(instruction),
+                                shape.dimensions()));
+        TF_RETURN_IF_ERROR(
+            set_shape(instruction->operands(), params.new_operand_shape));
+        break;
+      }
+      default:
+        if (!instruction->IsElementwise()) {
+          return absl::FailedPreconditionError(absl::StrCat(
+              "Cannot hoist bitcast past ", instruction->ToString()));
+        }
+        TF_RETURN_IF_ERROR(set_shape(instruction->operands(), shape));
+        break;
+    }
+  }
+  return result;
+}
+
 // Hoists the given 'bitcast' upwards out of its computation, to the parent of
 // each caller.
 absl::Status HoistBitcastUpwardsToCallers(
     HloInstruction* bitcast, const std::vector<HloInstruction*>& callers) {
-  HloInstructionSet producers = GetProducerSet(bitcast);
-  TF_RETURN_IF_ERROR(VerifyIsClosedProducerSet(producers, bitcast));
-
-  if (auto it = absl::c_find_if_not(producers, IsSafeToHoistPast);
-      it != producers.end()) {
-    return absl::InternalError(
-        absl::StrCat("Cannot hoist bitcast past ", (*it)->ToString()));
-  }
-
-  // Adjust the shape of of every producer instruction.
-  Shape shape = bitcast->shape();
-  for (HloInstruction* instruction : producers) {
+  TF_ASSIGN_OR_RETURN(auto rewrite_plan, PlanHoistBitcastToCallers(bitcast));
+  for (auto [instruction, shape] : rewrite_plan) {
+    VLOG(2) << absl::StrCat("rewriting shape of ", instruction->ToString(),
+                            " from ", instruction->shape().ToString(), " to ",
+                            shape.ToString());
+    switch (instruction->opcode()) {
+      case HloOpcode::kParameter: {
+        // Create a new bitcast in callers.
+        int64_t number = instruction->parameter_number();
+        for (HloInstruction* caller : callers) {
+          HloInstruction* new_bitcast =
+              caller->AddInstruction(HloInstruction::CreateBitcast(
+                  shape, caller->mutable_operand(number)));
+          TF_RETURN_IF_ERROR(
+              caller->ReplaceOperandWithDifferentShape(number, new_bitcast));
+        }
+        break;
+      }
+      case HloOpcode::kBroadcast: {
+        auto* broadcast = Cast<HloBroadcastInstruction>(instruction);
+        auto params =
+            CalculateBroadcastOutputReshape(broadcast, shape.dimensions());
+        QCHECK_OK(params);  // This must be OK as we have already ran this in
+                            // AssignShapesToHoistBitcastToCallers.
+        *broadcast->mutable_dimensions() = params.value().new_broadcast_dim_map;
+        break;
+      }
+      default:
+        break;
+    }
     *instruction->mutable_shape() = shape;
-    if (HloPredicateIsNotOp<HloOpcode::kParameter>(instruction)) {
-      continue;
-    }
-    // For parameters, we need to bitcast the caller's operand.
-    int64_t number = instruction->parameter_number();
-    for (HloInstruction* caller : callers) {
-      HloInstruction* new_bitcast =
-          caller->AddInstruction(HloInstruction::CreateBitcast(
-              shape, caller->mutable_operand(number)));
-      TF_RETURN_IF_ERROR(
-          caller->ReplaceOperandWithDifferentShape(number, new_bitcast));
-    }
   }
-
   TF_RETURN_IF_ERROR(bitcast->ReplaceAllUsesWith(bitcast->mutable_operand(0)));
   TF_RETURN_IF_ERROR(bitcast->parent()->RemoveInstruction(bitcast));
   return absl::OkStatus();
@@ -456,8 +696,7 @@ absl::Status HoistBitcastDownwardsToCallers(
   CHECK(is_root(bitcast) || absl::c_any_of(consumers, is_root))
       << "Expected" << bitcast->ToString()
       << " to be a root or have a root consumer.";
-
-  if (auto it = absl::c_find_if_not(consumers, IsSafeToHoistPast);
+  if (auto it = absl::c_find_if_not(consumers, IsSafeToSinkBitcastBelow);
       it != consumers.end()) {
     return absl::InternalError(
         absl::StrCat("Cannot hoist bitcast past ", (*it)->ToString()));
@@ -515,38 +754,60 @@ absl::Status TryHoistBitcastsInComputationToCallers(HloInstruction* dot,
 
 class NestGemmFusionVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit NestGemmFusionVisitor(mlir::MLIRContext* ctx, CallGraph* call_graph)
-      : ctx_(ctx), call_graph_(call_graph) {}
+  explicit NestGemmFusionVisitor(
+      mlir::MLIRContext* ctx, CallGraph* call_graph,
+      const se::GpuComputeCapability compute_capability)
+      : ctx_(ctx),
+        call_graph_(call_graph),
+        compute_capability_(compute_capability) {}
 
   absl::Status HandleFusion(HloInstruction* instruction) override {
     HloFusionInstruction* fusion = Cast<HloFusionInstruction>(instruction);
 
     absl::StatusOr<TritonGemmConfig> config = GetTritonGemmConfig(*fusion);
     if (!config.ok()) {
-      return absl::OkStatus();  // Skip because it's not a Triton gemm fusion.
+      VLOG(2) << "Skipping fusion as it does not have a TritonGemmConfig";
+      return absl::OkStatus();
     }
 
     HloComputation* computation = fusion->called_computation();
-    HloInstruction* dot =
+    HloInstruction* instr =
         hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
-    if (dot == nullptr) {
-      return absl::OkStatus();  // Skip because fusion has no dot.
+    if (instr == nullptr) {
+      VLOG(2) << "Skipping fusion as it has no dot instruction";
+      return absl::OkStatus();
     }
     DCHECK_EQ(GetDotCount(computation), 1) << "Fusion has more than one dot.";
+    HloDotInstruction* dot = Cast<HloDotInstruction>(instr);
+    TF_RETURN_IF_ERROR(
+        TryHoistBitcastsInComputationToCallers(instr, call_graph_));
+    VLOG(2) << "After hoisting bitcasts: " << computation->ToString();
 
     TF_RETURN_IF_ERROR(
-        TryHoistBitcastsInComputationToCallers(dot, call_graph_));
-    VLOG(2) << "After hoisting bitcasts: " << computation->ToString();
-    TF_RETURN_IF_ERROR(MakeNestedFusionFromGemmFusion(
-        fusion, config.value(), Cast<HloDotInstruction>(dot), ctx_));
+        MakeNestedFusionFromGemmFusion(fusion, config.value(), dot, ctx_));
 
     this->MarkAsChanged();
+    // TODO(b/393299275): support checks should be run *before* the fusion is
+    // constructed and this pass should only be applied to the known supported
+    // HLO. Currently though, we are at mercy of what GemmFusion pass thinks
+    // legacy emitter can handle. We change the kind of the fusion here and
+    // switch the track. Thus it is on us to make sure that the generic emitter
+    // will be able to handle the result. That is an early check to make sure
+    // that that nesting did not produce an unsupported HLO.
+    CodegenDecision can_codegen_computation =
+        IsTritonSupportedComputation(*computation, compute_capability_);
+    if (!can_codegen_computation) {
+      return absl::InternalError(absl::StrCat(
+          "Computation of fusion ", fusion->ToString(),
+          " is not supported by Triton: ", can_codegen_computation.Explain()));
+    }
     return absl::OkStatus();
   }
 
  private:
   mlir::MLIRContext* ctx_;
   CallGraph* call_graph_;
+  const se::GpuComputeCapability compute_capability_;
 };
 
 }  // namespace
@@ -559,7 +820,7 @@ absl::StatusOr<bool> NestGemmFusion::Run(
   mlir::MLIRContext ctx;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    NestGemmFusionVisitor visitor(&ctx, call_graph.get());
+    NestGemmFusionVisitor visitor(&ctx, call_graph.get(), compute_capability_);
     TF_RETURN_IF_ERROR(computation->Accept(&visitor));
     changed |= visitor.changed();
   }

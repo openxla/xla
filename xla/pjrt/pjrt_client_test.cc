@@ -102,7 +102,7 @@ std::unique_ptr<PjRtLoadedExecutable> MakeIncrementProgram(
   CompileOptions options;
   options.parameter_is_tupled_arguments = tuplize_arg;
   options.executable_build_options.set_device_assignment(assignment);
-  return client->Compile(computation, options).value();
+  return client->CompileAndLoad(computation, options).value();
 }
 
 class PjRtClientTest
@@ -558,7 +558,7 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                           ParseAndReturnUnverifiedModule(kProgram, {}));
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
-                          client->Compile(xla_computation, {}));
+                          client->CompileAndLoad(xla_computation, {}));
 
   std::vector<float> data(4, 0);
   TF_ASSERT_OK_AND_ASSIGN(auto buffer0,
@@ -568,6 +568,8 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
   TF_ASSERT_OK_AND_ASSIGN(auto buffer2,
                           MakeFloatBuffer(client.get(), data, {2, 2}));
 
+  xla::ExecuteOptions options;
+  options.untuple_result = true;
   {
     auto result = pjrt_executable->Execute(/*argument_handles=*/{{
                                                buffer0.get(),
@@ -575,7 +577,7 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                                                buffer1.get(),
                                                buffer0.get(),
                                            }},
-                                           /*options=*/{});
+                                           /*options=*/options);
     ASSERT_FALSE(result.ok());
     EXPECT_THAT(result.status().message(),
                 ::testing::HasSubstr("f(donate(a), donate(a))"));
@@ -587,7 +589,7 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                                                buffer2.get(),
                                                buffer0.get(),
                                            }},
-                                           /*options=*/{});
+                                           /*options=*/options);
     ASSERT_FALSE(result.ok());
     EXPECT_THAT(result.status().message(),
                 ::testing::HasSubstr("f(a, donate(a))"));
@@ -599,7 +601,7 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                                                buffer2.get(),
                                                buffer2.get(),
                                            }},
-                                           /*options=*/{});
+                                           /*options=*/options);
     ASSERT_FALSE(result.ok());
     EXPECT_THAT(result.status().message(),
                 ::testing::HasSubstr("f(donate(a), a)"));

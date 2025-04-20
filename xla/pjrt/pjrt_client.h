@@ -594,15 +594,24 @@ class PjRtClient {
   }
 
   // Compile `computation` with given `options`.
-  virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) {
-    return Unimplemented("Compile with options is not supported.");
+    return Unimplemented("Compile with XlaComputation is not supported.");
+  }
+  virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
+      const XlaComputation& computation, CompileOptions options) {
+    return Unimplemented(
+        "CompileAndLoad with XlaComputation is not supported.");
   }
 
   // Variant of `Compile` that accepts an MLIR module.
-  virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       mlir::ModuleOp module, CompileOptions options) {
     return Unimplemented("Compile with MLIR Module is not supported.");
+  }
+  virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
+      mlir::ModuleOp module, CompileOptions options) {
+    return Unimplemented("CompileAndLoad with MLIR Module is not supported.");
   }
 
   // Deserializes a serialized executable as produced by
@@ -612,10 +621,9 @@ class PjRtClient {
   // Pending completion of b/237720161, `options` is a mandatory argument in
   // most implementations of this interface. They _are_ optional for
   // implementations related to the PJRT C API.
-  virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-  DeserializeExecutable(absl::string_view serialized,
-                        std::optional<CompileOptions> options) {
-    return Unimplemented("Deserialize is not supported.");
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
+      absl::string_view serialized, std::optional<CompileOptions> options) {
+    return Unimplemented("Deserializing serialized executable not supported.");
   }
 
   // LoadSerializedExecutable takes the serialized output of PjRtExecutable. The
@@ -923,12 +931,6 @@ class PjRtClient {
     return Unimplemented("MakeCrossHostReceiveBuffers is not implemented.");
   }
 
-  // TODO(zhangqiaorjc): Experimental API to be removed.
-  // Defragment device memory.
-  virtual absl::Status Defragment() {
-    return Unimplemented("Defragment is not implemented.");
-  }
-
   // Return the PjRtHostMemoryForDeviceManager for this client. It can be
   // nullptr if the implementation does not provide one.
   virtual PjRtHostMemoryForDeviceManager* GetPjRtHostMemoryForDeviceManager()
@@ -972,7 +974,8 @@ class PjRtBuffer {
 
   // Returned dimensions have lifetime of this buffer.
   virtual absl::Span<const int64_t> dimensions() const {
-    return on_device_shape().dimensions();
+    return on_device_shape().IsArray() ? on_device_shape().dimensions()
+                                       : absl::Span<const int64_t>();
   }
 
   // The on-device memory layout of this buffer. Returned via shared_ptr to make
@@ -1257,20 +1260,6 @@ class PjRtBuffer {
   // valid (will not transition to error as a consequence of buffer deletion)
   // even if the buffer is subsequently donated or deleted.
   virtual PjRtFuture<> GetReadyFuture() = 0;
-
-  // Blocks the host until the buffer's value has been computed and is ready for
-  // immediate use on the device. Useful in particular for timing benchmarks.
-  ABSL_DEPRECATED("Use GetReadyFuture().Await() instead")
-  absl::Status BlockHostUntilReady() {
-    auto s = GetReadyFuture().Await();
-    // Fix up error string because some clients rely on it.
-    if (!s.ok() &&
-        s.message() == "GetReadyFuture() called on deleted or donated buffer") {
-      return InvalidArgument(
-          "BlockHostUntilReady() called on deleted or donated buffer");
-    }
-    return s;
-  }
 
   // Whether this buffer is on CPU and thus allows for certain optimizations.
   virtual bool IsOnCpu() const = 0;

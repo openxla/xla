@@ -21,6 +21,7 @@ limitations under the License.
 #include <limits>
 
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "xla/tsl/platform/logging.h"
@@ -37,7 +38,7 @@ static bool WaitForReadyWithTimeout(RendezvousStateSynchronization& state,
 
   // Keep checking if the rendezvous is ready inside a loop and update TraceMe
   // annotation to track the rendezvous progress.
-  while (state.ready.load() == false) {
+  while (!state.ready) {
     size_t num_pending = state.num_threads - state.ack.load();
 
     tsl::profiler::TraceMe trace([&] {
@@ -49,20 +50,19 @@ static bool WaitForReadyWithTimeout(RendezvousStateSynchronization& state,
     });
 
     bool timed_out = state.cv.WaitWithTimeout(&state.mutex, timeout);
-    bool ready = state.ready.load();
 
     // We are done and ready.
-    if (ready) return true;
+    if (state.ready) return true;
 
     // We are done with waiting because the timeout is exceeded.
-    if (timed_out && !ready) {
+    if (timed_out && !state.ready) {
       return false;
     }
 
     // Otherwise we keep waiting.
   }
 
-  return state.ready.load();
+  return state.ready;
 }
 
 void AwaitAndLogIfStuck(RendezvousStateSynchronization& state, int32_t id,

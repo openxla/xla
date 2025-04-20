@@ -14,16 +14,30 @@ limitations under the License.
 ==============================================================================*/
 
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/Support/Casting.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
 #include "mlir/IR/OpImplementation.h"  // IWYU pragma: keep
+#include "mlir/Support/LLVM.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 
 #define GET_ATTRDEF_CLASSES
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_attrs.cc.inc"
-#define GET_TYPEDEF_CLASSES
-#include "xla/backends/gpu/codegen/triton/ir/triton_xla_types.cc.inc"
 
 namespace mlir::triton::xla {
+
+struct TritonXlaOpAsmDialectInterface : public mlir::OpAsmDialectInterface {
+  using OpAsmDialectInterface::OpAsmDialectInterface;
+
+  AliasResult getAlias(mlir::Attribute attr,
+                       mlir::raw_ostream& os) const final {
+    if (llvm::isa<TmaDescriptorAttr>(attr)) {
+      os << "tma_descriptor";
+      return AliasResult::FinalAlias;
+    }
+    return AliasResult::NoAlias;
+  }
+};
 
 void XlaTritonDialect::initialize() {
   addOperations<
@@ -34,10 +48,7 @@ void XlaTritonDialect::initialize() {
 #define GET_ATTRDEF_LIST
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_attrs.cc.inc"
       >();
-  addTypes<
-#define GET_TYPEDEF_LIST
-#include "xla/backends/gpu/codegen/triton/ir/triton_xla_types.cc.inc"
-      >();
+  addInterfaces<TritonXlaOpAsmDialectInterface>();
 }
 
 }  // namespace mlir::triton::xla

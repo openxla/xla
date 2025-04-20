@@ -21,6 +21,7 @@ package(
         "@tsl//tsl/profiler:__subpackages__",
         "//tensorflow/core/profiler:__subpackages__",
         "//tensorflow/python/profiler/internal:__pkg__",
+        "//third_party/xprof:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -88,6 +89,9 @@ cc_library(
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
     ],
     alwayslink = True,
@@ -216,9 +220,10 @@ cc_library(
         "cache.h",
     ],
     deps = [
-        "@tsl//tsl/platform:mutex",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:raw_coding",
         "@tsl//tsl/platform:stringpiece",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -464,6 +469,7 @@ tsl_cc_test(
     deps = [
         ":cache",
         "//xla/tsl/platform:test",
+        "//xla/tsl/util:safe_reinterpret_cast",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:coding",
         "@tsl//tsl/platform:raw_coding",

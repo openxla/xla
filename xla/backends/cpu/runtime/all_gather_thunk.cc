@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
 
@@ -55,8 +55,6 @@ AllGatherThunk::AllGatherThunk(Info info, OpParams op_params,
 
 tsl::AsyncValueRef<AllGatherThunk::ExecuteEvent> AllGatherThunk::Execute(
     const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   TF_ASSIGN_OR_RETURN(OpDeviceMemory data, GetOpDeviceMemory(params));
 
   VLOG(3) << absl::StreamFormat(
@@ -77,16 +75,29 @@ tsl::AsyncValueRef<AllGatherThunk::ExecuteEvent> AllGatherThunk::Execute(
 
   return ExecuteWithCommunicator(
       params.collective_params,
-      [&](const RendezvousKey& key, Communicator& comm) {
+      [&](const RendezvousKey& key,
+          Communicator& comm) -> tsl::AsyncValueRef<Communicator::Event> {
         CpuCollectives::Executor executor(key, DefaultCollectiveTimeout());
+
+        tsl::CountDownAsyncValueRef<Communicator::Event> state(
+            data.source.size());
 
         for (int32_t i = 0; i < data.source.size(); ++i) {
           const Shape& shape = source_shape(i);
-          TF_RETURN_IF_ERROR(comm.AllGather(
+          auto communicator_event = comm.AllGather(
               data.source[i], data.destination[i], shape.element_type(),
-              ShapeUtil::ElementsIn(shape), executor));
+              ShapeUtil::ElementsIn(shape), executor);
+
+          communicator_event.AndThen([state, communicator_event]() mutable {
+            if (ABSL_PREDICT_FALSE(communicator_event.IsError())) {
+              state.CountDown(communicator_event.GetError());
+            } else {
+              state.CountDown();
+            }
+          });
         }
-        return absl::OkStatus();
+
+        return state.AsRef();
       });
 }
 

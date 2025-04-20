@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -111,8 +113,9 @@ bool ShouldLaunchDelayKernel() {
 // thread::ThreadPool on some platforms), we run certain routines in this pool
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
-  static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "cuda_driver", 1);
+  static tsl::thread::ThreadPool* const thread_pool =
+      new tsl::thread::ThreadPool(tsl::Env::Default(), tsl::ThreadOptions(),
+                                  "cuda_driver", 1);
   return thread_pool;
 }
 
@@ -1192,7 +1195,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
   size_t bytes = 0;
   CHECK(static_cast<bool>(module_handle));
 
-  {  // give limited scope to mutex_lock
+  {  // give limited scope to MutexLock
     absl::MutexLock lock{&in_memory_modules_mu_};
     auto it = gpu_binary_to_module_.find(module_handle);
     CHECK(it != gpu_binary_to_module_.end());
@@ -1421,8 +1424,8 @@ absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(
   return static_cast<const CudaKernel*>(*it);
 }
 
-absl::StatusOr<DeviceMemoryBase> CudaExecutor::CreateTensorMap(
-    TmaDescriptor tma_desc, void* global_address) {
+absl::StatusOr<TensorMap> CudaExecutor::CreateTensorMap(TmaDescriptor tma_desc,
+                                                        void* global_address) {
   TF_ASSIGN_OR_RETURN(CUtensorMapDataType data_type,
                       GetTensorMapDataType(tma_desc.element_size()));
   CUtensorMapSwizzle swizzle = GetTensorMapSwizzle(tma_desc.swizzle());
@@ -1435,7 +1438,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::CreateTensorMap(
 
   CUtensorMap tensor_map;
   auto result = cuTensorMapEncodeTiled(
-      &tensor_map, data_type, tma_desc.rank(), global_address,
+      &tensor_map, data_type, tma_desc.num_dimensions(), global_address,
       &tma_desc.global_dims()[0], &tma_desc.global_strides()[0],
       &tma_desc.box_dims()[0], &tma_desc.element_strides()[0], interleave,
       swizzle, l2_promotion, float_oob_fill);
@@ -1446,10 +1449,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::CreateTensorMap(
         "Failed to create tensormap with cuTensorMapEncodeTiled: %s",
         error_message));
   }
-  DeviceMemoryBase device_tensor_map = Allocate(sizeof(tensor_map), 0);
-  TF_RETURN_IF_ERROR(
-      SynchronousMemcpy(&device_tensor_map, &tensor_map, sizeof(tensor_map)));
-  return device_tensor_map;
+  return absl::bit_cast<TensorMap>(tensor_map);
 }
 
 }  // namespace gpu

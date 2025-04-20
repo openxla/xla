@@ -300,9 +300,11 @@ class HloInstruction {
   void DetachFromOperandsAndUsers();
 
   // Adds a derived instruction to the parent computation of this instruction.
-  // Also update setup the new instruction as a derived instruction.
+  // Updates setup the new instruction as a derived instruction, and sets the
+  // name of the new instruction (if `new_name` is not empty).
   HloInstruction* AddInstruction(
-      std::unique_ptr<HloInstruction> derived_instruction);
+      std::unique_ptr<HloInstruction> derived_instruction,
+      absl::string_view new_name = "");
 
   // Creates an instruction from the given proto. Arguments:
   //
@@ -996,7 +998,7 @@ class HloInstruction {
   // Creates a dynamic reshape instruction. Similar to reshape but dynamic
   // dimensions sizes are provided as additional variadic arguments.
   //
-  // Precondition: dim_sizes.size() == shape.rank()
+  // Precondition: dim_sizes.size() == shape.dimensions().size()
   static std::unique_ptr<HloInstruction> CreateDynamicReshape(
       const Shape& shape, HloInstruction* data_operand,
       absl::Span<HloInstruction* const> dim_sizes);
@@ -1265,6 +1267,9 @@ class HloInstruction {
 
   // Returns if instruction has any control dependencies.
   bool HasControlDependencies() const;
+
+  // Returns if instruction has successor control dependencies.
+  bool HasSuccessorControlDependencies() const;
 
   // Copies the control predecessors and successors on this HLO instruction to
   // `inst`.  Does not do a deep copy so this makes sense only if `inst` and
@@ -1732,12 +1737,7 @@ class HloInstruction {
   // when we clone hlo_computations and want to let the instructions to point
   // to the newly cloned nodes.
   void ReplaceCalledComputations(
-      absl::FunctionRef<HloComputation*(HloComputation*)> map_function) {
-    for (int64_t i = 0; i < called_computations().size(); ++i) {
-      mutable_rare()->called_computations[i] =
-          map_function(rare()->called_computations[i]);
-    }
-  }
+      absl::FunctionRef<HloComputation*(HloComputation*)> map_function);
 
   // Clears out the called computations.
   //
@@ -1747,11 +1747,7 @@ class HloInstruction {
   // clearing out the computations, we reflect the fact that all side-effecting
   // properties have been reflected in the caller, and make the call HLO
   // removable.
-  virtual void ClearCalledComputations() {
-    if (has_rare()) {
-      mutable_rare()->called_computations.clear();
-    }
-  }
+  virtual void ClearCalledComputations();
 
   // Returns true if this instruction performs an elementwise operation on
   // `operand_idx`-th operand. An instruction is elementwise on an operand iff,
@@ -1871,6 +1867,10 @@ class HloInstruction {
     return it.second;
   }
 
+  size_t erase_frontend_attribute(const std::string& key) {
+    return mutable_rare()->frontend_attributes.mutable_map()->erase(key);
+  }
+
   // Adds or overrides a single attribute in the HloInstruction.
   void set_frontend_attribute(const std::string& key,
                               const std::string& value) {
@@ -1912,6 +1912,18 @@ class HloInstruction {
   bool has_result_accuracy() const {
     return has_rare() && (result_accuracy().has_tolerance() ||
                           result_accuracy().mode() != ResultAccuracy::DEFAULT);
+  }
+
+  bool equal_result_accuracy(const HloInstruction* other) const {
+    return result_accuracy().has_tolerance() ==
+               other->result_accuracy().has_tolerance() &&
+           result_accuracy().tolerance().atol() ==
+               other->result_accuracy().tolerance().atol() &&
+           result_accuracy().tolerance().rtol() ==
+               other->result_accuracy().tolerance().rtol() &&
+           result_accuracy().tolerance().ulps() ==
+               other->result_accuracy().tolerance().ulps() &&
+           result_accuracy().mode() == other->result_accuracy().mode();
   }
 
   void add_single_statistic(Statistic statistic) {
@@ -1957,7 +1969,7 @@ class HloInstruction {
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
-    return std::move(proto);
+    return proto;
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
@@ -2017,10 +2029,7 @@ class HloInstruction {
   }
   const OpMetadata& metadata() const { return *metadata_; }
 
-  // Set/get the computation containing this instruction. set_parent should only
-  // be called by HloComputation methods which add/remove instructions to
-  // computations.
-  void set_parent(HloComputation* computation) { parent_ = computation; }
+  // Get the computation containing this instruction.
   const HloComputation* parent() const { return parent_; }
   HloComputation* parent() { return parent_; }
 
@@ -2389,9 +2398,8 @@ class HloInstruction {
 
   void DetachFrom(HloInstruction* usee) { usee->RemoveUser(this); }
 
-  void set_called_computation(int index, HloComputation* computation) {
-    mutable_rare()->called_computations[index] = computation;
-  }
+  void set_called_computation(int index, HloComputation* computation);
+
   // Indices of computations in called_computations for instructions which call
   // multiple computations.
   enum {
@@ -2423,6 +2431,9 @@ class HloInstruction {
       bool layout_sensitive, bool sharding_sensitive,
       bool ignore_channel_id_values,
       bool ignore_commutative_operand_order) const;
+
+  // Set the computation containing this instruction.
+  void set_parent(HloComputation* computation) { parent_ = computation; }
 
   // Implementation for non-common logic of PrintExtraAttributes.
   virtual void PrintExtraAttributesImpl(AttributePrinter& printer,

@@ -1,7 +1,7 @@
 # Description:
 #   Host-platform specific StreamExecutor support code.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -82,7 +82,6 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_common",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
@@ -105,7 +104,8 @@ cc_library(
     ],
     deps = [
         ":host_stream",
-        "@tsl//tsl/platform:mutex",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 

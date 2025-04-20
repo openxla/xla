@@ -24,6 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/client.h"
@@ -48,6 +51,7 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/topology.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
@@ -202,35 +206,34 @@ class CompileOnlyIfRtClient final
     }
   }
 
-  absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeArrayFromHostBuffer(
-      const void* data, ifrt::DType dtype, ifrt::Shape shape,
+  absl::StatusOr<tsl::RCReference<xla::ifrt::Array>> MakeArrayFromHostBuffer(
+      const void* data, xla::ifrt::DType dtype, xla::ifrt::Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      std::shared_ptr<const ifrt::Sharding> sharding,
+      absl::Nonnull<std::shared_ptr<const xla::ifrt::Sharding>> sharding,
       HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) override {
+      std::function<void()> on_done_with_host_buffer,
+      tsl::RCReference<xla::ifrt::UserContext> user_context) override {
     return Unimplemented(
         "MakeArrayFromHostBuffer not available with compile-only client.");
   }
 
-  absl::StatusOr<tsl::RCReference<ifrt::Array>>
-  AssembleArrayFromSingleDeviceArrays(
-      ifrt::Shape shape, std::shared_ptr<const ifrt::Sharding> sharding,
-      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
-      ifrt::ArrayCopySemantics semantics) override {
+  absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>>
+  MakeArraysFromHostBufferShards(
+      absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
+      HostBufferSemantics semantics,
+      tsl::RCReference<xla::ifrt::UserContext> user_context) override {
     return Unimplemented(
-        "AssembleArrayFromSingleDeviceArrays not available with compile-only "
+        "MakeArraysFromHostBufferShards not available with compile-only "
         "client.");
   }
-  absl::StatusOr<tsl::RCReference<ifrt::Array>>
-  AssembleArrayFromSingleDeviceArrays(
-      ifrt::Shape shape, std::shared_ptr<const ifrt::Sharding> sharding,
-      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
-      ifrt::ArrayCopySemantics array_copy_semantics,
-      ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override {
+
+  absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> MakeErrorArrays(
+      const absl::Status& error, absl::Span<const ifrt::ArraySpec> array_specs,
+      tsl::RCReference<ifrt::UserContext> user_context) override {
     return Unimplemented(
-        "AssembleArrayFromSingleDeviceArrays not available with compile-only "
-        "client.");
+        "MakeErrorArrays not available with compile-only client.");
   }
+
   absl::StatusOr<tsl::RCReference<ifrt::Array>>
   AssembleArrayFromSingleDeviceArrays(
       ifrt::DType dtype, ifrt::Shape shape,
@@ -245,7 +248,7 @@ class CompileOnlyIfRtClient final
 
   absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> CopyArrays(
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
-      std::optional<tsl::RCReference<ifrt::DeviceList>> devices,
+      std::optional<ifrt::DeviceListRef> devices,
       std::optional<ifrt::MemoryKind> memory_kind,
       ifrt::ArrayCopySemantics semantics) override {
     return Unimplemented("CopyArrays not available with compile-only client.");
@@ -311,19 +314,23 @@ class CompileOnlyIfRtClient final
         "LookupAddressableDevice not available with compile-only client.");
   }
 
-  tsl::RCReference<ifrt::DeviceList> MakeDeviceList(
+  ifrt::DeviceListRef MakeDeviceList(
       absl::Span<ifrt::Device* const> devices) const override {
     return ifrt::BasicDeviceList::Create(devices);
   }
 
   ifrt::Compiler* GetDefaultCompiler() override { return &default_compiler_; }
 
+  tsl::RCReference<xla::ifrt::UserContext> CreateUserContext() override {
+    return tsl::RCReference<xla::ifrt::UserContext>();
+  }
+
   static char ID;  // NOLINT
 
   const ifrt::PjRtTopology& topology() const { return *topology_; }
 
   absl::StatusOr<std::shared_ptr<ifrt::Topology>> GetTopologyForDevices(
-      const tsl::RCReference<xla::ifrt::DeviceList>& devices) const override {
+      const xla::ifrt::DeviceListRef& devices) const override {
     return topology_;
   }
 

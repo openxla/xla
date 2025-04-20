@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "xla/python/transfer/event_loop.h"
@@ -174,7 +175,7 @@ TEST(SocketBulkTransportFactoryTest, SendAndRecvWithFactory) {
 
   std::unique_ptr<BulkTransportInterface> bulk_transporta;
   std::unique_ptr<BulkTransportInterface> bulk_transportb;
-  {
+  for (size_t i = 0; i < 4; ++i) {
     auto init_res = factory->InitBulkTransport();
     bulk_transporta = std::move(init_res.bulk_transport);
     auto recv_res = factory2->RecvBulkTransport(init_res.request);

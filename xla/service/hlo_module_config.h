@@ -287,6 +287,9 @@ class HloModuleConfig {
   void set_static_device_assignment(const DeviceAssignment& device_assignment) {
     static_device_assignment_ = device_assignment;
   }
+  void reset_static_device_assignment() {
+    static_device_assignment_ = std::nullopt;
+  }
 
   // Checks if this config has a simulated device assignment.
   bool has_pre_simulation_device_assignment() const {
@@ -510,7 +513,7 @@ class HloModuleConfig {
   // instead. O3 might enable costly algorithms to reduce memory usage that may
   // greatly increase compile time.
   ExecutionOptions::EffortLevel memory_fitting_level_ =
-      ExecutionOptions::EFFORT_UNKNOWN;
+      ExecutionOptions::EFFORT_O2;
 
   // If enabled, deduplicate equivalent hlos into function calls to reduce code
   // size.

@@ -31,7 +31,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "xla/backends/cpu/codegen/dot_kernel_emitter.h"
+#include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
+#include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/concatenate_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/elemental_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/logical_id_thunk.h"
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
-#include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -75,6 +75,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/layout_util.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/backend_config.pb.h"
@@ -548,11 +549,32 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReduceScatterThunk(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCallThunk(
     const HloInstruction* instruction) {
-  TF_ASSIGN_OR_RETURN(
-      ThunkSequence called_sequence,
-      EmitHloComputation(instruction->called_computations().front()));
-  return ThunkSequence::Of<CallThunk>(ThunkInfo(instruction),
-                                      std::move(called_sequence));
+  if (std::optional<std::string> maybe_small_call =
+          instruction->get_frontend_attribute("xla_cpu_small_call");
+      maybe_small_call.has_value() && *maybe_small_call == "true") {
+    ComputationKernelEmitter emitter(instruction, &buffer_assignment_,
+                                     &target_machine_features_);
+    TF_ASSIGN_OR_RETURN(KernelDefinition kernel_definition,
+                        emitter.EmitKernelDefinition());
+
+    auto [kernel_spec, kernel_source] = std::move(kernel_definition).release();
+    auto llvm_ir_kernel_source = absl::WrapUnique<LlvmIrKernelSource>(
+        tsl::down_cast<LlvmIrKernelSource*>(kernel_source.release()));
+
+    kernels_.push_back(
+        {kernel_spec.name(),
+         std::move(*llvm_ir_kernel_source).thread_safe_module()});
+
+    return MakeKernelThunkSequence(
+        instruction, std::move(kernel_spec),
+        /*min_alignment=*/cpu_function_runtime::MinAlign());
+  } else {
+    TF_ASSIGN_OR_RETURN(
+        ThunkSequence called_sequence,
+        EmitHloComputation(instruction->called_computations().front()));
+    return ThunkSequence::Of<CallThunk>(ThunkInfo(instruction),
+                                        std::move(called_sequence));
+  }
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
@@ -830,10 +852,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
   const HloInstruction* lhs = instruction->operand(0);
   const HloInstruction* rhs = instruction->operand(1);
 
-  TF_RETURN_IF_ERROR(ElementTypesSameAndSupported(
-      *instruction, /*operands=*/{lhs, rhs},
-      /*supported_types=*/
-      {PRED, S8, U8, S16, U16, S32, U32, S64, U64, F16, F32, F64, C64, C128}));
+  TF_RETURN_IF_ERROR(
+      ElementTypesSameAndSupported(*instruction, /*operands=*/{lhs, rhs},
+                                   /*supported_types=*/
+                                   {PRED, S8, U8, S16, U16, S32, U32, S64, U64,
+                                    BF16, F16, F32, F64, C64, C128}));
 
   const DotDimensionNumbers& dnums = instruction->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1) {
@@ -842,7 +865,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
   }
 
   DotImplementationStrategy strategy = GetDotImplementationStrategy(
-      hlo_module_config_, *instruction, target_machine_features_);
+      hlo_module_config_, *instruction, target_machine_features_,
+      /*allow_runtime_calls=*/true);
 
   switch (strategy) {
     // Emit host kernel implementing dot instruction.
@@ -917,7 +941,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKThunk(
 
   // Deduce parameters from the result shape and operand shape
   const int64_t input_size = input->shape().dimensions().back();
-  const bool has_batch = result_shape.tuple_shapes(0).dimensions_size() == 2;
+  const bool has_batch = result_shape.tuple_shapes(0).dimensions().size() == 2;
   const int64_t batch_size =
       has_batch ? result_shape.tuple_shapes(0).dimensions(0) : 1;
   const int64_t k = result_shape.tuple_shapes(0).dimensions().back();

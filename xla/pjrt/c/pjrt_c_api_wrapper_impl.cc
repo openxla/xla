@@ -823,7 +823,7 @@ PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
                         std::visit(
                             [args, &options](auto& program) {
-                              return args->client->client->Compile(
+                              return args->client->client->CompileAndLoad(
                                   UnpackPjrtProgram(program), options);
                             },
                             module_or_hlo));
@@ -1847,9 +1847,10 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-                        args->client->client->DeserializeExecutable(
-                            serialized, /*options=*/std::nullopt));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      args->client->client->LoadSerializedExecutable(
+          serialized, /*options=*/std::nullopt, xla::LoadOptions()));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);
@@ -2830,9 +2831,11 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
 
 PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
   return PJRT_Layouts_Extension{
-      /*struct_size=*/PJRT_Layouts_Extension_STRUCT_SIZE,
-      /*type=*/PJRT_Extension_Type_Layouts,
-      /*next=*/next,
+      PJRT_Extension_Base{
+          /*struct_size=*/PJRT_Layouts_Extension_STRUCT_SIZE,
+          /*type=*/PJRT_Extension_Type_Layouts,
+          /*next=*/next,
+      },
       /*PJRT_Layouts_MemoryLayout_Destroy=*/
       pjrt::PJRT_Layouts_MemoryLayout_Destroy,
       /*PJRT_Layouts_MemoryLayout_Serialize=*/
@@ -2847,14 +2850,15 @@ PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
 PJRT_MemoryDescriptions_Extension CreateMemoryDescriptionsExtension(
     PJRT_Extension_Base* next) {
   return PJRT_MemoryDescriptions_Extension{
-      /*struct_size=*/PJRT_MemoryDescriptions_Extension_STRUCT_SIZE,
-      /*type=*/PJRT_Extension_Type_MemoryDescriptions,
-      /*next=*/next,
+      PJRT_Extension_Base{
+          /*struct_size=*/PJRT_MemoryDescriptions_Extension_STRUCT_SIZE,
+          /*type=*/PJRT_Extension_Type_MemoryDescriptions,
+          /*next=*/next,
+      },
       /*PJRT_DeviceDescription_MemorySpaces=*/
       pjrt::PJRT_DeviceDescription_MemoryDescriptions,
       /*PJRT_MemoryDescription_Kind=*/
-      pjrt::PJRT_MemoryDescription_Kind,
-  };
+      pjrt::PJRT_MemoryDescription_Kind};
 }
 
 }  // namespace pjrt

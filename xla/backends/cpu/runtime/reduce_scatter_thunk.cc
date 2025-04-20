@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
 
@@ -65,8 +65,6 @@ ReduceScatterThunk::ReduceScatterThunk(Info info, ReductionKind reduction_kind,
 
 tsl::AsyncValueRef<ReduceScatterThunk::ExecuteEvent>
 ReduceScatterThunk::Execute(const ExecuteParams& params) {
-  tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
-
   TF_ASSIGN_OR_RETURN(OpDeviceMemory data, GetOpDeviceMemory(params));
 
   VLOG(3) << absl::StreamFormat(
@@ -92,14 +90,25 @@ ReduceScatterThunk::Execute(const ExecuteParams& params) {
       [&](const RendezvousKey& key, Communicator& comm) {
         CpuCollectives::Executor executor(key, DefaultCollectiveTimeout());
 
+        tsl::CountDownAsyncValueRef<Communicator::Event> state(
+            data.source.size());
+
         for (int32_t i = 0; i < data.source.size(); ++i) {
           const Shape& shape = destination_shape(i);
-          TF_RETURN_IF_ERROR(comm.ReduceScatter(
+          auto communicator_event = comm.ReduceScatter(
               data.source[i], data.destination[i], shape.element_type(),
-              ShapeUtil::ElementsIn(shape), reduction_kind_, executor));
+              ShapeUtil::ElementsIn(shape), reduction_kind_, executor);
+
+          communicator_event.AndThen([state, communicator_event]() mutable {
+            if (ABSL_PREDICT_FALSE(communicator_event.IsError())) {
+              state.CountDown(communicator_event.GetError());
+            } else {
+              state.CountDown();
+            }
+          });
         }
 
-        return absl::OkStatus();
+        return state.AsRef();
       });
 }
 

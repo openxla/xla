@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -153,14 +152,6 @@ Future<> BasicStringArray::GetReadyFuture() const {
         absl::FailedPreconditionError("Array has already been deleted"));
   }
   return ready_future_;
-}
-
-absl::StatusOr<std::vector<tsl::RCReference<Array>>>
-BasicStringArray::DisassembleIntoSingleDeviceArrays(
-    ArrayCopySemantics semantics) {
-  DCHECK(this);
-  return DisassembleIntoSingleDeviceArrays(
-      semantics, SingleDeviceShardSemantics::kAllShards);
 }
 
 absl::StatusOr<std::vector<tsl::RCReference<Array>>>
@@ -303,7 +294,7 @@ Future<> BasicStringArray::CopyToHostBuffer(
 }
 
 absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::Copy(
-    std::optional<tsl::RCReference<xla::ifrt::DeviceList>> devices,
+    std::optional<xla::ifrt::DeviceListRef> devices,
     std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);

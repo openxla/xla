@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-
 #include <utility>
 
 #include "absl/strings/str_replace.h"
@@ -32,6 +30,8 @@ limitations under the License.
 
 namespace xla {
 namespace cpu {
+
+#if defined(INTEL_MKL)
 
 class ConvolutionTest : public HloTestBase,
                         public ::testing::WithParamInterface<PrimitiveType> {
@@ -72,9 +72,7 @@ class ConvolutionTest : public HloTestBase,
   ConvolutionTest() {
     dtype_ = GetParam();
     atol_ = rtol_ = (dtype_ == F32) ? 1e-4 : 1e-2;
-    // TODO(intel-tf): Set default value of user_scratchpad to true after
-    // enabling feature
-    user_scratchpad_ = false;
+    user_scratchpad_ = true;
     weights_prepacked_ = false;
     dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
   }
@@ -345,6 +343,25 @@ TEST_P(ConvolutionTest, ToeplitzConstrcutionTest) {
   })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BINARY_ADD"});
+}
+
+TEST_P(ConvolutionTest, Conv2DWithSumTest) {
+  const absl::string_view outline = R"(
+  HloModule convolution.test.with.sum
+  ENTRY convolution.test.with.sum {
+    arg0.1 = $dtype[1,22,22,1] parameter(0)
+    arg0.2 = $dtype[1,11,11,1] parameter(1)
+    constant.3 = $dtype[] constant(1)
+    broadcast.4 = $dtype[8,8,1,1] broadcast(constant.3), dimensions={}
+    convolution.0 = $dtype[1,11,11,1] convolution(arg0.1, broadcast.4),
+          window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    ROOT add.10 = $dtype[1,11,11,1] add(convolution.0, arg0.2)
+  })";
+
+  // Optimized HLO must match "SUM" only for precisions that support Elementwise
+  // Add operations
+  RunCompareAndMatchOptimizedHlo(outline,
+                                 {(dtype_ == BF16) ? "BINARY_ADD" : "SUM"});
 }
 
 TEST_P(ConvolutionTest, Conv2DWithBiasAndTanhTest) {
@@ -636,7 +653,10 @@ INSTANTIATE_TEST_SUITE_P(
       return test_name;
     });
 
+#endif  // INTEL_MKL
+
+// Ensure at least one test case is linked to avoid test failures.
+TEST(Dummy, Test) {}
+
 }  // namespace cpu
 }  // namespace xla
-
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3

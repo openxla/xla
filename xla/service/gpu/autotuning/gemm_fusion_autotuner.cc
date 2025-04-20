@@ -19,7 +19,6 @@ limitations under the License.
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -43,6 +42,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -64,8 +64,8 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_compile_util.h"
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/dot_search_space.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/buffer_comparator.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
+#include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_graph_dumper.h"
@@ -129,9 +130,6 @@ namespace {
 
 // Minimum tile size.
 constexpr int kMinTileSize = 16;
-
-// Default tiling when autotuning is disabled.
-constexpr TritonGemmConfig kDefaultGemmTiling = {32, 32, 32, 1, 1, 4};
 
 // Split-K is enabled when the estimate number of waves is lower than the limit.
 constexpr int kMaxWavesForSplitK = 5;
@@ -352,6 +350,13 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
     FusionWrapper fusion_wrapper(gpu_device_info);
     TF_RETURN_IF_ERROR(fusion_wrapper.Run(new_module.get()).status());
   }
+
+  if (debug_opts
+          .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms()) {
+    NestGemmFusion nest_gemm_fusion(gpu_device_info.gpu_compute_capability());
+    TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(new_module.get()).status());
+  }
+
   return new_module;
 }
 
@@ -873,6 +878,41 @@ void ModifyPotentiallyFailingConfig(TritonGemmConfig& config, int minBitWidth,
 
 absl::StatusOr<std::vector<TritonGemmConfig>>
 GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
+  // Default tiling when autotuning is disabled.
+  constexpr TritonGemmConfig kDefaultConfig = {
+      /*block_m=*/32, /*block_n=*/32,   /*block_k=*/32,
+      /*split_k=*/1,  /*num_stages=*/1, /*num_warps=*/4,
+      /*num_ctas=*/1};
+  constexpr int kMinGemmElements = 2 * 32 * 32;
+  bool small_dot = ShapeUtil::ElementsIn(dot.operand(0)->shape()) +
+                       ShapeUtil::ElementsIn(dot.operand(1)->shape()) <=
+                   kMinGemmElements;
+  bool autotune_contracting_split =
+      debug_options_.xla_gpu_enable_split_k_autotuning();
+
+  if (debug_options_.xla_gpu_experimental_enable_dynamic_dot_search_space()) {
+    TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(),
+                                            &dot);
+    VLOG(1) << "Generating configs from search space: "
+            << search_space.ToString();
+    // We don't need to consider small_dot here. The new search space will
+    // already generate a unique config for small problems.
+    std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs(
+        /*force_contracting_split=*/autotune_contracting_split
+            ? std::nullopt
+            : std::make_optional(1));
+    if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
+      VLOG(1) << "Restricting configs to the default set.";
+      configs = search_space.OptimizeConfigSet(
+          configs, /*hints=*/GetDefaultTritonConfigs());
+    }
+    if (!IsAutotuningEnabled()) {
+      // Keep the first config, which likely does not spill registers.
+      configs.resize(1);
+    }
+    return configs;
+  }
+
   // Retrieve the minimum bit-width participating in the dot. This is needed
   // to avoid autotuning configurations that are not supported by Triton. This
   // is used to restrict the values for tile_k.
@@ -898,20 +938,14 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
 
   // Generate the list of configurations (once).
   if (triton_configs_.empty()) {
-    triton_configs_ = !IsAutotuningEnabled()
-                          ? std::vector(1, kDefaultGemmTiling)
+    triton_configs_ = !IsAutotuningEnabled() ? std::vector(1, kDefaultConfig)
                       : debug_options_.xla_gpu_exhaustive_tiling_search()
                           ? GetExhaustiveTritonConfigs()
                           : GetDefaultTritonConfigs();
   }
 
-  // Avoid autotuning tiny fusions.
-  constexpr int kMinGemmElements = 32 * 32;
-  bool small_dot =
-      ShapeUtil::ElementsIn(dot.operand(0)->shape()) <= kMinGemmElements &&
-      ShapeUtil::ElementsIn(dot.operand(1)->shape()) <= kMinGemmElements;
   std::vector<TritonGemmConfig> triton_configs =
-      small_dot ? std::vector(1, kDefaultGemmTiling) : triton_configs_;
+      small_dot ? std::vector(1, kDefaultConfig) : triton_configs_;
 
   // Split-K optimization enables more even utilization of a GPU in cases
   // where tiling just the non-contracting dimensions of a GEMM does not create
@@ -932,7 +966,7 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
     config.block_n = std::min(config.block_n, limits.block_n);
     config.block_k = std::min(config.block_k, limits.block_k);
     int max_split_k = 1;
-    if (debug_options_.xla_gpu_enable_split_k_autotuning()) {
+    if (autotune_contracting_split) {
       int64_t ratio = kSufficientNumberOfTiles * config.block_m *
                       config.block_n / result_size;
       max_split_k = 1 << std::max<int>(tsl::Log2Floor64(ratio), 0);
@@ -1337,6 +1371,10 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
   AutotuningLogs autotuning_logs;
   int fusion_id = 0;
   for (const auto& [fusion, candidates] : executable_sets) {
+    if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
+      TF_RETURN_IF_ERROR(DumpOriginalFusion(compile_util, *fusion, fusion_id));
+    }
+
     TF_ASSIGN_OR_RETURN(std::vector<AutotuneResult> results,
                         Profile(compile_util, *fusion, candidates));
 
@@ -1355,7 +1393,6 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
             << tsl::proto_utils::FromDurationProto(best.run_time());
 
     if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
-      TF_RETURN_IF_ERROR(DumpOriginalFusion(compile_util, *fusion, fusion_id));
       TF_RETURN_IF_ERROR(DumpAutotunedFusion(
           config_, toolkit_version_, compile_util, best, fusion, fusion_id++));
     }
@@ -1457,8 +1494,6 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
   XLA_SCOPED_LOGGING_TIMER("GEMM fusion autotuner");
 
   const DebugOptions& debug_options = module->config().debug_options();
-  const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
-                                key_value_store_.process_count > 1;
   GemmFusionAutotunerImpl autotuner(config_, toolkit_version_, debug_options,
                                     thread_pool_);
   GemmFusionCollector fusion_collector(&autotuner);
@@ -1466,6 +1501,10 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
       GemmFusionCollectorResult fusions,
       fusion_collector.CollectGemmFusions(*module, execution_threads));
   AutotuneCacheKeySet keys_of_this_rank;
+
+  const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
+                                key_value_store_.process_count > 1 &&
+                                autotuner.IsAutotuningEnabled();
   if (shard_autotuning) {
     if (key_value_store_.key_value_store == nullptr) {
       return absl::FailedPreconditionError(

@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -37,11 +38,11 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/cpu_clique_key.h"
 #include "xla/backends/cpu/collectives/cpu_cliques.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
-#include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
@@ -216,9 +217,27 @@ CollectiveThunk::ExecuteWithCommunicator(
       Communicator * communicator,
       AcquireCommunicator(collectives, clique_key, RankId(rank)));
 
-  TF_RETURN_IF_ERROR(callback(key, *communicator));
+  tsl::AsyncValueRef<Communicator::Event> communicator_event =
+      callback(key, *communicator);
 
-  return OkExecuteEvent();
+  auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+
+  // Keeps communicator event alive until the event is ready.
+  event.AndThen([communicator_event]() {});
+
+  // Set the event to concrete state once the communicator event is ready.
+  communicator_event.AndThen(
+      // We pass `communicator_event` as a pointer because `event` will keep it
+      // alive.
+      [event, communicator_event_ptr = communicator_event.AsPtr()]() {
+        if (ABSL_PREDICT_FALSE(communicator_event_ptr.IsError())) {
+          event.SetError(communicator_event_ptr.GetError());
+        }
+
+        event.SetStateConcrete();
+      });
+
+  return event;
 }
 
 const BufferAllocation::Slice& CollectiveThunk::source_buffer(

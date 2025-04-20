@@ -126,12 +126,12 @@ absl::StatusOr<std::vector<int>> GetParticipatingIDs(
     std::optional<int> total_participant_count,
     absl::Span<const ReplicaGroup> groups);
 
+// Returns the replica groups for the given async collective instruction.
+absl::StatusOr<std::vector<std::vector<int64_t>>> GetAsyncReplicaGroups(
+    const HloInstruction* instruction);
+
 absl::string_view CollectiveOpGroupModeToString(
     CollectiveOpGroupMode group_mode);
-
-absl::StatusOr<bool> GetCollectiveUseGlobalDeviceIds(const HloInstruction* hlo);
-
-std::optional<int64_t> GetCollectiveChannelId(const HloInstruction* hlo);
 
 const CollectiveDeviceList& GetCollectiveDeviceList(const HloInstruction* hlo);
 
@@ -139,9 +139,13 @@ const std::vector<ReplicaGroup>& GetCollectiveReplicaGroups(
     const HloInstruction* hlo);
 
 // Returns the group formation mode of instr, assuming that instr is, or is
-// dervied from, an HloAllGatherInstruction, HloAllReduceInstructionBase,
-// HloAllToAllInstruction, HloCollectiveBroadcastInstruction or
-// HloCollectivePermuteInstruction.
+// derived from on the following instructions:
+//   * HloAllGatherInstruction
+//   * HloAllReduceInstructionBase
+//   * HloAllToAllInstruction
+//   * HloCollectiveBroadcastInstruction
+//   * HloCollectivePermuteInstruction
+//   * HloRaggedAllToAllInstruction
 absl::StatusOr<CollectiveOpGroupMode> GetCollectiveOpGroupMode(
     const HloInstruction* instr);
 
@@ -230,6 +234,12 @@ bool IsExclusivelyCrossModule(absl::Span<const ReplicaGroup> replica_groups,
                               bool use_global_ids, bool has_channel_id,
                               const DeviceAssignment& device_assignment);
 
+// Returns true if all subgroups in replica_groups are exclusively
+// cross-replica.
+bool IsExclusivelyCrossReplica(absl::Span<const ReplicaGroup> replica_groups,
+                               bool use_global_ids, bool has_channel_id,
+                               const DeviceAssignment& device_assignment);
+
 // A custom call target that can be used to create a nop that can legally
 // replace a collective op.
 inline constexpr absl::string_view kNopCustomCallTarget = "AllocateBuffer";
@@ -244,6 +254,9 @@ bool IsNonFusionCollective(const HloInstruction* instruction);
 
 // Returns true if instruction is a collective op or a collective fusion.
 bool IsCollective(const HloInstruction* instruction);
+
+// Returns true if instruction is an async collective op.
+absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction);
 
 // Returns the collective instruction if argument is a collective op (or a
 // collective fusion) with channel_id.
@@ -373,6 +386,13 @@ constexpr char kSendRecvPipelineAttr[] = "_xla_send_recv_pipeline";
 // Similarly, the communication between device 1 and 2 will only send or
 // receive data on execution instances 5 and 7.
 constexpr char kSendRecvValidationAttr[] = "_xla_send_recv_validation";
+
+// Attribute to indicate that collective operations should be issued on a
+// dedicated p2p stream. This is a hint and there is no guarantee that this will
+// be honored.
+inline constexpr absl::string_view kCollectiveStreamAttrName =
+    "_xla_gpu_collective_stream";
+inline constexpr absl::string_view kCollectiveStreamP2P = "p2p";
 
 }  // end namespace xla
 

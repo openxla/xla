@@ -31,11 +31,10 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
-#include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/cpu/xfeed_manager.h"
 #include "xla/service/global_device_id.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -49,10 +48,8 @@ struct ThreadPoolDevice;
 
 namespace xla::cpu {
 
-// WARNING: This is under construction. Long term plan for XLA is to unify
-// runtimes between different backends and have a shared Thunk interface,
-// however for now we chose to have separate Thunk implementations in xla::cpu
-// and xla::gpu namespaces with a plan to unify them in the future.
+// Forward declare.
+class ThunkExecutor;
 
 // Thunk is the basic unit of execution for the XLA CPU runtime.
 //
@@ -184,7 +181,6 @@ class Thunk {
     const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
 
-   private:
     CustomCallExecuteParams(RunId run_id, int32_t device_ordinal,
                             const Eigen::ThreadPoolDevice* intra_op_thread_pool,
                             const ffi::ExecutionContext* ffi_execution_context);
@@ -285,9 +281,6 @@ class Thunk {
       const ExecuteParams& params) = 0;
 
  protected:
-  // Encodes thunk info into the TraceMe compatible format.
-  std::string TraceMeEncode() const;
-
   // Returns `true` if thunk should check buffer slices bounds, alignment, etc.
   // In optimized builds, we skip buffer slices checks, and assume that all
   // buffer slices are valid, as overhead of buffer slices checks adds up and
@@ -301,6 +294,12 @@ class Thunk {
   }
 
  private:
+  friend class ThunkExecutor;
+
+  // Encodes thunk info into the TraceMe compatible format. Used by
+  // ThunkExecutor to create TraceMe annotations for profiler.
+  std::string TraceMeEncode() const;
+
   Kind kind_;
   Info info_;
 

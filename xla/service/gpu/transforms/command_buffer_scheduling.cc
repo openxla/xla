@@ -44,7 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/variant_visitor.h"
+#include "xla/service/overload.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -260,6 +260,10 @@ static bool IsCommand(const HloInstruction* hlo,
         gpu_config->fusion_backend_config();
     if (backend_config.kind() == kCuDnnFusionKind) {
       return config.enabled_commands.contains(DebugOptions::CUDNN);
+    }
+    if (IsDynamicMemcpyFusion(fusion)) {
+      // Dynamic memcpy fusions do not yet have a command implementation.
+      return false;
     }
     if (IsDynamicSliceFusion(fusion)) {
       auto fusion_analysis =
@@ -876,7 +880,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
     erase(kRequireConditionals);  // on-device control flow
   };
 
-  std::visit(VariantVisitor{erase_cuda, erase_rocm},
+  std::visit(Overload{erase_cuda, erase_rocm},
              device_description_.gpu_compute_capability());
 
   auto order = module->MakeComputationPostOrder();
@@ -887,7 +891,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
   for (HloComputation* comp : order) {
     // Skip special computations that do not have lowering to thunks.
     if (comp->IsFusionComputation() || comp->IsAsyncComputation() ||
-        comp->IsCustomCallComputation())
+        !comp->caller_instructions(HloOpcode::kCustomCall).empty())
       continue;
 
     // Skip computations that already part of command buffers.

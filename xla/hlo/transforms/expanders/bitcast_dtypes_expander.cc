@@ -100,11 +100,11 @@ absl::StatusOr<HloInstruction*> BitcastDtypesExpander::ExpandInstruction(
           ConstantR0WithType(&b, output_logical_type, input_bit_width),
           Iota(&b,
                ShapeUtil::ChangeElementType(from_shape, output_logical_type),
-               from_shape.rank() - 1));
+               from_shape.dimensions_size() - 1));
       input = ShiftLeft(input, iota_m);
       input = Reduce(input, Zero(&b, output_logical_type),
                      CreateScalarOrComputation(output_logical_type, &b),
-                     {from_shape.rank() - 1});
+                     {from_shape.dimensions_size() - 1});
     }
 
     BitcastConvertType(input, to_shape.element_type());

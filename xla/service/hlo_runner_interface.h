@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/base/nullability.h"
 #include "absl/log/die_if_null.h"
 #include "absl/log/log.h"
@@ -34,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/hlo_module_util.h"
 #include "xla/shape.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -209,20 +207,18 @@ class HloRunnerInterface {
   HloRunnerInterface() = default;
   virtual ~HloRunnerInterface() = default;
 
-  // Converts an HloModule from the given hlo textual IR string (in
-  // HloModule::ToString format).
-  ABSL_DEPRECATE_AND_INLINE()
-  inline static absl::StatusOr<std::unique_ptr<HloModule>>
-  CreateModuleFromString(absl::string_view hlo_string,
-                         const DebugOptions& debug_options) {
-    return xla::CreateModuleFromString(hlo_string, debug_options);
-  }
-
   // Creates a runner-internal executable object given an HLO module and returns
   // a OpaqueExecutable. If run_hlo_passes is true, the HLO passes will be run
   // as part of compilation.
   virtual absl::StatusOr<std::unique_ptr<OpaqueExecutable>> CreateExecutable(
       std::unique_ptr<HloModule> module, bool run_hlo_passes) = 0;
+
+  // Creates a runner-internal executable object given a runner and
+  // platform-specific serialized executable representation. The serialized
+  // representation must have been produced by a compiler of the same platform
+  // and version as this one.
+  virtual absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
+  DeserializeExecutable(absl::string_view serialized) const = 0;
 
   // Same as above, except it takes buffer assignment as input.
   // Note: The default implementation of the API here does not utilize the given
@@ -347,6 +343,13 @@ class HloRunnerInterface {
   // HloModule.
   virtual absl::StatusOr<absl::Nonnull<const HloModule*>> HloModuleFromWrapped(
       const OpaqueExecutable* wrapped) const = 0;
+
+  // Returns true if the two given OpaqueExecutables originate from the same
+  // runner and are equivalent according to some notion specific to that runner.
+  // Executables that were created by different runners can never be equivalent.
+  virtual bool ExecutablesAreEquivalent(
+      absl::Nonnull<const OpaqueExecutable*> lhs,
+      absl::Nonnull<const OpaqueExecutable*> rhs) const = 0;
 };
 
 }  // namespace xla

@@ -23,12 +23,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_runner.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
@@ -1349,8 +1348,9 @@ ENTRY computation {
             /*opaque=*/std::string{}, API_VERSION_STATUS_RETURNING));
       }));
 
-  absl::StatusOr<bool> filecheck_result = RunFileCheck(module_->ToString({}),
-                                                       R"(
+  absl::StatusOr<bool> filecheck_result = RunFileCheck(
+      module_->ToString(HloPrintOptions().set_print_operand_shape(true)),
+      R"(
 // CHECK: compare = pred[] compare(s32[] %a_size_1, s32[] %b_size_1), direction=EQ
 // CHECK: compare.5 = pred[] compare(s32[] %a_size_2, s32[] %b_size_2), direction=EQ
 // CHECK: and.2 = pred[] and(pred[] %compare, pred[] %compare.5)

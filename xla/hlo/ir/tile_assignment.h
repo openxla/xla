@@ -214,6 +214,14 @@ class TileAssignment {
   void Each(
       absl::FunctionRef<void(absl::Span<const int64_t>, int64_t)> f) const;
 
+  // Templated variant of Each() that avoids virtual function call
+  // overhead per element. Useful for hot code paths.
+  template <class Fn>
+  void TemplatedEach(const Fn& fn) const {
+    MaybeMaterializeFullArray();
+    array_->TemplatedEach(fn);
+  }
+
   absl::Status EachStatus(
       absl::FunctionRef<absl::Status(absl::Span<const int64_t>, int64_t)> f)
       const;
@@ -267,7 +275,7 @@ class TileAssignment {
   void MaybeMaterializeFullArray() const;
 
   static const Array<int64_t>* ReplicatedArray() {
-    static auto* array = new Array<int64_t>({0});
+    static auto* const array = new Array<int64_t>({0});
     return array;
   }
 

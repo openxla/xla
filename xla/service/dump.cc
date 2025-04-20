@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/dump.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -80,7 +81,8 @@ absl::Status CreateDirIfNeeded(const std::string& dir, tsl::Env* env) {
     if (!status.ok()) {
       status = env->IsDirectory(dir);
       if (!status.ok()) {
-        LOG(ERROR) << "Could not create directory " << dir;
+        LOG(ERROR) << "Could not create directory: " << dir
+                   << ". Error: " << status;
         return status;
       }
     }
@@ -123,14 +125,9 @@ struct CanonicalDebugOptions {
             opts.xla_gpu_dump_hlo_unoptimized_snapshots()),
         dump_include_timestamp(opts.xla_dump_include_timestamp()),
         dump_max_hlo_modules(opts.xla_dump_max_hlo_modules()),
-        dump_module_metadata(opts.xla_dump_module_metadata()),
         dump_compress_protos(opts.xla_dump_compress_protos()),
-        dump_hlo_metadata(!opts.xla_dump_disable_metadata()),
         dump_fdo_profiles(opts.xla_gpu_experimental_dump_fdo_profiles()),
-        dump_as_long_text(opts.xla_dump_hlo_as_long_text()),
-        dump_mlir_pretty_form(opts.xla_dump_enable_mlir_pretty_form()),
-        dump_large_constants(opts.xla_dump_large_constants()),
-        syntax_sugar_async_ops(opts.xla_syntax_sugar_async_ops()) {
+        dump_mlir_pretty_form(opts.xla_dump_enable_mlir_pretty_form()) {
     // This constructor examines the values in `opts` and turns on other flags
     // based on what we think is the user's intent.  To reduce confusion about
     // what was a user-specified value versus an extrapolated value, within this
@@ -252,14 +249,9 @@ struct CanonicalDebugOptions {
   bool dump_unoptimized_snapshots;
   bool dump_include_timestamp;
   int64_t dump_max_hlo_modules;
-  bool dump_module_metadata;
   bool dump_compress_protos;
-  bool dump_hlo_metadata;
   bool dump_fdo_profiles;
-  bool dump_as_long_text;
   bool dump_mlir_pretty_form;
-  bool dump_large_constants;
-  bool syntax_sugar_async_ops;
 };
 
 // Helper class to hold a list of functions that produces data to be written to
@@ -467,18 +459,8 @@ static std::vector<std::string> DumpHloModuleImpl(
   std::vector<std::optional<std::string>> file_paths;
 
   if (opts.dump_as_text) {
-    auto print_options = opts.dump_as_long_text
-                             ? HloPrintOptions::Default()
-                             : HloPrintOptions::ShortParsable();
-    print_options.set_print_large_constants(opts.dump_large_constants);
-    print_options.set_print_control_dependencies(true);
-    print_options.set_print_operand_index_annotation_interval(5);
-    print_options.set_print_backend_config(true);
-    print_options.set_print_metadata(opts.dump_hlo_metadata);
-    print_options.set_print_name_after_closing_brace(true);
-    print_options.set_syntax_sugar_async_ops(opts.syntax_sugar_async_ops);
-    file_paths.push_back(DumpToFileInDirOrStdoutImpl(
-        StrCat(filename, ".txt"), module.ToString(print_options), opts));
+    file_paths.push_back(DumpToFileInDirOrStdoutImpl(StrCat(filename, ".txt"),
+                                                     module.ToString(), opts));
     if (buffer_assn) {
       DataProducer buffer_assignment;
       buffer_assignment.Append([&] { return buffer_assn->ToString(); });
@@ -773,12 +755,172 @@ std::vector<std::string> DumpHloModuleIfEnabled(const HloModule& module,
   return {};
 }
 
+std::string GetRepeatedValueAsString(
+    const tsl::protobuf::Reflection* reflection,
+    const DebugOptions& debug_options,
+    const tsl::protobuf::FieldDescriptor* field, int index) {
+  switch (field->type()) {
+    case tsl::protobuf::FieldDescriptor::TYPE_INT32:
+      return std::to_string(
+          reflection->GetRepeatedInt32(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_INT64:
+      return std::to_string(
+          reflection->GetRepeatedInt64(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_UINT32:
+      return std::to_string(
+          reflection->GetRepeatedUInt32(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_UINT64:
+      return std::to_string(
+          reflection->GetRepeatedUInt64(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return std::to_string(
+          reflection->GetRepeatedDouble(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_FLOAT:
+      return std::to_string(
+          reflection->GetRepeatedFloat(debug_options, field, index));
+    case tsl::protobuf::FieldDescriptor::TYPE_BOOL:
+      return reflection->GetRepeatedBool(debug_options, field, index) ? "true"
+                                                                      : "false";
+    case tsl::protobuf::FieldDescriptor::TYPE_ENUM:
+      return std::string(
+          reflection->GetRepeatedEnum(debug_options, field, index)->name());
+    case tsl::protobuf::FieldDescriptor::TYPE_STRING:
+      return reflection->GetRepeatedString(debug_options, field, index);
+    case tsl::protobuf::FieldDescriptor::TYPE_MESSAGE: {
+      tsl::protobuf::TextFormat::Printer tsl_printer;
+      tsl_printer.SetInitialIndentLevel(1);
+      std::string result;
+      tsl_printer.PrintToString(
+          reflection->GetRepeatedMessage(debug_options, field, index), &result);
+      return "{\n" + result + "}";
+    }
+    default:
+      return "Unsupported field type";
+  }
+}
+
+std::string GetValueAsString(const tsl::protobuf::Reflection* reflection,
+                             const DebugOptions& debug_options,
+                             const tsl::protobuf::FieldDescriptor* field) {
+  // Based on the field type, get the value and convert it to a string
+  switch (field->type()) {
+    case tsl::protobuf::FieldDescriptor::TYPE_INT32:
+      return std::to_string(reflection->GetInt32(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_INT64:
+      return std::to_string(reflection->GetInt64(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_UINT32:
+      return std::to_string(reflection->GetUInt32(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_UINT64:
+      return std::to_string(reflection->GetUInt64(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return std::to_string(reflection->GetDouble(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_FLOAT:
+      return std::to_string(reflection->GetFloat(debug_options, field));
+    case tsl::protobuf::FieldDescriptor::TYPE_BOOL:
+      return reflection->GetBool(debug_options, field) ? "true" : "false";
+    case tsl::protobuf::FieldDescriptor::TYPE_ENUM:
+      return std::string(reflection->GetEnum(debug_options, field)->name());
+    case tsl::protobuf::FieldDescriptor::TYPE_STRING:
+      return "\"" + reflection->GetString(debug_options, field) + "\"";
+    case tsl::protobuf::FieldDescriptor::TYPE_MESSAGE: {
+      tsl::protobuf::TextFormat::Printer tsl_printer;
+      tsl_printer.SetSingleLineMode(false);
+      std::string result;
+      tsl_printer.PrintToString(reflection->GetMessage(debug_options, field),
+                                &result);
+      return "{\n" + result + "}";
+    }
+    default:
+      return "Unsupported field type";
+  }
+}
+
+std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options) {
+  // Create a default DebugOptions to compare against
+  DebugOptions default_options = DefaultDebugOptionsIgnoringFlags();
+  std::string non_default_options;
+
+  // Use protobuf reflection to compare fields
+  const tsl::protobuf::Descriptor* descriptor = debug_options.GetDescriptor();
+  const tsl::protobuf::Reflection* reflection = debug_options.GetReflection();
+
+  // Iterate through all fields
+  for (int i = 0; i < descriptor->field_count(); i++) {
+    const tsl::protobuf::FieldDescriptor* field = descriptor->field(i);
+
+    if (field->is_repeated()) {
+      // Handle repeated fields by comparing the values
+      int repeated_count = reflection->FieldSize(debug_options, field);
+      int default_count = reflection->FieldSize(default_options, field);
+
+      // Only process if the repeated field has values
+      if (repeated_count > 0) {
+        std::vector<std::string> debug_values(repeated_count);
+        std::vector<std::string> default_values(default_count);
+
+        // Collect all values from debug_options
+        for (int j = 0; j < repeated_count; j++) {
+          debug_values[j] =
+              GetRepeatedValueAsString(reflection, debug_options, field, j);
+        }
+
+        // Collect all values from default_options
+        for (int j = 0; j < default_count; j++) {
+          default_values[j] =
+              GetRepeatedValueAsString(reflection, default_options, field, j);
+        }
+
+        // Sort both vectors for comparison
+        std::sort(debug_values.begin(), debug_values.end());
+        std::sort(default_values.begin(), default_values.end());
+
+        // Compare the sorted vectors
+        if (debug_values != default_values) {
+          // Values differ, append all debug values to output
+          for (const auto& value : debug_values) {
+            absl::StrAppend(&non_default_options, field->name(), ": ", value,
+                            "\n");
+          }
+        }
+      }
+      continue;
+    }
+
+    // Check if this field differs from default
+    if (reflection->HasField(debug_options, field) &&
+        !reflection->HasField(default_options, field)) {
+      // Field exists in debug_options but not defaults
+      absl::StrAppend(&non_default_options, field->name(), ": ",
+                      GetValueAsString(reflection, debug_options, field), "\n");
+    } else if (reflection->HasField(debug_options, field)) {
+      // Field exists in both, compare values
+      if (GetValueAsString(reflection, debug_options, field) !=
+          GetValueAsString(reflection, default_options, field)) {
+        absl::StrAppend(&non_default_options, field->name(), ": ",
+                        GetValueAsString(reflection, debug_options, field),
+                        "\n");
+      }
+    }
+  }
+
+  return non_default_options;
+}
+
+void DumpNonDefaultDebugOptions(const HloModule& module,
+                                absl::string_view suffix) {
+  const DebugOptions& debug_options = module.config().debug_options();
+  auto filename = FilenameFor(module, "", suffix);
+  auto nonDefaultDebugOptions = GetNonDefaultDebugOptions(debug_options);
+  DumpToFileInDir(debug_options, filename, nonDefaultDebugOptions);
+}
+
 std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, const BufferAssignment& buffer_assn,
     string_view name) {
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.should_dump_module(module.name())) {
     DumpHloModuleImpl(module, &buffer_assn, TimestampFor(module), name, opts);
+    DumpNonDefaultDebugOptions(module, kNonDefaultDebugOptionsDumpSuffix);
   }
   return {};
 }
@@ -797,6 +939,28 @@ std::vector<std::string> DumpHloModuleProtoIfEnabled(
                              TimestampFor(*module), name, opts);
   }
   return {};
+}
+
+void DumpHloConfigIfEnabled(const HloModule& module) {
+  if (!module.config().debug_options().xla_dump_full_hlo_config()) {
+    return;
+  }
+
+  CanonicalDebugOptions opts(module.config().debug_options());
+  if (opts.dumping_to_stdout()) {
+    VLOG(2) << "Refusing to write HLO config proto for " << module.name()
+            << " to stdout. Pass --xla_dump_to=<path> to write to a file.";
+    return;
+  }
+  std::string config_str;
+  if (tsl::protobuf::TextFormat::PrintToString(module.config().ToProto(),
+                                               &config_str)) {
+    std::string filename = FilenameFor(module, "", "config.pbtxt");
+    DumpToFileInDirImpl(filename, config_str, opts);
+  } else {
+    VLOG(1) << "Failed to convert HloModuleConfig to text. Module: "
+            << module.name();
+  }
 }
 
 bool DumpingEnabledForHloModule(string_view hlo_module_name,
@@ -986,7 +1150,7 @@ void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules) {
   absl::flat_hash_set<int64_t> dumped_module_ids;
   for (const HloModule* module : modules) {
     CanonicalDebugOptions opts(module->config().debug_options());
-    if (!opts.dump_module_metadata) {
+    if (!module->config().debug_options().xla_dump_module_metadata()) {
       continue;
     }
     DumpHloModuleMetadata(module->metadata().proto(), opts, &dumped_module_ids);

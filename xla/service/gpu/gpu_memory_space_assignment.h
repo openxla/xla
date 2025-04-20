@@ -36,28 +36,42 @@ inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
 // collective memory using ncclMemAlloc in the runtime.
 inline BufferAssigner::Colorer CollectiveColorer() {
   return [](HloAliasAnalysis* alias_analysis, const HloOrdering&) {
-    static const auto* kSupportedOpcodes = new absl::flat_hash_set<HloOpcode>{
-        HloOpcode::kAllReduce,
-        HloOpcode::kAllReduceStart,
-        HloOpcode::kAllReduceDone,
-        HloOpcode::kAllGather,
-        HloOpcode::kAllGatherStart,
-        HloOpcode::kAllGatherDone,
-        HloOpcode::kReduceScatter,
-        HloOpcode::kCollectivePermute,
-        HloOpcode::kCollectivePermuteStart,
-        HloOpcode::kCollectivePermuteDone,
-        HloOpcode::kAllToAll,
+    static const auto* const kSupportedOpcodes =
+        new absl::flat_hash_set<HloOpcode>{
+            HloOpcode::kAllReduce,
+            HloOpcode::kAllReduceStart,
+            HloOpcode::kAllReduceDone,
+            HloOpcode::kAllGather,
+            HloOpcode::kAllGatherStart,
+            HloOpcode::kAllGatherDone,
+            HloOpcode::kReduceScatter,
+            HloOpcode::kCollectivePermute,
+            HloOpcode::kCollectivePermuteStart,
+            HloOpcode::kCollectivePermuteDone,
+            HloOpcode::kAllToAll,
+        };
+    auto is_collective_memory_instr = [&](const HloInstruction* instr) {
+      return kSupportedOpcodes->contains(instr->opcode()) ||
+             // opcode or async wrapped opcode is in kSupportedOpcodes.
+             ((instr->opcode() == HloOpcode::kAsyncStart ||
+               instr->opcode() == HloOpcode::kAsyncDone) &&
+              kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
+    };
+    auto has_collective_memory_in_uses = [&](const HloValue* input_alias) {
+      // If any use is a collective instruction, we must color the value to use
+      // collective memory space.
+      for (auto& use : input_alias->GetUses()) {
+        if (is_collective_memory_instr(use.instruction)) {
+          return true;
+        }
+      }
+      return false;
     };
     for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
       auto& buffer = alias_analysis->GetBufferContainingValue(*value);
       for (const auto& alias : buffer.values()) {
-        // opcode or async wrapped opcode is in kSupportedOpcodes.
-        if (kSupportedOpcodes->contains(alias->instruction()->opcode()) ||
-            ((alias->instruction()->opcode() == HloOpcode::kAsyncStart ||
-              alias->instruction()->opcode() == HloOpcode::kAsyncDone) &&
-             kSupportedOpcodes->contains(
-                 alias->instruction()->async_wrapped_opcode()))) {
+        if (is_collective_memory_instr(alias->instruction()) ||
+            has_collective_memory_in_uses(alias)) {
           value->set_color(kCollectiveMemorySpaceColor);
         }
       }

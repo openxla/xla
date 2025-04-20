@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/errors.h"
 // The source_location.h is not available in open source.
 #if defined(PLATFORM_GOOGLE)
 #include "absl/types/source_location.h"
@@ -249,7 +250,8 @@ bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
       hlo->shape(),
       [&output_rank](const Shape& subshape, const ShapeIndex& shape_index) {
         if (subshape.IsArray()) {
-          output_rank = std::max(output_rank, ShapeUtil::TrueRank(subshape));
+          output_rank =
+              std::max(output_rank, ShapeUtil::TrueNumDimensions(subshape));
         }
       });
   return absl::c_count_if(
@@ -262,7 +264,11 @@ bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
                    ShapeUtil::IsEffectiveScalar(operand->shape())) {
                  return false;
                }
-               return ShapeUtil::TrueRank(operand->shape()) >= output_rank;
+               const int true_dims =
+                   operand->shape().IsArray()
+                       ? ShapeUtil::TrueNumDimensions(operand->shape())
+                       : 0;
+               return true_dims >= output_rank;
              }) <= 1;
 }
 
@@ -514,6 +520,62 @@ class ReversePostOrderFusionQueue : public FusionQueue {
   std::vector<bool> fusion_config_;
 };
 
+bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
+                                   HloInstruction* consumer,
+                                   const HloReachabilityMap& reachability) {
+  absl::flat_hash_set<int> operands;
+  auto insert = [&](const HloInstruction* operand) {
+    if (operand == producer) {
+      return false;
+    }
+
+    // If the reachability map already contains the producer and the operand of
+    // the consumer, and the producer can reach the operand, then we know for
+    // sure MultiOutputFusion would create a cycle. If not, we need to do a DFS
+    // traversal of the computation to verify that this multioutput fusion would
+    // not create a cycle.
+    if (reachability.IsPresent(producer) && reachability.IsPresent(operand) &&
+        reachability.IsReachable(producer, operand)) {
+      return true;
+    }
+    operands.insert(operand->unique_id());
+    return false;
+  };
+
+  for (const HloInstruction* operand : consumer->operands()) {
+    if (insert(operand)) {
+      return true;
+    }
+  }
+  for (const HloInstruction* predecessor : consumer->control_predecessors()) {
+    if (insert(predecessor)) {
+      return true;
+    }
+  }
+
+  // Do a DFS on the producer to see if any of the other consumer operands are
+  // reachable in the current state of the graph.
+  std::vector<HloInstruction*> worklist = producer->users();
+  worklist.insert(worklist.end(), producer->control_successors().begin(),
+                  producer->control_successors().end());
+  absl::flat_hash_set<int> visits;
+  while (!worklist.empty()) {
+    const HloInstruction* user = worklist.back();
+    worklist.pop_back();
+    if (operands.count(user->unique_id()) != 0) {
+      return true;
+    }
+    if (visits.count(user->unique_id()) == 0) {
+      visits.insert(user->unique_id());
+      worklist.insert(worklist.end(), user->users().begin(),
+                      user->users().end());
+      worklist.insert(worklist.end(), user->control_successors().begin(),
+                      user->control_successors().end());
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 std::vector<HloComputation*> InstructionFusion::GetNonFusionComputations(
@@ -666,6 +728,7 @@ absl::StatusOr<bool> InstructionFusion::Run(
           // Operand is now dead. Remove from queue.
           fusion_queue->RemoveInstruction(operand);
           // Remove from computation.
+          TF_RETURN_IF_ERROR(operand->SafelyDropAllControlDependencies());
           TF_RETURN_IF_ERROR(computation->RemoveInstruction(operand));
         }
 
@@ -783,62 +846,6 @@ HloInstruction* InstructionFusion::FuseIntoMultiOutput(
   UpdateReusedOperandsForFusion(producer, fusion_instruction);
   fusion_instruction->FuseInstructionIntoMultiOutput(producer);
   return fusion_instruction;
-}
-
-bool InstructionFusion::MultiOutputFusionCreatesCycle(
-    HloInstruction* producer, HloInstruction* consumer,
-    const HloReachabilityMap& reachability) {
-  absl::flat_hash_set<int> operands;
-  auto insert = [&](const HloInstruction* operand) {
-    if (operand == producer) {
-      return false;
-    }
-
-    // If the reachability map already contains the producer and the operand of
-    // the consumer, and the producer can reach the operand, then we know for
-    // sure MultiOutputFusion would create a cycle. If not, we need to do a DFS
-    // traversal of the computation to verify that this multioutput fusion would
-    // not create a cycle.
-    if (reachability.IsPresent(producer) && reachability.IsPresent(operand) &&
-        reachability.IsReachable(producer, operand)) {
-      return true;
-    }
-    operands.insert(operand->unique_id());
-    return false;
-  };
-
-  for (const HloInstruction* operand : consumer->operands()) {
-    if (insert(operand)) {
-      return true;
-    }
-  }
-  for (const HloInstruction* predecessor : consumer->control_predecessors()) {
-    if (insert(predecessor)) {
-      return true;
-    }
-  }
-
-  // Do a DFS on the producer to see if any of the other consumer operands are
-  // reachable in the current state of the graph.
-  std::vector<HloInstruction*> worklist = producer->users();
-  worklist.insert(worklist.end(), producer->control_successors().begin(),
-                  producer->control_successors().end());
-  absl::flat_hash_set<int> visits;
-  while (!worklist.empty()) {
-    const HloInstruction* user = worklist.back();
-    worklist.pop_back();
-    if (operands.count(user->unique_id()) != 0) {
-      return true;
-    }
-    if (visits.count(user->unique_id()) == 0) {
-      visits.insert(user->unique_id());
-      worklist.insert(worklist.end(), user->users().begin(),
-                      user->users().end());
-      worklist.insert(worklist.end(), user->control_successors().begin(),
-                      user->control_successors().end());
-    }
-  }
-  return false;
 }
 
 namespace {
@@ -1029,7 +1036,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Slice op has a different shape than the update shape of the "
               "dus op, bailing.");
         }
-        for (int i = 0; i < dus->shape().rank(); ++i) {
+        for (int i = 0; i < dus->shape().dimensions_size(); ++i) {
           const HloInstruction* dus_operand =
               get_real_operand(consumer, dus->operand(2 + i));
           auto constant_operand = get_constant_operand(dus_operand);
@@ -1054,7 +1061,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Dynamic slice op has a different shape than the update shape "
               "of the dus op, bailing.");
         }
-        for (int i = 0; i < dus->shape().rank(); ++i) {
+        for (int i = 0; i < dus->shape().dimensions_size(); ++i) {
           const HloInstruction* ds_operand = get_real_operand(
               producer, producer_nonelementwise->operand(1 + i));
           const HloInstruction* dus_operand =

@@ -131,8 +131,9 @@ int fpus_per_core(std::string gcn_arch_name) {
 // thread::ThreadPool on some platforms), we run certain routines in this pool
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
-  static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "rocm_driver", 1);
+  static tsl::thread::ThreadPool* const thread_pool =
+      new tsl::thread::ThreadPool(tsl::Env::Default(), tsl::ThreadOptions(),
+                                  "rocm_driver", 1);
   return thread_pool;
 }
 
@@ -584,7 +585,7 @@ bool RocmExecutor::UnloadGpuBinary(ModuleHandle module_handle) {
     VLOG(3) << "No loaded  HSACO module for " << module_handle;
     return false;
   }
-  auto& module = module_it->second.first;
+  auto module = module_it->second.first;
   auto& refcount = module_it->second.second;
   VLOG(3) << "Found HSACO module " << module << " with refcount " << refcount;
   if (--refcount == 0) {
@@ -824,6 +825,35 @@ RocmExecutor::CreateMemoryAllocator(MemoryType type) {
 
 bool RocmExecutor::SynchronizeAllActivity() {
   return rocm_context_->Synchronize().ok();
+}
+
+bool RocmExecutor::HostMemoryRegister(void* location, uint64_t size) {
+  VLOG(1) << "Called StreamExecutor::HostMemoryRegister(data=" << location
+          << ")";
+
+  std::unique_ptr<ActivateContext> activation = Activate();
+  // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
+  auto status =
+      ToStatus(hipHostRegister(location, size, hipHostRegisterPortable));
+  if (!status.ok()) {
+    LOG(ERROR) << "error registering host memory at " << location << ": "
+               << status;
+    return false;
+  }
+  return true;
+}
+
+bool RocmExecutor::HostMemoryUnregister(void* location) {
+  VLOG(1) << "Called StreamExecutor::HostUnregister(data=" << location << ")";
+
+  std::unique_ptr<ActivateContext> activation = Activate();
+  auto status = ToStatus(hipHostUnregister(location));
+  if (!status.ok()) {
+    LOG(ERROR) << "error unregistering host memory at " << location << ": "
+               << status;
+    return false;
+  }
+  return true;
 }
 
 absl::Status RocmExecutor::SynchronousMemZero(DeviceMemoryBase* location,
@@ -1089,6 +1119,8 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
 
   desc.set_shared_memory_per_core(GetMaxSharedMemoryPerCore(device).value());
   desc.set_shared_memory_per_block(GetMaxSharedMemoryPerBlock(device).value());
+  desc.set_shared_memory_per_block_optin(
+      GetMaxSharedMemoryPerBlock(device).value());
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
   desc.set_fpus_per_core(fpus_per_core(gcn_arch_name));

@@ -21,7 +21,6 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -143,7 +142,13 @@ std::vector<Event> GetSortedEvents(Plane& plane,
     line.ForEachEvent(
         [&events](auto event) { events.emplace_back(std::move(event)); });
   });
-  absl::c_sort(events);
+  std::sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
+    const tsl::profiler::Timespan a_span = a.GetTimespan();
+    const tsl::profiler::Timespan b_span = b.GetTimespan();
+    if (a_span.begin_ps() < b_span.begin_ps()) return true;
+    if (a_span.begin_ps() > b_span.begin_ps()) return false;
+    return a_span.duration_ps() < b_span.duration_ps();
+  });
   return events;
 }
 
@@ -274,7 +279,8 @@ bool IsDevicePlane(const XPlane& plane);
 
 // Return whether this is an op line name.
 inline bool IsOpLineName(absl::string_view line_name) {
-  return line_name == kXlaOpLineName || line_name == kTensorFlowOpLineName;
+  return line_name == kXlaOpLineName || line_name == kTensorFlowOpLineName ||
+         line_name == kSparseCoreOpLineName;
 }
 
 // Returns the timespan of the event from the device offset and duration stats.

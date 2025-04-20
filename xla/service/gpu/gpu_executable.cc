@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -80,14 +81,12 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/env_time.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/env_time.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/random.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -234,7 +233,7 @@ absl::Status ExecuteThunksImpl(
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 
-  // Borrow streams required for NcclCollectiveThunk.
+  // Borrow streams required for CollectiveThunk.
   absl::InlinedVector<se::Stream*, kAsyncStreamTotal> async_comms_streams(
       kAsyncStreamTotal, nullptr);
   se::Stream* command_buffer_trace_stream = nullptr;
@@ -295,7 +294,7 @@ absl::Status ExecuteThunksImpl(
   {  // Collect resource requirements from thunks.
     Thunk::PrepareParams prepare_params{&collective_params};
 
-    tsl::profiler::TraceMe trace([&] { return "Thunks::Prepare"; });
+    tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     TF_RETURN_IF_ERROR(
         thunk_sequence.Prepare(prepare_params, resource_requests));
   }
@@ -325,7 +324,7 @@ absl::Status ExecuteThunksImpl(
         run_options->local_device_count(),
         requires_exclusive_lock_on_gpu};
 
-    tsl::profiler::TraceMe trace([&] { return "Thunks::Initialize"; });
+    tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     TF_RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
   }
 
@@ -345,7 +344,11 @@ absl::Status ExecuteThunksImpl(
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       std::move(additional_execution_streams));
 
+  VLOG(1) << "[" << run_options->device_ordinal() << "] "
+          << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
   TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
+  VLOG(1) << "[" << run_options->device_ordinal() << "] "
+          << "End GpuExecutable::ExecuteOnStream module: " << module_name;
 
   return MaybeSyncAndProfile(run_options, execution_timer.get(),
                              block_host_until_done ? main_stream : nullptr);
@@ -422,7 +425,7 @@ absl::Status RendezvousAfterInitialization(
       run_options->device_ordinal(),
       run_options->run_options().run_id().ToInt());
 
-  Rendezvous(
+  return Rendezvous(
       rendezvous_name, rendezvous_key, num_local_participants,
       absl::Seconds(
           debug_options
@@ -432,8 +435,6 @@ absl::Status RendezvousAfterInitialization(
           debug_options
               ? debug_options->xla_gpu_executable_terminate_timeout_seconds()
               : 30));
-
-  return absl::OkStatus();
 }
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
@@ -847,6 +848,11 @@ absl::Status GpuExecutable::VerboseAllocationError(absl::Status s) {
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options) {
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode("GpuExecutable::ExecuteThunks",
+                                        {{"module_name", module_name_}});
+  });
+
   if (VLOG_IS_ON(5)) {
     se::StreamExecutor* executor = run_options->stream()->parent();
     // Debug code to compare current allocation's address with previous run's

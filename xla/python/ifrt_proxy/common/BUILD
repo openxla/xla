@@ -69,6 +69,7 @@ tf_proto_library(
         # copybara:uncomment "@com_google_protobuf//:any",
         "//xla:xla_data_proto",
         "//xla/pjrt:execute_options_proto",
+        "//xla/python/ifrt:array_spec_proto",
         "//xla/python/ifrt:attribute_map_proto",
         "//xla/python/ifrt:dtype_proto",
         "//xla/python/ifrt:execute_options_proto",
@@ -233,6 +234,7 @@ cc_library(
 #     srcs = ["ifrt_proxy.bzl"],
 #     parse_tests = False,
 #     visibility = ["//visibility:private"],
+#     deps = ["//xla/tsl:package_groups_bzl"],
 # )
 #
 # bzl_library(

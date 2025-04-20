@@ -50,7 +50,7 @@ cc_library(
 
 cc_library(
     name = "criticality",
-    hdrs = ["@tsl//tsl/platform:criticality.h"],
+    hdrs = ["//xla/tsl/platform:criticality.h"],
     tags = [
         "manual",
         "nobuilder",
@@ -109,6 +109,7 @@ cc_library(
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
+        "@nvshmem//:nvshmem_config",
         "@local_config_nccl//:nccl_config",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_config",
@@ -152,17 +153,16 @@ cc_library(
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:context",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
@@ -557,20 +557,40 @@ bzl_library(
     # "manual",
     # "notap",
     # ],
+    # visibility = internal_visibility(["//tensorflow:__subpackages__"]),
     # copybara:uncomment_end
-    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
+    deps = [
+        "//xla/tsl:package_groups_bzl",
+    ],
 )
 
 bzl_library(
     name = "rules_cc_bzl",
     srcs = ["rules_cc.bzl"],
+    # This .bzl file is only used in OSS and references OSS paths. Therefore it cannot be parsed
+    # correctly by the parse test in g3.
+    # copybara:uncomment parse_tests = False,
 )
 
 bzl_library(
     name = "build_config_root_bzl",
     srcs = ["build_config_root.bzl"],
     # copybara:uncomment parse_tests = False,
-    deps = ["@tsl//third_party/py/rules_pywrap:pywrap_bzl"],
+    deps = [
+        "//xla/tsl:package_groups_bzl",
+        "@xla//third_party/py/rules_pywrap:pywrap_bzl",
+    ],
+)
+
+bzl_library(
+    name = "build_config_bzl",
+    srcs = ["build_config.bzl"],
+    # copybara:uncomment parse_tests = False,
+    deps = [
+        ":build_config_root_bzl",
+        "//xla/tsl:tsl_bzl",
+        "@xla//third_party/py/rules_pywrap:pywrap_bzl",
+    ],
 )
 
 # Export source files needed for mobile builds, which do not use granular targets.

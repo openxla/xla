@@ -255,6 +255,41 @@ TEST_F(PjrtCApiGpuBufferTest, CopyRawToHostWithInvalidOffset) {
   free(args.dst);
 }
 
+// TODO(b/399495406): Add tests for other GPU Executable behaviors.
+class PjrtCApiGpuExecutableTest : public PjrtCApiGpuTest {
+ protected:
+  std::unique_ptr<PJRT_LoadedExecutable, PJRT_LoadedExecutableDeleter>
+      executable_;
+
+  PjrtCApiGpuExecutableTest() {
+    executable_ = create_executable(api_, client_);
+  }
+
+  ~PjrtCApiGpuExecutableTest() override { executable_.reset(); }
+};
+
+TEST_F(PjrtCApiGpuExecutableTest, GetCompiledMemoryStats) {
+  auto executable = PjrtCApiTestBase::GetExecutable(executable_.get(), api_);
+  TF_ASSERT_OK_AND_ASSIGN(auto stats,
+                          pjrt::GetCompiledMemoryStats(api_, executable.get()));
+  TF_ASSERT_OK_AND_ASSIGN(auto ref_stats,
+                          executable->executable->GetCompiledMemoryStats());
+  EXPECT_EQ(ref_stats.generated_code_size_in_bytes,
+            stats.generated_code_size_in_bytes);
+  EXPECT_EQ(ref_stats.argument_size_in_bytes, stats.argument_size_in_bytes);
+  EXPECT_EQ(ref_stats.output_size_in_bytes, stats.output_size_in_bytes);
+  EXPECT_EQ(ref_stats.alias_size_in_bytes, stats.alias_size_in_bytes);
+  EXPECT_EQ(ref_stats.temp_size_in_bytes, stats.temp_size_in_bytes);
+  EXPECT_EQ(ref_stats.host_generated_code_size_in_bytes,
+            stats.host_generated_code_size_in_bytes);
+  EXPECT_EQ(ref_stats.host_argument_size_in_bytes,
+            stats.host_argument_size_in_bytes);
+  EXPECT_EQ(ref_stats.host_output_size_in_bytes,
+            stats.host_output_size_in_bytes);
+  EXPECT_EQ(ref_stats.host_alias_size_in_bytes, stats.host_alias_size_in_bytes);
+  EXPECT_EQ(ref_stats.host_temp_size_in_bytes, stats.host_temp_size_in_bytes);
+}
+
 TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
   PJRT_ExecuteContext_Create_Args create_arg;
   create_arg.struct_size = PJRT_ExecuteContext_Create_Args_STRUCT_SIZE;
@@ -297,7 +332,8 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
 TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
   void* host_dma_ptr = nullptr;
   size_t dma_size = 1024 * 1024;
-  ASSERT_EQ(posix_memalign(&host_dma_ptr, dma_size, dma_size), 0);
+  int err = posix_memalign(&host_dma_ptr, dma_size, dma_size);
+  CHECK_EQ(err, 0) << "posix_memalign failed: " << strerror(err);
 
   PJRT_Client_DmaMap_Args dma_args;
   dma_args.struct_size = PJRT_Client_DmaMap_Args_STRUCT_SIZE;
@@ -581,6 +617,12 @@ TEST(PjrtCApiGpuAllocatorTest, ValidOptionsParsing) {
 
     PJRT_Error* destroy_error = api->PJRT_Client_Destroy(&destroy_args);
     CHECK_EQ(destroy_error, nullptr);
+
+    PJRT_Error_Destroy_Args error_destroy_args;
+    error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+    error_destroy_args.extension_start = nullptr;
+    error_destroy_args.error = error;
+    api->PJRT_Error_Destroy(&error_destroy_args);
   }
 }
 
@@ -908,8 +950,7 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallUntyped) {
   args.handler_initialize = nullptr;
   args.handler_execute = reinterpret_cast<void*>(&TestCustomCallV2);
   auto api = GetPjrtApi();
-  const PJRT_Extension_Base* next =
-      reinterpret_cast<const PJRT_Extension_Base*>(api->extension_start);
+  const PJRT_Extension_Base* next = api->extension_start;
   while (next != nullptr &&
          next->type !=
              PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call) {
@@ -941,8 +982,7 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallTyped) {
   args.handler_initialize = nullptr;
   args.handler_execute = reinterpret_cast<void*>(kNoop);
   auto api = GetPjrtApi();
-  const PJRT_Extension_Base* next =
-      reinterpret_cast<const PJRT_Extension_Base*>(api->extension_start);
+  const PJRT_Extension_Base* next = api->extension_start;
   while (next != nullptr &&
          next->type !=
              PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call) {

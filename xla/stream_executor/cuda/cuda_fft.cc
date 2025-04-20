@@ -23,7 +23,9 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cufft.h"
@@ -464,7 +466,7 @@ void initialize_cufft() {
             return new gpu::CUDAFft(parent);
           });
   if (!status.ok()) {
-    LOG(ERROR) << "Unable to register cuFFT factory: " << status.message();
+    LOG(INFO) << "Unable to register cuFFT factory: " << status.message();
   }
 }
 

@@ -95,7 +95,7 @@ std::vector<HloInstruction*> GenerateExplicitBatchDimIndices(
 
 absl::StatusOr<HloInstruction*> TransformStartIndices(
     HloInstruction* indices, int64_t index_vector_dim) {
-  int64_t rank = indices->shape().rank();
+  int64_t rank = indices->shape().dimensions_size();
   if (index_vector_dim == rank) {
     // Add a size 1 dimension to the indices if the index_vector_dim is
     // implicit.
@@ -141,6 +141,14 @@ absl::StatusOr<HloInstruction*> MaybeTranspose(
   // layout normalization, and before, we don't care about the layout.
   *result->mutable_shape()->mutable_layout() =
       LayoutUtil::GetDefaultLayoutForShape(result->shape());
+  // Propagate the element size in bits of the operand to the newly created
+  // transpose. For sub-byte types, there is no canonical cross-platform
+  // normalization for packing, so `GetDefaultLayoutForShape` may not end up
+  // setting the element size in bits correctly.
+  int64_t element_size_in_bits =
+      operand->shape().layout().element_size_in_bits();
+  result->mutable_shape()->mutable_layout()->set_element_size_in_bits(
+      element_size_in_bits);
   return result;
 }
 

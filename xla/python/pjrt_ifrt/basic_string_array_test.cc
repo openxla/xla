@@ -66,7 +66,7 @@ using ::tsl::testing::StatusIs;
 // user-supplied buffers and on_done_with_buffer callback by means of the
 // factory method: `BasicStringArray::Create`. Uses the first device from the
 // `client->addressable_devices()`.
-absl::StatusOr<tsl::RCReference<BasicStringArray>> CreateTestArray(
+absl::StatusOr<tsl::RCReference<Array>> CreateTestArray(
     Client* client, Future<BasicStringArray::Buffers> buffers,
     BasicStringArray::OnDoneWithBuffer on_done_with_buffer) {
   Shape shape({1});
@@ -594,7 +594,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays,
 
   TF_ASSERT_OK_AND_ASSIGN(auto disassembled_arrays,
                           array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy));
+                              ArrayCopySemantics::kAlwaysCopy,
+                              SingleDeviceShardSemantics::kAddressableShards));
 
   ASSERT_EQ(disassembled_arrays.size(), 1);
   auto basic_string_array =
@@ -616,7 +617,8 @@ TEST(DisassembleArrayIntoSingleDeviceArrays, ShardedArrayDisassembleSuccess) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto disassembled_arrays,
                           array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy));
+                              ArrayCopySemantics::kAlwaysCopy,
+                              SingleDeviceShardSemantics::kAddressableShards));
 
   ASSERT_EQ(disassembled_arrays.size(), 2);
 
@@ -642,9 +644,10 @@ TEST(DisassembleArrayIntoSingleDeviceArrays, FailsIfTheArrayHasBeenDeleted) {
 
   array->Delete();
 
-  EXPECT_THAT(
-      array->DisassembleIntoSingleDeviceArrays(ArrayCopySemantics::kAlwaysCopy),
-      StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(array->DisassembleIntoSingleDeviceArrays(
+                  ArrayCopySemantics::kAlwaysCopy,
+                  SingleDeviceShardSemantics::kAddressableShards),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 TEST(CopyTest, SuccessSingleDeviceShardedArray) {

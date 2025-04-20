@@ -22,10 +22,12 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
@@ -38,6 +40,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
@@ -51,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/topology.h"
 #include "xla/python/ifrt/tuple.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -169,19 +173,21 @@ class PjRtClient final
   absl::StatusOr<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
       const void* data, DType dtype, Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      std::shared_ptr<const Sharding> sharding,
-      Client::HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) override;
+      absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer,
+      tsl::RCReference<UserContext> user_context) override;
 
-  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
-      Shape shape, std::shared_ptr<const Sharding> sharding,
-      absl::Span<tsl::RCReference<Array>> arrays,
-      ArrayCopySemantics semantics) override;
-  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
-      Shape shape, std::shared_ptr<const Sharding> sharding,
-      absl::Span<tsl::RCReference<Array>> arrays,
-      ArrayCopySemantics array_copy_semantics,
-      SingleDeviceShardSemantics single_device_shard_semantics) override;
+  absl::StatusOr<std::vector<tsl::RCReference<Array>>>
+  MakeArraysFromHostBufferShards(
+      absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
+      HostBufferSemantics semantics,
+      tsl::RCReference<UserContext> user_context) override;
+
+  absl::StatusOr<std::vector<tsl::RCReference<Array>>> MakeErrorArrays(
+      const absl::Status& error, absl::Span<const ArraySpec> array_specs,
+      tsl::RCReference<UserContext> user_context) override;
+
   absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
       DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
       absl::Span<tsl::RCReference<Array>> arrays,
@@ -190,7 +196,7 @@ class PjRtClient final
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,
-      std::optional<tsl::RCReference<DeviceList>> devices,
+      std::optional<DeviceListRef> devices,
       std::optional<MemoryKind> memory_kind,
       ArrayCopySemantics semantics) override;
 
@@ -256,7 +262,7 @@ class PjRtClient final
   absl::StatusOr<Device*> LookupAddressableDevice(
       int local_hardware_id) const override;
 
-  tsl::RCReference<DeviceList> MakeDeviceList(
+  DeviceListRef MakeDeviceList(
       absl::Span<Device* const> devices) const override;
 
   Compiler* GetDefaultCompiler() override {
@@ -265,7 +271,7 @@ class PjRtClient final
   }
 
   absl::StatusOr<std::shared_ptr<Topology>> GetTopologyForDevices(
-      const tsl::RCReference<DeviceList>& devices) const override;
+      const DeviceListRef& devices) const override;
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultLayout(
       DType dtype, absl::Span<const int64_t> dims, Device* device,
@@ -296,6 +302,10 @@ class PjRtClient final
   // Transfer and return a value of the given shape from the outfeed queue.
   absl::Status TransferFromOutfeed(PjRtDevice* device,
                                    MutableBorrowingLiteral literal);
+
+  tsl::RCReference<UserContext> CreateUserContext() override {
+    return tsl::RCReference<UserContext>();
+  }
 
   static char ID;  // NOLINT
 

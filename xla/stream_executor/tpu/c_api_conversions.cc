@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -273,10 +274,16 @@ stream_executor::DeviceMemoryBase FromC(const SE_DeviceMemoryBase& se_base) {
 void ToC(const xla::Shape& xla_shape, XLA_Shape* c_shape) {
   c_shape->element_type = xla_shape.element_type();
 
-  CreateVector(xla_shape.dimensions(), &c_shape->dimensions);
-  CreateVector(xla_shape.dynamic_dimensions(), &c_shape->dynamic_dimensions);
+  if (xla_shape.IsArray()) {
+    CreateVector(xla_shape.dimensions(), &c_shape->dimensions);
+    CreateVector(xla_shape.dynamic_dimensions(), &c_shape->dynamic_dimensions);
+  } else {
+    c_shape->dimensions.size = 0;
+    c_shape->dynamic_dimensions.size = 0;
+  }
 
-  c_shape->ntuple_shapes = xla_shape.tuple_shapes_size();
+  c_shape->ntuple_shapes =
+      xla_shape.IsTuple() ? xla_shape.tuple_shapes_size() : 0;
   if (c_shape->ntuple_shapes > 0) {
     c_shape->tuple_shapes = new XLA_Shape[c_shape->ntuple_shapes];
     for (int i = 0; i < c_shape->ntuple_shapes; ++i) {
@@ -302,8 +309,13 @@ xla::Shape FromC(const XLA_Shape* c_shape) {
     tuple_shapes.push_back(FromC(&c_shape->tuple_shapes[i]));
   }
 
-  xla::Shape result(static_cast<xla::PrimitiveType>(c_shape->element_type),
-                    dims, dynamic_dims, std::move(tuple_shapes));
+  const auto type = static_cast<xla::PrimitiveType>(c_shape->element_type);
+  xla::Shape result = xla::primitive_util::IsArrayType(type)
+                          ? xla::Shape(type, dims, dynamic_dims)
+                      : type == xla::PrimitiveType::TUPLE
+                          ? xla::Shape(std::move(tuple_shapes))
+                          // type is TOKEN or OPAQUE_TYPE.
+                          : xla::Shape(type);
   if (c_shape->has_layout) {
     *result.mutable_layout() = FromC(&c_shape->layout);
   }

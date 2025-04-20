@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
@@ -77,7 +78,7 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
   int num_device_to_device_streams =
       stream_options.has_value() ? stream_options->num_device_to_device_streams
                                  : kNumDeviceToDeviceStreams;
-  auto create_stream = [executor, &stream_options](std::string const& name) {
+  auto create_stream = [executor, &stream_options](const std::string& name) {
     std::unique_ptr<stream_executor::Stream> stream;
     if (stream_options.has_value()) {
       stream = executor->CreateStream(stream_options->priority).value();
@@ -174,7 +175,7 @@ absl::Status LocalDeviceState::ThenMemcpyDeviceToDevice(
 }
 
 absl::Status LocalDeviceState::ThenExecuteCallback(
-    se::Stream* stream, std::function<void()> callback) {
+    se::Stream* stream, absl::AnyInvocable<void() &&> callback) {
   tsl::profiler::TraceMe traceme("ThenExecuteCallback");
   if (callback_stream_map_.has_value()) {
     // Prevent concurrent updates to the callback stream map.

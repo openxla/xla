@@ -54,10 +54,9 @@ class BasicDeviceList : public llvm::RTTIExtends<BasicDeviceList, DeviceList> {
   using Devices = absl::InlinedVector<Device*, kInlineDeviceSize>;
 
   // Constructor with a pre-populated `devices`.
-  static tsl::RCReference<DeviceList> Create(Devices devices);
-  static tsl::RCReference<DeviceList> Create(absl::Span<Device* const> devices);
-  static tsl::RCReference<DeviceList> Create(
-      std::initializer_list<Device*> devices);
+  static DeviceListRef Create(Devices devices);
+  static DeviceListRef Create(absl::Span<Device* const> devices);
+  static DeviceListRef Create(std::initializer_list<Device*> devices);
 
   ~BasicDeviceList() override = default;
 
@@ -95,14 +94,14 @@ class BasicDeviceList : public llvm::RTTIExtends<BasicDeviceList, DeviceList> {
   struct AddressableDeviceListCache {
     absl::once_flag once_flag;
     DeviceList* device_list = nullptr;
-    tsl::RCReference<DeviceList> device_list_holder;
+    DeviceListRef device_list_holder;
   };
   mutable AddressableDeviceListCache addressable_device_list_cache_;
 
   // Cached hash. 0 indicates the hash needs to be computed and cached.
   // May be written multiple times with the same non-zero value.
   static constexpr uint64_t kUnsetHash = 0;
-  mutable std::atomic<uint64_t> hash_;
+  mutable std::atomic<uint64_t> hash_ = kUnsetHash;
 };
 
 }  // namespace ifrt
