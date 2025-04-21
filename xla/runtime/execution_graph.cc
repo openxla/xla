@@ -243,7 +243,8 @@ int64_t ExecutionGraph::EraseEdge(NodeDefBuilder& from, NodeDefBuilder& to,
       in_edges_it != to.in_edges.end() && in_edges_it->id == from.id;
 
   DCHECK(has_in_edge) << "In-edge must exist if out-edge exists";
-  DCHECK_EQ(in_edges_it->kind, out_edges_it->kind) << "Edges kind must match";
+  DCHECK_EQ(int(in_edges_it->kind), int(out_edges_it->kind))
+      << "Edges kind must match";
 
   // At this point we must have exactly one edge between `from` and `to` nodes.
   DCHECK_EQ(absl::c_count_if(from.out_edges, EdgePredicate(to.id)), 1)
