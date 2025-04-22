@@ -55,6 +55,12 @@ namespace xla {
 // them.
 class Shape {
  public:
+  // Returns true if the given dimension size is valid.
+  [[nodiscard]] static bool IsValidDimensionSize(int64_t size,
+                                                 bool is_dynamic) {
+    return size >= 0 || (is_dynamic && size == kUnboundedSize);
+  }
+
   // Creates an invalid shape, with element type PRIMITIVE_TYPE_INVALID and the
   // other fields empty.
   Shape();
@@ -203,19 +209,16 @@ class Shape {
   }
 
   // Sets whether or not the given dimension is dynamically-sized.
-  // Precondition: this is an array shape and `dimension` is a valid dimension
-  // index.
-  void set_dynamic_dimension(int dimension, bool is_dynamic) {
-    array_state().dynamic_dimensions[dimension] = is_dynamic;
-  }
+  // Precondition:
+  //   - This is an array shape.
+  //   - `dimension` is a valid dimension index.
+  //   - The dimension's size is valid for the given dynamic-ness.
+  void set_dynamic_dimension(int dimension, bool is_dynamic);
 
   // Returns a span to indicate whether each dimension is dynamic.
   // Precondition: this is an array shape.
   absl::Span<const bool> dynamic_dimensions() const {
     return array_state().dynamic_dimensions;
-  }
-  absl::Span<bool> mutable_dynamic_dimensions() {
-    return absl::MakeSpan(array_state().dynamic_dimensions);
   }
 
   // Removes the given dimension from the shape. Layout, if it exists, is
@@ -223,7 +226,9 @@ class Shape {
   // Precondition: this is an array shape, and the input dimension indices are
   // valid.
   void DeleteDimension(int64_t dim_to_delete);
-  void DeleteDimensions(absl::Span<const int64_t> sorted_dims_to_delete);
+  // Like the above, but deletes multiple dimensions at once. The dimensions
+  // must not contain duplicates.
+  void DeleteDimensions(absl::Span<const int64_t> dims_to_delete);
 
   // Returns the primitive type of the shape.
   PrimitiveType element_type() const { return element_type_; }
@@ -248,7 +253,7 @@ class Shape {
     return array_state().dimensions[index];
   }
 
-  // Returns the physical dimension index of the index-th minor dimension.
+  // Returns the size of the index-th minor dimension.
   // Precondition: this is an array shape, `index` is a valid dimension
   // index, and the shape has a layout.
   int64_t dimensions_minor(int index) const {
@@ -259,28 +264,39 @@ class Shape {
 
   // Sets the size of the given dimension if it's static, or sets the upper
   // bound of the dimension size if it's dynamic.
-  // Precondition: this is an array shape, `index` is a valid dimension
-  // index, and value is either >= 0 or kUnboundedSize.
-  void set_dimensions(int index, int64_t value) {
-    array_state().dimensions[index] = value;
-  }
+  // Arguments:
+  //   - `index` is the index of the dimension.
+  //   - `size` is the size of the dimension if it is static, or the upper
+  //      bound of the dimension size if it is dynamic.
+  //   - `is_dynamic` is the dynamic-ness of the dimension:
+  //     - false: the dimension is static.
+  //     - true: the dimension is dynamic.
+  //     - nullopt: don't change the dynamic-ness of the dimension.
+  // Precondition:
+  //   - This is an array shape.
+  //   - `index` is a valid dimension index
+  //   - `size` is either >= 0 or, when the dimension is dynamic,
+  //     kUnboundedSize.
+  void set_dimensions(int index, int64_t size,
+                      std::optional<bool> is_dynamic = std::nullopt);
 
-  // Sets the physical dimension index of the index-th minor dimension.
-  // Precondition: this is an array shape, `index` and `value` are valid
-  // dimension indices, and the shape has a layout.
-  void set_dimensions_minor(int index, int64_t value) {
-    CHECK(has_layout());
-    auto& state = array_state();
-    state.dimensions[state.layout->minor_to_major(index)] = value;
-  }
+  // Like set_dimensions, but sets the index-th minor dimension instead of
+  // the index-th dimension.
+  void set_dimensions_minor(int index, int64_t size,
+                            std::optional<bool> is_dynamic = std::nullopt);
 
-  // Appends a new dimension with the given fixed size.
-  // Precondition: this is an array shape, and `value` is >= 0.
-  void add_dimensions(int64_t value) {
-    auto& state = array_state();
-    state.dimensions.push_back(value);
-    state.dynamic_dimensions.push_back(false);
-  }
+  // Appends a new dimension with the given size.
+  // Arguments:
+  //   - `value` is the size of the dimension if it is static, or the upper
+  //      bound of the dimension size if it is dynamic.
+  //   - `is_dynamic` is the dynamic-ness of the dimension:
+  //     - false: the dimension is static.
+  //     - true: the dimension is dynamic.
+  // Precondition:
+  //   - This is an array shape.
+  //   - Either `value` is >= 0, or `is_dynamic` is true and `value` is
+  //     kUnboundedSize.
+  void add_dimensions(int64_t value, bool is_dynamic = false);
 
   // Clears all dimensions (i.e. makes this shape a scalar).
   // Precondition: this is an array shape.
@@ -532,6 +548,15 @@ class Shape {
 
   using State = std::variant<InvalidState, TokenState, OpaqueState, ArrayState,
                              TupleState>;
+
+  // CHECKs that the dimension size is valid.
+  void CheckDimensionSize(int dim_index, int64_t size, bool is_dynamic);
+
+  // Like add_dimensions(), but does not CHECK that the arguments are valid.
+  // Instead, we rely on validation down the road to catch invalid shapes.
+  // This is useful for code that should not crash, such as constructing a
+  // Shape from an unvalidated proto.
+  void UnsafeAddDimension(int64_t value, bool is_dynamic);
 
   // Convenience accessors for the state_ variant. Each if_*_state() accessor
   // returns a pointer to the corresponding state struct, or nullptr if the

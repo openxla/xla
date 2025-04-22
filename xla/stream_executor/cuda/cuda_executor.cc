@@ -113,8 +113,9 @@ bool ShouldLaunchDelayKernel() {
 // thread::ThreadPool on some platforms), we run certain routines in this pool
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
-  static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "cuda_driver", 1);
+  static tsl::thread::ThreadPool* const thread_pool =
+      new tsl::thread::ThreadPool(tsl::Env::Default(), tsl::ThreadOptions(),
+                                  "cuda_driver", 1);
   return thread_pool;
 }
 
@@ -1194,7 +1195,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
   size_t bytes = 0;
   CHECK(static_cast<bool>(module_handle));
 
-  {  // give limited scope to mutex_lock
+  {  // give limited scope to MutexLock
     absl::MutexLock lock{&in_memory_modules_mu_};
     auto it = gpu_binary_to_module_.find(module_handle);
     CHECK(it != gpu_binary_to_module_.end());

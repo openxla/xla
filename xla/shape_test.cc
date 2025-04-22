@@ -108,6 +108,13 @@ TEST_F(ShapeTest, DeleteDimensions) {
   EXPECT_EQ(shape, ShapeUtil::MakeShapeWithDenseLayout(F32, {5, 9}, {0, 1}));
 }
 
+TEST_F(ShapeTest, DeleteDimensionsUnordered) {
+  Shape shape = ShapeUtil::MakeShapeWithDenseLayout(F32, {5, 3, 2, 7, 9},
+                                                    {2, 0, 1, 4, 3});
+  shape.DeleteDimensions({3, 1, 2});
+  EXPECT_EQ(shape, ShapeUtil::MakeShapeWithDenseLayout(F32, {5, 9}, {0, 1}));
+}
+
 TEST_F(ShapeTest, EqualityTest) {
   // Different layouts.
   EXPECT_NE(ShapeUtil::MakeShapeWithDenseLayout(F32, {23, 44}, {1, 0}),
@@ -183,7 +190,7 @@ TEST_F(ShapeTest, IsDynamic) {
       ->set_dynamic_dimension(1, true);
   EXPECT_FALSE(unbounded_tuple.is_unbounded_dynamic());
   ShapeUtil::GetMutableSubshape(&unbounded_tuple, {2})
-      ->set_dimensions(1, Shape::kUnboundedSize);
+      ->set_dimensions(1, Shape::kUnboundedSize, /*is_dynamic=*/true);
   EXPECT_TRUE(unbounded_tuple.is_unbounded_dynamic());
 }
 

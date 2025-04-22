@@ -128,6 +128,7 @@ class TfrtGpuDevice final : public PjRtDevice {
     int stream_capacity;
     int max_inflight_computations;
     std::string platform_version;
+    std::string compute_capability;
   };
 
   explicit TfrtGpuDevice(Options&& options);
@@ -203,13 +204,12 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   int id_;
   PjRtClient* client_ = nullptr;
-  PjRtLocalDeviceId local_device_id_;
-  PjRtLocalHardwareId local_hardware_id_;
+  const PjRtLocalDeviceId local_device_id_;
+  const PjRtLocalHardwareId local_hardware_id_;
   se::StreamExecutor* executor_;
   BoundedStreamPool stream_pool_;
-  // TODO(b/400541410): Support H2D transfers on compute streams.
-  //   Have a dedicated compute stream pool to avoid blocking the stream pool
-  //   for H2D transfers.
+  //  Have a dedicated compute stream pool to avoid blocking the stream pool
+  //  for H2D transfers.
   BoundedStreamPool compute_stream_pool_;
   std::unique_ptr<tsl::Allocator> allocator_;
   std::unique_ptr<se::DeviceMemoryAllocator> se_allocator_;
@@ -309,18 +309,30 @@ class TfrtGpuClient final : public PjRtClient {
     return non_blocking_thread_pool_.get();
   }
 
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      mlir::ModuleOp mlir_module, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       mlir::ModuleOp mlir_module, CompileOptions options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
+      absl::string_view serialized,
+      std::optional<CompileOptions> options) override;
+
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
   LoadSerializedExecutable(absl::string_view serialized,
                            std::optional<CompileOptions> options,
                            const LoadOptions& load_options) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
+      std::unique_ptr<PjRtExecutable> executable,
+      const LoadOptions& load_options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
       absl::Status error, const Shape& shape, PjRtMemorySpace* memory) override;
@@ -355,6 +367,14 @@ class TfrtGpuClient final : public PjRtClient {
       std::optional<absl::Span<const std::optional<Layout>>> device_layouts,
       PjRtMemorySpace* memory_space) override;
 
+  // Caller is responsible to ensure that `data` has allocated enough memory
+  // for `buffer_size` to do DMA mapping.
+  absl::Status DmaMap(void* data, size_t buffer_size) override;
+
+  absl::Status DmaUnmap(void* data) override;
+
+  bool IsDmaMapped(const void* data_start, int64_t transfer_size);
+
  private:
   // Helper function for creating PjRtStreamExecutorExecutables. Modifies
   // `options` in-place.
@@ -366,11 +386,36 @@ class TfrtGpuClient final : public PjRtClient {
   };
   absl::StatusOr<ExecutableExtras> GetExecutableExtras(CompileOptions* options);
 
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileInternal(
+  // Updates `options` for compilation.
+  absl::Status UpdateCompileOptions(CompileOptions* options);
+
+  // Same as above, but also returns the executable extras.
+  absl::StatusOr<ExecutableExtras> UpdateCompileOptionsAndGetExecutableExtras(
+      CompileOptions* options);
+
+  // Updates `options` for compilation, and gets the executable extras if
+  // `returned_extras` is not null.
+  absl::Status UpdateCompileOptionsInternal(CompileOptions* options,
+                                            ExecutableExtras* returned_extras);
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
       const XlaComputation& computation,
       const std::vector<const Shape*>& argument_layout_pointers,
       LayoutCanonicalizationCallback layout_canonicalization_callback,
       CompileOptions options);
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> BuildPjRtExecutable(
+      std::vector<std::unique_ptr<LocalExecutable>> local_executables,
+      CompileOptions compile_options);
+
+  absl::StatusOr<
+      std::pair<std::vector<std::unique_ptr<LocalExecutable>>, CompileOptions>>
+  DeserializeToLocalExecutable(absl::string_view serialized,
+                               std::optional<CompileOptions> options);
+
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
+      std::vector<std::unique_ptr<LocalExecutable>> local_executables,
+      CompileOptions compile_options);
 
   int process_index_;
 
@@ -410,6 +455,10 @@ class TfrtGpuClient final : public PjRtClient {
 
   const std::string platform_name_;
   StreamExecutorGpuTopologyDescription topology_;
+
+  absl::Mutex dma_maps_mutex_;
+  // Maps dma mapped start pointers to their sizes.
+  absl::flat_hash_map<void*, size_t> dma_maps_ ABSL_GUARDED_BY(dma_maps_mutex_);
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetTfrtGpuClient(

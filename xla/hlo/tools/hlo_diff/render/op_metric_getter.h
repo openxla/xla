@@ -13,19 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_RAGGED_ALL_TO_ALL_KERNEL_COMMON_H_
-#define XLA_SERVICE_GPU_KERNELS_RAGGED_ALL_TO_ALL_KERNEL_COMMON_H_
+#ifndef XLA_HLO_TOOLS_HLO_DIFF_RENDER_OP_METRIC_GETTER_H_
+#define XLA_HLO_TOOLS_HLO_DIFF_RENDER_OP_METRIC_GETTER_H_
 
 #include <cstdint>
 
-namespace xla::gpu {
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 
-// Maximum number of output pointers that can be passed to the kernel.
-inline constexpr int64_t kMaxNumRaggedAllToAllOutputPtrs = 8;
+namespace xla {
+namespace hlo_diff {
 
-template <typename T>
-void* GetRaggedAllToAllKernel();
+// An interface for getting op metrics.
+class OpMetricGetter {
+ public:
+  virtual ~OpMetricGetter() = default;
 
-}  // namespace xla::gpu
+  // Returns the op time in picoseconds.
+  virtual absl::StatusOr<uint64_t> GetOpTimePs(
+      absl::string_view op_name) const = 0;
+};
 
-#endif  // XLA_SERVICE_GPU_KERNELS_RAGGED_ALL_TO_ALL_KERNEL_COMMON_H_
+}  // namespace hlo_diff
+}  // namespace xla
+
+#endif  // XLA_HLO_TOOLS_HLO_DIFF_RENDER_OP_METRIC_GETTER_H_

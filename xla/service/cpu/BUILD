@@ -1115,6 +1115,7 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
@@ -1144,8 +1145,8 @@ cc_library(
         "//xla:executable_run_options",
         "//xla/backends/cpu/runtime:convolution_thunk_internal",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
     ],
 )
 
@@ -1160,8 +1161,8 @@ cc_library(
         "//xla:executable_run_options",
         "//xla/backends/cpu/runtime:convolution_thunk_internal",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
     ],
 )
 
@@ -1232,8 +1233,8 @@ cc_library(
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
     ],
 )
 
@@ -1286,8 +1287,8 @@ cc_library(
     deps = [
         "//xla/backends/cpu/runtime:convolution_thunk_internal",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
     ],
 )
 
@@ -1300,8 +1301,8 @@ cc_library(
     deps = [
         "//xla/backends/cpu/runtime:convolution_thunk_internal",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
     ],
 )
 

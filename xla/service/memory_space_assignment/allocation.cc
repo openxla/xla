@@ -747,13 +747,13 @@ bool SlicedCopyAllocation::SliceDetail::operator==(
 absl::Status SlicedCopyAllocation::SliceDetail::CreateAsyncSlice(
     const Shape& original_shape, HloInstruction& producer,
     HloComputation& parent) {
-  if (original_shape.dimensions_size() !=
+  if (original_shape.dimensions().size() !=
       slice_decision.sizing.slice_params.size()) {
     return FailedPrecondition(
         "%s", absl::StrCat("The number of SlicedCopyAllocation parameters ",
                            slice_decision.sizing.slice_params.size(),
                            " does not match the rank ",
-                           original_shape.dimensions_size(),
+                           original_shape.dimensions().size(),
                            " of the tensor we are slicing."));
   }
 
@@ -1179,6 +1179,57 @@ void AllocationSequenceDebugging::LogAltMemAllocationsAt(
               << " during [" << data.start_time_inclusive << ","
               << data.end_time_inclusive << "], holding " << data.name;
   }
+}
+
+ReservedAllocation::ReservedAllocation(HloPosition defining_position,
+                                       HeapSimulator::Chunk chunk,
+                                       int64_t reservation_time)
+    : Allocation(std::move(defining_position), MemorySpace::kAlternate, chunk,
+                 /*start_time=*/reservation_time, /*end_time=*/reservation_time,
+                 /*is_scoped_allocation=*/false,
+                 /*cross_program_prefetch_index=*/std::nullopt),
+      reserved_(true) {}
+
+HloPosition ReservedAllocation::defining_position() const {
+  return original_defining_position();
+}
+
+absl::Status ReservedAllocation::Process(
+    const BitcastSplitFn& bitcast_split_fn) {
+  return absl::OkStatus();
+}
+
+void ReservedAllocation::MarkIfNeeded(
+    absl::flat_hash_set<const Allocation*>& needed_allocations) const {
+  MarkNeeded(needed_allocations);
+}
+
+void ReservedAllocation::MarkNeeded(
+    absl::flat_hash_set<const Allocation*>& needed_allocations) const {
+  needed_allocations.insert(this);
+}
+
+std::string ReservedAllocation::ToString() const {
+  std::string memory_space_str = MemorySpaceToString(memory_space());
+  std::optional<HeapSimulator::Chunk> chunk = maybe_chunk();
+  if (chunk) {
+    absl::StrAppend(&memory_space_str, " chunk: ", chunk->ToString());
+  }
+  return absl::StrCat(
+      "ReservedAllocationdefined in alternate memory defined at ",
+      original_defining_position().ToString(),
+      ", reservation_time:", start_time(), ", reserved: ", reserved_);
+}
+
+bool ReservedAllocation::operator==(const Allocation& other) const {
+  const ReservedAllocation* casted_other =
+      dynamic_cast<const ReservedAllocation*>(&other);
+  return casted_other != nullptr && (*this) == (*casted_other);
+}
+
+bool ReservedAllocation::operator==(const ReservedAllocation& other) const {
+  return this->base_is_equal(static_cast<const Allocation&>(other)) &&
+         reserved_ == other.reserved_;
 }
 
 }  // namespace xla::memory_space_assignment

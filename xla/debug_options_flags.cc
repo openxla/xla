@@ -240,7 +240,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
-  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(false);
+  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(true);
   opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
@@ -314,6 +314,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
+
+  opts.set_xla_gpu_first_collective_call_warn_stuck_timeout_seconds(20);
+  opts.set_xla_gpu_first_collective_call_terminate_timeout_seconds(40);
+
   opts.set_xla_gpu_experimental_collective_perf_table_path("");
   opts.set_xla_gpu_experimental_matmul_perf_table_path("");
   opts.set_xla_gpu_experimental_disable_binary_libraries(false);
@@ -326,6 +330,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
+  opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(false);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
@@ -2183,6 +2188,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_executable_terminate_timeout_seconds),
       debug_options->xla_gpu_executable_terminate_timeout_seconds(),
       "Set timeout for Rendezvous termination"));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_first_collective_call_warn_stuck_timeout_seconds",
+      int32_setter_for(
+          &DebugOptions::
+              set_xla_gpu_first_collective_call_warn_stuck_timeout_seconds),
+      debug_options->xla_gpu_first_collective_call_warn_stuck_timeout_seconds(),
+      "Set timeout for First Collective Call Rendezvous stuck warning"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_first_collective_call_terminate_timeout_seconds",
+      int32_setter_for(
+          &DebugOptions::
+              set_xla_gpu_first_collective_call_terminate_timeout_seconds),
+      debug_options->xla_gpu_first_collective_call_terminate_timeout_seconds(),
+      "Set timeout for First Collective Call Rendezvous termination"));
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_disable_binary_libraries",
       bool_setter_for(
@@ -2253,6 +2274,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(),
       "Internal: Enable the RaggedAllToAllDecomposer, an experimental pass "
       "that rewrites ragged-all-to-all as a dense all-to-all operation."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_unsupported_use_all_reduce_one_shot_kernel",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel),
+      debug_options->xla_gpu_unsupported_use_all_reduce_one_shot_kernel(),
+      "Internal: Enable the one-shot kernel for single-host all-reduce "
+      "operations."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel",
       bool_setter_for(

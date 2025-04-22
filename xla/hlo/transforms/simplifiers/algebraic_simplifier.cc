@@ -5728,6 +5728,7 @@ absl::Status AlgebraicSimplifierVisitor::HandlePad(HloInstruction* pad) {
       }
       *broadcast->mutable_shape() = broadcast_shape1;
       *broadcast->mutable_dimensions() = broadcast_dimensions;
+      broadcast->clear_sharding();
       simplifier_->UpdateLayout(broadcast->mutable_shape());
       auto pad2 = pad->AddInstruction(pad->CloneWithNewShape(pad_shape1));
       *pad2->mutable_padding_config() = pad_config;
@@ -8256,6 +8257,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   if (arg->opcode() == HloOpcode::kBroadcast &&
       Match(reduce->to_apply()->root_instruction(),
             m::AddAnyOrder(m::Parameter(0), m::Parameter(1)))) {
+    TF_RET_CHECK(
+        std::is_sorted(arg->dimensions().begin(), arg->dimensions().end()))
+        << "Broadcasts need to be canonicalized before algebraic "
+           "simplification.";
     bool only_reduce_dims_from_broadcast = true;
     int64_t common_dims_prod = 1;
     int64_t num_common_dims = 0;
