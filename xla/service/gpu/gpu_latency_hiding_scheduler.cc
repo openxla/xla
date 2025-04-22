@@ -139,18 +139,18 @@ bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
 }
 
 // Count the maximum overlapping count in subgroups of group and other
-size_t CountOverlappingRanks(const std::vector<ReplicaGroup>& group,
-                             const std::vector<ReplicaGroup>& other) {
+size_t CountOverlappingRanks(const std::vector<std::vector<int64_t>>& group,
+                             const std::vector<std::vector<int64_t>>& other) {
   size_t overlapping_count = 0;
   for (const auto& curr_replica_group : group) {
     absl::flat_hash_set<int> curr_replica_ids;
-    for (const auto curr_replica_id : curr_replica_group.replica_ids()) {
+    for (const auto curr_replica_id : curr_replica_group) {
       curr_replica_ids.insert(curr_replica_id);
     }
 
     for (const auto& replica_group : other) {
       size_t subgroup_count = 0;
-      for (const auto replica_id : replica_group.replica_ids()) {
+      for (const auto replica_id : replica_group) {
         if (curr_replica_ids.contains(replica_id)) ++subgroup_count;
       }
       overlapping_count = std::max(overlapping_count, subgroup_count);
@@ -192,20 +192,6 @@ CanonicalAsyncOp GpuGetCanonicalAsyncOp(const HloInstruction& hlo) {
     default:
       return DefaultGetCanonicalAsyncOp(hlo);
   }
-}
-
-std::vector<ReplicaGroup> GetReplicaGroupFromSourceTargetPairs(
-    HloInstruction* instr) {
-  HloCollectivePermuteInstruction* cp =
-      Cast<HloCollectivePermuteInstruction>(instr);
-  std::vector<ReplicaGroup> replica_groups;
-  for (auto& [i, j] : cp->source_target_pairs()) {
-    ReplicaGroup rep;
-    rep.add_replica_ids(i);
-    rep.add_replica_ids(j);
-    replica_groups.push_back(rep);
-  }
-  return replica_groups;
 }
 
 bool GpuScheduleCrossesOverlapLimit(
@@ -260,18 +246,15 @@ bool GpuScheduleCrossesOverlapLimit(
                   : const_cast<HloInstruction*>(async_occupier);
 
           // Number of overlapping ranks between this occupier and candidate
-          std::vector<ReplicaGroup> curr_start_replica_group =
-              (curr_start_inst->opcode() ==
-                   HloOpcode::kCollectivePermuteStart ||
-               curr_start_inst->opcode() == HloOpcode::kCollectivePermute)
-                  ? GetReplicaGroupFromSourceTargetPairs(
-                        const_cast<HloInstruction*>(curr_start_inst))
-                  : curr_start_inst->replica_groups();
-          std::vector<ReplicaGroup> occupier_replica_group =
-              (occupier->opcode() == HloOpcode::kCollectivePermuteStart ||
-               occupier->opcode() == HloOpcode::kCollectivePermute)
-                  ? GetReplicaGroupFromSourceTargetPairs(occupier)
-                  : occupier->replica_groups();
+          auto curr_start_replica_group_status =
+              GetAsyncReplicaGroups(curr_start_inst);
+          CHECK(curr_start_replica_group_status.ok());
+          std::vector<std::vector<int64_t>> curr_start_replica_group =
+              curr_start_replica_group_status.value();
+          auto occupier_replica_group_status = GetAsyncReplicaGroups(occupier);
+          CHECK(occupier_replica_group_status.ok());
+          std::vector<std::vector<int64_t>> occupier_replica_group =
+              occupier_replica_group_status.value();
 
           size_t overlapping_count = CountOverlappingRanks(
               curr_start_replica_group, occupier_replica_group);
