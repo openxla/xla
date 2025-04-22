@@ -441,7 +441,15 @@ int64_t GpuAsyncTracker::GetNumAvailableResources(int64_t resource_type) const {
   }
 
   if (resource_type ==
-      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectivesP2P)) {
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectivesP2P) ||
+      resource_type ==
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamSend0) ||
+      resource_type ==
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamSend1) ||
+      resource_type ==
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamRecv0) ||
+      resource_type ==
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamRecv1)) {
     return kNumAsyncCollectivesP2P;
   }
 

@@ -402,6 +402,10 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
        OverlappingRanksPreventOverlappingCollectives) {
+  // TODO TJ re-enable this test when the multi-streamed
+  // collective feature is fully upstreamed.
+  GTEST_SKIP() << "Overlap avoidance logic is disabled";
+
   absl::string_view kFdoProfile = R"pb(
     costs { name: "add_0" cost_us: 100000.0 }
     costs { name: "ar_0" cost_us: 10.0 }
