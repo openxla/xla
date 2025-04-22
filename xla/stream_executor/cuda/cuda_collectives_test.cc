@@ -34,9 +34,6 @@ using ::tsl::testing::IsOkAndHolds;
 
 TEST(CudaCollectivesTest, CollectiveMemoryAllocation) {
   auto* collectives = xla::gpu::GpuCollectives::Default();
-  if (collectives->IsImplemented()) {
-    GTEST_SKIP() << "Compiled without NCCL support";
-  }
 
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
                           PlatformManager::PlatformWithName("CUDA"));
@@ -53,6 +50,20 @@ TEST(CudaCollectivesTest, CollectiveMemoryAllocation) {
 
   EXPECT_THAT(CudaCollectives::CollectiveMemoryDeallocate(executor, memory),
               IsOk());
+}
+
+TEST(CudaCollectivesTest, CollectiveMemoryAllocationTooBig) {
+  auto* collectives = xla::gpu::GpuCollectives::Default();
+
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  constexpr uint64_t kTooBig = 1125899906842624;  // 1 PiB
+  auto should_fail =
+      CudaCollectives::CollectiveMemoryAllocate(executor, kTooBig);
+  EXPECT_FALSE(should_fail.ok());
 }
 
 }  // namespace

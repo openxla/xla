@@ -38,6 +38,13 @@ StreamExecutorAllocator::StreamExecutorAllocator(
       memory_type_(memory_type),
       index_(index) {}
 
+const std::unordered_map<MemoryType, std::string> memoryTypeStrings = {
+  {MemoryType::kDevice, "device"},
+  {MemoryType::kUnified, "unified"},
+  {MemoryType::kHost, "pinned host"},
+  {MemoryType::kCollective, "collective"},
+};
+
 void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
                                      size_t* bytes_received) {
   tsl::profiler::TraceMe traceme("StreamExecutorAllocator::Alloc");
@@ -47,8 +54,11 @@ void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
   if (num_bytes > 0) {
     auto allocation = memory_allocator_->Allocate(num_bytes);
     if (!allocation.ok()) {
-      LOG(WARNING) << "could not allocate pinned host memory of size: "
-                   << num_bytes;
+      LOG(WARNING) << "could not allocate "
+                   << (memoryTypeStrings.count(memory_type_)
+                      ? memoryTypeStrings.at(memory_type_)
+                      : "unknown")
+		   << " of size: " << num_bytes;
       *bytes_received = 0;
       return nullptr;
     }

@@ -130,6 +130,11 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorWorks) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MemoryAllocator> allocator,
       executor->CreateMemoryAllocator(MemoryType::kCollective));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                          allocator->Allocate(1024));
+  EXPECT_NE(allocation->opaque(), nullptr);
+  EXPECT_EQ(allocation->size(), 1024);
+  allocation.reset();
 }
 
 TEST(CudaExecutorTest, CreateUnsupportedMemoryAllocatorsFail) {
