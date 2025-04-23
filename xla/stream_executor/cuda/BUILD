@@ -456,6 +456,8 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util:env_var",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:stream_executor_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
