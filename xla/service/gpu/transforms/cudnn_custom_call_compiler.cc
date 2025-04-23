@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -39,6 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/transforms/block_scaling_rewriter.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -48,13 +51,12 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
 
 namespace {
+namespace m = match;
 
 inline absl::StatusOr<CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
     CudnnfMHABackendConfig_MaskType mask_type) {
@@ -133,11 +135,15 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
                                         custom_call->shape(), {1})));
   }
 
+  // QKV
+  int input_index = 3;
   std::optional<se::dnn::TensorDescriptor> bias;
   if (kind == CudnnfMHAKind::kScaleBiasSoftmax ||
       kind == CudnnfMHAKind::kScaleBiasSoftmaxDropout) {
     const HloInstruction &bias_hlo = *custom_call->operand(3);
     TF_ASSIGN_OR_RETURN(bias, TensorDescriptorFor(bias_hlo.shape()));
+    // bias
+    input_index++;
   }
 
   const double dropout_rate = config.dropout_rate();
@@ -149,13 +155,33 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
 
   const int sliding_window_length = config.sliding_window_length();
   const int max_seg_per_batch = config.max_seg_per_batch();
+
+  if (config.mask_type() == xla::gpu::CudnnfMHABackendConfig::PADDING ||
+      config.mask_type() == xla::gpu::CudnnfMHABackendConfig::PADDING_CAUSAL ||
+      max_seg_per_batch > 1) {
+    // skip q_seqlen and kv_seqlen
+    input_index += 2;
+  }
+
+  if (max_seg_per_batch > 1) {
+    // skip q_offsets and kv_offsets
+    input_index += 2;
+  }
+
+  auto computations = custom_call->called_computations();
+  const HloComputation *score_mod_fwd_comp = nullptr;
+  if (computations.size() == 1) {
+    score_mod_fwd_comp = computations[0];
+    input_index += score_mod_fwd_comp->num_parameters() - 1;
+  }
+  TF_RET_CHECK(input_index == custom_call->operand_count());
   TF_ASSIGN_OR_RETURN(
       se::gpu::CudnnGraph graph,
       se::gpu::GetCudnnFlashAttentionOperationGraph(
           dnn_support, lhs_bmm1, rhs_bmm1, rhs_bmm2, output, bias, activation,
           static_cast<float>(config.fmha_scale()), dropout_rate > 0.0,
-          dropout_rate, dnn_mask_type, sliding_window_length,
-          max_seg_per_batch));
+          dropout_rate, dnn_mask_type, sliding_window_length, max_seg_per_batch,
+          score_mod_fwd_comp));
   return graph;
 }
 
@@ -246,7 +272,6 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
     // skip q_offsets and kv_offsets
     input_index += 2;
   }
-  TF_RET_CHECK(input_index == custom_call->operand_count());
 
   int output_index = 0;
   const Shape &d_bmm1_lhs_shape =
@@ -315,6 +340,23 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
                       GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
 
   const int sliding_window_length = config.sliding_window_length();
+  auto computations = custom_call->called_computations();
+  const HloComputation *score_mod_fwd_comp = nullptr;
+  const HloComputation *score_mod_bwd_comp = nullptr;
+  if (computations.size() == 1) {
+    score_mod_bwd_comp = computations[0];
+    auto softmax_aux = custom_call->mutable_operand(3);
+    HloInstruction *fwd_custom_call;
+    if (Match(softmax_aux,
+              m::GetTupleElement(m::CustomCall(&fwd_custom_call), 1))) {
+      score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
+    } else {
+      return absl::InternalError("Can't find fmha fwd custom call.");
+    }
+    input_index += score_mod_fwd_comp->num_parameters() - 1;
+  }
+  TF_RET_CHECK(input_index == custom_call->operand_count());
+
   TF_ASSIGN_OR_RETURN(
       se::gpu::CudnnGraph graph,
       se::gpu::GetCudnnFlashAttentionBackwardOperationGraph(
@@ -323,7 +365,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
           d_bmm1_rhs, d_bmm2_rhs, bias, dbias, dropout_rate, config.seed(),
           config.fmha_scale(), dropout_rate > 0.0, bias != std::nullopt,
           dnn_mask_type, force_deterministic, sliding_window_length,
-          max_seg_per_batch));
+          max_seg_per_batch, score_mod_fwd_comp, score_mod_bwd_comp));
   return graph;
 }
 
