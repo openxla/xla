@@ -1060,6 +1060,39 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "dot_operation_test_lib",
+    testonly = True,
+    deps = [
+        ":client_library_test_base",
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:array2d",
+        "//xla:array3d",
+        "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla:reference_util",
+        "//xla:shape_util",
+        "//xla/client:local_client",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder/lib:arithmetic",
+        "//xla/hlo/builder/lib:matrix",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
+)
+
 xla_test(
     name = "dot_operation_test",
     timeout = "long",
@@ -1070,57 +1103,19 @@ xla_test(
         "test_xla_cpu_no_thunks",
     ],
     deps = [
-        ":client_library_test_base",
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:array2d",
-        "//xla:array3d",
-        "//xla:array4d",
-        "//xla:error_spec",
-        "//xla:executable_run_options",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:reference_util",
-        "//xla:shape_util",
-        "//xla:types",
-        "//xla/client:client_library",
-        "//xla/client:executable_build_options",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder/lib:arithmetic",
-        "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/service",
-        "//xla/service:platform_util",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-    ] + if_rocm_is_configured([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+		":dot_operation_test_lib"
+	],
 )
 
-# Run dot tests with auto-tuning disabled.  This just does a basic sanity check
+# Run dot tests with auto-tuning and triton disabled.  This just does a basic sanity check
 # that setting xla_gpu_autotune_level to 0 does not break simple graphs.
 xla_test(
     name = "dot_operation_test_autotune_disabled",
     srcs = ["dot_operation_test.cc"],
-    args = ["--xla_gpu_autotune_level=0"],
+    args = [
+		"--xla_gpu_autotune_level=0",
+		"--xla_gpu_enable_triton_gemm=false"
+	],
     backends = ["gpu"],
     shard_count = 20,
     tags = [
@@ -1130,33 +1125,28 @@ xla_test(
         "test_xla_cpu_no_thunks",
     ],
     deps = [
-        ":client_library_test_base",
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:array2d",
-        "//xla:array3d",
-        "//xla:error_spec",
-        "//xla:literal_util",
-        "//xla:reference_util",
-        "//xla:shape_util",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder/lib:arithmetic",
-        "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/service:platform_util",
-        "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-    ] + if_rocm_is_configured([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+		":dot_operation_test_lib"
+	],
+)
+
+xla_test(
+    name = "dot_operation_test_autotune_disabled_and_triton_enabled",
+    srcs = ["dot_operation_test.cc"],
+    args = [
+		"--xla_gpu_autotune_level=0",
+		"--xla_gpu_enable_triton_gemm=true"
+	],
+    backends = ["gpu"],
+    shard_count = 20,
+    tags = [
+        "optonly",
+        # TODO(b/151340488): Timed out on 2020-03-12.
+        "nozapfhahn",
+        "test_xla_cpu_no_thunks",
+    ],
+    deps = [
+		":dot_operation_test_lib"
+	],
 )
 
 # Run dot tests with dot canonicalization after the layout assignment pass.
@@ -1179,33 +1169,8 @@ xla_test(
         "test_xla_cpu_no_thunks",
     ],
     deps = [
-        ":client_library_test_base",
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:array2d",
-        "//xla:array3d",
-        "//xla:error_spec",
-        "//xla:literal_util",
-        "//xla:reference_util",
-        "//xla:shape_util",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder/lib:arithmetic",
-        "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/service:platform_util",
-        "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-    ] + if_rocm_is_configured([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+		":dot_operation_test_lib"
+	],
 )
 
 xla_test(
