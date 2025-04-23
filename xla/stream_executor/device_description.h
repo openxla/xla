@@ -192,7 +192,7 @@ class RocmComputeCapability {
   }
 
   bool gfx9_mi200_or_later() const {
-    static constexpr absl::string_view kList[] = {"gfx90a", "gfx942"};
+    static constexpr absl::string_view kList[] = {"gfx90a", "gfx942", "gfx950"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
