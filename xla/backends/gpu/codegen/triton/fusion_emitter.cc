@@ -1480,11 +1480,12 @@ absl::StatusOr<TritonModule> CreateTritonModule(
         "Failed to create Triton module for fusion:", fusion, *triton_module);
   }
 
-  VLOG(6) << DumpTritonIR(triton_module.get(),
-                          fusion->GetModule()
-                              ->config()
-                              .debug_options()
-                              .xla_gpu_unsupported_annotate_with_emitter_loc());
+  VLOG(-1) << DumpTritonIR(
+      triton_module.get(),
+      fusion->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_unsupported_annotate_with_emitter_loc());
   // TODO(loislo): Remove this dump once we have the Triton IR dump in
   // CompileTritonToLLVM after the Triton optimization passes.
   if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
