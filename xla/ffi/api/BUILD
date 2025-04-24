@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -48,7 +48,10 @@ cc_library(
     name = "api",
     hdrs = [":api_headers"],
     visibility = ["//visibility:private"],
-    deps = [":c_api"],
+    deps = [
+        ":c_api",
+        "@com_google_absl//absl/strings:string_view",
+    ],
 )
 
 cc_library(
@@ -68,6 +71,7 @@ cc_library(
     deps = [
         ":api",
         ":c_api",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -90,7 +94,6 @@ xla_cc_test(
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
@@ -98,6 +101,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",

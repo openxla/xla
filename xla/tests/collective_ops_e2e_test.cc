@@ -742,6 +742,52 @@ XLA_TEST_P(AsyncCollectiveOps, AsyncAllToAllWithoutSplitDim) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({40, 60, 44, 64}, results[1]);
 }
 
+XLA_TEST_P(AsyncCollectiveOps,
+           AsyncAllToAllNumberOfElementsLargerThanInt32Max) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_u8 = u8[] convert(id)
+    a0 = u8[2,32768,32768] broadcast(id_u8), dimensions={}
+    ROOT a2a = u8[2,32768,32768] all-to-all(u8[2,32768,32768] a0),
+      replica_groups={{0,1}}, dimensions={0}
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+  const bool enable_async_all_to_all = GetParam();
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(kModuleStr, kNumReplicas));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const hlo_module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+
+  HloInstruction* a2a_start =
+      FindInstruction(hlo_module, HloOpcode::kAsyncStart);
+  HloInstruction* a2a_done = FindInstruction(hlo_module, HloOpcode::kAsyncDone);
+  ASSERT_THAT(a2a_start, NotNull());
+  ASSERT_THAT(a2a_done, NotNull());
+  HloAsyncInstruction* a2a_start_async = Cast<HloAsyncInstruction>(a2a_start);
+  EXPECT_EQ(a2a_start_async->async_wrapped_opcode(), HloOpcode::kAllToAll);
+  EXPECT_EQ(IsAsync(a2a_start_async), enable_async_all_to_all);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  // Sanity check only a few elements in each result, because checking all 2GB
+  // would take too long.
+  EXPECT_EQ(results[0].Get<uint8_t>({0, 0, 0}), 0);
+  EXPECT_EQ(results[0].Get<uint8_t>({1, 0, 0}), 1);
+
+  EXPECT_EQ(results[1].Get<uint8_t>({0, 0, 0}), 0);
+  EXPECT_EQ(results[1].Get<uint8_t>({1, 0, 0}), 1);
+}
+
 XLA_TEST_P(AsyncMemcpyCollectiveOps, AsyncAllToAllMultipleReplicaGroups) {
   const absl::string_view kModuleStr = R"(
   HloModule test
@@ -1597,7 +1643,6 @@ ENTRY entry {
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   auto opts = GetDebugOptionsForTest();
-  opts.set_xla_gpu_enable_pipelined_collectives(true);
   opts.set_xla_gpu_enable_triton_gemm(false);
   CollectiveOpsVerifyF8Matmul(
       absl::StrReplaceAll(kModuleReplicatedStr, replacements_), opts);
@@ -1618,7 +1663,6 @@ class CollectiveOpsTestE2EPipelinedNonPipelined : public CollectiveOpsTestE2E {
     HloModuleConfig config =
         GetModuleConfigForTest(kNumReplicas, kNumPartitions);
     auto opts = GetDebugOptionsForTest();
-    opts.set_xla_gpu_enable_pipelined_collectives(true);
     config.set_debug_options(opts);
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_string, config));
@@ -1644,7 +1688,6 @@ class CollectiveOpsTestE2EPipelinedNonPipelined : public CollectiveOpsTestE2E {
     HloModuleConfig ref_config =
         GetModuleConfigForTest(kNumReplicas, kNumPartitions);
     auto ref_opts = GetDebugOptionsForTest();
-    ref_opts.set_xla_gpu_enable_pipelined_collectives(false);
     ref_opts.set_xla_gpu_enable_pipelined_all_reduce(false);
     ref_opts.set_xla_gpu_enable_pipelined_all_gather(false);
     ref_opts.set_xla_gpu_enable_pipelined_reduce_scatter(false);
@@ -2970,5 +3013,221 @@ ENTRY main.49 {
     EXPECT_TRUE(LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
   }
 }
+
+TEST_F(CollectiveOpsTestE2E, MemcpyP2pLargeMessage) {
+  absl::string_view hlo_string = R"(
+HloModule MemcpyP2pLargeMessage, entry_computation_layout={(bf16[1024,64000]{1,0})->bf16[1024,64000]{1,0}}, num_partitions=4
+
+ENTRY main {
+  Arg_0.5 = bf16[1024,64000]{1,0} parameter(0)
+  collective-permute.0 = bf16[1024,64000]{1,0} collective-permute(Arg_0.5), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.1 = bf16[1024,64000]{1,0} collective-permute(collective-permute.0), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.2 = bf16[1024,64000]{1,0} collective-permute(collective-permute.1), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.3 = bf16[1024,64000]{1,0} collective-permute(collective-permute.2), channel_id=4, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.4 = bf16[1024,64000]{1,0} collective-permute(collective-permute.3), channel_id=5, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.5 = bf16[1024,64000]{1,0} collective-permute(collective-permute.4), channel_id=6, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.6 = bf16[1024,64000]{1,0} collective-permute(collective-permute.5), channel_id=7, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.7 = bf16[1024,64000]{1,0} collective-permute(collective-permute.6), channel_id=8, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+
+  constant.0 = bf16[] constant(2)
+  broadcast.0 = bf16[1024,64000]{1,0} broadcast(constant.0), dimensions={}
+  collective-permute.8 = bf16[1024,64000]{1,0} collective-permute(broadcast.0), channel_id=6, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.9 = bf16[1024,64000]{1,0} collective-permute(collective-permute.8), channel_id=9, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.10 = bf16[1024,64000]{1,0} collective-permute(collective-permute.9), channel_id=10, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.11 = bf16[1024,64000]{1,0} collective-permute(collective-permute.10), channel_id=11, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+
+  ROOT multiply.10 = bf16[1024,64000]{1,0} multiply(collective-permute.7, collective-permute.11)
+} // main
+)";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
+
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  auto opts = GetDebugOptionsForTest();
+  opts.set_xla_gpu_use_memcpy_local_p2p(true);
+  opts.add_xla_disable_hlo_passes("gpu-convert-async-collectives-to-sync");
+
+  config.set_debug_options(opts);
+  config.set_use_spmd_partitioning(false);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  auto fake_arguments = xla::MakeFakeArguments(module.get()).value();
+  std::vector<Literal*> fake_ptrs(fake_arguments.size());
+  for (int i = 0; i < fake_arguments.size(); ++i) {
+    fake_ptrs[i] = &fake_arguments[i];
+  }
+  HloModuleConfig ref_config =
+      GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  auto ref_opts = GetDebugOptionsForTest();
+  ref_opts.set_xla_gpu_use_memcpy_local_p2p(false);
+  ref_config.set_debug_options(ref_opts);
+  TF_ASSERT_OK_AND_ASSIGN(auto ref_module,
+                          ParseAndReturnVerifiedModule(hlo_string, ref_config));
+  auto fake_ref_arguments = xla::MakeFakeArguments(ref_module.get()).value();
+  std::vector<Literal*> ref_fake_ptrs(fake_ref_arguments.size());
+  for (int i = 0; i < fake_ref_arguments.size(); ++i) {
+    ref_fake_ptrs[i] = &fake_ref_arguments[i];
+  }
+
+  DeviceAssignment assn(/*replica_count=*/kNumReplicas,
+                        /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    assn(0, i) = i;
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      HloTestBase::ExecuteReplicated(
+          std::move(module), fake_ptrs, kNumPartitions, &assn,
+          /*run_hlo_passes=*/true, /*use-threads=*/true));
+  ASSERT_EQ(results.size(), kNumPartitions);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> ref_results,
+      HloTestBase::ExecuteReplicated(
+          std::move(ref_module), ref_fake_ptrs, kNumPartitions, &assn,
+          /*run_hlo_passes=*/true, /*use-threads=*/true));
+  ASSERT_EQ(ref_results.size(), kNumPartitions);
+  ErrorSpec error_spec{1e-5, 1e-5};
+  // Expect same results with and without pipelining of collectives.
+  for (int i = 0; i < kNumPartitions; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
+  }
+}
+
+TEST_F(CollectiveOpsTestE2E, AllgatherMemspaceWithNcclUserBuffer) {
+  absl::string_view hlo_string = R"(
+HloModule AllgatherMemspaceWithNcclUserBuffer, entry_computation_layout={(bf16[1024,1024]{1,0},bf16[1024,1024]{1,0})->bf16[4096,1024]{1,0}}, num_partitions=4
+
+ENTRY main {
+  Arg_1 = bf16[1024,1024]{1,0} parameter(0)
+  Arg_2 = bf16[1024,1024]{1,0} parameter(1)
+
+  add = bf16[1024,1024]{1,0} add(Arg_1, Arg_2)
+  all-gather-start = (bf16[1024,1024]{1,0},bf16[4096,1024]{1,0}) all-gather-start(add), dimensions={0}
+  all-gather-done = bf16[4096,1024]{1,0} all-gather-done(all-gather-start)
+
+  ROOT add2 = bf16[4096,1024]{1,0} add(all-gather-done, all-gather-done)
+} // main
+)";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
+
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  auto opts = GetDebugOptionsForTest();
+  opts.set_xla_gpu_enable_nccl_user_buffers(true);
+  opts.add_xla_disable_hlo_passes("gpu-convert-async-collectives-to-sync");
+
+  config.set_debug_options(opts);
+  config.set_use_spmd_partitioning(false);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CreateExecutable(std::move(module), /*run_hlo_passes=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+  HloInstruction* ag_start =
+      FindInstructions(executable_module, HloOpcode::kAllGatherStart)[0];
+  // Both ag and its producer should have collective memory space 1
+  EXPECT_EQ(ag_start->shape().tuple_shapes()[1].layout().memory_space(), 1);
+  EXPECT_EQ(ag_start->operand(0)->shape().layout().memory_space(), 1);
+}
+
+class AllReduceTest
+    : public CollectiveOpsWithFlagsBase,
+      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
+ public:
+  AllReduceTest()
+      : CollectiveOpsWithFlagsBase(std::get<0>(GetParam()),
+                                   /*enable_p2p_memcpy=*/false) {}
+
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions opts = CollectiveOpsWithFlagsBase::GetDebugOptionsForTest();
+
+    opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
+        std::get<1>(GetParam()));
+
+    return opts;
+  }
+};
+
+TEST_P(AllReduceTest, AsyncAllReduce) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  apply_op {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    ROOT apply_op = f32[] add(x, y)
+  }
+
+  ENTRY test_computation {
+    param_0 = f32[65536] parameter(0)
+    ROOT all-reduce = f32[65536] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}}
+  }
+  )";
+
+  const int64_t kNumReplicas = 2;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  int64_t num_elements =
+      module->entry_computation()->root_instruction()->shape().dimensions()[0];
+
+  Array<float> input1({num_elements}), input2({num_elements});
+  input1.FillRandom(1.0f, 10.0f, /*seed=*/0);
+  input2.FillRandom(1.0f, 10.0f, /*seed=*/1);
+  Array<float> expected_output({num_elements});
+  expected_output.Each([&](absl::Span<const int64_t> indices, float* val) {
+    *val = input1(indices) + input2(indices);
+  });
+
+  Literal input_literal1 = LiteralUtil::CreateFromArray(input1);
+  Literal input_literal2 = LiteralUtil::CreateFromArray(input2);
+  Literal expected_output_literal =
+      LiteralUtil::CreateFromArray(expected_output);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      HloTestBase::ExecuteReplicated(std::move(module),
+                                     {{&input_literal1}, {&input_literal2}},
+                                     /*num_replicas=*/kNumReplicas,
+                                     /*run_hlo_passes=*/true,
+                                     /*device_assignment=*/nullptr));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_output_literal, results[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_output_literal, results[1]));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllReduceTest, AllReduceTest,
+    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
+    [](const ::testing::TestParamInfo<std::tuple<bool, bool>>& info) {
+      return absl::StrCat(GetAsyncTestName(std::get<0>(info.param)), "_",
+                          std::get<1>(info.param) ? "one_shot" : "nccl");
+    });
+
 }  // namespace
 }  // namespace xla

@@ -103,25 +103,11 @@ func.func @split_constants() -> (tensor<8x8xf32>, tensor<8x8xf32>) {
   return %0, %1 : tensor<8x8xf32>, tensor<8x8xf32>
 }
 
-// CHECK-LABEL: func @reshard_all_closed
-func.func @reshard_all_closed(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+// CHECK-LABEL: func @reshard
+func.func @reshard(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
   // CHECK-NEXT: %[[COPY:.*]] = mhlo.copy %arg0 {mhlo.sharding = "{devices=[2,4,4]<=[2,4,4]T(0,2,1) last_tile_dim_replicate}"}
   // CHECK-NEXT: return %[[COPY]]
   %0 = sdy.reshard %arg0 <@mesh_0, [{"axis_0"}, {"axis_2"}], replicated={"axis_1"}> : tensor<8x8xf32>
-  return %0 : tensor<8x8xf32>
-}
-
-// CHECK-LABEL: func @reshard_partially_open_closed
-func.func @reshard_partially_open_closed(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
-  // CHECK: mhlo.copy %arg0 {mhlo.sharding = "{devices=[2,4,4]<=[2,4,4]T(0,2,1) last_tile_dim_replicate}"}
-  %0 = sdy.reshard %arg0 <@mesh_0, [{"axis_0", ?}, {"axis_2"}]> : tensor<8x8xf32>
-  return %0 : tensor<8x8xf32>
-}
-
-// CHECK-LABEL: func @reshard_fully_open_partially_open
-func.func @reshard_fully_open_partially_open(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
-  // CHECK: mhlo.copy %arg0 {backend_config = "unspecified_dims=[1]", mhlo.sharding = "{devices=[2,1,16]<=[32] last_tile_dim_replicate}"}
-  %0 = sdy.reshard %arg0 <@mesh_0, [{"axis_0", ?}, {?}]> : tensor<8x8xf32>
   return %0 : tensor<8x8xf32>
 }
 
@@ -145,7 +131,7 @@ func.func @all_slice(%arg0: tensor<8x8xf32> {sdy.sharding=#sdy.sharding<@mesh_2,
 func.func @all_to_all(%arg0: tensor<8x8xf32> {sdy.sharding=#sdy.sharding<@mesh_2, [{"y"}, {}]>}) -> tensor<8x8xf32> {
   // CHECK-NEXT: %[[COPY:.*]] = mhlo.copy %arg0 {mhlo.sharding = "{devices=[1,4,8]<=[8,4]T(1,0) last_tile_dim_replicate}"}
   // CHECK-NEXT: return %[[COPY]]
-  %0 = sdy.all_to_all {"y"} 0->1 %arg0 out_sharding=<@mesh_2, [{}, {"y"}]> : tensor<8x8xf32>
+  %0 = sdy.all_to_all [{"y"}: 0->1] %arg0 out_sharding=<@mesh_2, [{}, {"y"}]> : tensor<8x8xf32>
   return %0 : tensor<8x8xf32>
 }
 
@@ -170,7 +156,7 @@ func.func @chain_of_collectives(%arg0: tensor<8x8xf32> {sdy.sharding=#sdy.shardi
   // CHECK-NEXT: %[[COPY_1:.*]] = mhlo.copy %[[COPY_0]] {mhlo.sharding = "{devices=[8,4]<=[32]}"}
   // CHECK-NEXT: %[[COPY_2:.*]] = mhlo.copy %[[COPY_1]] {mhlo.sharding = "{devices=[8,1,4]<=[32] last_tile_dim_replicate}"}
   // CHECK-NEXT: return %[[COPY_2]]
-  %0 = sdy.all_to_all {"y"} 0->1 %arg0 out_sharding=<@mesh_2, [{}, {"y"}]> : tensor<8x8xf32>
+  %0 = sdy.all_to_all [{"y"}: 0->1] %arg0 out_sharding=<@mesh_2, [{}, {"y"}]> : tensor<8x8xf32>
   %1 = sdy.all_slice [{"x"}, {}] %0 out_sharding=<@mesh_2, [{"x"}, {"y"}]> : tensor<8x8xf32>
   %2 = sdy.all_gather [{}, {"y"}] %1 out_sharding=<@mesh_2, [{"x"}, {}]> : tensor<8x8xf32>
   return %2 : tensor<8x8xf32>
@@ -437,6 +423,13 @@ func.func @while_with_no_sharding_inside_manual_comp(
     sdy.return %3#0 : tensor<1x2xi32>
   } : (tensor<32x2xi32>) -> tensor<32x2xi32>
   return %0 : tensor<32x2xi32>
+}
+
+// CHECK-LABEL: func @propagation_barrier
+func.func @propagation_barrier(%arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  // CHECK-NEXT: return %arg0 : tensor<8x16xf32>
+  %r = sdy.propagation_barrier %arg0 allowed_direction=BACKWARD : tensor<8x16xf32>
+  return %r : tensor<8x16xf32>
 }
 
 

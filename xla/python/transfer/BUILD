@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/tsl:tsl.bzl",
     "if_oss",
@@ -48,6 +48,7 @@ xla_cc_test(
     srcs = ["streaming_test.cc"],
     deps = [
         ":streaming",
+        ":transfer_socket_proto_cc",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
@@ -87,6 +88,7 @@ xla_cc_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
@@ -107,6 +109,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -167,6 +170,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
@@ -224,42 +228,5 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "py_socket_transfer",
-    srcs = ["py_socket_transfer.cc"],
-    hdrs = ["py_socket_transfer.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        ":event_loop",
-        ":socket-server",
-        ":socket_bulk_transport",
-        ":streaming",
-        ":streaming_ifrt",
-        "//xla:util",
-        "//xla/pjrt:pjrt_client",
-        "//xla/pjrt:status_casters",
-        "//xla/python:nb_class_ptr",
-        "//xla/python:nb_numpy",
-        "//xla/python:py_client",
-        "//xla/python:traceback",
-        "//xla/python:types",
-        "//xla/python/ifrt",
-        "//xla/python/pjrt_ifrt",
-        "//xla/python/pjrt_ifrt:pjrt_dtype",
-        "//xla/tsl/concurrency:ref_count",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@nanobind",
     ],
 )

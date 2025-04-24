@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -48,12 +48,24 @@ xla_cc_test(
         ":computation_partitioner",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
-        "//xla/tests:hlo_test_base",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "utils",
+    srcs = ["utils.cc"],
+    hdrs = ["utils.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -117,9 +129,9 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/mlir_hlo",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
@@ -168,6 +180,7 @@ cc_library(
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir/utils:type_util",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],

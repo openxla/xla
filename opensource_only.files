@@ -106,10 +106,6 @@ third_party/py/python_repo.bzl:
 third_party/py/python_wheel.bzl:
 third_party/py/rules_pywrap/def_file_filter_tool.py:
 third_party/pybind11.BUILD:
-third_party/remote_config/BUILD.tpl:
-third_party/remote_config/common.bzl:
-third_party/remote_config/remote_platform_configure.bzl:
-third_party/repo.bzl:
 third_party/six.BUILD:
 third_party/snappy.BUILD:
 third_party/spirv_llvm_translator/spirv_llvm_translator.BUILD:
@@ -150,12 +146,14 @@ tools/def_file_filter/BUILD:
 tools/def_file_filter/def_file_filter.py.tpl:
 tools/def_file_filter/def_file_filter_configure.bzl:
 tools/toolchains/BUILD:
+tools/toolchains/android/BUILD:
 tools/toolchains/clang6/BUILD:
 tools/toolchains/cpus/py/BUILD:
 tools/toolchains/cpus/py3/BUILD:
 tools/toolchains/cross_compile/cc/BUILD:
 tools/toolchains/cross_compile/config/BUILD:
 tools/toolchains/embedded/arm-linux/BUILD:
+tools/toolchains/ios/BUILD:
 tools/toolchains/java/BUILD:
 tools/toolchains/python/BUILD:
 tools/toolchains/remote/BUILD:

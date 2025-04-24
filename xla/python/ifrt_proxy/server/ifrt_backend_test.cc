@@ -310,7 +310,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   // be the target of the other Array-specific methods. Returns the array
   // handle.
   absl::StatusOr<uint64_t> MakeTestArray(tsl::RCReference<Array> mock_array) {
-    EXPECT_CALL(*mock_client_, MakeArrayFromHostBuffer(_, _, _, _, _, _, _))
+    EXPECT_CALL(*mock_client_, MakeArrayFromHostBuffer(_, _, _, _, _, _, _, _))
         .WillOnce(Return(std::move(mock_array)));
 
     auto ifrt_request = NewIfrtRequest(NewOpId());
@@ -677,7 +677,7 @@ TEST_P(IfrtBackendHandlerTest, MakeArrayFromHostBufferSuccess) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, DType(DType::kF64), expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -721,7 +721,7 @@ TEST_P(IfrtBackendHandlerTest, MakeStringArrayFromHostBufferSuccess) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, expected_dtype, expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -761,6 +761,7 @@ TEST_P(IfrtBackendHandlerTest, AssembleArrayFromSingleDeviceArrays) {
   std::vector<tsl::RCReference<xla::ifrt::MockArray>> single_device_arrays;
   for (int i = 0; i < 2; ++i) {
     auto array = tsl::MakeRef<xla::ifrt::MockArray>();
+    ON_CALL(*array, dtype()).WillByDefault(Return(dtype));
     single_device_arrays.push_back(array);
 
     TF_ASSERT_OK_AND_ASSIGN(uint64_t array_handle, MakeTestArray(array));
@@ -786,20 +787,10 @@ TEST_P(IfrtBackendHandlerTest, AssembleArrayFromSingleDeviceArrays) {
       tsl::MakeRef<xla::ifrt::MockArray>();
   const Shape expected_shape({2, 2});
 
-  if (Version().protocol_version() >=
-      protocol_version::kAssembleArrayFromSingleDeviceArraysWithDType) {
-    EXPECT_CALL(*mock_client_,
-                AssembleArrayFromSingleDeviceArrays(
-                    dtype, expected_shape, _,
-                    ElementsAreArray(single_device_arrays), _, _))
-        .WillOnce(Return(std::move(result)));
-  } else {
-    EXPECT_CALL(
-        *mock_client_,
-        AssembleArrayFromSingleDeviceArrays(
-            expected_shape, _, ElementsAreArray(single_device_arrays), _, _))
-        .WillOnce(Return(std::move(result)));
-  }
+  EXPECT_CALL(*mock_client_, AssembleArrayFromSingleDeviceArrays(
+                                 dtype, expected_shape, _,
+                                 ElementsAreArray(single_device_arrays), _, _))
+      .WillOnce(Return(std::move(result)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
   EXPECT_NE(response->assemble_array_from_single_device_arrays_response()
@@ -891,7 +882,7 @@ TEST_P(IfrtBackendHandlerTest, CopyToHostSuccessWithStringArray) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, expected_dtype, expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -1796,6 +1787,42 @@ TEST_P(IfrtBackendHandlerTest,
 
   EXPECT_THAT(CallBackend(std::move(request)),
               StatusIs(absl::StatusCode::kUnknown, StrEq("injected error")));
+}
+
+TEST_P(IfrtBackendHandlerTest, GetDefaultLayoutSuccess) {
+  const auto kDefaultLayout = std::make_shared<xla::PjRtLayout>(
+      xla::LayoutUtil::MakeDescendingLayout(1));
+  const xla::ifrt::DType kDType = xla::ifrt::DType(xla::ifrt::DType::kF32);
+  const std::vector<int64_t> kDims = {1, 2, 3};
+  const int64_t kDeviceId = 42;
+  const auto mock_device = std::make_unique<xla::ifrt::MockDevice>();
+  const std::string kMemoryKindStr = "xla::ifrt::MemoryKind()";
+  const xla::ifrt::MemoryKind kMemoryKind(kMemoryKindStr);
+
+  ON_CALL(*mock_client_, LookupDevice(DeviceId(kDeviceId)))
+      .WillByDefault(Return(mock_device.get()));
+
+  EXPECT_CALL(*mock_client_,
+              GetDefaultLayout(kDType, absl::MakeConstSpan(kDims),
+                               mock_device.get(), kMemoryKind))
+      .WillOnce(Return(std::shared_ptr<const xla::PjRtLayout>(kDefaultLayout)));
+
+  auto request = NewIfrtRequest(NewOpId());
+  auto* default_layout_request = request->mutable_get_default_layout_request();
+  *default_layout_request->mutable_dtype() = kDType.ToProto();
+  default_layout_request->mutable_dims()->Reserve(kDims.size());
+  for (int64_t dim : kDims) {
+    default_layout_request->add_dims(dim);
+  }
+  default_layout_request->set_device_id(kDeviceId);
+  default_layout_request->set_memory_kind(kMemoryKindStr);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(request)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto layout_got,
+      xla::PjRtLayout::Deserialize(
+          response->get_default_layout_response().serialized_pjrt_layout()));
+  EXPECT_EQ(*layout_got, *kDefaultLayout);
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -23,10 +23,12 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include "absl/base/nullability.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
@@ -36,6 +38,7 @@ limitations under the License.
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -112,7 +115,9 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                  std::optional<absl::Span<const int64_t>> byte_strides,
                  absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
                  HostBufferSemantics semantics,
-                 std::function<void()> on_done_with_host_buffer) {
+                 std::function<void()> on_done_with_host_buffer,
+                 tsl::RCReference<UserContext> user_context) {
+            // Currently the `user_context` parameter is ignored.
             return delegated_->MakeArrayFromHostBuffer(
                 data, dtype, std::move(shape), byte_strides,
                 std::move(sharding), semantics,
@@ -121,29 +126,18 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   ON_CALL(*this, MakeArraysFromHostBufferShards)
       .WillByDefault(
           [this](absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
-                 HostBufferSemantics semantics) {
-            return delegated_->MakeArraysFromHostBufferShards(specs, semantics);
+                 HostBufferSemantics semantics,
+                 tsl::RCReference<UserContext> user_context) {
+            return delegated_->MakeArraysFromHostBufferShards(
+                specs, semantics, std::move(user_context));
           });
-  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _))
-      .WillByDefault(
-          [this](Shape shape,
-                 absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
-                 absl::Span<tsl::RCReference<Array>> arrays,
-                 ArrayCopySemantics semantics) {
-            return delegated_->AssembleArrayFromSingleDeviceArrays(
-                std::move(shape), std::move(sharding), arrays, semantics);
-          });
-  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _, _))
-      .WillByDefault(
-          [this](Shape shape,
-                 absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
-                 absl::Span<tsl::RCReference<Array>> arrays,
-                 ArrayCopySemantics array_copy_semantics,
-                 SingleDeviceShardSemantics single_device_shard_semantics) {
-            return delegated_->AssembleArrayFromSingleDeviceArrays(
-                std::move(shape), std::move(sharding), arrays,
-                array_copy_semantics, single_device_shard_semantics);
-          });
+  ON_CALL(*this, MakeErrorArrays)
+      .WillByDefault([this](const absl::Status& error,
+                            absl::Span<const ArraySpec> array_specs,
+                            tsl::RCReference<UserContext> user_context) {
+        return delegated_->MakeErrorArrays(error, array_specs,
+                                           std::move(user_context));
+      });
   ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _, _, _))
       .WillByDefault(
           [this](DType dtype, Shape shape,

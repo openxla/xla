@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//xla:xla.bzl", "xla_cc_binary")
+load("//xla:xla.default.bzl", "xla_cc_binary")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_cuda_or_rocm", "if_google")
 load("//xla/tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
@@ -139,6 +139,7 @@ cc_library(
     deps = [
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_layout",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -151,6 +152,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/translate:stablehlo",
         "//xla/hlo/translate/hlo_to_mhlo:translate",
         "//xla/pjrt:host_memory_spaces",
@@ -166,6 +168,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_module_util",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:slow_operation_alarm",
         "//xla/tests:test_utils",
         "//xla/tools:hlo_control_flow_flattening",
         "//xla/tsl/platform:env",
@@ -208,6 +211,7 @@ xla_test(
         "gpu",
     ],
     data = [
+        "data/auto_layout.hlo",
         "data/multiple_gemm_fusions.hlo",
         "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
@@ -216,6 +220,7 @@ xla_test(
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
         "data/single_gemm_fusion.hlo",
+        "data/while_with_known_trip_count.hlo",
     ],
     tags = ["no_mac"],
     deps = [

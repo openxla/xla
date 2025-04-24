@@ -53,7 +53,7 @@ namespace xla {
 namespace spmd {
 
 // Enum representing the partitioning methods for gather and scatter.
-enum class PartitioningMethod {
+enum class GatherScatterPartitioningMethod {
   kExplicitBatch,
   kIndexParallel,
   kOperandPassthrough,
@@ -111,12 +111,16 @@ struct SpmdPartitionerOptions {
   bool disable_ag_rewrite_for_multiple_consumers = false;
 
   // Partitioning method to prioritize for gather operations.
-  PartitioningMethod gather_partition_method =
-      PartitioningMethod::kExplicitBatch;
+  std::vector<GatherScatterPartitioningMethod>
+      preferred_gather_partition_methods = {
+          GatherScatterPartitioningMethod::kExplicitBatch,
+          GatherScatterPartitioningMethod::kIndexParallel};
 
   // Partitioning method to prioritize for scatter operations.
-  PartitioningMethod scatter_partition_method =
-      PartitioningMethod::kExplicitBatch;
+  std::vector<GatherScatterPartitioningMethod>
+      preferred_scatter_partition_methods = {
+          GatherScatterPartitioningMethod::kExplicitBatch,
+          GatherScatterPartitioningMethod::kIndexParallel};
 
   // The minimum size to enable windowed einsum in total bytes.
   // This combines sizes in bytes of both operands.
@@ -348,6 +352,10 @@ class SpmdPartitioner : public HloModulePass {
     return execution_threads_;
   }
 
+  // Update module's parameter and output sharding information, based on the
+  // sharding information of the module's parameters and outptuts.
+  static void RecordInputsOutputsSharding(HloModule* module);
+
  protected:
   // This is the internal implementation for AllGatherShards(), returns a pair
   // of hlo instructions whose first element is the result of the all-gather
@@ -489,8 +497,15 @@ class PartitionedHlo {
       absl::Span<const int64_t> left_padded_dims = {},
       absl::Span<const int64_t> skipped_dims = {}) const;
 
+  // Same as PadWithValue with zero as the pad value.
   PartitionedHlo PadWithZero(absl::Span<const int64_t> left_padded_dims = {},
                              absl::Span<const int64_t> skipped_dims = {}) const;
+
+  // PadWithZero consider all dimensions except the skipped dimensions.
+  // PadWithZeroOnSpecifiedDims considers only the specified dimensions.
+  PartitionedHlo PadWithZeroOnSpecifiedDims(
+      absl::Span<const int64_t> dims,
+      absl::Span<const int64_t> left_padded_dims = {}) const;
 
   // Returns the SPMD instruction.
   HloInstruction* hlo() const { return hlo_; }
@@ -498,8 +513,8 @@ class PartitionedHlo {
   // Returns the sharding of the SPMD instruction.
   const HloSharding& sharding() const { return hlo_->sharding(); }
 
-  // Returns the rank of the SPMD instruction.
-  const int64_t rank() const { return base_shape_.rank(); }
+  // Returns the SPMD instruction's number of dimensions.
+  int64_t num_dimensions() const { return base_shape_.dimensions().size(); }
 
   // Original full shape of the data.
   const Shape& base_shape() const { return base_shape_; }
@@ -616,6 +631,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandlePad(HloInstruction* hlo) override;
   absl::Status HandleParameter(HloInstruction* hlo) override;
   absl::Status HandlePartitionId(HloInstruction* hlo) override;
+  absl::Status HandleRaggedDot(HloInstruction* hlo) override;
   absl::Status HandleReduce(HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(HloInstruction* hlo) override;
   absl::Status HandleReshape(HloInstruction* hlo) override;

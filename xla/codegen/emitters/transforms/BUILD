@@ -32,15 +32,10 @@ cc_library(
 gentbl_cc_library(
     name = "passes_inc_gen",
     compatible_with = get_compatible_with_portable(),
-    tbl_outs = [
-        (
-            [
-                "-gen-pass-decls",
-                "-name=Transforms",
-            ],
-            "passes.h.inc",
-        ),
-    ],
+    tbl_outs = {"passes.h.inc": [
+        "-gen-pass-decls",
+        "-name=Transforms",
+    ]},
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     visibility = ["//visibility:private"],
@@ -74,7 +69,6 @@ cc_library(
         "//xla/backends/cpu/codegen/emitters/ir:xla_cpu",
         "//xla/backends/gpu/codegen/emitters/ir:xla_gpu",
         "//xla/codegen:device_spec",
-        "//xla/codegen:emitter_loc_op_builder",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",

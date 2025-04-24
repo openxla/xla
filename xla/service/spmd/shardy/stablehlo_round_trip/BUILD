@@ -1,6 +1,6 @@
 # Import/Export passes for going from `sdy.sharding`s to `mhlo.sharding`s and vice versa.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -48,9 +48,7 @@ cc_library(
     srcs = ["export_ops.cc"],
     hdrs = ["export_ops.h"],
     deps = [
-        "//xla:sharding_op_util",
         "//xla/mlir_hlo",
-        "//xla/service/spmd/shardy:constants",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",

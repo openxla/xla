@@ -34,19 +34,20 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/model/symbolic_tile.h"
+#include "xla/service/gpu/model/constraint_expression.h"
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -58,7 +59,6 @@ using ::testing::ExplainMatchResult;
 using ::testing::IsEmpty;
 using ::testing::Matcher;
 using ::testing::Not;
-using ::testing::SizeIs;
 using ::tsl::testing::IsOkAndHolds;
 using ::tsl::testing::StatusIs;
 using TilingVector = std::vector<SymbolicTileAnalysis::Tiling>;
@@ -114,7 +114,7 @@ class FakeEmitterSpecificConstraints : public EmitterSpecificConstraints {
   int64_t dim0_tile_size_;
 };
 
-class SymbolicTileAnalysisTest : public HloTestBase {
+class SymbolicTileAnalysisTest : public HloHardwareIndependentTestBase {
  public:
   std::optional<SymbolicTileAnalysis> TryAnalyzeModule(
       HloModule* module,
@@ -230,6 +230,42 @@ ENTRY main {
   auto p0_from_subtract1 = root->operand(1)->operand(0);
 
   EXPECT_EQ(p0_from_subtract0, p0_from_subtract1);
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ExpandingReshapeIsSupportedWithTileParamsOutsideBounds) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+fusion {
+  param_0 = f32[20] parameter(0)
+  abs = f32[20] abs(param_0)
+  ROOT reshape = f32[4,5] reshape(abs)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[20] parameter(0)
+  ROOT fusion = f32[4, 5] fusion(param_0), kind=kCustom, calls=fusion
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
+                          analysis->ComputeTiledHloInstructions(
+                              /*tile_parameters=*/{1, 8},
+                              /*constraints_are_known_satisfied=*/false,
+                              /*compute_all_tile_offset_indexing_maps=*/true));
+
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
+  auto parameter = root->operand(0)->operand(0);
+  EXPECT_THAT(*parameter, MatchTiledHloInstruction(
+                              /*tile_sizes=*/{8},
+                              /*tile_strides=*/{1},
+                              /*tile_offsets_indexing=*/R"(
+    (pid_0, pid_1) -> (pid_0 * 5),
+    domain:
+    pid_0 in [0, 3],
+    pid_1 in [0, 0]
+  )"));
 }
 
 TEST_F(SymbolicTileAnalysisTest, ProducerConsumerFusionIsSupported) {
@@ -469,6 +505,40 @@ ENTRY entry_computation {
     pid_0 in [0, 7],
     pid_1 in [0, 1]
   )"));
+}
+
+TEST_F(
+    SymbolicTileAnalysisTest,
+    ExtraOutputCannotReuseTileForExpandingReshapeDueToDifferentNumberOfBlocks) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_computation {
+  param_0.1 = f32[6400] parameter(0)
+  abs = f32[6400] abs(param_0.1)
+  reshape = f32[64,100] reshape(abs)
+  ROOT tuple = (f32[64,100], f32[6400]) tuple(reshape, abs)
+}
+
+ENTRY entry_computation {
+  param_0.2 = f32[6400] parameter(0)
+  ROOT fusion = (f32[64,100], f32[6400]) fusion(param_0.2), kind=kCustom,
+    calls=fused_computation
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  auto maybe_tiled_hlo_computation = analysis->ComputeTiledHloInstructions(
+      /*tile_parameters=*/{1, 16},
+      /*constraints_are_known_satisfied=*/false,
+      /*compute_all_tile_offset_indexing_maps=*/false);
+  EXPECT_THAT(
+      maybe_tiled_hlo_computation.status(),
+      tsl::testing::StatusIs(
+          tsl::error::UNIMPLEMENTED,
+          ::testing::HasSubstr("Unsupported case of multi-output fusion")));
 }
 
 TEST_F(SymbolicTileAnalysisTest, ExtraOutputCanReuseTileForCollapsingReshape) {
@@ -1185,7 +1255,8 @@ ENTRY main {
   param_1 = s32[] parameter(1)
   param_2 = s32[] parameter(2)
   param_3 = s32[] parameter(3)
-  ROOT fusion = s32[1,2] fusion(param_0, param_1, param_2, param_3), kind=kLoop, calls=fused_computation
+  ROOT fusion = s32[1,2] fusion(param_0, param_1, param_2, param_3), kind=kLoop,
+      calls=fused_computation
 }
 )"));
 
@@ -1261,7 +1332,7 @@ ENTRY main {
                ->fused_instructions_computation(),
           &mlir_context_, /*emitter_specific_constraints_builder=*/nullptr);
 
-  EXPECT_TRUE(std::holds_alternative<FusionDecision>(analysis_or_error));
+  ASSERT_TRUE(std::holds_alternative<FusionDecision>(analysis_or_error));
   EXPECT_THAT(std::get<FusionDecision>(analysis_or_error).Explain(),
               ::testing::HasSubstr("Bailing out on reshape"));
 }
@@ -1325,44 +1396,40 @@ TEST_F(SymbolicTileAnalysisTest, TileNestedDotFusions) {
   // M is tiled to 128, K: 8, N: 32.
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
-    lhs {
-      lhs.p0 = bf16[8192,256]{1,0} parameter(0)
-      ROOT lhs.root = bf16[8192,256]{1,0} negate(lhs.p0)
-    }
+lhs {
+  lhs.p0 = bf16[8192,256]{1,0} parameter(0)
+  ROOT lhs.root = bf16[8192,256]{1,0} negate(lhs.p0)
+}
 
-    rhs {
-      ROOT rhs.p0 = bf16[256,512]{1,0} parameter(0)
-    }
+rhs {
+  ROOT rhs.p0 = bf16[256,512]{1,0} parameter(0)
+}
 
-    dot {
-      dot.p0 = bf16[8192,256]{1,0} parameter(0)
-      dot.p1 = bf16[256,512]{1,0} parameter(1)
+dot {
+  dot.p0 = bf16[8192,256]{1,0} parameter(0)
+  dot.p1 = bf16[256,512]{1,0} parameter(1)
 
-      dot.lhs = bf16[8192,256]{1,0} fusion(dot.p0),
-        kind=kCustom, calls=lhs, backend_config={
-          "fusion_backend_config":{
-            "block_level_fusion_config":{
-              "output_tiles":[{"sizes":["128","8"]}]}}}
-      dot.rhs = bf16[256,512]{1,0} fusion(dot.p1),
-        kind=kCustom, calls=rhs, backend_config={
-          "fusion_backend_config":{
-            "block_level_fusion_config":{
-              "output_tiles":[{"sizes":["8","32"]}]}}}
+  dot.lhs = bf16[8192,256]{1,0} fusion(dot.p0),
+    kind=kCustom, calls=lhs, backend_config={
+      "fusion_backend_config":{
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["128","8"]}]}}}
+  dot.rhs = bf16[256,512]{1,0} fusion(dot.p1),
+    kind=kCustom, calls=rhs, backend_config={
+      "fusion_backend_config":{
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["8","32"]}]}}}
 
-      ROOT dot = bf16[8192,512]{1,0} dot(dot.lhs, dot.rhs),
-        lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    }
+  ROOT dot = bf16[8192,512]{1,0} dot(dot.lhs, dot.rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
 
-    ENTRY main {
-      main.p0 = bf16[8192,256]{1,0} parameter(0)
-      main.p1 = bf16[256,512]{1,0} parameter(1)
-      ROOT fusion = bf16[8192,512]{1,0} fusion(main.p0, main.p1),
-        kind=kCustom, calls=dot
-    }
-  )"));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
+ENTRY main {
+  main.p0 = bf16[8192,256]{1,0} parameter(0)
+  main.p1 = bf16[256,512]{1,0} parameter(1)
+  ROOT fusion = bf16[8192,512]{1,0} fusion(main.p0, main.p1),
+    kind=kCustom, calls=dot
+})"));
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
@@ -1446,6 +1513,218 @@ ENTRY main {
                          /*tile_sizes=*/{2}, /*tile_strides=*/{1},
                          /*tile_offsets_indexing=*/
                          "(pid_0) -> (pid_0 * 2), domain: pid_0 in [0, 3]"));
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ConcatenatesInNestedGemmFusionsAllowSymbolicTileDerivation) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+concatenate {
+  p0 = bf16[6] parameter(0)
+  p1 = bf16[6] parameter(1)
+  p2 = bf16[6] parameter(2)
+  ROOT concatenate = bf16[18] concatenate(p0, p1, p2), dimensions={0}
+}
+
+ENTRY main {
+  p0 = bf16[6] parameter(0)
+  p1 = bf16[6] parameter(1)
+  p2 = bf16[6] parameter(2)
+  ROOT fusion = bf16[18] fusion(p0, p1, p2),
+    kind=kCustom, calls=concatenate, backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion"}}
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  EXPECT_TRUE(analysis.has_value());
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ConcatenatesOutsideOfNestedGemmFusionsForbidSymbolicTileDerivation) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+concatenate {
+  p0 = bf16[6] parameter(0)
+  p1 = bf16[6] parameter(1)
+  p2 = bf16[6] parameter(2)
+  ROOT concatenate = bf16[18] concatenate(p0, p1, p2), dimensions={0}
+}
+
+ENTRY main {
+  p0 = bf16[6] parameter(0)
+  p1 = bf16[6] parameter(1)
+  p2 = bf16[6] parameter(2)
+  ROOT fusion = bf16[18] fusion(p0, p1, p2),
+    kind=kCustom, calls=concatenate
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  EXPECT_FALSE(analysis.has_value());
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ConcatenateOperandsInNestedGemmFusionsAreProvidedCorrectTilingBounds) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+nest0 {
+  ROOT p0 = s32[128] parameter(0)
+}
+
+nest1 {
+  ROOT p0 = s32[128] parameter(0)
+}
+
+nest2 {
+  ROOT p0 = s32[128] parameter(0)
+}
+
+concatenate {
+  p0 = s32[128] parameter(0)
+  p1 = s32[128] parameter(1)
+  p2 = s32[128] parameter(2)
+
+  fusion0 = s32[128] fusion(p0), kind=kCustom, calls=nest0
+  fusion1 = s32[128] fusion(p1), kind=kCustom, calls=nest1
+  fusion2 = s32[128] fusion(p2), kind=kCustom, calls=nest2
+
+  ROOT concatenate = s32[384] concatenate(fusion0, fusion1, fusion2), dimensions={0}
+}
+
+ENTRY main {
+  p0 = s32[128] parameter(0)
+  p1 = s32[128] parameter(1)
+  p2 = s32[128] parameter(2)
+  ROOT fusion = s32[384] fusion(p0, p1, p2),
+    kind=kCustom, calls=concatenate, backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion"}}
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_hlo_computation,
+      analysis->ComputeTiledHloInstructions(
+          /*tile_parameters=*/{32}, /*constraints_are_known_satisfied=*/false,
+          /*compute_all_tile_offset_indexing_maps=*/true));
+
+  // Gather the three nested fusions present in the module, in order.
+  std::vector<const TiledHloFusionInstruction*> nested_fusions(3, nullptr);
+  for (const TiledHloInstruction* tiled_instr :
+       tiled_hlo_computation.instructions()) {
+    if (auto tiled_fusion =
+            dynamic_cast<const TiledHloFusionInstruction*>(tiled_instr)) {
+      nested_fusions[tiled_fusion->operand(0)->hlo()->parameter_number()] =
+          tiled_fusion;
+    }
+  }
+
+  // Ensure that each parameter has domain bounds with the proper offsets.
+  // Concatenate creates partial functions,
+  const TiledHloInstruction* nested_p0 =
+      nested_fusions[0]->called_computation()->GetRoots()[0];
+  EXPECT_THAT(*nested_p0,
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{32}, /*tile_strides=*/{1},
+                  /*tile_offsets_indexing=*/
+                  "(pid_0) -> (pid_0 * 32), domain: pid_0 in [0, 3]"));
+  const TiledHloInstruction* nested_p1 =
+      nested_fusions[1]->called_computation()->GetRoots()[0];
+  EXPECT_THAT(*nested_p1,
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{32}, /*tile_strides=*/{1},
+                  /*tile_offsets_indexing=*/
+                  "(pid_0) -> (pid_0 * 32 - 128), domain: pid_0 in [4, 7]"));
+
+  const TiledHloInstruction* nested_p2 =
+      nested_fusions[2]->called_computation()->GetRoots()[0];
+  EXPECT_THAT(*nested_p2,
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{32}, /*tile_strides=*/{1},
+                  /*tile_offsets_indexing=*/
+                  "(pid_0) -> (pid_0 * 32 - 256), domain: pid_0 in [8, 11]"));
+
+  // Ensure that providing tile sizes that do not divide the resulting offsets
+  // results in the tiling being rejected, even if we pretend that `33`
+  // satisfies the constraints.
+  auto tiled_hlo_computation_or = analysis->ComputeTiledHloInstructions(
+      /*tile_parameters=*/{33}, /*constraints_are_known_satisfied=*/true,
+      /*compute_all_tile_offset_indexing_maps=*/false);
+
+  EXPECT_THAT(tiled_hlo_computation_or,
+              tsl::testing::StatusIs(
+                  absl::StatusCode::kUnimplemented,
+                  ::testing::HasSubstr("not divisible by tile size")));
+}
+
+TEST_F(SymbolicTileAnalysisTest, TrivialDimensionParametersArePreserved) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+lhs {
+  ROOT p0 = f32[137,115] parameter(0)
+}
+
+rhs {
+  ROOT p0 = f32[1,115] parameter(0)
+}
+
+dot {
+  p0 = f32[137,115] parameter(0)
+  p1 = f32[1,115] parameter(1)
+
+  lhs = f32[137,115] fusion(p0),
+    kind=kCustom, calls=lhs, backend_config={
+      "fusion_backend_config":{
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16","32"]}]}}}
+  rhs = f32[1,115] fusion(p1),
+    kind=kCustom, calls=rhs, backend_config={
+      "fusion_backend_config":{
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16","32"]}]}}}
+
+  ROOT dot = f32[137,1] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  p0 = f32[137,115] parameter(0)
+  p1 = f32[1,115] parameter(1)
+  ROOT fusion = f32[137,1] fusion(p0, p1),
+    kind=kCustom, calls=dot
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
+                          analysis->ComputeTiledHloInstructions(
+                              /*tile_parameters=*/{16, 16},
+                              /*constraints_are_known_satisfied=*/true,
+                              /*compute_all_tile_offset_indexing_maps=*/true));
+
+  const TiledHloInstruction* dot = tiled_hlo_computation.GetRoots().front();
+  ASSERT_EQ(dot->hlo()->opcode(), HloOpcode::kDot);
+
+  const TiledHloFusionInstruction* lhs_fusion =
+      static_cast<const TiledHloFusionInstruction*>(dot->operand(0));
+  const TiledHloFusionInstruction* rhs_fusion =
+      static_cast<const TiledHloFusionInstruction*>(dot->operand(1));
+
+  EXPECT_THAT(*lhs_fusion->called_computation()->GetRoots().front(),
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{16, 32}, /*tile_strides=*/{1, 1},
+                  /*tile_offsets_indexing=*/
+                  "(pid_0, pid_1, pid_2) -> (pid_0 * 16, pid_2 * 32), domain: "
+                  "pid_0 in [0, 8], pid_1 in [0, 0], pid_2 in [0, 3]"));
+
+  // RHS has a trivial dimension. We make sure here that the requested padding
+  // is propagated as requested, and not simplified away (which would result in
+  // an invalid tile size of size "1").
+  // The trivial argument is still expected to be eliminated in the
+  // `tile_offsets_indexing` map, since this allows for more effective CSE.
+  EXPECT_THAT(*rhs_fusion->called_computation()->GetRoots().front(),
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{16, 32}, /*tile_strides=*/{1, 1},
+                  /*tile_offsets_indexing=*/
+                  "(pid_0, pid_1, pid_2) -> (0, pid_2 * 32), domain: "
+                  "pid_0 in [0, 8], pid_1 in [0, 0], pid_2 in [0, 3]"));
 }
 
 }  // namespace

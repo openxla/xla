@@ -37,12 +37,12 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "xla/ffi/api/c_api.h"
 
 // IWYU pragma: begin_exports
@@ -58,10 +58,16 @@ using TypeId = XLA_FFI_TypeId;  // NOLINT
 enum class DataType : uint8_t {
   INVALID = XLA_FFI_DataType_INVALID,
   PRED = XLA_FFI_DataType_PRED,
+  S1 = XLA_FFI_DataType_S1,
+  S2 = XLA_FFI_DataType_S2,
+  S4 = XLA_FFI_DataType_S4,
   S8 = XLA_FFI_DataType_S8,
   S16 = XLA_FFI_DataType_S16,
   S32 = XLA_FFI_DataType_S32,
   S64 = XLA_FFI_DataType_S64,
+  U1 = XLA_FFI_DataType_U1,
+  U2 = XLA_FFI_DataType_U2,
+  U4 = XLA_FFI_DataType_U4,
   U8 = XLA_FFI_DataType_U8,
   U16 = XLA_FFI_DataType_U16,
   U32 = XLA_FFI_DataType_U32,
@@ -87,10 +93,16 @@ enum class DataType : uint8_t {
 // Create aliases in ::xla::ffi namespace for all DataTypes, for consistency
 // with xla that defines PrimitiveType enums in ::xla namespace.
 inline constexpr DataType PRED = DataType::PRED;
+inline constexpr DataType S1 = DataType::S1;
+inline constexpr DataType S2 = DataType::S2;
+inline constexpr DataType S4 = DataType::S4;
 inline constexpr DataType S8 = DataType::S8;
 inline constexpr DataType S16 = DataType::S16;
 inline constexpr DataType S32 = DataType::S32;
 inline constexpr DataType S64 = DataType::S64;
+inline constexpr DataType U1 = DataType::U1;
+inline constexpr DataType U2 = DataType::U2;
+inline constexpr DataType U4 = DataType::U4;
 inline constexpr DataType U8 = DataType::U8;
 inline constexpr DataType U16 = DataType::U16;
 inline constexpr DataType U32 = DataType::U32;
@@ -123,7 +135,13 @@ constexpr size_t ByteWidth(DataType dtype) {
       return 0;
     case DataType::PRED:
       return 1;
+    case DataType::S1:
+    case DataType::S2:
+    case DataType::S4:
     case DataType::S8:
+    case DataType::U1:
+    case DataType::U2:
+    case DataType::U4:
     case DataType::U8:
     case DataType::F8E5M2:
     case DataType::F8E4M3:
@@ -980,18 +998,18 @@ XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(double, XLA_FFI_DataType_F64);
 #undef XLA_FFI_REGISTER_ARRAY_ATTR_DECODING
 
 template <>
-struct AttrDecoding<std::string_view> {
-  using Type = std::string_view;
-  static std::optional<std::string_view> Decode(XLA_FFI_AttrType type,
-                                                void* attr,
-                                                DiagnosticEngine& diagnostic) {
+struct AttrDecoding<absl::string_view> {
+  using Type = absl::string_view;
+  static std::optional<absl::string_view> Decode(XLA_FFI_AttrType type,
+                                                 void* attr,
+                                                 DiagnosticEngine& diagnostic) {
     if (XLA_FFI_PREDICT_FALSE(type != XLA_FFI_AttrType_STRING)) {
       return diagnostic.Emit("Wrong attribute type: expected ")
              << XLA_FFI_AttrType_STRING << " but got " << type;
     }
 
     auto* span = reinterpret_cast<XLA_FFI_ByteSpan*>(attr);
-    return std::string_view(span->ptr, span->len);
+    return absl::string_view(span->ptr, span->len);
   }
 };
 
@@ -1027,7 +1045,7 @@ class Dictionary : public internal::DictionaryBase {
   using internal::DictionaryBase::DictionaryBase;
 
   template <typename T>
-  ErrorOr<T> get(std::string_view name) const {
+  ErrorOr<T> get(absl::string_view name) const {
     DiagnosticEngine diagnostic;
     std::optional<T> value = internal::DictionaryBase::get<T>(name, diagnostic);
     if (!value.has_value()) {
@@ -1409,6 +1427,35 @@ inline ThreadPool::ThreadPool(const XLA_FFI_Api* api,
     : api_(api), ctx_(ctx), diagnostic_(diagnostic) {}
 
 //===----------------------------------------------------------------------===//
+// Context decoding for FFI internals
+//===----------------------------------------------------------------------===//
+
+struct FfiApi {};
+struct FfiExecutionContext {};
+
+template <>
+struct CtxDecoding<FfiApi> {
+  using Type = const XLA_FFI_Api*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    return api;
+  }
+};
+
+template <>
+struct CtxDecoding<FfiExecutionContext> {
+  using Type = XLA_FFI_ExecutionContext*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    return ctx;
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // Type Registration
 //===----------------------------------------------------------------------===//
 
@@ -1540,6 +1587,40 @@ struct CtxDecoding<RunId> {
     }
 
     return RunId{args.run_id};
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// DeviceOrdinal
+//===----------------------------------------------------------------------===//
+
+struct DeviceOrdinal {};
+
+// Context decoding for DeviceOrdinal.
+//
+// Example: Ffi::Bind().Ctx<DeviceOrdinal>()
+//                     .To([](int32_t device_ordinal) { ... });
+template <>
+struct CtxDecoding<DeviceOrdinal> {
+  using Type = int32_t;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    XLA_FFI_DeviceOrdinal_Get_Args args;
+    args.struct_size = XLA_FFI_ExecutionContext_Get_Args_STRUCT_SIZE;
+    args.extension_start = nullptr;
+    args.ctx = ctx;
+    args.device_ordinal = 0;
+
+    if (XLA_FFI_Error* err = api->XLA_FFI_DeviceOrdinal_Get(&args); err) {
+      diagnostic.Emit("Failed to get device ordinal from execution context: ")
+          << internal::GetErrorMessage(api, err);
+      internal::DestroyError(api, err);
+      return std::nullopt;
+    }
+
+    return args.device_ordinal;
   }
 };
 

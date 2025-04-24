@@ -28,6 +28,7 @@ if [[ $CONFIG == "rocm_ci_hermetic" ]]; then
 	ASAN_ARGS+=("--config=asan")
 fi
 
+
 bazel test \
 	--config=${CONFIG} \
 	--disk_cache=${DISK_CACHE_PATH} \
@@ -44,3 +45,4 @@ bazel test \
 	"${ASAN_ARGS[@]}" \
 	//xla/tests:dot_operation_test_autotune_disabled \
 	--test_arg="--gtest_filter=DotOperationTextTest.Einsum"
+

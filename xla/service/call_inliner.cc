@@ -175,15 +175,12 @@ bool InlineComposites(
              instruction->frontend_attributes().map().at("composite.name"));
 }
 
-bool InlineStreamAnnotation(HloInstruction* instruction) {
-  if (instruction->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_experimental_stream_annotation()) {
-    if (instruction->frontend_attributes().map().contains(
-            kXlaStreamAnnotationAttr)) {
-      return false;
-    }
+// Introduces a specific attribute so that the frontend has the direct
+// control over inlining specific calls.
+bool InlineInstruction(HloInstruction* instruction) {
+  auto it = instruction->frontend_attributes().map().find("inlineable");
+  if (it != instruction->frontend_attributes().map().end()) {
+    return it->second == "true";
   }
   return true;
 }
@@ -237,12 +234,19 @@ CallInliner::Inline(HloInstruction* call) {
 }
 
 bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
-  return instruction->opcode() == HloOpcode::kCall &&
-         !instruction->has_backend_config() &&
-         !instruction->parent()->IsAsyncComputation() &&
-         InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_) &&
-         InlineStreamAnnotation(instruction);
+  bool prerequisite = instruction->opcode() == HloOpcode::kCall &&
+                      !instruction->has_backend_config() &&
+                      !instruction->parent()->IsAsyncComputation();
+  if (!prerequisite) {
+    return false;
+  }
+  if (!InlineInstruction(instruction)) {
+    // Always prioritize user's explicit requests after fulfilling the
+    // prerequisites.
+    return false;
+  }
+  return InlineUnderShardy(instruction) &&
+         InlineComposites(instruction, composites_to_preserve_);
 }
 
 absl::StatusOr<bool> CallInliner::Run(

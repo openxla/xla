@@ -1,5 +1,5 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -18,6 +18,15 @@ package_group(
     ],
 )
 
+config_setting(
+    name = "nvshmem_supported",
+    constraint_values = [
+        # TODO(b/409709288): Fix nvshmem ARM issues and remove this condition.
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
 # Build target that registers all available GPU collectives implementations with the collectives
 # registry at link time.
 cc_library(
@@ -25,7 +34,10 @@ cc_library(
     deps = [
         ":gpu_collectives_stub",
         ":nccl_collectives",
-    ],
+    ] + select({
+        ":nvshmem_supported": [":nvshmem_collectives"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(
@@ -53,8 +65,6 @@ cc_library(
     srcs = ["gpu_clique_key.cc"],
     hdrs = ["gpu_clique_key.h"],
     deps = [
-        "//xla/core/collectives",
-        "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
         "//xla/service:global_device_id",
         "//xla/tsl/lib/gtl:int_type",
@@ -76,11 +86,9 @@ xla_cc_test(
         ":gpu_clique_key",
         "//xla/core/collectives:clique_id",
         "//xla/service:global_device_id",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:btree",
-        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -132,6 +140,7 @@ cc_library(
     srcs = ["gpu_collectives.cc"],
     hdrs = ["gpu_collectives.h"],
     deps = [
+        "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -140,14 +149,17 @@ cc_library(
         "//xla/core/collectives:clique_key",
         "//xla/core/collectives:collectives_registry",
         "//xla/core/collectives:communicator",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:global_device_id",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -174,19 +186,8 @@ cc_library(
 
 cc_library(
     name = "nccl_errors",
+    srcs = if_gpu_is_configured(["nccl_errors.cc"]),
     hdrs = if_gpu_is_configured(["nccl_errors.h"]),
-    visibility = ["//visibility:private"],
-    deps = [
-        "//xla:util",
-        "//xla/tsl/platform:logging",
-        "@com_google_absl//absl/strings:str_format",
-    ],
-)
-
-cc_library(
-    name = "nccl_collectives",
-    srcs = if_gpu_is_configured(["nccl_collectives.cc"]),
-    hdrs = if_gpu_is_configured(["nccl_collectives.h"]),
     local_defines = if_cuda_is_configured([
         "GOOGLE_CUDA=1",
     ]) + if_rocm_is_configured([
@@ -194,9 +195,41 @@ cc_library(
     ]),
     visibility = ["//visibility:private"],
     deps = [
+        "//xla:util",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+    ] + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rccl",
+    ]),
+)
+
+cc_library(
+    name = "nccl_collectives",
+    srcs = if_gpu_is_configured([
+        "nccl_collectives.cc",
+        "nccl_communicator.cc",
+    ]),
+    hdrs = if_gpu_is_configured([
+        "nccl_collectives.h",
+        "nccl_communicator.h",
+    ]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":gpu_clique_key",
         ":gpu_collectives",
-        ":nccl_communicator",
         ":nccl_errors",
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla/core/collectives",
@@ -205,17 +238,32 @@ cc_library(
         "//xla/core/collectives:collectives_registry",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:collective_ops_utils",
+        "//xla/service:global_device_id",
+        "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:gpu_stream",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:numbers",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]) + if_rocm_is_configured([
@@ -226,53 +274,12 @@ cc_library(
 )
 
 cc_library(
-    name = "nccl_communicator",
-    srcs = if_gpu_is_configured(["nccl_communicator.cc"]),
-    hdrs = if_gpu_is_configured(["nccl_communicator.h"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    name = "nvshmem_collectives",
+    srcs = if_cuda_is_configured(["nvshmem_collectives.cc"]),
+    hdrs = if_cuda_is_configured(["nvshmem_collectives.h"]),
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
-        ":nccl_errors",
-        "//xla:shape_util",
-        "//xla:util",
-        "//xla/core/collectives:communicator",
-        "//xla/core/collectives:rank_id",
-        "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_stream",
-        "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
-    ] + if_cuda_is_configured([
-        "@local_config_nccl//:nccl",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rccl",
-    ]),
-)
-
-cc_library(
-    name = "nvshmem_collectives",
-    srcs = ["nvshmem_collectives.cc"],
-    hdrs = ["nvshmem_collectives.h"],
-    tags = [
-        "cuda-only",
-        "gpu",
-    ],
-    visibility = ["//visibility:private"],
-    deps = [
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
@@ -291,11 +298,10 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:numbers",
-    ],
-    alwayslink = True,  # registers collectives implementation
+    ] + if_cuda_is_configured(["@nvshmem//:nvshmem_lib"]),
+    alwayslink = True,
 )
 
 xla_cc_test(
@@ -318,11 +324,13 @@ xla_cc_test(
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
-        ":nccl_communicator",
+        ":nccl_collectives",
         ":nccl_errors",
+        "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:device_memory",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/log",

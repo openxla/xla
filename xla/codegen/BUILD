@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -21,7 +21,6 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/runtime:thunk",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
     ],
@@ -46,6 +45,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform",
@@ -60,13 +60,13 @@ xla_cc_test(
         ":emitter_loc_op_builder",
         "//xla/backends/gpu/codegen/triton:fusion_emitter",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -116,5 +116,22 @@ cc_library(
         ":kernel_source",
         ":kernel_spec",
         "//xla/tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "mlir_kernel_source",
+    srcs = ["mlir_kernel_source.cc"],
+    hdrs = ["mlir_kernel_source.h"],
+    deps = [
+        ":kernel_source",
+        "//xla:util",
+        "//xla/mlir/utils:error_util",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Support",
     ],
 )

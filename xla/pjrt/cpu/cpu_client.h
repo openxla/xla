@@ -45,22 +45,22 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/cpu/abstract_tfrt_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_device.h"
-#include "xla/pjrt/cpu/tracked_tfrt_cpu_device_buffer.h"
+#include "xla/pjrt/cpu/cpu_event.h"
+#include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
-#include "xla/pjrt/plugin/xla_cpu/cpu_device_description.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/cpu_event.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -139,10 +139,6 @@ class TfrtCpuClient final : public PjRtClient {
   // For TfrtCpuClient, `options` is mandatory.
   // This function returns an InvalidArgument error if `std::nullopt` is passed.
   // TODO(b/237720161): make it actually optional
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> DeserializeExecutable(
-      absl::string_view serialized,
-      std::optional<CompileOptions> options) override;
-
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
   LoadSerializedExecutable(absl::string_view serialized,
                            std::optional<CompileOptions> options,
@@ -185,10 +181,6 @@ class TfrtCpuClient final : public PjRtClient {
       void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
       std::function<void()> on_delete_callback,
       std::optional<std::intptr_t> stream) override;
-
-  absl::Status Defragment() override {
-    return Unimplemented("Defragment not implemented.");
-  }
 
   tsl::thread::ThreadPool* pjrt_client_thread_pool() const {
     return pjrt_client_thread_pool_.get();
@@ -300,11 +292,10 @@ class TfrtCpuClient final : public PjRtClient {
 
 class TfrtCpuBuffer final : public AbstractTfrtCpuBuffer {
  public:
-  TfrtCpuBuffer(
-      Shape on_device_shape,
-      std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer,
-      TfrtCpuClient* client, TfrtCpuDevice* device,
-      PjRtMemorySpace* memory_space);
+  TfrtCpuBuffer(Shape on_device_shape,
+                std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
+                TfrtCpuClient* client, TfrtCpuDevice* device,
+                PjRtMemorySpace* memory_space);
 
   TfrtCpuBuffer(const TfrtCpuBuffer&) = delete;
   TfrtCpuBuffer(TfrtCpuBuffer&&) = delete;
@@ -447,8 +438,8 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
   // Checks that the input buffers passed in by the user have the correct size
   // on device for the compiled program.
   absl::Status CheckBufferCompatibilities(
-      absl::Span<std::pair<bool, TrackedTfrtCpuDeviceBuffer*> const>
-          input_buffers) const;
+      absl::Span<std::pair<bool, TrackedCpuDeviceBuffer*> const> input_buffers)
+      const;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,

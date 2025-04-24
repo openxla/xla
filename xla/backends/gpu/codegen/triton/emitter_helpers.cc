@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -95,10 +96,12 @@ absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
       return b.getI32Type();
     case S16:
       return b.getI16Type();
-    case PRED:
-      return b.getI1Type();
     case S8:
       return b.getI8Type();
+    case S4:
+      return b.getI4Type();
+    case PRED:
+      return b.getI1Type();
     case F8E5M2:
       return b.getType<mlir::Float8E5M2Type>();
     case F8E4M3FN:
@@ -110,9 +113,25 @@ absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
   }
 }
 
-Type StorageType(EmitterLocOpBuilder& b, Type t) {
-  if (t.isInteger(1)) {
-    return b.getI8Type();
+absl::StatusOr<PrimitiveType> GetPrimitiveType(Type t) {
+  if (t.isF64()) return F64;
+  if (t.isF32()) return F32;
+  if (t.isF16()) return F16;
+  if (t.isBF16()) return BF16;
+  if (t.isInteger(64)) return S64;
+  if (t.isInteger(32)) return S32;
+  if (t.isInteger(16)) return S16;
+  if (t.isInteger(8)) return S8;
+  if (t.isInteger(4)) return S4;
+  if (t.isInteger(1)) return PRED;
+  if (mlir::isa<mlir::Float8E5M2Type>(t)) return F8E5M2;
+  if (mlir::isa<mlir::Float8E4M3FNType>(t)) return F8E4M3FN;
+  return absl::UnimplementedError("Unsupported type in getPrimitiveType.\n");
+}
+
+Type StorageType(Type t) {
+  if (auto i = mlir::dyn_cast<mlir::IntegerType>(t); i && i.getWidth() == 1) {
+    return i.get(i.getContext(), 8, i.getSignedness());
   }
   return t;
 }
@@ -126,11 +145,13 @@ bool IsFp8Type(Type t) {
 Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
   Type src_ty = value.getType();
   Type src_element_ty = src_ty;
+  Type fp16_ty = b.getF16Type();
   Type fp32_ty = b.getF32Type();
   Type dst_ty = dst_element_ty;
   if (auto src_shaped_ty = mlir::dyn_cast<ShapedType>(src_ty)) {
     src_element_ty = src_shaped_ty.getElementType();
     dst_ty = src_shaped_ty.clone(src_shaped_ty.getShape(), dst_element_ty);
+    fp16_ty = src_shaped_ty.clone(src_shaped_ty.getShape(), b.getF16Type());
     fp32_ty = src_shaped_ty.clone(src_shaped_ty.getShape(), b.getF32Type());
   }
   if (src_ty == dst_ty) {
@@ -156,12 +177,19 @@ Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
     // because LLVM doesn't support casts from/to FP8.
     // TODO(b/266862493): Add end-to-end test once FP8 support lands in XLA as
     // we can't test the code below without patching the feature.
-    if (IsFp8Type(src_element_ty)) {
+    if (IsFp8Type(src_element_ty) && !IsFp8Type(dst_element_ty)) {
       return b.create<mt::FpToFpOp>(dst_ty, value);
     }
-    if (IsFp8Type(dst_element_ty)) {
+    if (IsFp8Type(dst_element_ty) && !IsFp8Type(src_element_ty)) {
       return b.create<mt::FpToFpOp>(
           dst_ty, value,
+          mt::RoundingModeAttr::get(b.getContext(), mt::RoundingMode::RTNE));
+    }
+    if (IsFp8Type(src_element_ty) && IsFp8Type(dst_element_ty)) {
+      // FP8 <-> FP8 conversion needs to go through FP16
+      auto fp16_value = b.create<mt::FpToFpOp>(fp16_ty, value);
+      return b.create<mt::FpToFpOp>(
+          dst_ty, fp16_value,
           mt::RoundingModeAttr::get(b.getContext(), mt::RoundingMode::RTNE));
     }
 

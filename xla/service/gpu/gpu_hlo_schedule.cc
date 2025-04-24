@@ -59,7 +59,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/async_collective_annotator.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/gpu/transforms/pgle_accuracy_checker.h"
-#include "xla/service/gpu/transforms/schedule_postprocessing.h"
 #include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
@@ -596,7 +595,6 @@ absl::Status RunLatencyHidingSchedulerPasses(
       std::move(estimator), std::move(async_tracker), std::move(scheduler_core),
       shape_size_in_bytes);
   pipeline.AddPass<SchedulingInstructionAnnotator>();
-  pipeline.AddPass<SchedulePostprocessing>();
 
   return pipeline.Run(module).status();
 }
@@ -746,7 +744,7 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
 absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     HloModule* module, int64_t pointer_size,
     const se::DeviceDescription& gpu_device_info) {
-  tsl::profiler::TraceMe traceme("GpuCompiler::CompileToBackendResult");
+  tsl::profiler::TraceMe traceme("ScheduleGpuModule");
 
   // Tag the module with its 128 bit fingerprint. The fingerprint should include
   // instruction name with ids.
@@ -792,9 +790,8 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     }
     return ShapeUtil::ByteSizeOf(shape, pointer_size);
   };
-  ModuleSchedulerAlgorithm algorithm = ComputationSchedulerToModuleScheduler(
-      DefaultMemoryScheduler, PostProcessSchedule);
-  return ScheduleModule(module, size_func, algorithm,
+  return ScheduleModule(module,
+                        DefaultMemoryScheduler(size_func, PostProcessSchedule),
                         /*execution_threads=*/{}, peak_memory_bytes);
 }
 

@@ -58,6 +58,9 @@ inline constexpr llvm::StringRef kFFIPythonGpuCallbackCustomCallTargetName =
 // The attribute name for backend config.
 inline constexpr llvm::StringRef kXlaBackendConfigAttr = "backend_config";
 
+// The attribute name for inlineable.
+inline constexpr llvm::StringRef kXlaInlineableAttr = "inlineable";
+
 // Attribute name for temporarily storing the Shardy sharding during HLO
 // sdy-round-trip. It cannot match the name `kShardingAttr` ("sdy.sharding"), as
 // during sdy-round-trip, going from HLO to StableHLO, the code removes
@@ -92,6 +95,14 @@ inline constexpr llvm::StringRef kShardingGroupCustomCallTargetName =
 // and will be used to identify a group of ops that should be sharded together.
 inline constexpr llvm::StringRef kShardingGroupIdAttr =
     "xla.sdy.sharding_group_id";
+
+// Shardy propagation barrier custom call target name.
+inline constexpr llvm::StringRef kPropagationBarrierCustomCallTargetName =
+    "xla.sdy.PropagationBarrier";
+
+// Propagation barrier allowed direction attribute name.
+inline constexpr llvm::StringRef kAllowedDirectionAttr =
+    "xla.sdy.allowed_direction";
 
 // Attribute name for storing frontend attributes in XLA.
 inline constexpr llvm::StringRef kFrontendAttributesAttr =

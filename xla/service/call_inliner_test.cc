@@ -27,11 +27,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
@@ -44,7 +44,7 @@ namespace {
 
 // Tests for call inlining that are most tractable at the HLO level (vs
 // ComputationBuilder API in call_test.cc).
-using CallInlinerTest = HloTestBase;
+using CallInlinerTest = HloHardwareIndependentTestBase;
 
 TEST_F(CallInlinerTest, ControlDependenciesAreCarriedToCaller) {
   // "inner" computation just has a control dependency from the "zero" value to
@@ -408,6 +408,31 @@ TEST_F(CallInlinerTest, PreserveCompositeCall) {
   EXPECT_FALSE((*inst)->frontend_attributes().map().empty());
 }
 
+TEST_F(CallInlinerTest, DontInlineCallWithAttributeInlineableFalse) {
+  const char* const hloString = R"(
+    HloModule jit_f, entry_computation_layout={(f32[8,8]{1,0})->f32[8,8]{1,0}}
+    %test (Arg_0.5: f32[1,8]) -> f32[1,8] {
+      %Arg_0.5 = f32[1,8]{1,0} parameter(0)
+      ROOT %add.6 = f32[1,8]{1,0} add(f32[1,8]{1,0} %Arg_0.5, f32[1,8]{1,0} %Arg_0.5), metadata={source_file="-" source_line=11}
+    }
+    ENTRY %main.10 (Arg_0.1: f32[8,8]) -> f32[8,8] {
+      %Arg_0.1 = f32[8,8]{1,0} parameter(0)
+      %custom-call.3 = f32[1,8]{1,0} custom-call(f32[8,8]{1,0} %Arg_0.1), custom_call_target="SPMDFullToShardShape", sharding={manual}, metadata={source_file="-" source_line=4}
+      %call.7 = f32[1,8]{1,0} call(f32[1,8]{1,0} %custom-call.3), to_apply=%test, frontend_attributes={inlineable="false"}
+      ROOT %custom-call.9 = f32[8,8]{1,0} custom-call(f32[1,8]{1,0} %call.7), custom_call_target="SPMDShardToFullShape", sharding={devices=[8,1]<=[8]}, metadata={source_file="-" source_line=7}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hloString));
+  module->mutable_config().set_use_shardy_partitioner(true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, CallInliner().Run(module.get()))
+  // The single call in the module is not inlined.
+  EXPECT_FALSE(changed);
+
+  HloInstruction* call = FindInstruction(module.get(), xla::HloOpcode::kCall);
+  EXPECT_NE(call, nullptr);
+  EXPECT_TRUE(call->has_to_apply());
+  EXPECT_EQ(call->to_apply()->name(), "test");
+}
+
 TEST_F(CallInlinerTest, UseShardyMhloToHloShmapBodyNotInlined) {
   const char* const hloString = R"(
     HloModule jit_f, entry_computation_layout={(f32[8,8]{1,0})->f32[8,8]{1,0}}
@@ -495,59 +520,6 @@ TEST_F(CallInlinerTest, UseShardManualComputationBodySurroundedNotInlined) {
   EXPECT_TRUE(call->has_to_apply());
   EXPECT_EQ(call->to_apply()->name(),
             "my_model.___call__.fwd.xla.sdy.manual_computation_body_14.1234");
-}
-
-TEST_F(CallInlinerTest, DontInlineStreamAnnotationCall) {
-  const absl::string_view hlo_string = R"(
-  HloModule composite
-
-  %add (lhs: f32[]) -> f32[] {
-    %lhs = f32[] parameter(0)
-    %rhs = f32[] constant(2)
-    ROOT %add = f32[] add(f32[] %lhs, f32[] %rhs)
-  }
-
-  %sub (lhs: f32[]) -> f32[] {
-    %lhs = f32[] parameter(0)
-    %rhs = f32[] constant(1)
-    ROOT %sub = f32[] subtract(f32[] %lhs, f32[] %rhs)
-  }
-
-  ENTRY %main () -> f32[] {
-    %lhs = f32[] constant(42)
-    %call1 = f32[] call(f32[] %lhs), to_apply=%sub, frontend_attributes={_xla_stream_annotation="1"}
-    ROOT %call2 = f32[] call(f32[] %call1), to_apply=%add
-  })";
-
-  auto debug_options = HloTestBase::GetDebugOptionsForTest();
-  debug_options.set_xla_gpu_experimental_stream_annotation(true);
-  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  module->mutable_config().set_debug_options(debug_options);
-  CallInliner call_inliner(/*single_call_site=*/true);
-
-  TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
-  absl::StatusOr<bool> filecheck_result = RunFileCheck(module->ToString({}), R"(
-  //CHECK: %lhs.2 = f32[] constant(42)
-  //CHECK: %call1 = f32[] call(%lhs.2), to_apply=%sub, frontend_attributes={_xla_stream_annotation="1"}
-  //CHECK: %rhs.2 = f32[] constant(2)
-  //CHECK: ROOT %add.1 = f32[] add(%call1, %rhs.2)
-  )");
-  TF_ASSERT_OK(filecheck_result.status());
-  EXPECT_TRUE(*filecheck_result);
-
-  ASSERT_TRUE(mutated);
-  ASSERT_EQ(module->entry_computation()->instruction_count(), 4);
-  auto inst = module->entry_computation()->instructions().begin();
-  EXPECT_THAT(*inst, op::Constant());
-  // Check that the annotated call isn't inlined
-  ++inst;
-  EXPECT_THAT(*inst, op::Call());
-
-  // Check that the non-annotated call is still inlined
-  ++inst;
-  EXPECT_THAT(*inst, op::Constant());
-  ++inst;
-  EXPECT_THAT(*inst, op::Add());
 }
 
 TEST_F(CallInlinerTest, ControlDepsPropagateToRootOfInlinedInstructions) {

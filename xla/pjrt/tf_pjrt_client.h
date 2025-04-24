@@ -253,10 +253,12 @@ class TfPjRtClient : public PjRtClient {
     return WrapExecutable(wrapped_->CompileAndLoad(std::move(module), options));
   }
 
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> DeserializeExecutable(
-      absl::string_view serialized,
-      std::optional<CompileOptions> options) override {
-    return WrapExecutable(wrapped_->DeserializeExecutable(serialized, options));
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+  LoadSerializedExecutable(absl::string_view serialized,
+                           std::optional<CompileOptions> options,
+                           const LoadOptions& load_options) override {
+    return WrapExecutable(
+        wrapped_->LoadSerializedExecutable(serialized, options, load_options));
   }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
@@ -308,7 +310,6 @@ class TfPjRtClient : public PjRtClient {
       const override {
     return wrapped_->GetTopologyDescription();
   }
-  absl::Status Defragment() override { return wrapped_->Defragment(); }
 
   PjRtClient* wrapped() const { return wrapped_.get(); }
 

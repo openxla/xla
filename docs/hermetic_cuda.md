@@ -10,11 +10,11 @@ versions.
 
 The supported CUDA versions are specified in `CUDA_REDIST_JSON_DICT`
 dictionary,
-[third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
+[third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
 
 The supported CUDNN versions are specified in `CUDNN_REDIST_JSON_DICT`
 dictionary,
-[third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
+[third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
 
 The `.bazelrc` files of individual projects have `HERMETIC_CUDA_VERSION`,
 `HERMETIC_CUDNN_VERSION` environment variables set to the versions used by
@@ -23,26 +23,26 @@ default when `--config=cuda` is specified in Bazel command options.
 ## Environment variables controlling the hermetic CUDA/CUDNN versions
 
 `HERMETIC_CUDA_VERSION` environment variable should consist of major, minor and
-patch CUDA version, e.g. `12.3.2`.
+patch CUDA version, e.g. `12.6.3`.
 `HERMETIC_CUDNN_VERSION` environment variable should consist of major, minor and
-patch CUDNN version, e.g. `9.1.1`.
+patch CUDNN version, e.g. `9.3.0`.
 
 Three ways to set the environment variables for Bazel commands:
 
 ```
 # Add an entry to your `.bazelrc` file
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.6.3"
+build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
 
 # OR pass it directly to your specific build command
 bazel build --config=cuda <target> \
---repo_env=HERMETIC_CUDA_VERSION="12.3.2" \
---repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+--repo_env=HERMETIC_CUDA_VERSION="12.6.3" \
+--repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
 
 # If .bazelrc doesn't have corresponding entries and the environment variables
 # are not passed to bazel command, you can set them globally in your shell:
-export HERMETIC_CUDA_VERSION="12.3.2"
-export HERMETIC_CUDNN_VERSION="9.1.1"
+export HERMETIC_CUDA_VERSION="12.6.3"
+export HERMETIC_CUDNN_VERSION="9.3.0"
 ```
 
 If `HERMETIC_CUDA_VERSION` and `HERMETIC_CUDNN_VERSION` are not present, the
@@ -51,7 +51,7 @@ hermetic CUDA/CUDNN repository rules will look up `TF_CUDA_VERSION` and
 compatibility with non-hermetic CUDA/CUDNN repository rules.
 
 The mapping between CUDA version and NCCL distribution version to be downloaded
-is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
+is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
 
 ## Configure hermetic CUDA
 
@@ -114,8 +114,8 @@ is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https:
    respectively. Use only supported versions. You may set the environment
    variables directly in your shell or in `.bazelrc` file as shown below:
    ```
-   build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
-   build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+   build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.6.3"
+   build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
    build:cuda --repo_env=HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90"
    ```
 
@@ -155,14 +155,14 @@ is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https:
 
 1.  Create and submit a pull request with updated `CUDA_REDIST_JSON_DICT`,
     `CUDA_REDIST_JSON_DICT` dictionaries in
-    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
+    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl).
 
     Update `CUDA_NCCL_WHEELS` in
-    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
+    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
     if needed.
 
     Update `REDIST_VERSIONS_TO_BUILD_TEMPLATES` in
-    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/tsl/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
+    [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https://github.com/openxla/xla/blob/main/third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl)
     if needed.
 
     Update `PTX_VERSION_DICT` in

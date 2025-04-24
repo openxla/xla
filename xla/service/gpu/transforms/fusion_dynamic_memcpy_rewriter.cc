@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
 
 #include <string>
-#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -42,8 +41,6 @@ absl::StatusOr<bool> FusionDynamicMemcpyRewriter::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool has_changed = false;
 
-  std::unique_ptr<CallGraph> call_graph = nullptr;
-
   for (HloComputation* computation : module->computations(execution_threads)) {
     if (!computation->IsFusionComputation()) {
       continue;
@@ -51,17 +48,7 @@ absl::StatusOr<bool> FusionDynamicMemcpyRewriter::Run(
 
     HloFusionInstruction* fusion =
         ::xla::Cast<HloFusionInstruction>(computation->FusionInstruction());
-    if (!DynamicMemcpyFusion::IsCandidateFusion(*fusion)) {
-      continue;
-    }
-
-    // Lazily build the call graph if we find a candidate fusion.
-    if (!call_graph) {
-      call_graph = CallGraph::Build(module, execution_threads);
-    }
-
-    if (DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(*fusion,
-                                                          *call_graph)) {
+    if (DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(*fusion)) {
       TF_ASSIGN_OR_RETURN(auto backend_config,
                           fusion->backend_config<GpuBackendConfig>());
       backend_config.mutable_fusion_backend_config()->set_kind(

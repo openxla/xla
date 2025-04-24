@@ -1,7 +1,7 @@
 # Description:
 #   XLA’s HLO Intermediate Representation implementation.
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -117,8 +117,35 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@highwayhash",
+        "@highwayhash//:arch_specific",
+        "@highwayhash//:hh_types",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_opcode_test",
+    srcs = ["hlo_opcode_test.cc"],
+    deps = [
+        ":hlo",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_computation_test",
+    srcs = ["hlo_computation_test.cc"],
+    deps = [
+        ":hlo",
+        "//xla:shape_util",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -130,6 +157,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:xla_data_proto_cc",
+        "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
@@ -179,10 +207,12 @@ xla_cc_test(
     deps = [
         ":hlo",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_module_config",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
@@ -221,7 +251,6 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -261,24 +290,9 @@ xla_cc_test(
         ":hlo_instruction_utils",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_query",
-        "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
-)
-
-cc_library(
-    name = "hlo_reachability",
-    hdrs = ["hlo_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_reachability"],
-)
-
-cc_library(
-    name = "hlo_dfs_reachability",
-    hdrs = ["hlo_dfs_reachability.h"],
-    deprecation = "This library is deprecated and will be removed in February 2025. Use //third_party/tensorflow/compiler/xla/hlo/analysis:hlo_dfs_reachability instead.",
-    deps = ["//xla/hlo/analysis:hlo_dfs_reachability"],
 )
 
 cc_library(
@@ -313,10 +327,12 @@ cc_library(
         "//xla:printer",
         "//xla:util",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -329,7 +345,6 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/log:globals",
         "@com_google_googletest//:gtest",
     ],
 )

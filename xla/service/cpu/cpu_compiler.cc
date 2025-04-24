@@ -95,6 +95,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
+#include "xla/backends/cpu/xnn_fusion.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/indexed_array_analysis.h"
@@ -166,6 +167,7 @@ limitations under the License.
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/cpu_executable.h"
+#include "xla/service/cpu/cpu_float_support.h"
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 #include "xla/service/cpu/cpu_layout_assignment.h"
 #include "xla/service/cpu/cpu_options.h"
@@ -238,8 +240,8 @@ limitations under the License.
 
 #if defined(INTEL_MKL)
 #include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
-#include "xla/service/cpu/cpu_float_support.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
+#include "xla/service/cpu/onednn_float_support.h"
 #include "xla/service/cpu/onednn_ops_rewriter.h"
 #endif
 
@@ -264,7 +266,7 @@ static tsl::thread::ThreadPool* GetCompilationThreadPool() {
   tsl::ThreadOptions thread_options;
   thread_options.stack_size = 4 * 1024 * 1024;  // 4 MB
 
-  static auto* thread_pool = new tsl::thread::ThreadPool(
+  static auto* const thread_pool = new tsl::thread::ThreadPool(
       tsl::Env::Default(), thread_options, "xla-cpu-llvm-codegen",
       std::min(kMaxCompilationThreads, tsl::port::MaxParallelism()));
   return thread_pool;
@@ -458,9 +460,9 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
 
   AlgebraicSimplifierOptions options;
   options.set_enable_dot_strength_reduction(false);
-  // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
-  // other platforms do, so it should be changed.
-  options.set_minmax_propagate_nan(false);
+  // "slow" minmax means we propagate nan.
+  options.set_minmax_propagate_nan(
+      !module->config().debug_options().xla_cpu_enable_fast_min_max());
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
@@ -491,7 +493,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
   pipeline->AddPass<ReshapeMover>();
   pipeline->AddPass<HloConstantFolding>(
       options::FoldAllConstants(module->config())
-          ? HloConstantFolding::Level::kAgressive
+          ? HloConstantFolding::Level::kAggressive
           : HloConstantFolding::Level::kDefault);
   pipeline->AddPass<ConditionalSimplifier>();
 
@@ -509,6 +511,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   const bool is_fusion_emitters =
       is_thunk_runtime &&
       module->config().debug_options().xla_cpu_use_fusion_emitters();
+  bool use_shardy_partitioner = module->config().use_shardy_partitioner();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -522,7 +525,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     spmd_pipeline.AddPass<CallInliner>();
     spmd_pipeline.AddPass<ZeroSizedHloElimination>();
     spmd_pipeline.AddPass<ConditionalCanonicalizer>();
-    if (module->config().use_shardy_partitioner()) {
+    if (use_shardy_partitioner) {
       spmd_pipeline.AddPass<sdy::ShardyXLA>();
     } else {
       spmd_pipeline.AddPass<ShardingPropagation>(
@@ -538,6 +541,11 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     AddHloVerifier(&sharding_removal_pipeline);
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
+    // Run ShardyXLA without propagation, which enforces use-tuple-args.
+    if (use_shardy_partitioner) {
+      sharding_removal_pipeline.AddPass<sdy::ShardyXLA>(
+          /*runSdyShardingPropagation=*/false);
+    }
     sharding_removal_pipeline.AddPass<HloDCE>();
     TF_RETURN_IF_ERROR(sharding_removal_pipeline.Run(module).status());
   }
@@ -555,7 +563,30 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   AddHloVerifier(&pipeline);
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
   pipeline.AddPass<ResultCaster>();
-  pipeline.AddPass<OperandUpcaster>();
+
+  // If XNNPACK is enabled, we only need to upcast dots that XnnDotThunk does
+  // not support. `upcaster_filter` returns false if the instruction shouldn't
+  // be processed.
+  // TODO(b/406806134): Stop calling XNNPACK from regular Dot thunks. All XNN
+  // Dots should be wrapped in an `__xnn_fusion` fusion region and processed in
+  // `XnnFusionThunk`.
+  bool xnnpack_enabled = module->config().debug_options().xla_cpu_use_xnnpack();
+  auto call_library_for_dot = [&](const HloInstruction& instr) {
+    if (!xnnpack_enabled) return false;
+    DotImplementationStrategy strategy = GetDotImplementationStrategy(
+        module->config(), instr, *target_machine_features,
+        /*allow_runtime_calls=*/true);
+    return strategy == DotImplementationStrategy::kEigen;
+  };
+  HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
+    if (!call_library_for_dot(*instr)) return true;
+    return !IsXnnDotSupported(instr->dot_dimension_numbers(),
+                              instr->operand(0)->shape(),
+                              instr->operand(1)->shape(), instr->shape(),
+                              target_machine_features)
+                .value_or(false);
+  };
+  pipeline.AddPass<OperandUpcaster>(upcaster_filter);
 
   // Expand random number generation.
   pipeline.AddPass<RngExpander>();
@@ -609,9 +640,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // Convert BF16 and F8 operations to F32 and F16 respectively so that the CPU
   // backend can support BF16/F8 operations without directly implementing a
   // BF16/F8 lowering for most ops.
-  FloatSupport bf16_support(BF16);
+  CpuFloatSupport bf16_support(BF16, call_library_for_dot,
+                               target_machine_features);
 #if defined(INTEL_MKL)
-  CpuFloatSupport onednn_bf16_support(BF16);
+  OneDnnFloatSupport onednn_bf16_support(BF16);
   if (!is_aot_compile && !is_thunk_runtime) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
@@ -735,8 +767,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<IndexedArrayAnalysisPrinterPass>();
   pipeline.AddPass<TransposeFolding>(
       [&](const HloInstruction& dot, int64_t operand) -> absl::StatusOr<bool> {
-        if (DotImplementationCanHandleTranspose(dot,
-                                                *target_machine_features)) {
+        if (DotImplementationCanHandleTranspose(dot, *target_machine_features,
+                                                /*allow_runtime_calls=*/true)) {
           return TransposeFolding::IsRowColumnTransposeDotOperand(dot, operand);
         }
         return false;
@@ -837,7 +869,8 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   // Run this to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
-       "simplification after layout assignment")] {
+       "simplification after layout assignment"),
+   &module] {
     AddHloVerifier(
         &pipeline,
         HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
@@ -847,9 +880,9 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_is_layout_sensitive(true);
     options.set_supports_non_canonical_dots(false);
     options.set_enable_dot_strength_reduction(false);
-    // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
-    // other platforms do, so it should be changed.
-    options.set_minmax_propagate_nan(false);
+    // "slow" minmax means we propagate nan.
+    options.set_minmax_propagate_nan(
+        !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
@@ -1016,7 +1049,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<llvm::TargetMachine> jit_target_machine,
-      JitCompiler::InferTargetMachine(
+      IrCompiler::InferTargetMachine(
           CompilerTargetOptions(config), IrCompiler::GetCodeGenOptLevel(config),
           CpuFeatureFromString(config.debug_options().xla_cpu_max_isa())));
 
@@ -1352,6 +1385,7 @@ CpuCompiler::CompileCpuExecutable(std::unique_ptr<HloModule> module) {
   IrCompiler::Options ir_compiler_options{
       /*optimization_level=*/IrCompiler::GetCodeGenOptLevel(config),
       /*optimize_for_size=*/options::OptimizeForSizeRequested(config),
+      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(config),
       /*disable_expensive_passes=*/
       debug_options.xla_llvm_disable_expensive_passes(),
@@ -1374,18 +1408,18 @@ CpuCompiler::CompileCpuExecutable(std::unique_ptr<HloModule> module) {
 
   // Options for orchestrating the JIT compilation process.
   JitCompiler::Options jit_compiler_options{
-      std::move(ir_compiler_options),
-      std::move(ir_compiler_hooks),
       /*num_dylibs=*/parallel_codegen_split_count,
       /*definition_generator=*/std::move(definition_generator),
-      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
   };
+
+  std::unique_ptr<IrCompiler> ir_compiler = IrCompiler::Create(
+      CompilerTargetOptions(module->config()), std::move(ir_compiler_options),
+      std::move(ir_compiler_hooks));
 
   TF_ASSIGN_OR_RETURN(
       JitCompiler jit_compiler,
-      JitCompiler::Create(CompilerTargetOptions(module->config()),
-                          std::move(jit_compiler_options),
-                          GetCompilationTaskRunner()));
+      JitCompiler::Create(std::move(jit_compiler_options),
+                          std::move(ir_compiler), GetCompilationTaskRunner()));
 
   HloComputation* entry_computation = module->entry_computation();
   absl::flat_hash_map<const HloInstruction*, int64_t>
@@ -1869,11 +1903,16 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   }
   llvm::CodeGenOptLevel opt_level =
       IrCompiler::GetCodeGenOptLevel(modules[0]->config());
-  std::shared_ptr<llvm::TargetMachine> target_machine =
-      absl::WrapUnique(target->createTargetMachine(
-          triple.getTriple(), options.cpu_name(), options.features(),
-          CompilerTargetOptions(modules[0]->config()), reloc_model,
-          std::nullopt, opt_level));
+  llvm::TargetOptions target_options =
+      CompilerTargetOptions(modules[0]->config());
+  auto target_machine_builder = [&]() {
+    return absl::WrapUnique(target->createTargetMachine(
+        triple.getTriple(), options.cpu_name(), options.features(),
+        target_options, reloc_model, std::nullopt, opt_level));
+  };
+
+  std::unique_ptr<llvm::TargetMachine> target_machine =
+      target_machine_builder();
 
   // Compile must be thread-safe so create a new LLVM context for the module.
   mlir::MLIRContext mlir_context;
@@ -1891,15 +1930,15 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
                                     /*dummy*/ CompileOptions{}));
 
     if (hlo_module->config().debug_options().xla_cpu_use_thunk_runtime()) {
-      TF_ASSIGN_OR_RETURN(
-          results.emplace_back(),
-          CompileAheadOfTimeThunks(std::move(hlo_module), target_machine,
-                                   options, triple, pic_level, pie_level));
+      TF_ASSIGN_OR_RETURN(results.emplace_back(),
+                          CompileAheadOfTimeThunks(
+                              std::move(hlo_module), target_machine_builder,
+                              options, triple, pic_level, pie_level));
     } else {
-      TF_ASSIGN_OR_RETURN(
-          results.emplace_back(),
-          CompileAheadOfTimeLegacy(std::move(hlo_module), target_machine,
-                                   options, triple, pic_level, pie_level));
+      TF_ASSIGN_OR_RETURN(results.emplace_back(),
+                          CompileAheadOfTimeLegacy(
+                              std::move(hlo_module), target_machine_builder,
+                              options, triple, pic_level, pie_level));
     }
   }
 
@@ -1910,7 +1949,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
 absl::StatusOr<std::unique_ptr<AotCompilationResult>>
 CpuCompiler::CompileAheadOfTimeLegacy(
     std::unique_ptr<HloModule> module,
-    std::shared_ptr<llvm::TargetMachine> target_machine,
+    IrCompiler::TargetMachineBuilder target_machine_builder,
     const CpuAotCompilationOptions& aot_options, const llvm::Triple& triple,
     const llvm::PICLevel::Level& pic_level,
     const llvm::PIELevel::Level& pie_level) {
@@ -1947,6 +1986,8 @@ CpuCompiler::CompileAheadOfTimeLegacy(
         &hlo_profile_index_map, &hlo_profile_printer_data));
   }
 
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
+                      target_machine_builder());
   TargetMachineFeatures target_machine_features(target_machine.get());
   std::vector<cpu_function_runtime::BufferInfo> buffer_infos =
       CreateBufferInfosFromBufferAssignment(*module, *assignment);
@@ -2025,13 +2066,15 @@ CpuCompiler::CompileAheadOfTimeLegacy(
     DumpModuleToFile(llvm_module, obj_file, *module);
   };
 
+  DebugOptions debug_options = module->config().debug_options();
   IrCompiler::Options ir_compiler_options = {
       /*optimization_level=*/target_machine->getOptLevel(),
       /*optimize_for_size=*/
       options::OptimizeForSizeRequested(module->config()),
+      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
       /*disable_expensive_passes=*/
-      module->config().debug_options().xla_llvm_disable_expensive_passes(),
+      debug_options.xla_llvm_disable_expensive_passes(),
       /*disable_slp_vectorizer=*/
       options::SlpVectorizerDisabled(module->config()),
       /*disable_loop_unrolling=*/
@@ -2045,7 +2088,7 @@ CpuCompiler::CompileAheadOfTimeLegacy(
       post_codegen_hook,
   };
 
-  IrCompiler ir_compiler([&] { return target_machine; },
+  IrCompiler ir_compiler(std::move(target_machine_builder),
                          std::move(ir_compiler_options),
                          std::move(ir_compiler_hooks));
 
@@ -2066,7 +2109,7 @@ CpuCompiler::CompileAheadOfTimeLegacy(
 absl::StatusOr<std::unique_ptr<AotCompilationResult>>
 CpuCompiler::CompileAheadOfTimeThunks(
     std::unique_ptr<HloModule> module,
-    std::shared_ptr<llvm::TargetMachine> target_machine,
+    IrCompiler::TargetMachineBuilder target_machine_builder,
     const CpuAotCompilationOptions& aot_options, const llvm::Triple& triple,
     const llvm::PICLevel::Level& pic_level,
     const llvm::PIELevel::Level& pie_level) {
@@ -2102,6 +2145,8 @@ CpuCompiler::CompileAheadOfTimeThunks(
   }
   // probably delete this end
 
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
+                      target_machine_builder());
   TargetMachineFeatures target_machine_features(target_machine.get());
 
   auto llvm_module =
@@ -2203,6 +2248,7 @@ CpuCompiler::CompileAheadOfTimeThunks(
       /*optimization_level=*/target_machine->getOptLevel(),
       /*optimize_for_size=*/
       options::OptimizeForSizeRequested(module->config()),
+      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
       /*disable_expensive_passes=*/
       module->config().debug_options().xla_llvm_disable_expensive_passes(),
@@ -2219,7 +2265,7 @@ CpuCompiler::CompileAheadOfTimeThunks(
       post_codegen_hook,
   };
 
-  IrCompiler ir_compiler([&] { return target_machine; },
+  IrCompiler ir_compiler(std::move(target_machine_builder),
                          std::move(ir_compiler_options),
                          std::move(ir_compiler_hooks));
 
@@ -2484,12 +2530,12 @@ CpuExecutableAotCompilationResult::LoadExecutable(
   const HloModuleConfig& config = module->config();
 
   // Infer target machine from the current host CPU.
-  IrCompiler::TargetMachineBuilder target_machine_builder =
-      JitCompiler::InferTargetMachineBuilder(
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<llvm::TargetMachine> target_machine,
+      IrCompiler::InferTargetMachine(
           std::move(CompilerTargetOptions(module->config())),
           IrCompiler::GetCodeGenOptLevel(config),
-          CpuFeatureFromString(debug_options.xla_cpu_max_isa()));
-  TF_ASSIGN_OR_RETURN(auto target_machine, target_machine_builder());
+          CpuFeatureFromString(debug_options.xla_cpu_max_isa())));
 
   // Definition generator to link with XLA:CPU host runtime symbols.
   ExecutionEngine::DefinitionGenerator definition_generator =
@@ -2634,17 +2680,18 @@ CpuCompiler::LoadAotCompilationResult(
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
     const HloModule& hlo_module) const {
   // Select a memory scheduler optimized for concurrency vs minimal memory.
-  auto scheduler = hlo_module.config()
-                           .debug_options()
-                           .xla_cpu_enable_concurrency_optimized_scheduler()
-                       ? BFSMemoryScheduler
-                       : DFSMemoryScheduler;
+  auto scheduler =
+      hlo_module.config()
+              .debug_options()
+              .xla_cpu_enable_concurrency_optimized_scheduler()
+          ? std::unique_ptr<ModuleSchedulerAlgorithm>(
+                std::make_unique<BFScheduler>(BufferSizeBytesFunction()))
+          : std::make_unique<DFSMemoryScheduler>(BufferSizeBytesFunction());
 
   // Select an order for emitting the HLO instructions for each
   // computation. Using this sequence enables tighter buffer liveness analysis
   // and reduced memory usage (as compared to using `DependencyHloOrdering`).
-  return ScheduleModule(&hlo_module, BufferSizeBytesFunction(),
-                        ComputationSchedulerToModuleScheduler(scheduler));
+  return ScheduleModule(&hlo_module, *scheduler);
 }
 
 absl::StatusOr<std::unique_ptr<BufferAssignment>>

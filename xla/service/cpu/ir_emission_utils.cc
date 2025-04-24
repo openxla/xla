@@ -104,11 +104,15 @@ bool PotentiallyImplementedAsEigenConvolution(
   }
 
   return dnums.input_batch_dimension() == 0 &&
-         dnums.input_feature_dimension() == input_shape.rank() - 1 &&
+         dnums.input_feature_dimension() ==
+             input_shape.dimensions().size() - 1 &&
          dnums.output_batch_dimension() == 0 &&
-         dnums.output_feature_dimension() == output_shape.rank() - 1 &&
-         dnums.kernel_input_feature_dimension() == kernel_shape.rank() - 2 &&
-         dnums.kernel_output_feature_dimension() == kernel_shape.rank() - 1;
+         dnums.output_feature_dimension() ==
+             output_shape.dimensions().size() - 1 &&
+         dnums.kernel_input_feature_dimension() ==
+             kernel_shape.dimensions().size() - 2 &&
+         dnums.kernel_output_feature_dimension() ==
+             kernel_shape.dimensions().size() - 1;
 }
 
 }  // namespace cpu

@@ -976,7 +976,7 @@ absl::Status HloCostAnalysis::HandleTriangularSolve(const HloInstruction* hlo) {
   const Shape& a_shape = hlo->operand(0)->shape();
   const Shape& b_shape = hlo->operand(1)->shape();
   // Estimate as batch * mn^2 / 2 flops.
-  int64_t elems = a_shape.dimensions(a_shape.rank() - 1);
+  int64_t elems = a_shape.dimensions(a_shape.dimensions_size() - 1);
   elems *= ShapeUtil::ElementsIn(b_shape);
   current_properties_[kFlopsKey] = kFmaFlops * elems;
   return absl::OkStatus();
@@ -994,7 +994,7 @@ absl::Status HloCostAnalysis::HandleCholesky(const HloInstruction* hlo) {
 
   const Shape& a_shape = hlo->operand(0)->shape();
   // Estimate as batch * n^3 / 3 flops.
-  int64_t elems = a_shape.dimensions(a_shape.rank() - 1);
+  int64_t elems = a_shape.dimensions(a_shape.dimensions_size() - 1);
   elems *= ShapeUtil::ElementsIn(a_shape);
   current_properties_[kFlopsKey] = elems / 3;
   return absl::OkStatus();
@@ -1168,6 +1168,9 @@ absl::Status HloCostAnalysis::FusionProcessOutputBytesAccessed(
       float& bytes_accessed =
           current_properties_[GetOutputBytesAccessedKey(shape_index)];
       if (bytes_accessed != 0) {
+        return bytes_accessed;
+      }
+      if (!shape.IsTuple()) {
         return bytes_accessed;
       }
       for (int i = 0; i < shape.tuple_shapes_size(); ++i) {

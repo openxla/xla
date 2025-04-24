@@ -23,8 +23,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/macros.h"
 #include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/topology.h"
 #include "xla/python/ifrt/tuple.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/service/computation_placer.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -108,6 +111,9 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   // `on_done_with_host_buffer` is optional and may be null.
   // `on_done_with_host_buffer` will be called iff OK is returned.
   //
+  // `user_context` is attached to all the runtime actions triggered by this
+  // call and thus simplifies performance analysis and debugging.
+  //
   // TODO(hyeontaek): Consider changing `on_done_with_host_buffer` into a
   // returned `Future<absl::Status>` for consistency with other IFRT APIs.
   virtual absl::StatusOr<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
@@ -115,8 +121,21 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
       std::optional<absl::Span<const int64_t>> byte_strides,
       absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
       HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) = 0;
+      std::function<void()> on_done_with_host_buffer,
+      tsl::RCReference<UserContext> user_context) = 0;
 
+  // Soon to be deprecated. Please use the version above that accepts a
+  // `UserContext`.
+  absl::StatusOr<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
+      const void* data, DType dtype, Shape shape,
+      std::optional<absl::Span<const int64_t>> byte_strides,
+      absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer) {
+    return MakeArrayFromHostBuffer(data, dtype, shape, byte_strides, sharding,
+                                   semantics, on_done_with_host_buffer,
+                                   CreateUserContext());
+  }
   // Represents a host buffer.
   //
   // TODO(hyeontaek): Consider evolving this structure to `Literal` once it is
@@ -178,28 +197,27 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   //
   // `specs` may be consumed by the implementation.
   //
+  // `user_context` is attached to all the runtime actions triggered by this
+  // call and thus simplifies performance analysis and debugging.
+  //
   // All resulting arrays should use the same device list and memory kind. i.e.,
   // `specs[i].sharding->devices()` and `specs[i].sharding->memory_kind()` must
   // be equal across all `i`.
   virtual absl::StatusOr<std::vector<tsl::RCReference<Array>>>
   MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
-      HostBufferSemantics semantics) = 0;
+      HostBufferSemantics semantics,
+      tsl::RCReference<UserContext> user_context) = 0;
+
+  // Creates new arrays that will be fulfilled with the given error status. The
+  // status must not be OK.
+  virtual absl::StatusOr<std::vector<tsl::RCReference<Array>>> MakeErrorArrays(
+      const absl::Status& error, absl::Span<const ArraySpec> array_specs,
+      tsl::RCReference<UserContext> user_context) = 0;
 
   // Builds a larger array out of individual per-device shards.
   // TODO(hyeontaek): Replace this API with the version that takes
   // `SingleDeviceShardSemantics` and `dtype`.
-  virtual absl::StatusOr<tsl::RCReference<Array>>
-  AssembleArrayFromSingleDeviceArrays(
-      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
-      absl::Span<tsl::RCReference<Array>> arrays,
-      ArrayCopySemantics semantics) = 0;
-  virtual absl::StatusOr<tsl::RCReference<Array>>
-  AssembleArrayFromSingleDeviceArrays(
-      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
-      absl::Span<tsl::RCReference<Array>> arrays,
-      ArrayCopySemantics array_copy_semantics,
-      SingleDeviceShardSemantics single_device_shard_semantics) = 0;
   virtual absl::StatusOr<tsl::RCReference<Array>>
   AssembleArrayFromSingleDeviceArrays(
       DType dtype, Shape shape,
@@ -207,6 +225,27 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics array_copy_semantics,
       SingleDeviceShardSemantics single_device_shard_semantics) = 0;
+
+  ABSL_DEPRECATE_AND_INLINE()
+  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
+      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics semantics) {
+    return AssembleArrayFromSingleDeviceArrays(
+        arrays.at(0)->dtype(), std::move(shape), std::move(sharding), arrays,
+        semantics, SingleDeviceShardSemantics::kAddressableShards);
+  }
+
+  ABSL_DEPRECATE_AND_INLINE()
+  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
+      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) {
+    return AssembleArrayFromSingleDeviceArrays(
+        arrays.at(0)->dtype(), std::move(shape), std::move(sharding), arrays,
+        array_copy_semantics, single_device_shard_semantics);
+  }
 
   // Copies the arrays to a new set of devices.
   //
@@ -327,6 +366,11 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual absl::StatusOr<std::shared_ptr<const PjRtLayout>> GetDefaultLayout(
       DType dtype, absl::Span<const int64_t> dims, Device* device,
       xla::ifrt::MemoryKind memory_kind) const = 0;
+
+  // Returns a UserContext that captures the current context information such as
+  // the stack trace. IFRT implementations that do not support UserContext will
+  // return a nullptr.
+  virtual tsl::RCReference<UserContext> CreateUserContext() = 0;
 
   static char ID;  // NOLINT
 };

@@ -23,10 +23,10 @@ include "mlir/Interfaces/SideEffectInterfaces.td" // Pure
 include "mlir/Interfaces/InferTypeOpInterface.td" // SameOperandsAndResultType
 include "mlir/Interfaces/ViewLikeInterface.td" // OffsetSizeAndStrideOpInterface
 include "xla/backends/gpu/codegen/triton/ir/triton_xla_dialect.td"
-include "xla/backends/gpu/codegen/triton/ir/triton_xla_types.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
-include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
+include "triton/Dialect/Triton/IR/TritonOpInterfaces.td"
 include "triton/Dialect/Triton/IR/TritonTypes.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 
 // -----------------------------------------------------------------------------
 // Triton XLA Ops
@@ -36,98 +36,62 @@ class TTXLA_Op<string mnemonic, list<Trait> traits = []> :
       Op<XlaTritonDialect, mnemonic, traits> {
 }
 
-def TTXLA_SparseDotOp : TTXLA_Op<"sparse_dot", [
-        Pure, DotLike, DeclareOpInterfaceMethods<InferTypeOpInterface>,
-        TypesMatchWith<"result's type matches accumulator's type", "d", "c", "$_self">]> {
-    let summary = "sparse dot";
-
-    let arguments = (ins
-      TTG_TensorOrMemDesc:$a,
-      TTG_TensorOrMemDesc:$b,
-      TT_FpIntTensor:$c,
-      TT_IntTensor: $aMeta);
-    let results = (outs TT_FpIntTensor:$d);
-    let assemblyFormat = [{
-      $a`,` $b`,` $c`,` $aMeta attr-dict
-        `:` type($a) `meta` type($aMeta) `*` type($b) `->` type($d)
-    }];
-    let hasVerifier = 1;
-}
-
-def TTXLA_TileOp : TTXLA_Op<"tile", [Pure,
+def TTXLA_ExtractOp : TTXLA_Op<"extract", [Pure, SameVariadicOperandSize,
     DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>]> {
-  let summary = "Capture the tiling information of a tensor.";
+  let summary = "Extract a tile from a tensor.";
   let description = [{
-    This op captures the tiling information of a tensor, which can be used to
-    extract/insert tiles with the `triton_xla.extract` and `triton_xla.insert`
-    ops.
+    Offsets, strides, and destination tensor size are used to specify the tile
+    to extract. Minor-to-major layout should also be specified.
 
     Example:
       ```
       %tensor: tensor<120x320xbf16>
+      %of = arith.constant 0 : index
+      %st1 = arith.constant 120 : index
+      %st2 = arith.constant 1 : index
       ...
-      %tiled_tensor = triton_xla.tile %tensor [0, 0][16, 64][120, 1]
-      : !triton_xla.tiled_tensor<16x64|120x320xbf16>
+      %extracted_tensor = triton_xla.extract %tensor [%of, %of][%st1, %st2]
+        {layout = array<i64:1, 0>} : tensor<120x320xbf16> to tensor<16x64xbf16>
       ```
   }];
 
   let arguments = (ins
-    AnyRankedTensor:$tensor,
-    DenseI32ArrayAttr:$offsets,
-    DenseI32ArrayAttr:$sizes,
-    DenseI64ArrayAttr:$strides
-  );
-  let results = (outs TTXLA_TiledTensorType:$tiled_tensor);
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-}
-
-def TTXLA_ExtractOp : TTXLA_Op<"extract", [Pure,
-    DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>]> {
-  let summary = "Extract a tile from a tensor.";
-  let description = [{
-    This op is used to extract a tile from a tiled tensor.
-
-    Example:
-      ```
-      %tiled_tensor = triton_xla.tile %tensor [0, 0][16, 64][120, 1]
-      : !triton_xla.tiled_tensor<16x64|120x320xbf16>
-      ...
-      %extracted_tensor = triton_xla.extract %tiled_tensor [%cst, %cst]
-        : tensor<120x320xbf16> to tensor<16x64xbf16>
-      ```
-  }];
-
-  let arguments = (ins
-    TTXLA_TiledTensorType:$src,
-    Variadic<I32>:$offsets
+    AnyRankedTensor:$src,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$layout
   );
   let results = (outs AnyRankedTensor:$result);
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 
-def TTXLA_InsertOp : TTXLA_Op<"insert", [Pure,
+def TTXLA_InsertOp : TTXLA_Op<"insert", [Pure, SameVariadicOperandSize,
     DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>]> {
   let summary = "Insert a tile into a tensor.";
   let description = [{
-    This op is used to insert a tile into a tensor. The tiling information can
-    be captured using triton_xla.tile and passed to this op.
+    Offsets, strides, and source tensor size are used to specify the tile to
+    insert into. Minor-to-major layout should also be specified.
 
     Example:
       ```
-      %tiled_tensor = triton_xla.tile %tensor [0, 0][16, 64][120, 1]
-      : !triton_xla.tiled_tensor<16x64|120x320xbf16>
+      %src: tensor<16x64xbf16>
+      %dst: tensor<120x320xbf16>
+      %of = arith.constant 0 : index
+      %st1 = arith.constant 120 : index
+      %st2 = arith.constant 1 : index
       ...
-      %updated_tensor = triton_xla.insert %arg0 into %tiled_tensor[%cst, %cst]
-        : tensor<16x64xbf16> into tensor<120x320xbf16>
+      %updated_tensor = triton_xla.insert %src into %dst [%of, %of][%st1, %st2]
+        {layout = array<i64:1, 0>} : tensor<16x64xbf16> into tensor<120x320xbf16>
       ```
   }];
 
   let arguments = (ins
     AnyRankedTensor:$src,
-    TTXLA_TiledTensorType:$dst,
-    Variadic<I32>:$offsets
+    AnyRankedTensor:$dst,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$layout
   );
   let results = (outs AnyRankedTensor:$result);
   let hasCustomAssemblyFormat = 1;

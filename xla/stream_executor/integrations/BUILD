@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -71,14 +71,9 @@ cc_library(
         "device_mem_allocator.h",
     ],
     deps = [
-        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:device_id",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )

@@ -19,10 +19,10 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -30,7 +30,7 @@ namespace {
 
 namespace op = xla::testing::opcode_matchers;
 
-class ReduceScatterDecomposerTest : public HloTestBase {
+class ReduceScatterDecomposerTest : public HloHardwareIndependentTestBase {
  public:
   enum class PassAction {
     kNoChange,
@@ -94,7 +94,7 @@ class ReduceScatterDecomposerTest : public HloTestBase {
     auto zero_matcher = op::Constant(LiteralUtil::Zero(U32));
 
     std::vector<::testing::Matcher<const ::xla::HloInstruction *>> ds_operands(
-        shape.rank() + 1, zero_matcher);
+        shape.dimensions_size() + 1, zero_matcher);
     ds_operands[0] = op::AllReduce(op::Parameter(0));
     ds_operands[shard_dimension + 1] =
         op::Multiply(slice_index, op::Constant(std::move(multiplier)));

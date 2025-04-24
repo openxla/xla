@@ -1,3 +1,4 @@
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -12,6 +13,7 @@ package_group(
         "//learning/deepmind/partir/compiler/mpmd/...",
         "//learning/deepmind/partir/compiler/shardonnay/...",
         "//third_party/openxla/shardy/tools/...",
+        "//third_party/py/jax/...",
         "//xla/...",
     ],
 )
@@ -55,9 +57,12 @@ cc_library(
     name = "import_shardy_attrs",
     srcs = ["import_shardy_attrs.cc"],
     hdrs = ["import_shardy_attrs.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:FuncDialect",
@@ -97,7 +102,6 @@ cc_library(
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -116,7 +120,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
@@ -131,13 +134,12 @@ cc_library(
     srcs = ["import_callback_custom_calls.cc"],
     hdrs = ["import_callback_custom_calls.h"],
     deps = [
+        "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TransformUtils",
-        "@shardy//shardy/dialect/sdy/ir:dialect",
         "@stablehlo//:stablehlo_ops",
     ],
 )
@@ -147,15 +149,12 @@ cc_library(
     srcs = ["dedup_meshes.cc"],
     hdrs = ["dedup_meshes.h"],
     deps = [
-        "//xla/service/spmd/shardy:utils",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TransformUtils",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/dialect/sdy/transforms/common:sharding_walker",
-        "@stablehlo//:stablehlo_ops",
     ],
 )
 
@@ -163,6 +162,7 @@ cc_library(
     name = "pipelines",
     srcs = ["pipelines.cc"],
     hdrs = ["pipelines.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":dedup_meshes",
         ":export_ops",

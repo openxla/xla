@@ -23,6 +23,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/xla_data.pb.h"
 
 namespace pjrt {
 namespace {

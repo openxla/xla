@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
-#include "xla/protobuf_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -56,6 +55,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
 
@@ -67,6 +67,7 @@ namespace m = ::xla::match;
 using ::absl::string_view;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
+using ::tsl::proto_testing::EqualsProto;
 
 struct TestData {
   std::string test_name;
@@ -4152,7 +4153,7 @@ TEST_F(HloParserTest, ParseUnknownSharding) {
 
 TEST_F(HloParserTest, ParseFrontendAttributes) {
   const std::string original =
-      R"({attr_a="test_a",attr_b="b",attr_c="s64",attr_d="a/b"})";
+      R"({attr_a="test_a",attr_b="b",attr_c={type="s64"},attr_d="a=\"b/c\""})";
   TF_ASSERT_OK_AND_ASSIGN(FrontendAttributes frontend_attributes,
                           ParseFrontendAttributes(original));
   EXPECT_EQ(FrontendAttributesToString(frontend_attributes), original);
@@ -5831,8 +5832,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyMode) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyModeError) {
@@ -5868,8 +5868,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyRtol) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   auto* unary = module->entry_computation()->root_instruction();
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
-                                            expected_result_accuracy));
+  EXPECT_THAT(unary->result_accuracy(), EqualsProto(expected_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalResultAccuracyInvalidName) {
@@ -5913,9 +5912,9 @@ TEST_F(HloParserTest, TranscendentalAccuracyNoConfig) {
                           ParseAndReturnUnverifiedModule(hlo_string));
   ResultAccuracy default_result_accuracy;
   default_result_accuracy.set_mode(ResultAccuracy::DEFAULT);
-  EXPECT_TRUE(protobuf_util::ProtobufEquals(
+  EXPECT_THAT(
       module->entry_computation()->root_instruction()->result_accuracy(),
-      default_result_accuracy));
+      EqualsProto(default_result_accuracy));
 }
 
 TEST_F(HloParserTest, TranscendentalAccuracyInvalidOp) {
@@ -5973,14 +5972,13 @@ TEST_F(HloParserTest,
   // Check the async-start and async-done instructions.
   HloInstruction* async_done = m->entry_computation()->root_instruction();
   HloInstruction* async_start = async_done->async_chain_start();
-  EXPECT_EQ(async_start->metadata().DebugString(),
-            wrapped_instr->metadata().DebugString());
+  EXPECT_THAT(async_start->metadata(), EqualsProto(wrapped_instr->metadata()));
   EXPECT_EQ(async_start->raw_backend_config_string(),
             wrapped_instr->raw_backend_config_string());
-  EXPECT_EQ(async_start->frontend_attributes().DebugString(),
-            wrapped_instr->frontend_attributes().DebugString());
-  EXPECT_EQ(async_start->statistics_viz().DebugString(),
-            wrapped_instr->statistics_viz().DebugString());
+  EXPECT_THAT(async_start->frontend_attributes(),
+              EqualsProto(wrapped_instr->frontend_attributes()));
+  EXPECT_THAT(async_start->statistics_viz(),
+              EqualsProto(wrapped_instr->statistics_viz()));
   EXPECT_EQ(OriginalValueToString(*async_done->original_value()),
             OriginalValueToString(*wrapped_instr->original_value()));
 }

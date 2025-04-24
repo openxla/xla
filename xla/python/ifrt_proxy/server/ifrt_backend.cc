@@ -29,6 +29,7 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/functional/bind_front.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -309,6 +310,8 @@ struct IfrtBackend::LoadedExecutableWithInfo {
   std::optional<std::vector<xla::ifrt::ArraySpec>> output_spec
       ABSL_GUARDED_BY(mu);
   const std::unique_ptr<xla::ifrt::LoadedExecutable> executable;
+
+  absl::flat_hash_set<int> donatable_indices ABSL_GUARDED_BY(mu);
 };
 
 class IfrtBackend::InOrderRequestsProcessor {
@@ -523,8 +526,14 @@ Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
       asr.emplace(request->make_arrays_from_host_buffer_shards_request()
                       .array_handles(),
                   &array_store_);
-      return Future<Response>(HandleMakeArraysFromHostBufferShardsRequest(
-          *asr, std::move(request)));
+      return Future<Response>(
+          asr->ProcessResponse(HandleMakeArraysFromHostBufferShardsRequest(
+              *asr, std::move(request))));
+    case IfrtRequest::RequestCase::kMakeErrorArraysRequest:
+      asr.emplace(request->make_error_arrays_request().array_handles(),
+                  &array_store_);
+      return Future<Response>(asr->ProcessResponse(
+          HandleMakeErrorArraysRequest(*asr, std::move(request))));
     case IfrtRequest::RequestCase::kAssembleArrayFromSingleDeviceArraysRequest:
       asr.emplace(request->assemble_array_from_single_device_arrays_request()
                       .result_handle(),
@@ -608,6 +617,9 @@ Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
     case IfrtRequest::RequestCase::kGetDefaultDeviceAssignmentRequest:
       return Future<Response>(
           HandleGetDefaultDeviceAssignmentRequest(std::move(request)));
+    case IfrtRequest::RequestCase::kGetDefaultLayoutRequest:
+      return Future<Response>(
+          HandleGetDefaultLayoutRequest(std::move(request)));
     default:
       LOG(ERROR) << "Got unimplemented request type: "
                  << request->DebugString();
@@ -908,11 +920,12 @@ IfrtBackend::HandleMakeArraysFromHostBufferShardsRequest(
 
   std::move(cleanup).Invoke();
 
-  TF_ASSIGN_OR_RETURN(
-      std::vector<tsl::RCReference<xla::ifrt::Array>> arrays,
-      client_->MakeArraysFromHostBufferShards(
-          absl::MakeSpan(specs), xla::ifrt::Client::HostBufferSemantics::
-                                     kImmutableUntilTransferCompletes));
+  TF_ASSIGN_OR_RETURN(std::vector<tsl::RCReference<xla::ifrt::Array>> arrays,
+                      client_->MakeArraysFromHostBufferShards(
+                          absl::MakeSpan(specs),
+                          xla::ifrt::Client::HostBufferSemantics::
+                              kImmutableUntilTransferCompletes,
+                          client_->CreateUserContext()));
 
   std::vector<uint64_t> handles;
   handles.reserve(make_arrays_request->specs_size());
@@ -937,6 +950,36 @@ IfrtBackend::HandleMakeArraysFromHostBufferShardsRequest(
   make_arrays_resp->mutable_array_handles()->Reserve(arrays.size());
   for (uint64_t handle : asr.Fill(arrays)) {
     make_arrays_resp->add_array_handles(handle);
+  }
+
+  return response;
+}
+
+absl::StatusOr<BackendInterface::Response>
+IfrtBackend::HandleMakeErrorArraysRequest(
+    ArrayStore::Reservation& asr, std::unique_ptr<IfrtRequest> request) {
+  CHECK(request->has_make_error_arrays_request());
+  auto* make_array_request = request->mutable_make_error_arrays_request();
+
+  const absl::Status error = tsl::StatusFromProto(make_array_request->error());
+
+  std::vector<xla::ifrt::ArraySpec> array_specs;
+  array_specs.reserve(make_array_request->array_specs_size());
+  for (const auto& array_spec_proto : make_array_request->array_specs()) {
+    TF_ASSIGN_OR_RETURN(auto array_spec,
+                        ArraySpec::FromProto(client_.get(), array_spec_proto));
+    array_specs.push_back(std::move(array_spec));
+  }
+
+  TF_ASSIGN_OR_RETURN(std::vector<IfrtArrayRef> arrays,
+                      client_->MakeErrorArrays(error, array_specs,
+                                               client_->CreateUserContext()));
+
+  std::unique_ptr<IfrtResponse> response =
+      NewIfrtResponse(request->request_metadata().op_id());
+  auto* make_array_resp = response->mutable_make_error_arrays_response();
+  for (uint64_t handle : asr.Fill(arrays)) {
+    make_array_resp->add_array_handles(handle);
   }
 
   return response;
@@ -1504,6 +1547,16 @@ IfrtBackend::HandleLoadedExecutableMetadataRequest(
           tsl::StatusToProto(output_memory_kinds.status());
     }
 
+    auto donated_input_indices = executable->GetDonatableInputIndices();
+    if (donated_input_indices.ok()) {
+      metadata_resp->mutable_donated_input_indices()
+          ->mutable_donated_input_indices()
+          ->Add(donated_input_indices->begin(), donated_input_indices->end());
+    } else {
+      *metadata_resp->mutable_donated_input_indices_error() =
+          tsl::StatusToProto(donated_input_indices.status());
+    }
+
     return ifrt_resp;
   });
 }
@@ -1567,6 +1620,17 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
             << "LoadedExecutable::Execute output " << i
             << "mismatched shape across invocations";
       }
+
+      // Check that only donatable arguments were deleted. The following assumes
+      // that there was no other concurrent operation issued that would delete
+      // the array. As of March 2025, the proxy-server issues operations in
+      // sequence, so this assumption is satisfied.
+      for (int i = 0; i < args.size(); ++i) {
+        if (execute_options.non_donatable_input_indices.contains(i) ||
+            !executable_info->donatable_indices.contains(i)) {
+          CHECK(!args[i]->IsDeleted());
+        }
+      }
     } else {
       // First `Execute()` call.
       executable_info->output_spec.emplace();
@@ -1576,6 +1640,16 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
             ArraySpec{/*dtype=*/output->dtype(), /*shape=*/output->shape(),
                       /*sharding=*/output->shared_ptr_sharding()});
       }
+      executable_info->donatable_indices = [&] {
+        absl::flat_hash_set<int> result;
+        absl::StatusOr<absl::Span<const int>> donatable_input_indices =
+            executable_info->executable->GetDonatableInputIndices();
+        if (donatable_input_indices.ok()) {
+          result.insert(donatable_input_indices->begin(),
+                        donatable_input_indices->end());
+        }
+        return result;
+      }();
     }
   }
 
@@ -1853,6 +1927,33 @@ IfrtBackend::HandleGetDefaultDeviceAssignmentRequest(
   assignment.Serialize(
       ifrt_resp->mutable_get_default_device_assignment_response()
           ->mutable_device_assignment());
+
+  return ifrt_resp;
+}
+
+absl::StatusOr<BackendInterface::Response>
+IfrtBackend::HandleGetDefaultLayoutRequest(
+    std::unique_ptr<IfrtRequest> request) {
+  const auto& get_default_layout_request =
+      request->get_default_layout_request();
+  TF_ASSIGN_OR_RETURN(auto dtype,
+                      DType::FromProto(get_default_layout_request.dtype()));
+  TF_ASSIGN_OR_RETURN(
+      Device* const device,
+      client_->LookupDevice(DeviceId(get_default_layout_request.device_id())));
+  MemoryKind memory_kind =
+      get_default_layout_request.memory_kind().empty()
+          ? MemoryKind()
+          : MemoryKind(get_default_layout_request.memory_kind());
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<const xla::PjRtLayout> layout,
+      client_->GetDefaultLayout(dtype, get_default_layout_request.dims(),
+                                device, memory_kind));
+
+  auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
+
+  *ifrt_resp->mutable_get_default_layout_response()
+       ->mutable_serialized_pjrt_layout() = layout->Serialize();
 
   return ifrt_resp;
 }

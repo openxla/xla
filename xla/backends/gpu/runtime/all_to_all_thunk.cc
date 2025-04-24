@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -112,13 +113,12 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
 
   if (is_local() && p2p_memcpy_enabled_) {
-    const CollectiveStreamId stream_id = nccl_stream_id();
     AsyncStreamKind stream_kind = GetAsyncStreamKind();
     TF_ASSIGN_OR_RETURN(
         CommunicatorHandle comm_handle,
         GetComm(collectives, *params.collective_params,
                 *params.collective_cliques, config().replica_groups,
-                config().group_mode, stream_id, stream_kind));
+                config().group_mode, stream_kind));
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
     se::StreamExecutor* executor = params.executor;
     {
@@ -201,7 +201,7 @@ absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
   PrimitiveType element_type = buffers[0].element_type;
-  int32_t element_count = buffers[0].element_count;
+  int64_t element_count = buffers[0].element_count;
 
   // All buffers must have the same element type and count.
   bool all_buffers_match = absl::c_all_of(buffers, [&](const auto& buffer) {
@@ -238,18 +238,30 @@ absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
       }
     }
 
-    return comm->AllToAll(send_buffers, recv_buffers, element_type,
-                          chunk_element_count, GpuCollectives::On(stream));
+    auto event =
+        comm->AllToAll(send_buffers, recv_buffers, element_type,
+                       chunk_element_count, GpuCollectives::On(stream));
 
+    tsl::BlockUntilReady(event);
+    if (event.IsError()) {
+      return event.GetError();
+    }
   } else {
     for (const DeviceBufferPair& buffer : buffers) {
       send_buffers.push_back(buffer.source_buffer);
       recv_buffers.push_back(buffer.destination_buffer);
     }
 
-    return comm->AllToAll(send_buffers, recv_buffers, element_type,
-                          element_count, GpuCollectives::On(stream));
+    auto event = comm->AllToAll(send_buffers, recv_buffers, element_type,
+                                element_count, GpuCollectives::On(stream));
+
+    tsl::BlockUntilReady(event);
+    if (event.IsError()) {
+      return event.GetError();
+    }
   }
+
+  return absl::OkStatus();
 }
 
 static absl::Status SendPtrToPeer(void* ptr, RankId peer, Communicator* comm,
@@ -258,8 +270,15 @@ static absl::Status SendPtrToPeer(void* ptr, RankId peer, Communicator* comm,
       "RecvPtrFromPeer on device #%d; peer=%d; comm=%p; stream=%p",
       stream.parent()->device_ordinal(), peer.value(), comm, &stream);
 
-  return comm->Send(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1, peer,
-                    GpuCollectives::On(stream));
+  auto event = comm->Send(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
+                          peer, GpuCollectives::On(stream));
+
+  tsl::BlockUntilReady(event);
+  if (event.IsError()) {
+    return event.GetError();
+  }
+
+  return absl::OkStatus();
 }
 
 static absl::Status RecvPtrFromPeer(void* ptr, RankId peer, Communicator* comm,
@@ -268,8 +287,15 @@ static absl::Status RecvPtrFromPeer(void* ptr, RankId peer, Communicator* comm,
       "RecvPtrFromPeer on device #%d; peer=%d; comm=%p; stream=%p",
       stream.parent()->device_ordinal(), peer.value(), comm, &stream);
 
-  return comm->Recv(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1, peer,
-                    GpuCollectives::On(stream));
+  auto event = comm->Recv(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
+                          peer, GpuCollectives::On(stream));
+
+  tsl::BlockUntilReady(event);
+  if (event.IsError()) {
+    return event.GetError();
+  }
+
+  return absl::OkStatus();
 }
 
 // TODO(b/380457503): Memcpy AllToAll implementation must be moved to

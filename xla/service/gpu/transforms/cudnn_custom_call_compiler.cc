@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -46,7 +45,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -255,8 +256,10 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   const Shape &d_bmm2_rhs_shape =
       ShapeUtil::GetSubshape(custom_call->shape(), {output_index++});
   bool has_dbias = custom_call->shape().tuple_shapes().size() == 5;
+  std::optional<Shape> dbias_shape;
   if (has_dbias) {
-    ++output_index;
+    dbias_shape =
+        ShapeUtil::GetSubshape(custom_call->shape(), {output_index++});
   }
   // The last one is the workspace.
   TF_RET_CHECK(output_index == custom_call->shape().tuple_shapes().size() - 1);
@@ -295,8 +298,13 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
                       TensorDescriptorFor(d_bmm2_rhs_shape));
 
   std::optional<se::dnn::TensorDescriptor> bias;
+  std::optional<se::dnn::TensorDescriptor> dbias;
   if (bias_shape.has_value()) {
     TF_ASSIGN_OR_RETURN(bias, TensorDescriptorFor(*bias_shape));
+  }
+
+  if (dbias_shape.has_value()) {
+    TF_ASSIGN_OR_RETURN(dbias, TensorDescriptorFor(*dbias_shape));
   }
 
   const double dropout_rate = config.dropout_rate();
@@ -312,7 +320,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
       se::gpu::GetCudnnFlashAttentionBackwardOperationGraph(
           dnn_support, bmm1_grad_gemm1_rhs, bmm1_grad_gemm2_rhs,
           bmm2_grad_gemm1_lhs, bmm2_grad_gemm2_rhs, d_output, d_bmm1_lhs,
-          d_bmm1_rhs, d_bmm2_rhs, bias, dropout_rate, config.seed(),
+          d_bmm1_rhs, d_bmm2_rhs, bias, dbias, dropout_rate, config.seed(),
           config.fmha_scale(), dropout_rate > 0.0, bias != std::nullopt,
           dnn_mask_type, force_deterministic, sliding_window_length,
           max_seg_per_batch));
@@ -388,7 +396,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
 absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBlockScaledDot(
     se::dnn::DnnSupport &dnn_support, HloCustomCallInstruction *custom_call) {
   TF_RET_CHECK(custom_call->operand_count() == 4);
-  TF_RET_CHECK(custom_call->shape().tuple_shapes_size() == 2);
+  TF_RET_CHECK(custom_call->shape().tuple_shapes().size() == 2);
 
   TF_ASSIGN_OR_RETURN(TensorDescriptor lhs_data,
                       TensorDescriptorFor(custom_call->operand(0)->shape()));

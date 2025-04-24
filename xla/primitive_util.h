@@ -417,13 +417,6 @@ template <PrimitiveType kPrimitiveType>
 using PrimitiveTypeConstant =
     std::integral_constant<PrimitiveType, kPrimitiveType>;
 
-// Returns true if values of the given primitive type are held in array shapes.
-inline constexpr bool IsArrayType(PrimitiveType primitive_type) {
-  return primitive_type != TUPLE && primitive_type != OPAQUE_TYPE &&
-         primitive_type != TOKEN && primitive_type > PRIMITIVE_TYPE_INVALID &&
-         primitive_type < PrimitiveType_ARRAYSIZE;
-}
-
 // Returns true if the given primitive type is a MX floating-point type.
 constexpr bool IsMXType(PrimitiveType type) {
   return type == F4E2M1FN || type == F8E8M0FNU;
@@ -467,6 +460,12 @@ constexpr bool IsIntegralType(PrimitiveType type) {
 // Returns true if the given primitive type is an 8-bit integral type.
 constexpr bool Is8BitIntegralType(PrimitiveType type) {
   return type == S8 || type == U8;
+}
+
+// Returns true if values of the given primitive type are held in array shapes.
+constexpr bool IsArrayType(PrimitiveType primitive_type) {
+  return primitive_type == PRED || IsIntegralType(primitive_type) ||
+         IsFloatingPointType(primitive_type) || IsComplexType(primitive_type);
 }
 
 // The following *TypeSwitch functions are used to dispatch on the run-time
@@ -645,6 +644,41 @@ constexpr R PrimitiveTypeSwitch(F&& f, PrimitiveType type) {
         PrimitiveTypeConstant<PrimitiveType::OPAQUE_TYPE>());
   }
   LOG(FATAL) << "unhandled type " << type;
+}
+
+template <typename F>
+constexpr void IntegralTypeForEach(F&& f) {
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S1>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S2>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S4>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S8>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S16>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S32>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::S64>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U1>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U2>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U4>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U8>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U16>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U32>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U64>());
+}
+
+template <typename F>
+constexpr void FloatingPointTypeForEach(F&& f) {
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F4E2M1FN>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E3M4>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3FN>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3B11FNUZ>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3FNUZ>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E5M2>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E5M2FNUZ>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E8M0FNU>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F16>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::BF16>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F32>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F64>());
 }
 
 namespace internal {

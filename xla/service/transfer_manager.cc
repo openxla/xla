@@ -176,12 +176,13 @@ absl::Status TransferManager::ReadDynamicShapes(
         TF_ASSIGN_OR_RETURN(
             auto metadata,
             TransferArrayFromDevice(
-                stream, ShapeUtil::MakeShape(S32, {buffer_shape.rank()}),
+                stream,
+                ShapeUtil::MakeShape(S32, {buffer_shape.dimensions_size()}),
                 metadata_buffer));
 
         // Update shape size from metadata.
         for (int64_t i = 0; i < metadata.element_count(); ++i) {
-          device_sub_shape.mutable_dimensions()[i] = metadata.Get<int32_t>({i});
+          device_sub_shape.set_dimensions(i, metadata.Get<int32_t>({i}));
         }
         return absl::OkStatus();
       }));

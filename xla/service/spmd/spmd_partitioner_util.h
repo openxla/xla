@@ -98,7 +98,7 @@ HloInstruction* CreateConstantBase(const Shape& shape, Literal value, T* b,
   }
   auto c = b->AddInstruction(HloInstruction::CreateConstant(
       literal_creator(std::move(value), shape.element_type())));
-  if (shape.rank() == 0) {
+  if (shape.dimensions_size() == 0) {
     return c;
   }
   return b->AddInstruction(HloInstruction::CreateBroadcast(shape, c, {}));
@@ -217,7 +217,7 @@ HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape, T* b,
     return hlo;
   }
   PaddingConfig padding_config;
-  for (int64_t i = 0; i < padded_shape.rank(); ++i) {
+  for (int64_t i = 0; i < padded_shape.dimensions_size(); ++i) {
     auto padding_config_dim = padding_config.add_dimensions();
     padding_config_dim->set_edge_padding_low(0);
     padding_config_dim->set_interior_padding(0);
@@ -959,6 +959,42 @@ absl::StatusOr<std::pair<int64_t, int64_t>> EvaluatePartitionCost(
 // new PartitionedHlo for the copy.
 PartitionedHlo MakeACopyAndReturnItsPartitionedHlo(const PartitionedHlo& phlo,
                                                    SpmdBuilder* b);
+
+// For dynamic-update-slice, we focus on the partitioned slice dimensions,
+// ignoring batch dimensions and replicated slice dimensions. We have three
+// methods to handle the partitioned slice dimensions.
+//
+// 1. **Default.** Replicate all tensors along the slice dimensions.
+// 2. **Single Partition Update.** The update is entirely contained within a
+//    single partition. All partitioned slice dimensions satisfy
+//    2.1 The slice size is 1, OR
+//    2.2 The update indices are compile-time constants, and the start and end
+//        indices reside in the same partition.
+// 3. **Constant Indices.** All partitioned slice dimensions have compile-time
+//    constant indices.
+//
+// If both optimizations (2 and 3) are feasible, we prioritize (2) over (3).
+// Refer to go/dus-spmd for more details.
+enum class DynamicUpdateSliceMethod {
+  // Replicate all tensors along the slice dimensions.
+  kDefault,
+
+  // The update is fully contained in a single partition.
+  kUpdateOnASinglePartition,
+
+  // All partitioned slice dimensions have compile-time constant indices.
+  kAllPartitionedSliceDimsHaveConstantIndices,
+};
+
+struct DynamicUpdateSliceAnalysis {
+  DynamicUpdateSliceMethod method;
+  // All slice dimensions of the dynamic update slice instruction.
+  std::vector<int64_t> slice_dims;
+  // The slice dimensions that are partitioned.
+  std::vector<int64_t> partitioned_slice_dims;
+};
+
+DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(const HloInstruction* hlo);
 
 }  // namespace spmd
 }  // namespace xla
