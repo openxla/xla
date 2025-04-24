@@ -503,6 +503,59 @@ TEST_F(PjrtCApiTest, PluginAttributes) {
   EXPECT_TRUE(names.find("stablehlo_minimum_version") != names.end());
 }
 
+TEST_F(PjrtCApiTest, ExecutableOutputDimensions) {
+  // First compile an executable
+  PJRT_Client_Compile_Args compile_args;
+  compile_args.struct_size = PJRT_Client_Compile_Args_STRUCT_SIZE;
+  compile_args.extension_start = nullptr;
+  compile_args.client = client_;
+  std::string options_str = BuildSingleDeviceCompileOptionStr();
+  compile_args.compile_options = options_str.c_str();
+  compile_args.compile_options_size = options_str.size();
+
+  std::string format(::pjrt::kMlirFormat);
+  std::string program_code{module_add_one};
+  PJRT_Program program;
+  program.struct_size = PJRT_Program_STRUCT_SIZE;
+  program.extension_start = nullptr;
+  program.code = program_code.data();
+  program.code_size = program_code.length();
+  program.format = format.c_str();
+  program.format_size = format.size();
+  compile_args.program = &program;
+
+  PJRT_Error* error = api_->PJRT_Client_Compile(&compile_args);
+  ASSERT_EQ(nullptr, error);
+
+  // Now test output dimensions
+  PJRT_Executable_OutputDimensions_Args args;
+  args.struct_size = PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.executable = compile_args.executable;
+  args.num_outputs = 0;  // Should be set by the API call
+  args.dims = nullptr;
+  args.dim_sizes = nullptr;
+  args.error = nullptr;
+
+  PJRT_Error* dim_error = api_->PJRT_Executable_GetOutputDimensions(&args);
+  ASSERT_EQ(nullptr, dim_error);
+
+  // Verify that num_outputs was set properly
+  EXPECT_GT(args.num_outputs, 0u);
+  ASSERT_NE(args.dim_sizes, nullptr);
+  ASSERT_NE(args.dims, nullptr);
+
+  // Verify that we have the correct number of output shapes
+  size_t total_dims = 0;
+  for (size_t i = 0; i < args.num_outputs; ++i) {
+    total_dims += args.dim_sizes[i];
+  }
+  EXPECT_GT(total_dims, 0);
+
+  // Clean up
+  destroy_executable(compile_args.executable, api_);
+}
+
 // --------------------------------- Devices -----------------------------------
 
 TEST_F(PjrtCApiTest, DeviceId) {
