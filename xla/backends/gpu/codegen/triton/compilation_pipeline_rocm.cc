@@ -120,10 +120,8 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
   if (cc.has_amd_matrix_core()) {
     pm->addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
-
-  pm->addPass(mlir::createTritonAMDGPUCanonicalizePointersPass());
-  pm->addPass(mlir::createCanonicalizerPass());
-  pm->addPass(mlir::createTritonAMDGPUConvertToBufferOpsPass(cc.gfx_version()));
+    
+  pm->addPass(mlir::createTritonAMDGPUFoldTrueCmpIPass());
 
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
