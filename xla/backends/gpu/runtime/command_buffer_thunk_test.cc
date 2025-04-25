@@ -1473,7 +1473,7 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
 
   std::vector<BufferAllocation::Slice> args;
   BufferAllocation alloc_input(/*index=*/0, kTotalElements, /*color=*/0);
-  BufferAllocation alloc_output(/*index=*/1, sizeof(int32_t),
+  BufferAllocation alloc_output(/*index=*/1, kTotalElements * sizeof(int32_t),
                                 /*color=*/0);
 
   BufferAllocation::Slice slice_input(&alloc_input, 0, kTotalElements);
