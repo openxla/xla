@@ -1116,6 +1116,7 @@ tsl_cc_test(
         ":platform",
         ":stringpiece",
         ":tstring",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
     ],
