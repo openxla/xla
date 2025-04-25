@@ -56,12 +56,14 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels_fatbin.h"
 #include "xla/stream_executor/gpu/gpu_types.h"  // IWYU pragma: keep
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -70,20 +72,19 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/profiler_lock.h"
+
+#ifdef GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
-#include "xla/stream_executor/cuda/cuda_dnn.h"
-#include "xla/stream_executor/dnn.h"
-#include "xla/stream_executor/numeric_options.h"
-
-#ifdef GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cuda.h"
 #endif
 
 namespace xla::gpu {
@@ -1433,6 +1434,7 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 }
 
 TEST(CommandBufferThunkTest, CuDnnCmd) {
+#ifdef GOOGLE_CUDA
   se::StreamExecutor* stream_executor = GpuExecutor();
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
   se::dnn::DnnSupport& dnn_support = *stream_executor->AsDnn();
@@ -1463,19 +1465,17 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
         .set_uid(3);
     return graph;
   }());
-  auto workspace_size = graph.Graph().get_workspace_size();
+  int64_t workspace_size = graph.Graph().get_workspace_size();
   TF_ASSERT_OK(graph.Prepare(dnn_support, se::NumericOptions{}));
   TF_ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
-  auto status_or = graph.SupportsExplicitCommandBufferConstruction();
-  TF_ASSERT_OK(status_or);
-  EXPECT_TRUE(status_or.value());
+  EXPECT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
+              tsl::testing::IsOkAndHolds(true));
 
   std::vector<BufferAllocation::Slice> args;
   BufferAllocation alloc_input(/*index=*/0, kTotalElements, /*color=*/0);
   BufferAllocation alloc_output(/*index=*/1, sizeof(int32_t),
                                 /*color=*/0);
 
-  BufferAllocation::Slice slice_lhs(&alloc_input, 0, kTotalElements);
   BufferAllocation::Slice slice_input(&alloc_input, 0, kTotalElements);
   BufferAllocation::Slice slice_output(&alloc_output, 0,
                                        kTotalElements * sizeof(int32_t));
@@ -1505,7 +1505,7 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   std::vector<se::DeviceMemoryBase> operands;
-  operands.reserve(4);
+  operands.reserve(3);
 
   se::DeviceMemory<int8_t> input =
       stream_executor->AllocateArray<int8_t>(kTotalElements);
@@ -1560,11 +1560,14 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copy output1 data back to host.
-  std::fill(dst.begin(), dst.end(), 0);
+  std::fill(dst.begin(), dst.end(), 1);
   TF_ASSERT_OK(
       stream->Memcpy(dst.data(), output1, kTotalElements * sizeof(int32_t)));
 
   ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
+#else
+  GTEST_SKIP() << "only enable this test on CUDA backend.";
+#endif
 }
 
 class CmdBufferTest : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {

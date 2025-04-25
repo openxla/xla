@@ -403,7 +403,6 @@ xla_test(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/stream_executor/cuda:cudnn_plugin",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:numeric_options",
         "//xla/stream_executor/gpu:gpu_test_kernels",
@@ -414,14 +413,16 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/profiler/lib:profiler_lock",
-        "@cudnn_frontend_archive//:cudnn_frontend",
     ] + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+        "//xla/stream_executor/cuda:cudnn_plugin",
     ]),
 )
 
