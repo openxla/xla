@@ -727,7 +727,6 @@ ENTRY main {
                     ->GetDeviceDescription()
                     .gpu_compute_capability();
   bool is_cuda = std::holds_alternative<stream_executor::CudaComputeCapability>(gpu_cc);
-  bool is_rocm = std::holds_alternative<stream_executor::RocmComputeCapability>(gpu_cc);
   auto cuda_cc = backend()
                      .default_stream_executor()
                      ->GetDeviceDescription()
