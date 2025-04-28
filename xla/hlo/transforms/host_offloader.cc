@@ -922,33 +922,33 @@ absl::StatusOr<bool> UpdateMemorySpaceForHostOffloadedOutputs(
   HloInstruction* root = called_computation->root_instruction();
   Shape* root_shape = root->mutable_shape();
 
-  host_instrs_tree.ForEachMutableElement([&](ShapeIndex output_index,
-                                             std::vector<
-                                                 InstructionAndShapeIndex>*
-                                                 instruction_and_shape_indexes)
-                                             -> void {
-    for (InstructionAndShapeIndex& instr_and_shape :
-         *instruction_and_shape_indexes) {
-      // If instruction is MoveToHost, we will replace usage.
-      if (instr_and_shape.instruction->IsCustomCall(
-              memory_annotations::kMoveToHostCustomCallTarget)) {
-        to_replace.push_back(instr_and_shape);
-        continue;
-      }
+  host_instrs_tree.ForEachMutableElement(
+      [&](ShapeIndex output_index,
+          std::vector<InstructionAndShapeIndex>* instruction_and_shape_indexes)
+          -> void {
+        for (InstructionAndShapeIndex& instr_and_shape :
+             *instruction_and_shape_indexes) {
+          // If instruction is MoveToHost, we will replace usage.
+          if (instr_and_shape.instruction->IsCustomCall(
+                  memory_annotations::kMoveToHostCustomCallTarget)) {
+            to_replace.push_back(instr_and_shape);
+            continue;
+          }
 
-      SetMemorySpace(ShapeUtil::GetMutableSubshape(
-                         instr_and_shape.instruction->mutable_shape(),
-                         instr_and_shape.shape_index),
-                     Layout::kHostMemorySpace);
-    }
+          SetMemorySpace(ShapeUtil::GetMutableSubshape(
+                             instr_and_shape.instruction->mutable_shape(),
+                             instr_and_shape.shape_index),
+                         Layout::kHostMemorySpace);
+        }
 
-    if (!instruction_and_shape_indexes->empty()) {
-      // Update the memory space for the output of the computation call
-      // itself.
-      SetMemorySpace(ShapeUtil::GetMutableSubshape(root_shape, output_index),
-                     Layout::kHostMemorySpace);
-    }
-  });
+        if (!instruction_and_shape_indexes->empty()) {
+          // Update the memory space for the output of the computation call
+          // itself.
+          SetMemorySpace(
+              ShapeUtil::GetMutableSubshape(root_shape, output_index),
+              Layout::kHostMemorySpace);
+        }
+      });
   bool modified = false;
   // Remove MoveToHost usage.
   for (InstructionAndShapeIndex& instr_and_shape : to_replace) {
