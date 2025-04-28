@@ -264,8 +264,8 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
           "Found an instruction (\"%s\") which does device compute in host "
           "memory space. Converting into host compute. This is likely to have "
           "a very slow execution time. If you're using JAX, use device_put() "
-          "on the inputs to move the computation to the "
-          "accelerator.",
+          "to move the inputs to the device so that computation happens on the "
+          "device.",
           instruction->name());
       host_offload_utils::SetHostComputeFrontendAttribute(*instruction);
     }
