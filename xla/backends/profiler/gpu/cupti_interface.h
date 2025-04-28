@@ -23,72 +23,81 @@ limitations under the License.
 
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_target.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/types.h"
 
-// CUPTI PM sampling headers added in 12.6
+// CUPTI PM sampling and profiler host headers added in v24 (CUDA 12.6)
 // Note - bug fix for PM sampling added after 12.6.2
-#if CUDA_VERSION >= 12060
-#define CUPTI_PM_SAMPLING 1
+#if CUPTI_API_VERSION >= 24
+#define CUPTI_PM_SAMPLING_SUPPORTED 1
+// Switch to constexpr instead of macro where possible
+inline constexpr bool kCuptiPmSamplingSupported = true;
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #else
-#define CUPTI_PM_SAMPLING 0
+#define CUPTI_PM_SAMPLING_SUPPORTED 0
+// Switch to constexpr instead of macro where possible
+inline constexpr bool kCuptiPmSamplingSupported = false;
 #endif
 
 namespace xla {
 namespace profiler {
 
-// Provide safe types if CUPTI pm sampling headers are not present
-#if CUPTI_PM_SAMPLING == 0
-typedef void CUpti_Profiler_Host_Initialize_Params;
-typedef void CUpti_Profiler_Host_Deinitialize_Params;
-typedef void CUpti_Profiler_Host_GetSupportedChips_Params;
-typedef void CUpti_Profiler_Host_GetBaseMetrics_Params;
-typedef void CUpti_Profiler_Host_GetSubMetrics_Params;
-typedef void CUpti_Profiler_Host_GetMetricProperties_Params;
-typedef void CUpti_Profiler_Host_GetRangeName_Params;
-typedef void CUpti_Profiler_Host_EvaluateToGpuValues_Params;
-typedef void CUpti_Profiler_Host_ConfigAddMetrics_Params;
-typedef void CUpti_Profiler_Host_GetConfigImageSize_Params;
-typedef void CUpti_Profiler_Host_GetConfigImage_Params;
-typedef void CUpti_Profiler_Host_GetNumOfPasses_Params;
-typedef void CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params;
+#if ! CUPTI_PM_SAMPLING_SUPPORTED
+// Safe types if CUPTI PM sampling or profiler host headers are not present
+extern "C" {
+  typedef struct CUpti_Profiler_Host_Initialize_Params
+      CUpti_Profiler_Host_Initialize_Params;
+  typedef struct CUpti_Profiler_Host_Deinitialize_Params
+      CUpti_Profiler_Host_Deinitialize_Params;
+  typedef struct CUpti_Profiler_Host_GetSupportedChips_Params
+      CUpti_Profiler_Host_GetSupportedChips_Params;
+  typedef struct CUpti_Profiler_Host_GetBaseMetrics_Params
+      CUpti_Profiler_Host_GetBaseMetrics_Params;
+  typedef struct CUpti_Profiler_Host_GetSubMetrics_Params
+      CUpti_Profiler_Host_GetSubMetrics_Params;
+  typedef struct CUpti_Profiler_Host_GetMetricProperties_Params
+      CUpti_Profiler_Host_GetMetricProperties_Params;
+  typedef struct CUpti_Profiler_Host_GetRangeName_Params
+      CUpti_Profiler_Host_GetRangeName_Params;
+  typedef struct CUpti_Profiler_Host_EvaluateToGpuValues_Params
+      CUpti_Profiler_Host_EvaluateToGpuValues_Params;
+  typedef struct CUpti_Profiler_Host_ConfigAddMetrics_Params
+      CUpti_Profiler_Host_ConfigAddMetrics_Params;
+  typedef struct CUpti_Profiler_Host_GetConfigImageSize_Params
+      CUpti_Profiler_Host_GetConfigImageSize_Params;
+  typedef struct CUpti_Profiler_Host_GetConfigImage_Params
+      CUpti_Profiler_Host_GetConfigImage_Params;
+  typedef struct CUpti_Profiler_Host_GetNumOfPasses_Params
+      CUpti_Profiler_Host_GetNumOfPasses_Params;
+  typedef struct CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params
+      CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params;
 
-typedef void CUpti_Profiler_Initialize_Params;
-typedef void CUpti_Profiler_DeInitialize_Params;
-typedef void CUpti_Profiler_CounterDataImage_CalculateSize_Params;
-typedef void CUpti_Profiler_CounterDataImage_Initialize_Params;
-typedef void CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params;
-typedef void CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params;
-typedef void CUpti_Profiler_BeginSession_Params;
-typedef void CUpti_Profiler_EndSession_Params;
-typedef void CUpti_Profiler_SetConfig_Params;
-typedef void CUpti_Profiler_UnsetConfig_Params;
-typedef void CUpti_Profiler_BeginPass_Params;
-typedef void CUpti_Profiler_EndPass_Params;
-typedef void CUpti_Profiler_EnableProfiling_Params;
-typedef void CUpti_Profiler_DisableProfiling_Params;
-typedef void CUpti_Profiler_IsPassCollected_Params;
-typedef void CUpti_Profiler_FlushCounterData_Params;
-typedef void CUpti_Profiler_PushRange_Params;
-typedef void CUpti_Profiler_PopRange_Params;
-typedef void CUpti_Profiler_GetCounterAvailability_Params;
-typedef void CUpti_Profiler_DeviceSupported_Params;
-
-typedef void CUpti_PmSampling_SetConfig_Params;
-typedef void CUpti_PmSampling_Enable_Params;
-typedef void CUpti_PmSampling_Disable_Params;
-typedef void CUpti_PmSampling_Start_Params;
-typedef void CUpti_PmSampling_Stop_Params;
-typedef void CUpti_PmSampling_DecodeData_Params;
-typedef void CUpti_PmSampling_GetCounterAvailability_Params;
-typedef void CUpti_PmSampling_GetCounterDataSize_Params;
-typedef void CUpti_PmSampling_CounterDataImage_Initialize_Params;
-typedef void CUpti_PmSampling_GetCounterDataInfo_Params;
-typedef void CUpti_PmSampling_CounterData_GetSampleInfo_Params;
-#endif
+  typedef struct CUpti_PmSampling_SetConfig_Params
+      CUpti_PmSampling_SetConfig_Params;
+  typedef struct CUpti_PmSampling_Enable_Params
+      CUpti_PmSampling_Enable_Params;
+  typedef struct CUpti_PmSampling_Disable_Params
+      CUpti_PmSampling_Disable_Params;
+  typedef struct CUpti_PmSampling_Start_Params
+      CUpti_PmSampling_Start_Params;
+  typedef struct CUpti_PmSampling_Stop_Params
+      CUpti_PmSampling_Stop_Params;
+  typedef struct CUpti_PmSampling_DecodeData_Params
+      CUpti_PmSampling_DecodeData_Params;
+  typedef struct CUpti_PmSampling_GetCounterAvailability_Params
+      CUpti_PmSampling_GetCounterAvailability_Params;
+  typedef struct CUpti_PmSampling_GetCounterDataSize_Params
+      CUpti_PmSampling_GetCounterDataSize_Params;
+  typedef struct CUpti_PmSampling_CounterDataImage_Initialize_Params
+      CUpti_PmSampling_CounterDataImage_Initialize_Params;
+  typedef struct CUpti_PmSampling_GetCounterDataInfo_Params
+      CUpti_PmSampling_GetCounterDataInfo_Params;
+  typedef struct CUpti_PmSampling_CounterData_GetSampleInfo_Params
+      CUpti_PmSampling_CounterData_GetSampleInfo_Params;
+}
+#endif  // ! CUPTI_PM_SAMPLING_SUPPORTED
 
 // Provides a wrapper interface to every single CUPTI API function. This class
 // is needed to create an easy mock object for CUPTI API calls. All member
@@ -169,101 +178,103 @@ class CuptiInterface {
   // cuda/extras/CUPTI/include/cupti_profiler_host.h and
   // cuda/extras/CUPTI/include/cupti_profiler_target.h
   virtual CUptiResult ProfilerHostInitialize(
-      CUpti_Profiler_Host_Initialize_Params* pParams) = 0;
+      CUpti_Profiler_Host_Initialize_Params* params) = 0;
   virtual CUptiResult ProfilerHostDeinitialize(
-      CUpti_Profiler_Host_Deinitialize_Params* pParams) = 0;
+      CUpti_Profiler_Host_Deinitialize_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetSupportedChips(
-      CUpti_Profiler_Host_GetSupportedChips_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetSupportedChips_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetBaseMetrics(
-      CUpti_Profiler_Host_GetBaseMetrics_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetBaseMetrics_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetSubMetrics(
-      CUpti_Profiler_Host_GetSubMetrics_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetSubMetrics_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetMetricProperties(
-      CUpti_Profiler_Host_GetMetricProperties_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetMetricProperties_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetRangeName(
-      CUpti_Profiler_Host_GetRangeName_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetRangeName_Params* params) = 0;
   virtual CUptiResult ProfilerHostEvaluateToGpuValues(
-      CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams) = 0;
+      CUpti_Profiler_Host_EvaluateToGpuValues_Params* params) = 0;
   virtual CUptiResult ProfilerHostConfigAddMetrics(
-      CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams) = 0;
+      CUpti_Profiler_Host_ConfigAddMetrics_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetConfigImageSize(
-      CUpti_Profiler_Host_GetConfigImageSize_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetConfigImageSize_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetConfigImage(
-      CUpti_Profiler_Host_GetConfigImage_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetConfigImage_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetNumOfPasses(
-      CUpti_Profiler_Host_GetNumOfPasses_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetNumOfPasses_Params* params) = 0;
   virtual CUptiResult ProfilerHostGetMaxNumHardwareMetricsPerPass(
-      CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams) = 0;
+      CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params*
+      params) = 0;
 
   virtual CUptiResult ProfilerInitialize(
-      CUpti_Profiler_Initialize_Params* pParams) = 0;
+      CUpti_Profiler_Initialize_Params* params) = 0;
   virtual CUptiResult ProfilerDeInitialize(
-      CUpti_Profiler_DeInitialize_Params* pParams) = 0;
+      CUpti_Profiler_DeInitialize_Params* params) = 0;
   virtual CUptiResult ProfilerCounterDataImageCalculateSize(
-      CUpti_Profiler_CounterDataImage_CalculateSize_Params* pParams) = 0;
+      CUpti_Profiler_CounterDataImage_CalculateSize_Params* params) = 0;
   virtual CUptiResult ProfilerCounterDataImageInitialize(
-      CUpti_Profiler_CounterDataImage_Initialize_Params* pParams) = 0;
+      CUpti_Profiler_CounterDataImage_Initialize_Params* params) = 0;
   virtual CUptiResult ProfilerCounterDataImageCalculateScratchBufferSize(
       CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
-          pParams) = 0;
+      params) = 0;
   virtual CUptiResult ProfilerCounterDataImageInitializeScratchBuffer(
       CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params*
-          pParams) = 0;
+      params) = 0;
   virtual CUptiResult ProfilerBeginSession(
-      CUpti_Profiler_BeginSession_Params* pParams) = 0;
+      CUpti_Profiler_BeginSession_Params* params) = 0;
   virtual CUptiResult ProfilerEndSession(
-      CUpti_Profiler_EndSession_Params* pParams) = 0;
+      CUpti_Profiler_EndSession_Params* params) = 0;
   virtual CUptiResult ProfilerSetConfig(
-      CUpti_Profiler_SetConfig_Params* pParams) = 0;
+      CUpti_Profiler_SetConfig_Params* params) = 0;
   virtual CUptiResult ProfilerUnsetConfig(
-      CUpti_Profiler_UnsetConfig_Params* pParams) = 0;
+      CUpti_Profiler_UnsetConfig_Params* params) = 0;
   virtual CUptiResult ProfilerBeginPass(
-      CUpti_Profiler_BeginPass_Params* pParams) = 0;
+      CUpti_Profiler_BeginPass_Params* params) = 0;
   virtual CUptiResult ProfilerEndPass(
-      CUpti_Profiler_EndPass_Params* pParams) = 0;
+      CUpti_Profiler_EndPass_Params* params) = 0;
   virtual CUptiResult ProfilerEnableProfiling(
-      CUpti_Profiler_EnableProfiling_Params* pParams) = 0;
+      CUpti_Profiler_EnableProfiling_Params* params) = 0;
   virtual CUptiResult ProfilerDisableProfiling(
-      CUpti_Profiler_DisableProfiling_Params* pParams) = 0;
+      CUpti_Profiler_DisableProfiling_Params* params) = 0;
   virtual CUptiResult ProfilerIsPassCollected(
-      CUpti_Profiler_IsPassCollected_Params* pParams) = 0;
+      CUpti_Profiler_IsPassCollected_Params* params) = 0;
   virtual CUptiResult ProfilerFlushCounterData(
-      CUpti_Profiler_FlushCounterData_Params* pParams) = 0;
+      CUpti_Profiler_FlushCounterData_Params* params) = 0;
   virtual CUptiResult ProfilerPushRange(
-      CUpti_Profiler_PushRange_Params* pParams) = 0;
+      CUpti_Profiler_PushRange_Params* params) = 0;
   virtual CUptiResult ProfilerPopRange(
-      CUpti_Profiler_PopRange_Params* pParams) = 0;
+      CUpti_Profiler_PopRange_Params* params) = 0;
   virtual CUptiResult ProfilerGetCounterAvailability(
-      CUpti_Profiler_GetCounterAvailability_Params* pParams) = 0;
+      CUpti_Profiler_GetCounterAvailability_Params* params) = 0;
   virtual CUptiResult ProfilerDeviceSupported(
-      CUpti_Profiler_DeviceSupported_Params* pParams) = 0;
+      CUpti_Profiler_DeviceSupported_Params* params) = 0;
 
   // PM sampling specific functions from
   // cuda/extras/CUPTI/include/cupti_pmsampling.h
   virtual CUptiResult PmSamplingSetConfig(
-      CUpti_PmSampling_SetConfig_Params* pParams) = 0;
+      CUpti_PmSampling_SetConfig_Params* params) = 0;
   virtual CUptiResult PmSamplingEnable(
-      CUpti_PmSampling_Enable_Params* pParams) = 0;
+      CUpti_PmSampling_Enable_Params* params) = 0;
   virtual CUptiResult PmSamplingDisable(
-      CUpti_PmSampling_Disable_Params* pParams) = 0;
+      CUpti_PmSampling_Disable_Params* params) = 0;
   virtual CUptiResult PmSamplingStart(
-      CUpti_PmSampling_Start_Params* pParams) = 0;
-  virtual CUptiResult PmSamplingStop(CUpti_PmSampling_Stop_Params* pParams) = 0;
+      CUpti_PmSampling_Start_Params* params) = 0;
+  virtual CUptiResult PmSamplingStop(
+      CUpti_PmSampling_Stop_Params* params) = 0;
   virtual CUptiResult PmSamplingDecodeData(
-      CUpti_PmSampling_DecodeData_Params* pParams) = 0;
+      CUpti_PmSampling_DecodeData_Params* params) = 0;
   virtual CUptiResult PmSamplingGetCounterAvailability(
-      CUpti_PmSampling_GetCounterAvailability_Params* pParams) = 0;
+      CUpti_PmSampling_GetCounterAvailability_Params* params) = 0;
   virtual CUptiResult PmSamplingGetCounterDataSize(
-      CUpti_PmSampling_GetCounterDataSize_Params* pParams) = 0;
+      CUpti_PmSampling_GetCounterDataSize_Params* params) = 0;
   virtual CUptiResult PmSamplingCounterDataImageInitialize(
-      CUpti_PmSampling_CounterDataImage_Initialize_Params* pParams) = 0;
+      CUpti_PmSampling_CounterDataImage_Initialize_Params* params) = 0;
   virtual CUptiResult PmSamplingGetCounterDataInfo(
-      CUpti_PmSampling_GetCounterDataInfo_Params* pParams) = 0;
+      CUpti_PmSampling_GetCounterDataInfo_Params* params) = 0;
   virtual CUptiResult PmSamplingCounterDataGetSampleInfo(
-      CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams) = 0;
+      CUpti_PmSampling_CounterData_GetSampleInfo_Params* params) = 0;
 
   virtual CUptiResult DeviceGetChipName(
-      CUpti_Device_GetChipName_Params* pParams) = 0;
+      CUpti_Device_GetChipName_Params* params) = 0;
 
   // Interface maintenance functions. Not directly related to CUPTI, but
   // required for implementing an error resilient layer over CUPTI API.

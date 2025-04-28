@@ -50,14 +50,17 @@ std::atomic_uint64_t atomic_total_read = 0;
 std::atomic_uint64_t atomic_total_write = 0;
 std::atomic_bool skip_first = true;
 
-void HandleRecords(struct PmSamplingDecodeInfo* info) {
+void HandleRecords(PmSamples* samples) {
   // Validate some samples were recorded
-  EXPECT_GT(info->num_completed, 0);
+  EXPECT_GT(samples->GetNumSamples(), 0);
 
-  auto back = info->sampler_ranges.back();
-  auto front = info->sampler_ranges.front();
+  // Validate we have the expected metrics
+  const std::vector<std::string>& metrics = samples->GetMetrics();
+  const std::vector<SamplerRange>& sampler_ranges = samples->GetSamplerRanges();
+  auto back = sampler_ranges.back();
+  auto front = sampler_ranges.front();
   double ranges_duration = back.end_timestamp_ns - front.start_timestamp_ns;
-  double ns_per_sample = ranges_duration / info->num_completed;
+  double ns_per_sample = ranges_duration / samples->GetNumSamples();
 
   // First pass may have large initial sample duration
   if (skip_first) {
@@ -67,20 +70,20 @@ void HandleRecords(struct PmSamplingDecodeInfo* info) {
     EXPECT_LT(ns_per_sample, 500000.0 * 1.05);
   }
 
-  for (int i = 0; i < info->metrics.size(); i++) {
+  for (int i = 0; i < metrics.size(); i++) {
     double sum = 0;
 
-    for (int j = 0; j < info->sampler_ranges.size(); j++) {
-      sum += info->sampler_ranges[j].metric_values[i];
+    for (int j = 0; j < sampler_ranges.size(); j++) {
+      sum += sampler_ranges[j].metric_values[i];
     }
 
-    if (strcmp("sm__inst_executed_pipe_fp64.sum", info->metrics[i]) == 0) {
+    if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
       atomic_total_fp64 += sum;
     }
-    else if (strcmp("pcie__read_bytes.sum", info->metrics[i]) == 0) {
+    else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
       atomic_total_read += sum;
     }
-    else if (strcmp("pcie__write_bytes.sum", info->metrics[i]) == 0) {
+    else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
       atomic_total_write += sum;
     }
   }
@@ -111,24 +114,25 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   auto collector = CreateCuptiCollector(collector_options, start_walltime_ns,
       start_gputime_ns);
 
-  PmSamplingConfig sampling_config;
-  sampling_config.enable_pm_sampling = true;
+  CuptiPmSamplerOptions sampler_options;
+  sampler_options.enable = true;
   // Metrics can be queried with Nsight Compute
   // ncu --query-metrics
-  sampling_config.metrics = {
+  sampler_options.metrics = {
     "sm__cycles_active.sum",
     "sm__inst_executed_pipe_fp64.sum",
     "pcie__read_bytes.sum",
     "pcie__write_bytes.sum"
   };
-  sampling_config.process_samples = HandleRecords;
+  sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
   tracer_options.enable_nvtx_tracking = false;
-  tracer_options.pm_sampling_config = &sampling_config;
+
+  tracer_options.pm_sampler_options = sampler_options;
 
   TestableCuptiTracer tracer;
-  tracer.Enable(tracer_options, collector.get());
+  tracer.Enable(tracer_options, collector.get()).IgnoreError();
 
   // SimpleAddSub does num_elements * 4 integer add / subs
   std::vector<double> vec = SimpleAddSubWithProfiler(kNumElements);

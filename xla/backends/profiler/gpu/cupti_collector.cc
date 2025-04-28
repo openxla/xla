@@ -655,6 +655,18 @@ void PmSamples::PopulateCounterLine(XPlaneBuilder* plane) {
   }
 }
 
+size_t PmSamples::GetNumSamples() {
+  return sampler_ranges_.size();
+}
+
+const std::vector<std::string>& PmSamples::GetMetrics() {
+  return metrics_;
+}
+
+const std::vector<SamplerRange>& PmSamples::GetSamplerRanges() {
+  return sampler_ranges_;
+}
+
 void CuptiTraceCollector::OnTracerCollectedCallbackData(
     std::vector<CallbackAnnotationsAndEvents> callback_annotations_and_events,
     bool need_callback_events) {

@@ -17,6 +17,7 @@ load(
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+    "if_cuda_newer_than",
 )
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
@@ -188,7 +189,41 @@ tsl_gpu_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:types",
+    ]
+    + if_cuda_newer_than("12_6",
+        [":cupti_pm_sampler_impl",],
+        [":cupti_pm_sampler_stub",]
+    ),
+)
+
+tsl_gpu_library(
+    name = "cupti_pm_sampler_stub",
+    srcs = ["cupti_pm_sampler.cc"],
+    hdrs = ["cupti_pm_sampler.h"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cupti_collector",
+        ":cupti_interface",
+        "@com_google_absl//absl/status",
     ],
+)
+
+
+tsl_gpu_library(
+    name = "cupti_pm_sampler_impl",
+    srcs = if_cuda(["cupti_pm_sampler_impl.cc"]),
+    hdrs = if_cuda(["cupti_pm_sampler_impl.h"]),
+    copts = tf_profiler_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cupti_pm_sampler_stub",
+        ":cupti_collector",
+        ":cupti_interface",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/time",
+    ] + if_cuda(["//xla/tsl/cuda:cupti"]),
 )
 
 tsl_gpu_library(

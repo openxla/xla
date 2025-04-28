@@ -29,4 +29,4 @@ std::vector<double> SimpleAddSubWithProfiler(int num_elements);
 }  // namespace profiler
 }  // namespace xla
 
-#endif // XLA_BACKENDS_PROFILER_GPU_PROFILE_WITH_CUDA_KERNELS_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_PROFILE_WITH_CUDA_KERNELS_H_
