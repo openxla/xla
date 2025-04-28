@@ -16,10 +16,14 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 
 #include <cassert>
+#include <cstdint>
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/LogicalResult.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"  // IWYU pragma: keep
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
@@ -32,61 +36,9 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_dialect.cc.inc"
 
 using mlir::LogicalResult;
-using mlir::RankedTensorType;
 using mlir::Type;
 
 namespace mlir::triton::xla {
-
-//===----------------------------------------------------------------------===//
-// TileOp
-//===----------------------------------------------------------------------===//
-
-void TileOp::getAsmResultNames(function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "tiled_tensor");
-}
-
-ParseResult TileOp::parse(OpAsmParser& parser, OperationState& result) {
-  OpAsmParser::UnresolvedOperand src;
-  TiledTensorType tiled_tensor_type;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets, sizes, strides;
-  if (parser.parseOperand(src) ||
-      parser.parseOperandList(offsets, OpAsmParser::Delimiter::Square) ||
-      parser.parseOperandList(strides, OpAsmParser::Delimiter::Square) ||
-      parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColonType(tiled_tensor_type)) {
-    return failure();
-  }
-
-  auto index_type = parser.getBuilder().getIndexType();
-  if (parser.resolveOperand(src, tiled_tensor_type.getOriginalType(),
-                            result.operands) ||
-      parser.resolveOperands(offsets, index_type, result.operands) ||
-      parser.resolveOperands(strides, index_type, result.operands)) {
-    return failure();
-  }
-  result.addTypes(tiled_tensor_type);
-  return success();
-}
-
-void TileOp::print(OpAsmPrinter& p) {
-  p << ' ' << getTensor();
-  p << '[';
-  llvm::interleaveComma(getOffsets(), p);
-  p << "][";
-  llvm::interleaveComma(getStrides(), p);
-  p << "] {layout = array<i64:";
-  llvm::interleaveComma(getLayout(), p);
-  p << ">} : " << getType();
-}
-
-LogicalResult TileOp::verify() {
-  auto tensor_rank = getTensor().getType().getRank();
-  if (tensor_rank != getOffsets().size() || tensor_rank != getStrides().size())
-    return emitError(
-        "mismatch between tensor rank and one or more of offsets and strides");
-  return success();
-}
-
 //===----------------------------------------------------------------------===//
 // ExtractOp
 //===----------------------------------------------------------------------===//
@@ -96,48 +48,43 @@ void ExtractOp::getAsmResultNames(
   setNameFn(getResult(), "extracted_tile");
 }
 
-ParseResult ExtractOp::parse(OpAsmParser& parser, OperationState& result) {
-  Builder& builder = parser.getBuilder();
-
-  OpAsmParser::UnresolvedOperand tiled_tensor;
-  Type tile_type, original_type;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
-  if (parser.parseOperand(tiled_tensor) ||
-      parser.parseOperandList(offsets, OpAsmParser::Delimiter::Square) ||
-      parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColonType(original_type) || parser.parseKeyword("to") ||
-      parser.parseType(tile_type)) {
-    return failure();
-  }
-  auto tiled_tensor_type = TiledTensorType::get(
-      parser.getContext(), mlir::cast<RankedTensorType>(tile_type),
-      mlir::cast<RankedTensorType>(original_type));
-  auto offset_type = builder.getIndexType();
-  if (parser.resolveOperand(tiled_tensor, tiled_tensor_type, result.operands) ||
-      parser.resolveOperands(offsets, offset_type, result.operands)) {
-    return failure();
-  }
-  result.addTypes(tile_type);
-  return success();
-}
-
-void ExtractOp::print(OpAsmPrinter& p) {
-  TiledTensorType tiled_type = getSrc().getType();
-  p << ' ' << getSrc() << '[';
-  llvm::interleaveComma(getOffsets(), p);
-  p << ']';
-  p.printOptionalAttrDict((*this)->getAttrs());
-  p << " : " << tiled_type.getOriginalType() << " to "
-    << tiled_type.getTileType();
-}
-
 LogicalResult ExtractOp::verify() {
-  if (getResult().getType().getRank() == 0) {
+  int64_t rank = getResultType().getRank();
+  if (rank == 0) {
     return emitError("cannot extract a 0-d tensor");
   }
-  if (getSrc().getType().getRank() != getOffsets().size())
-    return emitError("source tensor rank does not match number of offsets");
+  if (rank != getLayout().size()) {
+    return emitError("layout attribute has a wrong size");
+  }
   return success();
+}
+
+void ExtractOp::build(OpBuilder &b, OperationState &result,
+                      RankedTensorType result_type, Value src,
+                      ArrayRef<OpFoldResult> offsets,
+                      ArrayRef<OpFoldResult> strides, ArrayRef<int64_t> layout,
+                      ArrayRef<NamedAttribute> attrs) {
+  SmallVector<int64_t> staticOffsets, staticSizes, staticStrides;
+  SmallVector<Value> dynamicOffsets, dynamicSizes, dynamicStrides;
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
+  dispatchIndexOpFoldResults(strides, dynamicStrides, staticStrides);
+  result.addAttribute(InsertOp::getLayoutAttrName(OperationName(
+                          InsertOp::getOperationName(), b.getContext())),
+                      b.getDenseI64ArrayAttr(layout));
+  result.addAttributes(attrs);
+  build(b, result, result_type, src, dynamicOffsets, {}, dynamicStrides,
+        b.getDenseI64ArrayAttr(staticOffsets),
+        b.getDenseI64ArrayAttr(result_type.getShape()),
+        b.getDenseI64ArrayAttr(staticStrides), {});
+}
+
+void ExtractOp::build(OpBuilder &b, OperationState &result,
+                      RankedTensorType result_type, Value src,
+                      ValueRange offsets, ValueRange strides,
+                      ArrayRef<int64_t> layout,
+                      ArrayRef<NamedAttribute> attrs) {
+  build(b, result, result_type, src, getAsOpFoldResult(offsets),
+        getAsOpFoldResult(strides), layout, attrs);
 }
 
 //===----------------------------------------------------------------------===//
@@ -149,52 +96,42 @@ void InsertOp::getAsmResultNames(
   setNameFn(getResult(), "inserted_tile");
 }
 
-ParseResult InsertOp::parse(OpAsmParser& parser, OperationState& result) {
-  Builder& builder = parser.getBuilder();
-
-  OpAsmParser::UnresolvedOperand tile, tiled_tensor;
-  Type tile_type, original_type;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
-  if (parser.parseOperand(tile) || parser.parseKeyword("into") ||
-      parser.parseOperand(tiled_tensor) ||
-      parser.parseOperandList(offsets, OpAsmParser::Delimiter::Square) ||
-      parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColonType(tile_type) || parser.parseKeyword("into") ||
-      parser.parseType(original_type) ||
-      parser.resolveOperand(tile, tile_type, result.operands)) {
-    return failure();
-  }
-  auto tiled_tensor_type = TiledTensorType::get(
-      parser.getContext(), mlir::cast<RankedTensorType>(tile_type),
-      mlir::cast<RankedTensorType>(original_type));
-
-  auto offset_type = builder.getIndexType();
-  if (parser.resolveOperand(tiled_tensor, tiled_tensor_type, result.operands) ||
-      parser.resolveOperands(offsets, offset_type, result.operands)) {
-    return failure();
-  }
-  result.addTypes(original_type);
-  return success();
-}
-
-void InsertOp::print(OpAsmPrinter& p) {
-  TiledTensorType tiled_type = getDst().getType();
-  p << ' ' << getSrc() << " into " << getDst() << "[";
-  llvm::interleaveComma(getOffsets(), p);
-  p << ']';
-  p.printOptionalAttrDict((*this)->getAttrs());
-  p << " : " << tiled_type.getTileType() << " into "
-    << tiled_type.getOriginalType();
-}
-
 LogicalResult InsertOp::verify() {
-  if (getSrc().getType().getRank() == 0) {
+  int64_t rank = getSrcType().getRank();
+  if (rank == 0) {
     return emitError("cannot insert a 0-d tensor");
   }
-  if (getDst().getType().getRank() != getOffsets().size())
-    return emitError(
-        "destination tensor rank does not match number of offsets");
+  if (rank != getLayout().size()) {
+    return emitError("layout attribute has a wrong size");
+  }
   return success();
+}
+
+void InsertOp::build(OpBuilder &b, OperationState &result, Value src, Value dst,
+                     ArrayRef<OpFoldResult> offsets,
+                     ArrayRef<OpFoldResult> strides, ArrayRef<int64_t> layout,
+                     ArrayRef<NamedAttribute> attrs) {
+  RankedTensorType src_type = mlir::cast<RankedTensorType>(src.getType());
+  RankedTensorType dst_type = mlir::cast<RankedTensorType>(dst.getType());
+  SmallVector<int64_t> staticOffsets, staticSizes, staticStrides;
+  SmallVector<Value> dynamicOffsets, dynamicSizes, dynamicStrides;
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
+  dispatchIndexOpFoldResults(strides, dynamicStrides, staticStrides);
+  result.addAttribute(InsertOp::getLayoutAttrName(OperationName(
+                          InsertOp::getOperationName(), b.getContext())),
+                      b.getDenseI64ArrayAttr(layout));
+  result.addAttributes(attrs);
+  build(b, result, dst_type, src, dst, dynamicOffsets, {}, dynamicStrides,
+        b.getDenseI64ArrayAttr(staticOffsets),
+        b.getDenseI64ArrayAttr(src_type.getShape()),
+        b.getDenseI64ArrayAttr(staticStrides), {});
+}
+
+void InsertOp::build(OpBuilder &b, OperationState &result, Value src, Value dst,
+                     ValueRange offsets, ValueRange strides,
+                     ArrayRef<int64_t> layout, ArrayRef<NamedAttribute> attrs) {
+  build(b, result, src, dst, getAsOpFoldResult(offsets),
+        getAsOpFoldResult(strides), layout, attrs);
 }
 
 }  // namespace mlir::triton::xla

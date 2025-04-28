@@ -18,15 +18,15 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Value.h"
@@ -59,6 +59,11 @@ struct TritonWrapperResult {
   int64_t shmem_bytes = 0;
   std::optional<se::ClusterDim> cluster_dim;
   std::optional<stream_executor::gpu::TmaMetadata> tma_metadata;
+
+  // The captured nvvm.annotations from the lowest level LLVM IR coming from
+  // Triton. We need to propagate them because we later create the kernel and
+  // splice the impl_fn into it.
+  std::vector<llvm::Metadata*> nvvm_annotations;
 };
 
 // Load the MLIR dialects required for Triton IR generation.
@@ -104,10 +109,6 @@ namespace ir_emitter_triton_internal {
 // Computes the transformation from a 1-d program_id to a tile multi-index.
 llvm::SmallVector<mlir::Value, 3> ComputeDelinearizedTileIndex(
     EmitterLocOpBuilder& b, absl::Span<const int64_t> num_output_tiles_per_dim);
-
-absl::StatusOr<mlir::triton::xla::TileOp> CreateTileOp(
-    EmitterLocOpBuilder& b, mlir::ValueRange tile_multi_index,
-    const TiledHloInstruction& tiled_hlo, mlir::Value parent_base_ptr);
 
 // Dumps the Triton IR to a string.
 //

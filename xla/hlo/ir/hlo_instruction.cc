@@ -2993,6 +2993,11 @@ bool HloInstruction::HasControlDependencies() const {
   return (!r->control_predecessors.empty() || !r->control_successors.empty());
 }
 
+bool HloInstruction::HasSuccessorControlDependencies() const {
+  const Rare* r = rare();
+  return (!r->control_successors.empty());
+}
+
 absl::Status HloInstruction::CopyAllControlDepsTo(HloInstruction* start,
                                                   HloInstruction* end) const {
   for (auto* ctrl_pred : control_predecessors()) {
@@ -4760,11 +4765,15 @@ static absl::Status PostOrderDFS(
     if (visit_state == Visitor::kVisiting) {
       dfs_stack.pop_back();
 
-      TF_RETURN_IF_ERROR(visitor->Preprocess(current_node));
-      VLOG(2) << "Visiting HLO %" << current_node->name();
-      TF_RETURN_IF_ERROR(current_node->Visit(visitor));
-      visitor->SetVisitState(current_id, Visitor::kVisited);
-      TF_RETURN_IF_ERROR(visitor->Postprocess(current_node));
+      if (visitor->ShouldProcessNode(current_node)) {
+        TF_RETURN_IF_ERROR(visitor->Preprocess(current_node));
+        VLOG(2) << "Visiting HLO %" << current_node->name();
+        TF_RETURN_IF_ERROR(current_node->Visit(visitor));
+        visitor->SetVisitState(current_id, Visitor::kVisited);
+        TF_RETURN_IF_ERROR(visitor->Postprocess(current_node));
+      } else {
+        visitor->SetVisitState(current_id, Visitor::kVisited);
+      }
       continue;
     }
 
@@ -5249,7 +5258,8 @@ std::string ConvolutionDimensionNumbersToString(
 absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
     const std::string& name) {
   static absl::flat_hash_map<std::string, RandomAlgorithm>* map = [] {
-    static auto* map = new absl::flat_hash_map<std::string, RandomAlgorithm>;
+    static auto* const map =
+        new absl::flat_hash_map<std::string, RandomAlgorithm>;
     for (int i = 0; i < RandomAlgorithm_ARRAYSIZE; i++) {
       if (RandomAlgorithm_IsValid(i)) {
         auto value = static_cast<RandomAlgorithm>(i);
@@ -5268,7 +5278,8 @@ absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
 absl::StatusOr<RandomDistribution> StringToRandomDistribution(
     const std::string& name) {
   static absl::flat_hash_map<std::string, RandomDistribution>* map = [] {
-    static auto* map = new absl::flat_hash_map<std::string, RandomDistribution>;
+    static auto* const map =
+        new absl::flat_hash_map<std::string, RandomDistribution>;
     for (int i = 0; i < RandomDistribution_ARRAYSIZE; i++) {
       if (RandomDistribution_IsValid(i)) {
         auto value = static_cast<RandomDistribution>(i);
@@ -5288,7 +5299,7 @@ absl::StatusOr<PrecisionConfig::Precision> StringToPrecision(
     const std::string& name) {
   static absl::flat_hash_map<std::string, PrecisionConfig::Precision>* map =
       [] {
-        static auto* map =
+        static auto* const map =
             new absl::flat_hash_map<std::string, PrecisionConfig::Precision>;
         for (int i = 0; i < PrecisionConfig::Precision_ARRAYSIZE; i++) {
           if (PrecisionConfig::Precision_IsValid(i)) {
@@ -5329,7 +5340,7 @@ absl::StatusOr<PrecisionConfig::Algorithm> StringToAlgorithm(
     const std::string& name) {
   static absl::flat_hash_map<std::string, PrecisionConfig::Algorithm>* map =
       [] {
-        static auto* map =
+        static auto* const map =
             new absl::flat_hash_map<std::string, PrecisionConfig::Algorithm>;
         for (int i = 0; i < PrecisionConfig::Algorithm_ARRAYSIZE; i++) {
           if (PrecisionConfig::Algorithm_IsValid(i)) {
@@ -5349,7 +5360,8 @@ absl::StatusOr<PrecisionConfig::Algorithm> StringToAlgorithm(
 absl::StatusOr<CustomCallSchedule> StringToCustomCallSchedule(
     absl::string_view name) {
   static const absl::flat_hash_map<std::string, CustomCallSchedule>* map = [] {
-    static auto* map = new absl::flat_hash_map<std::string, CustomCallSchedule>;
+    static auto* const map =
+        new absl::flat_hash_map<std::string, CustomCallSchedule>;
     for (int i = 0; i < CustomCallSchedule_ARRAYSIZE; i++) {
       if (CustomCallSchedule_IsValid(i)) {
         auto value = static_cast<CustomCallSchedule>(i);
@@ -5369,7 +5381,7 @@ absl::StatusOr<CustomCallApiVersion> StringToCustomCallApiVersion(
     absl::string_view name) {
   static const absl::flat_hash_map<std::string, CustomCallApiVersion>* map =
       [] {
-        static auto* map =
+        static auto* const map =
             new absl::flat_hash_map<std::string, CustomCallApiVersion>;
         for (int i = 0; i < CustomCallApiVersion_ARRAYSIZE; i++) {
           if (CustomCallApiVersion_IsValid(i)) {

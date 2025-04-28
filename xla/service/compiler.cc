@@ -86,21 +86,21 @@ Compiler::CompileAheadOfTime(
 
 /* static */ absl::flat_hash_map<se::Platform::Id, Compiler::CompilerFactory>*
 Compiler::GetPlatformCompilerFactories() {
-  static auto* r = new absl::flat_hash_map<se::Platform::Id, CompilerFactory>;
+  static auto* const r =
+      new absl::flat_hash_map<se::Platform::Id, CompilerFactory>;
   return r;
 }
 
 /* static */
 absl::flat_hash_map<se::Platform::Id, std::unique_ptr<Compiler>>*
 Compiler::GetPlatformCompilers() {
-  static auto* r =
+  static auto* const r =
       new absl::flat_hash_map<se::Platform::Id, std::unique_ptr<Compiler>>;
   return r;
 }
 
 /* static */ void Compiler::RegisterCompilerFactory(
-    se::Platform::Id platform_id,
-    std::function<std::unique_ptr<Compiler>()> compiler_factory) {
+    se::Platform::Id platform_id, CompilerFactory compiler_factory) {
   absl::MutexLock lock(&platform_compiler_mutex_);
   auto* factories = GetPlatformCompilerFactories();
   CHECK(factories->find(platform_id) == factories->end())

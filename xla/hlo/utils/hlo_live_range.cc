@@ -26,6 +26,8 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -321,9 +323,10 @@ std::string HloLiveRange::ToString() const {
     auto it = buffer_live_ranges_.find(value);
     if (it != buffer_live_ranges_.end()) {
       if (it->second.start <= peak_moment && peak_moment <= it->second.end) {
-        int64_t bytes = ShapeUtil::ByteSizeOf(value->instruction()->shape(), 8);
-        absl::StrAppendFormat(&output, "    %s: %lld bytes\n",
-                              value->instruction()->name(), bytes);
+        int64_t bytes = ShapeUtil::ByteSizeOf(value->shape(), 8);
+        absl::StrAppendFormat(&output, "    %s%s: %lld bytes\n",
+                              value->instruction()->name(),
+                              value->index().ToString(), bytes);
       }
     }
   }

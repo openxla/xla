@@ -283,6 +283,18 @@ static xla::FftType Convert_fft_type(mlir::mhlo::FftType fft_type) {
   return fft_type_enum;
 }
 
+// Converts StringRef to xla FftType enum
+static xla::FftType Convert_fft_type(mlir::stablehlo::FftType fft_type) {
+  xla::FftType fft_type_enum;
+  // Illegal fft_type string would be caught by the verifier, so 'FftType_Parse'
+  // call below should never return false.
+  if (!FftType_Parse(std::string(mlir::stablehlo::stringifyFftType(fft_type)),
+                     &fft_type_enum))
+    return xla::FftType::FFT;
+
+  return fft_type_enum;
+}
+
 static std::vector<std::pair<int64_t, int64_t>> Convert_padding(
     std::optional<mlir::DenseIntElementsAttr> padding) {
   return xla::ConvertNx2Attribute(padding).value();
@@ -351,6 +363,13 @@ static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
       .value();
 }
 
+// Converts StringRef to xla Transpose enum.
+static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
+    mlir::stablehlo::Transpose transpose) {
+  return xla::ConvertTranspose(mlir::stablehlo::stringifyTranspose(transpose))
+      .value();
+}
+
 static xla::Layout ExtractLayout(
     mlir::Operation* op, int rank,
     llvm::StringRef attr_name = kDefaultLayoutAttrName) {
@@ -406,6 +425,7 @@ I64_ARRAY_ATTR_TO_VECTOR(broadcast_sizes);
 I64_ELEMENTS_ATTR_TO_VECTOR(broadcast_dimensions);
 I64_ARRAY_ATTR_TO_VECTOR(broadcast_dimensions);
 I64_ELEMENTS_ATTR_TO_VECTOR(permutation);
+I64_ARRAY_ATTR_TO_VECTOR(permutation);
 I64_ELEMENTS_ATTR_TO_VECTOR(start_indices);
 I64_ARRAY_ATTR_TO_VECTOR(start_indices);
 I64_ELEMENTS_ATTR_TO_VECTOR(limit_indices);
@@ -415,7 +435,9 @@ I64_ARRAY_ATTR_TO_VECTOR(strides);
 I64_ELEMENTS_ATTR_TO_VECTOR(slice_sizes);
 I64_ARRAY_ATTR_TO_VECTOR(slice_sizes);
 I64_ELEMENTS_ATTR_TO_VECTOR(fft_length);
+I64_ARRAY_ATTR_TO_VECTOR(fft_length);
 I64_ELEMENTS_ATTR_TO_VECTOR(dimensions);
+I64_ARRAY_ATTR_TO_VECTOR(dimensions);
 I64_ELEMENTS_ATTR_TO_VECTOR(window_strides);
 I64_ARRAY_ATTR_TO_VECTOR(window_strides);
 I64_ELEMENTS_ATTR_TO_VECTOR(lhs_dilation);
@@ -575,6 +597,17 @@ std::optional<xla::ChannelHandle> Convert_channel_handle(
   return Convert_channel_handle(attr.value());
 }
 
+std::optional<xla::ChannelHandle> Convert_channel_handle(
+    const std::optional<mlir::stablehlo::ChannelHandleAttr> attr) {
+  if (!attr.has_value()) return std::nullopt;
+
+  xla::ChannelHandle channel_handle;
+  channel_handle.set_handle(attr->getHandle());
+  channel_handle.set_type(
+      static_cast<xla::ChannelHandle::ChannelType>(attr->getType()));
+  return channel_handle;
+}
+
 // Converts the comparison_direction string attribute into the XLA enum. The
 // string is assumed to correspond to exactly one of the allowed strings
 // representing the enum. This should have been checked in the op verify method.
@@ -584,8 +617,8 @@ static xla::ComparisonDirection Convert_comparison_direction(
       .value();
 }
 
-static xla::GatherDimensionNumbers Convert_dimension_numbers(
-    mlir::mhlo::GatherDimensionNumbersAttr input) {
+template <typename T>
+static xla::GatherDimensionNumbers Convert_dimension_numbers(T input) {
   xla::GatherDimensionNumbers output;
 
   auto offset_dims = input.getOffsetDims();
@@ -616,6 +649,12 @@ static xla::GatherDimensionNumbers Convert_dimension_numbers(
 
   output.set_index_vector_dim(input.getIndexVectorDim());
   return output;
+}
+
+static xla::GatherDimensionNumbers Convert_dimension_numbers(
+    mlir::mhlo::GatherDimensionNumbersAttr input) {
+  return Convert_dimension_numbers<mlir::mhlo::GatherDimensionNumbersAttr>(
+      input);
 }
 
 static xla::ScatterDimensionNumbers Convert_scatter_dimension_numbers(
@@ -1246,6 +1285,74 @@ LogicalResult ExportXlaOp(TanOp op, OpLoweringContext ctx) {
   auto xla_result = xla::Tan(Unwrap(arg), result_accuracy);
   value_map[result] = xla_result;
   return mlir::success();
+}
+
+LogicalResult ExportXlaOp(SubtractOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  auto result = op.getResult();
+  xla::XlaOp lhs;
+  if (failed(GetXlaOp(*op.getODSOperands(0).begin(), value_map, &lhs, op)))
+    return mlir::failure();
+
+  xla::XlaOp rhs;
+  if (failed(GetXlaOp(*op.getODSOperands(1).begin(), value_map, &rhs, op)))
+    return mlir::failure();
+
+  auto xla_result = xla::Sub(Unwrap(lhs), Unwrap(rhs));
+  value_map[result] = xla_result;
+  return mlir::success();
+}
+
+LogicalResult ExportXlaOp(AllGatherOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+
+  SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op.getOperation(), op.getOperands(), ctx, operands)))
+    return op.emitOpError("failed to get tuple");
+
+  mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(op.getOperation());
+  if (failed(shape_or)) return op.emitOpError("failed to extract XLA shape");
+
+  auto all_gather_dim = op.getAllGatherDim();
+  int64_t shard_count = 0;
+
+  for (const auto& indexed_pair :
+       llvm::enumerate(llvm::zip(op.getOperandTypes(), op.getResultTypes()))) {
+    auto [operand_type, result_type] = indexed_pair.value();
+    TensorType operand_ttype = mlir::cast<TensorType>(operand_type);
+    TensorType result_ttype = mlir::cast<TensorType>(result_type);
+    if (!operand_ttype || !result_ttype)
+      return op.emitOpError("operands/results must be TensorTypes");
+
+    if (!operand_ttype.hasStaticShape() || !result_ttype.hasStaticShape())
+      return op.emitOpError("operands/results must have static shapes");
+
+    if (indexed_pair.index() == 0) {
+      shard_count = result_ttype.getDimSize(all_gather_dim) /
+                    operand_ttype.getDimSize(all_gather_dim);
+    }
+  }
+
+  if (shape_or->IsTuple()) {
+    std::optional<xla::Layout> layout = std::nullopt;
+    if (shape_or->has_layout()) layout = shape_or->layout();
+
+    auto tuple = xla::AllGatherTuple(
+        operands, all_gather_dim, shard_count,
+        Convert_replica_groups(op.getReplicaGroups()),
+        Convert_channel_handle(op.getChannelHandle()), layout,
+        Convert_use_global_device_ids(op.getUseGlobalDeviceIds()));
+    BuildGetTupleElementsForTupleResults(op, tuple, ctx);
+    return success();
+  }
+
+  value_map[op->getResults()[0]] = xla::AllGather(
+      operands[0], all_gather_dim, shard_count,
+      Convert_replica_groups(op.getReplicaGroups()),
+      Convert_channel_handle(op.getChannelHandle()), std::nullopt,
+      Convert_use_global_device_ids(op.getUseGlobalDeviceIds()));
+
+  return success();
 }
 
 }  // namespace

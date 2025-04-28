@@ -21,7 +21,9 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -34,12 +36,14 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/client_library_test_runner_utils.h"
 #include "xla/tests/hlo_runner_agnostic_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/bitmap.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -101,9 +105,14 @@ class ClientLibraryTestRunnerMixin : public T {
       *execution_options.mutable_shape_with_output_layout() =
           shape_with_output_layout->ToProto();
     }
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<HloModule> module,
-        BuildAndVerifyHloModule(computation, &execution_options));
+    std::vector<const Shape*> argument_shapes;
+    argument_shapes.reserve(arguments.size());
+    for (const Literal* argument : arguments) {
+      argument_shapes.push_back(&argument->shape());
+    }
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                        BuildAndVerifyHloModule(computation, argument_shapes,
+                                                &execution_options));
     return this->Execute(std::move(module), arguments);
   }
 
@@ -136,9 +145,15 @@ class ClientLibraryTestRunnerMixin : public T {
   void ComputeAndCompare(XlaBuilder* const builder,
                          const absl::Span<const Literal* const> arguments,
                          const std::optional<ErrorSpec> error = std::nullopt) {
+    std::vector<const Shape*> argument_shapes;
+    argument_shapes.reserve(arguments.size());
+    for (const Literal* argument : arguments) {
+      argument_shapes.push_back(&argument->shape());
+    }
     TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder->Build());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            BuildAndVerifyHloModule(computation));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        BuildAndVerifyHloModule(computation, argument_shapes));
     EXPECT_TRUE(this->RunAndCompare(std::move(module), arguments, error));
   }
 
@@ -262,6 +277,20 @@ class ClientLibraryTestRunnerMixin : public T {
     ComputeAndCompareLiteral(builder, expected_literal, arguments, error);
   }
 
+  // Compare with string.
+  // Side effect: EXPECT
+  void ComputeAndCompareR1U8(XlaBuilder* builder,
+                             const absl::string_view expected,
+                             absl::Span<const Literal* const> arguments) {
+    const absl::StatusOr<Literal> actual =
+        ExecuteAndTransfer(builder, arguments);
+    TF_EXPECT_OK(actual.status());
+    if (!actual.ok()) {
+      return;
+    }
+    EXPECT_EQ(actual->GetR1U8AsString(), expected);
+  }
+
   XlaComputation CreateScalarMax() { return xla::CreateScalarMax(test_type_); }
 
   Literal CreateParameterAndTransferLiteral(const int64_t parameter_number,
@@ -347,6 +376,9 @@ class ClientLibraryTestRunnerMixin : public T {
     opts->set_xla_gpu_enable_fast_min_max(!disabled);
   }
 
+  void SetSeed(const uint64_t seed) { execution_options_.set_seed(seed); }
+  void ClearSeed() { execution_options_.clear_seed(); }
+
   // Provides mutable access to the execution DebugOptions field; this lets
   // tests tweak the options that will be used to compile/run the graph.
   DebugOptions* mutable_debug_options() {
@@ -356,18 +388,20 @@ class ClientLibraryTestRunnerMixin : public T {
  private:
   absl::StatusOr<std::unique_ptr<HloModule>> BuildAndVerifyHloModule(
       const XlaComputation& computation,
+      absl::Span<const Shape* const> argument_shapes,
       const ExecutionOptions* execution_options = nullptr) const {
     if (execution_options == nullptr) {
       execution_options = &execution_options_;
     }
+    TF_ASSIGN_OR_RETURN(const ProgramShape program_shape,
+                        computation.GetProgramShape());
     TF_ASSIGN_OR_RETURN(
-        HloModuleConfig module_config,
-        HloModule::CreateModuleConfigFromProto(
-            computation.proto(), execution_options->debug_options(),
-            execution_options));
+        std::unique_ptr<HloModuleConfig> module_config,
+        CreateModuleConfig(program_shape, argument_shapes, execution_options,
+                           /*default_num_replicas=*/1));
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<HloModule> module,
-        HloModule::CreateFromProto(computation.proto(), module_config));
+        HloModule::CreateFromProto(computation.proto(), *module_config));
     TF_RETURN_IF_ERROR(this->verifier().Run(module.get()).status());
     return module;
   }

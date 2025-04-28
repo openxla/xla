@@ -23,7 +23,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
-        "@tsl//tsl/platform:mutex",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:thread_annotations",
     ],
 )

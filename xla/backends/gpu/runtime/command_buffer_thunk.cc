@@ -55,7 +55,7 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     : command_buffer(std::move(command_buffer)) {}
 
 CommandBufferThunk::CommandBufferThunk(
-    CommandBufferCmdSequence commands, ThunkInfo thunk_info,
+    CommandBufferCmdExecutor commands, ThunkInfo thunk_info,
     std::unique_ptr<SequentialThunk> thunks,
     bool enable_command_buffers_during_profiling)
     : Thunk(Thunk::kCommandBuffer, std::move(thunk_info)),
@@ -81,7 +81,7 @@ CommandBufferThunk::CommandBufferThunk(
 }
 
 bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
-    const CommandBufferCmdSequence& commands,
+    const CommandBufferCmdExecutor& commands,
     const Thunk::ExecuteParams& params) {
   if (commands.force_update()) {
     return true;
@@ -296,7 +296,7 @@ struct CommandBufferThunk::GlobalState {
 };
 
 CommandBufferThunk::GlobalState* CommandBufferThunk::GetGlobalState() {
-  static auto* global_state = new GlobalState();
+  static auto* const global_state = new GlobalState();
   return global_state;
 }
 

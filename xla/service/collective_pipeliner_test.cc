@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/scheduling_annotations_util.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -58,7 +58,7 @@ using ::testing::_;
 using ::tsl::testing::IsOkAndHolds;
 namespace op = xla::testing::opcode_matchers;
 
-class CollectivePipelinerTest : public HloTestBase {
+class CollectivePipelinerTest : public HloHardwareIndependentTestBase {
  public:
   CollectivePipelinerTest() {
     const int64_t kNumReplicas = 4;
@@ -586,7 +586,7 @@ ENTRY entry {
   XLA_VLOG_LINES(1, module->ToString());
   HloInstruction* while_instr =
       FindInstruction(module.get(), HloOpcode::kWhile);
-  EXPECT_EQ(while_instr->shape().tuple_shapes_size(), 5);
+  EXPECT_EQ(while_instr->shape().tuple_shapes().size(), 5);
 }
 
 TEST_F(CollectivePipelinerTest, TransformIncrementIndexByOneNotFirstIdx) {
@@ -3253,7 +3253,10 @@ while_body {
   dynamic-slice.99 = bf16[1,8,128] dynamic-slice(get-tuple-element.35, select.1348, constant.2561, constant.2561), dynamic_slice_sizes={1,8,128}
   mul = bf16[1,8,128] multiply(dynamic-slice.99, dynamic-slice.99)
   ar.1 = bf16[1,8,128] all-reduce(mul), replica_groups={}, to_apply=add, channel_id=1
-  b.1 = bf16[1,8,128,32] broadcast(ar.1), dimensions={0,1,2}
+  slice = bf16[1,8,120] slice(ar.1), slice={[0:1], [0:8], [0:120]}
+  constant.2563 = bf16[] constant(5.0)
+  pad = bf16[1,8,128] pad(slice, constant.2563), padding=0_0x0_0x0_8
+  b.1 = bf16[1,8,128,32] broadcast(pad), dimensions={0,1,2}
   constant = bf16[] constant(0)
   reduce = bf16[1,8,128] reduce(b.1, constant), dimensions={3}, to_apply=add.1
   dynamic-update-slice.35 = bf16[3,8,128] dynamic-update-slice(get-tuple-element.395, reduce, select.1348, constant.2561, constant.2561)

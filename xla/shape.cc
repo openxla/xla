@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -83,28 +84,35 @@ Shape::Shape(std::vector<Shape> tuple_shapes) {
 Shape::Shape(const ShapeProto& shape_proto) {
   set_element_type(shape_proto.element_type());
   if (auto* const state = if_array_state()) {
-    state->dimensions.reserve(shape_proto.dimensions_size());
-    for (const int64_t dimension : shape_proto.dimensions()) {
-      add_dimensions(dimension);
-    }
+    const int num_dims = shape_proto.dimensions_size();
+    const int num_is_dynamic_dims = shape_proto.is_dynamic_dimension_size();
+    state->dimensions.reserve(num_dims);
+    state->dynamic_dimensions.reserve(num_dims);
     // A malformed proto may have different is_dynamic_dimension_size and
     // dimensions_size. Since C++ is evil, and we have no good way of bailing
     // out in a constructor, conservatively trim the is_dynamic_dimension size.
     // TODO(b/120111794): Make this a hard error when we have a factory method
     // instead of a constructor.
-    if (shape_proto.dimensions_size() !=
-        shape_proto.is_dynamic_dimension_size()) {
-      if (shape_proto.is_dynamic_dimension_size() != 0) {
+    if (num_dims != num_is_dynamic_dims) {
+      if (num_is_dynamic_dims != 0) {
         LOG(ERROR) << "Malformed shape proto: number of is_dynamic_dimension "
-                      "fields does not match number of dimension fields";
+                      "fields ("
+                   << num_is_dynamic_dims
+                   << ") does not match number of dimension fields ("
+                   << num_dims << ").";
       } else {
-        LOG(WARNING) << "Malformed shape proto: is_dynamic_dimension is empty";
+        LOG(WARNING) << "Malformed shape proto: is_dynamic_dimension is empty "
+                        "- assuming all dimensions are static.";
       }
     }
-    const int64_t num_dynamic_dimension_fields = std::min(
-        shape_proto.dimensions_size(), shape_proto.is_dynamic_dimension_size());
-    for (int i = 0; i < num_dynamic_dimension_fields; i++) {
-      state->dynamic_dimensions[i] = shape_proto.is_dynamic_dimension(i);
+    for (int i = 0; i < num_dims; ++i) {
+      const bool is_dynamic =
+          (i < num_is_dynamic_dims) && shape_proto.is_dynamic_dimension(i);
+      // We don't want to crash due to a malformed proto, so use
+      // UnsafeAddDimension. We expect that the caller will eventually call a
+      // validation routine that will detect the error in case the dimension
+      // value is invalid.
+      UnsafeAddDimension(shape_proto.dimensions(i), is_dynamic);
     }
   } else if (auto* const state = if_tuple_state()) {
     state->tuple_shapes.reserve(shape_proto.tuple_shapes_size());
@@ -136,7 +144,7 @@ void Shape::SetProto(ShapeProto& proto) const {
       proto.add_is_dynamic_dimension(dynamic);
     }
     if (state->layout.has_value()) {
-      state->layout->SetProto(*proto.mutable_layout());
+      *proto.mutable_layout() = state->layout->ToProto();
     }
   } else if (const auto* const state = if_tuple_state()) {
     proto.mutable_tuple_shapes()->Reserve(state->tuple_shapes.size());
@@ -175,6 +183,60 @@ bool Shape::AreAllLeavesIntegers() const {
     });
   }
   return primitive_util::IsIntegralType(element_type());
+}
+
+void Shape::add_dimensions(int64_t value, bool is_dynamic) {
+  if (value < 0) {
+    CHECK(is_dynamic) << "static dimension must have size >= 0 instead of "
+                      << value << ".";
+    CHECK_EQ(value, kUnboundedSize)
+        << "dynamic dimension must have size == kUnboundedSize or >= 0.";
+  }
+  UnsafeAddDimension(value, is_dynamic);
+}
+
+void Shape::set_dynamic_dimension(int dimension, bool is_dynamic) {
+  auto& state = array_state();
+  // Ensure that the dimension size is valid for the new dynamic-ness.
+  CheckDimensionSize(dimension, state.dimensions[dimension], is_dynamic);
+  state.dynamic_dimensions[dimension] = is_dynamic;
+}
+
+void Shape::set_dimensions(int index, int64_t size,
+                           std::optional<bool> is_dynamic) {
+  auto& state = array_state();
+  const bool dynamic =
+      is_dynamic.has_value() ? *is_dynamic : state.dynamic_dimensions[index];
+  CheckDimensionSize(index, size, dynamic);
+  state.dimensions[index] = size;
+  state.dynamic_dimensions[index] = dynamic;
+}
+
+void Shape::set_dimensions_minor(int index, int64_t size,
+                                 std::optional<bool> is_dynamic) {
+  const int physical_index = layout().minor_to_major(index);
+  set_dimensions(physical_index, size, is_dynamic);
+}
+
+void Shape::CheckDimensionSize(int dim_index, int64_t size, bool is_dynamic) {
+  if (is_dynamic) {
+    if (size < 0) {
+      CHECK_EQ(size, kUnboundedSize) << "the " << dim_index
+                                     << "-th dimension is dynamic and must "
+                                        "have size == kUnboundedSize or >= 0.";
+    }
+  } else {
+    CHECK_GE(size, 0) << "the " << dim_index
+                      << "-th dimension is static and must have size >= 0.";
+  }
+}
+
+void Shape::UnsafeAddDimension(int64_t value, bool is_dynamic) {
+  auto& state = array_state();
+  CHECK_EQ(state.dimensions.size(), state.dynamic_dimensions.size())
+      << "where the shape is " << ToString();
+  state.dimensions.push_back(value);
+  state.dynamic_dimensions.push_back(is_dynamic);
 }
 
 bool Shape::is_static() const {
@@ -228,9 +290,11 @@ void Shape::DeleteDimension(int64_t dim_to_delete) {
   }
 }
 
-void Shape::DeleteDimensions(absl::Span<const int64_t> sorted_dims_to_delete) {
+void Shape::DeleteDimensions(absl::Span<const int64_t> dims_to_delete) {
   auto& state = array_state();
-  CHECK(absl::c_is_sorted(sorted_dims_to_delete));
+  std::vector<int64_t> sorted_dims_to_delete(dims_to_delete.begin(),
+                                             dims_to_delete.end());
+  absl::c_sort(sorted_dims_to_delete);
   state.dimensions = RemoveElements(sorted_dims_to_delete, state.dimensions);
   state.dynamic_dimensions =
       RemoveElements(sorted_dims_to_delete, state.dynamic_dimensions);
@@ -405,8 +469,8 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
   if (!ignore_dynamic_dimension_) {
     for (int i = 0; i < lhs.dimensions().size(); ++i) {
       if (lhs.is_dynamic_dimension(i) != rhs.is_dynamic_dimension(i)) {
-        VLOG(3)
-            << "CompareShapes: lhs and rhs have different dynamic dimensions.";
+        VLOG(3) << "CompareShapes: lhs and rhs have different dynamic "
+                   "dimensions.";
         return false;
       }
     }
@@ -427,13 +491,21 @@ ProgramShape& ProgramShape::operator=(const ProgramShape&) = default;
 ProgramShape& ProgramShape::operator=(ProgramShape&&) = default;
 
 ProgramShape::ProgramShape(const ProgramShapeProto& program_shape_proto) {
-  for (const ShapeProto& shape_proto : program_shape_proto.parameters()) {
-    *add_parameters() = Shape(shape_proto);
+  const int num_params = program_shape_proto.parameters_size();
+  const int num_param_names = program_shape_proto.parameter_names_size();
+  if (num_params != num_param_names) {
+    LOG(ERROR) << "ProgramShapeProto has different numbers of parameters and "
+                  "parameter names: "
+               << num_params << " vs " << num_param_names;
+  }
+  parameters_.reserve(num_params);
+  parameter_names_.reserve(num_params);
+  for (int i = 0; i < num_params; ++i) {
+    const std::string& name =
+        i < num_param_names ? program_shape_proto.parameter_names(i) : "";
+    AddParameter(Shape(program_shape_proto.parameters(i)), name);
   }
   *mutable_result() = Shape(program_shape_proto.result());
-  for (const std::string& name : program_shape_proto.parameter_names()) {
-    add_parameter_names(name);
-  }
 }
 
 ProgramShapeProto ProgramShape::ToProto() const {

@@ -1831,19 +1831,18 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   if (!annotations.empty()) {
     VLOG(2) << "Scheduled node is a frontier: " << n->GetInstr().name();
     for (int64_t annotation : annotations) {
-      sched_state->num_scheduled_successors_for_annotation[annotation]++;
-      VLOG(2)
-          << "Annotation: " << annotation << " scheduled num successors: "
-          << sched_state->num_scheduled_successors_for_annotation[annotation]
-          << " total num successors: "
-          << annotation_tracker_->GetNumSuccessors(n->GetInstr().parent(),
-                                                   annotation);
+      DefaultSchedulerCore::SchedulingState::NumSuccessorsForAnnotation&
+          num_successors_for_annotation =
+              sched_state->num_successors_for_annotation[annotation];
+      num_successors_for_annotation.scheduled++;
+      VLOG(2) << "Annotation: " << annotation << " scheduled num successors: "
+              << num_successors_for_annotation.scheduled
+              << " total num successors: " << num_successors_for_annotation.all;
       // LegalizeSchedulingAnnotations pass should have made sure that we will
       // eventually reach a state where all successors of the annotation are
       // scheduled.
-      if (annotation_tracker_->GetNumSuccessors(n->GetInstr().parent(),
-                                                annotation) ==
-          sched_state->num_scheduled_successors_for_annotation[annotation]) {
+      if (num_successors_for_annotation.scheduled ==
+          num_successors_for_annotation.all) {
         sched_state->ready_annotations.push_back(annotation);
       }
     }
@@ -2076,12 +2075,18 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   VLOG(10)
       << "Memory peak before schedule: "
       << sched_state->memory_pressure_tracker->pressure_state().memory_peak;
+
   sched_state->memory_pressure_tracker->UpdateBuffers(&n->GetInstr());
-  VLOG(10) << "Memory pressure after schedule: "
-           << sched_state->memory_pressure_tracker->memory_usage();
-  VLOG(10)
-      << "Memory peak after schedule: "
-      << sched_state->memory_pressure_tracker->pressure_state().memory_peak;
+  int64_t memory_after = sched_state->memory_pressure_tracker->memory_usage();
+  int64_t memory_peak =
+      sched_state->memory_pressure_tracker->pressure_state().memory_peak;
+
+  if (schedule_proto_.has_value()) {
+    sched_state->memory_trace[&n->GetInstr()] = {memory_after, memory_peak};
+  }
+
+  VLOG(10) << "Memory pressure after schedule: " << memory_after;
+  VLOG(10) << "Memory peak after schedule: " << memory_peak;
   return current_time;
 }
 
@@ -2468,6 +2473,28 @@ DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
   return num_resources_needed;
 }
 
+int64_t DefaultSchedulerCore::GetNumSuccessorsForAnnotation(
+    const SchedulingState& sched_state, int64_t annotation) const {
+  const HloComputation* comp =
+      sched_state.sched_graph.GetOriginalInstrList()[0]->parent();
+  int64_t num_successors = 0;
+  std::vector<const HloInstruction*> instrs =
+      annotation_tracker_->GetInstructions(comp, annotation);
+  absl::flat_hash_set<const HloInstruction*> seen_instrs(instrs.begin(),
+                                                         instrs.end());
+  for (const HloInstruction* instr : instrs) {
+    for (const HloEdge& edge :
+         sched_state.sched_graph.GetNode(instr).GetSuccessors()) {
+      const HloGraphNode& user = edge.Target();
+      if (seen_instrs.insert(&user.GetInstr()).second &&
+          (user.GetAnnotation() != annotation)) {
+        ++num_successors;
+      }
+    }
+  }
+  return num_successors;
+}
+
 bool DefaultSchedulerCore::SchedulingAnnotationCrossesOverlapLimit(
     const SchedulingState& sched_state, int64_t annotation) {
   absl::flat_hash_map<int64_t, int64_t> num_resources_needed =
@@ -2496,19 +2523,25 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
       latency_estimator_, async_tracker_, &memory_pressure_tracker, config_);
   async_tracker_->PostProcessScheduleGraph(&sched_state.sched_graph,
                                            latency_estimator_);
+  sched_state.sched_graph.InitializeGraphAnalysis(async_tracker_);
+  VLOG(5) << "Just built graph:";
+
   if (annotation_tracker_->HasAnnotations(computation)) {
     sched_state.sched_graph.AnnotateGraph(annotation_tracker_.get());
     for (int64_t annotation :
          annotation_tracker_->GetAnnotations(computation)) {
-      if (annotation_tracker_->GetSuccessors(computation, annotation).empty()) {
+      int64_t num_successors =
+          GetNumSuccessorsForAnnotation(sched_state, annotation);
+      sched_state.num_successors_for_annotation[annotation].all =
+          num_successors;
+      if (num_successors == 0) {
         VLOG(3) << "Annotation " << annotation
                 << " does not have any successors, is ready to be scheduled";
         sched_state.ready_annotations.push_back(annotation);
       }
     }
   }
-  sched_state.sched_graph.InitializeGraphAnalysis(async_tracker_);
-  VLOG(5) << "Just built graph:";
+
   XLA_VLOG_LINES(5, sched_state.sched_graph.ToString(async_tracker_));
   async_tracker_->SetConcurrentResourceLimits(
       sched_state.max_concurrent_resource);
@@ -2593,7 +2626,7 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
 
   if (schedule_proto_.has_value()) {
     *schedule_proto_->add_computation_schedules() = ComputationScheduleToProto(
-        computation, sched_state.sched_graph, *latency_estimator_,
+        computation, sched_state, *latency_estimator_,
         sched_state.new_sequence_reversed);
   }
   return std::move(sched_state.new_sequence_reversed);
@@ -2601,9 +2634,10 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
 
 ScheduleProto::ComputationScheduleProto
 DefaultSchedulerCore::ComputationScheduleToProto(
-    const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+    const HloComputation* computation, const SchedulingState& sched_state,
     const LatencyEstimator& estimator,
     const std::vector<HloInstruction*>& instructions) {
+  const HloScheduleGraph& schedule_graph = sched_state.sched_graph;
   ScheduleProto::ComputationScheduleProto proto;
   proto.set_computation_id(computation->unique_id());
   proto.set_cycles_per_microsecond(estimator.CyclesPerMicrosecond());
@@ -2624,6 +2658,12 @@ DefaultSchedulerCore::ComputationScheduleToProto(
     instr_msg->set_id(instr->unique_id());
     instr_msg->set_start_timestamp_cycles(start_time);
     instr_msg->set_end_timestamp_cycles(end_time);
+
+    auto it = sched_state.memory_trace.find(instr);
+    if (it != sched_state.memory_trace.end()) {
+      instr_msg->set_memory_usage_after(it->second.first);
+      instr_msg->set_peak_memory_after(it->second.second);
+    }
   }
   return proto;
 }
@@ -2899,15 +2939,16 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
       saved_schedules[computation] = std::move(new_schedule);
     }
   }
-  LOG(INFO) << "LatencyHidingScheduler current memory usage: "
+  LOG(INFO) << "[" << name() << "]"
+            << " LatencyHidingScheduler current memory usage: "
             << scheduler_core_->GetMemoryPeak()
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
   for (HloComputation* computation : computations_to_schedule) {
-    VLOG(1) << "Statistics before scheduling:";
+    VLOG(1) << "[" << name() << "] Statistics before scheduling:";
     LogScheduleStatistics(computation);
     module->schedule().set_sequence(
         computation, absl::MakeConstSpan(saved_schedules[computation]));
-    VLOG(1) << "Statistics after scheduling:";
+    VLOG(1) << "[" << name() << "] Statistics after scheduling:";
     LogScheduleStatistics(computation);
   }
   if (debug_options.xla_dump_latency_hiding_schedule()) {
