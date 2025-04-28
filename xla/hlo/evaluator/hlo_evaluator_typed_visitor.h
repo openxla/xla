@@ -1119,8 +1119,8 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
 
     auto is_default_layout = [](const HloInstruction* op) {
       return !op->shape().has_layout() ||
-             !LayoutUtil::Equal(op->shape().layout(),
-                                LayoutUtil::GetDefaultLayoutForR2());
+             LayoutUtil::Equal(op->shape().layout(),
+                               LayoutUtil::GetDefaultLayoutForR2());
     };
 
     // The fast path is for a simple rank 2 dot with default layout operands.
