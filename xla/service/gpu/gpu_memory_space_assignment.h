@@ -25,12 +25,51 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 
 namespace xla {
 namespace gpu {
 
 inline constexpr int64_t kCollectiveMemorySpaceColor = 1;
 inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
+
+inline bool IsCollectiveOp(const HloValue* alias) {
+  static const auto* kSupportedOpcodes = new absl::flat_hash_set<HloOpcode>{
+      HloOpcode::kAllReduce,
+      HloOpcode::kAllReduceStart,
+      HloOpcode::kAllReduceDone,
+      HloOpcode::kAllGather,
+      HloOpcode::kAllGatherStart,
+      HloOpcode::kAllGatherDone,
+      HloOpcode::kReduceScatter,
+      HloOpcode::kCollectivePermute,
+      HloOpcode::kCollectivePermuteStart,
+      HloOpcode::kCollectivePermuteDone,
+      HloOpcode::kAllToAll,
+  };
+  if (kSupportedOpcodes->contains(alias->instruction()->opcode())) return true;
+  return (alias->instruction()->opcode() == HloOpcode::kAsyncStart ||
+          alias->instruction()->opcode() == HloOpcode::kAsyncDone) &&
+         kSupportedOpcodes->contains(
+             alias->instruction()->async_wrapped_opcode());
+}
+
+inline bool IsNvshmemOp(const HloValue* alias) {
+  bool is_nvshmem_collective = false;
+  if (alias->instruction()->has_backend_config()) {
+    auto gpu_config = alias->instruction()->backend_config<GpuBackendConfig>();
+    if (!gpu_config.ok()) {
+      return false;
+    }
+    const CollectiveBackendConfig& backend_config =
+        gpu_config.value().collective_backend_config();
+    is_nvshmem_collective =
+        backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
+  }
+  return (alias->instruction()->opcode() == HloOpcode::kCustomCall &&
+          alias->instruction()->custom_call_target() == "mosaic_gpu") ||
+         is_nvshmem_collective;
+}
 
 // Set memory space to kCollectiveMemorySpaceColor for all allocations used by
 // all-reduce, all-gather, and reduce-scatter. This memory space maps to
