@@ -38,8 +38,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
 void AppendDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                              DebugOptions* debug_options = nullptr);
 
-// Parses the debug option flags from XLA_FLAGS environment variable.
+// Parses the debug option flags from XLA_FLAGS environment variable. The
+// global variable containing the debug options returned from
+// 'GetDebugOptionsFromFlags' is mutated by setting fields explicitly specified
+// in the environment variable.
 void ParseDebugOptionFlagsFromEnv();
+
+// Parse the debug options from debug_options file. Given a string containing
+// the textual form of a DebugOptions protobuf, parses it. The global variable
+// containing the debug options returned from 'GetDebugOptionsFromFlags' is
+// mutated by setting fields explicitly specified in the file.
+bool ParseFlagsFromDebugOptionsFile(absl::string_view filename);
+
+// Reset the flag values to default debug options ignoring flags.
+void ResetFlagValues();
 
 // Fetches a DebugOptions proto message from flags provided to the program.
 // Flags must be registered with the flags parser using AppendDebugOptionsFlags
