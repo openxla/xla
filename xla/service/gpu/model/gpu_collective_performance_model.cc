@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
@@ -68,39 +69,77 @@ enum class CollectiveAlgo {
   TREE,
 };
 
-// Table for max system bandwidths GB/s for using NCCL's low latency
-// algorithm. This is used for intra-node estimate.
-static constexpr std::array<double, 5> kLowLatencyMaxBandwidths = {
-    39.0 /* Volta */,      87.7 /* Ampere */,    141.0 /* Hopper */,
-    141.0 /* Blackwell */, 141.0 /* next-gen */,
+struct CudaBandwidthSettings {
+  // Table for max system bandwidths GB/s for using NCCL's low latency
+  // algorithm. This is used for intra-node estimate.
+  static constexpr std::array<double, 5> kLowLatencyMaxBandwidths = {
+      39.0 /* Volta */,      87.7 /* Ampere */,    141.0 /* Hopper */,
+      141.0 /* Blackwell */, 141.0 /* next-gen */,
+  };
+
+  // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
+  // single-node
+  static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
+      20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
+      36.7 /* Blackwell */, 36.7 /* next-gen */,
+  };
+
+  // Nvlink unidirectional bandwidth for different compute cap. Note this is per
+  // lane bandwidth.
+  static constexpr double kSm60NvlinkBandwidth = 18.0;
+  static constexpr double kSm70NvlinkBandwidth = 20.0;
+  static constexpr double kSm80NvlinkBandwidth = 20.0;
+  static constexpr double kSm90NvlinkBandwidth = 20.0;
+
+  // PCIE bandwidth for PCI Gen3 x16
+  static constexpr double kPciBandwidth = 12.0;
+
+  // Discount factor for ring algorithm
+  static constexpr double kRingAlgorithmDiscountFactor = 0.92;
+
+  // Maximum number of channels allowed by NCCL
+  static constexpr int64_t kMaxNumChannelsRing = 16;
+
+  // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
+  // launches 640 threads.
+  static constexpr int64_t kLL128NumThreads = 640;
 };
 
-// Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
-// single-node
-static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
-    20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
-    36.7 /* Blackwell */, 36.7 /* next-gen */,
+struct RocmBandwidthSettings {
+  // Table for max system bandwidths GB/s for using NCCL's low latency
+  // algorithm. This is used for intra-node estimate.
+  static constexpr std::array<double, 5> kLowLatencyMaxBandwidths = {
+      39.0 /* Volta */,      87.7 /* Ampere */,    141.0 /* Hopper */,
+      141.0 /* Blackwell */, 141.0 /* next-gen */,
+  };
+
+  // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
+  // single-node
+  static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
+      20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
+      36.7 /* Blackwell */, 36.7 /* next-gen */,
+  };
+
+  // Nvlink unidirectional bandwidth for different compute cap. Note this is per
+  // lane bandwidth.
+  static constexpr double kSm60NvlinkBandwidth = 18.0;
+  static constexpr double kSm70NvlinkBandwidth = 20.0;
+  static constexpr double kSm80NvlinkBandwidth = 20.0;
+  static constexpr double kSm90NvlinkBandwidth = 20.0;
+
+  // PCIE bandwidth for PCI Gen3 x16
+  static constexpr double kPciBandwidth = 12.0;
+
+  // Discount factor for ring algorithm
+  static constexpr double kRingAlgorithmDiscountFactor = 0.92;
+
+  // Maximum number of channels allowed by NCCL
+  static constexpr int64_t kMaxNumChannelsRing = 16;
+
+  // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
+  // launches 640 threads.
+  static constexpr int64_t kLL128NumThreads = 640;
 };
-
-// Nvlink unidirectional bandwidth for different compute cap. Note this is per
-// lane bandwidth.
-static constexpr double kSm60NvlinkBandwidth = 18.0;
-static constexpr double kSm70NvlinkBandwidth = 20.0;
-static constexpr double kSm80NvlinkBandwidth = 20.0;
-static constexpr double kSm90NvlinkBandwidth = 20.0;
-
-// PCIE bandwidth for PCI Gen3 x16
-static constexpr double kPciBandwidth = 12.0;
-
-// Discount factor for ring algorithm
-static constexpr double kRingAlgorithmDiscountFactor = 0.92;
-
-// Maximum number of channels allowed by NCCL
-static constexpr int64_t kMaxNumChannelsRing = 16;
-
-// ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
-// launches 640 threads.
-static constexpr int64_t kLL128NumThreads = 640;
 
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
     absl::Microseconds(5);
@@ -111,7 +150,7 @@ int64_t GetNcclMaxNumChannels(CollectiveAlgo algorithm) {
       // Tree and Ring algos share the same max channel number.
     case CollectiveAlgo::RING:
     case CollectiveAlgo::TREE:
-      max_nchannels = kMaxNumChannelsRing;
+      max_nchannels = CudaBandwidthSettings::kMaxNumChannelsRing;
       break;
   }
   const char* env = std::getenv("NCCL_MAX_NCHANNELS");
@@ -187,27 +226,28 @@ float GetMaxSysBwFromGpu(const se::RocmComputeCapability cc,
 }
 
 float GetNvlinkBw(se::RocmComputeCapability compute_capability) {
-  return kSm90NvlinkBandwidth;
+  return RocmBandwidthSettings::kSm90NvlinkBandwidth;
 }
 
 // Returns NVLink bw in GB/s
 float GetNvlinkBw(se::CudaComputeCapability compute_capability) {
   return compute_capability.IsAtLeast(se::CudaComputeCapability::kHopper)
-             ? kSm90NvlinkBandwidth
+             ? CudaBandwidthSettings::kSm90NvlinkBandwidth
          : compute_capability.IsAtLeast(se::CudaComputeCapability::kAmpere)
-             ? kSm80NvlinkBandwidth
+             ? CudaBandwidthSettings::kSm80NvlinkBandwidth
          : compute_capability.IsAtLeast(se::CudaComputeCapability::kVolta)
-             ? kSm70NvlinkBandwidth
+             ? CudaBandwidthSettings::kSm70NvlinkBandwidth
          : compute_capability.IsAtLeast(se::CudaComputeCapability::kPascal)
-             ? kSm60NvlinkBandwidth
-             : kSm80NvlinkBandwidth;
+             ? CudaBandwidthSettings::kSm60NvlinkBandwidth
+             : CudaBandwidthSettings::kSm80NvlinkBandwidth;
 }
 
-template <typename ComputeCapability>
+template <typename ComputeCapability, typename GpuBandwidthSettings>
 absl::Duration ComputeAllreduceTimeImpl(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
     const se::DeviceDescription& gpu_device_info,
-    const ComputeCapability& compute_cap) {
+    const ComputeCapability& compute_cap,
+    const GpuBandwidthSettings& bandwidth_settings) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
   absl::Duration total_time = kNcclKernelLaunchOverhead;
@@ -215,8 +255,8 @@ absl::Duration ComputeAllreduceTimeImpl(
   const auto& speeds = GetSpeeds(compute_cap);
 
   int speed_index = 0;
-  float max_sys_bw =
-      GetMaxSysBwFromGpu(compute_cap, kLowLatencyMaxBandwidths.data());
+  float max_sys_bw = GetMaxSysBwFromGpu(
+      compute_cap, bandwidth_settings.kLowLatencyMaxBandwidths.data());
 
   CHECK_GT(max_sys_bw, 0);
 
@@ -233,11 +273,14 @@ absl::Duration ComputeAllreduceTimeImpl(
   int64_t num_channels =
       std::max(min_nchannels, GetNcclMaxNumChannels(CollectiveAlgo::RING));
   int default_threads =
-      (bw_intra_node * num_channels <= kPciBandwidth) ? 256 : kLL128NumThreads;
+      (bw_intra_node * num_channels <= CudaBandwidthSettings::kPciBandwidth)
+          ? 256
+          : CudaBandwidthSettings::kLL128NumThreads;
 
   int warp_size = gpu_device_info.threads_per_warp();
-  int num_threads = GetNumThreads(warp_size, kLL128NumThreads / 4,
-                                  kLL128NumThreads, default_threads);
+  int num_threads =
+      GetNumThreads(warp_size, bandwidth_settings.kLL128NumThreads / 4,
+                    bandwidth_settings.kLL128NumThreads, default_threads);
 
   // Since channels are pipelined together, compute time will only occur as in a
   // single channel.
@@ -262,11 +305,12 @@ absl::Duration ComputeAllreduceTimeImpl(
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
-  double per_channel_ring_ll128_Bw =
-      GetMaxSysBwFromGpu(compute_cap, kPerChannelMaxRingLL128Bandwidths.data());
+  double per_channel_ring_ll128_Bw = GetMaxSysBwFromGpu(
+      compute_cap, bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
 
-  bus_bandwidth = std::min(bus_bandwidth * kRingAlgorithmDiscountFactor,
-                           num_channels * per_channel_ring_ll128_Bw);
+  bus_bandwidth =
+      std::min(bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
+               num_channels * per_channel_ring_ll128_Bw);
   double actual_bandwidth = bus_bandwidth * cost_analysis->ScalingRatio(instr);
 
   absl::Duration communication_time = absl::Milliseconds(
@@ -365,8 +409,15 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
   absl::Duration total_time = kNcclKernelLaunchOverhead;
   absl::Duration result;
   const auto visitor = [&](const auto& cc) {
-    result =
-        ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info, cc);
+    using compute_capability = std::remove_const_t<decltype(cc)>;
+    if constexpr (std::is_same_v<compute_capability,
+                                 stream_executor::CudaComputeCapability>) {
+      result = ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
+                                        cc, CudaBandwidthSettings{});
+    } else {
+      result = ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
+                                        cc, RocmBandwidthSettings{});
+    }
   };
 
   std::visit(visitor, gpu_device_info.gpu_compute_capability());
