@@ -1234,7 +1234,6 @@ TEST_F(CommandBufferSchedulingTest, AsyncDynamicMemcpyFusion) {
                             std::nullopt /* no change expected*/);
 }
 
-
 TEST_F(CommandBufferSchedulingTest, ReturnFalseWhenNoChange) {
   const char* hlo = R"(
     HloModule module, is_scheduled=true
