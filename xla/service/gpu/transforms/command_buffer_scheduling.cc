@@ -102,8 +102,8 @@ static bool IsNoOp(const HloInstruction* hlo) {
 // done operation is not part of the same command buffer, we would change the
 // execution semantics and create additional synchronization point.
 
-static bool IsAsyncStartOrDoneCommand(const HloInstruction* hlo,
-                                      const CommandBufferConfig& config) {
+static bool AsyncStartOrDoneCommandIsSupported(
+    const HloInstruction* hlo, const CommandBufferConfig& config) {
   CHECK(hlo->opcode() == HloOpcode::kAsyncStart ||
         hlo->opcode() == HloOpcode::kAsyncDone);
 
@@ -146,7 +146,7 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
   }
 
   if (HloPredicateIsOp<HloOpcode::kAsyncStart>(hlo)) {
-    return IsAsyncStartOrDoneCommand(hlo, config);
+    return AsyncStartOrDoneCommandIsSupported(hlo, config);
   }
 
   if (HloPredicateIsOp<HloOpcode::kReduceScatter, HloOpcode::kAllToAll>(hlo)) {
@@ -164,7 +164,7 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
   }
 
   if (HloPredicateIsOp<HloOpcode::kAsyncDone>(hlo)) {
-    return IsAsyncStartOrDoneCommand(hlo, config);
+    return AsyncStartOrDoneCommandIsSupported(hlo, config);
   }
 
   return false;
