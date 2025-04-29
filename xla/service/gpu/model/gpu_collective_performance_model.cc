@@ -63,7 +63,7 @@ const std::vector<double>& GetSpeeds(
 }
 
 // Different algorithms that can be used to perform the collective.
-enum CollectiveAlgo {
+enum class CollectiveAlgo {
   RING = 0,
   TREE,
 };
@@ -108,9 +108,9 @@ static constexpr absl::Duration kNcclKernelLaunchOverhead =
 int64_t GetNcclMaxNumChannels(CollectiveAlgo algorithm) {
   int64_t max_nchannels = 0;
   switch (algorithm) {
-    // Tree and Ring algos share the same max channel number.
-    case RING:
-    case TREE:
+      // Tree and Ring algos share the same max channel number.
+    case CollectiveAlgo::RING:
+    case CollectiveAlgo::TREE:
       max_nchannels = kMaxNumChannelsRing;
       break;
   }
@@ -127,9 +127,9 @@ int64_t GetNcclMaxNumChannels(CollectiveAlgo algorithm) {
 int64_t GetMinNumberOfChannels(CollectiveAlgo algorithm) {
   int64_t min_nchannels = 0;
   switch (algorithm) {
-    // Tree and Ring algos share the same min channel number.
-    case RING:
-    case TREE:
+      // Tree and Ring algos share the same min channel number.
+    case CollectiveAlgo::RING:
+    case CollectiveAlgo::TREE:
       min_nchannels = 1;
       break;
   }
