@@ -1339,6 +1339,66 @@ class FlashAttentionBMMScaleSegmentMaskSoftmaxBMM
   }
 };
 
+class FlashAttentionPagedAttention : public MultiHeadedAttentionTest {
+ protected:
+  const std::string                                  // NOLINT
+  GetModuleFlash_Attention_Paged_Attention_BF16() {  // NOLINT
+    const std::string hlo_text = R"(
+    HloModule jit_cudnn_attn, is_scheduled=true, entry_computation_layout={(bf16[1,128,2,128]{3,2,1,0}, bf16[1,128,2,128]{3,2,1,0})->bf16[1,128,2,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={fingerprint_before_lhs="38478931696ec7b03ee7a27161e4fae1"}
+
+    %wrapped_iota_computation () -> s32[1,1,2,1] {
+      ROOT %iota.3.1 = s32[1,1,2,1]{3,2,1,0} iota(), iota_dimension=2
+    }
+
+    ENTRY %main.11 (Arg_0.1: bf16[1,128,2,128], Arg_1.2: bf16[1,128,2,128]) -> bf16[1,128,2,128] {
+      %constant_3_0 = s32[1]{0} constant({128})
+      %Arg_1.2 = bf16[1,128,2,128]{3,2,1,0} parameter(1)
+      %Arg_0.1 = bf16[1,128,2,128]{3,2,1,0} parameter(0)
+      %bitcast.33.0 = bf16[2,64,2,128]{3,2,1,0} bitcast(%Arg_1.2)
+      %wrapped_iota = s32[1,1,2,1]{3,2,1,0} fusion(), kind=kLoop, calls=%wrapped_iota_computation
+      %custom-call.7 = (bf16[1,2,128,128]{3,1,2,0}, u8[0]{0}) custom-call(%Arg_0.1, %bitcast.33.0, %bitcast.33.0, %constant_3_0, %constant_3_0, /*index=5*/%wrapped_iota, %wrapped_iota), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[1,128,2,128]{3,2,1,0}, bf16[2,64,2,128]{3,2,1,0}, bf16[2,64,2,128]{3,2,1,0}, s32[1]{0}, s32[1]{0}, s32[1,1,2,1]{3,2,1,0}, s32[1,1,2,1]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["1", "2", "128", "64"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "is_flash_attention": true, "mask_type": "NO_MASK", "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "dropout_rate": 0, "seed": 42, "sliding_window_length": 0, "max_seg_per_batch": 1, "is_paged_attention": true}}
+      %get-tuple-element.8.0 = bf16[1,2,128,128]{3,1,2,0} get-tuple-element(%custom-call.7), index=0
+      ROOT %bitcast.11.0 = bf16[1,128,2,128]{3,2,1,0} bitcast(%get-tuple-element.8.0)
+    }
+  )";
+    return hlo_text;
+  }
+
+  const std::string                                            // NOLINT
+  GetModuleFlash_Attention_Paged_Attention_Reference_BF16() {  // NOLINT
+    const std::string hlo_text = R"(
+    HloModule jit_xla_attn, is_scheduled=true, entry_computation_layout={(bf16[1,128,2,128]{3,2,1,0}, bf16[1,128,2,128]{3,2,1,0})->bf16[1,128,2,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={fingerprint_before_lhs="2e4a32943e2d007d6896efc1ad690359"}
+
+    ENTRY %main.7 (Arg_0.1: bf16[1,128,2,128], Arg_1.2: bf16[1,128,2,128]) -> bf16[1,128,2,128] {
+      %Arg_1.2 = bf16[1,128,2,128]{3,2,1,0} parameter(1)
+      %Arg_0.1 = bf16[1,128,2,128]{3,2,1,0} parameter(0)
+      %custom-call.3 = (bf16[1,2,128,128]{3,1,2,0}, u8[256]{0}) custom-call(%Arg_0.1, %Arg_1.2, %Arg_1.2), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[1,128,2,128]{3,2,1,0}, bf16[1,128,2,128]{3,2,1,0}, bf16[1,128,2,128]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["1", "2", "128", "128"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "is_flash_attention": true, "mask_type": "NO_MASK", "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "dropout_rate": 0, "seed": 42, "sliding_window_length": 0, "max_seg_per_batch": 1, "is_paged_attention": false}}
+      %get-tuple-element.4.0 = bf16[1,2,128,128]{3,1,2,0} get-tuple-element(%custom-call.3), index=0
+      ROOT %bitcast.6.0 = bf16[1,128,2,128]{3,2,1,0} bitcast(%get-tuple-element.4.0)
+    }
+  )";
+    return hlo_text;
+  }
+
+  template <typename T>
+  void TestImpl_Flash_Attention_Paged_Attention() {
+    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+        se::dnn::VersionInfo(9, 5, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.5.0.";
+    }
+    XlaBuilder builder(TestName());
+    // Cudnn paged attention where kv is converted to kv blocks with paged table
+    std::string hlo_string =
+        GetModuleFlash_Attention_Paged_Attention_BF16();  // NOLINT
+    // Reference implementation is regular cudnn attention.
+    std::string hlo_string_ref =
+        GetModuleFlash_Attention_Paged_Attention_Reference_BF16();  // NOLINT
+    EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
+                                        ErrorSpec{1e-3, 1e-3}, false));
+  }
+};
+
 class FlashAttentionBMMScaleSoftmaxBMMF8 : public MultiHeadedAttentionTest {};
 
 class FlashAttentionBMMScaleSoftmaxDropoutBMM
@@ -1458,6 +1518,11 @@ XLA_TEST_F(FlashAttentionBMMScaleSegmentMaskSoftmaxBMM,
            Flash_Attention_Training_BMM1_SegmentMask_Softmax_BMM2_BF16) {
   TestImpl_Flash_Attention_Training_BMM1_SegmentMask_Softmax_BMM2<
       bfloat16>();  // NOLINT
+}
+
+// Paged Attention
+XLA_TEST_F(FlashAttentionPagedAttention, Flash_Attention_Paged_Attention_BF16) {
+  TestImpl_Flash_Attention_Paged_Attention<bfloat16>();
 }
 
 absl::string_view GetModuleFlashAttentionBMMScaleSoftmaxBMMCommonRef() {

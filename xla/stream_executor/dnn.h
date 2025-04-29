@@ -197,6 +197,8 @@ class MatmulTensorDescriptor {
 
   std::string ToString() const;
 
+  TensorDescriptor tensor() const { return tensor_; }
+
  protected:
   MatmulTensorDescriptor(TensorDescriptor tensor,
                          std::vector<int64_t> batch_dims,
