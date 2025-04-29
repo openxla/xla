@@ -117,6 +117,7 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
+	"gpu_amd_any",
         "gpu_b200",
     ],
     tags = [
