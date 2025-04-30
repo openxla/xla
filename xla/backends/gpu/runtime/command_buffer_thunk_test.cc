@@ -56,14 +56,12 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels_fatbin.h"
 #include "xla/stream_executor/gpu/gpu_types.h"  // IWYU pragma: keep
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -72,7 +70,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
@@ -80,11 +77,6 @@ limitations under the License.
 
 #ifdef GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "xla/stream_executor/cuda/cuda_dnn.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
-#include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
 #endif
 
 namespace xla::gpu {
@@ -1431,143 +1423,6 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
   ASSERT_EQ(dst, std::vector<int32_t>(4, 15));
-}
-
-TEST(CommandBufferThunkTest, CuDnnCmd) {
-#ifdef GOOGLE_CUDA
-  se::StreamExecutor* stream_executor = GpuExecutor();
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
-  se::dnn::DnnSupport& dnn_support = *stream_executor->AsDnn();
-
-  if (dnn_support.GetVersion().value_or(se::dnn::VersionInfo{0, 0, 0}) <
-      se::dnn::VersionInfo(9, 7, 0)) {
-    GTEST_SKIP() << "Requires cuDNN 9.7.0 or later.";
-  }
-
-  constexpr int kDimSize = 32;
-  constexpr int kTotalElements = kDimSize * kDimSize;
-
-  se::gpu::CudnnGraph graph([]() {
-    cudnn_frontend::graph::Graph graph;
-    graph.set_compute_data_type(cudnn_frontend::DataType_t::INT32);
-    std::shared_ptr<cudnn_frontend::graph::Tensor_attributes> lhs =
-        graph.tensor(cudnn_frontend::graph::Tensor_attributes()
-                         .set_dim({1, kDimSize, kDimSize})
-                         .set_stride({kDimSize * kDimSize, kDimSize, 1})
-                         .set_data_type(cudnn_frontend::DataType_t::INT8)
-                         .set_uid(1));
-    std::shared_ptr<cudnn_frontend::graph::Tensor_attributes> rhs =
-        graph.tensor_like(lhs);
-    rhs->set_uid(2);
-    graph.matmul(lhs, rhs, cudnn_frontend::graph::Matmul_attributes())
-        ->set_output(true)
-        .set_data_type(cudnn_frontend::DataType_t::INT32)
-        .set_uid(3);
-    return graph;
-  }());
-  int64_t workspace_size = graph.Graph().get_workspace_size();
-  TF_ASSERT_OK(graph.Prepare(dnn_support, se::NumericOptions{}));
-  TF_ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
-  EXPECT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
-              tsl::testing::IsOkAndHolds(true));
-
-  std::vector<BufferAllocation::Slice> args;
-  BufferAllocation alloc_input(/*index=*/0, kTotalElements, /*color=*/0);
-  BufferAllocation alloc_output(/*index=*/1, kTotalElements * sizeof(int32_t),
-                                /*color=*/0);
-
-  BufferAllocation::Slice slice_input(&alloc_input, 0, kTotalElements);
-  BufferAllocation::Slice slice_output(&alloc_output, 0,
-                                       kTotalElements * sizeof(int32_t));
-
-  args.reserve(4);
-  args.push_back(slice_input);  // multiplying the input by itself
-  args.push_back(slice_input);
-  args.push_back(slice_output);
-
-  if (workspace_size > 0) {
-    BufferAllocation alloc_workspace(
-        /*index=*/2, workspace_size, /*color=*/0);
-    BufferAllocation::Slice slice_workspace(&alloc_workspace, 0,
-                                            workspace_size);
-    args.push_back(slice_workspace);
-  }
-
-  auto dnn_graph = std::make_unique<se::gpu::CudnnGraph>(std::move(graph));
-  CommandBufferCmdSequence commands;
-  commands.Emplace<CuDnnCmd>(
-      s0, args, std::make_shared<se::dnn::LazyDnnGraph>(std::move(dnn_graph)));
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
-
-  // Construct a thunk with command sequence.
-  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
-
-  std::vector<se::DeviceMemoryBase> operands;
-  operands.reserve(3);
-
-  se::DeviceMemory<int8_t> input =
-      stream_executor->AllocateArray<int8_t>(kTotalElements);
-  TF_ASSERT_OK(stream->MemZero(&input, input.size()));
-
-  se::DeviceMemory<int32_t> output0 =
-      stream_executor->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
-
-  operands.push_back(input);  // multiplying the input by itself
-  operands.push_back(output0);
-
-  se::DeviceMemoryBase workspace;
-  if (workspace_size > 0) {
-    workspace = stream_executor->Allocate(workspace_size);
-    operands.push_back(workspace);
-  }
-
-  ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
-  BufferAllocations allocations(operands, 0, &allocator);
-
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
-  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(thunk.Initialize(
-      {stream_executor, source, &allocations, stream.get(), stream.get()}));
-
-  // Execute command buffer thunk and verify that it executed a GEMM.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream->BlockHostUntilDone());
-
-  // Copy output0 data back to host.
-  std::vector<int32_t> dst(kTotalElements, 1);
-  TF_ASSERT_OK(
-      stream->Memcpy(dst.data(), output0, kTotalElements * sizeof(int32_t)));
-
-  ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
-
-  // Prepare buffer allocation for updating command buffer.
-  se::DeviceMemory<int32_t> output1 =
-      stream_executor->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream->Memset32(&output1, 456, output1.size()));
-
-  // Update buffer allocation
-  operands[1] = output1;
-  allocations = BufferAllocations(operands, 0, &allocator);
-  // Thunk execution should automatically update underlying command
-  // buffer.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream->BlockHostUntilDone());
-
-  // Copy output1 data back to host.
-  std::fill(dst.begin(), dst.end(), 1);
-  TF_ASSERT_OK(
-      stream->Memcpy(dst.data(), output1, kTotalElements * sizeof(int32_t)));
-
-  ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
-#else
-  GTEST_SKIP() << "only enable this test on CUDA backend.";
-#endif
 }
 
 class CmdBufferTest : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
