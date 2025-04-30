@@ -366,6 +366,17 @@ struct InductionVariableFunctionalDependency {
   // to have no other transitive dependencies (except constants).
   const HloInstruction* derived_value;
 
+  // The dependency may be via multiple levels of intermediate calls. At each
+  // level, we need to know which parameters to evaluate, since not all of them
+  // may be relevant. The while loop's body is not included here, since the
+  // induction variable is implicitly the only dependency that is allowed.
+  // The size of the value is always the same as the number of parameters in the
+  // computation. We request a single element of inlined space, which will
+  // automatically pick the optimum value (16, usually).
+  absl::flat_hash_map<const HloComputation*,
+                      absl::InlinedVector<bool, 1 /* chosen automatically */>>
+      required_parameters;
+
   // The loop and its induction variable that the value depends on.
   const HloInstruction* loop;
   const HloInstruction* induction_var;
@@ -375,15 +386,11 @@ struct InductionVariableFunctionalDependency {
 // variable. This supports parameters that are inside call, async or fusion
 // instructions. The dependency can be through arbitrary non-side-effecting
 // instructions.
-// `call_stack` should contain the nested instructions that are ancestor of
-// `parameter`. For example, if it is a parameter of a fusion in a while loop,
-// it should contain the while loop as the first element and the fusion as the
-// second element.
+// Currently, this does not support nested while loops. Only dependencies on the
+// inner-most while loop will successfully be analyzed.
 // Requires `while_loop_trip_count_annotator` to have been run on the loop.
 std::optional<InductionVariableFunctionalDependency>
-ResolveFunctionalDependencyOnInductionVariable(
-    absl::Span<const HloInstruction* const> call_stack,
-    const HloInstruction* parameter);
+ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* parameter);
 
 }  // namespace gpu
 }  // namespace xla

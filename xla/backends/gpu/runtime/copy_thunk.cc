@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/container/node_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
@@ -208,16 +209,22 @@ absl::Status CopyDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
 
 namespace {
 
-absl::StatusOr<int64_t> EvaluateDynamicOffsets(
-    HloEvaluator& evaluator,
-    absl::Span<const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset>
-        offsets) {
-  int64_t offset_sum = 0;
-  for (const auto& offset : offsets) {
+class DynamicOffsetEvaluator {
+ public:
+  absl::StatusOr<int64_t> EvaluateOffset(
+      const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset);
+
+ private:
+  absl::node_hash_map<const HloInstruction*, Literal> known_values_;
+};
+
+absl::StatusOr<int64_t> DynamicOffsetEvaluator::EvaluateOffset(
+    const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset) {
+  // Set up the value of the induction variable, if it's not known yet.
+  if (!known_values_.contains(offset.induction_variable)) {
     TF_ASSIGN_OR_RETURN(
         auto config,
         offset.while_loop->backend_config<xla::WhileLoopBackendConfig>());
-
     TF_RET_CHECK(config.has_known_init_step());
     TF_ASSIGN_OR_RETURN(int64_t iteration,
                         WhileThunk::CurrentLoopIteration(offset.while_loop));
@@ -227,21 +234,102 @@ absl::StatusOr<int64_t> EvaluateDynamicOffsets(
     Literal induction_variable_literal(offset.induction_variable->shape());
     TF_RETURN_IF_ERROR(
         induction_variable_literal.SetIntegralAsS64({}, induction_variable));
-    TF_ASSIGN_OR_RETURN(Literal array_index_literal,
-                        evaluator.Evaluate(offset.offset, {}, true,
-                                           {{offset.induction_variable,
-                                             &induction_variable_literal}}));
+    known_values_[offset.induction_variable] =
+        std::move(induction_variable_literal);
+  }
 
-    std::optional<int64_t> array_index =
-        LiteralUtil::LiteralAsScalarInt64(array_index_literal);
-    if (!array_index) {
-      return absl::InternalError("Failed to evaluate offset");
+  // Construct the call stack, and evaluate missing intermediates on the way.
+  const HloComputation* current_computation = offset.offset->parent();
+  const HloComputation* while_body = offset.induction_variable->parent();
+  // Typically, there will be up to three items in the stack: 1) a fusion, 2)
+  // optionally an async-start, 3) optionally a command buffer.
+  // The while loop is not included.
+  absl::InlinedVector<HloInstruction*, 4> call_stack;
+  while (current_computation != while_body) {
+    VLOG(3) << "Current computation: " << current_computation->name();
+    auto callers = current_computation->caller_instructions();
+
+    // If there isn't a single caller, the thunk was not constructed correctly.
+    TF_RET_CHECK(callers.size() == 1);
+
+    call_stack.push_back(callers.front());
+    current_computation = callers.front()->parent();
+  }
+
+  // If we didn't arrive at the while body, the thunk was not constructed
+  // correctly.
+  TF_RET_CHECK(current_computation == while_body);
+
+  absl::flat_hash_map<const HloInstruction*, const LiteralBase*> substitutions;
+  substitutions[offset.induction_variable] =
+      &known_values_.at(offset.induction_variable);
+  HloEvaluator evaluator(/*max_loop_iterations=*/0);
+
+  // We can now compute the missing intermediates.
+  for (auto it = call_stack.rbegin(), e = call_stack.rend(); it != e; ++it) {
+    const HloInstruction* caller = *it;
+    VLOG(3) << "Evaluating required operands of caller " << caller->name()
+            << ".";
+    if (true || VLOG_IS_ON(3)) {
+      VLOG(3) << "Current substitutions:";
+      for (auto [instr, value] : substitutions) {
+        VLOG(3) << "  " << instr->name() << " -> " << value->ToString();
+      }
+    }
+    const HloComputation* callee = caller->called_computations().front();
+    absl::InlinedVector<bool, 1> required_parameters;
+    if (auto maybe_required = offset.required_parameters.find(callee);
+        maybe_required != offset.required_parameters.end()) {
+      required_parameters = maybe_required->second;
     }
 
-    int64_t clamped_index =
-        std::max<int64_t>(0, std::min(*array_index, offset.dimension_size - 1));
-    VLOG(3) << "Iteration index " << induction_variable
-            << " resulted in array index " << *array_index << ".";
+    absl::flat_hash_map<const HloInstruction*, const LiteralBase*>
+        next_substitutions;
+    for (int i = 0; i < required_parameters.size(); ++i) {
+      if (!required_parameters[i]) continue;
+
+      VLOG(3) << "Computing required parameter " << i << " of "
+              << callee->name();
+      auto* operand = caller->operand(i);
+      auto* parameter = callee->parameter_instruction(i);
+
+      if (!known_values_.contains(operand)) {
+        TF_ASSIGN_OR_RETURN(
+            known_values_[operand],
+            evaluator.Evaluate(operand, {}, true, substitutions));
+      }
+
+      next_substitutions[parameter] = &known_values_[operand];
+    }
+
+    std::swap(substitutions, next_substitutions);
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      auto array_index_literal,
+      evaluator.Evaluate(offset.offset, {}, true, substitutions));
+
+  std::optional<int64_t> array_index =
+      LiteralUtil::LiteralAsScalarInt64(array_index_literal);
+  if (!array_index) {
+    return absl::InternalError("Failed to evaluate offset");
+  }
+
+  int64_t clamped_index =
+      std::max<int64_t>(0, std::min(*array_index, offset.dimension_size - 1));
+  VLOG(3) << "Computed dynamic array index " << clamped_index << ".";
+
+  return clamped_index;
+}
+
+absl::StatusOr<int64_t> EvaluateDynamicOffsets(
+    absl::Span<const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset>
+        offsets) {
+  int64_t offset_sum = 0;
+  DynamicOffsetEvaluator evaluator;
+  for (const auto& offset : offsets) {
+    TF_ASSIGN_OR_RETURN(int64_t clamped_index,
+                        evaluator.EvaluateOffset(offset));
     offset_sum += clamped_index * offset.byte_stride;
   }
   return offset_sum;
@@ -265,15 +353,12 @@ absl::Status DynamicMemcpyThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::DeviceMemoryBase dst_data =
       params.buffer_allocations->GetDeviceAddress(destination_buffer_);
 
-  HloEvaluator evaluator(/*max_loop_iterations=*/0);
-  TF_ASSIGN_OR_RETURN(
-      int64_t src_offset,
-      EvaluateDynamicOffsets(evaluator, descriptor_.src_dynamic_offsets));
+  TF_ASSIGN_OR_RETURN(int64_t src_offset,
+                      EvaluateDynamicOffsets(descriptor_.src_dynamic_offsets));
   src_offset += descriptor_.src_byte_static_offset;
 
-  TF_ASSIGN_OR_RETURN(
-      int64_t dst_offset,
-      EvaluateDynamicOffsets(evaluator, descriptor_.dst_dynamic_offsets));
+  TF_ASSIGN_OR_RETURN(int64_t dst_offset,
+                      EvaluateDynamicOffsets(descriptor_.dst_dynamic_offsets));
   dst_offset += descriptor_.dst_byte_static_offset;
 
   auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);

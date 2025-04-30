@@ -1228,7 +1228,6 @@ TEST_F(IrEmissionUtilsTest, ResolveWhileLoopDependency) {
       module->GetComputationWithName("call_body")
           ->GetInstructionWithName("called_fusion");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
-      /*call_stack=*/{loop, call, called_fusion},
       module->GetComputationWithName("identity")->root_instruction());
 
   ASSERT_TRUE(result.has_value());
@@ -1252,7 +1251,6 @@ TEST_F(IrEmissionUtilsTest,
       module->GetComputationWithName("call_body")
           ->GetInstructionWithName("called_fusion");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
-      /*call_stack=*/{loop, call, called_fusion},
       module->GetComputationWithName("identity")->root_instruction());
 
   ASSERT_FALSE(result.has_value());
@@ -1268,7 +1266,6 @@ TEST_F(IrEmissionUtilsTest, ResolveWhileLoopDependencyWhileLoopNotInCallStack) {
       module->GetComputationWithName("call_body")
           ->GetInstructionWithName("called_fusion");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
-      /*call_stack=*/{call, called_fusion},
       module->GetComputationWithName("identity")->root_instruction());
 
   ASSERT_FALSE(result.has_value());
@@ -1286,7 +1283,6 @@ TEST_F(IrEmissionUtilsTest, ResolveWhileLoopDependencySideEffect) {
   const HloInstruction* called_fusion =
       while_body->GetInstructionWithName("not_functionally_dependent");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
-      /*call_stack=*/{loop, called_fusion},
       module->GetComputationWithName("identity2")->root_instruction());
 
   ASSERT_FALSE(result.has_value());
