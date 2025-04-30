@@ -36,6 +36,19 @@ limitations under the License.
 
 namespace xla {
 
+// This enum helps define the affinity that the communicator
+// spans.
+enum class CommAffinity {
+  kINVALID = -1,
+  // All ranks globally
+  kWORLD = 0,
+  // All ranks that share a particular communication space
+  kSHARED = 1,
+  // All ranks that locate on the same node
+  kNODE = 2,
+  kTOTAL_TEAMS_KIND = 3,
+};
+
 // Collective communicator defines the set of communicating XLA processes.
 //
 // Returned async value signals that the communicator has successfully

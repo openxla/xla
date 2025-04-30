@@ -161,6 +161,8 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
+    kNvshmemAllReduceStart,
+    kNvshmemAllReduceDone,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
