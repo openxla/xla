@@ -336,7 +336,6 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();  // NOLINT
     // reference cudnn fmha
@@ -352,7 +351,6 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();  // NOLINT
     std::string hlo_string_ref =
@@ -747,7 +745,6 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_BMM1_Bias_Softmax_BMM2_HloString_BF16();
     std::string hlo_string_ref =
@@ -762,7 +759,6 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_Bias_Softmax_BMM2_HloString_BF16();  // NOLINT
     std::string hlo_string_ref =
@@ -778,7 +774,6 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
       GTEST_SKIP() << "Flash Attention cross attention requires "
                       "cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention_HloString_BF16();  // NOLINT
     std::string hlo_string_ref =
@@ -796,7 +791,6 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
       GTEST_SKIP()
           << "Flash Attention dbias requires cuDNN >= 9.0.0 and Hopper arch.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_BMM1_Bias_Softmax_BMM2_Dbias_HloString_BF16();  // NOLINT
     std::string hlo_string_ref =
@@ -960,7 +954,6 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_Softmax_BMM2_HloString_BF16();  // NOLINT
     std::string hlo_string_ref =
@@ -978,7 +971,6 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
       GTEST_SKIP() << "Flash Attention deterministic kernels requires cuDNN >= "
                       "9.0.0 and Hopper arch.";
     }
-    XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_CuDNN_Training_BMM1_Softmax_BMM2_Deterministic_HloString_BF16();  // NOLINT
     EXPECT_TRUE(
@@ -1083,7 +1075,6 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
     // pass padding mask as bias
     std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_PaddingMask_As_Bias_Softmax_BMM2_HloString_BF16();  // NOLINT
@@ -1191,7 +1182,6 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
         se::dnn::VersionInfo(9, 2, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.2.0.";
     }
-    XlaBuilder builder(TestName());
     // pass sliding window mask as bias
     std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_SlidingWindowMask_As_Bias_Softmax_BMM2_HloString_BF16();  // NOLINT
@@ -1326,7 +1316,6 @@ class FlashAttentionBMMScaleSegmentMaskSoftmaxBMM
     if (!cc.IsAtLeastHopper()) {
       GTEST_SKIP() << "Flash Attention segment mask requires at least Hopper.";
     }
-    XlaBuilder builder(TestName());
     // Cudnn sequence packing packs multiple batches(segments) into one batch
     // using offsets and seqlen tensors to indicate where each segment begins
     std::string hlo_string =
@@ -1387,7 +1376,6 @@ class FlashAttentionPagedAttention : public MultiHeadedAttentionTest {
         se::dnn::VersionInfo(9, 5, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.5.0.";
     }
-    XlaBuilder builder(TestName());
     // Cudnn paged attention where kv is converted to kv blocks with paged table
     std::string hlo_string =
         GetModuleFlash_Attention_Paged_Attention_BF16();  // NOLINT
@@ -1438,7 +1426,6 @@ class FlashAttentionBMMScaleSoftmaxDropoutBMM
         se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
-    XlaBuilder builder(TestName());
 
     auto lhs_bmm1_literal =
         GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
@@ -1615,7 +1602,6 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   if (!cc.IsAtLeastHopper()) {
     GTEST_SKIP() << "Flash Attention fp8 requires at least Hopper.";
   }
-  XlaBuilder builder(TestName());
   std::string ref_bnth = R"(
     custom-call.4.0 = (
         bf16[4,4,16,16]{3,1,2,0},
@@ -1795,7 +1781,6 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   if (!cc.IsAtLeastHopper()) {
     GTEST_SKIP() << "Flash Attention fp8 requires at least Hopper.";
   }
-  XlaBuilder builder(TestName());
 
   std::string ref_btnh = R"(
     custom-call.4.0 = (
@@ -1980,7 +1965,6 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   if (!cc.IsAtLeastHopper()) {
     GTEST_SKIP() << "Flash Attention fp8 requires at least Hopper.";
   }
-  XlaBuilder builder(TestName());
   std::string hlo_string_ref = R"(
     HloModule fmha_cudnn_custom_call_bwd
     // Process inputs: clip, convert to f8e4m3fn, and convert back to bf16
