@@ -167,6 +167,8 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
+    kNvshmemAllReduceStart,
+    kNvshmemAllReduceDone,
     kNvshmemCollectivePermute,
     kNvshmemCollectivePermuteDone,
     kNvshmemCollectivePermuteStart,
