@@ -270,9 +270,9 @@ absl::Duration ComputeAllreduceTimeImpl(
   int64_t num_channels =
       std::max(min_nchannels, GetNcclMaxNumChannels(CollectiveAlgo::RING));
   int default_threads =
-      (bw_intra_node * num_channels <= CudaBandwidthSettings::kPciBandwidth)
+      (bw_intra_node * num_channels <= bandwidth_settings.kPciBandwidth)
           ? 256
-          : CudaBandwidthSettings::kLL128NumThreads;
+          : bandwidth_settings.kLL128NumThreads;
 
   int warp_size = gpu_device_info.threads_per_warp();
   int num_threads =
@@ -406,7 +406,8 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
   absl::Duration total_time = kNcclKernelLaunchOverhead;
   absl::Duration result;
   const auto visitor = [&](const auto& cc) {
-    using compute_capability = std::remove_const_t<decltype(cc)>;
+    using compute_capability =
+        std::remove_const_t<std::remove_reference_t<decltype(cc)>>;
     if constexpr (std::is_same_v<compute_capability,
                                  stream_executor::CudaComputeCapability>) {
       result = ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
