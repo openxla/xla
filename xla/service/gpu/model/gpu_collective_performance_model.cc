@@ -131,7 +131,7 @@ struct RocmBandwidthSettings {
   static constexpr double kRingAlgorithmDiscountFactor = 0.92;
 
   // Maximum number of channels allowed by NCCL
-  static constexpr int64_t kMaxNumChannelsRing = 16;
+  static constexpr int64_t kMaxNumChannelsRing = 56;
 
   // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
   // launches 640 threads.
