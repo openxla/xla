@@ -78,6 +78,9 @@ class NvshmemCollectives : public GpuCollectives {
     return absl::UnimplementedError("Not implemented.");
   }
 
+  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator(
+      CommAffinity comm_affinity) final;
+
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> SplitCommunicators(
       absl::Span<const Communicator* const> comms, int32_t color,
       absl::Span<const RankId> keys, const Collectives::Config& config) final {

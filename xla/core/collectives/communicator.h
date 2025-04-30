@@ -36,6 +36,19 @@ limitations under the License.
 
 namespace xla {
 
+// This enum helps define the affinity that the communicator
+// spans.
+enum class CommAffinity {
+  kINVALID = -1,
+  // All ranks globally
+  kWORLD = 0,
+  // All ranks that share a particular communication space
+  kSHARED = 1,
+  // All ranks that locate on the same node
+  kNODE = 2,
+  kTOTAL_TEAMS_KIND = 3,
+};
+
 // Collective communicator defines the set of communicating XLA processes.
 //
 // Returned async value signals that the communicator has successfully
@@ -84,6 +97,12 @@ class Communicator {
   // previously launched asynchronous collective operations, and it does not
   // have to wait for the completion of scheduled operations.
   virtual absl::Status HealthCheck() const { return absl::OkStatus(); }
+
+  // This is a barrier operation that blocks all participating
+  // ranks from proceeding.
+  virtual absl::Status Barrier(const Executor& executor) {
+    return Unimplemented("Barrier is not implemented");
+  }
 
   // Reduce buffers of length `count` in `send_buff` using `reduction_kind`
   // reduction and leaves identical copies of the result on each `recv_buff`.

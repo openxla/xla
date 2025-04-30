@@ -278,6 +278,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
+    CASE(kNvshmemAllReduceStart);
+    CASE(kNvshmemAllReduceDone);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
@@ -318,7 +320,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
-         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
+         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart ||
+         kind == Thunk::kNvshmemAllReduceStart;
+  ;
 }
 
 Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
