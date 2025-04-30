@@ -31,9 +31,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/ndarray.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/ndarray.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -398,8 +399,9 @@ absl::StatusOr<nb_dtype> IfrtDtypeToDtypeWithTokenCanonicalization(
 }
 
 const NumpyScalarTypes& GetNumpyScalarTypes() {
-  static const NumpyScalarTypes* singleton = []() {
-    NumpyScalarTypes* dtypes = new NumpyScalarTypes();
+  auto init_fn = []() {
+    std::unique_ptr<NumpyScalarTypes> dtypes =
+        std::make_unique<NumpyScalarTypes>();
     nb::module_ numpy = nb::module_::import_("numpy");
     nb::module_ ml_dtypes = nb::module_::import_("ml_dtypes");
     dtypes->np_bool = nb::object(numpy.attr("bool_"));
@@ -446,8 +448,10 @@ const NumpyScalarTypes& GetNumpyScalarTypes() {
     dtypes->np_longlong = nb::object(numpy.attr("longlong"));
     dtypes->np_intc = nb::object(numpy.attr("intc"));
     return dtypes;
-  }();
-  return *singleton;
+  };
+
+  const NumpyScalarTypes& singleton = SafeStaticInit<NumpyScalarTypes>(init_fn);
+  return singleton;
 }
 
 const char* PEP3118FormatDescriptorForPrimitiveType(PrimitiveType type) {
