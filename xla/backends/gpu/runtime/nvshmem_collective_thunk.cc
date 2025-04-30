@@ -1,11 +1,9 @@
-/* Copyright 2019 The OpenXLA Authors.
 
+/* Copyright 2025 The OpenXLA Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -28,7 +26,6 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -38,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/debug_options_flags.h"
@@ -54,17 +52,18 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
-namespace xla::gpu {
+namespace xla {
+namespace gpu {
 namespace {
 
-static constexpr int64_t kCollectiveMemorySpaceColor = 1;
 static constexpr CollectiveStreamId kNoStreamId = CollectiveStreamId(0);
 
-bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
+bool IsTypeSupportedByNvshmem(PrimitiveType element_type,
+                              Thunk::Kind reduction_op) {
   switch (element_type) {
     case S8:
     case PRED:
@@ -77,19 +76,15 @@ bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
     case F32:
     case F64:
     case BF16:
+      return true;
     case C64:
     case C128:
-      return true;
     case S16:
     case U16:
-      // 16-bit integer reductions are not directly supported by NCCL and cannot
-      // be implicitly converted into other 16-bit types like ncclFloat16 as
-      // they involve actual computation and not just data movement.
     case F8E5M2:
     case F8E4M3FN:
     case F8E5M2FNUZ:
     case F8E4M3FNUZ:
-    case F8E8M0FNU:
       return !IsReductionCollective(reduction_op);
     default:
       return false;
@@ -99,7 +94,7 @@ bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
 }  // namespace
 
 // This file runs collective ops (i.e. ops that communicate between multiple
-// GPUs) using NCCL.
+// GPUs) using NVSHMEM.
 //
 // Here's a high-level overview of how running an op works.
 //
@@ -107,9 +102,9 @@ bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
 //  - All threads that "go together" (i.e. are participating in the "same"
 //    collective op) choose the same Rendezvous object from a global map.
 //  - Once all threads have arrived at the Rendezvous, we know exactly which
-//    GPUs are participating in the op, so we get or create a NcclClique
+//    GPUs are participating in the op, so we get or create a Clique
 //    containing those GPUs.
-//  - We perform the NCCL operation using the clique.
+//  - We perform the NVSHMEM operation using the clique.
 
 // Returns if the collective communication operation is degenerate because all
 // the groups formed by the operation are singleton. A given op can be
@@ -129,8 +124,8 @@ bool IsTypeSupportedBy(PrimitiveType element_type, Thunk::Kind reduction_op) {
 //         degenerate if replica_groups are singleton or group emty and
 //         num_partitions == 1 (since replica groups contain partition ids).
 //
-bool CollectiveConfig::IsDegenerate(int64_t replica_count,
-                                    int64_t partition_count) const {
+bool NvshmemCollectiveConfig::IsDegenerate(int64_t replica_count,
+                                           int64_t partition_count) const {
   bool groups_empty = replica_groups.empty();
 
   // check if all replica_groups are singleton. If not, then the operation is
@@ -159,7 +154,7 @@ bool CollectiveConfig::IsDegenerate(int64_t replica_count,
   }
 }
 
-void CollectiveConfig::SetCollectiveOpKindAndID(
+void NvshmemCollectiveConfig::SetCollectiveOpKindAndID(
     const HloCollectivePermuteInstruction* instr) {
   if (instr->channel_id().has_value()) {
     collective_op_kind = RendezvousKey::kCrossModule;
@@ -170,7 +165,7 @@ void CollectiveConfig::SetCollectiveOpKindAndID(
   }
 }
 
-void CollectiveConfig::SetCollectiveOpKindAndID(
+void NvshmemCollectiveConfig::SetCollectiveOpKindAndID(
     const HloSendRecvInstruction* instr) {
   int64_t channel_id = instr->channel_id().value_or(0);
   if (channel_id > 0) {
@@ -182,9 +177,9 @@ void CollectiveConfig::SetCollectiveOpKindAndID(
   }
 }
 
-CollectiveConfig GetCollectiveConfig(
+NvshmemCollectiveConfig GetNvshmemCollectiveConfig(
     const HloInstruction* hlo, std::optional<bool> use_global_device_ids) {
-  CollectiveConfig config;
+  NvshmemCollectiveConfig config;
   config.operand_count = hlo->operands().size();
   config.operand_element_type.reserve(config.operand_count);
   for (int i = 0; i < config.operand_count; i++) {
@@ -208,34 +203,16 @@ CollectiveConfig GetCollectiveConfig(
   return config;
 }
 
-CollectiveThunk::CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
-                                 AsyncStreamKind stream_kind)
+NvshmemCollectiveThunk::NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info,
+                                               bool is_sync)
     : Thunk(kind, thunk_info),
-      stream_kind_(stream_kind),
-      async_events_(is_sync ? nullptr : new AsyncEvents()) {}
+      async_events_(is_sync ? nullptr : new CollectiveThunk::AsyncEvents()) {}
 
-absl::StatusOr<int64_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<GlobalDeviceId>& participants) {
-  if (!params.global_device_id_map) {
-    return participants.size();
-  }
-
-  std::vector<GlobalDeviceId> local_devices;
-  local_devices.reserve(params.global_device_id_map->size());
-  for (const auto& entry : *params.global_device_id_map) {
-    local_devices.push_back(entry.second);
-  }
-
-  return absl::c_count_if(participants, [&](const GlobalDeviceId& device_id) {
-    return absl::c_linear_search(local_devices, device_id);
-  });
-}
-
-absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
+absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind) {
+    CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
+    AsyncStreamKind stream_kind) {
   GlobalDeviceId global_device_id = params.global_device_id;
 
   TF_ASSIGN_OR_RETURN(
@@ -243,51 +220,22 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
       GetParticipatingDevices(global_device_id, *params.device_assn,
                               replica_groups, group_mode));
 
-  // If splitting is enabled, participating groups must match in order for a
-  // clique to be reused from the cache. We can ignore the participating groups
-  // otherwise.
-  static const int64_t enable_nccl_comm_splitting =
-      xla::GetDebugOptionsFromFlags().xla_gpu_enable_nccl_comm_splitting();
-  std::vector<std::vector<GlobalDeviceId>> participant_groups;
-  if (enable_nccl_comm_splitting) {
-    TF_ASSIGN_OR_RETURN(participant_groups,
-                        GetParticipatingDevicesGroups(
-                            *params.device_assn, replica_groups, group_mode));
-  }
-
   if (collectives->IsGlobalConfig() &&
       (participants.size() != params.device_assn->replica_count())) {
     return InvalidArgument(
-        "Partial replica groups are not allowed when using NCCL_COMM_ID "
+        "Partial replica groups are not allowed when using NVSHMEM_COMM_ID "
         "environment configuration.");
   }
-
   TF_ASSIGN_OR_RETURN(int64_t num_local_participants,
                       GetNumLocalParticipants(params, participants));
 
   return GpuCliqueKey(std::move(participants), num_local_participants,
-                      kNoStreamId, stream_kind, std::move(participant_groups));
-}
-
-absl::StatusOr<CommunicatorHandle> GetComm(
-    GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
-    const Thunk::CollectiveCliques& collective_cliques,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind) {
-  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                      GetGpuCliqueKey(collectives, params, replica_groups,
-                                      group_mode, stream_kind));
-
-  std::optional<RankId> rank = clique_key.rank(params.global_device_id);
-  TF_ASSIGN_OR_RETURN(Communicator * comm,
-                      collective_cliques.GetComm(clique_key, *rank));
-
-  return CommunicatorHandle(comm, std::move(clique_key));
+                      kNoStreamId, stream_kind);
 }
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const Thunk::ExecuteParams& params,
-    const std::vector<CollectiveThunk::Buffer>& buffers,
+    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types) {
   return ConvertToDeviceBuffers(params.buffer_allocations, buffers,
                                 element_types);
@@ -295,7 +243,7 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const BufferAllocations* buffer_allocations,
-    const std::vector<CollectiveThunk::Buffer>& buffers,
+    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types) {
   if (buffers.size() != element_types.size())
     return FailedPrecondition("Mismatch in operand buffer counts.");
@@ -312,104 +260,36 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
   return device_buffers;
 }
 
-absl::Status RegisterBufferOnce(GpuCollectives* collectives,
-                                se::StreamExecutor* executor,
-                                Communicator* comm,
-                                se::DeviceMemoryBase buffer) {
-  // Keep track of which communicators we have registered for already.
-  // Each ncclMemAlloc'd buffer needs to be registered once per comm.
-  struct RegisteredBuffers {
-    absl::Mutex mu;
-    // Device ordinal, communicator, and base pointer address.
-    absl::flat_hash_set<std::tuple<int, uint64_t, Communicator*, void*>> records
-        ABSL_GUARDED_BY(mu);
-    // Buffers could be deregistered with ncclCommDeregister.
-    std::vector<std::unique_ptr<Communicator::RegisteredBufferHandle>> handles
-        ABSL_GUARDED_BY(mu);
-  };
-  static auto& all_registered = *new RegisteredBuffers;
-
-  // Since each XLA buffer is a slice into a larger BFCAllocator chunk, first
-  // get the base address of buffer. We will use the base address to keep track
-  // of which chunks we have registered.
-  TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase base_buffer,
-                      executor->GetMemoryRange(buffer));
-
-  absl::MutexLock lock(&all_registered.mu);
-  if (!all_registered.records.contains(
-          {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()})) {
-    // ncclCommRegister will internally get and use the base address/size of the
-    // address we provide.
-    VLOG(5) << "Registering " << buffer.opaque()
-            << " with size: " << buffer.size()
-            << " and base pointer: " << base_buffer.opaque();
-    TF_ASSIGN_OR_RETURN(auto handle, comm->RegisterBuffer(buffer));
-    all_registered.handles.push_back(std::move(handle));
-    all_registered.records.insert(
-        {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()});
-  } else {
-    VLOG(5) << "Buffer: " << buffer.opaque() << " with size: " << buffer.size()
-            << " and base pointer: " << base_buffer.opaque()
-            << " is already registered.";
-  }
-  return absl::OkStatus();
+absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectivesFromRegistry() {
+  TF_ASSIGN_OR_RETURN(xla::Collectives * collectives,
+                      xla::CollectivesRegistry::Get("gpu", "nvshmem"));
+  return tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
 }
 
-absl::Status MaybeRegisterBuffers(GpuCollectives* collectives,
-                                  se::StreamExecutor* executor,
-                                  const std::vector<DeviceBufferPair>& buffers,
-                                  Communicator* comm) {
-  for (int i = 0; i < buffers.size(); ++i) {
-    if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
-      TF_RETURN_IF_ERROR(RegisterBufferOnce(collectives, executor, comm,
-                                            buffers[i].source_buffer));
-    }
-    if (buffers[i].destination_memory_space == kCollectiveMemorySpaceColor) {
-      TF_RETURN_IF_ERROR(RegisterBufferOnce(collectives, executor, comm,
-                                            buffers[i].destination_buffer));
-    }
-  }
-  return absl::OkStatus();
-}
-
-absl::Status CollectiveThunk::AsyncEvents::Initialize(
-    se::StreamExecutor* executor) {
-  absl::MutexLock lock(&mu_);
-  if (events_.contains(executor)) return absl::OkStatus();
-
-  TF_ASSIGN_OR_RETURN(auto event, executor->CreateEvent());
-
-  events_.try_emplace(executor, std::move(event));
-  return absl::OkStatus();
-}
-
-absl::StatusOr<se::Event*> CollectiveThunk::AsyncEvents::GetEvent(
-    se::StreamExecutor* executor) {
-  absl::MutexLock lock(&mu_);
-
-  auto event = events_.find(executor);
-  if (event == events_.end()) {
-    return absl::InternalError(
-        "Collective operation async completion event not initialized");
-  }
-
-  return event->second.get();
-}
-
-absl::Status CollectiveThunk::Prepare(
+absl::Status NvshmemCollectiveThunk::Prepare(
     const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetGpuCliqueKey(collectives, *params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      GetAsyncStreamKind()));
+      GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
+                             config().replica_groups, config().group_mode,
+                             nvshmem_stream_id(), GetAsyncStreamKind()));
   return resource_requests.AddClique(clique_key);
 }
 
-absl::Status CollectiveThunk::Initialize(const InitializeParams& params) {
+absl::Status NvshmemCollectiveThunk::Initialize(
+    const InitializeParams& params) {
   if (async_events_) {
     TF_RETURN_IF_ERROR(async_events_->Initialize(params.executor));
+  }
+  if (!barrier_called_) {
+    TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
+                        collectives->CreateCommunicator(CommAffinity::kNODE));
+
+    TF_RETURN_IF_ERROR(
+        nvshmem_comm->Barrier(GpuCollectives::On(*params.stream)));
+    barrier_called_ = true;
   }
   return absl::OkStatus();
 }
@@ -432,19 +312,14 @@ bool operator==(const FirstCallRendezvousKey& a,
 }
 }  // namespace
 
-absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
+    const ExecuteParams& params) {
   VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",
                                 Thunk::KindToString(kind()));
+  const CollectiveStreamId stream_id = nvshmem_stream_id();
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
-  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  TF_ASSIGN_OR_RETURN(
-      CommunicatorHandle comm_handle,
-      GetComm(collectives, *params.collective_params,
-              *params.collective_cliques, config().replica_groups,
-              config().group_mode, stream_kind));
   se::StreamExecutor* executor = params.stream->parent();
   int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
-
   if (IsAsync()) {
     // Launch collective operation on an async stream.
     se::Stream& async_stream =
@@ -453,7 +328,7 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
 
-    TF_RETURN_IF_ERROR(RunCollective(params, async_stream, comm_handle));
+    TF_RETURN_IF_ERROR(RunNvshmemCollective(params, async_stream));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
@@ -461,15 +336,21 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   } else {
     // Launch collective operation on a main stream.
-    TF_RETURN_IF_ERROR(RunCollective(params, *params.stream, comm_handle));
+    TF_RETURN_IF_ERROR(RunNvshmemCollective(params, *params.stream));
   }
 
   // After a first execution of this instance of collective operation do a
   // rendezvous with other participants to make sure that all of them allocated
-  // required state (internal to NCCL) and ready to continue. Going too far
-  // ahead on one rank leads to deadlocks in NCCL.
+  // required state (internal to nvshmem) and ready to continue. Going too far
+  // ahead on one rank leads to deadlocks in nvshmem.
   if (NeedFirstCallRendzevous() && !first_call_rendezvous_flag_.IsCompleted()) {
-    GpuCliqueKey clique_key = comm_handle.clique_key;
+    TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                        GetGpuCollectives(params));
+    TF_ASSIGN_OR_RETURN(
+        GpuCliqueKey clique_key,
+        GetGpuNvshmemCliqueKey(collectives, *params.collective_params,
+                               config().replica_groups, config().group_mode,
+                               stream_id, stream_kind));
     size_t num_local_participants = clique_key.num_local_participants();
 
     auto global_device_id = params.collective_params->global_device_id;
@@ -487,39 +368,18 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
         "first call to collective operation %d; run_id=%d", config().op_id,
         params.collective_params->run_id.ToInt());
 
-    const xla::DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
-
-    TF_RETURN_IF_ERROR(Rendezvous(
-        first_call_rendezvous_flag_, rendezvous_name, rendezvous_key,
-        num_local_participants,
-        /*warn_stuck_timeout=*/
-        absl::Seconds(
-            debug_options
-                .xla_gpu_first_collective_call_warn_stuck_timeout_seconds()),
-        /*terminate_timeout=*/
-        absl::Seconds(
-            debug_options
-                .xla_gpu_first_collective_call_terminate_timeout_seconds())
-
-            ));
+    TF_RETURN_IF_ERROR(Rendezvous(first_call_rendezvous_flag_, rendezvous_name,
+                                  rendezvous_key, num_local_participants,
+                                  /*warn_stuck_timeout=*/absl::Seconds(20),
+                                  /*terminate_timeout=*/absl::Seconds(40)));
   }
-
+  if (barrier_called_) {
+    barrier_called_ = false;
+  }
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<Communicator*>> CollectiveThunk::GetCommunicators(
-    const ExecuteParams& params) const {
-  AsyncStreamKind stream_kind = GetAsyncStreamKind();
-  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  TF_ASSIGN_OR_RETURN(
-      CommunicatorHandle comm_handle,
-      GetComm(collectives, *params.collective_params,
-              *params.collective_cliques, config().replica_groups,
-              config().group_mode, stream_kind));
-  return std::vector<Communicator*>{comm_handle.comm};
-}
-
-std::string CollectiveThunk::GetDeviceString(
+std::string NvshmemCollectiveThunk::GetDeviceString(
     const Thunk::CollectiveExecuteParams& collective_params) {
   GlobalDeviceId global_device_id = collective_params.global_device_id;
   DeviceAssignment::LogicalID logical_id =
@@ -531,7 +391,7 @@ std::string CollectiveThunk::GetDeviceString(
                          collective_params.local_device_ordinal);
 }
 
-CollectiveDoneThunk::CollectiveDoneThunk(
+NvshmemCollectiveDoneThunk::NvshmemCollectiveDoneThunk(
     Thunk::Kind kind, ThunkInfo thunk_info,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     AsyncStreamKind async_stream_kind)
@@ -539,24 +399,26 @@ CollectiveDoneThunk::CollectiveDoneThunk(
       async_events_(async_events),
       async_stream_kind_(async_stream_kind) {}
 
-absl::Status CollectiveDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status NvshmemCollectiveDoneThunk::ExecuteOnStream(
+    const ExecuteParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
   TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
   return params.stream->WaitFor(event);
 }
 
-absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
+absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op) {
   if (!LayoutUtil::IsDenseArray(shape)) {
     return absl::AbortedError(
         absl::StrFormat("input is not a dense array: %s",
                         shape.ToString(/*print_layout=*/true)));
   }
-  if (!IsTypeSupportedBy(shape.element_type(), reduction_op)) {
+  if (!IsTypeSupportedByNvshmem(shape.element_type(), reduction_op)) {
     return absl::AbortedError(absl::StrFormat(
-        "element type %s not suppored by NCCL",
+        "element type %s not suppored by Nvshmem",
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }
   return absl::OkStatus();
 }
 
-}  // namespace xla::gpu
+}  // namespace gpu
+}  // namespace xla
