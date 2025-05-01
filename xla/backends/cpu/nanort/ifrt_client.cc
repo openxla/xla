@@ -1131,13 +1131,19 @@ class NanoCompiler final
   absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
       std::unique_ptr<ifrt::Program> program,
       std::unique_ptr<ifrt::CompileOptions> options) override {
-    return NanoExecutable::Create(client_, std::move(program));
+    return CompileAndLoad(std::move(program), std::move(options));
   }
 
   absl::StatusOr<std::unique_ptr<ifrt::Executable>> Compile(
       std::unique_ptr<ifrt::Program> program, const ifrt::Topology& topology,
       std::unique_ptr<ifrt::CompileOptions> options) override {
     return absl::UnimplementedError("Partial compilation is not implemented.");
+  }
+
+  absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> CompileAndLoad(
+      std::unique_ptr<ifrt::Program> program,
+      std::unique_ptr<ifrt::CompileOptions> options) override {
+    return NanoExecutable::Create(client_, std::move(program));
   }
 
   absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>>

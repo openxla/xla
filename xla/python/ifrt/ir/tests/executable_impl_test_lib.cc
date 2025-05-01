@@ -77,7 +77,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -128,7 +128,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -178,7 +178,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       auto mpmd_executable,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(
               GetDeviceIds(devices), AtomExecutableMap(),
@@ -237,7 +237,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       auto mpmd_executable,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(
               GetDeviceIds(devices), AtomExecutableMap(),
@@ -293,7 +293,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       auto mpmd_executable,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(
               GetDeviceIds(devices), AtomExecutableMap(),
@@ -358,7 +358,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       auto mpmd_executable,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(
               GetDeviceIds(devices), AtomExecutableMap(),
@@ -403,7 +403,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -450,7 +450,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -499,7 +499,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -538,7 +538,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -585,7 +585,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -642,7 +642,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -690,7 +690,7 @@ module {
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module),
           std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
 
@@ -745,7 +745,7 @@ module {
     exec_build_options.set_device_assignment(device_assignment);
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LoadedExecutable> child_exec,
-                          client_->GetDefaultCompiler()->Compile(
+                          client_->GetDefaultCompiler()->CompileAndLoad(
                               std::make_unique<HloProgram>(*mhlo_module),
                               std::make_unique<XlaCompileOptions>(
                                   std::move(xla_options), devices)));
@@ -768,7 +768,7 @@ module {
   options->loaded_exec_binding["add_one"] = std::move(child_exec);
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LoadedExecutable> loaded_exec,
-      client_->GetDefaultCompiler()->Compile(
+      client_->GetDefaultCompiler()->CompileAndLoad(
           std::make_unique<IfrtIRProgram>(*mlir_module), std::move(options)));
 
   std::vector<int> data0 = {0, 1};
