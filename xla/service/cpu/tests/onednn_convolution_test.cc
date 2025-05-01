@@ -309,9 +309,9 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndBinaryAddTest) {
   // Optimized HLO must match "SUM" only for precisions that support Elementwise
   // Add operations
   if (dtype_ == BF16) {
-    RunCompareAndMatchOptimizedHlo(outline, {"BIAS","BINARY_ADD"});
+    RunCompareAndMatchOptimizedHlo(outline, {"BIAS", "BINARY_ADD"});
   } else {
-    RunCompareAndMatchOptimizedHlo(outline,{"BIAS","SUM"});
+    RunCompareAndMatchOptimizedHlo(outline, {"BIAS", "SUM"});
   }
 }
 
