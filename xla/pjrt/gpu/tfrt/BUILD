@@ -119,6 +119,7 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
     ]),
 )
 
