@@ -430,7 +430,7 @@ AbstractTfrtCpuBuffer::CopyToDeviceAcrossClients(PjRtDevice* dst_device) {
   // Avoid use-after-free on `literal` due to unsequenced move and use.
   Literal* literal_pointer = literal.get();
   absl::InlinedVector<int64_t, 4> byte_strides(
-      literal->shape().dimensions_size());
+      literal->shape().dimensions().size());
   TF_RETURN_IF_ERROR(
       ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
   TF_ASSIGN_OR_RETURN(PjRtMemorySpace * dst_memory_space,
@@ -510,22 +510,23 @@ PjRtFuture<> AbstractTfrtCpuBuffer::GetReadyFuture() {
 
   if (definition_event.IsAvailable()) {
     if (definition_event.IsError()) {
-      return PjRtFuture<>(
-          FailedPrecondition("Buffer Definition Event: %s",
-                             definition_event.GetError().message()));
+      const absl::Status& s = definition_event.GetError();
+      return PjRtFuture<>(tsl::errors::CreateWithUpdatedMessage(
+          s, absl::StrCat("Buffer Definition Event: ", s.message())));
     }
     return PjRtFuture<>(absl::OkStatus());
   } else {
     PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-    definition_event.AndThen([definition_event = definition_event.AsPtr(),
-                              promise]() mutable {
-      if (definition_event.IsError()) {
-        promise.Set(FailedPrecondition("Buffer Definition Event: %s",
-                                       definition_event.GetError().message()));
-      } else {
-        promise.Set();
-      }
-    });
+    definition_event.AndThen(
+        [definition_event = definition_event.AsPtr(), promise]() mutable {
+          if (definition_event.IsError()) {
+            const absl::Status& s = definition_event.GetError();
+            promise.Set(tsl::errors::CreateWithUpdatedMessage(
+                s, absl::StrCat("Buffer Definition Event: ", s.message())));
+          } else {
+            promise.Set();
+          }
+        });
 
     std::string message = absl::StrCat(buffer_name(), "::Await");
     return PjRtFuture<>(
@@ -547,8 +548,6 @@ PjRtFuture<> AbstractTfrtCpuBuffer::GetReadyFuture() {
   }
 }
 
-namespace {
-
 void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
                 void* data, int64_t size) {
   if (primitive_util::IsSubByteNonPredType(element_type)) {
@@ -562,8 +561,6 @@ void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
     std::memcpy(data, literal.untyped_data(), size);
   }
 }
-
-}  // namespace
 
 // The buffer's memory should have been allocated before calling this function.
 void AbstractTfrtCpuBuffer::CopyFromLiteral(
@@ -610,7 +607,7 @@ AbstractTfrtCpuBuffer::AllocateTrackedDeviceBuffer(
     absl::InlinedVector<tsl::RCReference<tsl::AsyncValue>, 4>* avs,
     absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4>* definition_events) {
   // Nested tuple shapes are not supported here.
-  int num_leaf_buffers = shape.IsTuple() ? shape.tuple_shapes_size() : 1;
+  int num_leaf_buffers = shape.IsTuple() ? shape.tuple_shapes().size() : 1;
   for (int i = 0; i < num_leaf_buffers; ++i) {
     tsl::AsyncValueRef<CpuEvent> definition_event =
         tsl::MakeConstructedAsyncValueRef<CpuEvent>();

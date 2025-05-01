@@ -100,9 +100,11 @@ bool EvenlyPartitions(const Shape& shape, const HloSharding& sharding) {
   if (sharding.IsTileMaximal()) {
     return sharding.IsReplicated();
   }
-  for (int64_t i = 0; i < shape.dimensions_size(); ++i) {
-    if (shape.dimensions(i) % sharding.tile_assignment().dim(i) != 0) {
-      return false;
+  if (shape.IsArray()) {
+    for (int64_t i = 0; i < shape.dimensions().size(); ++i) {
+      if (shape.dimensions(i) % sharding.tile_assignment().dim(i) != 0) {
+        return false;
+      }
     }
   }
   return true;
@@ -2453,21 +2455,47 @@ HloInstruction* PadDataFromWindowReshard(
 
 std::vector<std::vector<int64_t>> GetPartitionGroupsForReplication(
     const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {
+  absl::Span<const int64_t> tile_assignment_dims =
+      sharding.tile_assignment().dimensions();
+  DCHECK_GE(tile_assignment_dims.size(), replication_dims.size());
   int64_t group_size = 1;
   for (int64_t i : replication_dims) {
-    group_size *= sharding.tile_assignment().dim(i);
+    DCHECK_LT(i, tile_assignment_dims.size());
+    group_size *= tile_assignment_dims[i];
   }
+  std::vector<int64_t> non_replication_indices;
+  non_replication_indices.reserve(tile_assignment_dims.size() -
+                                  replication_dims.size());
+  for (int64_t i = 0; i < tile_assignment_dims.size(); ++i) {
+    if (!absl::c_linear_search(replication_dims, i)) {
+      non_replication_indices.push_back(i);
+    }
+  }
+  DCHECK_EQ(replication_dims.size() + non_replication_indices.size(),
+            tile_assignment_dims.size());
+  std::vector<int64_t> non_replication_strides(non_replication_indices.size());
+  if (!non_replication_strides.empty()) {
+    non_replication_strides.back() = 1;
+    for (int64_t i = non_replication_indices.size() - 1; i > 0; --i) {
+      non_replication_strides[i - 1] =
+          non_replication_strides[i] *
+          tile_assignment_dims[non_replication_indices[i]];
+    }
+  }
+
   std::vector<std::vector<int64_t>> partition_groups(
       sharding.tile_assignment().num_elements() / group_size);
   sharding.tile_assignment().Each(
       [&](absl::Span<const int64_t> indices, int64_t partition) {
         int64_t group_id = 0;
-        for (int64_t i = 0; i < indices.size(); ++i) {
-          if (!absl::c_linear_search(replication_dims, i)) {
-            group_id *= sharding.tile_assignment().dim(i);
-            group_id += indices[i];
-          }
+        auto non_replication_strides_it = non_replication_strides.begin();
+        for (int64_t non_replication_index : non_replication_indices) {
+          group_id +=
+              indices[non_replication_index] * (*non_replication_strides_it);
+          ++non_replication_strides_it;
         }
+        DCHECK(non_replication_strides_it == non_replication_strides.end());
+        DCHECK_LT(group_id, partition_groups.size());
         partition_groups[group_id].push_back(partition);
       });
   return partition_groups;
@@ -2575,6 +2603,63 @@ PartitionedHlo MakeACopyAndReturnItsPartitionedHlo(const PartitionedHlo& phlo,
       phlo.hlo()->shape(), HloOpcode::kCopy, phlo.hlo()));
   copy_hlo->copy_sharding(phlo.hlo());
   return PartitionedHlo(copy_hlo, phlo.base_shape(), phlo.state());
+}
+
+DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
+    const HloInstruction* hlo) {
+  CHECK(!hlo->sharding().IsTileMaximal());
+
+  DynamicUpdateSliceAnalysis analysis;
+
+  bool update_on_a_single_partition = true;
+  bool has_partitioned_slice_dim_with_dynamic_index = false;
+  for (int64_t i = 0; i < hlo->shape().dimensions_size(); ++i) {
+    if (hlo->operand(1)->shape().dimensions(i) == hlo->shape().dimensions(i)) {
+      continue;
+    }
+    analysis.slice_dims.push_back(i);
+
+    if (hlo->sharding().tile_assignment().dim(i) == 1) {
+      continue;
+    }
+    analysis.partitioned_slice_dims.push_back(i);
+
+    int64_t slice_size = hlo->operand(1)->shape().dimensions(i);
+    if (slice_size == 1) {
+      continue;
+    }
+
+    if (hlo->operand(i + 2)->IsConstant()) {
+      const PrimitiveType elemType =
+          hlo->operand(i + 2)->shape().element_type();
+      int64_t start_index =
+          elemType == S64 ? hlo->operand(i + 2)->literal().Get<int64_t>({})
+                          : hlo->operand(i + 2)->literal().Get<int>({});
+      int64_t end_index = start_index + slice_size - 1;
+
+      int64_t per_partition_size = CeilOfRatio(
+          hlo->shape().dimensions(i), hlo->sharding().tile_assignment().dim(i));
+      if (start_index / per_partition_size != end_index / per_partition_size) {
+        update_on_a_single_partition = false;
+      }
+    } else {
+      update_on_a_single_partition = false;
+      has_partitioned_slice_dim_with_dynamic_index = true;
+    }
+  }
+
+  if (analysis.partitioned_slice_dims.empty()) {
+    analysis.method = DynamicUpdateSliceMethod::kDefault;
+  } else if (update_on_a_single_partition) {
+    analysis.method = DynamicUpdateSliceMethod::kUpdateOnASinglePartition;
+  } else if (has_partitioned_slice_dim_with_dynamic_index) {
+    analysis.method = DynamicUpdateSliceMethod::kDefault;
+  } else {
+    analysis.method =
+        DynamicUpdateSliceMethod::kAllPartitionedSliceDimsHaveConstantIndices;
+  }
+
+  return analysis;
 }
 
 }  // namespace spmd

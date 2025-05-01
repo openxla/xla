@@ -93,8 +93,8 @@ GpuPerformanceModel::EstimateRunTimeForInstruction(
   }
 
   absl::Duration write_time = WriteTime(device_info, bytes_written);
-  absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
-      compute_time, read_time + write_time, config);
+  absl::Duration exec_time =
+      CombineComputeAndMemoryAccessTime(compute_time, read_time + write_time);
 
   EstimateRunTimeData runtime_data = {flops,     bytes_read, bytes_written,
                                       read_time, write_time, compute_time,
@@ -207,8 +207,8 @@ GpuPerformanceModel::EstimateRunTimeForInstructionCached(
     write_time += producer_runtime.write_time;
   }
 
-  auto exec_time = CombineComputeAndMemoryAccessTime(
-      compute_time, read_time + write_time, config);
+  auto exec_time =
+      CombineComputeAndMemoryAccessTime(compute_time, read_time + write_time);
 
   VLOG(3) << "Runtime data for producer-consumer fusion:\n"
           << " producer: " << producer->name() << "\n"
@@ -336,8 +336,7 @@ void GpuPerformanceModel::RecordEstimatedRunTime(
 
   auto gpu_config = instruction->backend_config<GpuBackendConfig>();
   TF_CHECK_OK(gpu_config.status()) << instruction->ToString();
-  auto reification_cost =
-      gpu_config->mutable_fusion_backend_config()->mutable_reification_cost();
+  auto reification_cost = gpu_config->add_reification_cost();
   reification_cost->set_end_to_end_cycles(cycles);
   reification_cost->set_compute_time_us(
       absl::ToDoubleMicroseconds(data.compute_time));

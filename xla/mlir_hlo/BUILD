@@ -12,6 +12,7 @@ package(
 
 exports_files([
     "mhlo/IR/hlo_ops.td",
+    "mhlo/IR/hlo_utils.td",
 ])
 
 # Python extension sources.
@@ -295,9 +296,9 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@stablehlo//:base",
-        "@stablehlo//:broadcast_utils",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_assembly_format",
+        "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_type_inference",
     ],
 )
@@ -569,7 +570,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:Transforms",
     ],
 )
 
@@ -762,6 +762,7 @@ cc_library(
         ":mlir_hlo",
         ":transforms_passes",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AMDGPUUtils",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:ArithDialect",

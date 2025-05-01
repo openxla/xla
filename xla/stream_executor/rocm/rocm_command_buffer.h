@@ -134,14 +134,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                 const BlockDim& blocks, const Kernel& kernel,
                                 const KernelArgsPackedArrayBase& args) override;
 
-  absl::StatusOr<GraphNodeHandle> CreateBarrierNode(
-      absl::Span<const GraphNodeHandle> dependencies) override;
-
   absl::Status Trace(Stream* stream,
                      absl::AnyInvocable<absl::Status()> function) override;
-
-  absl::Status SetNodeExecutionEnabled(GraphNodeHandle node_handle,
-                                       bool enabled) override;
 
   absl::Status LaunchGraph(Stream* stream) override;
 
@@ -160,9 +154,6 @@ class RocmCommandBuffer : public GpuCommandBuffer {
       GpuCommandBuffer* nested_cmd_buffer) override;
 
   absl::Status CheckCanBeUpdated() override;
-
-  absl::StatusOr<std::vector<GraphNodeHandle>> GetNodeDependencies(
-      GraphNodeHandle node) override;
 
   static_assert(std::is_pointer_v<hipGraph_t>, "hipGraph_t must be a pointer");
   static_assert(std::is_pointer_v<hipGraphExec_t>,

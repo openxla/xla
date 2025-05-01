@@ -44,10 +44,21 @@ class TritonDotFusionSearchSpace {
   // autotuner to try. If `force_contracting_split` is set, the search space
   // will be restricted to only include configs with the given split_k factor.
   std::vector<TritonGemmConfig> GenerateConfigs(
-      std::optional<int64_t> force_contracting_split = std::nullopt);
+      std::optional<int64_t> force_contracting_split = std::nullopt) const;
+
+  // Restrict the set of configs to the ones compatible with the hints list.
+  // Generally, this will mean that configs are restricted to the ones that
+  // appear in hints. The implementation is allowed to deviate though, and
+  // slightly change the hints list if it thinks that the exact configs in the
+  // hints are unlikely to be performant (e.g., if the RHS side of a config in
+  // hints list is larger than the problem's RHS side, it might restrict that
+  // config to the problem's RHS size).
+  std::vector<TritonGemmConfig> OptimizeConfigSet(
+      const std::vector<TritonGemmConfig>& configs,
+      const std::vector<TritonGemmConfig>& hints) const;
 
   // Serializes the search space to a human-readable string.
-  std::string Serialize();
+  std::string ToString() const;
 
  private:
   // Groups together the tiling of the dot's output dimensions: the parallel
@@ -71,6 +82,14 @@ class TritonDotFusionSearchSpace {
     std::string ToString() const { return config.ToString(); }
   };
 
+  // Newer NVIDIA GPUs can achieve good enough occupancy with as
+  // few as 2 warps per Cooperative Thread Array (CTA). See
+  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#features-and-technical-specifications-technical-specifications-per-compute-capability
+  static constexpr int kMinWarpsPerCtaForOccupancy = 2;
+  // To use Hopper's wgmma instructions, we need at least a single "warp
+  // group" (4 warps) within a CTA to cooperate on a single instruction.
+  /// https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions
+  static constexpr int kMinWarpsPerCtaForWgmma = 4;
   // Approximation on the maximum number of warps we would want to oversubscribe
   // the SMs with to overlap different GPU pipes (memory, tensor core, ALU,
   // special function unit, etc.)
@@ -81,13 +100,13 @@ class TritonDotFusionSearchSpace {
   // extensions of `config` to the `updated_configs` vector.
   using ExtendConfigCallback = void (TritonDotFusionSearchSpace::*)(
       const ConfigWithNotes& config,
-      std::vector<ConfigWithNotes>& updated_configs);
+      std::vector<ConfigWithNotes>& updated_configs) const;
 
   // Extends Triton gemm configs by repeatedly calling `*extend_config()` on
   // each config in `configs`. Expects that after all calls to `extend_config`,
   // the updated list of configs is non-empty.
   void ExtendConfigs(std::vector<ConfigWithNotes>& configs,
-                     ExtendConfigCallback extend_config);
+                     ExtendConfigCallback extend_config) const;
 
   // Computes the maximum number of total warps we should have to sufficiently
   // saturate the GPU.
@@ -106,47 +125,97 @@ class TritonDotFusionSearchSpace {
   // splitting the contracting dimension for a given output tile.
   int64_t GetNumResultTiles(OutputTile output_tile) const;
 
+  // Decides if the problem is small enough so it makes sense to trade off
+  // compute for occupancy efficiency.
+  bool ShouldOptimizeForOccupancy() const;
+
+  // Computes the minimum sensible size of the output tile (block_m, block_n).
+  OutputTile GetMinOutputTile() const;
+
+  // Computes the minimum number of warps we want to try using per Cooperative
+  // Thread Array (CTA).
+  int GetMinWarpsPerCta() const;
+
   // Computes how many warps per Cooperative Thread Array (aka. CTA, aka. CUDA
   // block) is reasonable for the given output tile and restrictions on
   // instruction shape.
   int GetMaxWarpsPerCta(OutputTile output_tile) const;
+
+  // Computes the minimum reasonable tile size for the contracting dimension
+  // given the element types of the operands.
+  int GetMinContractingTileSize() const;
 
   // Computes the maximum sensible split in the contracting dimension
   // (split_k) to sufficiently occupy all available cores when using the given
   // output tile.
   int GetMaxContractingSplit(OutputTile output_tile) const;
 
+  // Computes the size limit for contracting dimension, based on the shared
+  // memory budget.
+  int GetContractingSizeLimitToFitSharedMemory(OutputTile output_tile) const;
+
+  // Computes the maximum reasonable tile size for the contracting dimension for
+  // the given output tile and contracting split.
+  int GetMaxContractingTileSize(OutputTile output_tile,
+                                int contracting_split) const;
+
+  // Computes the maximum reasonable number of stages for the given output and
+  // input tilings and contracting split.
+  int GetMaxNumStages(OutputTile output_tile, int contracting_tile_size,
+                      int contracting_split) const;
+
   // Finds all promising values for splitting the contracting dimension to
   // achieve sufficient occupancy (split_k).
-  std::vector<ConfigWithNotes> GenerateContractingSplitFactors();
+  std::vector<ConfigWithNotes> GenerateContractingSplitFactors() const;
 
   // Finds all promising output shape tilings (block_m, block_n), based on
   // `config` with already determined contracting split value and appends them
   // to `updated_configs`. Each config in the input list might yield zero or
   // more configs in the output.
   void AddOutputTilings(const ConfigWithNotes& config,
-                        std::vector<ConfigWithNotes>& updated_configs);
+                        std::vector<ConfigWithNotes>& updated_configs) const;
 
   // Finds all promising values for the Cooperative Thread Array (aka. CTA, aka.
   // CUDA block) size (num_warps), based on `config` with already determined
   // output tiling and appends them to `updated_configs`. Each config in the
   // input list might yield zero or more configs in the output.
   void AddCtaSizeParameter(const ConfigWithNotes& config,
-                           std::vector<ConfigWithNotes>& updated_configs);
+                           std::vector<ConfigWithNotes>& updated_configs) const;
+
+  // Finds all promising values for the contracting dimension tile size
+  // (block_k), based on `config` with already determined contracting split and
+  // output tiling, and appends them to `updated_configs`. Each config in the
+  // input list might yield zero or more configs in the output.
+  void AddContractingTiling(
+      const ConfigWithNotes& config,
+      std::vector<ConfigWithNotes>& updated_configs) const;
+
+  // Finds all promising values for the pipelining parameter, based on
+  // `config` with already determined contracting split, output tiling, and
+  // contracting tile size, and appends them to `updated_configs`. Each config
+  // in the input list might yield zero or more configs in the output.
+  void AddPipeliningParameter(
+      const ConfigWithNotes& config,
+      std::vector<ConfigWithNotes>& updated_configs) const;
 
   // Removes configs that are marked with `not_enough_tiles` from the list. If
   // this results in an empty list, adds a config that should be the most
   // optimal one even though it does not occupy all cores.
-  void EliminateLowOccupancyConfigs(std::vector<ConfigWithNotes>& configs);
+  void EliminateLowOccupancyConfigs(
+      std::vector<ConfigWithNotes>& configs) const;
 
+  // The order of these fields is important: the values of those defined earlier
+  // are used to compute the values of later ones.
   se::DeviceDescription device_description_;
   int64_t contracting_size_;
   int64_t batch_size_;
   int64_t lhs_parallel_size_;
   int64_t rhs_parallel_size_;
+  int operand_bitwidth_;
   int compute_bitwidth_;
   int desired_total_warps_;
   OutputTile max_out_tile_;
+  bool should_optimize_for_occupancy_;
   OutputTile min_out_tile_;
   int min_warps_per_cta_;
   int min_contracting_tile_size_;

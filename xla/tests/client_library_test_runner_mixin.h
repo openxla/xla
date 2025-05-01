@@ -21,7 +21,9 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -34,12 +36,14 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/client_library_test_runner_utils.h"
 #include "xla/tests/hlo_runner_agnostic_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/bitmap.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -94,21 +98,27 @@ class ClientLibraryTestRunnerMixin : public T {
 
   absl::StatusOr<Literal> ExecuteAndTransfer(
       const XlaComputation& computation,
-      const absl::Span<Literal* const> arguments,
+      const absl::Span<const Literal* const> arguments,
       const Shape* const shape_with_output_layout = nullptr) {
     ExecutionOptions execution_options = execution_options_;
     if (shape_with_output_layout != nullptr) {
       *execution_options.mutable_shape_with_output_layout() =
           shape_with_output_layout->ToProto();
     }
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<HloModule> module,
-        BuildAndVerifyHloModule(computation, &execution_options));
+    std::vector<const Shape*> argument_shapes;
+    argument_shapes.reserve(arguments.size());
+    for (const Literal* argument : arguments) {
+      argument_shapes.push_back(&argument->shape());
+    }
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                        BuildAndVerifyHloModule(computation, argument_shapes,
+                                                &execution_options));
     return this->Execute(std::move(module), arguments);
   }
 
   absl::StatusOr<Literal> ExecuteAndTransfer(
-      XlaBuilder* const builder, const absl::Span<Literal* const> arguments,
+      XlaBuilder* const builder,
+      const absl::Span<const Literal* const> arguments,
       const Shape* shape_with_output_layout = nullptr) {
     // Build the computation, as a convenience.
     TF_ASSIGN_OR_RETURN(XlaComputation computation, builder->Build());
@@ -118,8 +128,9 @@ class ClientLibraryTestRunnerMixin : public T {
 
   // Run a computation and return its value as a string. If an error
   // occurs, then instead return the error as a string.
-  std::string ExecuteToString(XlaBuilder* const builder,
-                              const absl::Span<Literal* const> arguments) {
+  std::string ExecuteToString(
+      XlaBuilder* const builder,
+      const absl::Span<const Literal* const> arguments) {
     const absl::StatusOr<Literal> result =
         ExecuteAndTransfer(builder, arguments);
     if (!result.ok()) {
@@ -132,20 +143,26 @@ class ClientLibraryTestRunnerMixin : public T {
   // Compare with reference.
   // Side effect: EXPECT_OK
   void ComputeAndCompare(XlaBuilder* const builder,
-                         const absl::Span<Literal* const> arguments,
+                         const absl::Span<const Literal* const> arguments,
                          const std::optional<ErrorSpec> error = std::nullopt) {
+    std::vector<const Shape*> argument_shapes;
+    argument_shapes.reserve(arguments.size());
+    for (const Literal* argument : arguments) {
+      argument_shapes.push_back(&argument->shape());
+    }
     TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder->Build());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            BuildAndVerifyHloModule(computation));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        BuildAndVerifyHloModule(computation, argument_shapes));
     EXPECT_TRUE(this->RunAndCompare(std::move(module), arguments, error));
   }
 
   // Compare with literal.
   // Side effect: EXPECT_OK
-  void ComputeAndCompareLiteral(XlaBuilder* const builder,
-                                const Literal& expected,
-                                const absl::Span<Literal* const> arguments,
-                                const Shape* shape_with_layout) {
+  void ComputeAndCompareLiteral(
+      XlaBuilder* const builder, const Literal& expected,
+      const absl::Span<const Literal* const> arguments,
+      const Shape* shape_with_layout) {
     return ComputeAndCompareLiteral(builder, expected, arguments, std::nullopt,
                                     shape_with_layout);
   }
@@ -154,7 +171,7 @@ class ClientLibraryTestRunnerMixin : public T {
   // Side effect: EXPECT_OK
   void ComputeAndCompareLiteral(
       XlaBuilder* const builder, const Literal& expected,
-      const absl::Span<Literal* const> arguments,
+      const absl::Span<const Literal* const> arguments,
       const std::optional<ErrorSpec> error = std::nullopt,
       const Shape* shape_with_layout = nullptr) {
     if (error == std::nullopt) {
@@ -195,14 +212,14 @@ class ClientLibraryTestRunnerMixin : public T {
   // Compare with literal.
   // Side effect: EXPECT_OK
   void ComputeAndCompareTuple(XlaBuilder* builder, const Literal& expected,
-                              absl::Span<Literal* const> arguments,
+                              absl::Span<const Literal* const> arguments,
                               std::optional<ErrorSpec> error = std::nullopt) {
     return ComputeAndCompareLiteral(builder, expected, arguments, error);
   }
 
   template <typename NativeT>
   void ComputeAndCompareR0(XlaBuilder* builder, NativeT expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal = LiteralUtil::CreateR0<NativeT>(expected);
@@ -212,7 +229,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR1(XlaBuilder* builder,
                            absl::Span<const NativeT> expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal = LiteralUtil::CreateR1<NativeT>(expected);
@@ -221,7 +238,7 @@ class ClientLibraryTestRunnerMixin : public T {
 
   void ComputeAndCompareR1(XlaBuilder* builder,
                            const tsl::core::Bitmap& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     Literal expected_literal = LiteralUtil::CreateR1(expected);
     ComputeAndCompareLiteral(builder, expected_literal, arguments, error);
@@ -230,7 +247,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR2(XlaBuilder* builder,
                            const Array2D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
@@ -241,7 +258,7 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR3(XlaBuilder* builder,
                            const Array3D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
@@ -252,12 +269,26 @@ class ClientLibraryTestRunnerMixin : public T {
   template <typename NativeT>
   void ComputeAndCompareR4(XlaBuilder* builder,
                            const Array4D<NativeT>& expected,
-                           absl::Span<Literal* const> arguments,
+                           absl::Span<const Literal* const> arguments,
                            std::optional<ErrorSpec> error = std::nullopt) {
     CheckErrorSpec<NativeT>(error);
     Literal expected_literal =
         LiteralUtil::CreateR4FromArray4D<NativeT>(expected);
     ComputeAndCompareLiteral(builder, expected_literal, arguments, error);
+  }
+
+  // Compare with string.
+  // Side effect: EXPECT
+  void ComputeAndCompareR1U8(XlaBuilder* builder,
+                             const absl::string_view expected,
+                             absl::Span<const Literal* const> arguments) {
+    const absl::StatusOr<Literal> actual =
+        ExecuteAndTransfer(builder, arguments);
+    TF_EXPECT_OK(actual.status());
+    if (!actual.ok()) {
+      return;
+    }
+    EXPECT_EQ(actual->GetR1U8AsString(), expected);
   }
 
   XlaComputation CreateScalarMax() { return xla::CreateScalarMax(test_type_); }
@@ -313,6 +344,16 @@ class ClientLibraryTestRunnerMixin : public T {
     return literal;
   }
 
+  template <typename NativeT>
+  Literal CreateR4Parameter(const Array4D<NativeT>& array_4d,
+                            int64_t parameter_number, const std::string& name,
+                            XlaBuilder* builder, XlaOp* data_handle) {
+    Literal literal = LiteralUtil::CreateR4FromArray4D(array_4d);
+    literal = MaybeConvertLiteralToTestType(literal);
+    *data_handle = Parameter(builder, parameter_number, literal.shape(), name);
+    return literal;
+  }
+
   Literal MaybeConvertLiteralToTestType(const Literal& literal) const {
     switch (test_type_) {
       case BF16:
@@ -335,6 +376,9 @@ class ClientLibraryTestRunnerMixin : public T {
     opts->set_xla_gpu_enable_fast_min_max(!disabled);
   }
 
+  void SetSeed(const uint64_t seed) { execution_options_.set_seed(seed); }
+  void ClearSeed() { execution_options_.clear_seed(); }
+
   // Provides mutable access to the execution DebugOptions field; this lets
   // tests tweak the options that will be used to compile/run the graph.
   DebugOptions* mutable_debug_options() {
@@ -344,18 +388,20 @@ class ClientLibraryTestRunnerMixin : public T {
  private:
   absl::StatusOr<std::unique_ptr<HloModule>> BuildAndVerifyHloModule(
       const XlaComputation& computation,
+      absl::Span<const Shape* const> argument_shapes,
       const ExecutionOptions* execution_options = nullptr) const {
     if (execution_options == nullptr) {
       execution_options = &execution_options_;
     }
+    TF_ASSIGN_OR_RETURN(const ProgramShape program_shape,
+                        computation.GetProgramShape());
     TF_ASSIGN_OR_RETURN(
-        HloModuleConfig module_config,
-        HloModule::CreateModuleConfigFromProto(
-            computation.proto(), execution_options->debug_options(),
-            execution_options));
+        std::unique_ptr<HloModuleConfig> module_config,
+        CreateModuleConfig(program_shape, argument_shapes, execution_options,
+                           /*default_num_replicas=*/1));
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<HloModule> module,
-        HloModule::CreateFromProto(computation.proto(), module_config));
+        HloModule::CreateFromProto(computation.proto(), *module_config));
     TF_RETURN_IF_ERROR(this->verifier().Run(module.get()).status());
     return module;
   }

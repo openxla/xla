@@ -95,8 +95,10 @@ EpilogueSpecification EpilogueSpecification::FromIdentityIndexing(
     const HloInstruction* hero, const HloInstruction* root,
     mlir::MLIRContext* mlir_context) {
   EpilogueSpecification result;
-  absl::c_copy(root->shape().dimensions(),
-               std::back_inserter(result.index_ranges));
+  if (root->shape().IsArray()) {
+    absl::c_copy(root->shape().dimensions(),
+                 std::back_inserter(result.index_ranges));
+  }
   result.roots.push_back(root);
   result.root_indexing.push_back(
       CreateIdentityMap(root->shape(), mlir_context));
@@ -155,7 +157,7 @@ bool IsEvaluatedMoreThanOnce(const HloInstruction* instr) {
   return absl::c_any_of(instr->users(), [&](const HloInstruction* user) {
     if (user->opcode() == HloOpcode::kGather &&
         absl::c_linear_search(user->OperandIndices(instr), 1) &&
-        instr->shape().dimensions_size() >= 2 &&
+        instr->shape().dimensions().size() >= 2 &&
         instr->shape().dimensions(1) > 1) {
       return true;
     }

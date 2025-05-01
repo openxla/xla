@@ -887,21 +887,37 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
   bool small_dot = ShapeUtil::ElementsIn(dot.operand(0)->shape()) +
                        ShapeUtil::ElementsIn(dot.operand(1)->shape()) <=
                    kMinGemmElements;
+  // TODO: b/393299275 - Remove this once the new emitter lands and we can
+  // support slices in contracting dimension with splits.
+  bool supports_contracting_split =
+      HloBfsFindAll({&dot}, [&](const HloInstruction* node) {
+        return node->opcode() == HloOpcode::kSlice;
+      }).empty();
   bool autotune_contracting_split =
+      supports_contracting_split &&
       debug_options_.xla_gpu_enable_split_k_autotuning();
 
   if (debug_options_.xla_gpu_experimental_enable_dynamic_dot_search_space()) {
-    if (!IsAutotuningEnabled()) {
-      return {{kDefaultConfig}};
-    }
     TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(),
                                             &dot);
     VLOG(1) << "Generating configs from search space: "
-            << search_space.Serialize();
+            << search_space.ToString();
     // We don't need to consider small_dot here. The new search space will
     // already generate a unique config for small problems.
-    return search_space.GenerateConfigs(
-        autotune_contracting_split ? std::make_optional(1) : std::nullopt);
+    std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs(
+        /*force_contracting_split=*/autotune_contracting_split
+            ? std::nullopt
+            : std::make_optional(1));
+    if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
+      VLOG(1) << "Restricting configs to the default set.";
+      configs = search_space.OptimizeConfigSet(
+          configs, /*hints=*/GetDefaultTritonConfigs());
+    }
+    if (!IsAutotuningEnabled()) {
+      // Keep the first config, which likely does not spill registers.
+      configs.resize(1);
+    }
+    return configs;
   }
 
   // Retrieve the minimum bit-width participating in the dot. This is needed

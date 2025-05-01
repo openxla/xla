@@ -32,11 +32,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -57,14 +60,13 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/gpu/gpu_diagnostics.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "tsl/platform/errors.h"
@@ -90,8 +92,6 @@ limitations under the License.
 #include "third_party/gpus/cudnn/cudnn_ops_train.h"
 #endif
 
-#include "third_party/gpus/cudnn/cudnn_backend.h"
-
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_EngineConfig.h"
@@ -103,7 +103,6 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend_Operation.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_OperationGraph.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_PointWiseDesc.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend_Rng.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_Tensor.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_VariantPack.h"
 // clang-format on
@@ -288,7 +287,9 @@ class CudnnAccess {
   CudnnHandle GetHandle(StreamExecutor* executor, Stream* stream) {
     auto lock = std::make_unique<absl::MutexLock>(&mutex_);
     mutex_.AssertHeld();
-    CUstream cu_stream = stream ? AsGpuStreamValue(stream) : cudaStreamLegacy;
+    CUstream cu_stream = stream ? absl::bit_cast<CUstream>(
+                                      stream->platform_specific_handle().stream)
+                                : cudaStreamLegacy;
     if (!current_stream_ || cu_stream != *current_stream_) {
       current_stream_ = cu_stream;
       const auto status = cudnnSetStream(handle_, cu_stream);
@@ -306,7 +307,8 @@ class CudnnAccess {
   }
 
   void NotifyStreamDestroyed(Stream* stream) {
-    CUstream cu_stream = AsGpuStreamValue(stream);
+    CUstream cu_stream =
+        absl::bit_cast<CUstream>(stream->platform_specific_handle().stream);
     absl::MutexLock lock(&mutex_);
     if (current_stream_ && cu_stream == *current_stream_) {
       current_stream_.reset();
@@ -537,7 +539,7 @@ absl::Status CudnnSupport::Init() {
              << " bytes total.";
 
   if (status == CUDNN_STATUS_NOT_INITIALIZED) {
-    auto result = gpu::Diagnostician::FindKernelDriverVersion();
+    auto result = cuda::Diagnostician::FindKernelDriverVersion();
     if (!result.ok()) {
       LOG(ERROR) << "Error retrieving driver version: "
                  << cuda::DriverVersionStatusToString(result);
@@ -879,7 +881,7 @@ const json* CudnnExecutionPlanEngineFilterStatic() {
             "comment"             : "b/281887114"
           }
       ]})";
-  static const json* json_handle = new json(json::parse(filter_str));
+  static const json* const json_handle = new json(json::parse(filter_str));
   return json_handle;
 }
 
@@ -6271,8 +6273,8 @@ absl::Status CreateOpRunners(
 }  // namespace
 
 absl::Status CudnnSupport::GetConvolveRunners(
-    bool use_cudnn_frontend, dnn::ConvolutionKind kind,
-    dnn::DataType input_type, dnn::DataType output_type, Stream* stream,
+    dnn::ConvolutionKind kind, dnn::DataType input_type,
+    dnn::DataType output_type, Stream* stream,
     const dnn::BatchDescriptor& input_descriptor,
     DeviceMemoryBase /*input_data*/,
     const dnn::FilterDescriptor& filter_descriptor,
@@ -6283,79 +6285,6 @@ absl::Status CudnnSupport::GetConvolveRunners(
     ScratchAllocator* /*scratch_allocator*/,
     const NumericOptions& numeric_options,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans) {
-  // cuDNN frontend support for Tx32 convolutions added in 8.3.
-  // If the filter is not reordered, do not use frontend (it is slow).
-  const bool is_disabled_x32 =
-      input_descriptor.layout() == dnn::kBatchDepthYX32 &&
-      (filter_descriptor.layout() !=
-       dnn::FilterLayout::kOutputInputYX32_CudnnReordered);
-
-  const bool actually_use_cudnn_frontend =
-      use_cudnn_frontend && !is_disabled_x32;
-
-  if (use_cudnn_frontend && !actually_use_cudnn_frontend) {
-    // This will happen once per unique conv configuration/shape that gets
-    // affected (and not, for example, on every conv launch).  Confusion over
-    // whether this has happened or not has repeatedly wasted a lot of time
-    // debugging, so be sure it shows up in the logs.
-    LOG(INFO) << "Disabling cuDNN frontend for the following convolution:\n"
-              << "  input: " << input_descriptor.ToString() << "\n"
-              << "  filter: " << filter_descriptor.ToString() << "\n"
-              << "  " << convolution_descriptor.ToString() << "\n"
-              << "  ... because "
-              << (is_disabled_x32
-                      ? "Tx32 convolutions are disabled."
-                      : "the current cuDNN version does not support it.");
-  }
-
-  if (!actually_use_cudnn_frontend) {
-    auto cuda_compute_capability = stream->GetCudaComputeCapability();
-    std::vector<dnn::AlgorithmDesc> algorithms;
-    bool got_algos = false;
-    switch (kind) {
-      default:
-        return tsl::errors::Internal(absl::StrFormat(
-            "Unknown ConvolutionKind for unfused conv: %d", kind));
-      case dnn::ConvolutionKind::FORWARD:
-        got_algos = GetConvolveAlgorithms(cuda_compute_capability, input_type,
-                                          numeric_options, &algorithms);
-        break;
-      case dnn::ConvolutionKind::BACKWARD_FILTER:
-        got_algos = GetConvolveBackwardFilterAlgorithms(
-            cuda_compute_capability, input_type, numeric_options, &algorithms);
-        break;
-      case dnn::ConvolutionKind::BACKWARD_DATA:
-        got_algos = GetConvolveBackwardDataAlgorithms(
-            cuda_compute_capability, input_type, numeric_options, &algorithms);
-        break;
-    }
-    if (!got_algos) {
-      return absl::UnknownError(
-          absl::StrFormat("Listing algorithms failed for kind %d", kind));
-    }
-
-    for (const auto& algo : algorithms) {
-      auto runner_or = ConvolveRunnerFromDesc(
-          stream, algo, kind, input_type, output_type, input_descriptor,
-          filter_descriptor, output_descriptor, convolution_descriptor);
-      if (!runner_or.ok()) {
-        // Failures here can result from trying to query the workspace size
-        // for algorithms that aren't supported for the present configuration.
-        // This means we'll now return only supported algorithms, unlike the
-        // predecessor 'GetConvolveAlgorithms', which returned all existing
-        // algorithms regardless of any particular configuration.
-        //
-        // TODO(awpr): can we arrange for the expected errors here to have a
-        // particular error code (e.g. UNIMPLEMENTED or INVALID_ARGUMENT) and
-        // log errors for anything unexpected?
-        continue;
-      }
-      out_exec_plans->push_back(std::move(runner_or).value());
-    }
-
-    return absl::OkStatus();
-  }
-
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   TF_ASSIGN_OR_RETURN(
       auto op_graph,
@@ -6742,10 +6671,9 @@ CudnnSupport::FusedConvolveRunnerFromDesc(
 }
 
 absl::Status CudnnSupport::GetFusedConvolveRunners(
-    bool use_cudnn_frontend, dnn::ConvolutionKind kind,
-    dnn::DataType input_type, dnn::DataType bias_type,
-    dnn::DataType output_type, double conv_scale, double side_input_scale,
-    double leakyrelu_alpha, Stream* stream,
+    dnn::ConvolutionKind kind, dnn::DataType input_type,
+    dnn::DataType bias_type, dnn::DataType output_type, double conv_scale,
+    double side_input_scale, double leakyrelu_alpha, Stream* stream,
     const dnn::BatchDescriptor& input_descriptor,
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& bias_descriptor,
@@ -6757,32 +6685,6 @@ absl::Status CudnnSupport::GetFusedConvolveRunners(
   // Fused convolutions with identity activations are broken in that they
   // implicitly do ReLU on some engines, and we can't reliably detect which
   // ones.
-
-  // If the filter is not reordered, do not use frontend (it is slow).
-  const bool is_disabled_x32 =
-      input_descriptor.layout() == dnn::kBatchDepthYX32 &&
-      (filter_descriptor.layout() !=
-       dnn::FilterLayout::kOutputInputYX32_CudnnReordered);
-
-  const bool actually_use_cudnn_frontend =
-      use_cudnn_frontend && !is_disabled_x32;
-
-  if (use_cudnn_frontend && !actually_use_cudnn_frontend) {
-    const char* reason = "the current cuDNN version does not support it.";
-    if (is_disabled_x32) {
-      reason = "Tx32 convolutions are disabled.";
-    }
-
-    // This will happen once per unique conv configuration/shape that gets
-    // affected (and not, for example, on every conv launch).  Confusion over
-    // whether this has happened or not has repeatedly wasted a lot of time
-    // debugging, so be sure it shows up in the logs.
-    LOG(INFO) << "Disabling cuDNN frontend for the following convolution:\n"
-              << "  input: " << input_descriptor.ToString() << "\n"
-              << "  filter: " << filter_descriptor.ToString() << "\n"
-              << "  " << convolution_descriptor.ToString() << "\n"
-              << "  ... because " << reason;
-  }
 
   if (input_type == dnn::DataType::kInt8 &&
       !stream->GetCudaComputeCapability().IsAtLeast(6, 1)) {
@@ -6799,39 +6701,6 @@ absl::Status CudnnSupport::GetFusedConvolveRunners(
     return absl::InvalidArgumentError(
         "CuDNN fusion only supports activations of "
         "{Relu, Relu6, Elu, <None>}.");
-  }
-
-  if (!actually_use_cudnn_frontend) {
-    std::vector<dnn::AlgorithmDesc> algorithms;
-
-    auto cuda_compute_capability = stream->GetCudaComputeCapability();
-    if (!GetConvolveAlgorithms(cuda_compute_capability, input_type,
-                               numeric_options, &algorithms)) {
-      return absl::UnknownError("Listing fused convolve algorithms failed.");
-    }
-
-    for (const auto& algo : algorithms) {
-      // Only CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM is supported
-      // for identity activation, other algs seem to quietly do Relu. See
-      // https://docs.nvidia.com/deeplearning/sdk/cudnn-developer-guide/index.html#cudnnConvolutionBiasActivationForward
-      if (activation_mode == dnn::ActivationMode::kNone &&
-          algo.algo_id() != CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM) {
-        continue;
-      }
-      auto runner_or = FusedConvolveRunnerFromDesc(
-          stream, algo, kind, input_type, bias_type, output_type, conv_scale,
-          side_input_scale, leakyrelu_alpha, input_descriptor,
-          filter_descriptor, bias_descriptor, output_descriptor,
-          convolution_descriptor, activation_mode);
-      if (!runner_or.ok()) {
-        // See the corresponding error handling in
-        // CudnnSupport::GetConvolveRunners: this filters out algorithms that
-        // don't support this conv.
-        continue;
-      }
-      out_exec_plans->push_back(std::move(runner_or).value());
-    }
-    return absl::OkStatus();
   }
 
   auto cudnn = cudnn_->GetHandle(parent_, stream);
@@ -6854,19 +6723,13 @@ absl::Status CudnnSupport::GetFusedConvolveRunners(
 }
 
 absl::Status CudnnSupport::GetFusedMatmulRunners(
-    bool use_cudnn_frontend, dnn::DataType input_type, dnn::DataType bias_type,
+    dnn::DataType input_type, dnn::DataType bias_type,
     dnn::DataType output_type, Stream* stream, bool trans_a, bool trans_b,
     uint64_t m, uint64_t n, uint64_t k, int64_t lda, int64_t ldb, int64_t ldc,
     dnn::ActivationMode activation_mode, bool use_fallback,
     const NumericOptions& numeric_options,
     std::vector<std::unique_ptr<const dnn::FusedMatmulRunner>>*
         out_exec_plans) {
-  if (!use_cudnn_frontend) {
-    return tsl::errors::Unimplemented(
-        "Cudnn execution plans for matmul are only supported with cudnn "
-        "frontend APIs.");
-  }
-
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   auto op_graph_status = GetCudnnFusedMatmulGraph(
       input_type, bias_type, output_type, trans_a, trans_b, m, n, k, lda, ldb,

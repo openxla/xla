@@ -46,6 +46,7 @@
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
@@ -112,8 +113,9 @@ static absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
   mlir::MLIRContext context;
   auto module = xla::ParseMlirModuleString(program, context);
 
-  auto compile_options =
-      std::make_unique<ifrt::XlaCompileOptions>(xla::CompileOptions());
+  auto devices = client->MakeDeviceList({client->addressable_devices().at(0)});
+  auto compile_options = std::make_unique<ifrt::XlaCompileOptions>(
+      xla::CompileOptions(), std::move(devices));
   compile_options->compile_options.compile_portable_executable = true;
 
   return compiler->Compile(std::make_unique<ifrt::HloProgram>(**module),

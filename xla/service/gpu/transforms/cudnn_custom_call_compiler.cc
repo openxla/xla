@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -46,7 +45,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -165,7 +166,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHAF8(
       custom_call->backend_config<xla::gpu::GpuBackendConfig>());
   const xla::gpu::CudnnfMHABackendConfig &config =
       gpu_config.cudnn_fmha_backend_config();
-  Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
+  TF_ASSIGN_OR_RETURN(Shape intermediate_tensor_shape,
+                      Shape::FromProto(config.intermediate_tensor_shape()));
 
   TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
                       AsCudnnFmhaMaskKind(config.mask_type()));
@@ -217,7 +219,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
       custom_call->operand(input_index++)->shape();
   const Shape &bmm2_grad_gemm2_rhs_shape =
       custom_call->operand(input_index++)->shape();
-  const Shape bmm2_grad_gemm1_lhs_shape(config.intermediate_tensor_shape());
+  TF_ASSIGN_OR_RETURN(const Shape bmm2_grad_gemm1_lhs_shape,
+                      Shape::FromProto(config.intermediate_tensor_shape()));
   ++input_index;
   const Shape &d_output_shape = custom_call->operand(input_index++)->shape();
 
@@ -341,7 +344,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
   Shape fwd_output_shape = custom_call->operand(3)->shape();
   Shape d_output_shape = custom_call->operand(4)->shape();
 
-  Shape bmm2_grad_gemm1_lhs_shape(config.intermediate_tensor_shape());
+  TF_ASSIGN_OR_RETURN(Shape bmm2_grad_gemm1_lhs_shape,
+                      Shape::FromProto(config.intermediate_tensor_shape()));
 
   Shape d_bmm1_lhs_shape = ShapeUtil::GetSubshape(custom_call->shape(), {0});
   Shape d_bmm1_rhs_shape = ShapeUtil::GetSubshape(custom_call->shape(), {1});
@@ -395,7 +399,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
 absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBlockScaledDot(
     se::dnn::DnnSupport &dnn_support, HloCustomCallInstruction *custom_call) {
   TF_RET_CHECK(custom_call->operand_count() == 4);
-  TF_RET_CHECK(custom_call->shape().tuple_shapes_size() == 2);
+  TF_RET_CHECK(custom_call->shape().tuple_shapes().size() == 2);
 
   TF_ASSIGN_OR_RETURN(TensorDescriptor lhs_data,
                       TensorDescriptorFor(custom_call->operand(0)->shape()));

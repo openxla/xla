@@ -222,7 +222,7 @@ class AbstractTfrtCpuBuffer : public CommonPjRtBuffer {
 
   bool IsEmptyTuple() const {
     return on_device_shape_.IsTuple() &&
-           on_device_shape_.tuple_shapes_size() == 0;
+           on_device_shape_.tuple_shapes().size() == 0;
   }
 
   // Similar to Delete, drops the buffer's reference to its associated device
@@ -271,8 +271,8 @@ class AbstractAsyncHostToHostMemoryTransferManager
   void SetBufferError(int buffer_index, absl::Status error) override;
 
   void AddTransferMetadata(const TransferMetadata& meta) override {
-    LOG(WARNING) << "AddTransferMetadata not implemented for "
-                    "AbstractAsyncHostToHostMemoryTransferManager";
+    LOG_FIRST_N(WARNING, 1) << "AddTransferMetadata not implemented for "
+                               "AbstractAsyncHostToHostMemoryTransferManager";
   }
 
  protected:
@@ -323,6 +323,10 @@ class AbstractAsyncHostToHostMemoryTransferManager
 
   AsyncWorkRunner* async_work_runner_;
 };
+
+// Helper for copying into potentially sub-byte packed literals.
+void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
+                void* data, int64_t size);
 
 }  // namespace xla
 

@@ -97,6 +97,35 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(GetUppercaseStringSetterTestCases()),
     UppercaseStringSetterTest::Name);
 
+TEST(FuelTest, FuelPassCountsAreSeparate) {
+  tsl::setenv("XLA_FLAGS", "--xla_fuel=ABC=1,PQR=2", /*overwrite=*/true);
+  // Parse flags from the environment variable.
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  ParseDebugOptionFlagsFromEnv();
+
+  EXPECT_TRUE(ConsumeFuel("ABC"));
+  EXPECT_FALSE(ConsumeFuel("ABC"));
+
+  EXPECT_TRUE(ConsumeFuel("PQR"));
+  EXPECT_TRUE(ConsumeFuel("PQR"));
+  EXPECT_FALSE(ConsumeFuel("PQR"));
+}
+
+TEST(FuelTest,
+     PassFuelIsSetReturnsTrueOnExplicitlyFueledPassesAndFalseOtherwise) {
+  tsl::setenv("XLA_FLAGS", "--xla_fuel=MNO=1,XYZ=2", /*overwrite=*/true);
+  // Parse flags from the environment variable.
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  ParseDebugOptionFlagsFromEnv();
+  EXPECT_FALSE(PassFuelIsSet("ABC"));
+  EXPECT_TRUE(PassFuelIsSet("MNO"));
+  EXPECT_FALSE(PassFuelIsSet("PQR"));
+  EXPECT_TRUE(PassFuelIsSet("XYZ"));
+}
 }  // namespace
 }  // namespace xla
 

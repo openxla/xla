@@ -998,7 +998,7 @@ class HloInstruction {
   // Creates a dynamic reshape instruction. Similar to reshape but dynamic
   // dimensions sizes are provided as additional variadic arguments.
   //
-  // Precondition: dim_sizes.size() == shape.dimensions_size()
+  // Precondition: dim_sizes.size() == shape.dimensions().size()
   static std::unique_ptr<HloInstruction> CreateDynamicReshape(
       const Shape& shape, HloInstruction* data_operand,
       absl::Span<HloInstruction* const> dim_sizes);
@@ -1267,6 +1267,9 @@ class HloInstruction {
 
   // Returns if instruction has any control dependencies.
   bool HasControlDependencies() const;
+
+  // Returns if instruction has successor control dependencies.
+  bool HasSuccessorControlDependencies() const;
 
   // Copies the control predecessors and successors on this HLO instruction to
   // `inst`.  Does not do a deep copy so this makes sense only if `inst` and

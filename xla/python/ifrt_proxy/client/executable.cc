@@ -196,7 +196,7 @@ absl::StatusOr<uint64_t> PrepareAndExecuteLoadedHostCallback(
 // executions.
 class LoadedExecutable::OutputSpecCache {
  public:
-  explicit OutputSpecCache(absl::Nonnull<LoadedExecutable*> parent)
+  explicit OutputSpecCache(LoadedExecutable* absl_nonnull parent)
       : parent_(parent) {}
 
   // Returns the cached output spec if already cached, and std::nullopt if not.
@@ -719,7 +719,7 @@ void LoadedExecutable::PollLoadedHostCallback(
     }
   };
 
-  static auto* global_pool = new tsl::thread::ThreadPool(
+  static auto* const global_pool = new tsl::thread::ThreadPool(
       tsl::Env::Default(), GetThreadOptions(), "XLAIFRTProxy",
       std::min(16, tsl::port::MaxParallelism()));
   global_pool->Schedule(std::move(f));

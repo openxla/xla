@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/model/constraint_expression.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -114,7 +114,7 @@ class FakeEmitterSpecificConstraints : public EmitterSpecificConstraints {
   int64_t dim0_tile_size_;
 };
 
-class SymbolicTileAnalysisTest : public HloTestBase {
+class SymbolicTileAnalysisTest : public HloHardwareIndependentTestBase {
  public:
   std::optional<SymbolicTileAnalysis> TryAnalyzeModule(
       HloModule* module,
@@ -230,6 +230,42 @@ ENTRY main {
   auto p0_from_subtract1 = root->operand(1)->operand(0);
 
   EXPECT_EQ(p0_from_subtract0, p0_from_subtract1);
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ExpandingReshapeIsSupportedWithTileParamsOutsideBounds) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+fusion {
+  param_0 = f32[20] parameter(0)
+  abs = f32[20] abs(param_0)
+  ROOT reshape = f32[4,5] reshape(abs)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[20] parameter(0)
+  ROOT fusion = f32[4, 5] fusion(param_0), kind=kCustom, calls=fusion
+})"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
+                          analysis->ComputeTiledHloInstructions(
+                              /*tile_parameters=*/{1, 8},
+                              /*constraints_are_known_satisfied=*/false,
+                              /*compute_all_tile_offset_indexing_maps=*/true));
+
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
+  auto parameter = root->operand(0)->operand(0);
+  EXPECT_THAT(*parameter, MatchTiledHloInstruction(
+                              /*tile_sizes=*/{8},
+                              /*tile_strides=*/{1},
+                              /*tile_offsets_indexing=*/R"(
+    (pid_0, pid_1) -> (pid_0 * 5),
+    domain:
+    pid_0 in [0, 3],
+    pid_1 in [0, 0]
+  )"));
 }
 
 TEST_F(SymbolicTileAnalysisTest, ProducerConsumerFusionIsSupported) {

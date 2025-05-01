@@ -19,6 +19,8 @@ lit_test_suite(
             "simple.hlo",
             "simple.mlir",
             "stablehlo.mlir",
+            "stablehlo_invalid.mlir",
+            "stablehlo_unary_elementwise.mlir",
             "vhlo_input.mlir",
             # go/keep-sorted end
         ],
@@ -34,6 +36,7 @@ lit_test_suite(
     ],
     tools = [
         "//xla/hlo/tools:hlo-translate",
+        "//xla/hlo/translate:xla-translate",
         "//xla/mlir_hlo:mlir-hlo-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//llvm:not",

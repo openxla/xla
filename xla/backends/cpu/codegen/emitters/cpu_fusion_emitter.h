@@ -60,9 +60,15 @@ absl::StatusOr<emitters::CallTargetProvider> EmitCallTargets(
 void SetDataLayoutAttribute(mlir::ModuleOp module,
                             const HloFusionInstruction& fusion);
 
-absl::StatusOr<absl::flat_hash_set<int64_t>> SetKernelFunctionAttributes(
-    llvm::Module& module, const BufferAssignment& buffer_assignment,
-    const HloFusionInstruction* fusion);
+// Creates a module op with the name of the fusion using `GetFusionName`.
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateNamedMlirModuleOp(
+    const HloFusionInstruction& fusion, mlir::Builder& builder);
+
+// Returns the name of the fusion.
+// If `xla_cpu_generate_unique_c_style_kernel_entry_points` is true, returns a
+// C-style name of the fusion created by combining the name of the parent
+// HloModule and the name of the fusion.
+absl::StatusOr<std::string> GetFusionName(const HloFusionInstruction& fusion);
 
 class CpuFusionEmitterBase {
  public:

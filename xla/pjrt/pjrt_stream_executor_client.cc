@@ -118,6 +118,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
+#include "xla/pjrt/profiling/profiling_context.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/stream_executor_executable.h"
 #include "xla/pjrt/tracked_device_buffer.h"
@@ -743,7 +744,8 @@ PjRtStreamExecutorClient::BufferFromHostBufferInternal(
         device_shape,
         transfer_manager->ChooseCompactLayoutForShape(device_shape));
   }
-  absl::InlinedVector<int64_t, 4> shape_strides(device_shape.dimensions_size());
+  absl::InlinedVector<int64_t, 4> shape_strides(
+      device_shape.dimensions().size());
   TF_RETURN_IF_ERROR(
       ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
@@ -793,8 +795,8 @@ PjRtStreamExecutorClient::BufferFromHostBufferInternal(
   // Allocating multigigabyte pinned buffers can be very slow. In that case,
   // using a staging buffer is probably worse than not using one.
   // TODO(phawkins): add chunking for transfers.
-  if (!IsDmaMapped(data, packed_size) &&
-      (must_use_staging_buffer || (should_stage_host_to_device_transfers() &&
+  if (must_use_staging_buffer || (!IsDmaMapped(data, packed_size) &&
+                                  (should_stage_host_to_device_transfers() &&
                                    packed_size < (int64_t{1} << 30)))) {
     void* ptr = host_memory_allocator()->AllocateRaw(
         tsl::Allocator::kAllocatorAlignment, transpose ? size : packed_size);
@@ -1003,7 +1005,14 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorClient::BufferFromHostLiteral(const LiteralSlice& literal,
-                                                PjRtMemorySpace* memory_space) {
+                                                PjRtMemorySpace* memory_space,
+                                                const Layout* device_layout) {
+  if (device_layout) {
+    return absl::UnimplementedError(absl::StrCat(
+        "BufferFromHostLiteral with device_layout is not implemented on "
+        "platform: ",
+        platform_name()));
+  }
   CHECK_EQ(memory_space->devices().size(), 1);
   PjRtDevice* device = memory_space->devices().front();
 
@@ -1687,7 +1696,7 @@ PjRtStreamExecutorBuffer::CopyToDeviceMemorySpace(
     // Avoid use-after-free on `literal` due to unsequenced move and use.
     Literal* literal_pointer = literal.get();
     absl::InlinedVector<int64_t, 4> byte_strides(
-        literal->shape().dimensions_size());
+        literal->shape().dimensions().size());
     TF_RETURN_IF_ERROR(
         ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
     return dst_device->client()->BufferFromHostBuffer(
@@ -1865,7 +1874,7 @@ absl::Status CheckCompatibleShapes(bool strict_shape_checking,
   // shape `pred[0]`.
   if (execution_shape.IsToken() &&
       buffer_on_device_shape.element_type() == PrimitiveType::PRED &&
-      buffer_on_device_shape.dimensions_size() == 1 &&
+      buffer_on_device_shape.dimensions().size() == 1 &&
       buffer_on_device_shape.dimensions(0) == 0) {
     return absl::OkStatus();
   }
@@ -1917,9 +1926,9 @@ MakeTupleHelper(
   TransferManager* transfer_manager =
       client->client()->backend().transfer_manager();
 
-  if (tupled_parameter_shape.tuple_shapes_size() != py_buffers.size()) {
+  if (tupled_parameter_shape.tuple_shapes().size() != py_buffers.size()) {
     return InvalidArgument("Executable expected %lld parameters but got %lld",
-                           tupled_parameter_shape.tuple_shapes_size(),
+                           tupled_parameter_shape.tuple_shapes().size(),
                            py_buffers.size());
   }
   for (int i = 0; i < py_buffers.size(); ++i) {
@@ -2726,7 +2735,7 @@ PjRtStreamExecutorLoadedExecutable::MakeOutputBuffers(
   std::vector<std::unique_ptr<PjRtBuffer>> outputs;
   LocalDeviceState* device_state = &(client_->device_state(device_ordinal));
   if (result_buffer.shape().IsTuple()) {
-    int tuple_count = result_buffer.shape().tuple_shapes_size();
+    int tuple_count = result_buffer.shape().tuple_shapes().size();
     outputs.reserve(tuple_count);
     // Take ownership of each of the output values, leaving only the root table
     // in result_buffer.
@@ -2968,6 +2977,7 @@ PjRtStreamExecutorLoadedExecutable::Execute(
     results[0] = ExecuteHelper(argument_handles[0], replica, partition, run_id,
                                options, returned_futures.has_value());
   } else {
+    std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
     absl::Mutex mu;
     int running = num_addressable_devices;
     int failed = 0;
@@ -2981,6 +2991,8 @@ PjRtStreamExecutorLoadedExecutable::Execute(
           *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
                ->local_device_state();
       device_state.execute_thread()->Schedule([&, replica, partition, i] {
+        std::unique_ptr<WithProfilingContext> wpc =
+            CreateWithProfilingContext(pc.get());
         results[i] =
             ExecuteHelper(argument_handles[i], replica, partition, run_id,
                           options, returned_futures.has_value());
@@ -3152,7 +3164,7 @@ absl::StatusOr<std::vector<absl::string_view>> MemoryKindsFromShape(
     return {{memory_kind}};
   }
   std::vector<absl::string_view> result;
-  result.reserve(shape.tuple_shapes_size());
+  result.reserve(shape.tuple_shapes().size());
   for (const auto& element_shape : shape.tuple_shapes()) {
     TF_ASSIGN_OR_RETURN(
         absl::string_view element_memory_kind,
@@ -3454,6 +3466,12 @@ PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
   return Load(std::move(executable), LoadOptions());
 }
 
+namespace {
+
+constexpr absl::string_view kPjRtClientName = "PjRtStreamExecutorClient";
+
+}  // namespace
+
 absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
     const PjRtLoadedExecutable& executable) const {
   const PjRtStreamExecutorLoadedExecutable* se_executable =
@@ -3485,6 +3503,7 @@ absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
   *proto.mutable_serialized_executable() = std::move(serialized);
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       se_executable->compile_options_.ToProto());
+  *proto.mutable_pjrt_client_name() = kPjRtClientName;
   return proto.SerializeAsString();
 }
 
@@ -3537,6 +3556,13 @@ PjRtStreamExecutorClient::DeserializeToLocalExecutable(
   }
   if (!proto.ParseFromArray(serialized.data(), serialized.size())) {
     return Internal("Proto deserialization failed");
+  }
+  if (!proto.pjrt_client_name().empty() &&
+      proto.pjrt_client_name() != kPjRtClientName) {
+    return Internal(
+        "Serialized executable is from an incompatible PjRt client type. "
+        "PjRt client type expected by the serialized executable: %s",
+        proto.pjrt_client_name());
   }
 
   CompileOptions compile_options;

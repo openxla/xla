@@ -15,7 +15,10 @@
 #include "xla/hlo/tools/hlo_diff/matchers/hlo_gumgraph_matcher.h"
 
 #include <algorithm>
-#include <cstdint>
+#include <cstddef>
+#include <iomanip>
+#include <iostream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -45,6 +48,18 @@ constexpr double kMetadataOpNameMatchScore = 0.1;
 constexpr double kMetadataSourceFileMatchScore = 0.1;
 constexpr double kMetadataSourceLineMatchScore = 0.1;
 
+constexpr int kProgressBarWidth = 60;
+constexpr char kProgressBarBlock = '|';
+constexpr char kProgressBarEmpty = ' ';
+
+void PrintProgress(int percentage) {
+  int lpad = static_cast<int>(percentage / 100.0 * kProgressBarWidth);
+  int rpad = kProgressBarWidth - lpad;
+  std::cout << "\r" << std::setw(3) << percentage << "% ["
+            << std::string(lpad, kProgressBarBlock)
+            << std::string(rpad, kProgressBarEmpty) << "]" << std::flush;
+}
+
 struct NodePairSimilarity {
   const HloInstructionNode* left;
   const HloInstructionNode* right;
@@ -52,8 +67,8 @@ struct NodePairSimilarity {
 };
 
 // Returns true if the two subgraphs have a diff.
-bool HasDiff(absl::Nonnull<const HloInstructionNode*> left, int left_graph_size,
-             absl::Nonnull<const HloInstructionNode*> right,
+bool HasDiff(const HloInstructionNode* absl_nonnull left, int left_graph_size,
+             const HloInstructionNode* absl_nonnull right,
              int right_graph_size) {
   if (left->props.subgraph_fingerprint != right->props.subgraph_fingerprint) {
     return true;
@@ -88,9 +103,9 @@ bool HasDiff(absl::Nonnull<const HloInstructionNode*> left, int left_graph_size,
 };
 
 // Maps the two subgraphs starting from the given nodes.
-void MapSubgraph(absl::Nonnull<const HloInstructionNode*> left,
+void MapSubgraph(const HloInstructionNode* absl_nonnull left,
                  int left_graph_size,
-                 absl::Nonnull<const HloInstructionNode*> right,
+                 const HloInstructionNode* absl_nonnull right,
                  int right_graph_size, const MatcherType matcher_type,
                  HloGumgraphMappings& mappings) {
   std::vector<const HloInstructionNode*> left_subgraph = GetAllNodesInBfsOrder(
@@ -138,8 +153,8 @@ void RecursiveTopDownMatcher(const HloInstructionNode* left,
 
 // DiceSim similarity score between two subgraphs. Subgraphs are limited to
 // first max_subgraph_size nodes of BFS starting from the given nodes.
-double DiceSimLimitedSubgraph(absl::Nonnull<const HloInstructionNode*> left,
-                              absl::Nonnull<const HloInstructionNode*> right,
+double DiceSimLimitedSubgraph(const HloInstructionNode* absl_nonnull left,
+                              const HloInstructionNode* absl_nonnull right,
                               HloGumgraphMappings& mappings,
                               int max_subgraph_size, int left_graph_size,
                               int right_graph_size) {
@@ -176,9 +191,8 @@ double DiceSimLimitedSubgraph(absl::Nonnull<const HloInstructionNode*> left,
 // fingerprint, name and generation of the nodes. This set of parameters
 // together with min_similarity threshold = 0.75 works the best so far, and
 // might need to be tuned later.
-double NodeAttributesSimilarity(
-    absl::Nonnull<const HloInstructionNode*> left,
-    absl::Nonnull<const HloInstructionNode*> right) {
+double NodeAttributesSimilarity(const HloInstructionNode* absl_nonnull left,
+                                const HloInstructionNode* absl_nonnull right) {
   double sim_score = 0.0;
 
   if (right->props.fingerprint == left->props.fingerprint) {
@@ -275,18 +289,29 @@ std::vector<const HloValue*> GetAllValuesUsedByInstruction(
 
 // Returns true if all HloValues used by the left and right nodes have their
 // defining instructions matched.
-double AllOperandHloValuesMatchedScore(const HloInstructionNode* left_node,
-                                       const HloInstructionNode* right_node,
-                                       const HloGumgraph& left,
-                                       const HloGumgraph& right,
-                                       HloGumgraphMappings& mappings) {
-  std::vector<const HloValue*> left_hlo_values =
-      GetAllValuesUsedByInstruction(left_node->instruction, left);
-  std::vector<const HloValue*> right_hlo_values =
-      GetAllValuesUsedByInstruction(right_node->instruction, right);
+double AllOperandHloValuesMatchedScore(
+    const HloInstructionNode* left_node, const HloInstructionNode* right_node,
+    const HloGumgraph& left, const HloGumgraph& right,
+    absl::flat_hash_map<const HloInstruction*,
+                        const std::vector<const HloValue*>>&
+        instruction_used_values_cache,
+    HloGumgraphMappings& mappings) {
+  if (!instruction_used_values_cache.contains(left_node->instruction)) {
+    instruction_used_values_cache.emplace(
+        left_node->instruction,
+        GetAllValuesUsedByInstruction(left_node->instruction, left));
+  }
+  if (!instruction_used_values_cache.contains(right_node->instruction)) {
+    instruction_used_values_cache.emplace(
+        right_node->instruction,
+        GetAllValuesUsedByInstruction(right_node->instruction, right));
+  }
+  auto& left_hlo_values = instruction_used_values_cache[left_node->instruction];
+  auto& right_hlo_values =
+      instruction_used_values_cache[right_node->instruction];
 
   if (left_hlo_values.empty() || right_hlo_values.empty() ||
-      left_hlo_values.size() != right_hlo_values.size()) {
+      (left_hlo_values.size() != right_hlo_values.size())) {
     return 0.0;
   }
 
@@ -416,10 +441,20 @@ void GreedyLimitedCandidatesBottomUpMatcher::Match(
     HloGumgraphMappings& mappings) const {
   LOG(INFO) << "Running GreedyLimitedCandidatesBottomUpMatcher: matching "
                "subgraphs that match based on Dice similarity";
+  absl::flat_hash_map<const HloInstruction*, const std::vector<const HloValue*>>
+      instruction_used_values_cache;
   int current_mapping_count = mappings.left_to_right_instruction_map.size();
   std::vector<const HloInstructionNode*> left_postorder = GetAllNodesInDfsOrder(
       left_.GetRoot(), DfsTraversalOrder::kPostOrder, left_.GetNodeCount());
-  for (const HloInstructionNode* left_node : left_postorder) {
+  int progress = 0;
+  int total_steps = left_postorder.size();
+  for (size_t i = 0; i < total_steps; ++i) {
+    const auto* left_node = left_postorder[i];
+    int current_progress = static_cast<int>((i * 100.0) / total_steps);
+    if (current_progress > progress) {
+      PrintProgress(current_progress);
+      progress = current_progress;
+    }
     // Skip matched nodes or ones without children.
     if (mappings.InstructionMapContainsLeft(left_node) ||
         left_node->children.empty()) {
@@ -456,7 +491,8 @@ void GreedyLimitedCandidatesBottomUpMatcher::Match(
               node.instruction->opcode() == left_node->instruction->opcode()) {
             // Found candidate. Calculate similarity.
             double operands_match_similarity = AllOperandHloValuesMatchedScore(
-                left_node, &node, left_, right_, mappings);
+                left_node, &node, left_, right_, instruction_used_values_cache,
+                mappings);
             double dice_sim = DiceSimLimitedSubgraph(
                 left_node, &node, mappings, max_dice_subgraph_size_,
                 left_.GetNodeCount(), right_.GetNodeCount());
