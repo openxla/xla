@@ -151,7 +151,6 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:     }
     ; CHECK:     }
     )";
-<<<<<<< HEAD
   const char* fused_matmul_bias_add_str_ = R"(
     ; CHECK:     custom_call_target="__onednn$matmul",
     ; CHECK:       backend_config={
@@ -161,11 +160,20 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:         "ops":["BIAS","BINARY_ADD"]
     ; CHECK-DAG:   }
     ; CHECK:     }
-=======
+    )";
+    const char* fused_matmul_bias_add_sum_str_ = R"(
+      ; CHECK:     custom_call_target="__onednn$matmul",
+      ; CHECK:       backend_config={
+      ; CHECK-DAG:     "outer_dimension_partitions":[],
+      ; CHECK-DAG:     "onednn_matmul_config":{
+      ; CHECK-DAG:       "fusions":{
+      ; CHECK-DAG:         "ops":["BIAS","SUM"]
+      ; CHECK-DAG:   }
+      ; CHECK:     }
+      )";
   const char* matmul_transpose_rewrite_str_ = R"(
     ; CHECK-NOT: transpose(%{{[a-z,A-Z,0-9,_,\.]*}}),
     ; CHECK:     custom_call_target="__onednn$matmul",
->>>>>>> main
     )";
 };
 
@@ -1734,7 +1742,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAndAddFusion) {
   const std::string matmul_module_str =
       CreateMatmulBiasAddAndAddModuleText("f32", "f32");
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_str_);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_sum_str_);
 }
 
 // Test Matmul + BiasAdd + Add fusion : BF16
