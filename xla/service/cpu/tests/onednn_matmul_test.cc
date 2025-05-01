@@ -161,16 +161,16 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:   }
     ; CHECK:     }
     )";
-    const char* fused_matmul_bias_add_sum_str_ = R"(
-      ; CHECK:     custom_call_target="__onednn$matmul",
-      ; CHECK:       backend_config={
-      ; CHECK-DAG:     "outer_dimension_partitions":[],
-      ; CHECK-DAG:     "onednn_matmul_config":{
-      ; CHECK-DAG:       "fusions":{
-      ; CHECK-DAG:         "ops":["BIAS","SUM"]
-      ; CHECK-DAG:   }
-      ; CHECK:     }
-      )";
+  const char* fused_matmul_bias_add_sum_str_ = R"(
+    ; CHECK:     custom_call_target="__onednn$matmul",
+    ; CHECK:       backend_config={
+    ; CHECK-DAG:     "outer_dimension_partitions":[],
+    ; CHECK-DAG:     "onednn_matmul_config":{
+    ; CHECK-DAG:       "fusions":{
+    ; CHECK-DAG:         "ops":["BIAS","SUM"]
+    ; CHECK-DAG:   }
+    ; CHECK:     }
+    )";
   const char* matmul_transpose_rewrite_str_ = R"(
     ; CHECK-NOT: transpose(%{{[a-z,A-Z,0-9,_,\.]*}}),
     ; CHECK:     custom_call_target="__onednn$matmul",
