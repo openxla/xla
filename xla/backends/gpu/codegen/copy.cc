@@ -268,7 +268,7 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
         functional_dependency->loop,
         functional_dependency->induction_var,
         std::move(functional_dependency->required_parameters),
-        functional_dependency->derived_value,
+        operand,
         /*dimension_size=*/slice_input_shape.dimensions(i),
         /*byte_stride=*/(*strides)[i]};
   }

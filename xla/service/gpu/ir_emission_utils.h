@@ -362,10 +362,6 @@ absl::StatusOr<std::string> FingerprintWithBackendConfig(
 }
 
 struct InductionVariableFunctionalDependency {
-  // The value that is derived from the induction variable. This is guaranteed
-  // to have no other transitive dependencies (except constants).
-  const HloInstruction* derived_value;
-
   // The dependency may be via multiple levels of intermediate calls. At each
   // level, we need to know which parameters to evaluate, since not all of them
   // may be relevant. The while loop's body is not included here, since the
@@ -382,15 +378,15 @@ struct InductionVariableFunctionalDependency {
   const HloInstruction* induction_var;
 };
 
-// Checks if `parameter`'s value is a pure function of a while loop's induction
-// variable. This supports parameters that are inside call, async or fusion
+// Checks if `instr`'s value is a pure function of a while loop's induction
+// variable. This supports instructions that are inside call, async or fusion
 // instructions. The dependency can be through arbitrary non-side-effecting
 // instructions.
 // Currently, this does not support nested while loops. Only dependencies on the
 // inner-most while loop will successfully be analyzed.
 // Requires `while_loop_trip_count_annotator` to have been run on the loop.
 std::optional<InductionVariableFunctionalDependency>
-ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* parameter);
+ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr);
 
 }  // namespace gpu
 }  // namespace xla
