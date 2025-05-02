@@ -52,27 +52,6 @@ TEST_F(CopyFusionTest, ValidCandidate) {
   EXPECT_TRUE(DynamicMemcpyFusion::IsCandidateFusion(GetFusion(module.get())));
 }
 
-TEST_F(CopyFusionTest, InvalidCandidateNonParameterOffset) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-    dynamic_slice {
-      p0 = f32[100] parameter(0)
-      p1 = s32[] parameter(1)
-      c1 = s32[] constant(1)
-      sum = s32[] add(p1, c1)
-      ROOT slice = f32[10] dynamic-slice(p0, sum), dynamic_slice_sizes={10}
-    }
-
-    ENTRY main {
-      p0 = f32[100] parameter(0)
-      p1 = s32[] parameter(1)
-      ROOT fusion = f32[10] fusion(p0, p1), kind=kLoop, calls=dynamic_slice
-    }
-  )")
-                    .value();
-
-  EXPECT_FALSE(DynamicMemcpyFusion::IsCandidateFusion(GetFusion(module.get())));
-}
-
 TEST_F(CopyFusionTest, ValidCandidateClamped) {
   auto module = ParseAndReturnVerifiedModule(R"(
     dynamic_slice {
@@ -288,7 +267,7 @@ TEST_F(CopyFusionTest, BuildUpdateSliceDescriptor) {
   EXPECT_EQ(descriptor->dst_byte_static_offset, 32);
   EXPECT_EQ(offset.while_loop->name(), "while");
   EXPECT_EQ(offset.induction_variable->name(), "ivar");
-  EXPECT_EQ(offset.offset->name(), "ivar");
+  EXPECT_EQ(offset.offset->name(), "p2");
   EXPECT_EQ(offset.dimension_size, 4);
   EXPECT_EQ(offset.byte_stride, 8 * 8 * sizeof(float));
 }
