@@ -101,7 +101,6 @@ bool IsTritonSupportedDotOutputType(
 };
 
 // Data types that are supported by the Triton emitters.
-// TODO(b/266862493): Support more data types (F8, F64, etc.).
 bool IsTritonSupportedDataType(PrimitiveType type,
                                const se::GpuComputeCapability& gpu_version) {
   if (IsTritonSupportedDotOutputType(type, gpu_version)) {
@@ -263,7 +262,6 @@ CodegenDecision AreDotInputAndOutputTypesSupportedAndCompatible(
   auto lhs_type = dot.operand(0)->shape().element_type();
   auto rhs_type = dot.operand(1)->shape().element_type();
 
-  // TODO(b/266862493): Support more output types.
   if (!IsTritonSupportedDotOutputType(output_type, gpu_version)) {
     return CodegenDecision::Forbid("Unsupported output data type for Dot op.");
   }
@@ -330,10 +328,10 @@ bool NoNonContractingDimension(const HloDotInstruction& dot) {
   const DotDimensionNumbers& dim_numbers = dot.dot_dimension_numbers();
   if (dim_numbers.lhs_batch_dimensions().size() +
               dim_numbers.lhs_contracting_dimensions().size() ==
-          dot.operand(0)->shape().dimensions_size() ||
+          dot.operand(0)->shape().dimensions().size() ||
       dim_numbers.rhs_batch_dimensions().size() +
               dim_numbers.rhs_contracting_dimensions().size() ==
-          dot.operand(1)->shape().dimensions_size()) {
+          dot.operand(1)->shape().dimensions().size()) {
     return true;
   }
   return false;
@@ -362,7 +360,7 @@ CodegenDecision IsTritonSupportedDynamicSlice(
   int64_t majormost_dim_id =
       in_layout.minor_to_major(in_layout.minor_to_major_size() - 1);
 
-  for (int i = 0; i < input->shape().dimensions_size(); ++i) {
+  for (int i = 0; i < input->shape().dimensions().size(); ++i) {
     if (i == majormost_dim_id) {
       continue;
     } else if (input->shape().dimensions(i) != instr.slice_sizes(i)) {

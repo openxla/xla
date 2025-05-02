@@ -21,8 +21,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -30,7 +31,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class SplitkRewriterTest : public HloTestBase {
+class SplitkRewriterTest : public HloHardwareIndependentTestBase {
  public:
   SplitkRewriterTest()
       : rewriter_(se::DeviceDescription(
@@ -94,6 +95,36 @@ TEST_F(SplitkRewriterTest, PaddingIsInserted) {
   EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
 CHECK: f32[16,102528]{1,0} pad({{.*}}), padding=0_0x127_0
     )")
+                  .value_or(false));
+}
+
+TEST_F(SplitkRewriterTest, AccumulatorTypeIsDifferentFromOutputType) {
+  // Huge K dimension to trigger 128 which is the largest possible splitK
+  // (hoping to make the test less fragile as heuristic changes).
+  const char* hlo_string = R"(
+  HloModule module
+
+  ENTRY test {
+    lhs = bf16[16,102400]{1,0} parameter(0)
+    rhs = bf16[102400,128]{1,0} parameter(1)
+    ROOT dot = bf16[16,128]{1,0} dot(lhs, rhs),
+                                lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_split_k_rewrite(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          rewriter_.HloModulePass::Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
+CHECK: f32{{.*}} dot(
+CHECK: f32{{.*}} reduce(
+CHECK: bf16[16,128]{1,0} convert(
+)")
                   .value_or(false));
 }
 

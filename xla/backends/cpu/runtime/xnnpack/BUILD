@@ -33,7 +33,7 @@ cc_library(
     hdrs = ["xnn_threadpool.h"],
     # copybara:uncomment_begin(google-only)
     # local_defines = select({
-    # "@pthreadpool:pthreadpool_header_only_explicit_true": [
+    # "//xla/tsl:linux_any": [
     # "XLA_CPU_USE_CUSTOM_PTHREADPOOL",
     # ],
     # "//conditions:default": [],
@@ -46,6 +46,9 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:str_format",
         "@eigen_archive//:eigen3",
         "@pthreadpool",
         "@tsl//tsl/platform:platform_port",
@@ -59,10 +62,12 @@ xla_cc_test(
         ":xnn_threadpool",
         "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
+        "@eigen_archive//:eigen3",
         "@pthreadpool",
     ],
 )
@@ -179,10 +184,10 @@ cc_library(
         ":xnn_interop",
         ":xnn_threadpool",
         "//xla:shape_util",
-        "//xla/backends/cpu/runtime:object_pool",
         "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/runtime:buffer_use",
+        "//xla/runtime:object_pool",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
@@ -213,6 +218,7 @@ xla_cc_test(
         ":xnn_interop",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_testlib",

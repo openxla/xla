@@ -934,8 +934,8 @@ void HloCollectiveInstruction::PrintExtraAttributesImpl(
     VLOG(4) << name() << " replica_groups="
             << device_list_.ToString(options.print_full_replica_group_list());
 
-    AppendCat(printer, "replica_groups=",
-              device_list_.ToString(options.print_full_replica_group_list()));
+    printer->Append("replica_groups=");
+    device_list_.Print(printer, options.print_full_replica_group_list());
   });
   if (constrain_layout_) {
     printer.Next(
@@ -1831,9 +1831,11 @@ void HloConstantInstruction::PrintOperandsWithCanonicalNameMap(
       // large constant tensors; for example: b/265669625. The limit of 500k was
       // chosen empirically to make sure that serialization of the `literal_` is
       // less than a second.
-      if (auto num_constants =
-              absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>());
-          num_constants <= 500'000) {
+      const auto num_constants =
+          shape().IsArray()
+              ? absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>())
+              : 1;
+      if (num_constants <= 500'000) {
         literal_->PrintWithoutShapeOneline(printer);
         return;
       }

@@ -63,6 +63,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
@@ -88,18 +89,21 @@ limitations under the License.
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #ifdef GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_solver_context.h"
 #endif  // GOOGLE_CUDA
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
+#include "xla/backends/gpu/runtime/topk.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/gpu_norm_runner.h"
@@ -111,7 +115,6 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
-#include "xla/service/gpu/kernels/topk_custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
@@ -567,19 +570,19 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
   // Maybe serialize all commands in a sequence by forcing barriers between all
   // recorded commands. This guarantees that we execute all device operations
   // in the exact same order as a thunk sequence.
-  CommandBufferCmdSequence::SynchronizationMode synchronization_mode =
+  CommandBufferCmdExecutor::SynchronizationMode synchronization_mode =
       ir_emitter_context_->debug_options()
               .xla_gpu_graph_enable_concurrent_region()
-          ? CommandBufferCmdSequence::SynchronizationMode::kAutomatic
-          : CommandBufferCmdSequence::SynchronizationMode::kSerialize;
+          ? CommandBufferCmdExecutor::SynchronizationMode::kAutomatic
+          : CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
 
   TF_ASSIGN_OR_RETURN(
-      CommandBufferCmdSequence cmd_sequence,
+      CommandBufferCmdExecutor cmd_executor,
       ConvertToCommands(thunk_sequence->thunks(),
                         ConvertToCommandsOptions{synchronization_mode}));
 
   AddThunkToThunkSequence(std::make_unique<CommandBufferThunk>(
-      std::move(cmd_sequence), Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      std::move(cmd_executor), Thunk::ThunkInfo::WithProfileAnnotation(instr),
       std::move(thunk_sequence),
       ir_emitter_context_->debug_options()
           .xla_enable_command_buffers_during_profiling()));
@@ -733,9 +736,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax, workspace_buffer);
+      instr, std::move(gemm_config), blas_lt_epilogue, algorithm, a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax, workspace_buffer);
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -825,9 +827,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax, workspace_buffer);
+      instr, std::move(gemm_config), blas_lt_epilogue, algorithm, a, b, c, d,
+      bias, aux, a_scale, b_scale, c_scale, d_scale, d_amax, workspace_buffer);
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -1021,7 +1022,8 @@ absl::Status IrEmitterUnnested::EmitCubDeviceRadixSort(
           : std::nullopt,
       operands, results, scratch, options.descending(),
       Product(operand_shape.dimensions()) /
-          operand_shape.dimensions(operand_shape.dimensions().size() - 1));
+          operand_shape.dimensions(operand_shape.dimensions().size() - 1),
+      ir_emitter_context_->platform_name());
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -1360,10 +1362,14 @@ absl::Status IrEmitterUnnested::EmitTopKCustomCall(
           : std::tuple<size_t, size_t, size_t>{
                 1, data_shape.dimensions(0), top_elements_shape.dimensions(0)};
 
+  auto wavefront_size =
+      ir_emitter_context_->gpu_device_info().threads_per_warp();
+
   // Load TopK custom kernel.
-  TF_ASSIGN_OR_RETURN(CustomKernel kernel,
-                      kernel::topk::GetTopKKernel(
-                          "topk", data_shape.element_type(), n, k, batch_size));
+  TF_ASSIGN_OR_RETURN(
+      CustomKernel kernel,
+      kernel::topk::GetTopKKernel("topk", data_shape.element_type(), n, k,
+                                  batch_size, platform_name(), wavefront_size));
 
   // Prepare kernel arguments.
   TF_ASSIGN_OR_RETURN(
@@ -1454,11 +1460,11 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
       llvm::Function* kernel;
       std::vector<llvm_ir::IrArray> inputs;
       std::vector<llvm_ir::IrArray> outputs;
-      TF_ASSIGN_OR_RETURN(
-          std::tie(kernel, inputs, outputs),
-          BuildKernelPrototypeFromUniqueName(
-              *ir_emitter_context_, sanitized_kernel_name,
-              kernel_arguments.args(), arg_size, launch_dimensions, &builder));
+      TF_ASSIGN_OR_RETURN(std::tie(kernel, inputs, outputs),
+                          BuildKernelPrototypeFromUniqueName(
+                              *ir_emitter_context_, impl_fn->getName().str(),
+                              sanitized_kernel_name, kernel_arguments.args(),
+                              arg_size, launch_dimensions, &builder));
 
       // Move function body into kernel prototype.
       llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
@@ -2300,9 +2306,10 @@ IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
   std::vector<llvm_ir::IrArray> outputs;
   TF_ASSIGN_OR_RETURN(
       std::tie(kernel, inputs, outputs),
-      BuildKernelPrototype(
-          *ir_emitter_context_, suggested_kernel_name, kernel_arguments.args(),
-          kernel_arguments.args().size(), launch_dimensions, &b_));
+      BuildKernelPrototype(*ir_emitter_context_, suggested_kernel_name,
+                           suggested_kernel_name, kernel_arguments.args(),
+                           kernel_arguments.args().size(), launch_dimensions,
+                           &b_));
 
   AddThunkToThunkSequence(std::make_unique<KernelThunk>(
       hlo, kernel->getName().str(), kernel_arguments.args(), launch_dimensions,

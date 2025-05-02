@@ -456,7 +456,7 @@ message DebugOptions {
 
   bool xla_gpu_enable_pipelined_all_reduce = 217;
 
-  bool xla_gpu_enable_pipelined_collectives = 239;
+  bool xla_gpu_enable_pipelined_collectives = 239 [deprecated = true];
 
   bool xla_gpu_enable_pipelined_p2p = 246;
 
@@ -551,6 +551,10 @@ message DebugOptions {
   // Pre-existing block-level fusions are left unmodified.
   bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
 
+  // Enable NVSHMEM. Must be set via XLA_FLAGS variable before XLA client is
+  // initialized and can't be set just through HLO Config->ExecutionOptions.
+  bool xla_gpu_experimental_enable_nvshmem = 388;
+
   // Enable the pass that splits GEMMs that underutilize the GPU load by
   // splitting the K dimension using a heuristic.
   bool xla_gpu_experimental_enable_split_k_rewrite = 386;
@@ -600,6 +604,14 @@ message DebugOptions {
 
   // Filter out kernels that spill registers during autotuning.
   bool xla_gpu_filter_kernels_spilling_registers_on_autotuning = 250;
+
+  // The number of seconds to wait before terminating a rendezvous of the first
+  // call.
+  int32 xla_gpu_first_collective_call_terminate_timeout_seconds = 392;
+
+  // The number of seconds to wait before warning about a first call rendezvous
+  // that has not yet timed out.
+  int32 xla_gpu_first_collective_call_warn_stuck_timeout_seconds = 391;
 
   // Overrides normal multi-threaded compilation setting to use this many
   // threads. Setting to 0 (the default value) means no enforcement.
@@ -754,8 +766,6 @@ message DebugOptions {
   // `xla_gpu_cublas_fallback` set to false.
   bool xla_gpu_triton_gemm_any = 190;
 
-  bool xla_gpu_triton_gemm_disable_reduced_precision_reduction = 226;
-
   // It is usually preferable to not fallback to the driver; it can consume more
   // memory, or have bugs.
   bool xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found = 138;
@@ -788,6 +798,10 @@ message DebugOptions {
   bool xla_gpu_unsupported_enable_triton_multi_output_fusion = 382;
 
   // Internal testing flag to enable one-shot kernel for single-host
+  // all-reduce operations.
+  bool xla_gpu_unsupported_use_all_reduce_one_shot_kernel = 387;
+
+  // Internal testing flag to enable one-shot kernel for single-host
   // ragged-all-to-all operations.
   bool xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel = 375;
 
@@ -806,6 +820,7 @@ message DebugOptions {
   // go/keep-sorted end
 
   reserved 276;  // xla_gpu_enable_nccl_per_stream_comms
+  reserved 226;  // xla_gpu_triton_gemm_disable_reduced_precision_reduction
 
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
@@ -1200,7 +1215,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 387
+  // Next id: 389
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1497,6 +1512,9 @@ message ScheduleProto {
     // Start and end timestamps in cycles.
     double start_timestamp_cycles = 2;
     double end_timestamp_cycles = 3;
+
+    int64 memory_usage_after = 5;
+    int64 peak_memory_after = 6;
   }
 
   message SchedulerStatisticsProto {

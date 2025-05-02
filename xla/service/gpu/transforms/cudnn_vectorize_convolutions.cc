@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -48,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -128,7 +131,7 @@ static Shape SplitShapeAtDim(Shape shape, int64_t dim, int64_t vect_size) {
 // Transposes dimension `src` to right before `dst`.
 static XlaOp MoveDim(XlaOp instr, int64_t src, int64_t dst) {
   XlaBuilder& b = *instr.builder();
-  int64_t rank = b.GetShape(instr)->dimensions_size();
+  int64_t rank = b.GetShape(instr)->dimensions().size();
 
   DimensionVector idxs(rank);
   absl::c_iota(idxs, 0);
@@ -493,7 +496,7 @@ static absl::StatusOr<bool> TryVectorizeConv(
     return false;
   }
 
-  if (input_shape.dimensions_size() >
+  if (input_shape.dimensions().size() >
       2 + dnums->input_spatial_dimensions_size()) {
     // Conv already has an extra dimension, which we assume is the vectorized
     // features dim.

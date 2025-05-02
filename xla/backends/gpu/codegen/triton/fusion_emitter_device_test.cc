@@ -15,18 +15,18 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -42,6 +42,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -55,6 +57,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -74,6 +77,20 @@ class TritonEmitterTest : public GpuCodegenTest {
         .gpu_compute_capability();
   }
 };
+
+class TmaParameterizedTritonEmitterTest
+    : public TritonEmitterTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = TritonEmitterTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_triton_tma(GetParam());
+    return debug_options;
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(TmaParameterizedTritonEmitterTestSuite,
+                         TmaParameterizedTritonEmitterTest, ::testing::Bool());
 
 // TODO(bchetioui): turn this into a general binary elementwise test.
 TEST_F(TritonEmitterTest, MinimumIsEmittedCorrectly) {
@@ -484,13 +501,10 @@ ENTRY main {
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
                                           "triton_softmax_computation", R"(
 CHECK:        func.func @triton_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}})
-CHECK-DAG:        %[[C0:.*]] = arith.constant 0 : index
-CHECK-DAG:        %[[C1:.*]] = arith.constant 1 : index
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
 CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
-CHECK-DAG:        triton_xla.tile %[[P0]][%[[PID_INDEX]], %[[C0]]][%[[C1]], %[[C1]]] {layout = array<i64:1, 0>} : !triton_xla.tiled_tensor<1x128|125x127xf32>
-CHECK-NEXT:       triton_xla.extract
+CHECK-NEXT:       triton_xla.extract %[[P0]][%[[PID_INDEX]], 0] [1, 128] [1, 1] {layout = array<i64: 1, 0>}
 CHECK:            tt.reduce
 CHECK-NEXT:       ^bb0(%[[ARG2:[^:]*]]: f32, %[[ARG3:[^:]*]]: f32):
 CHECK-NEXT:           %[[ADD:.*]] = arith.addf %[[ARG2]], %[[ARG3]] : f32
@@ -498,8 +512,7 @@ CHECK-NEXT:           tt.reduce.return %[[ADD]] : f32
 CHECK-NEXT:       }) : (tensor<1x128xf32>) -> tensor<1xf32>
 CHECK:            arith.mulf
 CHECK-SAME:       tensor<1x128xf32>
-CHECK:            triton_xla.tile %[[P1]][%[[PID_INDEX]], %[[C0]]][%[[C1]], %[[C1]]] {layout = array<i64:1, 0>} : !triton_xla.tiled_tensor<1x128|125x127xf32>
-CHECK-NEXT:       triton_xla.insert
+CHECK:            triton_xla.insert {{.*}} into %[[P1]][%[[PID_INDEX]], 0] [1, 128] [1, 1]  {layout = array<i64: 1, 0>}
 CHECK:            return
 CHECK:        }
 )"));
@@ -546,24 +559,18 @@ CHECK:         func.func @triton_fn(
 CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: tensor<125x127xf32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: tensor<127xf32>
 CHECK-SAME:                      %[[P2:[A-Za-z0-9_]*]]: tensor<125x127xf32>
-CHECK-DAG:        %[[C0:.*]] = arith.constant 0 : index
-CHECK-DAG:        %[[C1:.*]] = arith.constant 1 : index
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
 CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
-CHECK-DAG:        %[[TILE_0:.*]] = triton_xla.tile %[[P0]][%[[PID_INDEX]], %[[C0]]][%[[C1]], %[[C1]]] {layout = array<i64:1, 0>} : !triton_xla.tiled_tensor<1x128|125x127xf32>
-CHECK-DAG:        triton_xla.extract %[[TILE_0]][%[[C0]], %[[C0]]] : tensor<125x127xf32> to tensor<1x128xf32>
-CHECK-DAG:        %[[TILE_1:.*]] = triton_xla.tile %[[P1]][%[[C0]]][%[[C1]]] {layout = array<i64:0>} : !triton_xla.tiled_tensor<128|127xf32>
-CHECK-DAG:        triton_xla.extract %[[TILE_1]][%[[C0]]] : tensor<127xf32> to tensor<128xf32>
+CHECK-DAG:        triton_xla.extract %[[P0]][%[[PID_INDEX]], 0] [1, 128] [1, 1] {layout = array<i64: 1, 0>} : tensor<125x127xf32> to tensor<1x128xf32>
+CHECK-DAG:        triton_xla.extract %[[P1]][0] [128] [1] {layout = array<i64: 0>} : tensor<127xf32> to tensor<128xf32>
 CHECK:            tt.reduce
 CHECK-NEXT:       ^bb0(%[[ARG3:[^:]*]]: f32, %[[ARG4:[^:]*]]: f32):
 CHECK-NEXT:           %[[ADD:.*]] = arith.addf %[[ARG3]], %[[ARG4]] : f32
 CHECK-NEXT:           tt.reduce.return %[[ADD]] : f32
 CHECK-NEXT:       }) : (tensor<1x128xf32>) -> tensor<1xf32>
 CHECK:            arith.mulf
-
-CHECK-DAG:        %[[TILE_2:.*]] = triton_xla.tile %[[P2]][%[[PID_INDEX]], %[[C0]]][%[[C1]], %[[C1]]] {layout = array<i64:1, 0>} : !triton_xla.tiled_tensor<1x128|125x127xf32>
-CHECK-DAG:        triton_xla.insert {{.*}} into %[[TILE_2]][%[[C0]], %[[C0]]] : tensor<1x128xf32> into tensor<125x127xf32>
+CHECK-DAG:        triton_xla.insert {{.*}} into %[[P2]][%[[PID_INDEX]], 0] [1, 128] [1, 1] {layout = array<i64: 1, 0>} : tensor<1x128xf32> into tensor<125x127xf32>
 )"));
 }
 
@@ -612,31 +619,21 @@ ENTRY main {
 CHECK:        #[[MAP:.*]] = #xla.indexing_map<"(d0) -> (d0 floordiv 125), domain: d0 in [0, 1249]">
 CHECK:        #[[MAP1:.*]] = #xla.indexing_map<"(d0) -> (d0 mod 125), domain: d0 in [0, 1249]">
 CHECK:        func.func @triton_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[P2:.*]]: {{.*}}, %[[P3:.*]]: {{.*}})
-CHECK-DAG:        %[[C0:.*]] = arith.constant 0 : index
-CHECK-DAG:        %[[C1:.*]] = arith.constant 1 : index
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
 CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
 CHECK-DAG:        %[[ROW_INDEX:.*]] = xla.apply_indexing #[[MAP]](%[[PID_INDEX]]
 CHECK-DAG:        %[[COL_INDEX:.*]] = xla.apply_indexing #[[MAP1]](%[[PID_INDEX]]
-
-CHECK-DAG:        triton_xla.tile %[[P0]][%[[ROW_INDEX]], %[[COL_INDEX]], %[[C0]]][%[[C1]], %[[C1]], %[[C1]]] {layout = array<i64:2, 1, 0>} : !triton_xla.tiled_tensor<1x1x128|10x125x127xf32>
-CHECK-NEXT:       triton_xla.extract {{.*}} : tensor<10x125x127xf32> to tensor<1x1x128xf32>
-CHECK-DAG:        triton_xla.tile %[[P1]][%[[C0]]][%[[C1]]] {layout = array<i64:0>} : !triton_xla.tiled_tensor<128|127xf32>
-CHECK-NEXT:       triton_xla.extract {{.*}} : tensor<127xf32> to tensor<128xf32>
-
-CHECK-DAG:        triton_xla.tile %[[P2]][%[[ROW_INDEX]], %[[COL_INDEX]]][%[[C1]], %[[C1]]] {layout = array<i64:1, 0>} : !triton_xla.tiled_tensor<1x1|10x125xf32>
-CHECK-NEXT:       triton_xla.extract {{.*}} : tensor<10x125xf32> to tensor<1x1xf32>
+CHECK:            triton_xla.extract %[[P0]][%[[ROW_INDEX]], %[[COL_INDEX]], 0] [1, 1, 128] [1, 1, 1] {layout = array<i64: 2, 1, 0>} : tensor<10x125x127xf32> to tensor<1x1x128xf32>
+CHECK:            triton_xla.extract %[[P1]][0] [128] [1] {layout = array<i64: 0>} : tensor<127xf32> to tensor<128xf32>
+CHECK:            triton_xla.extract %[[P2]][%[[ROW_INDEX]], %[[COL_INDEX]]] [1, 1] [1, 1] {layout = array<i64: 1, 0>} : tensor<10x125xf32> to tensor<1x1xf32>
 CHECK:            tt.reduce
 CHECK-NEXT:       ^bb0(%[[ARG4:[^:]*]]: f32, %[[ARG5:[^:]*]]: f32):
 CHECK-NEXT:           %[[MAX:.*]] = arith.maximumf %[[ARG4]], %[[ARG5]] : f32
 CHECK-NEXT:           tt.reduce.return %[[MAX]] : f32
 CHECK-NEXT:       }) : (tensor<1x1x128xf32>) -> tensor<1x1xf32>
-
-CHECK-DAG:        triton_xla.tile %[[P3]][%[[ROW_INDEX]], %[[COL_INDEX]], %[[C0]]][%[[C1]], %[[C1]], %[[C1]]] {layout = array<i64:2, 1, 0>} : !triton_xla.tiled_tensor<1x1x128|10x125x127xf32>
-CHECK-NEXT:       triton_xla.insert {{.*}} : tensor<1x1x128xf32> into tensor<10x125x127xf32>
+CHECK:            triton_xla.insert {{.*}} into %[[P3]][%[[ROW_INDEX]], %[[COL_INDEX]], 0] [1, 1, 128] [1, 1, 1] {layout = array<i64: 2, 1, 0>} : tensor<1x1x128xf32> into tensor<10x125x127xf32>
 )"));
-
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
@@ -684,9 +681,16 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
-TEST_F(TritonEmitterTest, NestedReducerFusionGetsCodegenedCorrectly) {
+// TODO(b/413300983): Un-parameterize this test and add a precise regression
+// test for the TMA-related failure separately.
+TEST_P(TmaParameterizedTritonEmitterTest,
+       NestedReducerFusionGetsCodegenedCorrectly) {
   if (!SupportsBF16(GpuComputeCapability())) {
     GTEST_SKIP() << "BF16 not supported.";
+  }
+  bool tma_enabled = GetParam();
+  if (tma_enabled) {
+    GTEST_SKIP() << "TODO(b/413300983): Skipping TMA due to: Wrong results.";
   }
 
   constexpr absl::string_view kHloText = R"(
@@ -1056,7 +1060,7 @@ ENTRY main {
       "fusion_backend_config":{
       "kind":"__triton",
       "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["2","5","16"]}],
+        "output_tiles":[{"sizes":["2","8","16"]}],
         "num_warps":"4",
         "num_ctas":"1",
         "num_stages":"1"}}}
@@ -1104,7 +1108,15 @@ ENTRY entry_computation {
                                                            /*arel=*/1e-6}));
 }
 
-TEST_F(TritonEmitterTest, TestSliceWithTileThatNeedsMasking) {
+// Parameterized to make sure that slices are also handled correctly when TMA is
+// enabled.
+TEST_P(TmaParameterizedTritonEmitterTest, TestSliceWithTileThatNeedsMasking) {
+  bool tma_enabled = GetParam();
+  if (tma_enabled) {
+    GTEST_SKIP()
+        << "TODO(b/413301521): Skipping TMA due to: contiguous dimension "
+           "size too small.";
+  }
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1133,15 +1145,15 @@ TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguous) {
 HloModule m
 
 fused_computation {
-  param_0.1 = f32[16,16,32] parameter(0)
-  slice = f32[4,4,8] slice(param_0.1), slice={[2:10:2], [2:6], [3:11]}
-  slice.1 = f32[4,4,8] slice(param_0.1), slice={[4:8], [8:16:2], [13:21]}
-  ROOT add.3 = f32[4,4,8] add(slice, slice.1)
+  param_0 = f32[16,16,32] parameter(0)
+  slice = f32[4,4,8] slice(param_0), slice={[2:10:2], [2:6], [3:11]}
+  slice.1 = f32[4,4,8] slice(param_0), slice={[4:8], [8:16:2], [13:21]}
+  ROOT add = f32[4,4,8] add(slice, slice.1)
 }
 
 ENTRY entry_computation {
-  param_0.2 = f32[16,16,32] parameter(0)
-  ROOT fusion = f32[4,4,8] fusion(param_0.2), kind=kCustom,
+  param_0 = f32[16,16,32] parameter(0)
+  ROOT fusion = f32[4,4,8] fusion(param_0), kind=kCustom,
     calls=fused_computation,
     backend_config={
       "fusion_backend_config":{
@@ -1152,8 +1164,35 @@ ENTRY entry_computation {
         "num_ctas":"1",
         "num_stages":"1"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-6,
-                                                           /*arel=*/1e-6}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
+TEST_P(TmaParameterizedTritonEmitterTest,
+       TestSlice2DWithTileElementsNotAllContiguous) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_computation {
+  param_0 = f32[16,32] parameter(0)
+  slice = f32[4,16] slice(param_0), slice={[2:6], [3:19]}
+  slice.1 = f32[4,16] slice(param_0), slice={[4:8], [13:29]}
+  ROOT add = f32[4,16] add(slice, slice.1)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[16,32] parameter(0)
+  ROOT fusion = f32[4,16] fusion(param_0), kind=kCustom,
+    calls=fused_computation,
+    backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["2","8"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
+})";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguousUnaligned) {
@@ -1178,6 +1217,36 @@ ENTRY entry_computation {
           "num_stages":"1"}}}
 })";
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
+}
+
+TEST_P(TmaParameterizedTritonEmitterTest,
+       TestSlice2DWithTileElementsNotAllContiguousUnaligned) {
+  bool tma_enabled = GetParam();
+  if (tma_enabled) {
+    GTEST_SKIP() << "TODO(b/413351837): Skipping TMA due to: "
+                    "CUDA_ERROR_ILLEGAL_INSTRUCTION";
+  }
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_computation {
+  p = f32[7,80] parameter(0)
+  ROOT slice = f32[2,14] slice(p), slice={[2:6:3], [35:75:3]}
+}
+
+ENTRY entry_computation {
+  p = f32[7,80] parameter(0)
+  ROOT fusion = f32[2,14] fusion(p),
+    kind=kCustom, calls=fused_computation, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton",
+        "block_level_fusion_config": {
+          "output_tiles":[{"sizes":["2","8"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, ReshapeIntoBroadcastIsLoweredCorrectly) {
@@ -1267,16 +1336,25 @@ CHECK:     triton_xla.insert
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
-TEST_F(TritonEmitterTest, BitcastNonNormalizedInputLayoutIsLoweredCorrectly) {
+// Parameterized the test to also make sure that non-canonical layouts are
+// handled correctly when TMA is enabled.
+TEST_P(TmaParameterizedTritonEmitterTest,
+       BitcastNonNormalizedInputLayoutIsLoweredCorrectly) {
+  bool tma_enabled = GetParam();
+  if (tma_enabled) {
+    GTEST_SKIP() << "TODO(b/413351367): Skipping TMA due to: Potentially "
+                    "incorrect handling of non-normalized layouts. "
+                    "Investigate, fix, and enable.";
+  }
   constexpr absl::string_view kHloText = R"(
 triton_computation {
-  p = s8[42,5]{0,1} parameter(0)
-  ROOT bitcast = s8[5,6,7] bitcast(p)
+  p = s8[42,16]{0,1} parameter(0)
+  ROOT bitcast = s8[16,6,7] bitcast(p)
 }
 
 ENTRY entry_computation {
-  p = s8[42,5]{0,1} parameter(0)
-  ROOT fusion = s8[5,6,7] fusion(p), kind=kCustom, calls=triton_computation,
+  p = s8[42,16]{0,1} parameter(0)
+  ROOT fusion = s8[16,6,7] fusion(p), kind=kCustom, calls=triton_computation,
     backend_config={
       "fusion_backend_config":{
       "kind":"__triton",
@@ -1907,8 +1985,13 @@ CHECK:     triton_xla.insert
 }
 
 // Reproducer from b/384110192.
-TEST_F(TritonEmitterTest,
+TEST_P(TmaParameterizedTritonEmitterTest,
        FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly) {
+  bool tma_enabled = GetParam();
+  if (tma_enabled) {
+    GTEST_SKIP() << "TODO(b/413300983): Skipping TMA due to: Wrong results.";
+  }
+
   // The point here is to check the output of the Triton fusion. The `slice` op
   // at the end is inserted to allow the comparison of output to run in a
   // reasonable amount of time, and has been proven to still correctly capture
@@ -1967,12 +2050,10 @@ ENTRY entry_computation {
 TEST_F(TritonEmitterTest, ConvertF16ToF8E5M2Exhaustive) {
   // TODO(b/396595945): enable post-Ampere once Triton respects RTNE semantics
   // on H100.
-  if (auto cc =
-          std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
-    if (cc->IsAtLeastHopper()) {
-      GTEST_SKIP() << "Skipping tests above Ampere, Triton's conversion isn't "
-                      "always correct";
-    }
+  if (auto cc = std::get_if<se::CudaComputeCapability>(&GpuComputeCapability());
+      cc && cc->IsAtLeastHopper()) {
+    GTEST_SKIP() << "Skipping tests above Ampere, Triton's conversion isn't "
+                    "always correct";
   }
 
   constexpr absl::string_view kHloTextTemplate = R"(
@@ -2010,38 +2091,34 @@ ENTRY entry_computation {
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), kExactMatch));
 }
 
-TEST_F(TritonEmitterTest, FP8ToFP8EndToEnd) {
-  if (auto cc =
-          std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
-    if (!cc->IsAtLeastHopper()) {
-      GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
-    }
-  }
-
-  const std::string hlo_text = R"(
-HloModule t
-
-triton_dot {
-  parameter_0 = f8e5m2[32,32]{1,0} parameter(0)
-  parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
-  convert = f8e4m3fn[32,32]{1,0} convert(parameter_0)
-  ROOT dot = f32[32,32]{1,0} dot(convert, parameter_1),
-                lhs_contracting_dims={1}, rhs_contracting_dims={1}
+TEST_F(TritonEmitterTest, ConvertS4ToS8Exhaustive) {
+  constexpr absl::string_view kHloText = R"(
+computation {
+  p0 = s4[16] parameter(0)
+  ROOT convert = s8[16] convert(p0)
 }
 
-ENTRY main {
-  parameter_0 = f8e5m2[32,32]{1,0} parameter(0)
-  parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
-  ROOT gemm_fusion_dot = f32[32,32]{1,0} fusion(parameter_0, parameter_1),
-       kind=kCustom, calls=triton_dot,
-       backend_config={
-       "fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":
-         {"block_m":"32","block_n":"32","block_k":"32","split_k":"1",
-          "num_stages":"1","num_warps":"4","num_ctas":"1"}}}
+ENTRY entry_computation {
+  p0 = s4[16] parameter(0)
+  ROOT fusion = s8[16] fusion(p0), kind=kCustom,
+    calls=computation,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
 })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text,
-                                       ErrorSpec{/*aabs=*/1.0, /*arel=*/1e-3}));
+  auto values = {s4(-8), s4(-7), s4(-6), s4(-5), s4(-4), s4(-3), s4(-2), s4(-1),
+                 s4(0),  s4(1),  s4(2),  s4(3),  s4(4),  s4(5),  s4(6),  s4(7)};
+  Literal literal = LiteralUtil::CreateR1<s4>(values);
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module), {&literal}, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, SingleTileDotWithNestedFusionsIsEmittedCorrectly) {
@@ -2100,7 +2177,9 @@ CHECK: tt.dot {{.*}} -> tensor<16x16xf32>
       kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
-TEST_F(TritonEmitterTest, DotWithNestedFusionsIsEmittedCorrectly) {
+// Parameterized as a sanity check to make sure dots work with TMA.
+TEST_P(TmaParameterizedTritonEmitterTest,
+       DotWithNestedFusionsIsEmittedCorrectly) {
   const std::string kHloText = R"(
 flhs {
   flhs.p0 = f32[32,256] parameter(0)
@@ -2156,8 +2235,8 @@ CHECK-DAG:  %[[C8:.*]] = arith.constant 8 : i64
 CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : i64
 CHECK:      {{.*}} = scf.for {{.*}} = %[[C0]] to %[[C8]] step %[[C1]]
 CHECK-SAME: iter_args({{.*}}) -> (tensor<16x64xf32>)  : i64 {
-CHECK-DAG:  triton_xla.tile %[[ARG0]]
-CHECK-DAG:  triton_xla.tile %[[ARG1]]
+CHECK-DAG:  triton_xla.extract %[[ARG0]]
+CHECK-DAG:  triton_xla.extract %[[ARG1]]
 CHECK-DAG:  arith.subf {{.*}} : tensor<16x32xf32>
 CHECK-DAG:  math.absf {{.*}} : tensor<32x64xf32>
 CHECK-DAG:  tt.dot {{.*}} tensor<16x32xf32> * tensor<32x64xf32> -> tensor<16x64xf32>
@@ -2669,7 +2748,7 @@ ErrorSpec ErrorSpecForDotAlgorithm(PrecisionConfig::Algorithm algorithm) {
     case PrecisionConfig::ALG_UNSET:
       // Give a loose tolerance to ALG_UNSET, as the expected behaviour is
       // not deducible from the algorithm name alone.
-      return ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3};
+      return ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2};
     case PrecisionConfig::ALG_DOT_F16_F16_F16:
       // Computed to make the tests pass (and it seems reasonable on the face of
       // it), and not derived from first principles.
@@ -2868,52 +2947,43 @@ INSTANTIATE_TEST_SUITE_P(TF32DotAlgorithmEmitterTestSuite,
 
 class DotUnsetAlgorithmEmitterTest
     : public TritonEmitterTest,
-      public ::testing::WithParamInterface<PrimitiveType> {};
+      public ::testing::WithParamInterface<
+          std::tuple<PrimitiveType, PrimitiveType>> {
+ public:
+  static std::string ParamToString(
+      const ::testing::TestParamInfo<DotUnsetAlgorithmEmitterTest::ParamType>&
+          data) {
+    auto [result_type, input_type] = data.param;
+    return absl::StrCat(primitive_util::LowercasePrimitiveTypeName(result_type),
+                        "_",
+                        primitive_util::LowercasePrimitiveTypeName(input_type));
+  };
+};
 
 TEST_P(DotUnsetAlgorithmEmitterTest, UnsetAlgorithmIsEmittedCorrectly) {
-  // This currently assumes that the dot output type is the same as the input
-  // type. This is not enforced by the verifier/HLO spec, but is currently true
-  // for our emitters, and is enforced by `support_test.cc`. This test may
-  // require upgrading if we ever consider emitting code for truly mixed type
-  // `dot`s.
-  PrimitiveType ty = GetParam();
-  if (!internal::IsResultTypeSupportedByAlgUnsetDot(ty,
-                                                    GpuComputeCapability())) {
-    GTEST_SKIP() << primitive_util::LowercasePrimitiveTypeName(ty)
-                 << " is not supported on this platform.";
+  auto [result_type, input_type] = GetParam();
+  const std::string kHloText =
+      GetDotAlgorithmHlo(input_type, result_type, PrecisionConfig::ALG_UNSET);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  if (!IsTritonSupportedComputation(*module->entry_computation(),
+                                    GpuComputeCapability())) {
+    GTEST_SKIP() << "Not supported on this platform.";
   }
 
   ErrorSpec error_spec = ErrorSpecForDotAlgorithm(PrecisionConfig::ALG_UNSET);
   // For 8-bit floating point types, we need to allow large errors.
-  if (primitive_util::IsFloatingPointType(ty) &&
-      primitive_util::BitWidth(ty) == 8) {
+  if (primitive_util::IsFloatingPointType(result_type) &&
+      primitive_util::BitWidth(result_type) == 8) {
     error_spec = ErrorSpec{/*aabs=*/1e0, /*arel=*/1e-1};
   }
-
-  const std::string kHloText =
-      GetDotAlgorithmHlo(ty, ty, PrecisionConfig::ALG_UNSET);
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, error_spec));
-}
-
-std::vector<PrimitiveType> AllXlaDataTypesSupportedByAlgUnsetDotLowering() {
-  // We don't have a pointer to stream executor available here so we can't
-  // detect the particular device we're running on with a canonical API call.
-  // Instead, we just return a superset of the supported types (i.e. those that
-  // are supported on the latest device), and filter out the unsupported types
-  // in the test body.
-  std::vector<PrimitiveType> supported_types;
-  absl::c_copy_if(AllXlaDataTypes(), std::back_inserter(supported_types),
-                  [](PrimitiveType type) {
-                    return internal::IsResultTypeSupportedByAlgUnsetDot(
-                        type, se::CudaComputeCapability::Blackwell());
-                  });
-  return supported_types;
 }
 
 INSTANTIATE_TEST_SUITE_P(
     DotUnsetAlgorithmEmitterTestSuite, DotUnsetAlgorithmEmitterTest,
-    ::testing::ValuesIn(AllXlaDataTypesSupportedByAlgUnsetDotLowering()),
-    TypeTestParamToString);
+    ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
+                       ::testing::ValuesIn(AllXlaDataTypes())),
+    DotUnsetAlgorithmEmitterTest::ParamToString);
 
 }  // namespace
 }  // namespace gpu

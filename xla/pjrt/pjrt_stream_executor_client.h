@@ -96,10 +96,10 @@ struct PjRtStreamExecutorExecutionOutput {
 
 class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
-  explicit PjRtStreamExecutorDevice(
-      int id, std::unique_ptr<LocalDeviceState> local_device_state,
-      std::string device_kind, int process_index = 0)
-      : description_(id, std::move(device_kind), process_index),
+  PjRtStreamExecutorDevice(int id,
+                           std::unique_ptr<LocalDeviceState> local_device_state,
+                           int process_index, std::string device_kind)
+      : description_(id, process_index, std::move(device_kind)),
         local_device_id_(local_device_state
                              ? local_device_state->local_device_id()
                              : PjRtLocalDeviceId(-1)),
@@ -329,8 +329,10 @@ class PjRtStreamExecutorClient : public PjRtClient {
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       PjRtMemorySpace* memory_space, const Layout* device_layout) override;
 
+  using PjRtClient::BufferFromHostLiteral;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
-      const LiteralSlice& literal, PjRtMemorySpace* memory_space) override;
+      const LiteralSlice& literal, PjRtMemorySpace* memory_space,
+      const Layout* device_layout) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
@@ -568,7 +570,7 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
   PjRtStreamExecutorClient* client() const override { return client_; }
   bool IsEmptyTuple() const {
     return on_device_shape_.IsTuple() &&
-           on_device_shape_.tuple_shapes_size() == 0;
+           on_device_shape_.tuple_shapes().size() == 0;
   }
 
   absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference()

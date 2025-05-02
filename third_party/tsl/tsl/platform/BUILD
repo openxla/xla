@@ -693,7 +693,12 @@ cc_library(
         "numa.h",
         "snappy.h",
     ],
-    deps = tf_windows_aware_platform_deps("platform_port"),
+    deps = tf_windows_aware_platform_deps("platform_port") + [
+        ":platform",
+        "@xla//xla/tsl/platform:byte_order",
+        "@xla//xla/tsl/platform:dynamic_annotations",
+        "@xla//xla/tsl/platform:types",
+    ],
 )
 
 cc_library(
@@ -773,7 +778,9 @@ cc_library(
     deps = [
         ":numbers",
         ":stringpiece",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/meta:type_traits",
+        "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
@@ -1116,6 +1123,7 @@ tsl_cc_test(
         ":platform",
         ":stringpiece",
         ":tstring",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
     ],
@@ -1364,6 +1372,7 @@ tsl_cc_test(
         "strcat_test.cc",
     ],
     deps = [
+        ":bfloat16",
         ":strcat",
         ":stringprintf",
         "@com_google_absl//absl/strings",

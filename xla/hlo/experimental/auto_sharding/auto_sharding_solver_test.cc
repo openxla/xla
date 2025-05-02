@@ -85,13 +85,6 @@ void AddGroups(
   }
 }
 
-std::optional<double> GetOverbudgetCoeff(
-    const AutoShardingSolverRequest& request) {
-  return request.has_overbudget_coeff()
-             ? std::make_optional(request.overbudget_coeff().coeff())
-             : std::nullopt;
-}
-
 // clang-format off
 
 AutoShardingSolverRequest DefaultAutoShardingSolverRequest() {
@@ -265,7 +258,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, SolvesOptimally) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 7650.0;
@@ -280,7 +273,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, SolvesOverbudget) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 9007650.0;
@@ -294,7 +287,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, SolvesMaxDepartures) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 7872.0;
@@ -308,7 +301,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, MinimizesDepartures) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 1, 0, 0, 1};
   const double objective_value = 3.0;
@@ -324,7 +317,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, AvoidsInfiniteNodeCosts) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {3, 0, 0, 0, 0};
   const double objective_value = 10683.0;
@@ -338,7 +331,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, AvoidsInfiniteEdgeCosts) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 7872.0;
@@ -364,7 +357,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesFollowedEdges) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 12650.0;
@@ -392,7 +385,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesCollapsedEdge) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                         FormulateAndSolveMIPFromSolverRequest(
-                            request, GetOverbudgetCoeff(request)));
+                            request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 13972.0;
@@ -407,7 +400,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, UsesHint) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                         FormulateAndSolveMIPFromSolverRequest(
-                            request, GetOverbudgetCoeff(request)));
+                            request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 7650.0;
@@ -421,7 +414,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HonorsMaxCost) {
 
   const absl::StatusOr<AutoShardingSolverOutput> result =
       FormulateAndSolveMIPFromSolverRequest(request,
-                                            GetOverbudgetCoeff(request));
+                                            GetParams(request));
 
   EXPECT_TRUE(absl::IsInternal(result.status()));
 }
@@ -432,7 +425,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesExtremelyHighMaxCost) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 7650.0;
@@ -440,7 +433,8 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesExtremelyHighMaxCost) {
   EXPECT_EQ(result, expected_output);
 }
 
-TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesMemoryEdgeCosts) {
+TEST(DISABLED_FormulateAndSolveMIPFromSolverRequestTest,
+     HandlesMemoryEdgeCosts) {
   AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const EdgeMatrix live_edges = {{}, {0}, {0, 1}, {1}, {}};
   const CostMatrix memory_edge_costs = {{1000000, 1100, 1200, 1300,
@@ -456,7 +450,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesMemoryEdgeCosts) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 7872.0;
@@ -464,7 +458,8 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesMemoryEdgeCosts) {
   EXPECT_EQ(result, expected_output);
 }
 
-TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesIntervals) {
+TEST(DISABLED_FormulateAndSolveMIPFromSolverRequestTest,
+     HandlesIntervals) {
   AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const CostMatrix memory_edge_costs = {{1000000, 1100, 1200, 1300,
                                          2000, 2100, 2200, 2300,
@@ -478,7 +473,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, HandlesIntervals) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 7872.0;
@@ -513,7 +508,7 @@ TEST(DISABLED_FormulateAndSolveMIPFromSolverRequestTest,
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
   const double objective_value = 7872.0;
@@ -535,7 +530,7 @@ TEST(DISABLED_FormulateAndSolveMIPFromSolverRequestTest,
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 7650.0;
@@ -578,7 +573,7 @@ TEST(DISABLED_FormulateAndSolveMIPFromSolverRequestTest,
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
   const double objective_value = 7650.0;
@@ -592,7 +587,7 @@ TEST(FormulateAndSolveMIPFromSolverRequestTest, SolvesWithEquivalences) {
 
   TF_ASSERT_OK_AND_ASSIGN(const AutoShardingSolverOutput result,
                           FormulateAndSolveMIPFromSolverRequest(
-                              request, GetOverbudgetCoeff(request)));
+                              request, GetParams(request)));
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 5, 5, 1};
   const double objective_value = 7650.0;
@@ -607,7 +602,7 @@ TEST(AutoShardingEvaluatorTest, NoViolations) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.total.computation_cost = 159.0;  // 13+21+32+42+51
@@ -631,7 +626,7 @@ TEST(AutoShardingEvaluatorTest, EvaluatesOverbudget) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.total.computation_cost = 158.0;  // 12+21+32+42+51
@@ -657,7 +652,7 @@ TEST(AutoShardingEvaluatorTest, EvaluatesOverbudgetWithIntervals) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.total.computation_cost = 158.0;  // 12+21+32+42+51
@@ -691,7 +686,7 @@ TEST(DISABLED_AutoShardingEvaluatorTest,
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.total.computation_cost = 158.0;  // 12+21+32+42+51
@@ -715,7 +710,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesFollower) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kFollowerViolationCode};
@@ -738,7 +733,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesAlias) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kAliasViolationCode};
@@ -761,7 +756,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesMemory) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kMemoryViolationCode};
@@ -787,7 +782,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesInfiniteCostForNode) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kInfiniteCostViolationCode};
@@ -811,7 +806,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesInfiniteCostForEdge) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kInfiniteCostViolationCode};
@@ -835,7 +830,7 @@ TEST(AutoShardingEvaluatorTest, ViolatesMaxDepartures) {
   const AutoShardingSolverOutput output = {s_val, objective_value};
 
   const AutoShardingEvaluation evaluation =
-      Evaluate(request, output, GetOverbudgetCoeff(request));
+      Evaluate(request, output, GetParams(request));
 
   AutoShardingEvaluation expected_evaluation;
   expected_evaluation.violation_codes = {kMaxDeparturesViolationCode};

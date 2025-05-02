@@ -224,7 +224,7 @@ GenerateReshardingCostsAndMissingShardingsForAllOperands(
     const StrategyGroup& operand_strategy_group = *strategy_map.at(operand);
     const auto& operand_strategies = operand_strategy_group.GetStrategies();
     const std::vector<double> zeros(operand_strategies.size(), 0.0);
-    if (operand_shape.IsToken() || operand_shape.dimensions_size() == 0) {
+    if (operand_shape.IsToken() || operand_shape.dimensions().size() == 0) {
       communication_resharding_costs.push_back(zeros);
       memory_resharding_costs.push_back(zeros);
       if (!input_shardings.shardings[k].has_value()) {
@@ -366,7 +366,7 @@ std::unique_ptr<StrategyGroup> HandlePartialReduce(
 
   std::unique_ptr<StrategyGroup> strategy_group =
       CreateTupleStrategyGroup(instruction_id);
-  int64_t output_size = shape.tuple_shapes_size();
+  int64_t output_size = shape.tuple_shapes().size();
   for (size_t i = 0; i < output_size; ++i) {
     std::unique_ptr<StrategyGroup> child_strategy_group =
         CreateLeafStrategyGroupWithoutInNodes(instruction_id, strategy_groups);
@@ -429,7 +429,7 @@ std::unique_ptr<StrategyGroup> MaybeFollowInsStrategyGroup(
   std::unique_ptr<StrategyGroup> strategy_group;
   if (src_strategy_group.is_tuple) {
     CHECK(shape.IsTuple());
-    CHECK_EQ(shape.tuple_shapes_size(), children.size());
+    CHECK_EQ(shape.tuple_shapes().size(), children.size());
     strategy_group = CreateTupleStrategyGroup(instruction_id);
     for (size_t i = 0; i < children.size(); ++i) {
       auto child_strategies = MaybeFollowInsStrategyGroup(
@@ -458,12 +458,12 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
   std::unique_ptr<StrategyGroup> strategy_group;
   if (output_shape.IsTuple()) {
     strategy_group = CreateTupleStrategyGroup(instruction_id);
-    for (size_t i = 0; i < ins->shape().tuple_shapes_size(); ++i) {
+    for (size_t i = 0; i < ins->shape().tuple_shapes().size(); ++i) {
       TF_ASSIGN_OR_RETURN(
           std::unique_ptr<StrategyGroup> child_strategy,
           FollowReduceStrategy(
               ins, ins->shape().tuple_shapes().at(i), ins->operand(i),
-              ins->operand(i + ins->shape().tuple_shapes_size()),
+              ins->operand(i + ins->shape().tuple_shapes().size()),
               instruction_id, strategy_map, strategy_groups, cluster_env,
               allow_mixed_mesh_shape, crash_at_error));
       child_strategy->tuple_element_idx = i;
@@ -481,9 +481,9 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
     // op_dim_to_output_dim = [0, 1, -1]
     std::vector<int64_t> op_dim_to_output_dim =
         GetDimensionMapping(/*reduced_dimensions=*/ins->dimensions(),
-                            /*op_count*/ operand->shape().dimensions_size());
-    CHECK_EQ(ins->dimensions().size() + output_shape.dimensions_size(),
-             operand->shape().dimensions_size())
+                            /*op_count*/ operand->shape().dimensions().size());
+    CHECK_EQ(ins->dimensions().size() + output_shape.dimensions().size(),
+             operand->shape().dimensions().size())
         << "Invalid kReduce: output size + reduced dimensions size != op count";
 
     for (const auto& src_strategy : src_strategy_group->GetStrategies()) {
@@ -492,12 +492,12 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
           operand->shape(), input_sharding,
           /* consider_reverse_device_meshes */ true,
           /* crash_at_error */ crash_at_error);
-      if (tensor_dim_to_mesh.size() != operand->shape().dimensions_size()) {
+      if (tensor_dim_to_mesh.size() != operand->shape().dimensions().size()) {
         return absl::InvalidArgumentError(
             "Cannot generate tensor dim to mesh dim mapping");
       }
       std::vector<int64_t> all_reduce_dims;
-      for (int64_t op_dim = 0; op_dim < operand->shape().dimensions_size();
+      for (int64_t op_dim = 0; op_dim < operand->shape().dimensions().size();
            ++op_dim) {
         int64_t mesh_dim = tensor_dim_to_mesh[op_dim];
         // Replicates on this mesh dim.
@@ -587,7 +587,7 @@ ReshardingCostsForTupleOperand(const HloInstruction* operand,
   ReshardingCosts memory_resharding_costs;
   std::vector<HloSharding> tuple_element_shardings;
   for (size_t tuple_element_idx = 0;
-       tuple_element_idx < operand->shape().tuple_shapes_size();
+       tuple_element_idx < operand->shape().tuple_shapes().size();
        tuple_element_idx++) {
     const StrategyGroup& tuple_element_strategy_group =
         *operand_strategy_vector.GetChildren()[tuple_element_idx];
@@ -629,7 +629,7 @@ ReshardingCosts CreateZeroReshardingCostsForAllOperands(
             << "Do not support instructions with more than one tuple "
                "operand.";
         for (size_t tuple_element_idx = 0;
-             tuple_element_idx < operand->shape().tuple_shapes_size();
+             tuple_element_idx < operand->shape().tuple_shapes().size();
              tuple_element_idx++) {
           const StrategyGroup& tuple_element_strategy_group =
               *operand_strategy_group.GetChildren().at(tuple_element_idx);
@@ -655,7 +655,7 @@ void GenerateOutfeedStrategy(const HloInstruction* ins, const Shape& shape,
   ReshardingCosts memory_resharding_costs;
   InputShardings input_shardings = {"R"};
 
-  const int tuple_size = ins->operand(0)->shape().tuple_shapes_size();
+  const int tuple_size = ins->operand(0)->shape().tuple_shapes().size();
   const auto& operand_strategy_group = strategy_map.at(ins->operand(0));
   const auto& operand_children = operand_strategy_group->GetChildren();
   if (ins->has_sharding()) {
@@ -880,7 +880,7 @@ void EnumerateAll1DPartition(
     bool allow_shardings_small_dims_across_many_devices,
     const std::string& suffix, const CallGraph& call_graph,
     StrategyGroup& strategy_group) {
-  for (int64_t i = 0; i < shape.dimensions_size(); ++i) {
+  for (int64_t i = 0; i < shape.dimensions().size(); ++i) {
     for (int64_t j = 0; j < device_mesh.num_dimensions(); ++j) {
       bool small_dims_sharding_check =
           !allow_shardings_small_dims_across_many_devices &&
@@ -939,7 +939,7 @@ void EnumerateAll1DPartition(
         // the cost model for sort (which, as noted above in the comments for
         // the function) is also an approximation.
         communication_cost = ComputeSortCommunicationCost(
-            ins->operand(0)->shape().dimensions_size() - 1, i, j, shape,
+            ins->operand(0)->shape().dimensions().size() - 1, i, j, shape,
             cluster_env);
       }
       strategy_group.AddStrategy(
@@ -975,7 +975,7 @@ void EnumerateAllPartition(
     return;
   }
   // Fully tile the buffer to the mesh
-  for (int64_t i = 0; i < shape.dimensions_size(); ++i) {
+  for (int64_t i = 0; i < shape.dimensions().size(); ++i) {
     auto tensor_it = std::find(tensor_dims.begin(), tensor_dims.end(), i);
     if (tensor_it != tensor_dims.end()) {
       continue;
@@ -1044,7 +1044,7 @@ void BuildStrategyAndCostForOp(const HloInstruction* ins, const Shape& shape,
     CHECK(sort_ins);
     sort_or_topk_dim = sort_ins->sort_dimension();
   } else if (IsTopKCustomCall(ins)) {
-    sort_or_topk_dim = ins->operand(0)->shape().dimensions_size() - 1;
+    sort_or_topk_dim = ins->operand(0)->shape().dimensions().size() - 1;
   }
 
   if (sort_or_topk_dim != -1) {
@@ -1072,7 +1072,7 @@ void EnumerateAll1DPartitionReshape(const HloInstruction* ins,
   const Shape& operand_shape = operand->shape();
   const StrategyGroup& operand_strategy_group = *strategy_map.at(operand);
 
-  for (int64_t i = 0; i < ins->shape().dimensions_size(); ++i) {
+  for (int64_t i = 0; i < ins->shape().dimensions().size(); ++i) {
     for (int64_t j = 0; j < device_mesh.num_dimensions(); ++j) {
       if (device_mesh.dim(j) == 1 ||
           (only_allow_divisible &&
@@ -1263,7 +1263,7 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> CreateAllStrategiesGroup(
   std::unique_ptr<StrategyGroup> strategy_group;
   if (shape.IsTuple()) {
     strategy_group = CreateTupleStrategyGroup(instruction_id);
-    for (size_t i = 0; i < shape.tuple_shapes_size(); ++i) {
+    for (size_t i = 0; i < shape.tuple_shapes().size(); ++i) {
       auto child_strategies =
           CreateAllStrategiesGroup(
               ins, shape.tuple_shapes(i), instruction_id, strategy_groups,
@@ -1534,7 +1534,7 @@ void RemoveShardingsWhereSmallDimsShardedAcrossManyDevices(
       continue;
     }
     const auto& tile_assignment = strategy.output_sharding.tile_assignment();
-    for (int64_t i = 0; i < shape.dimensions_size(); ++i) {
+    for (int64_t i = 0; i < shape.dimensions().size(); ++i) {
       if (tile_assignment.dim(i) > 1 &&
           tile_assignment.dim(i) > shape.dimensions(i)) {
         invalid_strategy_indices.push_back(sid);
@@ -1644,7 +1644,7 @@ std::unique_ptr<StrategyGroup> HandleManuallyShardedInstruction(
   std::unique_ptr<StrategyGroup> strategy_group;
   if (shape.IsTuple()) {
     strategy_group = CreateTupleStrategyGroup(instruction_id);
-    for (size_t i = 0; i < shape.tuple_shapes_size(); ++i) {
+    for (size_t i = 0; i < shape.tuple_shapes().size(); ++i) {
       std::unique_ptr<StrategyGroup> child_strategies =
           HandleManuallyShardedInstruction(ins, shape.tuple_shapes(i),
                                            instruction_id, strategy_groups,
@@ -1996,16 +1996,10 @@ CreateAutoShardingSolverRequestAndCallSolver(
     *request.add_edge_intervals() = std::move(interval);
   }
 
-  PopulateTemporalValues(cost_graph, request);
-
   const auto converted_problem = ConvertToProblem(request);
   const auto converted_request = ConvertToSolverRequest(converted_problem);
-  const std::optional<double> overbudget_coeff =
-      option.memory_overbudget_coeff >= 0.0
-          ? std::make_optional(option.memory_overbudget_coeff)
-          : std::nullopt;
   return FormulateAndSolveMIPFromSolverRequest(converted_request,
-                                               overbudget_coeff);
+                                               GetParams(request));
 }
 
 void CheckHloSharding(
@@ -2221,8 +2215,10 @@ absl::Status InsertReshardReshapes(
               rhs->shape(), rhs_sharding,
               /*consider_reverse_device_meshes=*/true, crash_at_error);
 
-      if (lhs_tensor_dim_to_mesh_dim.size() != lhs->shape().dimensions_size() ||
-          rhs_tensor_dim_to_mesh_dim.size() != rhs->shape().dimensions_size()) {
+      if (lhs_tensor_dim_to_mesh_dim.size() !=
+              lhs->shape().dimensions().size() ||
+          rhs_tensor_dim_to_mesh_dim.size() !=
+              rhs->shape().dimensions().size()) {
         return absl::InvalidArgumentError(
             "Cannot generate tensor dim to mesh dim mapping");
       }
@@ -2284,7 +2280,7 @@ absl::Status InsertReshardReshapes(
           case HloOpcode::kCustomCall:
           case HloOpcode::kRngBitGenerator:
           case HloOpcode::kSort: {
-            for (size_t i = 0; i < inst->shape().tuple_shapes_size(); ++i) {
+            for (size_t i = 0; i < inst->shape().tuple_shapes().size(); ++i) {
               const InputShardings& input_shardings =
                   GetInputShardingsForTuple(inst, {static_cast<int64_t>(i)},
                                             strategy_map, cost_graph, s_val);
@@ -2298,7 +2294,7 @@ absl::Status InsertReshardReshapes(
             break;
           }
           case HloOpcode::kTuple: {
-            for (size_t i = 0; i < inst->shape().tuple_shapes_size(); ++i) {
+            for (size_t i = 0; i < inst->shape().tuple_shapes().size(); ++i) {
               const InputShardings& input_shardings =
                   GetInputShardingsForTuple(inst, {static_cast<int64_t>(i)},
                                             strategy_map, cost_graph, s_val);
@@ -2312,8 +2308,8 @@ absl::Status InsertReshardReshapes(
           }
           case HloOpcode::kGetTupleElement: {
             std::vector<std::optional<HloSharding>> dst_shardings(
-                inst->shape().tuple_shapes_size(), std::nullopt);
-            for (size_t i = 0; i < inst->shape().tuple_shapes_size(); ++i) {
+                inst->shape().tuple_shapes().size(), std::nullopt);
+            for (size_t i = 0; i < inst->shape().tuple_shapes().size(); ++i) {
               CHECK(!inst->shape().tuple_shapes(i).IsTuple())
                   << "We currently do not support ops with nested tuples as "
                      "output. See b/332951306.";
@@ -2665,7 +2661,7 @@ void CheckUserShardingPreservation(
       } else if (inst->sharding().IsTuple()) {
         const std::vector<HloSharding>* preserve_shardings_tuple =
             &preserve_shardings.at(inst->name());
-        for (size_t i = 0; i < inst->shape().tuple_shapes_size(); i++) {
+        for (size_t i = 0; i < inst->shape().tuple_shapes().size(); i++) {
           if (!preserve_shardings_tuple->at(i).IsUnknown() &&
               preserve_shardings_tuple->at(i) !=
                   inst->sharding().tuple_elements().at(i)) {
@@ -3235,7 +3231,7 @@ HloSharding GetReduceScatterOutput(const HloInstruction* ins,
     }
   } else if (ins->opcode() == HloOpcode::kReduce) {
     // TODO(zhuohan): support more cases.
-    CHECK_EQ(ins->shape().dimensions_size(), 1);
+    CHECK_EQ(ins->shape().dimensions().size(), 1);
 
     int mesh_dim;
     if (absl::StrContains(input_shardings.name, "allreduce @ [0]")) {
@@ -3291,7 +3287,7 @@ bool HasReduceScatterOpportunity(const HloInstruction* inst,
   }
 
   if (inst->opcode() == HloOpcode::kReduce &&
-      inst->shape().dimensions_size() == 1) {
+      inst->shape().dimensions().size() == 1) {
     return true;
   }
   if (inst->opcode() == HloOpcode::kDot) {

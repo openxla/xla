@@ -166,6 +166,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -302,9 +303,12 @@ cc_library(
         ":pjrt_c_api_memory_descriptions_extension_hdrs",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
     ],
 )
@@ -461,6 +465,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
@@ -490,6 +495,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/client:client_library",
         "//xla/ffi:execution_context",
         "//xla/ffi:ffi_api",
@@ -545,6 +551,7 @@ xla_cc_test(
     srcs = ["pjrt_c_api_cpu_test.cc"],
     deps = [
         ":pjrt_c_api_cpu",
+        ":pjrt_c_api_hdrs",
         ":pjrt_c_api_test_common",
         "@com_google_googletest//:gtest_main",
     ],
