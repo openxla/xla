@@ -5468,8 +5468,7 @@ TEST_F(HloEvaluatorTest, ParameterThroughCallSucceedsWithPrecomputation) {
       TuplePointsToAnalysis::Run(hlo_module.get()));
   TF_ASSERT_OK_AND_ASSIGN(
       Literal result,
-      evaluator_.Evaluate(parameter_instruction,
-                          {tuple_points_to.get()},
+      evaluator_.Evaluate(parameter_instruction, {tuple_points_to.get()},
                           /*recursively_evaluate_nonconstant_operands=*/true));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 }
@@ -5564,8 +5563,8 @@ TEST_F(PatternMatchParseWhileLoopTest,
 
   HloInstruction* while_op =
       hlo_module->entry_computation()->root_instruction()->mutable_operand(0);
-  std::optional<ParsedWhileLoop> parsed_while_loop = PatternMatchParseWhileLoop(
-      while_op, {tuple_points_to.get()});
+  std::optional<ParsedWhileLoop> parsed_while_loop =
+      PatternMatchParseWhileLoop(while_op, {tuple_points_to.get()});
   ASSERT_TRUE(parsed_while_loop.has_value());
   EXPECT_FALSE(parsed_while_loop->is_dynamic());
   EXPECT_EQ(parsed_while_loop->static_while_loop->trip_count, 5);
