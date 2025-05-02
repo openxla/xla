@@ -75,12 +75,14 @@ absl::StatusOr<std::unique_ptr<LoadedExecutable>> CompileOnDevices(
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       xla::ParseMlirModuleString(mlir_module_str, context));
 
-  auto compile_options =
-      std::make_unique<XlaCompileOptions>(xla::CompileOptions());
+  xla::CompileOptions compile_options;
   ExecutableBuildOptions& build_options =
-      compile_options->compile_options.executable_build_options;
+      compile_options.executable_build_options;
+  DeviceListRef device_list;
   if (devices.empty()) {
-    compile_options->compile_options.compile_portable_executable = true;
+    compile_options.compile_portable_executable = true;
+    device_list =
+        client->MakeDeviceList({client->addressable_devices().front()});
   } else {
     build_options.set_device_ordinal(devices.front()->Id().value());
     if (replicated) {
@@ -105,9 +107,12 @@ absl::StatusOr<std::unique_ptr<LoadedExecutable>> CompileOnDevices(
       }
       build_options.set_device_assignment(device_assignment);
     }
+    device_list = client->MakeDeviceList(devices);
   }
+  auto xla_compile_options = std::make_unique<XlaCompileOptions>(
+      compile_options, std::move(device_list));
   return compiler->Compile(std::make_unique<HloProgram>(*module),
-                           std::move(compile_options));
+                           std::move(xla_compile_options));
 }
 
 TEST(LoadedExecutableImplTest, GetDonatableInputIndices) {
@@ -160,8 +165,7 @@ TEST(LoadedExecutableImplTest, CompileAndExecute) {
   std::vector<float> data(6);
   std::iota(data.begin(), data.end(), 0);
   Device* device = client->addressable_devices().at(0);
-  std::shared_ptr<const Sharding> sharding =
-      SingleDeviceSharding::Create(device, MemoryKind());
+  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array, client->MakeArrayFromHostBuffer(
@@ -205,8 +209,7 @@ TEST(LoadedExecutableImplTest, CompileAndExecutePortable) {
   std::vector<float> data(6);
   std::iota(data.begin(), data.end(), 0);
   Device* device = client->addressable_devices().at(0);
-  std::shared_ptr<const Sharding> sharding =
-      SingleDeviceSharding::Create(device, MemoryKind());
+  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array, client->MakeArrayFromHostBuffer(
@@ -250,8 +253,7 @@ TEST(LoadedExecutableImplTest, DoNotFillStatus) {
   std::vector<float> data(6);
   std::iota(data.begin(), data.end(), 0);
   Device* device = client->addressable_devices().at(0);
-  std::shared_ptr<const Sharding> sharding =
-      SingleDeviceSharding::Create(device, MemoryKind());
+  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto array, client->MakeArrayFromHostBuffer(

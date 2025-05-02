@@ -2,6 +2,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -37,17 +38,31 @@ config_setting(
     },
 )
 
+# Since selects can't be nested we need to create this intermediate target
+cc_library(
+    name = "nvshmem_collectives_if_supported",
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps =
+        select({
+            ":nvshmem_supported": [":nvshmem_collectives"],
+            "//conditions:default": [],
+        }),
+)
+
 # Build target that registers all available GPU collectives implementations with the collectives
 # registry at link time.
 cc_library(
     name = "gpu_collectives_plugin",
     deps = [
         ":gpu_collectives_stub",
+    ] + if_gpu_is_configured([
         ":nccl_collectives",
-    ] + select({
-        ":nvshmem_supported": [":nvshmem_collectives"],
-        "//conditions:default": [],
-    }),
+    ]) + if_cuda_is_configured([
+        ":nvshmem_collectives_if_supported",
+    ]),
 )
 
 cc_library(
@@ -169,7 +184,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -196,13 +210,13 @@ cc_library(
 
 cc_library(
     name = "nccl_errors",
-    srcs = if_gpu_is_configured(["nccl_errors.cc"]),
-    hdrs = if_gpu_is_configured(["nccl_errors.h"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    srcs = ["nccl_errors.cc"],
+    hdrs = ["nccl_errors.h"],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
+    tags = ["gpu"],
     visibility = ["//visibility:private"],
     deps = [
         "//xla:util",
@@ -220,19 +234,19 @@ cc_library(
 
 cc_library(
     name = "nccl_collectives",
-    srcs = if_gpu_is_configured([
+    srcs = [
         "nccl_collectives.cc",
         "nccl_communicator.cc",
-    ]),
-    hdrs = if_gpu_is_configured([
+    ],
+    hdrs = [
         "nccl_collectives.h",
         "nccl_communicator.h",
-    ]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    ],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
+    tags = ["gpu"],
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_clique_key",
@@ -286,8 +300,12 @@ cc_library(
 
 cc_library(
     name = "nvshmem_collectives",
-    srcs = if_cuda_is_configured(["nvshmem_collectives.cc"]),
-    hdrs = if_cuda_is_configured(["nvshmem_collectives.h"]),
+    srcs = ["nvshmem_collectives.cc"],
+    hdrs = ["nvshmem_collectives.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
@@ -309,22 +327,22 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:numbers",
-    ] + if_cuda_is_configured(["@nvshmem//:nvshmem_lib"]),
+    ],
     alwayslink = True,
 )
 
-xla_cc_test(
+xla_test(
     name = "nccl_communicator_test",
-    srcs = if_gpu_is_configured(["nccl_communicator_test.cc"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    srcs = ["nccl_communicator_test.cc"],
+    backends = ["gpu"],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
     tags = [
-        "requires-gpu-nvidia",
         # Stop chloroxylenol from running this test with msan because msan does
         # not work with CUDA.
         #
@@ -390,31 +408,25 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "worker_thread",
-    srcs = ["worker_thread.cc"],
-    hdrs = ["worker_thread.h"],
+    name = "single_threaded_executor",
+    srcs = ["single_threaded_executor.cc"],
+    hdrs = ["single_threaded_executor.h"],
     deps = [
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
+        "//xla/tsl/platform:threadpool_async_executor",
     ],
 )
 
 xla_cc_test(
-    name = "worker_thread_test",
-    srcs = ["worker_thread_test.cc"],
+    name = "single_threaded_executor_test",
+    srcs = ["single_threaded_executor_test.cc"],
     deps = [
-        ":worker_thread",
+        ":single_threaded_executor",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
     ],
 )

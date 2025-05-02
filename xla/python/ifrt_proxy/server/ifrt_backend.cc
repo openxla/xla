@@ -94,7 +94,7 @@ using IfrtArrayRef = tsl::RCReference<xla::ifrt::Array>;
 absl::StatusOr<IfrtArrayRef> MakeStringArrayFromHostBuffer(
     Client* client, std::shared_ptr<const std::string> host_buffer, DType dtype,
     Shape shape, std::optional<absl::Span<const int64_t>> byte_strides,
-    std::shared_ptr<const Sharding> sharding) {
+    ShardingRef sharding) {
   TF_ASSIGN_OR_RETURN(std::vector<absl::Cord> string_host_buffer,
                       DeserializeStringHostBufferFromString(*host_buffer));
   const void* data = string_host_buffer.data();
@@ -1411,6 +1411,17 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
               "implementations using `xla::ifrt::XlaCompileOptions`");
         }
       }
+    }
+
+    if (auto xla_options =
+            llvm::dyn_cast<xla::ifrt::XlaCompileOptions>(options.get())) {
+      // TODO(emilyaf): Devices should be plumbed through or serialized to
+      // support MPMD parallelism, which allows executables with empty device
+      // assignments. In the meantime, devices are obtained from the device
+      // assignment in compile_options.
+      TF_ASSIGN_OR_RETURN(xla_options->devices,
+                          xla::ifrt::GetDeviceListFromXlaCompileOptions(
+                              client_.get(), xla_options->compile_options));
     }
 
     TF_ASSIGN_OR_RETURN(auto executable,

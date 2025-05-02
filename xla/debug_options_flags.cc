@@ -241,7 +241,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
-  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(true);
   opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
@@ -1870,15 +1869,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_auto_spmd_partitioning_memory_budget_ratio times the estimated "
       "memory usage lower bound."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_triton_gemm_disable_reduced_precision_reduction",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_triton_gemm_disable_reduced_precision_reduction),
-      debug_options->xla_gpu_triton_gemm_disable_reduced_precision_reduction(),
-      "Forces any reductions during matrix multiplications to use the "
-      "accumulator type and not the output type. The precision of the dot "
-      "operation may not increase that much if there is output fusion."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotuned_gemm_fusions",
       bool_setter_for(&DebugOptions::set_xla_gpu_dump_autotuned_gemm_fusions),
       debug_options->xla_gpu_dump_autotuned_gemm_fusions(),
@@ -2396,6 +2386,11 @@ static void AllocateFlags(DebugOptions* defaults) {
   flag_values = defaults;
   flag_objects = new std::vector<tsl::Flag>();
   MakeDebugOptionsFlags(flag_objects, flag_values);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
+}
+
+void ParseDebugOptionFlagsFromEnv() {
+  absl::call_once(flags_init, &AllocateFlags, nullptr);
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }
 

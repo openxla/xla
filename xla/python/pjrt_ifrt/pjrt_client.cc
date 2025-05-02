@@ -541,8 +541,7 @@ void LogDeviceSummary(PjRtClient* client) {
 
 absl::StatusOr<tsl::RCReference<Array>> MakeStringArrayFromHostBuffer(
     Client* client, const void* data, DType dtype, Shape shape,
-    std::optional<absl::Span<const int64_t>> byte_strides,
-    std::shared_ptr<const Sharding> sharding,
+    std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     Client::HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer) {
   auto param_validation = [&]() -> absl::Status {
@@ -591,7 +590,7 @@ absl::StatusOr<tsl::RCReference<Array>> MakeStringArrayFromHostBuffer(
 
 absl::StatusOr<tsl::RCReference<Array>>
 AssembleStringArrayFromSingleDeviceStringArrays(
-    PjRtClient* client, Shape shape, std::shared_ptr<const Sharding> sharding,
+    PjRtClient* client, Shape shape, ShardingRef sharding,
     absl::Span<tsl::RCReference<Array>> arrays,
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
@@ -888,8 +887,7 @@ PjRtClient::CreatePjRtArray(Shape shape, PjRtBuffers pjrt_buffers) {
 
 absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
     const void* data, DType dtype, Shape shape,
-    std::optional<absl::Span<const int64_t>> byte_strides,
-    std::shared_ptr<const Sharding> sharding,
+    std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     Client::HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer,
     tsl::RCReference<UserContext> user_context) {
@@ -1057,7 +1055,7 @@ PjRtClient::MakeErrorArrays(const absl::Status& error,
 
 absl::StatusOr<tsl::RCReference<Array>>
 PjRtClient::AssembleArrayFromSingleDeviceArrays(
-    DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
+    DType dtype, Shape shape, ShardingRef sharding,
     absl::Span<tsl::RCReference<Array>> arrays,
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
@@ -1137,9 +1135,9 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
   }
   // TODO(yashkatariya): Remove the following logic once layout is plumbed
   // through.
-  std::shared_ptr<const PjRtLayout> layout;
+  std::shared_ptr<const xla::PjRtLayout> layout;
   if (dtype.kind() == DType::kToken) {
-    layout = std::make_shared<PjRtLayout>(xla::Layout());
+    layout = std::make_shared<xla::PjRtLayout>(xla::Layout());
   } else if (buffers.empty()) {
     TF_ASSIGN_OR_RETURN(auto shard_shape, sharding->GetShardShape(shape));
     TF_ASSIGN_OR_RETURN(layout,
@@ -1221,18 +1219,18 @@ absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
                                                           topology));
 }
 
-absl::StatusOr<std::shared_ptr<const PjRtLayout>> PjRtClient::GetDefaultLayout(
-    DType dtype, absl::Span<const int64_t> dims, Device* device,
-    MemoryKind memory_kind) const {
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
+PjRtClient::GetDefaultLayout(DType dtype, absl::Span<const int64_t> dims,
+                             Device* device, MemoryKind memory_kind) const {
   static MemoryKind kUnpinnedHostMemoryKind(UnpinnedHostMemorySpace::kKind);
   if (memory_kind == kUnpinnedHostMemoryKind) {
-    return std::make_shared<PjRtLayout>(
+    return std::make_shared<xla::PjRtLayout>(
         LayoutUtil::MakeDescendingLayout(dims.size()));
   }
   TF_ASSIGN_OR_RETURN(PrimitiveType element_type, ToPrimitiveType(dtype));
   TF_ASSIGN_OR_RETURN(xla::Layout layout,
                       pjrt_client_->GetDefaultLayout(element_type, dims));
-  return std::make_shared<PjRtLayout>(std::move(layout));
+  return std::make_shared<xla::PjRtLayout>(std::move(layout));
 }
 
 absl::Status PjRtClient::TransferToInfeed(PjRtDevice* device,

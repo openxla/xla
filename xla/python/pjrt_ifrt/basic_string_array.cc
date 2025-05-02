@@ -60,8 +60,8 @@ namespace ifrt {
 char BasicStringArray::ID = 0;
 
 absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
-    Client* client, Shape shape, std::shared_ptr<const Sharding> sharding,
-    Future<Buffers> buffers, OnDoneWithBuffer on_done_with_buffer) {
+    Client* client, Shape shape, ShardingRef sharding, Future<Buffers> buffers,
+    OnDoneWithBuffer on_done_with_buffer) {
   if (!buffers.IsValid()) {
     return absl::InvalidArgumentError("Got buffers_ future is invalid");
   }
@@ -110,7 +110,7 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
 }
 
 BasicStringArray::BasicStringArray(Client* client, Shape shape,
-                                   std::shared_ptr<const Sharding> sharding,
+                                   ShardingRef sharding,
                                    Future<Buffers> buffers,
                                    Future<> ready_future,
                                    OnDoneWithBuffer on_done_with_buffer)
@@ -406,8 +406,8 @@ absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::FullyReplicatedShard(
       std::move(buffers_future), std::move(on_done_with_buffer));
 }
 
-absl::StatusOr<std::shared_ptr<const PjRtLayout>> BasicStringArray::layout()
-    const {
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
+BasicStringArray::layout() const {
   return absl::UnimplementedError("String arrays do not support PjRtLayout");
 }
 

@@ -486,8 +486,8 @@ FindResultBufferAllocationIndex(const BufferAssignment& assignment,
     buffer_indices.push_back(buffer_index);
     return {std::move(buffer_indices)};
   }
-  buffer_indices.reserve(result_shape.tuple_shapes_size());
-  for (int i = 0; i < result_shape.tuple_shapes_size(); ++i) {
+  buffer_indices.reserve(result_shape.tuple_shapes().size());
+  for (int i = 0; i < result_shape.tuple_shapes().size(); ++i) {
     // Find the buffer allocations that corresponds to the output tuple,
     // including the tuple index table.
     const HloValueSet& sources = root_value_set.element({i});
@@ -1088,7 +1088,14 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::BufferFromHostBuffer(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 TfrtCpuClient::BufferFromHostLiteral(const LiteralSlice& literal,
-                                     PjRtMemorySpace* memory_space) {
+                                     PjRtMemorySpace* memory_space,
+                                     const Layout* device_layout) {
+  if (device_layout) {
+    return absl::UnimplementedError(absl::StrCat(
+        "BufferFromHostLiteral with device_layout is not implemented on "
+        "platform: ",
+        platform_name()));
+  }
   CHECK_EQ(memory_space->devices().size(), 1);
   PjRtDevice* device = memory_space->devices().front();
 
@@ -1221,9 +1228,9 @@ TfrtCpuExecutable::TfrtCpuExecutable(
     }
   } else {
     input_buffer_sizes_in_bytes_.reserve(
-        computation_layout.parameter_shape(0).tuple_shapes_size());
+        computation_layout.parameter_shape(0).tuple_shapes().size());
     for (int i = 0;
-         i < computation_layout.parameter_shape(0).tuple_shapes_size(); ++i) {
+         i < computation_layout.parameter_shape(0).tuple_shapes().size(); ++i) {
       input_buffer_sizes_in_bytes_.push_back(ShapeUtil::ByteSizeOf(
           computation_layout.parameter_shape(0).tuple_shapes(i)));
     }

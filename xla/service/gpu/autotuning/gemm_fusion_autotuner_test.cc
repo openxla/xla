@@ -393,18 +393,6 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
   }
 };
 
-class GemmFusionAutotunerTestWithMorePreciseReduction
-    : public GemmFusionAutotunerTest {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        GemmFusionAutotunerTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(
-        true);
-    return debug_options;
-  }
-};
-
 // TODO: b/404470821 - Remove once this is enabled by default.
 class DynamicSearchSpaceAutotunerTest : public GemmFusionAutotunerTest {
  public:
@@ -571,31 +559,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTest, SelectsSplitK) {
-  // Shapes with K >> M, N have to force split-K configurations.
-  const std::string kHloText = R"(
-HloModule t
-
-ENTRY e {
-  p0 = s8[7,8192] parameter(0)
-  p0c = f16[7,8192] convert(p0)
-  p1 = f16[8192,18] parameter(1)
-  ROOT dot.0 = f16[7,18] dot(p0c, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  MatchOptimizedHlo(kHloText, R"(
-; CHECK: reduce
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: kCustom
-; CHECK-NEXT: {{kLoop|kInput}}
-)");
-
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1, /*arel=*/0.5}));
-}
-
-TEST_F(GemmFusionAutotunerTestWithMorePreciseReduction, SelectsSplitK) {
   // Shapes with K >> M, N have to force split-K configurations.
   constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -1011,7 +974,7 @@ ENTRY e {
         RunFileCheck(
             module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
             R"(
-// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"32","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}},"force_earliest_schedule":false}
+// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"32","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}},"force_earliest_schedule":false
             )"));
     EXPECT_TRUE(filecheck_matches);
   } else {
@@ -1646,6 +1609,23 @@ ENTRY e {
 // CHECK: __triton_gemm
 // CHECK-NOT: "split_k":"1"
 // CHECK: ROOT
+)");
+}
+
+TEST_F(DynamicSearchSpaceAutotunerTest,
+       FindsValidConfigForSlicedContractingDimension) {
+  const std::string hlo = R"(
+ENTRY e {
+  p0 = f16[32,16400] parameter(0)
+  s0 = f16[32,16384] slice(p0), slice={[0:32], [11:16395]}
+  p1 = f16[16384,32] parameter(1)
+  ROOT _ = f16[32,32] dot(s0, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  CheckTritonAutotuning(hlo, R"(
+// CHECK: ENTRY
+// CHECK: __triton_gemm
 )");
 }
 
