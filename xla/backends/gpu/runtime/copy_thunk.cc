@@ -211,14 +211,15 @@ namespace {
 
 class DynamicOffsetEvaluator {
  public:
-  absl::StatusOr<int64_t> EvaluateOffset(
+  // Evaluates the clamped array index for the given offset.
+  absl::StatusOr<int64_t> EvaluateArrayIndexForOffset(
       const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset);
 
  private:
   absl::node_hash_map<const HloInstruction*, Literal> known_values_;
 };
 
-absl::StatusOr<int64_t> DynamicOffsetEvaluator::EvaluateOffset(
+absl::StatusOr<int64_t> DynamicOffsetEvaluator::EvaluateArrayIndexForOffset(
     const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset) {
   // Set up the value of the induction variable, if it's not known yet.
   if (!known_values_.contains(offset.induction_variable)) {
@@ -270,7 +271,7 @@ absl::StatusOr<int64_t> DynamicOffsetEvaluator::EvaluateOffset(
     const HloInstruction* caller = *it;
     VLOG(3) << "Evaluating required operands of caller " << caller->name()
             << ".";
-    if (true || VLOG_IS_ON(3)) {
+    if (VLOG_IS_ON(3)) {
       VLOG(3) << "Current substitutions:";
       for (auto [instr, value] : substitutions) {
         VLOG(3) << "  " << instr->name() << " -> " << value->ToString();
@@ -291,14 +292,13 @@ absl::StatusOr<int64_t> DynamicOffsetEvaluator::EvaluateOffset(
       VLOG(3) << "Computing required parameter " << i << " of "
               << callee->name();
       auto* operand = caller->operand(i);
-      auto* parameter = callee->parameter_instruction(i);
-
       if (!known_values_.contains(operand)) {
         TF_ASSIGN_OR_RETURN(
             known_values_[operand],
             evaluator.Evaluate(operand, {}, true, substitutions));
       }
 
+      auto* parameter = callee->parameter_instruction(i);
       next_substitutions[parameter] = &known_values_[operand];
     }
 
@@ -329,7 +329,7 @@ absl::StatusOr<int64_t> EvaluateDynamicOffsets(
   DynamicOffsetEvaluator evaluator;
   for (const auto& offset : offsets) {
     TF_ASSIGN_OR_RETURN(int64_t clamped_index,
-                        evaluator.EvaluateOffset(offset));
+                        evaluator.EvaluateArrayIndexForOffset(offset));
     offset_sum += clamped_index * offset.byte_stride;
   }
   return offset_sum;
