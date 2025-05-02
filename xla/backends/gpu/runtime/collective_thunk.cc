@@ -340,18 +340,17 @@ absl::Status RegisterBufferOnce(GpuCollectives* collectives,
           {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()})) {
     // ncclCommRegister will internally get and use the base address/size of the
     // address we provide.
-    LOG(INFO) << "Registering " << buffer.opaque()
-              << " with size: " << buffer.size()
-              << " and base pointer: " << base_buffer.opaque();
+    VLOG(5) << "Registering " << buffer.opaque()
+            << " with size: " << buffer.size()
+            << " and base pointer: " << base_buffer.opaque();
     TF_ASSIGN_OR_RETURN(auto handle, comm->RegisterBuffer(buffer));
     all_registered.handles.push_back(std::move(handle));
     all_registered.records.insert(
         {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()});
   } else {
-    LOG(INFO) << "Buffer: " << buffer.opaque()
-              << " with size: " << buffer.size()
-              << " and base pointer: " << base_buffer.opaque()
-              << " is already registered.";
+    VLOG(5) << "Buffer: " << buffer.opaque() << " with size: " << buffer.size()
+            << " and base pointer: " << base_buffer.opaque()
+            << " is already registered.";
   }
   return absl::OkStatus();
 }
