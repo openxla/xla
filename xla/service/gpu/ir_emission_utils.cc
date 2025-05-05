@@ -904,7 +904,8 @@ ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
     }
   }
 
-  if (!unique_param || !unique_gte || unique_gte->operand(0) != unique_param) {
+  if (!while_loop || !unique_param || !unique_gte ||
+      unique_gte->operand(0) != unique_param) {
     VLOG(5) << "Did not find a parameter or GTE or they don't match.";
     return std::nullopt;
   }
