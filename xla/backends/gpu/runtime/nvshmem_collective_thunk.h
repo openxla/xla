@@ -54,56 +54,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-struct NvshmemCollectiveConfig {
-  int64_t operand_count;
-  std::vector<PrimitiveType> operand_element_type;
-  std::vector<ReplicaGroup> replica_groups;
-  RendezvousKey::CollectiveOpKind collective_op_kind;
-  int64_t op_id;
-  CollectiveOpGroupMode group_mode;
-
-  template <typename OpT>
-  void SetCollectiveOpKindAndID(OpT op);
-  void SetCollectiveOpKindAndID(const HloCollectivePermuteInstruction* instr);
-  void SetCollectiveOpKindAndID(const HloSendRecvInstruction* instr);
-  bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
-};
-
-template <typename OpT>
-void NvshmemCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
-  if (op.getChannelId()) {
-    collective_op_kind = RendezvousKey::kCrossModule;
-    op_id = static_cast<int64_t>(op.getChannelId()->getHandle());
-  } else {
-    collective_op_kind = RendezvousKey::kCrossReplica;
-    mlir::ModuleOp parent = op->template getParentOfType<mlir::ModuleOp>();
-    mlir::IntegerAttr unique_id =
-        parent->getAttrOfType<mlir::IntegerAttr>("hlo.unique_id");
-    op_id = static_cast<int64_t>(unique_id.getInt());
-  }
-}
-
-NvshmemCollectiveConfig GetNvshmemCollectiveConfig(
-    const HloInstruction* hlo, std::optional<bool> use_global_device_ids);
-
-template <typename OpT>
-NvshmemCollectiveConfig GetNvshmemCollectiveConfigForMlir(
-    OpT op, std::optional<bool> use_global_device_ids) {
-  NvshmemCollectiveConfig config;
-  config.operand_count = op.getInputs().size();
-  config.operand_element_type.reserve(config.operand_count);
-  for (int i = 0; i < config.operand_count; i++) {
-    const Shape shape = GetShape(op.getInputs()[i]);
-    config.operand_element_type.push_back(shape.element_type());
-  }
-  config.replica_groups = ConvertReplicaGroups(op.getReplicaGroups()).value();
-  config.SetCollectiveOpKindAndID(op);
-  config.group_mode = GetCollectiveOpGroupMode(op.getChannelId().has_value(),
-                                               use_global_device_ids)
-                          .value();
-  return config;
-}
-
 //===----------------------------------------------------------------------===//
 // NvshmemCollectiveThunk
 //===----------------------------------------------------------------------===//
@@ -112,23 +62,11 @@ NvshmemCollectiveConfig GetNvshmemCollectiveConfigForMlir(
 class NvshmemCollectiveDoneThunk;
 
 // Thunk base class for NVSHMEM collective operations.
+// TODO tixxx refactor Collective and NvshmemCollective thunks
+// to have a single parent class for all gpu comm backends.
 class NvshmemCollectiveThunk : public Thunk {
  public:
   NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync);
-
-  struct Buffer {
-    int64_t element_count;
-    BufferAllocation::Slice source_buffer;
-    BufferAllocation::Slice destination_buffer;
-    int64_t source_memory_space;
-    int64_t destination_memory_space;
-    mlir::Value source_value;
-    mlir::Value destination_value;
-  };
-
-  // Logging support.
-  static std::string GetDeviceString(
-      const Thunk::CollectiveExecuteParams& params);
 
   absl::Status Prepare(const PrepareParams& params,
                        ResourceRequestsInterface& resource_requests) override;
@@ -145,19 +83,10 @@ class NvshmemCollectiveThunk : public Thunk {
     async_events_ = async_events;
   }
 
-  CollectiveStreamId nvshmem_stream_id() const {
-    return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamKind());
-  }
-
-  ExecutionStreamId nvshmem_execution_stream_id() const {
-    return ExecutionStreamId(execution_stream_id().value() +
-                             nvshmem_stream_id().value());
-  }
-
  protected:
   virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,
                                             se::Stream& stream) = 0;
-  virtual const NvshmemCollectiveConfig& config() const = 0;
+  virtual const CollectiveConfig& config() const = 0;
   virtual AsyncStreamKind GetAsyncStreamKind() const {
     return AsyncStreamKind::kCollective;
   }
@@ -198,14 +127,6 @@ class NvshmemCollectiveDoneThunk : public Thunk {
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  // return the execution stream id wheer previous async operator was launched
-  // to.
-  ExecutionStreamId nvshmem_execution_stream_id() const {
-    return ExecutionStreamId(
-        execution_stream_id().value() +
-        xla::gpu::GetCollectiveStreamId(true, async_stream_kind_).value());
-  }
-
  private:
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
   AsyncStreamKind async_stream_kind_ = AsyncStreamKind::kCollective;
@@ -213,59 +134,9 @@ class NvshmemCollectiveDoneThunk : public Thunk {
 
 //===----------------------------------------------------------------------===//
 
-absl::Status IsValidNvshmemOperand(mlir::Value operand,
-                                   Thunk::Kind reduction_op);
-
 absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op);
 
-template <typename NvshmemThunkType, typename OpT>
-absl::Status AddNvshmemOpDescription(absl::Status status, OpT op,
-                                     int64_t replica_count,
-                                     int64_t partition_count) {
-  if (status.ok()) {
-    return status;
-  }
-  CollectiveOpGroupMode group_mode = NvshmemThunkType::GetGroupMode(op);
-
-  int64_t operand_count = 0;
-  std::string str;
-
-  if constexpr (std::is_base_of_v<HloInstruction, std::remove_pointer_t<OpT>>) {
-    operand_count = op->operand_count();
-    str = op->ToString();
-  } else {
-    operand_count = op->getNumOperands() / 2;
-    str = llvm_ir::DumpToString(op.getOperation());
-  }
-
-  return absl::Status(
-      status.code(),
-      absl::StrFormat(
-          "%s\n"
-          "%s with replica_count: %d, partition_count: %d, group_mode: %s, "
-          "operand_count: %d\n%s",
-          status.message(), NvshmemThunkType::GetHloOpName(), replica_count,
-          partition_count, CollectiveOpGroupModeToString(group_mode),
-          operand_count, str));
-}
-
 //===----------------------------------------------------------------------===//
-
-absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
-    GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
-    AsyncStreamKind stream_kind);
-
-absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
-    const Thunk::ExecuteParams& params,
-    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
-    const std::vector<PrimitiveType>& element_types);
-
-absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
-    const BufferAllocations* buffer_allocations,
-    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
-    const std::vector<PrimitiveType>& element_types);
 
 absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectivesFromRegistry();
 

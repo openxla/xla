@@ -157,14 +157,19 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCollectiveAsyncDone(Thunk::Kind kind,
                                        const HloInstruction* instr);
 
-  template <typename NvshmemThunkType, typename HloInstType>
+  template <typename NvshmemAllReduceThunkType,
+            typename HloAllReduceInstruction>
   absl::Status EmitNvshmemThunk(Thunk::Kind kind,
                                 const HloInstruction* async_start,
-                                const HloInstType* inst,
+                                const HloAllReduceInstruction* inst,
                                 std::optional<bool> use_global_device_ids);
 
   absl::Status EmitNvshmemAsyncDone(Thunk::Kind kind,
                                     const HloInstruction* instr);
+  template <typename HloInstType>
+  absl::Status EmitDegeneratedCollectiveThunk(
+      std::vector<CollectiveThunk::Buffer>& buffers,
+      const HloInstruction* async_start, const HloInstType* inst);
   template <typename ThunkType>
   absl::Status EmitReplicaOrPartitionId(const HloInstruction* instr);
 

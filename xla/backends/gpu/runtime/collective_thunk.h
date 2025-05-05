@@ -111,6 +111,21 @@ struct CommunicatorHandle {
   GpuCliqueKey clique_key;  // clique key
 };
 
+// Wrap GpuCliqueKey into a unique struct to guarantee we do not accidentally
+// try to run multiple unrelated rendezvous for a same key.
+struct FirstCallRendezvousKey {
+  GpuCliqueKey clique_key;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const FirstCallRendezvousKey& key) {
+    return H::combine(std::move(h), key.clique_key);
+  }
+  friend bool operator==(const FirstCallRendezvousKey& a,
+                         const FirstCallRendezvousKey& b) {
+    return a.clique_key == b.clique_key;
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // CollectiveThunk
 //===----------------------------------------------------------------------===//
@@ -283,7 +298,8 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind);
+    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
+    bool use_nccl = true);
 
 // Returns a communicator and additional information about the clique.
 absl::StatusOr<CommunicatorHandle> GetComm(
