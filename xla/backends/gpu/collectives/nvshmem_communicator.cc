@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "third_party/gpus/cuda/include/cuda_fp16.h"
-#include "third_party/nvshmem/nvshmemx.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/core/collectives/communicator.h"
@@ -53,34 +52,8 @@ namespace xla::gpu {
 // NVSHMEM Utility Functions
 //==-----------------------------------------------------------------------===//
 
-static size_t ToRealCount(PrimitiveType dtype, size_t count) {
+size_t ToRealCount(PrimitiveType dtype, size_t count) {
   return primitive_util::IsComplexType(dtype) ? count * 2 : count;
-}
-
-static absl::StatusOr<nvshmem_team_t> ToNvshmemTeam(CommAffinity kind) {
-  switch (kind) {
-    case CommAffinity::kNODE:
-      return NVSHMEMX_TEAM_NODE;
-    case CommAffinity::kSHARED:
-      return NVSHMEM_TEAM_SHARED;
-    case CommAffinity::kWORLD:
-      return NVSHMEM_TEAM_WORLD;
-    default:
-      return absl::InvalidArgumentError("Invalid Nvshmem team.");
-  }
-}
-
-static absl::StatusOr<std::string> ToNvshmemTeamString(CommAffinity kind) {
-  switch (kind) {
-    case CommAffinity::kNODE:
-      return "Node";
-    case CommAffinity::kSHARED:
-      return "Shared";
-    case CommAffinity::kWORLD:
-      return "World";
-    default:
-      return absl::InvalidArgumentError("Invalid Nvshmem team.");
-  }
 }
 
 //==-----------------------------------------------------------------------===//
@@ -162,31 +135,9 @@ static absl::StatusOr<std::string> ToNvshmemTeamString(CommAffinity kind) {
 // NVSHMEM Communicator
 //==-----------------------------------------------------------------------===//
 
-NvshmemCommunicator::NvshmemCommunicator(NvshmemCollectives* collectives,
-                                         CommAffinity comm)
-    : collectives_(collectives), comm_(comm) {
+NvshmemCommunicator::NvshmemCommunicator(NvshmemCollectives* collectives)
+    : collectives_(collectives) {
   VLOG(1) << "Created " << *this;
-}
-
-NvshmemCommunicator::~NvshmemCommunicator() {
-  if (comm_ == CommAffinity::kINVALID) {
-    VLOG(1) << "Skipping destruction; invalid comm_ " << *this;
-    return;
-  }
-
-  if (aborted_) {
-    VLOG(1) << "Skipping destruction; already aborted " << *this;
-    return;
-  }
-
-  VLOG(1) << "Destroy " << *this;
-
-  auto team = ToNvshmemTeam(comm_);
-  // Cannot destroy node or world since they are pre-defined comms.
-  if (team.ok() && (team.value() != NVSHMEMX_TEAM_NODE) &&
-      (team.value() != NVSHMEM_TEAM_WORLD)) {
-    nvshmem_team_destroy(team.value());
-  }
 }
 
 absl::Status NvshmemCommunicator::Abort() {
@@ -194,6 +145,10 @@ absl::Status NvshmemCommunicator::Abort() {
   if (aborted_) {
     return FailedPrecondition("NvshmemCommunicator aborted");
   }
+  if (!collectives_->IsInitialized()) {
+    return FailedPrecondition("NvshmemCollectives not initialized.");
+  }
+
   aborted_ = true;
   // Call nvshmem_global_exit with a non-zero return code
   // to abort the program.
@@ -207,12 +162,15 @@ absl::Status NvshmemCommunicator::Barrier(
   if (aborted_) {
     return FailedPrecondition("NvshmemCommunicator aborted");
   }
+  if (!collectives_->IsInitialized()) {
+    return FailedPrecondition("NvshmemCollectives not initialized.");
+  }
+
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
   auto gpu_stream = se::gpu::AsGpuStreamValue(stream);
-  TF_ASSIGN_OR_RETURN(nvshmemx_team_t team, ToNvshmemTeam(comm_));
 
-  if (nvshmemx_barrier_on_stream(team, gpu_stream) != 0) {
+  if (nvshmemx_barrier_on_stream(NVSHMEMX_TEAM_NODE, gpu_stream) != 0) {
     return absl::InternalError("Nvshmem team barrier failed.");
   }
   return absl::OkStatus();
@@ -222,10 +180,12 @@ absl::StatusOr<size_t> NvshmemCommunicator::NumRanks() const {
   if (aborted_) {
     return absl::FailedPreconditionError("NvshmemCommunicator aborted");
   }
+  if (!collectives_->IsInitialized()) {
+    return FailedPrecondition("NvshmemCollectives not initialized.");
+  }
 
   int32_t count = 0;
-  TF_ASSIGN_OR_RETURN(nvshmem_team_t team, ToNvshmemTeam(comm_));
-  count = nvshmem_team_n_pes(team);
+  count = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
   if (count < 0) {
     return absl::InvalidArgumentError(
         "NvshmemCommunicator::NumRanks invalid team.");
@@ -240,68 +200,74 @@ tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::AllReduce(
   if (aborted_) {
     return absl::FailedPreconditionError("NvshmemCommunicator aborted");
   }
+  if (!collectives_->IsInitialized()) {
+    return FailedPrecondition("NvshmemCollectives not initialized.");
+  }
+
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
-  TF_ASSIGN_OR_RETURN(nvshmemx_team_t team, ToNvshmemTeam(comm_));
   void* dest_ptr = send_buffer.opaque();
   void* source_ptr = recv_buffer.opaque();
   count = ToRealCount(dtype, count);
   VLOG(3) << absl::StreamFormat(
       "Launch NVSHMEM AllReduce operation on device #%d; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=%s; team=%d;"
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=node; "
+      "team=%d;"
       "stream=%p",
       stream->parent()->device_ordinal(), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
-      count, ReductionKindToString(reduction_kind),
-      ToNvshmemTeamString(comm_).value(), team, stream);
+      count, ReductionKindToString(reduction_kind), NVSHMEMX_TEAM_NODE, stream);
 
   switch (dtype) {
     case PrimitiveType::F64: {
       CALL_NVSHMEM_REDUCTION_DATATYPE(
-          double, double, team, se::gpu::AsGpuStreamValue(stream),
+          double, double, NVSHMEMX_TEAM_NODE, se::gpu::AsGpuStreamValue(stream),
           reduction_kind, dest_ptr, source_ptr, count);
       break;
     }
     case PrimitiveType::F16: {
       CALL_NVSHMEM_REDUCTION_DATATYPE(
-          half, __half, team, se::gpu::AsGpuStreamValue(stream), reduction_kind,
-          dest_ptr, source_ptr, count);
+          half, __half, NVSHMEMX_TEAM_NODE, se::gpu::AsGpuStreamValue(stream),
+          reduction_kind, dest_ptr, source_ptr, count);
       break;
     }
     case PrimitiveType::F32: {
       CALL_NVSHMEM_REDUCTION_DATATYPE(
-          float, float, team, se::gpu::AsGpuStreamValue(stream), reduction_kind,
-          dest_ptr, source_ptr, count);
+          float, float, NVSHMEMX_TEAM_NODE, se::gpu::AsGpuStreamValue(stream),
+          reduction_kind, dest_ptr, source_ptr, count);
       break;
     }
     case PrimitiveType::BF16: {
       CALL_NVSHMEM_REDUCTION_DATATYPE(
-          bfloat16, __nv_bfloat16, team, se::gpu::AsGpuStreamValue(stream),
-          reduction_kind, dest_ptr, source_ptr, count);
+          bfloat16, __nv_bfloat16, NVSHMEMX_TEAM_NODE,
+          se::gpu::AsGpuStreamValue(stream), reduction_kind, dest_ptr,
+          source_ptr, count);
       break;
     }
     case PrimitiveType::S32: {
       CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
-          int32, int32_t, team, se::gpu::AsGpuStreamValue(stream),
+          int32, int32_t, NVSHMEMX_TEAM_NODE, se::gpu::AsGpuStreamValue(stream),
           reduction_kind, dest_ptr, source_ptr, count);
       break;
     }
     case PrimitiveType::S64: {
       CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
-          int64, int64_t, team, se::gpu::AsGpuStreamValue(stream),
+          int64, int64_t, NVSHMEMX_TEAM_NODE, se::gpu::AsGpuStreamValue(stream),
           reduction_kind, dest_ptr, source_ptr, count);
       break;
     }
     case PrimitiveType::U32: {
       CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
-          uint32, uint32_t, team, se::gpu::AsGpuStreamValue(stream),
-          reduction_kind, dest_ptr, source_ptr, count);
+          uint32, uint32_t, NVSHMEMX_TEAM_NODE,
+          se::gpu::AsGpuStreamValue(stream), reduction_kind, dest_ptr,
+          source_ptr, count);
       break;
     }
     case PrimitiveType::U64: {
       CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
-          uint64, uint64_t, team, se::gpu::AsGpuStreamValue(stream),
-          reduction_kind, dest_ptr, source_ptr, count);
+          uint64, uint64_t, NVSHMEMX_TEAM_NODE,
+          se::gpu::AsGpuStreamValue(stream), reduction_kind, dest_ptr,
+          source_ptr, count);
       break;
     }
     default:
@@ -311,7 +277,8 @@ tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::AllReduce(
 }
 
 std::string NvshmemCommunicator::ToString() const {
-  return absl::StrFormat("NvshmemCommunicator(nvshmem_team_t=%d)", comm_);
+  return absl::StrFormat("NvshmemCommunicator(nvshmem_team_t=%d)",
+                         NVSHMEMX_TEAM_NODE);
 }
 
 absl::StatusOr<se::Stream*> NvshmemCommunicator::ToStream(

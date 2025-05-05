@@ -161,8 +161,8 @@ absl::Status NvshmemCollectives::Deallocate(void* buffer) {
 }
 
 absl::StatusOr<std::unique_ptr<Communicator>>
-NvshmemCollectives::CreateCommunicator(CommAffinity comm_affinity) {
-  auto comm = std::make_unique<NvshmemCommunicator>(this, comm_affinity);
+NvshmemCollectives::CreateCommunicator() {
+  auto comm = std::make_unique<NvshmemCommunicator>(this);
   return comm;
 }
 

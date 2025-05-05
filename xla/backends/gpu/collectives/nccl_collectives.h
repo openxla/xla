@@ -54,8 +54,7 @@ class NcclCollectives : public GpuCollectives {
                       absl::Span<const DeviceRank> ranks,
                       const Collectives::Config& config) final;
 
-  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator(
-      CommAffinity comm_affinity) {
+  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator() {
     return absl::UnimplementedError("Not implemented.");
   }
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> SplitCommunicators(

@@ -48,7 +48,7 @@ absl::Status RunNvshmemAllReduce(ReductionKind reduction_kind,
           << device_ordinal;
   TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
-                      collectives->CreateCommunicator(CommAffinity::kNODE));
+                      collectives->CreateCommunicator());
   for (DeviceBufferPair& buffer : buffers) {
     auto event = nvshmem_comm->AllReduce(
         buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
@@ -79,28 +79,15 @@ absl::Status CheckNvshmemImplementableInst(const HloInstruction* inst,
 }
 
 template <typename HloInstType>
-NvshmemAllReduceConfig GetNvshmemAllReduceConfigInst(HloInstType* inst) {
-  std::optional<ReductionKind> reduction_kind =
-      MatchReductionComputation(inst->called_computations().front());
-  CHECK(reduction_kind.has_value());
-
-  NvshmemAllReduceConfig config;
-  config.config =
-      GetNvshmemCollectiveConfig(inst, inst->use_global_device_ids());
-  config.reduction_kind = *reduction_kind;
-  return config;
-}
-
-template <typename HloInstType>
 CollectiveOpGroupMode GetGroupModeInst(HloInstType* inst) {
-  return GetNvshmemAllReduceConfigInst(inst).config.group_mode;
+  return GetAllReduceConfigInst(inst).config.group_mode;
 }
 
 }  // namespace impl
 
 NvshmemAllReduceReduceScatterThunkBase::NvshmemAllReduceReduceScatterThunkBase(
-    Thunk::Kind kind, ThunkInfo thunk_info, NvshmemAllReduceConfig config,
-    std::vector<Buffer> buffers, bool is_sync)
+    Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
+    std::vector<CollectiveThunk::Buffer> buffers, bool is_sync)
     : NvshmemCollectiveThunk(kind, thunk_info, is_sync),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
@@ -109,16 +96,16 @@ NvshmemAllReduceReduceScatterThunkBase::NvshmemAllReduceReduceScatterThunkBase(
 
 NvshmemAllReduceStartThunk::NvshmemAllReduceStartThunk(
     ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
-    std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
     : NvshmemAllReduceReduceScatterThunkBase(
           Thunk::kNvshmemAllReduceStart, thunk_info,
-          impl::GetNvshmemAllReduceConfigInst(inst), std::move(buffers),
+          GetAllReduceConfigInst(inst), std::move(buffers),
           IsGPUSyncCollective(*inst)) {}
 
 absl::Status NvshmemAllReduceStartThunk::CheckImplementable(
     const HloAllReduceInstruction* inst, int64_t replica_count,
     int64_t partition_count) {
-  return AddNvshmemOpDescription<NvshmemAllReduceStartThunk>(
+  return AddOpDescription<NvshmemAllReduceStartThunk>(
       impl::CheckNvshmemImplementableInst(inst, Thunk::kNvshmemAllReduceStart),
       inst, replica_count, partition_count);
 }

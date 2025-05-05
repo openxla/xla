@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "third_party/nvshmem/nvshmemx.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/service/collective_ops_utils.h"
@@ -41,9 +42,11 @@ class NvshmemCollectives;
 // XLA collectives communicator wrapping an NVSHMEM communicator.
 class NvshmemCommunicator : public Communicator {
  public:
-  explicit NvshmemCommunicator(NvshmemCollectives* collectives,
-                               CommAffinity comm);
-  ~NvshmemCommunicator() override;
+  explicit NvshmemCommunicator(NvshmemCollectives* collectives);
+  // Since the communicator is hardcoded to use pre-defined node
+  // team for now, we don't need to call nvshmem_team_destroy on it.
+  // If user-defined comms are used, we need to add a destructor to
+  // call nvshmem_team_destroy on each one.
 
   // NvshmemCommunicator is not copyable or movable.
   NvshmemCommunicator(const NvshmemCommunicator&) = delete;
@@ -112,13 +115,10 @@ class NvshmemCommunicator : public Communicator {
 
   std::string ToString() const final;
 
-  CommAffinity comm() const { return comm_; }
-
  private:
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
   NvshmemCollectives* collectives_;  // Parent NvshmemCollectives instance
-  CommAffinity comm_;                // Underlying NVSHMEM communicator
   bool aborted_ = false;             // Has Abort() been called?
 };
 

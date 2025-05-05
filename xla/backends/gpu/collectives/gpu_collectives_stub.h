@@ -74,8 +74,7 @@ class GpuCollectivesStub : public GpuCollectives {
     return UnimplementedError();
   }
 
-  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator(
-      CommAffinity comm_affinity) {
+  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator() {
     return UnimplementedError();
   }
 
