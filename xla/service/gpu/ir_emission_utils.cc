@@ -879,7 +879,6 @@ ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
         }
         while_loop = caller;
         unique_param = instruction;
-        continue;
       } else {
         // Otherwise, we arrived at something we don't support.
         VLOG(5) << "Arrived at unsupported parameter. Caller is "
