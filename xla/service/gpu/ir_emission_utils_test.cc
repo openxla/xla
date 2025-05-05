@@ -1250,7 +1250,6 @@ TEST_F(IrEmissionUtilsTest,
        ResolveWhileLoopDependencyUnknownInductionVariable) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kWhileLoopTestModule));
-  auto* while_body = module->GetComputationWithName("while_body");
 
   HloInstruction* loop = module->entry_computation()->root_instruction();
   loop->clear_backend_config();
