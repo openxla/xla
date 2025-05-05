@@ -49,8 +49,8 @@ namespace xla {
 namespace gpu {
 
 using ::testing::ElementsAre;
-using ::tsl::testing::IsOkAndHolds;
 using ::testing::SizeIs;
+using ::tsl::testing::IsOkAndHolds;
 
 class IrEmissionUtilsTest : public HloRunnerAgnosticTestBase {
  public:
@@ -1233,10 +1233,6 @@ TEST_F(IrEmissionUtilsTest, ResolveWhileLoopDependency) {
   HloComputation* call_body = module->GetComputationWithName("call_body");
 
   const HloInstruction* loop = module->entry_computation()->root_instruction();
-  const HloInstruction* call = while_body->GetInstructionWithName("call");
-
-  const HloInstruction* called_fusion =
-      call_body->GetInstructionWithName("called_fusion");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
       plus_one->GetInstructionWithName("sum"));
 
@@ -1258,10 +1254,6 @@ TEST_F(IrEmissionUtilsTest,
 
   HloInstruction* loop = module->entry_computation()->root_instruction();
   loop->clear_backend_config();
-  const HloInstruction* call = while_body->GetInstructionWithName("call");
-  const HloInstruction* called_fusion =
-      module->GetComputationWithName("call_body")
-          ->GetInstructionWithName("called_fusion");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
       module->GetComputationWithName("plus_one")->root_instruction());
 
@@ -1275,12 +1267,10 @@ TEST_F(IrEmissionUtilsTest, ResolveWhileLoopDependencySideEffect) {
                           ParseAndReturnVerifiedModule(kWhileLoopTestModule));
 
   auto* while_body = module->GetComputationWithName("while_body");
-
-  const HloInstruction* loop = module->entry_computation()->root_instruction();
   const HloInstruction* called_fusion =
       while_body->GetInstructionWithName("not_functionally_dependent");
   auto result = ResolveFunctionalDependencyOnInductionVariable(
-      module->GetComputationWithName("identity2")->root_instruction());
+      called_fusion->called_computations()[0]->root_instruction());
 
   ASSERT_FALSE(result.has_value());
 }
