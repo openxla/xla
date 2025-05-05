@@ -39,12 +39,16 @@ StreamExecutorAllocator::StreamExecutorAllocator(
       index_(index) {}
 
 // Maps MemoryType to human-readable strings for allocation error messages
-const std::unordered_map<MemoryType, std::string> memoryTypeStrings = {
-    {MemoryType::kDevice, "device"},
-    {MemoryType::kUnified, "unified"},
-    {MemoryType::kHost, "pinned host"},
-    {MemoryType::kCollective, "collective"},
-};
+const std::unordered_map<MemoryType, std::string>& GetMemoryTypeStrings() {
+  static const std::unordered_map<MemoryType, std::string> kMemoryTypeStrings =
+      {
+          {MemoryType::kDevice, "device"},
+          {MemoryType::kUnified, "unified"},
+          {MemoryType::kHost, "pinned host"},
+          {MemoryType::kCollective, "collective"},
+      };
+  return kMemoryTypeStrings;
+}
 
 void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
                                      size_t* bytes_received) {
@@ -54,10 +58,11 @@ void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
 
   if (num_bytes > 0) {
     auto allocation = memory_allocator_->Allocate(num_bytes);
+    const auto& kMemoryTypeStrings = GetMemoryTypeStrings();
     if (!allocation.ok()) {
       LOG(WARNING) << "could not allocate "
-                   << (memoryTypeStrings.count(memory_type_)
-                           ? memoryTypeStrings.at(memory_type_)
+                   << (kMemoryTypeStrings.count(memory_type_)
+                           ? kMemoryTypeStrings.at(memory_type_)
                            : "unknown")
                    << " of size: " << num_bytes;
       *bytes_received = 0;
