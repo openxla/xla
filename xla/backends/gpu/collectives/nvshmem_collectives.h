@@ -43,6 +43,8 @@ class NvshmemCollectives : public GpuCollectives {
   static NvshmemCollectives* Default();
   bool IsInitialized() { return initialized_; }
 
+  bool IsInitialized() { return initialized_; }
+
   void SetEnvInfo(int process_id, size_t num_processes,
                   size_t device_count_per_process,
                   std::weak_ptr<KeyValueStoreInterface> kv_store);

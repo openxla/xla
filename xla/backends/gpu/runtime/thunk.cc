@@ -278,8 +278,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
-    CASE(kNvshmemAllReduceStart);
     CASE(kNvshmemAllReduceDone);
+    CASE(kNvshmemAllReduceStart);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);

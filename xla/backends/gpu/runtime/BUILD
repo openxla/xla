@@ -1929,6 +1929,7 @@ cc_library(
     hdrs = ["nvshmem_all_reduce_thunk.h"],
     tags = ["gpu"],
     deps = [
+        ":all_reduce_thunk",
         ":thunk",
         ":nvshmem_collective_thunk",
         "//xla:debug_options_flags",
@@ -1969,7 +1970,5 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([
-      "@nvshmem//:nvshmem_lib",
-    ]),
+    ],
 )
