@@ -283,8 +283,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
-    CASE(kNvshmemAllReduceStart);
     CASE(kNvshmemAllReduceDone);
+<<<<<<< HEAD
     CASE(kNvshmemCollectivePermute);
     CASE(kNvshmemCollectivePermuteDone);
     CASE(kNvshmemCollectivePermuteStart);
@@ -292,6 +292,9 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kNvshmemRecvDone);
     CASE(kNvshmemSend);
     CASE(kNvshmemSendDone);
+=======
+    CASE(kNvshmemAllReduceStart);
+>>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);

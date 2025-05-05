@@ -167,8 +167,8 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
-    kNvshmemAllReduceStart,
     kNvshmemAllReduceDone,
+<<<<<<< HEAD
     kNvshmemCollectivePermute,
     kNvshmemCollectivePermuteDone,
     kNvshmemCollectivePermuteStart,
@@ -176,6 +176,9 @@ class Thunk {
     kNvshmemRecvDone,
     kNvshmemSend,
     kNvshmemSendDone,
+=======
+    kNvshmemAllReduceStart,
+>>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,

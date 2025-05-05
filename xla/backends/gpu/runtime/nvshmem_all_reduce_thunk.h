@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -28,30 +29,25 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-struct NvshmemAllReduceConfig {
-  NvshmemCollectiveConfig config;
-  ReductionKind reduction_kind;
-};
-
 // Thunk that performs a nvshmem-based All-Reduce among CUDA
 // GPU-based replicas.
+// TODO tixxx consolidate this with
+// ALlReduceReduceScatterThunkBase once collective thunk bases
+// are consolidated.
 class NvshmemAllReduceReduceScatterThunkBase : public NvshmemCollectiveThunk {
  public:
-  NvshmemAllReduceReduceScatterThunkBase(Kind kind, ThunkInfo thunk_info,
-                                         NvshmemAllReduceConfig config,
-                                         std::vector<Buffer> buffers,
-                                         bool is_sync);
+  NvshmemAllReduceReduceScatterThunkBase(
+      Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
+      std::vector<CollectiveThunk::Buffer> buffers, bool is_sync);
 
-  const NvshmemCollectiveConfig& config() const override {
-    return config_.config;
-  }
+  const CollectiveConfig& config() const override { return config_.config; }
   ReductionKind reduction_kind() const { return config_.reduction_kind; }
 
-  absl::Span<const Buffer> buffers() const { return buffers_; }
+  absl::Span<const CollectiveThunk::Buffer> buffers() const { return buffers_; }
 
  protected:
-  const NvshmemAllReduceConfig config_;
-  const std::vector<Buffer> buffers_;
+  const AllReduceConfig config_;
+  const std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 // -----------------------------------------------------------------------------
@@ -63,10 +59,10 @@ class NvshmemAllReduceStartThunk
  public:
   NvshmemAllReduceStartThunk(ThunkInfo thunk_info,
                              const HloAllReduceInstruction* inst,
-                             std::vector<Buffer> buffers,
+                             std::vector<CollectiveThunk::Buffer> buffers,
                              bool p2p_memcpy_enabled = false);
 
-  static const char* GetHloOpName() { return "all-reduce-start"; }
+  static const char* GetHloOpName() { return "all-reduce-start:nvshmem"; }
 
   static absl::Status CheckImplementable(const HloAllReduceInstruction* inst,
                                          int64_t replica_count,

@@ -86,6 +86,11 @@ absl::StatusOr<std::string> GetDataTypeString(xla::PrimitiveType data_type) {
       return absl::InvalidArgumentError("Invalida data type.");
   }
 }
+<<<<<<< HEAD
+=======
+TEST(NvshmemGpuCollectivesTest, NvshmemAllReduceFloat) {
+  constexpr int num_ranks = 2;
+>>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
 
 void RunNvshmemTest(PrimitiveType data_type, absl::string_view test_case) {
   const int num_ranks = 2;
@@ -156,7 +161,26 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
   options.executable_build_options.set_use_spmd_partitioning(false);
   options.executable_build_options.set_num_replicas(num_ranks);
   TF_ASSIGN_OR_RETURN(std::string data_type_str, GetDataTypeString(data_type));
+<<<<<<< HEAD
   std::string kProgram;
+=======
+  const std::string kProgram =
+      absl::StrFormat(R"(
+    HloModule NvshmemAr
+      apply_op {
+        x = %s[] parameter(0)
+        y = %s[] parameter(1)
+        ROOT apply_op = %s[] add(x, y)
+      }
+
+      ENTRY test_computation {
+        id = %s[] constant(10)
+        start = %s[] all-reduce-start(id), to_apply=apply_op, backend_config={"collective_backend_config":{"backend":"NVSHMEM"}}
+        ROOT done = %s[] all-reduce-done(start)
+      })",
+                      data_type_str, data_type_str, data_type_str,
+                      data_type_str, data_type_str, data_type_str);
+>>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
 
   if (test_case == "collective_permute") {
     kProgram = absl::StrFormat(R"(
@@ -286,6 +310,41 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
       default:
         return absl::InvalidArgumentError("Invalid data type.");
     }
+<<<<<<< HEAD
+=======
+    case xla::PrimitiveType::BF16: {
+      std::vector<Eigen::bfloat16> ref_data{20};
+      TF_RET_CHECK(literal->data<Eigen::bfloat16>()[0] == ref_data[0]);
+      break;
+    }
+    case xla::PrimitiveType::F16: {
+      std::vector<Eigen::half> ref_data{20};
+      TF_RET_CHECK(literal->data<Eigen::half>()[0] == ref_data[0]);
+      break;
+    }
+    case xla::PrimitiveType::U32: {
+      std::vector<uint32_t> ref_data{20};
+      TF_RET_CHECK(literal->data<uint32_t>()[0] == ref_data[0]);
+      break;
+    }
+    case xla::PrimitiveType::U64: {
+      std::vector<uint64_t> ref_data{20};
+      TF_RET_CHECK(literal->data<uint64_t>()[0] == ref_data[0]);
+      break;
+    }
+    case xla::PrimitiveType::S32: {
+      std::vector<int32_t> ref_data{20};
+      TF_RET_CHECK(literal->data<int32_t>()[0] == ref_data[0]);
+      break;
+    }
+    case xla::PrimitiveType::S64: {
+      std::vector<int64_t> ref_data{20};
+      TF_RET_CHECK(literal->data<int64_t>()[0] == ref_data[0]);
+      break;
+    }
+    default:
+      return absl::InvalidArgumentError("Invalida data type.");
+>>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
   }
 
   VLOG(1) << "Rank " << rank_id << " completed successfully";
