@@ -95,7 +95,7 @@ absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
   return client.CompileAndLoad(xla_computation, compile_options);
 }
 
-std::string GetDataTypeString(xla::PrimitiveType data_type) {
+absl::StatusOr<std::string> GetDataTypeString(xla::PrimitiveType data_type) {
   switch (data_type) {
     case xla::PrimitiveType::F32:
       return "f32";
@@ -114,11 +114,11 @@ std::string GetDataTypeString(xla::PrimitiveType data_type) {
     case xla::PrimitiveType::S64:
       return "s64";
     default:
-      throw absl::InvalidArgumentError("Invalida data type.");
+      return absl::InvalidArgumentError("Invalida data type.");
   }
 }
 TEST(NvshmemGpuCollectivesTest, NvshmemAllReduceFloat) {
-  int num_ranks = 2;
+  constexpr int num_ranks = 2;
 
   tsl::SubProcess child[num_ranks];
   for (int rank_id = 0; rank_id < num_ranks; ++rank_id) {
@@ -176,7 +176,7 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
   options.executable_build_options.set_run_backend_only(true);
   options.executable_build_options.set_use_spmd_partitioning(false);
   options.executable_build_options.set_num_replicas(num_ranks);
-  std::string data_type_str = GetDataTypeString(data_type);
+  TF_ASSIGN_OR_RETURN(std::string data_type_str, GetDataTypeString(data_type));
   const std::string kProgram =
       absl::StrFormat(R"(
     HloModule NvshmemAr
@@ -242,7 +242,7 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
       break;
     }
     default:
-      throw absl::InvalidArgumentError("Invalida data type.");
+      return absl::InvalidArgumentError("Invalida data type.");
   }
 
   return absl::OkStatus();
