@@ -44,9 +44,13 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-HloInstructionAdaptor SkipBitcast(HloInstructionAdaptor adaptor) {
+HloInstructionAdaptor SkipOptionalBitcast(HloInstructionAdaptor adaptor) {
   return adaptor.opcode() == HloOpcode::kBitcast ? adaptor.GetOperand(0)
                                                  : adaptor;
+}
+
+const HloInstruction* SkipOptionalBitcast(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kBitcast ? instr->operand(0) : instr;
 }
 
 absl::StatusOr<FusionEmissionResult> MemcpyFusion::Emit(
@@ -92,7 +96,7 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
     const HloFusionInstruction& fusion) const {
   CHECK_EQ(analysis_.fusion_roots().size(), 1);
 
-  auto root = SkipBitcast(analysis_.fusion_roots().front());
+  auto root = SkipOptionalBitcast(analysis_.fusion_roots().front());
 
   int source_operand_index;
   const Shape* copy_shape;
@@ -110,7 +114,7 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
     TF_ASSIGN_OR_RETURN(
         BufferAllocation::Slice input_slice,
         buffer_assignment_->GetUniqueSlice(
-            &SkipBitcast(root.GetOperand(0)).instruction(), {}));
+            &SkipOptionalBitcast(root.GetOperand(0)).instruction(), {}));
     TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_slice,
                         buffer_assignment_->GetUniqueSlice(&fusion, {}));
     CHECK_EQ(input_slice, dst_slice);
@@ -124,7 +128,7 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
   }
 
   const auto* src_instr =
-      &SkipBitcast(root.GetOperand(source_operand_index)).instruction();
+      &SkipOptionalBitcast(root.GetOperand(source_operand_index)).instruction();
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice src_buffer,
                       buffer_assignment_->GetUniqueSlice(src_instr, {}));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_buffer,
@@ -141,15 +145,6 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
 }
 
 namespace {
-
-// Returns the fusion's root, skipping an optional bitcast.
-const HloInstruction* GetRealRoot(const HloFusionInstruction& fusion) {
-  const HloInstruction* root = fusion.fused_expression_root();
-  if (root->opcode() == HloOpcode::kBitcast) {
-    root = root->operand(0);
-  }
-  return root;
-}
 
 // Returns the slice size in the given dimension for a dynamic-(update-)slice
 // instruction.
@@ -181,7 +176,8 @@ int GetFirstOffsetOperandIndex(const HloInstruction* slice) {
 
 bool DynamicMemcpyFusion::IsCandidateFusion(
     const HloFusionInstruction& instruction) {
-  const HloInstruction* root = GetRealRoot(instruction);
+  const HloInstruction* root =
+      SkipOptionalBitcast(instruction.fused_expression_root());
   if (root->opcode() != HloOpcode::kDynamicSlice &&
       root->opcode() != HloOpcode::kDynamicUpdateSlice) {
     return false;
@@ -202,10 +198,7 @@ bool DynamicMemcpyFusion::IsCandidateFusion(
 
   int first_offset_index = GetFirstOffsetOperandIndex(root);
   for (int i = 0; i < first_offset_index; ++i) {
-    auto* operand = root->operand(i);
-    if (operand->opcode() == HloOpcode::kBitcast) {
-      operand = operand->operand(0);
-    }
+    auto* operand = SkipOptionalBitcast(root->operand(i));
     if (operand->opcode() != HloOpcode::kParameter) {
       VLOG(5) << "Not a slice of a parameter.";
       return false;
@@ -224,7 +217,8 @@ DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(
     return std::nullopt;
   }
 
-  const HloInstruction* slice = GetRealRoot(fusion);
+  const HloInstruction* slice =
+      SkipOptionalBitcast(fusion.fused_expression_root());
   const Shape& slice_input_shape = slice->operand(0)->shape();
   std::optional<absl::InlinedVector<int64_t, 4>> strides =
       ShapeUtil::ByteStrides(slice_input_shape);
