@@ -43,6 +43,7 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
 
 HloInstructionAdaptor SkipOptionalBitcast(HloInstructionAdaptor adaptor) {
   return adaptor.opcode() == HloOpcode::kBitcast ? adaptor.GetOperand(0)
@@ -52,6 +53,8 @@ HloInstructionAdaptor SkipOptionalBitcast(HloInstructionAdaptor adaptor) {
 const HloInstruction* SkipOptionalBitcast(const HloInstruction* instr) {
   return instr->opcode() == HloOpcode::kBitcast ? instr->operand(0) : instr;
 }
+
+}  // namespace
 
 absl::StatusOr<FusionEmissionResult> MemcpyFusion::Emit(
     IrEmitterContext& ir_emitter_context,
