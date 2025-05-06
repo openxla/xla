@@ -105,7 +105,6 @@ TEST(CudaExecutorTest, CreateUnifiedMemoryAllocatorWorks) {
                           allocator->Allocate(1024));
   EXPECT_NE(allocation->opaque(), nullptr);
   EXPECT_EQ(allocation->size(), 1024);
-  allocation.reset();
 }
 
 TEST(CudaExecutorTest, CreateHostMemoryAllocatorWorks) {
@@ -119,7 +118,6 @@ TEST(CudaExecutorTest, CreateHostMemoryAllocatorWorks) {
                           allocator->Allocate(1024));
   EXPECT_NE(allocation->opaque(), nullptr);
   EXPECT_EQ(allocation->size(), 1024);
-  allocation.reset();
 }
 
 TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorWorks) {
@@ -134,7 +132,6 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorWorks) {
                           allocator->Allocate(1024));
   EXPECT_NE(allocation->opaque(), nullptr);
   EXPECT_EQ(allocation->size(), 1024);
-  allocation.reset();
 }
 
 TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorFailsForExcessiveSize) {
