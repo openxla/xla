@@ -44,6 +44,10 @@ class Compiler final : public llvm::RTTIExtends<Compiler, xla::ifrt::Compiler> {
       std::unique_ptr<Program> program, const Topology& topology,
       std::unique_ptr<CompileOptions> options) override;
 
+  absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>> CompileAndLoad(
+      std::unique_ptr<xla::ifrt::Program> program,
+      std::unique_ptr<xla::ifrt::CompileOptions> options) override;
+
   absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>>
   DeserializeLoadedExecutable(
       absl::string_view serialized,

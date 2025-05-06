@@ -57,6 +57,11 @@ Compiler::Compiler(xla::ifrt::Client* client,
 absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>> Compiler::Compile(
     std::unique_ptr<Program> program,
     std::unique_ptr<xla::ifrt::CompileOptions> options) {
+  return CompileAndLoad(std::move(program), std::move(options));
+}
+absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>>
+Compiler::CompileAndLoad(std::unique_ptr<Program> program,
+                         std::unique_ptr<xla::ifrt::CompileOptions> options) {
   auto request = std::make_unique<CompileRequest>();
   {
     tsl::profiler::TraceMe traceme("IfrtProxyProgramSerialize");

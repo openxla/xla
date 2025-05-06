@@ -62,6 +62,10 @@ class Compiler : public llvm::RTTIExtends<Compiler, llvm::RTTIRoot> {
       std::unique_ptr<Program> program, const Topology& topology,
       std::unique_ptr<CompileOptions> options) = 0;
 
+  virtual absl::StatusOr<std::unique_ptr<LoadedExecutable>> CompileAndLoad(
+      std::unique_ptr<Program> program,
+      std::unique_ptr<CompileOptions> options) = 0;
+
   // Deserializes a serialized executable as produced by
   // `LoadedExecutable::Serialize()`. The compatibility of `serialized` is
   // implementation specific.

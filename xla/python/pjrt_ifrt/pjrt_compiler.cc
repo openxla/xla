@@ -87,6 +87,11 @@ absl::Status TranslateDeviceIds(PjRtClient* client,
 
 absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtCompiler::Compile(
     std::unique_ptr<Program> program, std::unique_ptr<CompileOptions> options) {
+  return CompileAndLoad(std::move(program), std::move(options));
+}
+
+absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtCompiler::CompileAndLoad(
+    std::unique_ptr<Program> program, std::unique_ptr<CompileOptions> options) {
   DCHECK(this);
   const auto* xla_program = llvm::dyn_cast<HloProgram>(program.get());
   if (xla_program == nullptr) {

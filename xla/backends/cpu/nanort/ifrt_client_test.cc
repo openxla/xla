@@ -72,8 +72,8 @@ TEST(NanoIfrtClientTest, BigResult) {
   mlir::MLIRContext context;
   auto module = xla::ParseMlirModuleString(kBigResult, context);
 
-  auto executable =
-      compiler->Compile(std::make_unique<ifrt::HloProgram>(**module), nullptr);
+  auto executable = compiler->CompileAndLoad(
+      std::make_unique<ifrt::HloProgram>(**module), nullptr);
   CHECK_OK(executable);
 
   ifrt::DType dtype(ifrt::DType::kF32);
@@ -118,8 +118,8 @@ static absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
       xla::CompileOptions(), std::move(devices));
   compile_options->compile_options.compile_portable_executable = true;
 
-  return compiler->Compile(std::make_unique<ifrt::HloProgram>(**module),
-                           std::move(compile_options));
+  return compiler->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
+                                  std::move(compile_options));
 }
 
 static ifrt::DType DTypeFromPrimitiveType(PrimitiveType type) {

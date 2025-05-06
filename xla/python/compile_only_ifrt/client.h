@@ -159,11 +159,17 @@ class CompileOnlyIfrtCompiler final
   absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
       std::unique_ptr<ifrt::Program> program,
       std::unique_ptr<ifrt::CompileOptions> options) override {
-    return Unimplemented("Compile not implemented.");
+    return CompileAndLoad(std::move(program), std::move(options));
   }
 
   absl::StatusOr<std::unique_ptr<ifrt::Executable>> Compile(
       std::unique_ptr<ifrt::Program> program, const ifrt::Topology& topology,
+      std::unique_ptr<ifrt::CompileOptions> options) override {
+    return Unimplemented("Compile not implemented.");
+  }
+
+  absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> CompileAndLoad(
+      std::unique_ptr<ifrt::Program> program,
       std::unique_ptr<ifrt::CompileOptions> options) override {
     return Unimplemented("Compile not implemented.");
   }

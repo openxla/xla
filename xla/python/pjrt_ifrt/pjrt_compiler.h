@@ -51,6 +51,10 @@ class PjRtCompiler final : public llvm::RTTIExtends<PjRtCompiler, Compiler> {
       std::unique_ptr<Program> program, const Topology& topology,
       std::unique_ptr<CompileOptions> options) override;
 
+  absl::StatusOr<std::unique_ptr<LoadedExecutable>> CompileAndLoad(
+      std::unique_ptr<Program> program,
+      std::unique_ptr<CompileOptions> options) override;
+
   absl::StatusOr<std::unique_ptr<LoadedExecutable>> DeserializeLoadedExecutable(
       absl::string_view serialized,
       std::unique_ptr<DeserializeExecutableOptions> options) override;
