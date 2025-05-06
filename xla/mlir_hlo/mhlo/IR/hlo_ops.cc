@@ -2151,7 +2151,7 @@ struct ConvolutionIsDot : public OpRewritePattern<mhlo::ConvolutionOp> {
 
 void ConvolutionOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
-  results.add<ConvolutionIsDot>(context);
+  // results.add<ConvolutionIsDot>(context);
 }
 
 /*
@@ -6472,7 +6472,7 @@ struct ScatterFullReplace : public OpRewritePattern<ScatterOp> {
 
 void ScatterOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                             MLIRContext* context) {
-  results.add<ScatterFullReplace>(context);
+  // results.add<ScatterFullReplace>(context);
 }
 
 //===----------------------------------------------------------------------===//
