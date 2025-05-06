@@ -881,8 +881,8 @@ GetTransitiveFunctionalDependencies(const HloInstruction* root) {
 }
 
 // Returns true if `dependency` contains a valid functional dependency: `loop`
-// and `induction_var` are set, and `induction_var` actually points t the loop's
-// induction variable.
+// and `induction_var` are set, and `induction_var` actually points to the
+// loop's induction variable.
 bool VerifyFunctionalDependency(
     const InductionVariableFunctionalDependency& dependency) {
   if (!dependency.loop || !dependency.induction_var) {
