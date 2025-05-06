@@ -883,7 +883,8 @@ GetTransitiveFunctionalDependencies(const HloInstruction* root) {
 // Returns true if `dependency` contains a valid functional dependency: `loop`
 // and `induction_var` are set, and `induction_var` actually points t the loop's
 // induction variable.
-bool Verify(const InductionVariableFunctionalDependency& dependency) {
+bool VerifyFunctionalDependency(
+    const InductionVariableFunctionalDependency& dependency) {
   if (!dependency.loop || !dependency.induction_var) {
     VLOG(5) << "Loop or induction variable not set.";
     return false;
@@ -913,8 +914,6 @@ std::optional<InductionVariableFunctionalDependency>
 ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
   VLOG(5) << "Looking for defining while loop of " << instr->name();
 
-  InductionVariableFunctionalDependency result{};
-
   auto dependencies = GetTransitiveFunctionalDependencies(instr);
   // If there is a side effect in the dependencies, the result will be nullopt.
   if (!dependencies) {
@@ -924,6 +923,7 @@ ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
   // In the dependencies, there should be exactly one parameter of a while loop,
   // and exactly one GTE for that parameter. We already verified that there are
   // no side-effecting dependencies.
+  InductionVariableFunctionalDependency result{};
   for (const HloInstruction* dep : *dependencies) {
     if (dep->opcode() == HloOpcode::kParameter) {
       const HloComputation* callee = dep->parent();
@@ -937,18 +937,23 @@ ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
         required[dep->parameter_number()] = true;
       } else if (caller && caller->opcode() == HloOpcode::kWhile) {
         if (result.loop) {
-          LOG(ERROR) << "Non-unique while loop. This should never happen.";
+          LOG(WARNING) << "While loop not unique. This should never happen.";
           return std::nullopt;
         }
         result.loop = caller;
       } else {
-        // We arrived at an unexpected parameter.
-        VLOG(5) << "Arrived at unsupported parameter: " << dep->name() << ".";
+        // We arrived at an unexpected parameter. This likely means we're not in
+        // a while loop, or there's an unsupported instruction between the while
+        // loop and `instr`.
+        VLOG(5) << "Unsupported parameter: " << dep->name() << ".";
         return std::nullopt;
       }
     }
 
     if (dep->opcode() == HloOpcode::kGetTupleElement) {
+      // Note that this may not actually be the induction variable. We will
+      // verify this later (in VerifyFunctionalDependency). We can't do it here
+      // because we may not have visited the loop yet.
       if (result.induction_var) {
         VLOG(5) << "Found non-unique GTEs.";
         return std::nullopt;
@@ -957,7 +962,7 @@ ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
     }
   }
 
-  if (!Verify(result)) {
+  if (!VerifyFunctionalDependency(result)) {
     return std::nullopt;
   }
   VLOG(5) << "While loop for " << instr->name() << ": " << result.loop->name();
