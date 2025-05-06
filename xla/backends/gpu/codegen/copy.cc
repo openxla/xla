@@ -109,8 +109,6 @@ absl::StatusOr<FusionEmissionResult> DynamicMemcpyFusion::Emit(
     // prefix, one for the updated slice, one for the unchanged suffix). The
     // first option is inefficient, the second option is currently not
     // implemented: we only support dynamic offsets, no dynamic sizes.
-    auto input = root.GetOperand(0);
-
     TF_ASSIGN_OR_RETURN(
         BufferAllocation::Slice input_slice,
         buffer_assignment_->GetUniqueSlice(
