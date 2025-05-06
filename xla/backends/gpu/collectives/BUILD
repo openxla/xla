@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -210,8 +210,9 @@ cc_library(
 
 cc_library(
     name = "nccl_errors",
-    srcs = ["nccl_errors.cc"],
-    hdrs = ["nccl_errors.h"],
+    # Using if_cuda_or_rocm guard to prevent sycl target build / link errors.
+    srcs = if_cuda_or_rocm(["nccl_errors.cc"]),
+    hdrs = if_cuda_or_rocm(["nccl_errors.h"]),
     local_defines =
         if_rocm_is_configured([
             "TENSORFLOW_USE_ROCM=1",
@@ -234,14 +235,15 @@ cc_library(
 
 cc_library(
     name = "nccl_collectives",
-    srcs = [
+    # Using if_cuda_or_rocm guard to prevent sycl target build / link errors.
+    srcs = if_cuda_or_rocm([
         "nccl_collectives.cc",
         "nccl_communicator.cc",
-    ],
-    hdrs = [
+    ]),
+    hdrs = if_cuda_or_rocm([
         "nccl_collectives.h",
         "nccl_communicator.h",
-    ],
+    ]),
     local_defines =
         if_rocm_is_configured([
             "TENSORFLOW_USE_ROCM=1",
@@ -336,7 +338,8 @@ cc_library(
 
 xla_test(
     name = "nccl_communicator_test",
-    srcs = ["nccl_communicator_test.cc"],
+    # Using if_cuda_or_rocm guard to prevent sycl target build / link errors.
+    srcs = if_cuda_or_rocm(["nccl_communicator_test.cc"]),
     backends = ["gpu"],
     local_defines =
         if_rocm_is_configured([

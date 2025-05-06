@@ -170,6 +170,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#ifdef TENSORFLOW_USE_SYCL
+#include "xla/stream_executor/sycl/sycl_solver_context.h"
+#endif  // TENSORFLOW_USE_SYCL
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -1062,6 +1065,8 @@ absl::Status IrEmitterUnnested::EmitCholeskyThunk(const HloInstruction* instr) {
 
 #if GOOGLE_CUDA
   auto solver_creator = stream_executor::CudaSolverContext::Create;
+#elif TENSORFLOW_USE_SYCL
+  auto solver_creator = stream_executor::SyclSolverContext::Create;
 #else
   auto solver_creator = stream_executor::RocmSolverContext::Create;
 #endif
