@@ -444,9 +444,6 @@ _pywrap_split_library = rule(
             mandatory = True,
         ),
         "pywrap_index": attr.int(mandatory = False, default = -1),
-        "_cc_toolchain": attr.label(
-            default = "@bazel_tools//tools/cpp:current_cc_toolchain",
-        ),
         "collect_objects": attr.bool(default = False, mandatory = False),
     },
     fragments = ["cpp"],
@@ -507,9 +504,6 @@ _pywrap_common_split_library = rule(
             allow_files = False,
             providers = [PywrapFilters],
             mandatory = True,
-        ),
-        "_cc_toolchain": attr.label(
-            default = "@bazel_tools//tools/cpp:current_cc_toolchain",
         ),
         "collect_objects": attr.bool(default = False, mandatory = False),
     },
