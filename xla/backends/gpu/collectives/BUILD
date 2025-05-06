@@ -1,6 +1,8 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -18,6 +20,12 @@ package_group(
     ],
 )
 
+# Allows to explicitely disable nvshmem collectives using invocation flag.
+bool_flag(
+    name = "nvshmem_enabled",
+    build_setting_default = True,
+)
+
 config_setting(
     name = "nvshmem_supported",
     constraint_values = [
@@ -25,6 +33,23 @@ config_setting(
         "@platforms//cpu:x86_64",
         "@platforms//os:linux",
     ],
+    flag_values = {
+        ":nvshmem_enabled": "True",
+    },
+)
+
+# Since selects can't be nested we need to create this intermediate target
+cc_library(
+    name = "nvshmem_collectives_if_supported",
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps =
+        select({
+            ":nvshmem_supported": [":nvshmem_collectives"],
+            "//conditions:default": [],
+        }),
 )
 
 # Build target that registers all available GPU collectives implementations with the collectives
@@ -33,11 +58,11 @@ cc_library(
     name = "gpu_collectives_plugin",
     deps = [
         ":gpu_collectives_stub",
+    ] + if_gpu_is_configured([
         ":nccl_collectives",
-    ] + select({
-        ":nvshmem_supported": [":nvshmem_collectives"],
-        "//conditions:default": [],
-    }),
+    ]) + if_cuda_is_configured([
+        ":nvshmem_collectives_if_supported",
+    ]),
 )
 
 cc_library(
@@ -185,31 +210,50 @@ cc_library(
 
 cc_library(
     name = "nccl_errors",
-    hdrs = if_gpu_is_configured(["nccl_errors.h"]),
+    srcs = ["nccl_errors.cc"],
+    hdrs = ["nccl_errors.h"],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
+    tags = ["gpu"],
     visibility = ["//visibility:private"],
     deps = [
         "//xla:util",
         "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:str_format",
-    ],
+        "@com_google_absl//absl/time",
+    ] + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rccl",
+    ]),
 )
 
 cc_library(
     name = "nccl_collectives",
-    srcs = if_gpu_is_configured(["nccl_collectives.cc"]),
-    hdrs = if_gpu_is_configured(["nccl_collectives.h"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    srcs = [
+        "nccl_collectives.cc",
+        "nccl_communicator.cc",
+    ],
+    hdrs = [
+        "nccl_collectives.h",
+        "nccl_communicator.h",
+    ],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
+    tags = ["gpu"],
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_clique_key",
         ":gpu_collectives",
-        ":nccl_communicator",
         ":nccl_errors",
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla/core/collectives",
@@ -219,14 +263,23 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:gpu_stream",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -246,49 +299,13 @@ cc_library(
 )
 
 cc_library(
-    name = "nccl_communicator",
-    srcs = if_gpu_is_configured(["nccl_communicator.cc"]),
-    hdrs = if_gpu_is_configured(["nccl_communicator.h"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
-    visibility = ["//visibility:private"],
-    deps = [
-        ":gpu_collectives",
-        ":nccl_errors",
-        "//xla:shape_util",
-        "//xla:util",
-        "//xla/core/collectives:communicator",
-        "//xla/core/collectives:rank_id",
-        "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_stream",
-        "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
-    ] + if_cuda_is_configured([
-        "@local_config_nccl//:nccl",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rccl",
-    ]),
-)
-
-cc_library(
     name = "nvshmem_collectives",
-    srcs = if_cuda_is_configured(["nvshmem_collectives.cc"]),
-    hdrs = if_cuda_is_configured(["nvshmem_collectives.h"]),
+    srcs = ["nvshmem_collectives.cc"],
+    hdrs = ["nvshmem_collectives.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
@@ -310,22 +327,22 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:numbers",
-    ] + if_cuda_is_configured(["@nvshmem//:nvshmem_lib"]),
+    ],
     alwayslink = True,
 )
 
-xla_cc_test(
+xla_test(
     name = "nccl_communicator_test",
-    srcs = if_gpu_is_configured(["nccl_communicator_test.cc"]),
-    local_defines = if_cuda_is_configured([
-        "GOOGLE_CUDA=1",
-    ]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    srcs = ["nccl_communicator_test.cc"],
+    backends = ["gpu"],
+    local_defines =
+        if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ]),
     tags = [
-        "requires-gpu-nvidia",
         # Stop chloroxylenol from running this test with msan because msan does
         # not work with CUDA.
         #
@@ -336,7 +353,7 @@ xla_cc_test(
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
-        ":nccl_communicator",
+        ":nccl_collectives",
         ":nccl_errors",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
@@ -387,5 +404,29 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
+    name = "single_threaded_executor",
+    srcs = ["single_threaded_executor.cc"],
+    hdrs = ["single_threaded_executor.h"],
+    deps = [
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:threadpool_async_executor",
+    ],
+)
+
+xla_cc_test(
+    name = "single_threaded_executor_test",
+    srcs = ["single_threaded_executor_test.cc"],
+    deps = [
+        ":single_threaded_executor",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_googletest//:gtest_main",
     ],
 )

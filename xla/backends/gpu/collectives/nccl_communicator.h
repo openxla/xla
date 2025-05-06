@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -46,10 +47,12 @@ limitations under the License.
 
 namespace xla::gpu {
 
+class NcclCollectives;
+
 // XLA collectives communicator wrapping an NCCL communicator.
 class NcclCommunicator : public Communicator {
  public:
-  explicit NcclCommunicator(ncclComm_t comm);
+  explicit NcclCommunicator(NcclCollectives* collectives, ncclComm_t comm);
   ~NcclCommunicator() override;
 
   // NcclCommunicator is not copyable or movable.
@@ -89,9 +92,9 @@ class NcclCommunicator : public Communicator {
                                       const Executor& executor) final;
 
   tsl::AsyncValueRef<Event> AllToAll(
-      absl::Span<const se::DeviceMemoryBase> send_buffers,
-      absl::Span<const se::DeviceMemoryBase> recv_buffers, PrimitiveType dtype,
-      size_t count, const Executor& executor) final;
+      absl::InlinedVector<se::DeviceMemoryBase, 4> send_buffers,
+      absl::InlinedVector<se::DeviceMemoryBase, 4> recv_buffers,
+      PrimitiveType dtype, size_t count, const Executor& executor) final;
 
   tsl::AsyncValueRef<Event> CollectivePermute(
       se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
@@ -113,8 +116,9 @@ class NcclCommunicator : public Communicator {
  private:
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
-  ncclComm_t comm_;
-  bool aborted_ = false;  // Has Abort() been called?
+  NcclCollectives* collectives_;  // Parent NcclCollectives instance
+  ncclComm_t comm_;               // Underlying NCCL communicator
+  bool aborted_ = false;          // Has Abort() been called?
 };
 
 }  // namespace xla::gpu

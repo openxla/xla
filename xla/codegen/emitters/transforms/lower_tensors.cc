@@ -345,7 +345,7 @@ ml::GEPOp CreateGep(TypedValue<mlir::RankedTensorType> tensor,
   auto llvm_element_type = converter.convertType(element_type);
   auto gep =
       b.create<ml::GEPOp>(ptr, llvm_element_type, tensor_ptr, linear_index);
-  gep.setInbounds(true);
+  gep.setNoWrapFlags(mlir::LLVM::GEPNoWrapFlags::inbounds);
   return gep;
 }
 
@@ -758,7 +758,7 @@ bool IsAtomicIntegral(Type element_type) {
 Value CreateBitcast(mlir::ImplicitLocOpBuilder& b, mlir::Operation* op,
                     Value value, Type ty) {
   if (value.getType().isIntOrFloat() && ty.isIntOrFloat()) {
-    return b.create<ml::BitcastOp>(ty, value);
+    return b.create<arith::BitcastOp>(ty, value);
   }
 
   mlir::LLVMTypeConverter converter(b.getContext());
@@ -1073,7 +1073,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
 
     auto then_builder =
         OpBuilder::atBlockEnd(if_need_update.thenBlock(), b.getListener());
-    Value source_float_as_int = then_builder.create<ml::BitcastOp>(
+    Value source_float_as_int = then_builder.create<arith::BitcastOp>(
         loc, then_builder.getI32Type(), no_negative_nan_source);
     Value c0 = then_builder.create<ml::ConstantOp>(loc, b.getI32Type(), 0);
     Value is_not_negative = then_builder.create<ml::ICmpOp>(
@@ -1168,7 +1168,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
           rewriter.create<ml::ConstantOp>(loc, addr_int_ty, -1));
       addr = rewriter.create<ml::GEPOp>(loc, addr.getType(),
                                         rewriter.getI8Type(), addr, index,
-                                        /*inbounds=*/true);
+                                        mlir::LLVM::GEPNoWrapFlags::inbounds);
 
       // Calculate the bit shift (assume little-endianness).
       Value offset = rewriter.create<ml::TruncOp>(loc, atomic_ty, addr_offset);
@@ -1207,7 +1207,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
             Value short_value =
                 b.create<ml::TruncOp>(b.getIntegerType(result_size),
                                       b.create<ml::LShrOp>(old_value, shift));
-            input_value = b.create<ml::BitcastOp>(result_ty, short_value);
+            input_value = b.create<arith::BitcastOp>(result_ty, short_value);
           } else {
             input_value = CreateBitcast(b, op, old_value, result_ty);
           }
@@ -1223,7 +1223,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
           Value new_value;
           if (small_type) {
             Value cast_value = b.create<ml::ZExtOp>(
-                atomic_ty, b.create<ml::BitcastOp>(
+                atomic_ty, b.create<arith::BitcastOp>(
                                rewriter.getIntegerType(result_size), result));
             new_value =
                 b.create<ml::OrOp>(b.create<ml::AndOp>(old_value, mask),

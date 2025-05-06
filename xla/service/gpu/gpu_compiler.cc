@@ -136,6 +136,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_permute_decomposer.h"
 #include "xla/service/collective_pipeliner.h"
+#include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/collective_utils.h"
 #include "xla/service/compiler.h"
 #include "xla/service/conditional_simplifier.h"
@@ -182,17 +183,16 @@ limitations under the License.
 #include "xla/service/gpu/transforms/add_tracking_suffix_to_instruction_names.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/algorithm_checker.h"
-#include "xla/service/gpu/transforms/all_gather_dynamic_slice_simplifier.h"
-#include "xla/service/gpu/transforms/all_gather_optimizer.h"
-#include "xla/service/gpu/transforms/all_reduce_blueconnect.h"
-#include "xla/service/gpu/transforms/all_reduce_decomposer.h"
-#include "xla/service/gpu/transforms/all_reduce_splitter.h"
 #include "xla/service/gpu/transforms/async_wrapper.h"
 #include "xla/service/gpu/transforms/collective_permute_cycle_decomposer.h"
-#include "xla/service/gpu/transforms/collective_permute_valid_iteration_annotator.h"
 #include "xla/service/gpu/transforms/collective_select_folder.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
+#include "xla/service/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
+#include "xla/service/gpu/transforms/collectives/all_gather_optimizer.h"
+#include "xla/service/gpu/transforms/collectives/all_reduce_blueconnect.h"
 #include "xla/service/gpu/transforms/collectives/all_reduce_combiner.h"
+#include "xla/service/gpu/transforms/collectives/all_reduce_decomposer.h"
+#include "xla/service/gpu/transforms/collectives/all_reduce_splitter.h"
 #include "xla/service/gpu/transforms/collectives/collective_combiner_annotator.h"
 #include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
@@ -258,6 +258,7 @@ limitations under the License.
 #include "xla/service/sharding_remover.h"
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
+#include "xla/service/spmd/shardy/shardy_xla_pass.h"
 #include "xla/service/topk_rewriter.h"
 #include "xla/service/transpose_folding.h"
 #include "xla/service/while_loop_all_reduce_code_motion.h"
@@ -646,17 +647,16 @@ absl::Status RunSPMDPasses(
 #else
         std::nullopt);
 #endif  // PLATFORM_GOOGLE
-    if (hlo_module->config()
-            .debug_options()
-            .xla_gpu_unsafe_pipelined_loop_annotator()) {
-      spmd_pipeline.AddPass<WhileLoopTripCountAnnotator>();
-      spmd_pipeline.AddPass<CollectivePermuteValidIterationAnnotator>();
-    }
     return spmd_pipeline.Run(hlo_module).status();
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
+    // Run ShardyXLA without propagation, which enforces use-tuple-args.
+    if (hlo_module->config().use_shardy_partitioner()) {
+      sharding_removal_pipeline.AddPass<sdy::ShardyXLA>(
+          /*runSdyShardingPropagation=*/false);
+    }
     sharding_removal_pipeline.AddPass<HloDCE>();
     return sharding_removal_pipeline.Run(hlo_module).status();
   }
@@ -928,7 +928,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
-        CollectivePipeliner::PipeliningDirection::kForward,
+        collective_pipeliner_utils::PipeliningDirection::kForward,
         /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
@@ -951,7 +951,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
-        CollectivePipeliner::PipeliningDirection::kBackward,
+        collective_pipeliner_utils::PipeliningDirection::kBackward,
         /*should_process=*/HloPredicateIsOp<HloOpcode::kAllGather>,
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
@@ -974,7 +974,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
-        CollectivePipeliner::PipeliningDirection::kForward,
+        collective_pipeliner_utils::PipeliningDirection::kForward,
         /*should_process=*/HloPredicateIsOp<HloOpcode::kReduceScatter>,
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
@@ -1085,9 +1085,7 @@ absl::Status RunLayoutAssignmentPasses(
   // Run HostOffloadLegalize before LayoutNormalization to prevent
   // the creation of invalid transpose/bitcast operations within
   // host memory offloading segments.
-  pipeline.AddPass<HostOffloadLegalize>(
-      static_cast<int64_t>(stream_executor::MemoryType::kHost),
-      /* after_layout= */ true);
+  pipeline.AddPass<HostOffloadLegalize>();
   return pipeline.Run(hlo_module).status();
 }
 
@@ -1592,6 +1590,13 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
+      // Transpose dimension grouper simplifies the dimensions of the transpose
+      // and enables the symbolic tiling analysis for the generic emitter to
+      // find the possible tiling. It should run before the gemm rewriter has
+      // introduced the nested fusions. We also want to keep it close to the
+      // gemm rewriter to avoid the possibility of new passes to rewrite the
+      // transpose.
+      pipeline.AddPass<TransposeDimensionGrouper>();
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<GemmFusionSwapOperands>();
     } else if (cuda_cc != nullptr &&
@@ -1620,7 +1625,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // also have unsorted update_window_dims.
     pipeline.AddPass<ScatterSimplifier>();
     pipeline.AddPass<BroadcastCanonicalizer>();
-
+    // BroadcastCanonicalizer can create transposes.
     pipeline.AddPass<TransposeDimensionGrouper>();
     pipeline.AddPass<ReductionDegenerateDimRemover>();
     pipeline.AddPass<ReductionLayoutNormalizer>();
@@ -1686,12 +1691,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
-
-  // Recover host-offloader invariants (such as the single-use broadcast buffer
-  // initialization before loops) by re-running the offload legalizer.
-  pipeline.AddPass<HostOffloadLegalize>(
-      static_cast<int64_t>(stream_executor::MemoryType::kHost),
-      /* after_layout= */ true);
 
   pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
 

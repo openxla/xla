@@ -766,10 +766,6 @@ message DebugOptions {
   // `xla_gpu_cublas_fallback` set to false.
   bool xla_gpu_triton_gemm_any = 190;
 
-  // TODO(b/409940111): Remove this flag and use high precision reductions for
-  // Split-K GEMMs unconditionally.
-  bool xla_gpu_triton_gemm_disable_reduced_precision_reduction = 226;
-
   // It is usually preferable to not fallback to the driver; it can consume more
   // memory, or have bugs.
   bool xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found = 138;
@@ -777,6 +773,8 @@ message DebugOptions {
   // Recognises rotate-right patterns (slice, slice, concat) within a while
   // loop and labels the while loop as a pipelined while loop. This is an
   // unsafe flag.
+  // DEPRECATED: Use xla_gpu_experimental_pipeline_parallelism_opt_level
+  // instead.
   bool xla_gpu_unsafe_pipelined_loop_annotator = 309;
 
   // If true, XLA will annotate instructions in the dumps with emitter code
@@ -824,6 +822,7 @@ message DebugOptions {
   // go/keep-sorted end
 
   reserved 276;  // xla_gpu_enable_nccl_per_stream_comms
+  reserved 226;  // xla_gpu_triton_gemm_disable_reduced_precision_reduction
 
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
@@ -1515,6 +1514,9 @@ message ScheduleProto {
     // Start and end timestamps in cycles.
     double start_timestamp_cycles = 2;
     double end_timestamp_cycles = 3;
+
+    int64 memory_usage_after = 5;
+    int64 peak_memory_after = 6;
   }
 
   message SchedulerStatisticsProto {

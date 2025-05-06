@@ -49,8 +49,6 @@ class HloRunnerPjRt : public HloRunnerInterface {
       DeviceShapeRepresentationFn device_shape_representation_fn,
       DeviceShapeSizeFn device_shape_size_fn);
 
-  ~HloRunnerPjRt() override;
-
   // Transfers data between the host and device, using the given parameter
   // layouts.
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -71,25 +69,12 @@ class HloRunnerPjRt : public HloRunnerInterface {
                                   bool run_hlo_passes,
                                   ExecutionProfile* profile) override;
 
-  // As Execute(), but accepts and returns device buffers instead of host
-  // buffers.
+  // Like Execute(), but accepts and returns pjrt buffers instead of literals.
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   ExecuteWithDeviceBuffers(
-      PjRtLoadedExecutable* executable, const ExecuteOptions& execute_options,
-      const std::vector<std::unique_ptr<PjRtBuffer>>& arguments);
-
-  struct ExecuteWithDeviceBuffersResult {
-    std::vector<std::unique_ptr<PjRtBuffer>> buffers;
-    bool untuple_result = false;
-  };
-  absl::StatusOr<ExecuteWithDeviceBuffersResult> ExecuteWithDeviceBuffers(
       OpaqueExecutable* executable,
       const std::vector<std::unique_ptr<PjRtBuffer>>& arguments,
       const ExecuteOptions* execute_options = nullptr);
-
-  // Creates an executable object for an HloModule.
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CreateExecutable(
-      HloModule* module, CompileOptions compile_options);
 
   // Creates an executable object given an HLO module. If run_hlo_passes is
   // true, the HLO passes will be run as part of compilation.
@@ -148,15 +133,15 @@ class HloRunnerPjRt : public HloRunnerInterface {
 
   bool HasProperty(HloRunnerPropertyTag::Type tag) const override;
 
-  absl::StatusOr<absl::Nonnull<const HloModule*>> HloModuleFromWrapped(
+  absl::StatusOr<const HloModule* absl_nonnull> HloModuleFromWrapped(
       const OpaqueExecutable* wrapped) const override;
 
   // Returns true if the two given OpaqueExecutables originate from the same
   // runner and are equivalent according to some notion specific to that runner.
   // Executables that were created by different runners can never be equivalent.
   bool ExecutablesAreEquivalent(
-      absl::Nonnull<const OpaqueExecutable*> lhs,
-      absl::Nonnull<const OpaqueExecutable*> rhs) const override;
+      const OpaqueExecutable* absl_nonnull lhs,
+      const OpaqueExecutable* absl_nonnull rhs) const override;
 
  private:
   absl::StatusOr<CompileOptions> GenerateDefaultCompileOptions(
@@ -173,7 +158,7 @@ class HloRunnerPjRt : public HloRunnerInterface {
       DeviceAssignment* device_assignment);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> TransferLiteralToDevice(
-      const Literal& literal, absl::Nonnull<PjRtMemorySpace*> memory_space,
+      const Literal& literal, PjRtMemorySpace* absl_nonnull memory_space,
       const Layout& on_device_layout);
   absl::StatusOr<Literal> TransferLiteralFromDevice(PjRtBuffer& buffer);
 

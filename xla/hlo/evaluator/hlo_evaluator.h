@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
-#include "xla/service/call_graph.h"
 #include "xla/service/dynamic_dimension_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -67,7 +66,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   // recomputation during evaluation.
   struct PrecomputedAnalyses {
     TuplePointsToAnalysis* tuple_points_to;
-    CallGraph* call_graph;
   };
 
   // Only evaluate up to max_loop_iterations per while-loop execution if
@@ -165,7 +163,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   // pointer.
   bool TryEvaluate(const HloInstruction* instruction, Literal* result,
                    bool recursively_evaluate_nonconstant_operands = false);
-
 
   absl::StatusOr<Literal> EvaluateElementwiseBinaryOp(HloOpcode opcode,
                                                       const Literal& lhs,
@@ -353,7 +350,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   absl::Status HandleReverse(const HloInstruction* reverse) override;
   absl::Status HandleSelectAndScatter(
       const HloInstruction* select_and_scatter) override;
-  absl::Status HandleSlice(const HloInstruction* slice) override;
+  absl::Status HandleSlice(const HloInstruction* hlo) override;
   absl::Status HandleSort(const HloInstruction* sort) override;
   absl::Status HandleStochasticConvert(
       const HloInstruction* stochastic_convert) override;
@@ -413,6 +410,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   // Returns the already-evaluated literal result for the instruction and
   // removes it from internal evaluate state.
   Literal ExtractEvaluatedLiteralFor(const HloInstruction* hlo) {
+    if (state_.has_evaluated(hlo)) {
+      return state_.extract_evaluated(hlo);
+    }
     if (hlo->IsConstant()) {
       return hlo->literal().Clone();
     }
@@ -420,9 +420,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
       return state_.arg(hlo->parameter_number())->Clone();
     }
 
-    CHECK(state_.has_evaluated(hlo))
-        << "could not find evaluated value for: " << hlo->ToString();
-    return state_.extract_evaluated(hlo);
+    LOG(FATAL) << "could not find evaluated value for: " << hlo->ToString();
   }
 
   // Returns true if the given hlo has been evaluated and cached.
@@ -591,7 +589,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   TraceMACHandler trace_mac_handler_;
 
   // TODO(ezhulenev): Move cache members to EvaluationState.
-  std::unique_ptr<CallGraph> call_graph_cache_;
   std::unique_ptr<TuplePointsToAnalysis> tuple_points_to_analysis_cache_;
 
   // Set by EvaluateInternal and opportunitiscally used by the HandleXXX

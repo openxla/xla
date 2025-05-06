@@ -241,7 +241,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
-  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(true);
   opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
@@ -341,6 +340,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_unsupported_crash_on_hlo_pass_silent_hlo_change(false);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
+  opts.set_xla_gpu_experimental_enable_triton_tma(false);
   return opts;
 }
 
@@ -1295,16 +1295,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "that falling back to the driver can have drawbacks like using more "
       "memory and/or other bugs during compilation, so we recommend setting "
       "this flag to false."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_unsafe_pipelined_loop_annotator",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_unsafe_pipelined_loop_annotator),
-      debug_options->xla_gpu_unsafe_pipelined_loop_annotator(),
-      "If this option is true, then the while loop with rotate right "
-      "pattern will be considered a pipelined while loop and the "
-      "operations within the pipeline bubbles may be considered no-ops. "
-      "Specifically, collective-permute may become a no-op for the iterations "
-      "within pipeline bubble. This is an unsafe flag."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_unsafe_pipelined_loop_annotator",
+                bool_setter_for(
+                    &DebugOptions::set_xla_gpu_unsafe_pipelined_loop_annotator),
+                debug_options->xla_gpu_unsafe_pipelined_loop_annotator(),
+                "[Deprecated, do not use]"));
   flag_list->push_back(tsl::Flag(
       "xla_multiheap_size_constraint_per_heap",
       int32_setter_for(
@@ -1869,15 +1865,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_auto_spmd_partitioning_memory_budget_ratio times the estimated "
       "memory usage lower bound."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_triton_gemm_disable_reduced_precision_reduction",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_triton_gemm_disable_reduced_precision_reduction),
-      debug_options->xla_gpu_triton_gemm_disable_reduced_precision_reduction(),
-      "Forces any reductions during matrix multiplications to use the "
-      "accumulator type and not the output type. The precision of the dot "
-      "operation may not increase that much if there is output fusion."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotuned_gemm_fusions",
       bool_setter_for(&DebugOptions::set_xla_gpu_dump_autotuned_gemm_fusions),
       debug_options->xla_gpu_dump_autotuned_gemm_fusions(),
@@ -2378,6 +2365,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_split_k_rewrite(),
       "Enable the pass that splits GEMMs that underutilize the GPU load by "
       "splitting the K dimension using a heuristic."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_triton_tma",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_triton_tma),
+      debug_options->xla_gpu_experimental_enable_triton_tma(),
+      "Enable Triton's TMA loads/stores for arguments where applicable."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
@@ -2389,6 +2382,11 @@ static void AllocateFlags(DebugOptions* defaults) {
   flag_values = defaults;
   flag_objects = new std::vector<tsl::Flag>();
   MakeDebugOptionsFlags(flag_objects, flag_values);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
+}
+
+void ParseDebugOptionFlagsFromEnv() {
+  absl::call_once(flags_init, &AllocateFlags, nullptr);
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }
 

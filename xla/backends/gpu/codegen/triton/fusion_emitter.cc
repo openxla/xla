@@ -39,6 +39,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/FileSystem.h"
@@ -1506,13 +1507,9 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
         << "Unexpected scalar encountered. Expected padded_tile_sizes() to be "
            "non-empty.";
 
-    insert_results.push_back(
-        b.create<mtx::InsertOp>(
-             mlir::RankedTensorType::get(tile_info.original_shape(),
-                                         result_storage_type),
-             result.UnwrapTensor(), parent_base_ptr, tile_info.offsets(),
-             tile_info.tile_strides(), tile_info.minor_to_major_layout())
-            .getResult());
+    insert_results.push_back(b.create<mtx::InsertOp>(
+        result.UnwrapTensor(), parent_base_ptr, tile_info.offsets(),
+        tile_info.tile_strides(), tile_info.minor_to_major_layout()));
   }
 
   return insert_results;
@@ -1893,9 +1890,9 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
   }
 
-  // TODO(b/315957220): Propagate TMA flag once it's supported.
   pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass(
-      device_info, /*tma_enabled=*/false));
+      device_info,
+      hlo_config.debug_options().xla_gpu_experimental_enable_triton_tma()));
 
   // Lower affine expressions into arithmetic ops.
   pm.addPass(mlir::createLowerAffinePass());
@@ -1959,6 +1956,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
   }
 
+  std::vector<llvm::Metadata*> captured_nvvm_annotations;
   if (emit_kernel) {
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<llvm::Module> ll_triton_module,
@@ -1969,11 +1967,12 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
 
     // Integrate LLVM matmul kernel into XLA's LLVM module.
-    // TODO(goncharov): remove once we integrated past LLVM
-    // 6c2e170d043d3a7d7b32635e887cfd255ef5c2ce that removes nvvm.annotations.
     auto* nvvm_annotations =
         ll_triton_module->getNamedMetadata("nvvm.annotations");
     if (nvvm_annotations) {
+      for (auto operand : nvvm_annotations->operands()) {
+        captured_nvvm_annotations.push_back(operand);
+      }
       ll_triton_module->eraseNamedMetadata(nvvm_annotations);
     }
     ll_triton_module->setDataLayout(llvm_module->getDataLayout());
@@ -2012,7 +2011,8 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   TF_ASSIGN_OR_RETURN(stream_executor::gpu::TmaMetadata tma_metadata,
                       ExtractTmaMetadata(triton_module, kernel_name));
 
-  return {{shared_mem_bytes, cluster_dim, tma_metadata}};
+  return {
+      {shared_mem_bytes, cluster_dim, tma_metadata, captured_nvvm_annotations}};
 }
 
 }  // namespace gpu

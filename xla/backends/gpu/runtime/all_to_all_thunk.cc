@@ -237,9 +237,9 @@ absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
       }
     }
 
-    auto event =
-        comm->AllToAll(send_buffers, recv_buffers, element_type,
-                       chunk_element_count, GpuCollectives::On(stream));
+    auto event = comm->AllToAll(
+        std::move(send_buffers), std::move(recv_buffers), element_type,
+        chunk_element_count, GpuCollectives::On(stream));
 
     tsl::BlockUntilReady(event);
     if (event.IsError()) {
@@ -251,8 +251,9 @@ absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
       recv_buffers.push_back(buffer.destination_buffer);
     }
 
-    auto event = comm->AllToAll(send_buffers, recv_buffers, element_type,
-                                element_count, GpuCollectives::On(stream));
+    auto event =
+        comm->AllToAll(std::move(send_buffers), std::move(recv_buffers),
+                       element_type, element_count, GpuCollectives::On(stream));
 
     tsl::BlockUntilReady(event);
     if (event.IsError()) {

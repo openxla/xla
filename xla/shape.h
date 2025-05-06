@@ -25,6 +25,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -74,6 +75,7 @@ class Shape {
 
   // Constructs a shape from a ShapeProto. Results in an invalid shape (as
   // opposed to crashing) if the proto has logically invalid fields.
+  ABSL_DEPRECATED("Use FromProto instead.")
   explicit Shape(const ShapeProto& shape_proto);
 
   // Creates a token or opaque shape.
@@ -94,10 +96,12 @@ class Shape {
   // shape is a nil shape (empty tuple).
   explicit Shape(std::vector<Shape> tuple_shapes);
 
+  // Constructs a shape from a ShapeProto. Results in an invalid shape (as
+  // opposed to crashing) if the proto has logically invalid fields.
+  static absl::StatusOr<Shape> FromProto(const ShapeProto& shape_proto);
+
   // Returns a ShapeProto representation of the Shape.
   ShapeProto ToProto() const;
-  // Sets a ShapeProto to the representation of the Shape.
-  void SetProto(ShapeProto& proto) const;
 
   // Prints a human-readable string that represents the given shape, with or
   // without layout. e.g. "F32[42,12] {0, 1}" or "F32[64]".
@@ -311,9 +315,6 @@ class Shape {
   absl::Span<const int64_t> dimensions() const {
     return array_state().dimensions;
   }
-  absl::Span<int64_t> mutable_dimensions() {
-    return absl::MakeSpan(array_state().dimensions);
-  }
 
   // Returns the number of top-level tuple components in this shape.
   // Precondition: this is a tuple shape.
@@ -399,9 +400,6 @@ class Shape {
   // Resets this to the default state (an invalid shape).
   void Clear();
 
-  std::string SerializeAsString() const {
-    return ToProto().SerializeAsString();
-  }
   std::string ShortDebugString() const { return ToProto().ShortDebugString(); }
   std::string DebugString() const { return ToProto().DebugString(); }
 
@@ -603,26 +601,10 @@ class Shape {
     CHECK(state) << "Expected an opaque shape. Got " << ToString();
     return *state;
   }
-  const ArrayState& array_state() const {
-    const auto* const state = if_array_state();
-    CHECK(state) << "Expected an array shape. Got " << ToString();
-    return *state;
-  }
-  ArrayState& array_state() {
-    auto* const state = if_array_state();
-    CHECK(state) << "Expected an array shape. Got " << ToString();
-    return *state;
-  }
-  const TupleState& tuple_state() const {
-    const auto* const state = if_tuple_state();
-    CHECK(state) << "Expected a tuple shape. Got " << ToString();
-    return *state;
-  }
-  TupleState& tuple_state() {
-    auto* const state = if_tuple_state();
-    CHECK(state) << "Expected a tuple shape. Got " << ToString();
-    return *state;
-  }
+  const ArrayState& array_state() const;
+  ArrayState& array_state();
+  const TupleState& tuple_state() const;
+  TupleState& tuple_state();
 
   // CHECK-fails if this shape's state is not empty.
   void CheckStateIsEmpty() const;
@@ -646,8 +628,12 @@ class ProgramShape {
   ProgramShape& operator=(const ProgramShape&);
   ProgramShape& operator=(ProgramShape&&);
 
-  // Creates a ProgramShape from a ProgramShapeProto protobuf.
+  ABSL_DEPRECATED("Use FromProto instead.")
   explicit ProgramShape(const ProgramShapeProto& program_shape_proto);
+
+  // Creates a ProgramShape from a ProgramShapeProto protobuf.
+  static absl::StatusOr<ProgramShape> FromProto(
+      const ProgramShapeProto& program_shape_proto);
 
   // Returns a proto representation of the object.
   ProgramShapeProto ToProto() const;
@@ -690,9 +676,6 @@ class ProgramShape {
   const std::vector<std::string>& parameter_names() const {
     return parameter_names_;
   }
-
-  std::string ShortDebugString() const { return ToProto().ShortDebugString(); }
-  std::string DebugString() const { return ToProto().DebugString(); }
 
  private:
   // Invariant: parameters_ and parameter_names_ have the same size.

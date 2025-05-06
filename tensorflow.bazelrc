@@ -123,6 +123,7 @@ build:macos --features=archive_param_file
 # Settings for MacOS on ARM CPUs.
 build:macos_arm64 --cpu=darwin_arm64
 build:macos_arm64 --macos_minimum_os=11.0
+build:macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
 
 # Config to use a mostly-static build and disable modular op registration
 # support (this will revert to loading TensorFlow with RTLD_GLOBAL in Python).
@@ -147,15 +148,13 @@ build:mkl_threadpool --define=build_with_mkl_opensource=true
 build:mkl_threadpool -c opt
 
 # Config setting to build oneDNN with Compute Library for the Arm Architecture (ACL).
-build:mkl_aarch64 --define=build_with_mkl_aarch64=true
-build:mkl_aarch64 --define=build_with_openmp=true
-build:mkl_aarch64 --define=build_with_acl=true
-build:mkl_aarch64 -c opt
-
-# Config setting to build oneDNN with Compute Library for the Arm Architecture (ACL).
 # with Eigen threadpool support
 build:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
+build:mkl_aarch64_threadpool --define=build_with_acl=true
 build:mkl_aarch64_threadpool -c opt
+
+# This is an alias for the mkl_aarch64_threadpool build.
+build:mkl_aarch64 --config=mkl_aarch64_threadpool
 
 # Default CUDA and CUDNN versions.
 build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.6.3"
@@ -469,6 +468,7 @@ common:rbe_linux_cpu --remote_instance_name=projects/tensorflow-testing/instance
 
 build:rbe_linux_cuda --config=cuda_clang_official
 build:rbe_linux_cuda --config=rbe_linux_cpu
+build:rbe_linux_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 # For Remote build execution -- GPU configuration
 build:rbe_linux_cuda --repo_env=REMOTE_GPU_TESTING=1
 
@@ -496,8 +496,10 @@ build:elinux --crosstool_top=@local_config_embedded_arm//:toolchain
 build:elinux --host_crosstool_top=@bazel_tools//tools/cpp:toolchain
 build:elinux_aarch64 --config=elinux
 build:elinux_aarch64 --cpu=aarch64
+build:elinux_aarch64 --platforms=@org_tensorflow//tensorflow/tools/toolchains/linux:linux_aarch64
 build:elinux_armhf --config=elinux
 build:elinux_armhf --cpu=armhf
+build:elinux_armhf --platforms=@org_tensorflow//tensorflow/tools/toolchains/linux:linux_armhf
 build:elinux_armhf --copt -mfp16-format=ieee
 
 # Config-specific options should come above this line.
@@ -521,6 +523,7 @@ build:release_macos_x86 --config=release_macos_base
 # Build with the AVX instruction set when on macOS x86
 build:release_macos_x86 --config=avx_linux
 build:release_macos_x86 --cpu=darwin
+build:release_macos_x86 --platforms=@build_bazel_apple_support//configs/platforms:darwin_x86_64
 # Target Catalina as the minimum compatible OS version
 build:release_macos_x86 --macos_minimum_os=10.15
 build:release_macos_x86 --macos_sdk_version=10.15
@@ -528,6 +531,7 @@ build:release_macos_x86 --macos_sdk_version=10.15
 # Build configs for macOS Arm64
 build:release_macos_arm64 --config=release_macos_base
 build:release_macos_arm64 --cpu=darwin_arm64
+build:release_macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
 build:release_macos_arm64 --define=tensorflow_mkldnn_contraction_kernel=0
 # Target Moneterey as the minimum compatible OS version
 build:release_macos_arm64 --macos_minimum_os=12.0

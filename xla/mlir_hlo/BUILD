@@ -12,6 +12,7 @@ package(
 
 exports_files([
     "mhlo/IR/hlo_ops.td",
+    "mhlo/IR/hlo_utils.td",
 ])
 
 # Python extension sources.
@@ -761,6 +762,7 @@ cc_library(
         ":mlir_hlo",
         ":transforms_passes",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AMDGPUUtils",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:ArithDialect",

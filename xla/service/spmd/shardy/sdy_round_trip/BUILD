@@ -12,6 +12,7 @@ package_group(
     packages = [
         "//learning/deepmind/partir/compiler/mpmd/...",
         "//learning/deepmind/partir/compiler/shardonnay/...",
+        "//third_party/australis/google/ifrt/...",
         "//third_party/openxla/shardy/tools/...",
         "//third_party/py/jax/...",
         "//xla/...",
@@ -120,7 +121,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",

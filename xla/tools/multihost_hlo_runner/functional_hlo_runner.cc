@@ -113,6 +113,14 @@ absl::StatusOr<Literal> MakeFakeLiteralWithSameValue(const Shape& shape,
             PopulateWithSameValue(
                 &literal,
                 static_cast<NativeT>(type == PRED ? (value % 2) == 0 : value));
+            for (int i = 0; i < shape.dimensions_size(); i++) {
+              if (shape.is_dynamic_dimension(i)) {
+                // TODO(b/378917570): We might need to set the dynamic size to
+                // the actual bound i.e., shape.dimensions(i) when HybridSim
+                // supports SparseCore.
+                literal.SetDynamicSize(i, 0);
+              }
+            }
             return literal;
           }
           return Unimplemented(
@@ -1208,7 +1216,8 @@ FunctionalHloRunner::CreateArgumentsOnDevice(
       if (flatten_arguments) {
         CHECK_EQ(params.size(), 1);
         CHECK(params.front()->shape().IsTuple());
-        argument_literals.reserve(params.front()->shape().tuple_shapes_size());
+        argument_literals.reserve(
+            params.front()->shape().tuple_shapes().size());
       } else {
         argument_literals.reserve(params.size());
       }
@@ -1385,7 +1394,8 @@ FunctionalHloRunner::CopyArgumentsToDevice(
       TF_RET_CHECK(entry_layout.parameter_count() == 1)
           << "entry_layout.parameter_count(): "
           << entry_layout.parameter_count();
-      TF_RET_CHECK(arg_i < entry_layout.parameter_shape(0).tuple_shapes_size());
+      TF_RET_CHECK(arg_i <
+                   entry_layout.parameter_shape(0).tuple_shapes().size());
       const Shape& shape = entry_layout.parameter_shape(0).tuple_shapes(arg_i);
       TF_RET_CHECK(!shape.IsTuple()) << "Nested tuples are not supported";
       return non_tuple_memory_space(shape);

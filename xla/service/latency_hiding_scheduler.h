@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/ir/ptrvec.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/map_util.h"
 #include "xla/service/hlo_buffer.h"
@@ -531,6 +530,12 @@ class HloGraphNode {
   bool OccupiesSelectiveResource() const {
     return occupies_selective_resource_;
   }
+  void SetReleasesSelectiveResource(bool releases_selective_resource) {
+    releases_selective_resource_ = releases_selective_resource;
+  }
+  void SetOccupiesSelectiveResource(bool occupies_selective_resource) {
+    occupies_selective_resource_ = occupies_selective_resource;
+  }
   int64_t GetNumHopsToClosestSelectiveResourceOccupier() const {
     return num_hops_to_closest_selective_resource_occupier_;
   }
@@ -786,6 +791,14 @@ class BufferInfoTracker {
     const HloBuffer* value = nullptr;
     const HloInstruction* first_definition = nullptr;
     int64_t buffer_size = 0;
+
+    // Precomputed value of
+    //     value->values()[0]->shape().has_layout() &&
+    //     (value->values()[0]->shape().layout().memory_space() !=
+    //      kDefaultMemorySpace)
+    // This expression is invoked repeatedly and is responsible for many cache
+    // misses.
+    bool non_default_memory_space_layout = false;
   };
   BufferInfoTracker(const HloModule* module,
                     const HloAliasAnalysis* alias_analysis,
@@ -793,9 +806,16 @@ class BufferInfoTracker {
   static ValueInfo CreateBufferInfo(
       const HloBuffer* value, const HloInstruction* first_definition,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
+    const auto& shape = value->values()[0]->shape();
+    const bool non_default_memory_space_layout =
+        (shape.has_layout() &&
+         (shape.layout().memory_space() != Layout::kDefaultMemorySpace));
     return ValueInfo{
-        /*value=*/value, /*first_definition=*/first_definition,
-        /*buffer_size=*/shape_size_bytes(value->values()[0]->shape())};
+        /*value=*/value,
+        /*first_definition=*/first_definition,
+        /*buffer_size=*/shape_size_bytes(shape),
+        /*non_default_memory_space_layout=*/non_default_memory_space_layout,
+    };
   }
   const ValueInfo& GetBufferInfo(HloBuffer::Id id) const {
     return buffer_infos_[id];
@@ -1031,6 +1051,11 @@ class DefaultSchedulerCore : public SchedulerCore {
     // order (because we schedule bottom up). This will be required to be
     // reversed before assigning to the HloSchedule.
     std::vector<HloInstruction*> new_sequence_reversed;
+
+    // Memory pressure during and after an instruction in a schedule.
+    // (memory_after, memory_peak)
+    absl::flat_hash_map<const HloInstruction*, std::pair<int64_t, int64_t>>
+        memory_trace;
     // Units of time passed in the schedule. To keep track of latency hiding.
     HloGraphNode::TimeCost current_time = 0;
     // Resources and corresponding occupiers in flight.
@@ -1153,7 +1178,7 @@ class DefaultSchedulerCore : public SchedulerCore {
                                         int64_t annotation) const;
 
   ScheduleProto::ComputationScheduleProto ComputationScheduleToProto(
-      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+      const HloComputation* computation, const SchedulingState& sched_state,
       const LatencyEstimator& estimator,
       const std::vector<HloInstruction*>& instructions);
 
@@ -1224,8 +1249,8 @@ class LatencyHidingScheduler : public HloModulePass {
   };
 
   LatencyHidingScheduler(
-      std::unique_ptr<LatencyEstimator> latency_estimator,
-      std::unique_ptr<AsyncTracker> async_tracker,
+      std::shared_ptr<LatencyEstimator> latency_estimator,
+      std::shared_ptr<AsyncTracker> async_tracker,
       std::unique_ptr<SchedulerCore> scheduler_core,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes)
       : latency_estimator_(std::move(latency_estimator)),
@@ -1252,8 +1277,8 @@ class LatencyHidingScheduler : public HloModulePass {
   virtual void LogScheduleStatistics(const HloComputation* computation);
 
  private:
-  std::unique_ptr<LatencyEstimator> latency_estimator_;
-  std::unique_ptr<AsyncTracker> async_tracker_;
+  std::shared_ptr<LatencyEstimator> latency_estimator_;
+  std::shared_ptr<AsyncTracker> async_tracker_;
   std::unique_ptr<SchedulerCore> scheduler_core_;
   const HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   absl::flat_hash_set<HloComputation*> computations_to_schedule_;

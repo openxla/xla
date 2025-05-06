@@ -27,6 +27,7 @@ cc_library(
         "device.cc",
         "device_list.cc",
         "dtype.cc",
+        "layout.cc",
         "remap_plan.cc",
         "executable.cc",
         "host_callback.cc",
@@ -44,6 +45,7 @@ cc_library(
     ],
     hdrs = [
         "array.h",
+        "layout.h",
         "array_spec.h",
         "client.h",
         "compiler.h",
@@ -78,6 +80,7 @@ cc_library(
         ":device_proto_cc",
         ":dtype_proto_cc",
         ":execute_options_proto_cc",
+        ":layout_proto_cc",
         ":ref_wrapper",
         ":remap_plan_proto_cc",
         ":serdes",
@@ -98,6 +101,7 @@ cc_library(
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/lib/core:bitmap",
         "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
@@ -112,6 +116,7 @@ cc_library(
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -247,6 +252,71 @@ xla_cc_test(
     ],
 )
 
+tf_proto_library(
+    name = "layout_proto",
+    srcs = ["layout.proto"],
+    protodeps = [":serdes_proto"],
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+        ":users",
+    ]),
+)
+
+xla_cc_test(
+    name = "layout_test",
+    size = "small",
+    srcs = ["layout_test.cc"],
+    deps = [
+        ":basic_device_list",
+        ":ifrt",
+        ":mock",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_layout",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+tf_proto_library(
+    name = "layout_serdes_proto",
+    srcs = ["layout_serdes.proto"],
+)
+
+cc_library(
+    name = "layout_serdes",
+    srcs = ["layout_serdes.cc"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":ifrt",
+        ":layout_serdes_proto_cc",
+        ":serdes",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "layout_serdes_test",
+    size = "small",
+    srcs = ["layout_serdes_test.cc"],
+    deps = [
+        ":ifrt",
+        ":layout_serdes",
+        ":serdes",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 xla_cc_test(
     name = "memory_test",
     size = "small",
@@ -309,7 +379,6 @@ xla_cc_test(
         ":device_test_util",
         ":ifrt",
         "//xla/python/ifrt/ir:sharding_param",
-        "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
@@ -511,7 +580,6 @@ cc_library(
         "//xla/pjrt:pjrt_layout",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
-        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -589,6 +657,7 @@ cc_library(
         "//xla:util",
         "@llvm-project//llvm:Support",
     ],
+    alwayslink = True,
 )
 
 cc_library(

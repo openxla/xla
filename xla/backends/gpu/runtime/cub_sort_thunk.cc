@@ -191,7 +191,7 @@ absl::Status CubSortPairsImpl::Run(se::DeviceMemoryBase input_keys,
     temp_bytes -= GetOffsetsSize(batch_size);
   }
 
-  ffi::CallFrameBuilder builder(2, 1);
+  ffi::CallFrameBuilder builder(3, 2);
   builder.AddBufferArg(scratch, PrimitiveType::U8,
                        {static_cast<int64_t>(temp_bytes)});
   builder.AddBufferArg(input_keys, PrimitiveType::U8,
