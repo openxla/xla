@@ -151,10 +151,8 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
-  if (/*(instruction_sched_variant=="none") == */ false) {
-    pm->addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
-        cc.gfx_version(), num_stages));
-  }
+  pm->addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
+      cc.gfx_version(), num_stages, "none"));
   pm->addPass(mt::createConvertBuiltinFuncToLLVMPass(/*ftz=*/true));
   // There is no clusters in ROCm for now.
   out_cluster_info.clusterDimX = 1;
