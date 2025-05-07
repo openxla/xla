@@ -649,7 +649,6 @@ absl::Status HorizontalLoopFusionImpl::Fuse(
                                        : HloInstruction::FusionKind::kLoop,
                                    bound_operands, fused_comp, prefix_),
       &fused_comp->root_instruction()->metadata());
-  fused_comp->SetFusionInstruction(hori_fusion_instr);
 
   // we push the newly fused instruction into fusion candidate stack, because
   // the operands of the newly fused instruction could now be possible to be
