@@ -267,6 +267,7 @@ SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
   config.collective_permute_overlap_limit = 1;
   config.use_real_cost_model = false;
   config.aggressive_scheduling_policies = true;
+  config.prioritize_compute_over_async_start = overlap_limit > 1;
   config.schedule_send_recvs = true;
   config.memory_limit = memory_limit;
   config.parallel_collective_overlap_limit = overlap_limit;
