@@ -41,6 +41,7 @@ xla_cc_test(
         ":graphcycles",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/random",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
