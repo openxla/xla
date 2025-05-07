@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -37,8 +36,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/autotuning/autotuner_compile_util.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/redzone_buffers.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -51,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -128,9 +128,16 @@ class GemmAutotuner {
     // Don't run autotuning concurrently on the same GPU.
     absl::MutexLock gpu_lock(&GetGpuMutex(stream_->parent()));
 
-    TF_ASSIGN_OR_RETURN(rz_buffers_, RedzoneBuffers::FromInstruction(
-                                         *gemm, autotune_config_, debug_options,
-                                         RedzoneBuffers::kAllInputsAllOutputs));
+    bool should_init_buffers = autotune_config_.should_init_buffers();
+    bool should_check_correctness = autotune_config_.should_check_correctness();
+    int redzone_padding_bytes = debug_options.xla_gpu_redzone_padding_bytes();
+    TF_ASSIGN_OR_RETURN(se::Stream * stream, autotune_config_.GetStream());
+    TF_ASSIGN_OR_RETURN(
+        rz_buffers_,
+        RedzoneBuffers::FromInstruction(
+            *gemm, autotune_config_.GetAllocator(), stream,
+            RedzoneBuffers::kAllInputsAllOutputs, should_init_buffers,
+            should_check_correctness, redzone_padding_bytes));
 
     return IsCublasLtMatmul(*gemm) || IsCublasLtMatmulF8(*gemm)
                ? TuneGpuBlasLt(gemm, gemm_config)
@@ -151,8 +158,8 @@ class GemmAutotuner {
 
   absl::StatusOr<AutotuneResult> TuneGpuBlasLt(const HloInstruction* gemm,
                                                const GemmConfig& gemm_config) {
-    auto workspace_buffer =
-        rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
+    auto workspace_buffer = rz_buffers_.output_buffers().at(
+        gemm->shape().tuple_shapes().size() - 1);
 
     GpuBackendConfig gpu_config =
         gemm->backend_config<GpuBackendConfig>().value();
@@ -201,24 +208,24 @@ class GemmAutotuner {
 
     TF_ASSIGN_OR_RETURN(
         auto algorithms,
-        plan->GetAlgorithms(stream_, /*max_algorithm_count*/ 128,
+        plan->GetAlgorithms(stream_, GemmConfig::kNumAlgorithms,
                             /*max_workspace_size*/ workspace_buffer.size()));
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> absl::StatusOr<se::blas::ProfileResult> {
       // Run a warmup iteration without the profiler active.
+      TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithm));
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
-          workspace_buffer));
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, workspace_buffer));
       se::blas::ProfileResult profile_result;
       profile_result.set_warmup_run_executed(true);
       TF_RETURN_IF_ERROR(plan->ExecuteOnStream(
           stream_, LhsBuffer(), RhsBuffer(), OutputBuffer(), OutputBuffer(),
           bias_buffer, aux_buffer, a_scale_buffer, b_scale_buffer,
-          c_scale_buffer, d_scale_buffer, d_amax_buffer, algorithm,
-          workspace_buffer, &profile_result));
+          c_scale_buffer, d_scale_buffer, d_amax_buffer, workspace_buffer,
+          &profile_result));
       return std::move(profile_result);
     };
 

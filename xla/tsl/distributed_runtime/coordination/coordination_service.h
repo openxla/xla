@@ -43,7 +43,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 
 namespace tsl {
-class Env;
 
 // Coordination service is used for controlling and coordinating distributed
 // execution in a cluster of multiple tasks.
@@ -90,14 +89,6 @@ class CoordinationService {
       Env* env, const tensorflow::CoordinationServiceConfig& config,
       std::unique_ptr<CoordinationClientCache> cache) {
     return std::make_unique<CoordinationService>(env, config, std::move(cache));
-  }
-
-  // TODO: b/410607726 - Remove once deprecated EnableCoordinationService is
-  // unused.
-  static std::unique_ptr<CoordinationService> EnableCoordinationService(
-      Env* env, const tensorflow::CoordinationServiceConfig& config,
-      std::unique_ptr<CoordinationClientCache> cache) {
-    return Create(env, config, std::move(cache));
   }
 
   CoordinationService(Env* env,
@@ -653,10 +644,6 @@ class CoordinationService {
   CoordinationService(const CoordinationService&) = delete;
   void operator=(const CoordinationService&) = delete;
 };
-
-// TODO: b/410607726 - Remove once deprecated CoordinationServiceInterface is
-// removed.
-using CoordinationServiceInterface = CoordinationService;
 
 }  // namespace tsl
 

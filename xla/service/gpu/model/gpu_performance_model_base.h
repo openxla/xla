@@ -126,22 +126,6 @@ class GpuPerformanceModelCache {
       fusion_runtime_data_;
 };
 
-struct GpuPerformanceModelOptions {
-  // If present, use this to retrieve fusion analyses.
-  HloFusionAnalysisCache* fusion_analysis_cache = nullptr;
-
-  GpuPerformanceModelCache* gpu_performance_model_cache = nullptr;
-
-  static GpuPerformanceModelOptions Default(
-      HloFusionAnalysisCache* fusion_analysis_cache = nullptr,
-      GpuPerformanceModelCache* gpu_performance_model_cache = nullptr) {
-    GpuPerformanceModelOptions config;
-    config.fusion_analysis_cache = fusion_analysis_cache;
-    config.gpu_performance_model_cache = gpu_performance_model_cache;
-    return config;
-  }
-};
-
 class GpuPerformanceModelBase {
  public:
   struct RunTimes {
@@ -218,6 +202,10 @@ class GpuPerformanceModelBase {
 
   static absl::Duration WriteTime(const se::DeviceDescription& gpu_device_info,
                                   int64_t bytes_written);
+
+  static int64_t CalculateEffectiveFlopsPerNs(
+      const se::DeviceDescription& gpu_device_info, int64_t num_blocks,
+      int64_t num_threads_per_block);
 
   static absl::Duration ComputeTime(
       const se::DeviceDescription& gpu_device_info, int64_t flops,

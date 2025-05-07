@@ -110,8 +110,9 @@ absl::Status HloGumgraph::ConstructGraph(const HloModule& hlo_module) {
               if (parent == nullptr || child == nullptr) {
                 return absl::InternalError(absl::StrFormat(
                     "Called computation instruction (%s) operand not found "
-                    "in the called computation: %s parameters",
-                    child->GetName(), parent->GetName()));
+                    "in the called computation: %s parameters (%dth parameter)",
+                    child == nullptr ? "nullptr" : child->GetName(),
+                    parent == nullptr ? "nullptr" : parent->GetName(), i));
               }
               AddEdge(parent, child);
             }
@@ -301,7 +302,7 @@ void HloGumgraph::PrecomputeDfsPosition() {
 }
 
 absl::StatusOr<std::unique_ptr<const HloGumgraph>> HloGumgraph::Create(
-    absl::Nonnull<const HloModule*> hlo_module,
+    const HloModule* absl_nonnull hlo_module,
     const HloGumgraphFingerprintOptions& fingerprint_options) {
   CHECK(hlo_module != nullptr) << "Expected a non-null hlo module";
   CHECK(hlo_module->entry_computation() != nullptr)

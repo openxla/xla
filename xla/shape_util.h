@@ -447,7 +447,6 @@ class ShapeUtil {
       PrimitiveType element_type, absl::Span<const int64_t> dimensions,
       absl::Span<const int64_t> minor_to_major,
       absl::Span<const DimLevelType> dim_level_types,
-      absl::Span<const bool> dim_unique = {},
       absl::Span<const bool> dim_ordered = {},
       PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID,
       PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID,
@@ -1063,17 +1062,6 @@ class ShapeUtil {
   static std::vector<const Shape*> FlattenTupleShape(const Shape& shape);
 
  private:
-  // Fills *shape ignoring dynamic dimensions. Returns true on success.
-  // This populates the following fields in the shape:
-  // - sets shape->element_type to element_type,
-  // - sets shape->dimensions to dimensions,
-  // - sets shape->layout.minor_to_major to [ndims - 1, ndims - 2, ..., 0]
-  //   where ndims is the size of dimensions.
-  // REQUIRES: *shape is empty.
-  [[nodiscard]] static bool FillNewShape(PrimitiveType element_type,
-                                         absl::Span<const int64_t> dimensions,
-                                         Shape* shape);
-
   // Helper for ForEachSubshape which visits the subshapes of the given shape in
   // DFS pre-order starting with the index.
   template <typename Fn>

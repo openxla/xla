@@ -524,7 +524,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDotLoop(
   const mlir::Type accumulator_type =
       result_element_type.isBF16() ? b.getF32Type() : result_element_type;
   Value accum_init_value;
-  if (auto complex_ty = accumulator_type.dyn_cast<mlir::ComplexType>()) {
+  if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(accumulator_type)) {
     // For complex, build real-zero and imag-zero separately:
     mlir::Type element_ty = complex_ty.getElementType();
 
@@ -1230,7 +1230,7 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
   int offset = 0;
   for (auto root : callee_subgraph.roots) {
     int root_arity =
-        root->shape().IsTuple() ? root->shape().tuple_shapes_size() : 1;
+        root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
     if (root == operand) {
       return results.slice(offset, root_arity);
     }
@@ -1313,7 +1313,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::Convert() {
       auto injected =
           this_fn_.getArguments().take_back(subgraph_.num_injected_values);
       int arity =
-          root->shape().IsTuple() ? root->shape().tuple_shapes_size() : 1;
+          root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
       absl::c_copy(injected.slice(it->second, arity),
                    std::back_inserter(results));
       continue;

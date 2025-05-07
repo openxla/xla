@@ -14,11 +14,12 @@ package_group(
 )
 
 cc_library(
-    name = "backend",
-    hdrs = ["backend.h"],
+    name = "codegen_backend",
+    hdrs = ["codegen_backend.h"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
+        "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",

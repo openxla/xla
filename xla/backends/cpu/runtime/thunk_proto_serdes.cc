@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -71,6 +72,24 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 
 namespace xla::cpu {
+
+void ForEachThunkProto(const ThunkSequenceProto& proto,
+                       std::function<void(const ThunkProto&)> callback) {
+  for (const ThunkProto& thunk_proto : proto.thunks()) {
+    if (thunk_proto.has_call_thunk()) {
+      ForEachThunkProto(thunk_proto.call_thunk().called_sequence(), callback);
+    } else if (thunk_proto.has_conditional_thunk()) {
+      for (const ThunkSequenceProto& branch_sequence :
+           thunk_proto.conditional_thunk().branch_sequences()) {
+        ForEachThunkProto(branch_sequence, callback);
+      }
+    } else if (thunk_proto.has_while_thunk()) {
+      ForEachThunkProto(thunk_proto.while_thunk().body_sequence(), callback);
+      ForEachThunkProto(thunk_proto.while_thunk().cond_sequence(), callback);
+    }
+    callback(thunk_proto);
+  }
+}
 
 static absl::StatusOr<CollectiveThunk::CollectiveKind>
 ProtoCollectiveThunkToCollectiveThunkKind(const CollectiveThunkProto& proto) {
@@ -211,9 +230,9 @@ static absl::StatusOr<CollectiveThunk::OpParams> OpParamsFromProto(
   return op_params;
 }
 
-static absl::StatusOr<BufferAllocationSliceProto> SerializeSliceIntoProto(
-    const BufferAllocation::Slice& slice) {
-  BufferAllocationSliceProto proto;
+static absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto>
+SerializeSliceIntoProto(const BufferAllocation::Slice& slice) {
+  xla::buffer_assignment::BufferAllocationSliceProto proto;
   proto.set_offset(slice.offset());
   proto.set_size(slice.size());
   proto.set_buffer_allocation_index(
@@ -222,7 +241,7 @@ static absl::StatusOr<BufferAllocationSliceProto> SerializeSliceIntoProto(
 }
 
 static absl::StatusOr<BufferAllocation::Slice> DeserializeSliceFromProto(
-    const BufferAllocationSliceProto& proto,
+    const xla::buffer_assignment::BufferAllocationSliceProto& proto,
     const std::vector<BufferAllocation>& buffer_allocations) {
   const BufferAllocation& allocation =
       buffer_allocations[proto.buffer_allocation_index()];
@@ -244,7 +263,7 @@ DeserializeSliceShapeFromProto(
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice slice,
       DeserializeSliceFromProto(proto.slice(), buffer_allocations));
-  Shape shape(proto.shape());
+  TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.shape()));
   return std::make_pair(slice, shape);
 }
 
@@ -1324,14 +1343,14 @@ static absl::StatusOr<std::unique_ptr<Thunk>> KernelThunkFromProto(
   std::vector<BufferAllocation::Slice> arguments_buffers;
   std::vector<BufferAllocation::Slice> results_buffers;
 
-  for (const BufferAllocationSliceProto& buffer_proto :
+  for (const xla::buffer_assignment::BufferAllocationSliceProto& buffer_proto :
        proto.kernel_thunk().arguments_buffers()) {
     TF_ASSIGN_OR_RETURN(auto buffer, DeserializeSliceFromProto(
                                          buffer_proto, buffer_allocations));
     arguments_buffers.push_back(std::move(buffer));
   }
 
-  for (const BufferAllocationSliceProto& buffer_proto :
+  for (const xla::buffer_assignment::BufferAllocationSliceProto& buffer_proto :
        proto.kernel_thunk().results_buffers()) {
     TF_ASSIGN_OR_RETURN(auto buffer, DeserializeSliceFromProto(
                                          buffer_proto, buffer_allocations));
@@ -1494,9 +1513,10 @@ static absl::StatusOr<std::unique_ptr<WhileThunk>> WhileThunkFromProto(
                                 buffer_allocations));
 
   std::optional<int64_t> trip_count = std::nullopt;
-  if (proto.while_thunk().has_trip_count()) {
+  if (proto.while_thunk().trip_count().contains_value()) {
     trip_count = proto.while_thunk().trip_count().value();
   }
+
   return WhileThunk::Create(std::move(info), cond_buffer,
                             std::move(*cond_sequence),
                             std::move(*body_sequence), trip_count);

@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/ifrt/tuple.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -33,14 +34,13 @@ namespace xla {
 namespace ifrt {
 namespace {
 
-absl::StatusOr<tsl::RCReference<Array>> MakeArray(Client* client) {
+absl::StatusOr<ArrayRef> MakeArray(Client* client) {
   DType dtype(DType::kF32);
   Shape shape({2, 3});
   std::vector<float> data(6);
   std::iota(data.begin(), data.end(), 0);
   Device* device = client->addressable_devices().at(0);
-  std::shared_ptr<const Sharding> sharding =
-      SingleDeviceSharding::Create(device, MemoryKind());
+  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
   return client->MakeArrayFromHostBuffer(
       data.data(), dtype, shape,

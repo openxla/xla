@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/dot_search_space.h"
+#include "xla/service/gpu/autotuning/redzone_buffers.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -887,23 +888,37 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
   bool small_dot = ShapeUtil::ElementsIn(dot.operand(0)->shape()) +
                        ShapeUtil::ElementsIn(dot.operand(1)->shape()) <=
                    kMinGemmElements;
+  // TODO: b/393299275 - Remove this once the new emitter lands and we can
+  // support slices in contracting dimension with splits.
+  bool supports_contracting_split =
+      HloBfsFindAll({&dot}, [&](const HloInstruction* node) {
+        return node->opcode() == HloOpcode::kSlice;
+      }).empty();
   bool autotune_contracting_split =
+      supports_contracting_split &&
       debug_options_.xla_gpu_enable_split_k_autotuning();
 
   if (debug_options_.xla_gpu_experimental_enable_dynamic_dot_search_space()) {
-    if (!IsAutotuningEnabled()) {
-      return {{kDefaultConfig}};
-    }
     TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(),
                                             &dot);
     VLOG(1) << "Generating configs from search space: "
             << search_space.ToString();
     // We don't need to consider small_dot here. The new search space will
     // already generate a unique config for small problems.
-    return search_space.GenerateConfigs(
+    std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs(
         /*force_contracting_split=*/autotune_contracting_split
             ? std::nullopt
             : std::make_optional(1));
+    if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
+      VLOG(1) << "Restricting configs to the default set.";
+      configs = search_space.OptimizeConfigSet(
+          configs, /*hints=*/GetDefaultTritonConfigs());
+    }
+    if (!IsAutotuningEnabled()) {
+      // Keep the first config, which likely does not spill registers.
+      configs.resize(1);
+    }
+    return configs;
   }
 
   // Retrieve the minimum bit-width participating in the dot. This is needed
@@ -1192,16 +1207,22 @@ absl::StatusOr<AutotuneResult> GemmFusionAutotunerImpl::MeasurePerformance(
   if (!stream_exec->SynchronizeAllActivity()) {
     return Internal("Failed to synchronize GPU for autotuning.");
   }
-  TF_ASSIGN_OR_RETURN(se::Stream* const stream, config_.GetStream());
 
   VLOG(5) << "Trying : " << ConfigToString(candidate.config);
   AutotuneResult res = FromConfig(candidate.config);
 
   const HloComputation* fusion_computation = fusion.called_computation();
-  TF_ASSIGN_OR_RETURN(auto rz_buffers,
-                      RedzoneBuffers::FromInstruction(
-                          *fusion_computation->FusionInstruction(), config_,
-                          debug_options_, RedzoneBuffers::kAllInputs));
+
+  bool should_init_buffers = config_.should_init_buffers();
+  bool should_check_correctness = config_.should_check_correctness();
+  int redzone_padding_bytes = debug_options_.xla_gpu_redzone_padding_bytes();
+  TF_ASSIGN_OR_RETURN(se::Stream * stream, config_.GetStream());
+  TF_ASSIGN_OR_RETURN(
+      auto rz_buffers,
+      RedzoneBuffers::FromInstruction(
+          *fusion_computation->FusionInstruction(), config_.GetAllocator(),
+          stream, RedzoneBuffers::kAllInputs, should_init_buffers,
+          should_check_correctness, redzone_padding_bytes));
 
   TF_ASSIGN_OR_RETURN(
       ProfilingOutput profiling_output,

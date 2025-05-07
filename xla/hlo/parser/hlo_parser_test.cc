@@ -2767,12 +2767,12 @@ ENTRY test {
 R"(HloModule test
 
 ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+,S)} parameter(0)
+  ROOT root = f32[10,10]{1,0:D(C,S)} parameter(0)
 })",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C+,S)})->f32[10,10]{1,0:D(C+,S)}}
+R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C,S)})->f32[10,10]{1,0:D(C,S)}}
 
 ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+,S)} parameter(0)
+  ROOT root = f32[10,10]{1,0:D(C,S)} parameter(0)
 })",
 },
 
@@ -2781,12 +2781,12 @@ ENTRY test {
 R"(HloModule test
 
 ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+~,S~)} parameter(0)
+  ROOT root = f32[10,10]{1,0:D(C~,S~)} parameter(0)
 })",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C+~,S~)})->f32[10,10]{1,0:D(C+~,S~)}}
+R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C~,S~)})->f32[10,10]{1,0:D(C~,S~)}}
 
 ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C+~,S~)} parameter(0)
+  ROOT root = f32[10,10]{1,0:D(C~,S~)} parameter(0)
 })",
 },
 });
@@ -4799,12 +4799,11 @@ TEST_F(HloParserTest, ParseDynamicTuple) {
 TEST_F(HloParserTest, ParseInvalidDimLevel) {
   constexpr absl::string_view shape_string = "f32[123]{0:D(D+~)}";
   absl::StatusOr<Shape> result = ParseShape(shape_string);
-  ASSERT_THAT(
-      result.status(),
-      tsl::testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          testing::HasSubstr(
-              "invalid DimLevelType/unique/ordered combination in shape")));
+  ASSERT_THAT(result.status(),
+              tsl::testing::StatusIs(
+                  tsl::error::INVALID_ARGUMENT,
+                  testing::HasSubstr(
+                      "invalid DimLevelType/ordered combination in shape")));
 }
 
 TEST_F(HloParserTest, NegativeParameterNumber) {
@@ -5581,11 +5580,11 @@ ENTRY %Entry (p0: f32[10]) -> f32[20] {
   ROOT %async-done.1 = f32[20]{0} async-done(((f32[10]{0}), f32[20]{0}, s32[]) %async-start.1)
 }
   )";
-  EXPECT_THAT(ParseAndReturnUnverifiedModule(hlo_string).status(),
-              tsl::testing::StatusIs(
-                  tsl::error::INVALID_ARGUMENT,
-                  HasSubstr("Computation async_wrapped is already referenced "
-                            "by another async op")));
+  EXPECT_THAT(
+      ParseAndReturnUnverifiedModule(hlo_string).status(),
+      tsl::testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                             HasSubstr("Computation async_wrapped is called by "
+                                       "more than one async op")));
 }
 
 TEST_F(HloParserTest, AsyncUpdateWrongComputation) {

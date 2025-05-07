@@ -81,7 +81,7 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
 
   // Returns a single device sharding. Generally callers should prefer to use
   // this when possible for optimal performance.
-  std::shared_ptr<ifrt::Sharding> default_sharding() const;
+  ifrt::ShardingRef default_sharding() const;
 
   // Returns the underlying NanoRtClient.
   NanoRtClient* nano_client() { return &client_; }
@@ -91,22 +91,19 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
   // Creates an array from a host buffer. The buffer will be used directly
   // without a copy if the copy semantics allow it and the layout is row major
   // and dense.
-  absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeArrayFromHostBuffer(
+  absl::StatusOr<ifrt::ArrayRef> MakeArrayFromHostBuffer(
       const void* data, ifrt::DType dtype, ifrt::Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      absl::Nonnull<std::shared_ptr<const ifrt::Sharding>> sharding,
-      HostBufferSemantics semantics,
+      ifrt::ShardingRef sharding, HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer,
       tsl::RCReference<xla::ifrt::UserContext> user_context) override;
 
-  absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>>
-  MakeArraysFromHostBufferShards(
+  absl::StatusOr<std::vector<ifrt::ArrayRef>> MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
       HostBufferSemantics semantics,
       tsl::RCReference<xla::ifrt::UserContext> user_context) override;
 
-  absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>>
-  MakeErrorArrays(
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> MakeErrorArrays(
       const absl::Status& error,
       absl::Span<const xla::ifrt::ArraySpec> array_specs,
       tsl::RCReference<xla::ifrt::UserContext> user_context) override;
@@ -117,23 +114,20 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
   //
   // Otherwise we will produce an assembled array on demand when it is first
   // accessed by an XLA program.
-  absl::StatusOr<tsl::RCReference<ifrt::Array>>
-  AssembleArrayFromSingleDeviceArrays(
-      ifrt::DType dtype, ifrt::Shape shape,
-      absl::Nonnull<std::shared_ptr<const ifrt::Sharding>> sharding,
-      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
+  absl::StatusOr<ifrt::ArrayRef> AssembleArrayFromSingleDeviceArrays(
+      ifrt::DType dtype, ifrt::Shape shape, ifrt::ShardingRef sharding,
+      absl::Span<ifrt::ArrayRef> arrays,
       ifrt::ArrayCopySemantics array_copy_semantics,
       ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override;
 
-  absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> CopyArrays(
-      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
+  absl::StatusOr<std::vector<ifrt::ArrayRef>> CopyArrays(
+      absl::Span<ifrt::ArrayRef> arrays,
       std::optional<ifrt::DeviceListRef> devices,
       std::optional<ifrt::MemoryKind> memory_kind,
       ifrt::ArrayCopySemantics semantics) override;
 
-  absl::StatusOr<std::vector<tsl::RCReference<xla::ifrt::Array>>> RemapArrays(
-      const ifrt::RemapPlan& plan,
-      absl::Span<tsl::RCReference<xla::ifrt::Array>> arrays,
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> RemapArrays(
+      const ifrt::RemapPlan& plan, absl::Span<xla::ifrt::ArrayRef> arrays,
       ifrt::ArrayCopySemantics semantics) override;
 
   ifrt::Future<> GetReadyFuture(
@@ -194,10 +188,6 @@ class NanoIfrtClient : public llvm::RTTIExtends<NanoIfrtClient, ifrt::Client> {
   std::unique_ptr<ifrt::Compiler> compiler_;
   std::unique_ptr<ifrt::Memory> memory_;
   std::vector<std::unique_ptr<ifrt::Device>> owned_devices_;
-
-  // The default sharding for this client. When this sharding is used it
-  // typically means that we can use an array's contents directly.
-  std::shared_ptr<ifrt::Sharding> default_sharding_;
 
   // Some of the ifrt::Client methods return a span of devices, so we need to
   // keep storage for them here.

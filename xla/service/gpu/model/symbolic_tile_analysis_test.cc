@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/model/constraint_expression.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -114,7 +114,7 @@ class FakeEmitterSpecificConstraints : public EmitterSpecificConstraints {
   int64_t dim0_tile_size_;
 };
 
-class SymbolicTileAnalysisTest : public HloTestBase {
+class SymbolicTileAnalysisTest : public HloHardwareIndependentTestBase {
  public:
   std::optional<SymbolicTileAnalysis> TryAnalyzeModule(
       HloModule* module,
@@ -523,6 +523,39 @@ fused_computation {
 ENTRY entry_computation {
   param_0.2 = f32[6400] parameter(0)
   ROOT fusion = (f32[64,100], f32[6400]) fusion(param_0.2), kind=kCustom,
+    calls=fused_computation
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  auto maybe_tiled_hlo_computation = analysis->ComputeTiledHloInstructions(
+      /*tile_parameters=*/{1, 16},
+      /*constraints_are_known_satisfied=*/false,
+      /*compute_all_tile_offset_indexing_maps=*/false);
+  EXPECT_THAT(
+      maybe_tiled_hlo_computation.status(),
+      tsl::testing::StatusIs(
+          tsl::error::UNIMPLEMENTED,
+          ::testing::HasSubstr("Unsupported case of multi-output fusion")));
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ExtraOutputCannotReuseTileForExpandingReshapeDueToDifferentTileOffsets) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_computation {
+  param_0 = f32[36] parameter(0)
+  abs = f32[36] abs(param_0)
+  reshape = f32[3,12] reshape(abs)
+  ROOT tuple = (f32[3,12], f32[36]) tuple(reshape, abs)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[36] parameter(0)
+  ROOT fusion = (f32[3,12], f32[36]) fusion(param_0), kind=kCustom,
     calls=fused_computation
 })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,

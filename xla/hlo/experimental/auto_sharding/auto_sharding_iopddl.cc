@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_iopddl.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -37,15 +37,32 @@ iopddl::Cost ConvertCost(const double cost) {
 }
 
 iopddl::Problem ConvertToProblem(const AutoShardingSolverRequest& request) {
-  CHECK(request.live().empty());  // Contest files don't support live matrices.
   CHECK(request.node_groups().empty());  // Contest files don't support groups.
   iopddl::Problem problem = {.name = request.request_name()};
+  std::vector<iopddl::Interval> node_intervals;
   for (int64_t node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
-    CHECK_LT(node_idx, request.node_intervals_size());
-    const auto& interval = request.node_intervals(node_idx);
+    iopddl::Interval node_interval = {kInfinityInt, -1};
+    if (request.live().empty()) {
+      CHECK_LT(node_idx, request.node_intervals_size());
+      const auto& interval = request.node_intervals(node_idx);
+      if (interval.first() <= interval.second()) {
+        node_interval = {interval.first(), interval.second() + 1};
+      }
+    }
+    node_intervals.push_back(node_interval);
+  }
+  for (LivenessIdx t = 0; t < request.live_size(); ++t) {
+    for (int64_t node_idx : request.live(t).nodes()) {
+      node_intervals[node_idx] = {
+          std::min(node_intervals[node_idx].first, t),
+          std::max(node_intervals[node_idx].second, t + 1)};
+    }
+  }
+  for (int64_t node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
+    const auto& interval = node_intervals[node_idx];
     iopddl::Interval node_interval = {0, 0};
-    if (interval.first() <= interval.second()) {
-      node_interval = {interval.first(), interval.second() + 1};
+    if (interval.first <= interval.second) {
+      node_interval = {interval.first, interval.second};
     }
     problem.nodes.push_back({node_interval});
     CHECK_LT(node_idx, request.s_len_size());
@@ -67,16 +84,26 @@ iopddl::Problem ConvertToProblem(const AutoShardingSolverRequest& request) {
   // The first kind of edges come from request.edges
   for (int64_t edge_idx = 0; edge_idx < request.edges_size(); ++edge_idx) {
     const auto& edge = request.edges(edge_idx);
-    CHECK_LT(edge.first(), request.s_len_size());
-    CHECK_LT(edge.second(), request.s_len_size());
+    NodeIdx u = edge.first(), v = edge.second();
+    CHECK_LT(u, request.s_len_size());
+    CHECK_LT(v, request.s_len_size());
     CHECK_LT(edge_idx, request.resharding_costs_size());
-    problem.edges.push_back({{edge.first(), edge.second()}});
-    for (int64_t i = 0; i < request.s_len(edge.first()); ++i) {
-      for (int64_t j = 0; j < request.s_len(edge.second()); ++j) {
-        const int64_t k = i * request.s_len(edge.second()) + j;
+    problem.edges.push_back({{u, v}});
+    double min_cost = 0.0;
+    for (int64_t i = 0; i < request.s_len(u); ++i) {
+      for (int64_t j = 0; j < request.s_len(v); ++j) {
+        const int64_t k = i * request.s_len(v) + j;
+        CHECK_LT(k, request.resharding_costs(edge_idx).costs_size());
+        min_cost =
+            std::min(min_cost, request.resharding_costs(edge_idx).costs(k));
+      }
+    }
+    for (int64_t i = 0; i < request.s_len(u); ++i) {
+      for (int64_t j = 0; j < request.s_len(v); ++j) {
+        const int64_t k = i * request.s_len(v) + j;
         CHECK_LT(k, request.resharding_costs(edge_idx).costs_size());
         const iopddl::Cost cost =
-            ConvertCost(request.resharding_costs(edge_idx).costs(k));
+            ConvertCost(request.resharding_costs(edge_idx).costs(k) - min_cost);
         problem.edges.back().strategies.push_back({cost});
       }
     }
@@ -232,50 +259,6 @@ void RandomizeCosts(iopddl::Problem& problem) {
       randomize(strategy.cost, multiplier);
     }
   }
-}
-
-// TODO(moffitt): Re-implement this using an XLA-friendly library (eg, jsoncpp).
-std::string ConvertToJsonString(const iopddl::Problem& problem) {
-/*
-  nlohmann::json json;
-  json["problem"]["name"] = problem.name;
-  json["problem"]["nodes"]["intervals"] = nlohmann::json::array();
-  json["problem"]["nodes"]["costs"] = nlohmann::json::array();
-  json["problem"]["nodes"]["usages"] = nlohmann::json::array();
-  for (const iopddl::Node& node : problem.nodes) {
-    auto intervals = nlohmann::json::array();
-    auto costs = nlohmann::json::array();
-    auto usages = nlohmann::json::array();
-    intervals.push_back(node.interval.first);
-    intervals.push_back(node.interval.second);
-    for (const iopddl::Strategy& strategy : node.strategies) {
-      costs.push_back(strategy.cost);
-      usages.push_back(strategy.usage);
-    }
-    json["problem"]["nodes"]["intervals"].push_back(intervals);
-    json["problem"]["nodes"]["costs"].push_back(costs);
-    json["problem"]["nodes"]["usages"].push_back(usages);
-  }
-  json["problem"]["edges"]["nodes"] = nlohmann::json::array();
-  json["problem"]["edges"]["costs"] = nlohmann::json::array();
-  for (const iopddl::Edge& edge : problem.edges) {
-    auto nodes = nlohmann::json::array();
-    auto costs = nlohmann::json::array();
-    for (const iopddl::NodeIdx node_idx : edge.nodes) {
-      nodes.push_back(node_idx);
-    }
-    for (const iopddl::Strategy& strategy : edge.strategies) {
-      costs.push_back(strategy.cost);
-    }
-    json["problem"]["edges"]["nodes"].push_back(nodes);
-    json["problem"]["edges"]["costs"].push_back(costs);
-  }
-  if (problem.usage_limit.has_value()) {
-    json["problem"]["usage_limit"] = *problem.usage_limit;
-  }
-  return json.dump();
-*/
-  return "";
 }
 
 }  // namespace spmd

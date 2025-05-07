@@ -23,6 +23,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -99,6 +100,12 @@ inline constexpr absl::string_view kUncompilableFusion =
 
 inline constexpr absl::string_view kTopKCustomCallTarget = "__gpu$TopK";
 
+// The number of shared memory banks.
+inline constexpr int64_t kNumShmemBanks = 32;
+
+// The bitwidth of a shared memory bank.
+inline constexpr int64_t kBankBitwidth = 32;
+
 // The name of the custom fusion config for dynamic slice fusion with static
 // slices, such that the offset can be computed at compile time.
 inline constexpr absl::string_view
@@ -121,6 +128,10 @@ std::optional<std::string> GetCustomFusionConfigName(
 // Returns true if the given instruction is a custom fusion for dynamic slice
 // fusion. This is determined by checking the name of custom fusion config.
 bool IsDynamicSliceFusion(const HloInstruction* instr);
+
+// Returns the bitwidth of the given primitive type. Unfortunately,
+// primitive_util::BitWidth(PRED) return 1 instead of 8.
+int GetBitwidth(PrimitiveType type);
 
 // Returns true if the given instruction is a dynamic memcpy fusion. This
 // function only checks the fusion kind, which is populated by the
@@ -198,14 +209,17 @@ struct TransposeDescription {
   // Permutations of normalized transpose dimensions.
   absl::InlinedVector<int64_t, 3> permutation;
 
-  TransposeDescription(absl::InlinedVector<int64_t, 3> dimensions,
-                       absl::InlinedVector<int64_t, 3> permutation)
-      : TransposeDescription(/*instr=*/nullptr, dimensions, permutation) {}
+  // Required amount of shared memory in bytes.
+  int64_t shmem_usage = 0;
 
   TransposeDescription(const HloInstruction* instr,
                        absl::InlinedVector<int64_t, 3> dimensions,
-                       absl::InlinedVector<int64_t, 3> permutation)
-      : instr(instr), dimensions(dimensions), permutation(permutation) {}
+                       absl::InlinedVector<int64_t, 3> permutation,
+                       int64_t shmem_usage)
+      : instr(instr),
+        dimensions(dimensions),
+        permutation(permutation),
+        shmem_usage(shmem_usage) {}
 
   // Transpose instruction input shape.
   const Shape& input_shape() const { return instr->operand(0)->shape(); }
@@ -213,7 +227,9 @@ struct TransposeDescription {
   // Returns true, if both descriptions have the same dimensions and
   // permutation, even if they're produced by different instructions.
   bool IsEquivalent(const TransposeDescription& other) const {
-    return dimensions == other.dimensions && permutation == other.permutation;
+    return dimensions == other.dimensions && permutation == other.permutation &&
+           GetBitwidth(instr->shape().element_type()) ==
+               GetBitwidth(other.instr->shape().element_type());
   }
 };
 
@@ -238,7 +254,7 @@ struct TransposeSpec {
   const Shape& input_shape() const { return transpose->operand(0)->shape(); }
   const Shape& output_shape() const { return transpose->shape(); }
 
-  int64_t rank() const { return input_shape().dimensions_size(); }
+  int64_t rank() const { return input_shape().dimensions().size(); }
   int64_t canonical_rank() const { return canonical_input_shape.size(); }
 
   int64_t dim_A() const { return canonical_input_shape[dim_A_id()]; }
@@ -273,6 +289,10 @@ struct TransposeSpec {
 };
 
 TransposeSpec GetTransposeSpec(const HloTransposeInstruction* transpose);
+
+// Returns the default tile sizes for the packed transpose emitter.
+absl::StatusOr<absl::InlinedVector<int64_t, 3>> GetPackedTransposeTileSizes(
+    const TransposeSpec& spec);
 
 // Checks if the instruction is elementwise.
 bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count = 1);
@@ -343,28 +363,31 @@ absl::StatusOr<std::string> FingerprintWithBackendConfig(
 }
 
 struct InductionVariableFunctionalDependency {
-  // The value that is derived from the induction variable. This is guaranteed
-  // to have no other transitive dependencies (except constants).
-  const HloInstruction* derived_value;
+  // The dependency may be via multiple levels of intermediate calls. At each
+  // level, we need to know which parameters to evaluate, since not all of them
+  // may be relevant. The while loop's body is not included here, since the
+  // induction variable is implicitly the only dependency that is allowed.
+  // The size of the value is always the same as the number of parameters in the
+  // computation. We request a single element of inlined space, which will
+  // automatically pick the optimum value (16, usually).
+  absl::flat_hash_map<const HloComputation*,
+                      absl::InlinedVector<bool, 1 /* chosen automatically */>>
+      required_parameters;
 
   // The loop and its induction variable that the value depends on.
   const HloInstruction* loop;
   const HloInstruction* induction_var;
 };
 
-// Checks if `parameter`'s value is a pure function of a while loop's induction
-// variable. This supports parameters that are inside call, async or fusion
+// Checks if `instr`'s value is a pure function of a while loop's induction
+// variable. This supports instructions that are inside call, async or fusion
 // instructions. The dependency can be through arbitrary non-side-effecting
 // instructions.
-// `call_stack` should contain the nested instructions that are ancestor of
-// `parameter`. For example, if it is a parameter of a fusion in a while loop,
-// it should contain the while loop as the first element and the fusion as the
-// second element.
+// Currently, this does not support nested while loops. Only dependencies on the
+// inner-most while loop will successfully be analyzed.
 // Requires `while_loop_trip_count_annotator` to have been run on the loop.
 std::optional<InductionVariableFunctionalDependency>
-ResolveFunctionalDependencyOnInductionVariable(
-    absl::Span<const HloInstruction* const> call_stack,
-    const HloInstruction* parameter);
+ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr);
 
 }  // namespace gpu
 }  // namespace xla

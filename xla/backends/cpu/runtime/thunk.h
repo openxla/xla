@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
@@ -84,6 +85,13 @@ class Thunk {
     kOneDnnFusion,
   };
 
+  static absl::string_view KindToString(Kind kind);
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, Kind kind) {
+    sink.Append(KindToString(kind));
+  }
+
   struct Info {
     std::string op_name;
     std::string module_name;
@@ -125,8 +133,6 @@ class Thunk {
 
   Kind kind() const { return kind_; }
   const Info& info() const { return info_; }
-
-  static absl::string_view KindToString(Kind kind);
 
   // Returns the list of buffers used by a thunk. Thunk executor relies on this
   // information to execute thunks concurrently and to avoid data races.
@@ -181,7 +187,6 @@ class Thunk {
     const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
 
-   private:
     CustomCallExecuteParams(RunId run_id, int32_t device_ordinal,
                             const Eigen::ThreadPoolDevice* intra_op_thread_pool,
                             const ffi::ExecutionContext* ffi_execution_context);

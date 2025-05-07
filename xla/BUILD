@@ -1,7 +1,8 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 load("//xla:package_groups.bzl", "xla_package_groups")
 load("//xla:xla.default.bzl", "xla_bzl_library", "xla_cc_test", "xla_py_proto_library")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
@@ -17,6 +18,36 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
+)
+
+# Indicates whether --//third_party/tensorflow/compiler/xla:ci_build=True
+# is set on the bazel command line.
+#
+# Example:
+#   cc_binary(
+#     name = "foo",
+#     srcs = ["foo.cc"],
+#     linkstatic = select({
+#         # If --//third_party/tensorflow/compiler/xla:ci_build=True is set
+#         # on the bazel command line, then the binary is linked statically.
+#         "//xla:is_ci_build": True,
+#         # Otherwise, the binary is linked dynamically.
+#         "//conditions:default": False,
+#     }),
+#     deps = [...],
+#   )
+config_setting(
+    name = "is_ci_build",
+    flag_values = {":ci_build": "True"},
+    visibility = ["//visibility:public"],
+)
+
+# Implements the custom bazel flag
+# --//third_party/tensorflow/compiler/xla:ci_build=True.
+bool_flag(
+    name = "ci_build",
+    build_setting_default = False,
+    visibility = ["//visibility:private"],
 )
 
 exports_files([
@@ -236,10 +267,10 @@ cc_library(
     hdrs = ["status_macros.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/log",
@@ -260,8 +291,12 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
@@ -492,6 +527,7 @@ xla_cc_test(
         ":shape_util",
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/hash:hash_testing",
@@ -508,6 +544,7 @@ xla_cc_test(
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
@@ -526,8 +563,8 @@ xla_cc_test(
         ":shape_util",
         ":util",
         ":xla_data_proto_cc",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test_helpers",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_googletest//:gtest",
@@ -572,6 +609,7 @@ xla_cc_test(
         ":shape_util",
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
@@ -791,7 +829,9 @@ cc_library(
     hdrs = ["array.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":permutation_util",
         ":types",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -807,9 +847,9 @@ xla_cc_test(
         ":array",
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
     ],
 )
@@ -1324,6 +1364,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

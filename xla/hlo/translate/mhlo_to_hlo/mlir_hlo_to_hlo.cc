@@ -283,6 +283,18 @@ static xla::FftType Convert_fft_type(mlir::mhlo::FftType fft_type) {
   return fft_type_enum;
 }
 
+// Converts StringRef to xla FftType enum
+static xla::FftType Convert_fft_type(mlir::stablehlo::FftType fft_type) {
+  xla::FftType fft_type_enum;
+  // Illegal fft_type string would be caught by the verifier, so 'FftType_Parse'
+  // call below should never return false.
+  if (!FftType_Parse(std::string(mlir::stablehlo::stringifyFftType(fft_type)),
+                     &fft_type_enum))
+    return xla::FftType::FFT;
+
+  return fft_type_enum;
+}
+
 static std::vector<std::pair<int64_t, int64_t>> Convert_padding(
     std::optional<mlir::DenseIntElementsAttr> padding) {
   return xla::ConvertNx2Attribute(padding).value();
@@ -322,7 +334,7 @@ static void SetLayout(xla::Shape& shape, mlir::DenseIntElementsAttr layout) {
 
 static void SetLayout(xla::Shape& shape, mlir::ArrayAttr layouts) {
   if (shape.IsTuple()) {
-    for (int i = 0; i < shape.tuple_shapes_size(); ++i) {
+    for (int i = 0; i < shape.tuple_shapes().size(); ++i) {
       SetLayout(*shape.mutable_tuple_shapes(i),
                 mlir::cast<mlir::DenseIntElementsAttr>(layouts[i]));
     }
@@ -348,6 +360,13 @@ static std::vector<xla::Shape> ConvertTypesToShapesWithLayout(
 static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
     mlir::mhlo::Transpose transpose) {
   return xla::ConvertTranspose(mlir::mhlo::stringifyTranspose(transpose))
+      .value();
+}
+
+// Converts StringRef to xla Transpose enum.
+static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
+    mlir::stablehlo::Transpose transpose) {
+  return xla::ConvertTranspose(mlir::stablehlo::stringifyTranspose(transpose))
       .value();
 }
 
@@ -406,6 +425,7 @@ I64_ARRAY_ATTR_TO_VECTOR(broadcast_sizes);
 I64_ELEMENTS_ATTR_TO_VECTOR(broadcast_dimensions);
 I64_ARRAY_ATTR_TO_VECTOR(broadcast_dimensions);
 I64_ELEMENTS_ATTR_TO_VECTOR(permutation);
+I64_ARRAY_ATTR_TO_VECTOR(permutation);
 I64_ELEMENTS_ATTR_TO_VECTOR(start_indices);
 I64_ARRAY_ATTR_TO_VECTOR(start_indices);
 I64_ELEMENTS_ATTR_TO_VECTOR(limit_indices);
@@ -415,7 +435,9 @@ I64_ARRAY_ATTR_TO_VECTOR(strides);
 I64_ELEMENTS_ATTR_TO_VECTOR(slice_sizes);
 I64_ARRAY_ATTR_TO_VECTOR(slice_sizes);
 I64_ELEMENTS_ATTR_TO_VECTOR(fft_length);
+I64_ARRAY_ATTR_TO_VECTOR(fft_length);
 I64_ELEMENTS_ATTR_TO_VECTOR(dimensions);
+I64_ARRAY_ATTR_TO_VECTOR(dimensions);
 I64_ELEMENTS_ATTR_TO_VECTOR(window_strides);
 I64_ARRAY_ATTR_TO_VECTOR(window_strides);
 I64_ELEMENTS_ATTR_TO_VECTOR(lhs_dilation);
@@ -575,6 +597,24 @@ std::optional<xla::ChannelHandle> Convert_channel_handle(
   return Convert_channel_handle(attr.value());
 }
 
+// `ChannelHandleAttr` is NOT optional for stablehlo sendOp, RecvOp.
+xla::ChannelHandle Convert_channel_handle(
+    mlir::stablehlo::ChannelHandleAttr attr) {
+  xla::ChannelHandle channel_handle;
+  channel_handle.set_handle(attr.getHandle());
+  channel_handle.set_type(
+      static_cast<xla::ChannelHandle::ChannelType>(attr.getType()));
+  return channel_handle;
+}
+
+// `ChannelHandleAttr` is optional for stablehlo CollectivePermuteOp,
+// CollectiveBroadcastOp, AllToAllOp, AllReduceOp, AllGatherOp, ReduceScatterOp.
+std::optional<xla::ChannelHandle> Convert_channel_handle(
+    std::optional<mlir::stablehlo::ChannelHandleAttr> attr) {
+  if (!attr.has_value()) return std::nullopt;
+  return Convert_channel_handle(attr.value());
+}
+
 // Converts the comparison_direction string attribute into the XLA enum. The
 // string is assumed to correspond to exactly one of the allowed strings
 // representing the enum. This should have been checked in the op verify method.
@@ -584,8 +624,8 @@ static xla::ComparisonDirection Convert_comparison_direction(
       .value();
 }
 
-static xla::GatherDimensionNumbers Convert_dimension_numbers(
-    mlir::mhlo::GatherDimensionNumbersAttr input) {
+template <typename T>
+static xla::GatherDimensionNumbers Convert_dimension_numbers(T input) {
   xla::GatherDimensionNumbers output;
 
   auto offset_dims = input.getOffsetDims();
@@ -616,6 +656,18 @@ static xla::GatherDimensionNumbers Convert_dimension_numbers(
 
   output.set_index_vector_dim(input.getIndexVectorDim());
   return output;
+}
+
+static xla::GatherDimensionNumbers Convert_dimension_numbers(
+    mlir::mhlo::GatherDimensionNumbersAttr input) {
+  return Convert_dimension_numbers<mlir::mhlo::GatherDimensionNumbersAttr>(
+      input);
+}
+
+static xla::GatherDimensionNumbers Convert_dimension_numbers(
+    mlir::stablehlo::GatherDimensionNumbersAttr input) {
+  return Convert_dimension_numbers<mlir::stablehlo::GatherDimensionNumbersAttr>(
+      input);
 }
 
 static xla::ScatterDimensionNumbers Convert_scatter_dimension_numbers(
@@ -1262,6 +1314,280 @@ LogicalResult ExportXlaOp(SubtractOp op, OpLoweringContext ctx) {
   auto xla_result = xla::Sub(Unwrap(lhs), Unwrap(rhs));
   value_map[result] = xla_result;
   return mlir::success();
+}
+
+LogicalResult ExportXlaOp(AllGatherOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+
+  SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op.getOperation(), op.getOperands(), ctx, operands)))
+    return op.emitOpError("failed to get tuple");
+
+  mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(op.getOperation());
+  if (failed(shape_or)) return op.emitOpError("failed to extract XLA shape");
+
+  auto all_gather_dim = op.getAllGatherDim();
+  int64_t shard_count = 0;
+
+  for (const auto& indexed_pair :
+       llvm::enumerate(llvm::zip(op.getOperandTypes(), op.getResultTypes()))) {
+    auto [operand_type, result_type] = indexed_pair.value();
+    TensorType operand_ttype = mlir::cast<TensorType>(operand_type);
+    TensorType result_ttype = mlir::cast<TensorType>(result_type);
+    if (!operand_ttype || !result_ttype)
+      return op.emitOpError("operands/results must be TensorTypes");
+
+    if (!operand_ttype.hasStaticShape() || !result_ttype.hasStaticShape())
+      return op.emitOpError("operands/results must have static shapes");
+
+    if (indexed_pair.index() == 0) {
+      shard_count = result_ttype.getDimSize(all_gather_dim) /
+                    operand_ttype.getDimSize(all_gather_dim);
+    }
+  }
+
+  if (shape_or->IsTuple()) {
+    std::optional<xla::Layout> layout = std::nullopt;
+    if (shape_or->has_layout()) layout = shape_or->layout();
+
+    auto tuple = xla::AllGatherTuple(
+        operands, all_gather_dim, shard_count,
+        Convert_replica_groups(op.getReplicaGroups()),
+        Convert_channel_handle(op.getChannelHandle()), layout,
+        Convert_use_global_device_ids(op.getUseGlobalDeviceIds()));
+    BuildGetTupleElementsForTupleResults(op, tuple, ctx);
+    return success();
+  }
+
+  value_map[op->getResults()[0]] = xla::AllGather(
+      operands[0], all_gather_dim, shard_count,
+      Convert_replica_groups(op.getReplicaGroups()),
+      Convert_channel_handle(op.getChannelHandle()), std::nullopt,
+      Convert_use_global_device_ids(op.getUseGlobalDeviceIds()));
+
+  return success();
+}
+
+LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+
+  llvm::SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op, op.getInputs(), ctx, operands))) return failure();
+
+  xla::XlaOp operand;
+  if (operands.size() == 1)
+    operand = operands[0];
+  else
+    operand = Tuple(ctx.builder, operands);
+
+  xla::XlaOp token;
+  if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
+
+  // SendOp has 1 result, but HLO Send has 3 results. Convert the sharding to a
+  // tuple sharding with 3 entries.
+  if (ctx.builder->sharding().has_value()) {
+    xla::OpSharding sharding = *ctx.builder->sharding();
+    const xla::OpSharding single_sharding = *ctx.builder->sharding();
+    sharding.set_type(xla::OpSharding::TUPLE);
+    auto* tuple_shardings = sharding.mutable_tuple_shardings();
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, sharding);
+    token = xla::internal::XlaBuilderFriend::BuildSend(
+        ctx.builder, operand, token,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  } else {
+    token = xla::internal::XlaBuilderFriend::BuildSend(
+        ctx.builder, operand, token,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
+  value_map[op] = xla::internal::XlaBuilderFriend::BuildSendDone(
+      ctx.builder, token, Convert_channel_handle(op.getChannelHandle()),
+      op.getIsHostTransfer());
+  return success();
+}
+
+LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+
+  xla::XlaOp token;
+  if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
+
+  // stablehlo.recvOp produces multiple results. The shape argument expected by
+  // the xla client API is a tuple type with two element-types: data_type : A
+  // tuple containing all the stablehlo.RecvOp result types except
+  //             the token type.
+  // token_type : The last result type of stablehlo.recvOp.
+  auto result_types = op.getResultTypes();
+  auto num_results = op.getNumResults();
+
+  xla::Shape token_shape = xla::TypeToShape(result_types[num_results - 1]);
+  std::vector<xla::Shape> subshapes;
+  for (const auto& item : llvm::enumerate(result_types)) {
+    if (item.index() == num_results - 1) break;
+    subshapes.push_back(xla::TypeToShape(item.value()));
+  }
+
+  xla::Shape data_shape;
+  if (subshapes.size() == 1)
+    data_shape = subshapes[0];
+  else
+    data_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
+
+  auto get_sharding = [](const xla::OpSharding& sharding) {
+    xla::OpSharding ret;
+    if (sharding.type() != xla::OpSharding::TUPLE) {
+      ret = sharding;
+    } else {
+      ret = sharding.tuple_shardings(0);
+    }
+    return ret;
+  };
+  if (ctx.builder->sharding().has_value()) {
+    // HLO Recv needs a 3-tuple sharding. Get the sharding from the builder and
+    // make it a 3-tuple sharding.
+    std::optional<xla::OpSharding> sharding = *ctx.builder->sharding();
+    xla::OpSharding single_sharding = get_sharding(*sharding);
+    auto* tuple_shardings = sharding->mutable_tuple_shardings();
+    tuple_shardings->Clear();
+    for (int i = 0; i < 3; ++i) {
+      tuple_shardings->Add(xla::OpSharding(single_sharding));
+    }
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, sharding);
+    token = xla::internal::XlaBuilderFriend::BuildRecv(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  } else {
+    token = xla::internal::XlaBuilderFriend::BuildRecv(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
+
+  xla::XlaOp xla_result;
+  {
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder,
+                                                    ctx.builder->sharding());
+    xla_result = xla::internal::XlaBuilderFriend::BuildRecvDone(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
+
+  xla::XlaOp data_tuple_element;
+  if (ctx.builder->sharding().has_value()) {
+    // HLO GetTupleElement needs a single sharding,
+    xla::XlaScopedShardingAssignment sharding_scope(
+        ctx.builder, get_sharding(*ctx.builder->sharding()));
+    data_tuple_element = xla::GetTupleElement(xla_result, 0);
+  } else {
+    data_tuple_element = xla::GetTupleElement(xla_result, 0);
+  }
+
+  if (subshapes.size() == 1) {
+    value_map[op.getResult(0)] = data_tuple_element;
+  } else {
+    for (const auto& item : llvm::enumerate(op.getResults())) {
+      if (item.index() == num_results - 1) break;
+      value_map[item.value()] =
+          xla::GetTupleElement(data_tuple_element, item.index());
+    }
+  }
+
+  value_map[op.getResult(num_results - 1)] =
+      xla::GetTupleElement(xla_result, 1);
+
+  return success();
+}
+
+LogicalResult ExportXlaOp(InfeedOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp token;
+  if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
+
+  // stablehlo.infeed produces multiple results. The shape argument expected
+  // by the xla client API is a tuple type with two element-types:
+  // data_type : A tuple containing all the stablehlo.infeedOp result types
+  // except
+  //             the token type.
+  // token_type : The last result type of stablehlo.infeedOp.
+  auto result_types = op.getResultTypes();
+  auto num_results = op.getNumResults();
+
+  xla::Shape token_shape = xla::TypeToShape(result_types[num_results - 1]);
+  std::vector<xla::Shape> subshapes;
+  for (const auto& item : llvm::enumerate(result_types)) {
+    if (item.index() == num_results - 1) break;
+    subshapes.push_back(xla::TypeToShape(item.value()));
+  }
+
+  xla::Shape data_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
+  auto xla_result = xla::InfeedWithToken(token, data_shape,
+                                         std::string(op.getInfeedConfig()));
+  ctx.builder->ClearSharding();
+
+  if (!subshapes.empty()) {
+    auto data_tuple_element = xla::GetTupleElement(xla_result, 0);
+    for (const auto& item : llvm::enumerate(op.getResults())) {
+      if (item.index() == num_results - 1) break;
+      value_map[item.value()] =
+          xla::GetTupleElement(data_tuple_element, item.index());
+    }
+  }
+
+  value_map[op.getResult(num_results - 1)] =
+      xla::GetTupleElement(xla_result, 1);
+
+  return success();
+}
+
+LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+
+  llvm::SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op, op.getInputs(), ctx, operands))) return failure();
+
+  const auto sharding = ctx.builder->sharding();
+  xla::XlaOp operand;
+
+  if (sharding.has_value() &&
+      sharding->tuple_shardings_size() != operands.size()) {
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
+    operand = Tuple(ctx.builder, operands);
+  } else {
+    operand = Tuple(ctx.builder, operands);
+  }
+  std::vector<xla::Shape> subshapes;
+  for (auto operand : op.getInputs())
+    subshapes.push_back(xla::TypeToShape(operand.getType()));
+
+  xla::Shape shape_with_layout = xla::ShapeUtil::MakeTupleShape(subshapes);
+
+  xla::XlaOp token;
+  if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
+
+  value_map[op] = xla::OutfeedWithToken(operand, token, shape_with_layout,
+                                        std::string(op.getOutfeedConfig()));
+  return success();
+}
+
+LogicalResult ExportXlaOp(OptimizationBarrierOp op, OpLoweringContext ctx) {
+  // In case StableHLO's OptimizationBarrierOp has multiple operands,
+  // create xla::Tuple, using those operands, to be used as
+  // sole operand of xla::OptimizationBarrier.
+  llvm::SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op, op.getOperands(), ctx, operands))) return failure();
+  if (operands.empty()) return success();
+
+  auto& value_map = *ctx.values;
+  if (operands.size() == 1) {
+    value_map[op.getOperation()->getResult(0)] =
+        xla::OptimizationBarrier(operands[0]);
+  } else {
+    auto result = xla::OptimizationBarrier(Tuple(ctx.builder, operands));
+    BuildGetTupleElementsForTupleResults(op, result, ctx);
+  }
+
+  return success();
 }
 
 }  // namespace
