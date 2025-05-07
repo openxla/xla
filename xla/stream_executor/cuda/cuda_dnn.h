@@ -27,12 +27,16 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
@@ -701,17 +705,22 @@ class CudnnSupport : public dnn::DnnSupport {
   void operator=(const CudnnSupport&) = delete;
 };
 
+using Tensor_t = std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>;
+using Graph_t = std::shared_ptr<cudnn_frontend::graph::Graph>;
+using AttentionScoreModifier_t =
+    std::function<Tensor_t(Graph_t, Tensor_t, std::vector<Tensor_t>)>;
+
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,
     const dnn::MatmulTensorDescriptor& q_descriptor,
     const dnn::MatmulTensorDescriptor& k_descriptor,
     const dnn::MatmulTensorDescriptor& v_descriptor,
     const dnn::TensorDescriptor& o_descriptor,
-    std::optional<dnn::TensorDescriptor> bias_descriptor,
-    std::optional<dnn::TensorDescriptor> stats_descriptor, double scale,
-    bool use_dropout, std::optional<double> dropout_rate,
-    dnn::FMHAMaskKind mask_type, int sliding_window_length,
-    int max_seg_per_batch);
+    const std::optional<dnn::TensorDescriptor> bias_descriptor,
+    const std::optional<dnn::TensorDescriptor> stats_descriptor, double scale,
+    const bool use_dropout, const std::optional<double> dropout_rate,
+    const dnn::FMHAMaskKind mask_type, const int sliding_window_length,
+    const int max_seg_per_batch, const xla::HloComputation* fwd_comp);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
     dnn::DnnSupport& dnn_support,
@@ -733,8 +742,10 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     const std::optional<dnn::TensorDescriptor> bias_descriptor,
     const std::optional<dnn::TensorDescriptor> dbias_descriptor,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
-    double scale, bool use_dropout, bool use_bias, dnn::FMHAMaskKind mask_type,
-    bool force_deterministic, int sliding_window_length, int max_seg_per_batch);
+    double scale, bool use_dropout, bool use_bias,
+    const dnn::FMHAMaskKind mask_type, bool force_deterministic,
+    const int sliding_window_length, const int max_seg_per_batch,
+    const xla::HloComputation* fwd_comp, const xla::HloComputation* bwd_comp);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
     dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,
