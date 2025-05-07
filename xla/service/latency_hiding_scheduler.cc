@@ -1420,6 +1420,31 @@ class ReadySetLt {
                    AsyncDepth0CandidateCondition(b, bn), "kStartAtZeroDepth");
     }
 
+    auto delay_async_start_candidate =
+        [this](DefaultSchedulerCore::ScheduleCandidate& a,
+               DefaultSchedulerCore::ScheduleCandidate& b)
+        -> std::optional<DefaultSchedulerCore::CandidateResult> {
+      // If an instruction releasing a resource is not resource constrained,
+      // delay it as much as possible.
+      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+              /*first_cond=*/!(a.node->DoesReleaseAnyResource() &&
+                               !IsResourceConstrained(a)),
+              a,
+              /*second_cond=*/
+              !(b.node->DoesReleaseAnyResource() && !IsResourceConstrained(b)),
+              b, "kDelayAsyncStart")) {
+        return value;
+      }
+      return std::nullopt;
+    };
+
+    if (sched_state_.config.aggressive_scheduling_policies &&
+        sched_state_.config.prioritize_compute_over_async_start) {
+      if (auto value = delay_async_start_candidate(a, b)) {
+        return *value;
+      }
+    }
+
     auto a_readytime = an->GetReadyTime();
     auto b_readytime = bn->GetReadyTime();
     if (a_readytime != b_readytime) {  // Quick test to avoid lots of work
