@@ -47,7 +47,7 @@ class DenylistTest : public testing::Test {
                               "data", "hlo_algorithm_denylist.pbtxt"))
             .data(),
         /*overwrite=*/1);
-    ParseDebugOptionFlagsFromEnv();
+    ParseDebugOptionFlagsFromEnv(false);
     config_ =
         ParseTextProto<GpuBackendConfig>(
             "operation_queue_id: 0 wait_on_operation_queues: [] "

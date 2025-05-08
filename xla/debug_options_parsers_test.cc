@@ -104,7 +104,7 @@ TEST(FuelTest, FuelPassCountsAreSeparate) {
   int* pargc;
   std::vector<char*>* pargv;
   ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
-  ParseDebugOptionFlagsFromEnv();
+  ParseDebugOptionFlagsFromEnv(false);
 
   EXPECT_TRUE(ConsumeFuel("ABC"));
   EXPECT_FALSE(ConsumeFuel("ABC"));
@@ -121,7 +121,7 @@ TEST(FuelTest,
   int* pargc;
   std::vector<char*>* pargv;
   ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
-  ParseDebugOptionFlagsFromEnv();
+  ParseDebugOptionFlagsFromEnv(true);
   EXPECT_FALSE(PassFuelIsSet("ABC"));
   EXPECT_TRUE(PassFuelIsSet("MNO"));
   EXPECT_FALSE(PassFuelIsSet("PQR"));
@@ -272,13 +272,6 @@ TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
                         "\"/gpu/target/config/from/debug/options/file\""));
 
   ResetFlagValues();
-  ASSERT_TRUE(ParseFlagsFromDebugOptionsFile(debug_options_file));
-  DebugOptions parsed_debug_options = GetDebugOptionsFromFlags();
-  EXPECT_EQ(parsed_debug_options.xla_dump_to(),
-            "/path/from/debug/options/file");
-  EXPECT_EQ(parsed_debug_options.xla_gpu_target_config_filename(),
-            "/gpu/target/config/from/debug/options/file");
-
   tsl::setenv("XLA_FLAGS",
               "--xla_dump_to=/path/from/env/var "
               "--xla_gpu_per_fusion_autotune_cache_dir=/path/to/autotune/cache/"
@@ -287,7 +280,21 @@ TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
   int* pargc;
   std::vector<char*>* pargv;
   ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
-  ParseDebugOptionFlagsFromEnv();
+
+  // This is a proxy for the allocate call in run_hlo_module, which parses the
+  // options from env.
+  ParseDebugOptionFlagsFromEnv(false);
+
+  ASSERT_TRUE(ParseFlagsFromDebugOptionsFile(debug_options_file));
+  DebugOptions parsed_debug_options = GetDebugOptionsFromFlags();
+  EXPECT_EQ(parsed_debug_options.xla_dump_to(),
+            "/path/from/debug/options/file");
+  EXPECT_EQ(parsed_debug_options.xla_gpu_target_config_filename(),
+            "/gpu/target/config/from/debug/options/file");
+
+  // This is a proxy for the second parsing from env var after parsing from the
+  // file.
+  ParseDebugOptionFlagsFromEnv(true);
   parsed_debug_options = GetDebugOptionsFromFlags();
   EXPECT_EQ(parsed_debug_options.xla_dump_to(), "/path/from/env/var");
   EXPECT_EQ(parsed_debug_options.xla_gpu_target_config_filename(),

@@ -423,7 +423,7 @@ int main(int argc, char** argv) {
   if (debugOptionsFilename.has_value()) {
     xla::ParseFlagsFromDebugOptionsFile(debugOptionsFilename.value());
   }
-  xla::ParseDebugOptionFlagsFromEnv();
+  xla::ParseDebugOptionFlagsFromEnv(true);
 
   // The usage string includes the message at the top of the file, the
   // DebugOptions flags and the flags defined above.

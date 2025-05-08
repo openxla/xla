@@ -41,8 +41,9 @@ void AppendDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
 // Parses the debug option flags from XLA_FLAGS environment variable. The
 // global variable containing the debug options returned from
 // 'GetDebugOptionsFromFlags' is mutated by setting fields explicitly specified
-// in the environment variable.
-void ParseDebugOptionFlagsFromEnv();
+// in the environment variable. If `reset_envvar` is true, then the environment
+// variable is read again, otherwise the previously read value is used.
+void ParseDebugOptionFlagsFromEnv(bool reset_envvar);
 
 // Parse the debug options from debug_options file. Given a string containing
 // the textual form of a DebugOptions protobuf, parses it. The global variable

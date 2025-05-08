@@ -2383,11 +2383,12 @@ static void AllocateFlags(DebugOptions* defaults) {
   flag_values = defaults;
   flag_objects = new std::vector<tsl::Flag>();
   MakeDebugOptionsFlags(flag_objects, flag_values);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }
 
-void ParseDebugOptionFlagsFromEnv() {
+void ParseDebugOptionFlagsFromEnv(bool reset_envvar) {
   absl::call_once(flags_init, &AllocateFlags, nullptr);
-  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects, reset_envvar);
 }
 
 bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
