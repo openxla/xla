@@ -151,6 +151,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//lld:Common",
+        "@llvm-project//lld:ELF",
         "@llvm-project//llvm:AMDGPUAsmParser",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:BitReader",
