@@ -43,12 +43,12 @@ namespace gpu {
 absl::Status RunNvshmemAllReduce(ReductionKind reduction_kind,
                                  std::vector<DeviceBufferPair>& buffers,
                                  se::Stream& stream) {
-  int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing nvshmem all-reduce from device ordinal: "
-          << device_ordinal;
   TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
                       collectives->CreateCommunicator());
+
+  VLOG(3) << "Performing nvshmem all-reduce from device ordinal: "
+          << *nvshmem_comm->CurrentRank();
   for (DeviceBufferPair& buffer : buffers) {
     auto event = nvshmem_comm->AllReduce(
         buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
