@@ -1872,6 +1872,7 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
 cc_library(
     name = "nvshmem_collective_thunk",
     srcs = ["nvshmem_collective_thunk.cc"],
