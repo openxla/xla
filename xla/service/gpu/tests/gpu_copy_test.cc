@@ -399,17 +399,17 @@ TEST_F(GpuCopyTest, UseMemcpyForDynamicUpdateSliceWithBitcasts) {
 
 constexpr char kSliceMemcpyModuleUnfused[] = R"(
     body {
-      p0 = (s32[], s32[4,8,100000000], s32[1,1,100000000]) parameter(0)
+      p0 = (s32[], s32[4,8,1000000], s32[1,1,1000000]) parameter(0)
       ivar = s32[] get-tuple-element(p0), index=0
-      input = s32[4,8,100000000] get-tuple-element(p0), index=1
+      input = s32[4,8,1000000] get-tuple-element(p0), index=1
 
       ivar_copy = s32[] copy(ivar)
       c1 = s32[] constant(1)
-      slice = s32[1,1,100000000] dynamic-slice(input, ivar_copy, c1, c1),
-          dynamic_slice_sizes={1,1,100000000}
+      slice = s32[1,1,1000000] dynamic-slice(input, ivar_copy, c1, c1),
+          dynamic_slice_sizes={1,1,1000000}
 
       next_ivar = s32[] add(ivar_copy, c1)
-      ROOT result = (s32[], s32[4,8,100000000], s32[1,1,100000000])
+      ROOT result = (s32[], s32[4,8,1000000], s32[1,1,1000000])
           tuple(next_ivar, input, slice)
     }
 
@@ -420,18 +420,18 @@ constexpr char kSliceMemcpyModuleUnfused[] = R"(
     }
 
     condition {
-      p0 = (s32[], s32[4,8,100000000], s32[1,1,100000000]) parameter(0)
+      p0 = (s32[], s32[4,8,1000000], s32[1,1,1000000]) parameter(0)
       ivar = s32[] get-tuple-element(p0), index=0
       c6 = s32[] constant(6)
       ROOT cmp = pred[] compare(ivar, c6), direction=LT
     }
 
     ENTRY main {
-      p0 = s32[4,8,100000000] parameter(0)
-      p1 = s32[1,1,100000000] parameter(1)
+      p0 = s32[4,8,1000000] parameter(0)
+      p1 = s32[1,1,1000000] parameter(1)
       c0 = s32[] constant(0)
-      tuple = (s32[], s32[4,8,100000000], s32[1,1,100000000]) tuple(c0, p0, p1)
-      ROOT while = (s32[], s32[4,8,100000000], s32[1,1,100000000]) while(tuple),
+      tuple = (s32[], s32[4,8,1000000], s32[1,1,1000000]) tuple(c0, p0, p1)
+      ROOT while = (s32[], s32[4,8,1000000], s32[1,1,1000000]) while(tuple),
           condition=condition, body=body
     })";
 
