@@ -142,15 +142,15 @@ bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
 size_t CountOverlappingRanks(const std::vector<std::vector<int64_t>>& group,
                              const std::vector<std::vector<int64_t>>& other) {
   size_t overlapping_count = 0;
-  for (const auto& curr_replica_group : group) {
-    absl::flat_hash_set<int> curr_replica_ids;
-    for (const auto curr_replica_id : curr_replica_group) {
+  for (const std::vector<int64_t>& curr_replica_group : group) {
+    absl::flat_hash_set<int64_t> curr_replica_ids;
+    for (const int64_t curr_replica_id : curr_replica_group) {
       curr_replica_ids.insert(curr_replica_id);
     }
 
-    for (const auto& replica_group : other) {
+    for (const std::vector<int64_t>& replica_group : other) {
       size_t subgroup_count = 0;
-      for (const auto replica_id : replica_group) {
+      for (const int64_t replica_id : replica_group) {
         if (curr_replica_ids.contains(replica_id)) ++subgroup_count;
       }
       overlapping_count = std::max(overlapping_count, subgroup_count);
@@ -240,24 +240,19 @@ bool GpuScheduleCrossesOverlapLimit(
       for (const auto async_occupier :
            sched_state.resource_occupiers_in_flight.at(resource_type)) {
         if (sched_state.async_tracker->IsSupportedAsyncStart(*async_occupier)) {
-          HloInstruction* occupier =
+          const HloInstruction* occupier =
               async_occupier->opcode() == HloOpcode::kAsyncStart
                   ? async_occupier->async_wrapped_instruction()
-                  : const_cast<HloInstruction*>(async_occupier);
+                  : async_occupier;
 
           // Number of overlapping ranks between this occupier and candidate
-          auto curr_start_replica_group_status =
+          auto curr_start_replica_group =
               GetAsyncReplicaGroups(curr_start_inst);
-          CHECK(curr_start_replica_group_status.ok());
-          std::vector<std::vector<int64_t>> curr_start_replica_group =
-              curr_start_replica_group_status.value();
-          auto occupier_replica_group_status = GetAsyncReplicaGroups(occupier);
-          CHECK(occupier_replica_group_status.ok());
-          std::vector<std::vector<int64_t>> occupier_replica_group =
-              occupier_replica_group_status.value();
-
+          CHECK_OK(curr_start_replica_group);
+          auto occupier_replica_group = GetAsyncReplicaGroups(occupier);
+          CHECK_OK(occupier_replica_group);
           size_t overlapping_count = CountOverlappingRanks(
-              curr_start_replica_group, occupier_replica_group);
+              *curr_start_replica_group, *occupier_replica_group);
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count
