@@ -151,6 +151,11 @@ class Communicator {
   // Returns the number of ranks in the communicator.
   virtual absl::StatusOr<size_t> NumRanks() const = 0;
 
+  // Returns the current rank number in the communicator.
+  virtual absl::StatusOr<size_t> CurrentRank() {
+    return Unimplemented("CurrentRank is not implemented");
+  }
+
   // Returns a human-readable description of the communicator.
   virtual std::string ToString() const = 0;
 

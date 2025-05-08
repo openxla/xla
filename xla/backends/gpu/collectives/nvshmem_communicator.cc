@@ -193,6 +193,24 @@ absl::StatusOr<size_t> NvshmemCommunicator::NumRanks() const {
   return count;
 }
 
+absl::StatusOr<size_t> NvshmemCommunicator::CurrentRank() {
+  VLOG(5) << "Get current rank in NVSHMEM communicator: " << ToString();
+  if (aborted_) {
+    return absl::FailedPreconditionError("NvshmemCommunicator aborted");
+  }
+  if (!collectives_->IsInitialized()) {
+    return FailedPrecondition("NvshmemCollectives not initialized.");
+  }
+
+  int32_t rank = 0;
+  rank = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
+  if (rank < 0) {
+    return absl::InvalidArgumentError(
+        "NvshmemCommunicator::NumRanks invalid team.");
+  }
+  return rank;
+}
+
 tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::AllReduce(
     se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
     PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
@@ -214,7 +232,7 @@ tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::AllReduce(
       "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=node; "
       "team=%d;"
       "stream=%p",
-      stream->parent()->device_ordinal(), send_buffer.opaque(),
+      nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, ReductionKindToString(reduction_kind), NVSHMEMX_TEAM_NODE, stream);
 

@@ -2343,7 +2343,9 @@ absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
 
   // Can be null if no start thunk was created (e.g. if the start op is
   // degenerate), in which case there's nothing to do here.
-  if (!async_events_it->second) return absl::OkStatus();
+  if (!async_events_it->second) {
+    return absl::OkStatus();
+  }
 
   AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
   AddThunkToThunkSequence(std::make_unique<NvshmemCollectiveDoneThunk>(

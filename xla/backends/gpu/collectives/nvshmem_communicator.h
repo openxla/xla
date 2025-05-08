@@ -56,6 +56,8 @@ class NvshmemCommunicator : public Communicator {
 
   absl::Status Abort() final;
   absl::StatusOr<size_t> NumRanks() const final;
+  absl::StatusOr<size_t> CurrentRank() final;
+
   absl::Status Barrier(const Executor& executor) final;
 
   tsl::AsyncValueRef<Event> AllReduce(se::DeviceMemoryBase send_buffer,

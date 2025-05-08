@@ -76,7 +76,7 @@ class NvshmemCollectives : public GpuCollectives {
   CreateCommunicators(const CliqueKey& clique_key,
                       const std::optional<CliqueIds>& clique_ids,
                       absl::Span<const DeviceRank> ranks,
-                      const Collectives::Config& config) {
+                      const Collectives::Config& config) override {
     return absl::UnimplementedError("Not implemented.");
   }
 
