@@ -23,12 +23,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "third_party/gpus/cuda/include/cuda_fp16.h"
-<<<<<<< HEAD
 #include "third_party/nvshmem/nvshmem.h"   // IWYU pragma: keep
 #include "third_party/nvshmem/nvshmemx.h"  // IWYU pragma: keep
-=======
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
->>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
 #include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/primitive_util.h"

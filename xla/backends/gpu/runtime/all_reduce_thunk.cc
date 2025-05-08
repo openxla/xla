@@ -82,19 +82,7 @@ AllReduceConfig GetAllReduceConfigInst(HloInstType* inst) {
   return config;
 }
 
-<<<<<<< HEAD
-template <typename HloInstType>
-CollectiveOpGroupMode GetGroupModeInst(HloInstType* inst) {
-  return GetAllReduceConfigInst(inst).config.group_mode;
-}
-
-}  // namespace
-
 absl::Status RunAllReduce(ReductionKind reduction_kind,
-=======
-absl::Status RunAllReduce(GpuCollectives* collectives,
-                          ReductionKind reduction_kind,
->>>>>>> 3d43235c5d (Addressed comments and remove duplicate methond in nvshmem ar thunk)
                           std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator* comm) {
   int device_ordinal = stream.parent()->device_ordinal();

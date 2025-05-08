@@ -1959,6 +1959,7 @@ xla_cc_test(
         "@tsl//tsl/platform:protobuf",
     ],
 )
+
 cc_library(
     name = "nvshmem_collective_thunk",
     srcs = ["nvshmem_collective_thunk.cc"],
