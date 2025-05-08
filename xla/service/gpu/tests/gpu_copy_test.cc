@@ -435,8 +435,10 @@ constexpr char kSliceMemcpyModuleUnfused[] = R"(
           condition=condition, body=body
     })";
 
-TEST_F(GpuCopyTest, UseMemcpyIntegrationTest) {
-  // This is an integration test to verify that the pipeline works as a whole.
+TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTest) {
+  // This is an integration test to verify that the pipeline for replacing
+  // dynamic-slices that depend on while loop iteration variables with memcpy
+  // works as a whole.
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> hlo_module,
       ParseAndReturnVerifiedModule(kSliceMemcpyModuleUnfused));
@@ -468,8 +470,8 @@ TEST_F(GpuCopyTest, UseMemcpyIntegrationTest) {
                      /*run_optimization_passes=*/true);
 }
 
-TEST_F(GpuCopyTest, UseMemcpyIntegrationTestControl) {
-  // Control for UseMemcpyIntegrationTest. Verify that without
+TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTestControl) {
+  // Control for UseDynamicMemcpyIntegrationTest. Verify that without
   // fusion-dynamic-memcpy-rewriter, we have a third fusion.
   HloModuleConfig config;
   DebugOptions options;
