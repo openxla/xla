@@ -469,7 +469,7 @@ TEST_F(GpuCopyTest, UseMemcpyIntegrationTest) {
 }
 
 TEST_F(GpuCopyTest, UseMemcpyIntegrationTestControl) {
-  // Control for  UseMemcpyIntegrationTest. Verify that without
+  // Control for UseMemcpyIntegrationTest. Verify that without
   // fusion-dynamic-memcpy-rewriter, we have a third fusion.
   HloModuleConfig config;
   DebugOptions options;
