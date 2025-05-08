@@ -42,6 +42,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "//xla/stream_executor:executor_cache",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/platform:initialize",
         "//xla/stream_executor/gpu:gpu_types_header",
         "@tsl//tsl/platform:errors",
@@ -84,4 +85,32 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:scratch_allocator",
     ] + if_static([":all_runtime"]),
+)
+
+cc_library(
+    name = "sycl_solver_context",
+    srcs = if_sycl_is_configured(["sycl_solver_context.cc"]),
+    hdrs = if_sycl_is_configured(["sycl_solver_context.h"]),
+    local_defines = [
+        "TENSORFLOW_USE_SYCL=1",
+    ],
+    tags = [
+        "gpu",
+        "manual",
+        "sycl-only",
+    ],
+    deps = if_sycl_is_configured([
+        "//xla:comparison_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:gpu_solver_context",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ]),
 )

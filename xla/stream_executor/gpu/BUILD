@@ -393,6 +393,24 @@ rocm_library(
 )
 
 cc_library(
+    name = "redzone_allocator_kernel_stub",
+    srcs = [
+        "redzone_allocator_kernel.h",
+        "redzone_allocator_kernel_stub.cc",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":gpu_asm_opts",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:typed_kernel_factory",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "redzone_allocator",
     srcs = [
         "redzone_allocator.cc",
@@ -425,6 +443,8 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_rocm_is_configured([
         ":redzone_allocator_kernel_rocm",
+    ]) + if_sycl_is_configured([
+        ":redzone_allocator_kernel_stub",
     ]) + if_cuda_is_configured([
         ":redzone_allocator_kernel_cuda",
     ]),
