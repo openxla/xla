@@ -23,6 +23,7 @@ load(
     "//xla/stream_executor:build_defs.bzl",
     "gpu_only_cc_library",
     "stream_executor_gpu_friends",
+    "if_gpu_is_configured",
 )
 load(
     "//xla/tests:build_defs.bzl",
@@ -346,62 +347,24 @@ gpu_only_cc_library(
     ],
 )
 
-cc_library(
-    name = "redzone_allocator_kernel_cuda",
-    srcs = [
-        "redzone_allocator_kernel.h",
-        "redzone_allocator_kernel_cuda.cc",
-    ],
-    tags = [
-        "cuda-only",
-        "gpu",
-        "manual",
-    ],
-    deps = [
-        ":gpu_asm_opts",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:kernel",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor:typed_kernel_factory",
-        "//xla/stream_executor/cuda:cuda_asm_compiler",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:node_hash_map",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
 gpu_kernel_library(
-    name = "redzone_allocator_kernel_rocm",
+    name = "redzone_allocator_kernel",
     srcs = [
-        "redzone_allocator_kernel.h",
-        "redzone_allocator_kernel_rocm.cu.cc",
+        "redzone_allocator_kernel.cu.cc",
     ],
-    tags = ["manual"],
-    deps = [
-        ":gpu_asm_opts",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:kernel",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor:typed_kernel_factory",
-        "@com_google_absl//absl/container:node_hash_map",
-        "@com_google_absl//absl/status:statusor",
+    tags = ["gpu"],
+    deps = if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
-        "@tsl//tsl/platform:statusor",
-    ],
+        "@local_config_rocm//rocm:rocm_config",
+    ]),
 )
 
 gpu_only_cc_library(
     name = "redzone_allocator",
     srcs = [
         "redzone_allocator.cc",
-        "redzone_allocator_kernel.h",
     ],
     hdrs = ["redzone_allocator.h"],
     visibility = internal_visibility([":friends"]),
@@ -428,10 +391,8 @@ gpu_only_cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-    ] + if_rocm_is_configured([
-        ":redzone_allocator_kernel_rocm",
-    ]) + if_cuda_is_configured([
-        ":redzone_allocator_kernel_cuda",
+    ] + if_gpu_is_configured([
+        ":redzone_allocator_kernel",
     ]),
 )
 

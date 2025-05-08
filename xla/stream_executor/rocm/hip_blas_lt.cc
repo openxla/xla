@@ -248,8 +248,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
     // removed later when this limitation is gone.
     auto IsFP8 = [&](const MatrixLayout& layout) -> bool {
       return layout.type() == HIP_R_8F_E5M2_FNUZ ||
-             layout.type() == HIP_R_8F_E4M3_FNUZ ||
-             layout.type() == HIP_R_8F_E5M2 || layout.type() == HIP_R_8F_E4M3;
+             layout.type() == HIP_R_8F_E4M3_FNUZ;
     };
     if (IsFP8(a_desc_) && IsFP8(b_desc_)) {
       static int64_t dummy_pointer = 0xACEBALL;
