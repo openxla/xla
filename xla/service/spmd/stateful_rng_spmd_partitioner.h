@@ -59,7 +59,8 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
-          std::nullopt, int64_t slice_size = 32)
+          std::nullopt,
+      int64_t slice_size = 32)
       : spmd::SpmdPartitioner(
             num_partitions, num_replicas,
             GetSpmdPartitionerOptions(threshold_for_windowed_einsum_mib,
@@ -91,7 +92,8 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
-          std::nullopt, int64_t slice_size = 32) {
+          std::nullopt,
+      int64_t slice_size = 32) {
     spmd::SpmdPartitionerOptions options;
     options.allow_module_signature_change = true;
     options.threshold_for_windowed_einsum_mib =
