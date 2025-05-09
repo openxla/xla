@@ -1949,7 +1949,7 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
         lhs_sharding_transposed_to_match_rhs,
         rhs_sharding_transposed_to_match_lhs, lhs_sharding, rhs_sharding,
         conv_window, dims_mapping, visitor->call_graph(),
-        options.MaxWindowedEinsumIteration(), original_hlo, &lhs, &rhs,
+        options.max_windowed_einsum_iteration, original_hlo, &lhs, &rhs,
         create_sharded_dot, b, module, visitor);
   }
   if (e_config) {

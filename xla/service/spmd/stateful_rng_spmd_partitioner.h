@@ -60,7 +60,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool disable_ag_rewrite_for_multiple_consumers = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
           std::nullopt,
-      int64_t slice_size = 32)
+      int64_t max_windowed_einsum_iteration = 32)
       : spmd::SpmdPartitioner(
             num_partitions, num_replicas,
             GetSpmdPartitionerOptions(threshold_for_windowed_einsum_mib,
@@ -68,7 +68,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
                                       skip_checking_windowed_einsum_users,
                                       disable_ag_rewrite_for_multiple_consumers,
                                       total_bytes_windowed_einsum_threshold,
-                                      slice_size)) {}
+                                      max_windowed_einsum_iteration)) {}
 
  protected:
   std::unique_ptr<spmd::SpmdPartitioningVisitor> CreateVisitor(
@@ -93,7 +93,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool disable_ag_rewrite_for_multiple_consumers = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
           std::nullopt,
-      int64_t slice_size = 32) {
+      int64_t max_windowed_einsum_iteration = 32) {
     spmd::SpmdPartitionerOptions options;
     options.allow_module_signature_change = true;
     options.threshold_for_windowed_einsum_mib =
@@ -105,8 +105,9 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
         disable_ag_rewrite_for_multiple_consumers;
     options.total_bytes_windowed_einsum_threshold =
         total_bytes_windowed_einsum_threshold;
-    options.slice_size = slice_size;
-    VLOG(3) << "Set SPMD slice size to " << options.slice_size;
+    options.max_windowed_einsum_iteration = max_windowed_einsum_iteration;
+    VLOG(3) << "Set SPMD max windowed einsum iteration to "
+            << options.max_windowed_einsum_iteration;
     return options;
   }
 };

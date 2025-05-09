@@ -643,7 +643,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
 absl::Status RunSPMDPasses(
     HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
-    int64_t slice_size) {
+    int64_t max_windowed_einsum_iteration) {
   bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
 #ifndef PLATFORM_GOOGLE
   if (auto_sharding) {
@@ -669,7 +669,7 @@ absl::Status RunSPMDPasses(
 #else
         std::nullopt,
 #endif  // PLATFORM_GOOGLE
-        slice_size);
+        max_windowed_einsum_iteration);
     return spmd_pipeline.Run(hlo_module).status();
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
@@ -1403,7 +1403,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
                                    layout_insensitive_algsimp_opts,
-                                   options.slice_size));
+                                   options.max_windowed_einsum_iteration));
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));

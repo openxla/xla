@@ -127,15 +127,8 @@ struct SpmdPartitionerOptions {
   // When it's set, it will override threshold_for_windowed_einsum_mib.
   std::optional<int64_t> total_bytes_windowed_einsum_threshold = std::nullopt;
 
-  // Number of devices in the current slice, if known.
-  int64_t slice_size = 0;
-
-  // Gets the number of devices in the current slice based on the debug option.
-  // If slice_size is set, returns the current slice size. Otherwise,
-  // returns the default value.
-  int64_t MaxWindowedEinsumIteration(int64_t default_value = 32) const {
-    return slice_size > 0 ? slice_size : default_value;
-  }
+  // The maximum number of iterations for windowed einsum.
+  int64_t max_windowed_einsum_iteration = 32;
 };
 
 // Class to wrap the computation builder to capture information during SPMD

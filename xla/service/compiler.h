@@ -165,7 +165,7 @@ class Compiler {
 
     MultiProcessKeyValueStore key_value_store;
 
-    // The number of devices to compile for in parallel.
+    // The number of devices in a fast-interconnect domain.
     int64_t slice_size = 0;
   };
 

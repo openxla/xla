@@ -34,7 +34,7 @@ void AddSPMDPasses(
     HloPassPipeline& spmd_pipeline,
     std::optional<const absl::FunctionRef<void(HloPassPipeline&)>>
         auto_sharding_func = std::nullopt,
-    int64_t slice_size = 32);
+    int64_t max_windowed_einsum_iteration = 32);
 
 }  // namespace gpu
 }  // namespace xla
