@@ -872,7 +872,6 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
   if (!status.ok()) {
     return status;
   }
-#if defined(GOOGLE_CUDA)
   TF_ASSIGN_OR_RETURN(const auto* topology_description,
                       GetTopologyDescription());
   const auto& gpu_topology =
@@ -880,7 +879,6 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
           *topology_description);
   options->executable_build_options.set_slice_size(
       gpu_topology.gpu_topology().slice_size());
-#endif  // GOOGLE_CUDA
   return absl::OkStatus();
 }
 
