@@ -399,9 +399,10 @@ absl::Status CudaCommandBuffer::PopulateDnnGraphNode(
 absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
     dnn::DnnGraph& dnn_graph, Stream& stream,
     absl::Span<DeviceMemoryBase> operands, GraphNodeHandle node_handle) {
+  cuGraphDestroy(graph_);
+  is_owned_graph_ = false;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuGraphChildGraphNodeGetGraph(ToCudaGraphHandle(node_handle), &graph_)));
-  is_owned_graph_ = false;
   return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
                                                     true);
 }
