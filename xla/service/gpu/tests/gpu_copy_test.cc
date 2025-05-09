@@ -442,6 +442,10 @@ TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTest) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> hlo_module,
       ParseAndReturnVerifiedModule(kSliceMemcpyModuleUnfused));
+  DebugOptions debug_options = hlo_module->config().debug_options();
+  debug_options.set_xla_dump_to("sponge");
+  debug_options.set_xla_dump_hlo_pass_re(".*");
+  hlo_module->mutable_config().set_debug_options(debug_options);
 
   // Check that there are exactly two fusions:
   // 1. A `compare` fusion for the loop condition.
