@@ -436,16 +436,22 @@ constexpr char kSliceMemcpyModuleUnfused[] = R"(
     })";
 
 TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTest) {
+  auto compute_capability = backend()
+                                .default_stream_executor()
+                                ->GetDeviceDescription()
+                                .gpu_compute_capability();
+  if (auto cc = std::get_if<stream_executor::CudaComputeCapability>(
+          &compute_capability);
+      !cc || !cc->IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Test requires at least Ampere.";
+  }
+
   // This is an integration test to verify that the pipeline for replacing
   // dynamic-slices that depend on while loop iteration variables with memcpy
   // works as a whole.
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> hlo_module,
       ParseAndReturnVerifiedModule(kSliceMemcpyModuleUnfused));
-  DebugOptions debug_options = hlo_module->config().debug_options();
-  debug_options.set_xla_dump_to("sponge");
-  debug_options.set_xla_dump_hlo_pass_re(".*");
-  hlo_module->mutable_config().set_debug_options(debug_options);
 
   // Check that there are exactly two fusions:
   // 1. A `compare` fusion for the loop condition.
