@@ -40,6 +40,8 @@ enum class AsyncStreamKind : int64_t {
   kMemCpyP2P = 3,   // Stream for MemCpyP2P
 };
 
+bool IsP2PStreamKind(AsyncStreamKind stream_kind);
+
 inline constexpr int64_t kAsyncStreamTotal =
     static_cast<int64_t>(AsyncStreamKind::kMemCpyP2P) + 1;
 
@@ -56,8 +58,7 @@ class GpuCliqueKey : public CliqueKey {
  public:
   explicit GpuCliqueKey(
       std::vector<GlobalDeviceId> devices, int64_t num_local_participants,
-      CollectiveStreamId stream_id = CollectiveStreamId(0),
-      AsyncStreamKind stream_kind = AsyncStreamKind::kCollective,
+      bool is_p2p,
       std::vector<std::vector<GlobalDeviceId>> participant_groups = {},
       GlobalDeviceId root_device = GlobalDeviceId(-1));
 
@@ -75,6 +76,9 @@ class GpuCliqueKey : public CliqueKey {
   // Returns true if this clique is a subset of `other`: both cliques have the
   // same `stream_id` and all clique devices are part of `other` clique.
   bool IsSubsetOf(const CliqueKey& other) const final;
+  
+  // Returns true if this clique will be used with p2p communicators.
+  bool is_p2p() const;
 
   // For multi-root initialization, generate `nroots` copies (subkeys) of the
   // key each with a different root device. Root devices are distributed evenly
@@ -84,7 +88,6 @@ class GpuCliqueKey : public CliqueKey {
 
   // Returns the stream kind for this clique key, stream kind will be used to
   // specify what configuration to pass for each type of operation.
-  AsyncStreamKind stream_kind() const { return stream_kind_; }
 
   // The number of participant devices that are local to the current process (in
   // multi-host environments this likely to be all devices on the same host).
@@ -109,9 +112,7 @@ class GpuCliqueKey : public CliqueKey {
 
   // See comment on `num_local_participants()`.
   int64_t num_local_participants_;
-
-  CollectiveStreamId stream_id_;
-  AsyncStreamKind stream_kind_;
+  bool is_p2p_;
 
   // The full list of groups across all devices which this clique is a part of.
   //
