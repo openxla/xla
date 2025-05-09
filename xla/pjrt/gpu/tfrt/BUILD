@@ -118,7 +118,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
