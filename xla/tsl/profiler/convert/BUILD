@@ -35,6 +35,7 @@ cc_library(
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_profiler_backends",
         "//xla/python:__pkg__",
+        "//third_party/xprof:__subpackages__",
     ]),
     deps = [
         "//xla/tsl/platform:macros",
