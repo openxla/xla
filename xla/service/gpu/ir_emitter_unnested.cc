@@ -98,7 +98,9 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #ifdef GOOGLE_CUDA
+#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #include "xla/stream_executor/cuda/cuda_solver_context.h"
+#include "xla/service/gpu/ptx_kernel_call.h"
 #endif  // GOOGLE_CUDA
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
@@ -158,6 +160,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
 #include "xla/backends/gpu/runtime/wait_for_streams_thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_call.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
@@ -171,6 +174,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
@@ -945,7 +949,7 @@ absl::Status IrEmitterUnnested::EmitNormThunk(
 absl::Status IrEmitterUnnested::EmitCuDnnThunk(
     const HloCustomCallInstruction* instr) {
   TF_ASSIGN_OR_RETURN(
-      auto kernel_arguments,
+      KernelArguments kernel_arguments,
       KernelArguments::Create(ir_emitter_context_->buffer_assignment(), instr,
                               instr->operands()));
   TF_ASSIGN_OR_RETURN(const std::string fingerprint,
@@ -961,6 +965,54 @@ absl::Status IrEmitterUnnested::EmitCuDnnThunk(
       fingerprint, Thunk::ThunkInfo::WithProfileAnnotation(instr),
       kernel_arguments.args(), dropout_seed));
   return absl::OkStatus();
+}
+
+absl::Status IrEmitterUnnested::EmitPtxCustomCall(
+    const HloCustomCallInstruction* instr) {
+#if !GOOGLE_CUDA
+  return absl::UnimplementedError("PTX custom call support requires CUDA");
+#else
+  absl::string_view backend_config_str = instr->raw_backend_config_string();
+  if (backend_config_str.empty()) {
+    return Internal("PTX custom call backend config is empty");
+  }
+
+  PtxCall call =
+      PtxCall::Parse(backend_config_str, ir_emitter_context_->mlir_context());
+
+  const std::string& kernel_name = call.name;
+  const absl::string_view ptx = call.source;
+
+  absl::Span<const int32_t> output_indices = call.output_indices;
+  LaunchDimensions launch_dimensions(call.block_dim, call.thread_dim);
+
+  se::GpuComputeCapability gpu_compute_capability =
+      ir_emitter_context_->gpu_compute_capability();
+  se::CudaComputeCapability* cuda_cc =
+      std::get_if<se::CudaComputeCapability>(&gpu_compute_capability);
+
+  TF_ASSIGN_OR_RETURN(
+      KernelArguments kernel_arguments,
+      KernelArguments::Create(ir_emitter_context_->buffer_assignment(), instr,
+                              instr->operands(), output_indices));
+
+  HloModuleConfig hlo_module_config = instr->GetModule()->config();
+
+  stream_executor::GpuAsmOpts options =
+      PtxOptsFromDebugOptions(hlo_module_config.debug_options());
+
+  TF_ASSIGN_OR_RETURN(std::vector<uint8_t> cubin,
+                      CompileGpuAsm(cuda_cc->major, cuda_cc->minor, ptx.data(),
+                                    options, /*cancel_if_reg_spill=*/false));
+
+  auto thunk = std::make_unique<KernelThunk>(
+      instr, kernel_name, kernel_arguments.args(), launch_dimensions,
+      std::nullopt, call.shared_mem, /*tma_metadata=*/std::nullopt,
+      std::move(call.source), std::move(cubin));
+  AddThunkToThunkSequence(std::move(thunk));
+
+  return absl::OkStatus();
+#endif  // GOOGLE_CUDA
 }
 
 absl::StatusOr<BufferAllocation::Slice>
@@ -2776,6 +2828,9 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       if (IsCustomCallTofMHA(*instr) || IsCustomCallTofMHAF8(*instr) ||
           IsCustomCallToBlockScaledDot(*instr)) {
         return EmitCuDnnThunk(custom_call);
+      }
+      if (IsCustomCallToPtxKernel(*instr)) {
+        return EmitPtxCustomCall(custom_call);
       }
       if (IsCustomCallToTopK(*instr)) {
         return EmitTopKCustomCall(custom_call);
