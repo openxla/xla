@@ -1267,6 +1267,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/service/gpu/transforms:fusion_dynamic_memcpy_rewriter",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu/transforms:fusion_block_level_rewriter",
