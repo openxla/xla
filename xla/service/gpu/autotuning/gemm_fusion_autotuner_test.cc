@@ -358,7 +358,7 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
                                      .gpu_compute_capability());
     tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "",
                                         tsl::port::MaxParallelism());
-    DebugOptions opts;
+    DebugOptions opts = GetDebugOptionsForTest();
     MultiProcessKeyValueStore key_value_store;
     pipeline.AddPass<GemmFusionAutotuner>(
         AutotuneConfig{DeviceConfig{backend().default_stream_executor(),
@@ -891,6 +891,58 @@ ENTRY e {
   p1 = f32[3,28,32] parameter(1)
   ROOT _ = f32[3,32,32] fusion(p0, p1), kind=kCustom, calls=fusion1,
     backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})";
+
+  CheckTritonAutotuning(kHlo, R"(
+// CHECK: "plan_id":
+)");
+}
+
+// TODO: Remove once subchannel dequantization fusion is enabled by default.
+class SubchannelDequantizationAutotunerTest : public GemmFusionAutotunerTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        GemmFusionAutotunerTest::GetDebugOptionsForTest();
+    debug_options
+        .set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(true);
+    return debug_options;
+  }
+};
+
+TEST_F(SubchannelDequantizationAutotunerTest, AutotuneCuDnnBlockScaledDot) {
+  if (!GetCudaComputeCapability().IsBlackwell()) {
+    GTEST_SKIP() << "Block scaled dot kernel is only available on Blackwell.";
+  }
+  const std::string kHlo = R"(
+block_scaled_dot {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  %a_conv = f16[256,128] convert(%lhs)
+  %b_conv = f16[384,128] convert(%rhs)
+  %a_scale_conv = f16[256,4] convert(%lhs_scale)
+  %b_scale_conv = f16[384,4] convert(%rhs_scale)
+  %a_scale_bc = f16[256,4,32] broadcast(%a_scale_conv), dimensions={0,1}
+  %b_scale_bc = f16[384,4,32] broadcast(%b_scale_conv), dimensions={0,1}
+  %a_scale = f16[256,128] reshape(%a_scale_bc)
+  %b_scale = f16[384,128] reshape(%b_scale_bc)
+  %lhs_dq = f16[256,128] multiply(%a_conv, %a_scale)
+  %rhs_dq = f16[384,128] multiply(%b_conv, %b_scale)
+  ROOT %result = f32[256,384] dot(%lhs_dq, %rhs_dq),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  ROOT %result = f32[256,384] fusion(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      kind=kCustom, calls=block_scaled_dot,
+      backend_config={"fusion_backend_config":{kind:"__cudnn$fusion"}},
+      frontend_attributes={composite.name="mx.block_scaled_dot",composite.version="1"}
 })";
 
   CheckTritonAutotuning(kHlo, R"(

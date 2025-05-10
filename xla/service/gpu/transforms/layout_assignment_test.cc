@@ -1052,6 +1052,62 @@ TEST_F(LayoutAssignmentTest, RaggedAllToAllLayoutSetRaggedDimToMajor) {
       ragged_all_to_all->shape(), 0));
 }
 
+TEST_F(LayoutAssignmentTest, BlockScaledDotFusionLayout) {
+  const char* hlo = R"(
+HloModule test
+
+block_scaled_dot {
+  %lhs = f16[2,128,64] parameter(0)
+  %rhs = f16[2,64,128] parameter(1)
+  %lhs_scale = f16[2,128,2] parameter(2)
+  %rhs_scale = f16[2,2,128] parameter(3)
+  %lhs_scale_bc = f16[2,128,2,32] broadcast(%lhs_scale), dimensions={0,1,2}
+  %lhs_scale_rs = f16[2,128,64] reshape(%lhs_scale_bc)
+  %rhs_scale_bc = f16[2,2,32,128] broadcast(%rhs_scale), dimensions={0,1,3}
+  %rhs_scale_rs = f16[2,64,128] reshape(%rhs_scale_bc)
+  %a = f16[2,128,64] multiply(%lhs, %lhs_scale_rs)
+  %b = f16[2,64,128] multiply(%rhs, %rhs_scale_rs)
+  ROOT %dot = f32[2,128,128] dot(%a, %b),
+      lhs_batch_dims={0}, rhs_batch_dims={0},
+      lhs_contracting_dims={2}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  %lhs = f16[2,128,64]{1,0,2} parameter(0)
+  %rhs = f16[2,64,128]{2,0,1} parameter(1)
+  %lhs_scale = f16[2,128,2]{2,0,1} parameter(2)
+  %rhs_scale = f16[2,2,128]{1,0,2} parameter(3)
+  %lhs_ag = f16[2,128,64] all-gather(%lhs), dimensions={2}
+  %rhs_ag = f16[2,64,128] all-gather(%rhs), dimensions={1}
+  %lhs_scale_ag = f16[2,128,2] all-gather(%lhs_scale), dimensions={2}
+  %rhs_scale_ag = f16[2,2,128] all-gather(%rhs_scale), dimensions={1}
+  ROOT %result = f32[2,128,128] fusion(%lhs_ag, %rhs_ag, %lhs_scale_ag, %rhs_scale_ag),
+      kind=kCustom, calls=block_scaled_dot,
+      backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}},
+      frontend_attributes={composite.name="mx.block_scaled_dot",composite.version="1"}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape());
+
+  RunAndFilecheckHloRewrite(
+      hlo,
+      GpuLayoutAssignment{&computation_layout, GetGpuComputeCapability(),
+                          GetDnnVersion(), GetDeviceDescription()},
+      R"(
+// CHECK: [[lhs_ag:%.+]] = f16[2,128,64]{1,0,2} all-gather
+// CHECK: [[lhs:%.+]] = f16[2,128,64]{2,1,0} copy([[lhs_ag]])
+// CHECK: [[rhs_ag:%.+]] = f16[2,64,128]{2,0,1} all-gather
+// CHECK: [[rhs:%.+]] = f16[2,64,128]{2,1,0} copy([[rhs_ag]])
+// CHECK: [[lhs_scale_ag:%.+]] = f16[2,128,2]{1,0,2} all-gather
+// CHECK: [[lhs_scale:%.+]] = f16[2,128,2]{2,1,0} copy([[lhs_scale_ag]])
+// CHECK: [[rhs_scale_ag:%.+]] = f16[2,2,128]{2,0,1} all-gather
+// CHECK: [[rhs_scale:%.+]] = f16[2,2,128]{2,1,0} copy([[rhs_scale_ag]])
+// CHECK: f32[2,128,128]{2,1,0} fusion([[lhs]], [[rhs]], [[lhs_scale]], [[rhs_scale]])
+)");
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
