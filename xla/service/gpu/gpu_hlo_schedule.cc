@@ -677,6 +677,22 @@ bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint) {
   return enable_lhs;
 }
 
+bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint) {
+  bool enable_lhs =
+      module.config()
+          .debug_options()
+          .xla_gpu_enable_latency_hiding_scheduler() ||
+      IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(module);
+  if (!enable_lhs && HasValidPGLEProfile(module, fingerprint)) {
+    LOG(WARNING)
+        << "Profile data detected but "
+           "`xla_gpu_enable_latency_hiding_scheduler` unset. To use it "
+           "compiler will run Latency Hiding Scheduler anyway.";
+    enable_lhs = true;
+  }
+  return enable_lhs;
+}
+
 }  // end namespace
 
 absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
