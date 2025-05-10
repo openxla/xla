@@ -219,6 +219,7 @@ lit_test_suite(
             "tests/gpu_hlo_unoptimized_llvm.hlo",
             "tests/gpu_hlo_html.hlo",
             "tests/list_passes.hlo",
+            "tests/run_algsimp_pass.hlo",
             "tests/run_pass_with_input.hlo",
         ],
         include = [
