@@ -80,7 +80,7 @@ class NcclCommunicator : public GpuCommunicator {
   absl::StatusOr<size_t> NumRanks() const final;
 
   absl::StatusOr<std::unique_ptr<RegisteredBufferHandle>> RegisterBuffer(
-      se::DeviceMemoryBase buffer) final;
+      se::DeviceMemoryBase buffer, bool use_symmetric_buffer = false) final;
 
   tsl::AsyncValueRef<Communicator::Event> GroupExecute(
       absl::AnyInvocable<absl::Status(GpuCommunicator*)> f) final;
