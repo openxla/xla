@@ -65,6 +65,8 @@ struct CollectiveConfig {
   void SetCollectiveOpKindAndID(const HloCollectivePermuteInstruction* instr);
   void SetCollectiveOpKindAndID(const HloSendRecvInstruction* instr);
   bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
+
+  bool use_symmetric_buffer;
 };
 
 template <typename OpT>
@@ -334,7 +336,8 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 absl::Status MaybeRegisterBuffers(GpuCollectives* collectives,
                                   se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
-                                  Communicator* comm);
+                                  Communicator* comm,
+                                  bool use_symmetric_buffer = false);
 
 absl::StatusOr<int64_t> GetNumLocalParticipants(
     const Thunk::CollectiveExecuteParams& params,
