@@ -100,16 +100,18 @@ absl::Status AllGatherStartThunk::RunCollective(
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   return xla::gpu::RunAllGather(collectives, device_buffers, stream,
-                                comm_handle.comm);
+                                comm_handle.comm,
+                                config_.config.use_symmetric_buffer);
 }
 
 absl::Status RunAllGather(GpuCollectives* collectives,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator* comm) {
+                          se::Stream& stream, Communicator* comm,
+                          bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-gather from device ordinal: " << device_ordinal;
-  TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(collectives, stream.parent(), buffers,
+                                          comm, use_symmetric_buffer));
 
   TF_ASSIGN_OR_RETURN(GpuCommunicator * gpu_comm, collectives->TryCast(comm));
   tsl::AsyncValueRef<Communicator::Event> event = gpu_comm->GroupExecute(
