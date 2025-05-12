@@ -19,11 +19,14 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
@@ -80,7 +83,18 @@ class ExecutionGraph {
     virtual absl::Span<const BufferUse> BufferUses() const = 0;
     virtual absl::Span<const ResourceUse> ResourceUses() const = 0;
 
+    const absl::flat_hash_map<std::string,
+                              std::vector<std::unique_ptr<Operation>>>&
+    named_nested_operations() const {
+      return named_nested_operations_;
+    }
+
    protected:
+    absl::flat_hash_map<std::string, std::vector<std::unique_ptr<Operation>>>&
+    named_nested_operations() {
+      return named_nested_operations_;
+    }
+
     Operation() = default;
 
     Operation(const Operation&) = default;
@@ -88,6 +102,10 @@ class ExecutionGraph {
 
     Operation(Operation&&) = default;
     Operation& operator=(Operation&&) = default;
+
+   private:
+    absl::flat_hash_map<std::string, std::vector<std::unique_ptr<Operation>>>
+        named_nested_operations_;
   };
 
   // An edge between two nodes created for the execution graph operations.
@@ -155,6 +173,27 @@ class ExecutionGraph {
     int64_t priority = 0;
   };
 
+  class Renderer {
+   public:
+    Renderer() = default;
+    virtual ~Renderer() = default;
+
+    // Generates a string representation for the given execution graph
+    // operations which can be published to a URL using `PublishGraph`.
+    virtual std::string GenerateGraphAsString(
+        absl::Span<const ExecutionGraph::Operation* const> operations) = 0;
+
+    // Publishes the generated graph.
+    virtual absl::StatusOr<std::string> PublishGraph(
+        absl::string_view graph_as_string) = 0;
+  };
+
+  // Returns the registered renderer for execution graphs.
+  static Renderer* GetRenderer();
+
+  // Registers a renderer for execution graphs.
+  static void RegisterRenderer(std::unique_ptr<Renderer> renderer);
+
   // Constructs an execution graph from a sequence of operations.
   template <typename Op,
             std::enable_if_t<std::is_base_of_v<Operation, Op>>* = nullptr>
@@ -165,6 +204,10 @@ class ExecutionGraph {
     }
     return Create(ptrs);
   }
+
+  // Constructs an execution graph from a sequence of operations.
+  static absl::StatusOr<ExecutionGraph> Create(
+      absl::Span<const Operation* const> operations);
 
   // Returns execution graph nodes definitions.
   absl::Span<const NodeDef> nodes_defs() const { return nodes_defs_; }
@@ -206,10 +249,6 @@ class ExecutionGraph {
   bool is_sequential() const { return is_sequential_; }
 
  private:
-  // Constructs an execution graph from a sequence of operations.
-  static absl::StatusOr<ExecutionGraph> Create(
-      absl::Span<const Operation* const> operations);
-
   // We store all `in_edges` and `out_edges` referenced by the `NodeDef` inside
   // large vectors to optimize for data locality on a hot path.
   using NodesEdges = std::vector<NodeEdge>;
