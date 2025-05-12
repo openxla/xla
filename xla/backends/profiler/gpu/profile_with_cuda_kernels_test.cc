@@ -21,6 +21,8 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include "absl/time/time.h"
+
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_error_manager.h"
@@ -132,7 +134,11 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   tracer_options.pm_sampler_options = sampler_options;
 
   TestableCuptiTracer tracer;
-  tracer.Enable(tracer_options, collector.get()).IgnoreError();
+  auto err = tracer.Enable(tracer_options, collector.get());
+
+  if (absl::IsPermissionDenied(err)) {
+    GTEST_SKIP() << "PM Sampling requires root access";
+  }
 
   // SimpleAddSub does num_elements * 4 integer add / subs
   std::vector<double> vec = SimpleAddSubWithProfiler(kNumElements);

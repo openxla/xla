@@ -498,13 +498,13 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
       }
 
       if (info.overflow) {
-        LOG(WARNING) << "Profiling::PM Sampling - hardware buffer overflow on "
+        LOG(WARNING) << "(Profiling::PM Sampling) hardware buffer overflow on "
             "device " << dev->device_id_ << ", sample data has been lost";
       }
 
       if (info.decode_stop_reason ==
           CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNTER_DATA_FULL) {
-        LOG(WARNING) << "Profiling::PM Sampling - ran out of host buffer space "
+        LOG(WARNING) << "(Profiling::PM Sampling) ran out of host buffer space "
             "before decoding all records from the device buffer on device " <<
             dev->device_id_;
       }
@@ -525,7 +525,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
       // (should not happen)
       for (size_t i = 0; i < info.num_completed; i++) {
         if (! dev->GetSample(info.sampler_ranges[i], i).ok()) {
-          LOG(WARNING) << "Profiling::PM Sampling - Error decoding pm sample";
+          LOG(WARNING) << "(Profiling::PM Sampling) Error decoding pm sample";
           info.sampler_ranges[i].range_index = 0;
           info.sampler_ranges[i].start_timestamp_ns = 0;
           info.sampler_ranges[i].end_timestamp_ns = 0;
@@ -553,7 +553,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
       process_samples_time = absl::Now();
 
       if (! dev->RestoreCounterDataImage().ok()) {
-        LOG(WARNING) << "Profiling::PM Sampling - Error resetting counter data "
+        LOG(WARNING) << "(Profiling::PM Sampling) Error resetting counter data "
             "image";
       }
 
@@ -585,7 +585,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
       VLOG(2) << "(Profiling::PM Sampling)   decoded " << decoded_samples <<
           ", took " << elapsed << ", decode period is " <<
           control->decode_period_;
-      LOG(WARNING) << "Profiling::PM Sampling - decode thread took longer than "
+      LOG(WARNING) << "(Profiling::PM Sampling) decode thread took longer than "
           "configured period to complete a single decode pass.  When this "
           "happens, hardware buffer may overflow and lose sample data.  Reduce "
           "number of devices per decode thread, reduce the number of metrics "
@@ -634,24 +634,36 @@ absl::Status CuptiPmSamplerImpl::Initialize(
   // Wait > 1 decode periods at stop to ensure all data is flushed
   decode_stop_delay_ = options->decode_period * 1.5;
 
+  abs::Status status;
+
   // PM sampling has to be enabled on individual devices
   for (int dev_idx = 0; dev_idx < num_gpus; dev_idx++) {
     // Create a new PM sampling instance for this device
     std::shared_ptr<CuptiPmSamplerDevice> dev = std::make_shared<CuptiPmSamplerDevice>(
         dev_idx, cupti_interface, options);
 
+    // FIXME: track error codes, tear down cleanly if needed,
+    // return error codes so caller can handle whether the
+    // code should continue or not
+
     // Create all configuration needed for this device, or skip device on error
-    if (!dev->CreateConfig().ok()) continue;
+    if (status = dev->CreateConfig(); ! status.ok()) break;
 
     // Set configuration
-    if (!dev->SetConfig().ok()) continue;
+    if (status = dev->SetConfig(); ! status.ok()) break;
 
     // Device is fully configured but PM sampling not yet started - push to list
     // of PM sampling devices
     devices_.push_back(std::move(dev));
   }
 
-  // OK to have no devices that support PM sampling
+  // If error occurred, clean up created devices and return failure
+  if (! status.ok()) {
+    devices_.clear();
+    return status;
+  }
+
+  // OK to have no devices that support PM sampling as long as not due to error
   if (devices_.size() < 1) return absl::OkStatus();
 
   // Create decode thread(s)
@@ -675,6 +687,8 @@ absl::Status CuptiPmSamplerImpl::Initialize(
   for (auto& thd : threads_) {
     while (! thd->IsThdInitialized());
   }
+
+  initialized_ = true;
 
   return absl::OkStatus();
 }
