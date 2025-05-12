@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
+#include "xla/service/gpu/transforms/block_scaling_matcher.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
@@ -67,6 +68,8 @@ namespace {
 
 namespace fe = cudnn_frontend;
 namespace graph = fe::graph;
+
+using block_scaling::BlockScaledDotOps;
 
 inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
     const HloInstruction& instruction) {
@@ -153,10 +156,14 @@ inline std::optional<fe::DataType_t> ToCudnnDataType(const PrimitiveType type) {
       return t::INT8;
     case PrimitiveType::PRED:
       return t::INT8;
+    case PrimitiveType::F4E2M1FN:
+      return t::FP4_E2M1;
     case PrimitiveType::F8E5M2:
       return t::FP8_E5M2;
     case PrimitiveType::F8E4M3FN:
       return t::FP8_E4M3;
+    case PrimitiveType::F8E8M0FNU:
+      return t::FP8_E8M0;
     default:
       return std::nullopt;
   }
@@ -180,11 +187,15 @@ inline std::optional<fe::DataType_t> GetComputeDataType(
 // cuDNN.
 class GemmDimensionAdapter {
   explicit GemmDimensionAdapter(const HloDotInstruction& dot,
-                                TritonFusionAnalysis analysis)
-      : analysis_(std::move(analysis)), dot_(dot) {};
+                                TritonFusionAnalysis analysis,
+                                std::optional<BlockScaledDotOps> block_scaling)
+      : analysis_(std::move(analysis)),
+        block_scaling_(std::move(block_scaling)),
+        dot_(dot){};
 
  public:
   const TritonFusionAnalysis analysis_;
+  const std::optional<BlockScaledDotOps> block_scaling_;
 
   static absl::StatusOr<std::optional<GemmDimensionAdapter>> Create(
       const HloComputation& computation) {
@@ -203,7 +214,8 @@ class GemmDimensionAdapter {
     }
     TF_ASSIGN_OR_RETURN(auto analysis,
                         TritonFusionAnalysis::Execute(computation));
-    return GemmDimensionAdapter{*dot, std::move(analysis)};
+    return GemmDimensionAdapter{*dot, std::move(analysis),
+                                BlockScaledDotOps::Match(dot)};
   }
 
   struct Result {
@@ -429,8 +441,22 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
   if (!adapter.has_value()) {
     return std::nullopt;
   }
+
+  const auto& block_scaling = adapter->block_scaling_;
+  absl::flat_hash_set<const HloInstruction*> skip_instructions;
+  if (block_scaling.has_value()) {
+    for (const auto& side : {block_scaling->lhs, block_scaling->rhs}) {
+      // Convert instructions should be skipped in the graph.
+      skip_instructions.insert(side.input);
+      skip_instructions.insert(side.scale);
+      // Block scaling rewriter pass makes sure the parameter is valid.
+      skip_instructions.insert(side.GetScaleParameter());
+    }
+  }
+
   auto add_parameter = [&](const HloInstruction& parameter,
-                           const GemmDimensionAdapter::Result& dims) {
+                           const GemmDimensionAdapter::Result& dims,
+                           bool is_block_scale_param) {
     const std::optional<fe::DataType_t> data_type =
         ToCudnnDataType(parameter.shape().element_type());
     if (!data_type.has_value()) {
@@ -444,7 +470,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
             .set_data_type(*data_type)
             .set_name(std::string(parameter.name()))
             .set_uid(se::gpu::CuDnnTensorUID(parameter.parameter_number())));
-    if (dims.slices.has_value()) {
+    if (dims.slices.has_value() && !is_block_scale_param) {
       hlo_to_cudnn[&parameter] = graph.slice(
           hlo_to_cudnn[&parameter],
           graph::Slice_attributes().set_slices(dims.slices.value()));
@@ -462,7 +488,9 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         VLOG(3) << "Unsupported dimensions.";
         return std::nullopt;
       }
-      if (!add_parameter(*parameter, *dims)) {
+      bool is_block_scale_param =
+          block_scaling.has_value() && skip_instructions.contains(parameter);
+      if (!add_parameter(*parameter, *dims, is_block_scale_param)) {
         return std::nullopt;
       }
     }
@@ -475,6 +503,10 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     };
     if (HloPredicateIsOp<HloOpcode::kParameter>(hlo)) {
       CHECK(hlo_to_cudnn.contains(hlo));
+      continue;
+    } else if (skip_instructions.contains(hlo)) {
+      VLOG(5) << "...skipping instruction";
+      hlo_to_cudnn[hlo] = operand(0);
       continue;
     } else if (HloPredicateIsOp<HloOpcode::kCustomCall>(hlo)) {
       if (hlo->user_count() != 1 ||
@@ -550,7 +582,31 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
             }
           }
         } else if (hlo->operand_count() == 2) {
-          hlo_to_cudnn[hlo] = graph.pointwise(operand(0), operand(1), attrs);
+          if (block_scaling.has_value() && (hlo == block_scaling->lhs.result ||
+                                            hlo == block_scaling->rhs.result)) {
+            VLOG(5) << "Block scaling dequantize";
+
+            // Get dequantization ops reference and the dimension number.
+            bool is_lhs = hlo == block_scaling->lhs.result;
+            const auto& side = is_lhs ? block_scaling->lhs : block_scaling->rhs;
+            int dim_number = is_lhs ? block_scaling->lhs_contracting_dim()
+                                    : block_scaling->rhs_contracting_dim();
+
+            // Update scale tensor attributes.
+            graph::Tensor_attributes& scale_attr = *operand(1);
+            scale_attr.set_reordering_type(fe::TensorReordering_t::F8_128x4);
+            scale_attr.set_data_type(*ToCudnnDataType(
+                side.scale->operand(0)->shape().element_type()));
+
+            // Build dequantization graph node.
+            auto dq_attrs = graph::Block_scale_dequantize_attributes()
+                                .set_block_size(side.GetBlockSize(dim_number))
+                                .set_compute_data_type(fe::DataType_t::FLOAT);
+            hlo_to_cudnn[hlo] =
+                graph.block_scale_dequantize(operand(0), operand(1), dq_attrs);
+          } else {
+            hlo_to_cudnn[hlo] = graph.pointwise(operand(0), operand(1), attrs);
+          }
         } else if (hlo->operand_count() == 3) {
           if (HloPredicateIsNotOp<HloOpcode::kSelect>(hlo)) {
             VLOG(3) << "Unexpected ternary operation: " << hlo->ToString();

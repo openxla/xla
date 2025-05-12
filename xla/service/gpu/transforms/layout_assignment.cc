@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/service/gpu/transforms/block_scaling_matcher.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/shape.h"
@@ -586,6 +587,17 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       LayoutUtil::SetToDefaultLayout(&operand_shape);
       TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
       TF_RETURN_IF_ERROR(SetInstructionLayout(operand_shape, instruction));
+    } else if (HloPredicateIsOp<HloOpcode::kFusion>(instruction) &&
+               instruction->get_frontend_attribute("composite.name") ==
+                   block_scaling::kBlockScaledDotCompositeName) {
+      // Block scaled dot fusion expects default layout on all operands and
+      // the output.
+      for (int i = 0; i < instruction->operand_count(); ++i) {
+        TF_RETURN_IF_ERROR(
+            SetOperandLayout(instruction->operand(i)->shape(), instruction, i));
+      }
+      TF_RETURN_IF_ERROR(
+          SetInstructionLayout(instruction->shape(), instruction));
     }
   }
   return absl::OkStatus();
