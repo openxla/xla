@@ -281,7 +281,7 @@ TEST_F(LoadedExecutableTest, Execute) {
 
   DeviceListRef devices = BasicDeviceList::Create({&device});
 
-  std::vector<tsl::RCReference<xla::ifrt::Array>> args;
+  std::vector<xla::ifrt::ArrayRef> args;
   for (const uint64_t handle : {1000, 1001}) {
     args.push_back(tsl::MakeRef<Array>(
         &client, rpc_helper_, DType(DType::kF32), Shape({2, 2}),
@@ -351,82 +351,6 @@ TEST_F(LoadedExecutableTest, Execute) {
                 ->GetHandleUnknownIfBeingDonated()
                 ->handle,
             execute_req.result_array_handle()[1]);
-}
-#endif
-
-// TODO(b/315809436): Test needs rewrite because protobuf matchers are not OSS
-#if defined(PLATFORM_GOOGLE)
-TEST_F(LoadedExecutableTest, Delete) {
-  MockClient client;
-  LoadedExecutable executable(
-      &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
-      /*num_devices=*/2, /*addressable_devices=*/{},
-      /*fingerprint=*/"fingerprint",
-      /*ready_future=*/Future<>(absl::OkStatus()),
-      /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
-
-  {
-    IfrtResponse response;
-    ASSERT_TRUE(TextFormat::ParseFromString(
-        R"pb(
-          loaded_executable_delete_response { future_handle: 2000 }
-        )pb",
-        &response));
-    EXPECT_CALL(*session_, Enqueue(Pointee(Partially(EquivToProto(
-                               R"pb(loaded_executable_delete_request {
-                                      loaded_executable_handle: 1234
-                                    })pb")))))
-        .WillOnce(MockClientSessionReturnResponse(response));
-
-    ASSERT_TRUE(TextFormat::ParseFromString(
-        R"pb(
-          response_metadata {
-            status {
-              code: 2  # UNKNOWN
-              message: "injected error"
-            }
-          }
-        )pb",
-        &response));
-    EXPECT_CALL(
-        *session_,
-        Enqueue(Pointee(Partially(EquivToProto(R"pb(check_future_request {
-                                                      future_handle: 2000
-                                                    })pb")))))
-        .WillOnce(MockClientSessionReturnResponse(response));
-
-    Future<> result = executable.Delete();
-    EXPECT_THAT(result.Await(),
-                StatusIs(absl::StatusCode::kUnknown, StrEq("injected error")));
-  }
-
-  {
-    IfrtResponse response;
-    ASSERT_TRUE(TextFormat::ParseFromString(
-        R"pb(
-          loaded_executable_is_deleted_response { is_deleted: true }
-        )pb",
-        &response));
-    EXPECT_CALL(*session_, Enqueue(Pointee(Partially(EquivToProto(
-                               R"pb(loaded_executable_is_deleted_request {
-                                      loaded_executable_handle: 1234
-                                    })pb")))))
-        .WillOnce(MockClientSessionReturnResponse(response));
-
-    EXPECT_TRUE(executable.IsDeleted());
-  }
-
-  IfrtResponse response;
-  ASSERT_TRUE(TextFormat::ParseFromString(
-      R"pb(
-        loaded_executable_destruct_response {}
-      )pb",
-      &response));
-  EXPECT_CALL(*session_, Enqueue(Pointee(Partially(EquivToProto(
-                             R"pb(loaded_executable_destruct_request {
-                                    loaded_executable_handle: 1234
-                                  })pb")))))
-      .WillOnce(MockClientSessionReturnResponse(response));
 }
 #endif
 

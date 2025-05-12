@@ -45,6 +45,7 @@ pytype_strict_library(
     srcs = ["xla_client.py"],
     visibility = ["//visibility:public"],
     deps = if_google([
+        ":_hlo_pass",
         ":_ops",
         ":_profiler",
         ":_xla_builder",
@@ -98,6 +99,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         ":nb_numpy",
+        ":safe_static_init",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -222,6 +224,23 @@ cc_library(
 )
 
 nanobind_pywrap_extension(
+    name = "_hlo_pass",
+    srcs = ["hlo_pass.cc"],
+    pytype_srcs = ["_hlo_pass.pyi"],
+    visibility = [":friends"],
+    deps = [
+        "//xla/hlo/ir:hlo_module_group",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:flatten_call_graph",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
+        "//xla/hlo/transforms/simplifiers:tuple_simplifier",
+        "//xla/pjrt:status_casters",
+        "//xla/service:call_inliner",
+        "@nanobind",
+    ],
+)
+
+nanobind_pywrap_extension(
     name = "_xla_builder",
     srcs = ["xla_builder.cc"],
     pytype_deps = [
@@ -304,6 +323,14 @@ cc_library(
         "@stablehlo//:base",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
+    ],
+)
+
+cc_library(
+    name = "safe_static_init",
+    hdrs = ["safe_static_init.h"],
+    deps = [
+        "@com_google_absl//absl/synchronization",
     ],
 )
 

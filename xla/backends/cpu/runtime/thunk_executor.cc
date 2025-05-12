@@ -30,11 +30,13 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
 #include "absl/base/optimization.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -70,16 +72,27 @@ namespace {
 
 // An adaptor from Thunk to ExecutionGraph::Operation for building an execution
 // graph from a thunk sequence.
-struct ThunkOperation : public ExecutionGraph::Operation {
-  ThunkOperation(Thunk::BufferUses buffers, Thunk::ResourceUses resources)
-      : buffers(std::move(buffers)), resources(std::move(resources)) {}
+class ThunkOperation : public ExecutionGraph::Operation {
+ public:
+  explicit ThunkOperation(Thunk* thunk)
+      : name_(absl::StrFormat("op: %s (kind: %v)", thunk->info().op_name,
+                              thunk->kind())),
+        op_type_id_(static_cast<int64_t>(thunk->kind())),
+        buffer_uses_(thunk->buffer_uses()),
+        resource_uses_(thunk->resource_uses()) {}
 
-  absl::Span<const BufferUse> BufferUses() const final { return buffers; }
-  absl::Span<const ResourceUse> ResourceUses() const final { return resources; }
+  absl::string_view name() const final { return name_; }
+  int64_t op_type_id() const final { return op_type_id_; }
+  absl::Span<const BufferUse> BufferUses() const final { return buffer_uses_; }
+  absl::Span<const ResourceUse> ResourceUses() const final {
+    return resource_uses_;
+  }
 
  private:
-  Thunk::BufferUses buffers;
-  Thunk::ResourceUses resources;
+  std::string name_;
+  int64_t op_type_id_;
+  Thunk::BufferUses buffer_uses_;
+  Thunk::ResourceUses resource_uses_;
 };
 
 }  // namespace
@@ -90,7 +103,7 @@ static std::vector<ThunkOperation> CreateThunkOperations(
   std::vector<ThunkOperation> operations;
   operations.reserve(thunk_sequence.size());
   for (const auto& thunk : thunk_sequence) {
-    operations.emplace_back(thunk->buffer_uses(), thunk->resource_uses());
+    operations.emplace_back(thunk.get());
   }
   return operations;
 }
@@ -128,6 +141,29 @@ ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
       execution_graph_.sink().size(), is_sequential_, small_buffers);
 
   VLOG(6) << "ThunkExecutor execution graph:\n" << ToString();
+
+  if (VLOG_IS_ON(8) && !options.is_nested_executor) {
+    ExecutionGraph::Renderer* renderer = ExecutionGraph::GetRenderer();
+
+    if (renderer == nullptr) {
+      VLOG(8) << "No execution graph renderer registered.";
+    } else {
+      auto operations = CreateThunkOperations(thunk_sequence_);
+      absl::InlinedVector<const ExecutionGraph::Operation*, 32>
+          operations_as_ptr;
+      operations_as_ptr.reserve(operations.size());
+      for (const auto& operation : operations) {
+        operations_as_ptr.push_back(&operation);
+      }
+      auto graph_as_string = renderer->GenerateGraphAsString(operations_as_ptr);
+      absl::StatusOr<std::string> url = renderer->PublishGraph(graph_as_string);
+      if (url.ok()) {
+        VLOG(8) << "Execution graph visualization URL: " << *url;
+      } else {
+        VLOG(8) << url.status();
+      }
+    }
+  }
 }
 
 absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(

@@ -23,10 +23,12 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -54,15 +56,9 @@ CommonPjRtClient::BufferFromHostLiteral(const LiteralSlice& literal,
   tsl::profiler::TraceMeProducer producer(
       "CommonPjRtClient::BufferFromHostLiteral",
       tsl::profiler::ContextType::kPjRt);
-  Shape device_shape = shape;
-  if (!device_layout) {
-    TF_ASSIGN_OR_RETURN(
-        *device_shape.mutable_layout(),
-        (*GetTopologyDescription())
-            ->GetDefaultLayout(shape.element_type(), shape.dimensions()));
-  } else {
-    *device_shape.mutable_layout() = *device_layout;
-  }
+  TF_ASSIGN_OR_RETURN(
+      Shape device_shape,
+      MakeDefaultShapeForMemorySpace(memory_space, shape, device_layout));
   TF_ASSIGN_OR_RETURN(
       auto promise_and_event,
       CreateLinkedEventPromise(memory_space, "BufferFromHostLiteral"));
@@ -94,6 +90,48 @@ CommonPjRtClient::BufferFromHostLiteral(const LiteralSlice& literal,
         definition_event->Set(std::move(h2d_transfer_event));
       });
   return output_buffer;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+CommonPjRtClient::CreateUninitializedBuffer(const Shape& shape,
+                                            PjRtMemorySpace* memory_space) {
+  if (shape.IsTuple()) {
+    return InvalidArgument(
+        "Tuples are not supported in "
+        "CommonPjRtClient::CreateUninitializedBuffer");
+  }
+  Shape device_shape;
+  if (!primitive_util::IsArrayType(shape.element_type())) {
+    device_shape = shape;
+  } else {
+    TF_ASSIGN_OR_RETURN(device_shape, MakeDefaultShapeForMemorySpace(
+                                          memory_space, shape, nullptr));
+  }
+  TF_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
+                      GetOnDeviceBytesCount(memory_space, device_shape));
+  TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                      AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                        /*allocate_after=*/{}));
+  TF_ASSIGN_OR_RETURN(auto definition_event,
+                      raw_buffer->MakeAllocationReadyEvent());
+  TF_ASSIGN_OR_RETURN(
+      auto output_buffer,
+      DefineBuffer(device_shape, raw_buffer, {std::move(definition_event)}));
+  return output_buffer;
+}
+
+absl::StatusOr<xla::Shape> CommonPjRtClient::MakeDefaultShapeForMemorySpace(
+    PjRtMemorySpace* memory_space, xla::Shape shape,
+    const xla::Layout* layout) const {
+  if (layout) {
+    *shape.mutable_layout() = *layout;
+  } else {
+    TF_ASSIGN_OR_RETURN(
+        *shape.mutable_layout(),
+        (*GetTopologyDescription())
+            ->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+  }
+  return shape;
 }
 
 }  // namespace xla

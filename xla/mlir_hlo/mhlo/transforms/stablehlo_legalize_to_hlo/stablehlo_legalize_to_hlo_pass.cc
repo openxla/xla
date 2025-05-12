@@ -64,7 +64,16 @@ void legalDirectStablehloToHloConversionOps(ConversionTarget& target) {
       stablehlo::SliceOp, stablehlo::TanhOp, stablehlo::TransposeOp,
       stablehlo::SubtractOp, stablehlo::SignOp, stablehlo::SineOp,
       stablehlo::TorchIndexSelectOp, stablehlo::ShiftLeftOp,
-      stablehlo::TriangularSolveOp, stablehlo::XorOp>();
+      stablehlo::TriangularSolveOp, stablehlo::XorOp, stablehlo::CreateTokenOp,
+      stablehlo::TupleOp, stablehlo::SendOp, stablehlo::RecvOp,
+      stablehlo::InfeedOp, stablehlo::OutfeedOp, stablehlo::GetTupleElementOp,
+      stablehlo::OptimizationBarrierOp, stablehlo::WhileOp, stablehlo::CaseOp,
+      stablehlo::IfOp, stablehlo::AllReduceOp, stablehlo::ReduceOp,
+      stablehlo::MapOp, stablehlo::ReturnOp, stablehlo::AllToAllOp,
+      stablehlo::BatchNormGradOp, stablehlo::BatchNormTrainingOp,
+      stablehlo::BitcastConvertOp, stablehlo::ClampOp,
+      stablehlo::CollectiveBroadcastOp, stablehlo::CompareOp,
+      stablehlo::SortOp>();
 }
 
 struct StablehloLegalizeToHloPass
@@ -79,7 +88,9 @@ struct StablehloLegalizeToHloPass
       legalDirectStablehloToHloConversionOps(target);
     }
 
-    stablehlo::StablehloToHloTypeConverter converter;
+    stablehlo::StablehloToHloTypeConverter converter(
+        convert_xla_supported_stablehlo_);
+
     RewritePatternSet patterns(&getContext());
     stablehlo::populateStablehloToHloPatterns(&patterns, &converter,
                                               &getContext());

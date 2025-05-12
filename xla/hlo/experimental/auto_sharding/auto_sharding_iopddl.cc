@@ -18,6 +18,8 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -84,16 +86,26 @@ iopddl::Problem ConvertToProblem(const AutoShardingSolverRequest& request) {
   // The first kind of edges come from request.edges
   for (int64_t edge_idx = 0; edge_idx < request.edges_size(); ++edge_idx) {
     const auto& edge = request.edges(edge_idx);
-    CHECK_LT(edge.first(), request.s_len_size());
-    CHECK_LT(edge.second(), request.s_len_size());
+    NodeIdx u = edge.first(), v = edge.second();
+    CHECK_LT(u, request.s_len_size());
+    CHECK_LT(v, request.s_len_size());
     CHECK_LT(edge_idx, request.resharding_costs_size());
-    problem.edges.push_back({{edge.first(), edge.second()}});
-    for (int64_t i = 0; i < request.s_len(edge.first()); ++i) {
-      for (int64_t j = 0; j < request.s_len(edge.second()); ++j) {
-        const int64_t k = i * request.s_len(edge.second()) + j;
+    problem.edges.push_back({{u, v}});
+    double min_cost = 0.0;
+    for (int64_t i = 0; i < request.s_len(u); ++i) {
+      for (int64_t j = 0; j < request.s_len(v); ++j) {
+        const int64_t k = i * request.s_len(v) + j;
+        CHECK_LT(k, request.resharding_costs(edge_idx).costs_size());
+        min_cost =
+            std::min(min_cost, request.resharding_costs(edge_idx).costs(k));
+      }
+    }
+    for (int64_t i = 0; i < request.s_len(u); ++i) {
+      for (int64_t j = 0; j < request.s_len(v); ++j) {
+        const int64_t k = i * request.s_len(v) + j;
         CHECK_LT(k, request.resharding_costs(edge_idx).costs_size());
         const iopddl::Cost cost =
-            ConvertCost(request.resharding_costs(edge_idx).costs(k));
+            ConvertCost(request.resharding_costs(edge_idx).costs(k) - min_cost);
         problem.edges.back().strategies.push_back({cost});
       }
     }
@@ -197,6 +209,8 @@ AutoShardingSolverRequest ConvertToSolverRequest(
     request.mutable_node_intervals()->rbegin()->set_second(
         empty_interval ? -1 : node.interval.second - 1);
   }
+  // Aggregate edge costs for all unique node pairs.
+  std::map<std::pair<int64_t, int64_t>, std::vector<iopddl::Cost>> edge_costs;
   for (iopddl::EdgeIdx edge_idx = 0; edge_idx < problem.edges.size();
        ++edge_idx) {
     const iopddl::Edge& edge = problem.edges[edge_idx];
@@ -215,13 +229,24 @@ AutoShardingSolverRequest ConvertToSolverRequest(
       }
       continue;
     }
+    std::pair<int64_t, int64_t> node_pair = {edge.nodes[0], edge.nodes[1]};
+    if (edge_costs.find(node_pair) == edge_costs.end()) {
+      edge_costs[node_pair].resize(edge.strategies.size());
+    }
+    auto& costs = edge_costs[node_pair];
+    for (iopddl::StrategyIdx idx = 0; idx < edge.strategies.size(); ++idx) {
+      costs[idx] += edge.strategies[idx].cost;
+    }
+  }
+  // Create one edge in the solver request for each node pair that appears.
+  for (const auto& [edge, costs] : edge_costs) {
     auto* edge_proto = request.add_edges();
-    edge_proto->set_first(edge.nodes[0]);
-    edge_proto->set_second(edge.nodes[1]);
+    edge_proto->set_first(edge.first);
+    edge_proto->set_second(edge.second);
     request.add_resharding_costs();
-    for (const iopddl::Strategy& strategy : edge.strategies) {
+    for (iopddl::Cost strategy_cost : costs) {
       request.mutable_resharding_costs()->rbegin()->add_costs(
-          static_cast<double>(strategy.cost));
+          static_cast<double>(strategy_cost));
     }
   }
   return request;
