@@ -1460,6 +1460,13 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
               *ir_emitter_context_, sanitized_kernel_name,
               kernel_arguments.args(), arg_size, launch_dimensions, &builder));
 
+      // If value for waves_per_eu is given create corresponding ROCm func attr
+      if (call.waves_per_eu != 0) {
+        // Default value - same as no value is given.
+        kernel->addFnAttr("amdgpu-waves-per-eu",
+                          std::to_string(call.waves_per_eu));
+      }
+
       // Move function body into kernel prototype.
       llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
       prototype_func->splice(prototype_func->begin(), impl_fn);
