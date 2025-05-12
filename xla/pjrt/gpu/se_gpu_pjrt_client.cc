@@ -866,9 +866,10 @@ PjRtFuture<> StreamExecutorGpuClient::CopyRawDeviceToHost(
 }
 
 absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
-    CompileOptions* options, ExecutableExtras* returned_extras) {
+    CompileOptions* options, ExecutableExtras* returned_extras,
+    bool lookup_addressable_devices) {
   auto status = PjRtStreamExecutorClient::UpdateCompileOptionsInternal(
-      options, returned_extras);
+      options, returned_extras, lookup_addressable_devices);
   if (!status.ok()) {
     return status;
   }
