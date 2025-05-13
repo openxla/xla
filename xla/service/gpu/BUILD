@@ -1255,6 +1255,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
