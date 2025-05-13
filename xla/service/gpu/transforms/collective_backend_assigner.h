@@ -25,9 +25,19 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// CollectiveBackendAssigner is a pass that assigns the appropriate backend
+// (NVSHMEM or DEFAULT) to collective operations based on:
+// 1. Communication pattern: Uses NVSHMEM for intranode communication
+// 2. Message size: Uses NVSHMEM for messages smaller than threshold_in_bytes
+// This pass helps optimize collective operations by choosing the most efficient
+// backend based on the operation's characteristics.
+
+constexpr int64_t kDefaultThresholdInBytes = 16 * 1024 * 1024;  // 16MB
+
 class CollectiveBackendAssigner : public HloModulePass {
  public:
-  explicit CollectiveBackendAssigner(int64_t threshold_in_bytes)
+  explicit CollectiveBackendAssigner(
+      int64_t threshold_in_bytes = kDefaultThresholdInBytes)
       : threshold_in_bytes_(threshold_in_bytes) {}
 
   absl::string_view name() const override {
@@ -39,74 +49,19 @@ class CollectiveBackendAssigner : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
   static bool HasInternodeCommunication(
-      const std::vector<ReplicaGroup>& replica_groups, int64_t num_processes) {
-    absl::flat_hash_set<int64_t> nodes;
-    for (const auto& group : replica_groups) {
-      nodes.clear();
-      for (int64_t replica_id : group.replica_ids()) {
-        nodes.insert(replica_id / num_processes);
-      }
-      if (nodes.size() > 1) {
-        VLOG(1) << "Found internode communication in replica groups";
-        return true;
-      }
-    }
-    VLOG(1) << "Found intranode communication in replica groups";
-    return false;
-  }
+      const std::vector<ReplicaGroup>& replica_groups, int64_t num_processes);
 
   static bool HasInternodeCommunication(
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      int64_t num_processes) {
-    for (const auto& pair : source_target_pairs) {
-      int64_t source_node = pair.first / num_processes;
-      int64_t target_node = pair.second / num_processes;
-      if (source_node != target_node) {
-        VLOG(1) << "Found internode communication between source node "
-                << source_node << " and target node " << target_node;
-        return true;
-      }
-    }
-    VLOG(1) << "Found intranode communication in source-target pairs";
-    return false;
-  }
+      int64_t num_processes);
 
   static bool HasInternodeCommunication(const HloInstruction& instr,
-                                        int64_t num_processes) {
-    if (instr.opcode() == HloOpcode::kAllReduce ||
-        instr.opcode() == HloOpcode::kAllReduceStart ||
-        instr.opcode() == HloOpcode::kAllReduceDone) {
-      return HasInternodeCommunication(instr.replica_groups(), num_processes);
-    }
-    if (instr.opcode() == HloOpcode::kCollectivePermute ||
-        instr.opcode() == HloOpcode::kCollectivePermuteStart ||
-        instr.opcode() == HloOpcode::kCollectivePermuteDone) {
-      return HasInternodeCommunication(instr.source_target_pairs(),
-                                       num_processes);
-    }
-    return false;
-  }
+                                        int64_t num_processes);
 
-  static bool IsCollectiveOp(const HloInstruction* instr) {
-    return HloPredicateIsOp<HloOpcode::kAllReduce>(instr) ||
-           HloPredicateIsOp<HloOpcode::kAllReduceStart>(instr) ||
-           HloPredicateIsOp<HloOpcode::kAllReduceDone>(instr) ||
-           HloPredicateIsOp<HloOpcode::kCollectivePermute>(instr) ||
-           HloPredicateIsOp<HloOpcode::kCollectivePermuteStart>(instr) ||
-           HloPredicateIsOp<HloOpcode::kCollectivePermuteDone>(instr);
-  }
+  static bool IsCollectiveOp(const HloInstruction* instr);
 
  private:
-  static int64_t GetShapeSize(const Shape& shape) {
-    int64_t size_in_bytes = 0;
-    if (shape.IsTuple()) {
-      for (int64_t i = 0; i < shape.tuple_shapes_size(); ++i) {
-        size_in_bytes += GetShapeSize(shape.tuple_shapes(i));
-      }
-      return size_in_bytes;
-    }
-    return ShapeUtil::ByteSizeOfElements(shape);
-  }
+  static int64_t GetShapeSize(const Shape& shape);
 
   int64_t threshold_in_bytes_;
 };

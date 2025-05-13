@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/test.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/subprocess.h"
@@ -79,6 +79,7 @@ limitations under the License.
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 
 namespace xla {
 namespace gpu {
@@ -95,11 +96,10 @@ absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
                       ParseAndReturnUnverifiedModule(program, {}));
 
   xla::XlaComputation xla_computation(hlo_module->ToProto());
-  return client.Compile(xla_computation, compile_options);
+  return client.CompileAndLoad(xla_computation, compile_options);
 }
 
 void RunCollectiveTest(const std::string& hlo_module, int num_ranks) {
-  VLOG(1) << "Starting test with " << num_ranks << " ranks";
   std::vector<tsl::SubProcess> child(num_ranks);
   for (int rank_id = 0; rank_id < num_ranks; ++rank_id) {
     std::vector<std::string> argv;
@@ -110,7 +110,6 @@ void RunCollectiveTest(const std::string& hlo_module, int num_ranks) {
     child[rank_id].SetProgram(test_binary_name, argv);
     child[rank_id].SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
     child[rank_id].SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
-    VLOG(1) << "Starting child process for rank " << rank_id;
     ASSERT_TRUE(child[rank_id].Start()) << "rank " << rank_id;
   }
   for (int rank_id = 0; rank_id < num_ranks; ++rank_id) {
@@ -125,135 +124,107 @@ void RunCollectiveTest(const std::string& hlo_module, int num_ranks) {
   VLOG(1) << "Test completed";
 }
 
-TEST(CollectiveBackendAssignerTest, AllReduceSmallMessage) {
-  const int num_ranks = 2;
+const char* kHloModule = R"(
+HloModule module
 
-  const std::string kProgram = R"(
-    HloModule module
-
-    add {
-      lhs = f32[] parameter(0)
-      rhs = f32[] parameter(1)
-      ROOT add = f32[] add(lhs, rhs)
-    }
-
-    ENTRY main {
-      p0 = f32[1024,1024] parameter(0)
-      ROOT all-reduce = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
-    })";
-
-  RunCollectiveTest(kProgram, num_ranks);
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
 }
 
-TEST(CollectiveBackendAssignerTest, AllReduceLargeMessage) {
-  const int num_ranks = 2;
+ENTRY main {
+  // Small AllReduce (should use NVSHMEM)
+  p0 = f32[1024,1024] parameter(0)
+  all-reduce-small = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
 
-  const std::string kProgram = R"(
-    HloModule module
+  // Large AllReduce (should use DEFAULT)
+  p1 = f32[8192,8192] parameter(1)
+  all-reduce-large = f32[8192,8192] all-reduce(p1), to_apply=add, replica_groups={{0,1}}, channel_id=2
 
-    add {
-      lhs = f32[] parameter(0)
-      rhs = f32[] parameter(1)
-      ROOT add = f32[] add(lhs, rhs)
-    }
+  // Small CollectivePermute (should use NVSHMEM)
+  p2 = u32[1024,1024] parameter(2)
+  permute-small = u32[1024,1024] collective-permute(p2), channel_id=3,
+    source_target_pairs={{0,1},{1,0}}
 
-    ENTRY main {
-      p0 = f32[8192,8192] parameter(0)
-      ROOT all-reduce = f32[8192,8192] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
-    })";
+  // Large CollectivePermute (should use DEFAULT)
+  p3 = u32[8192,8192] parameter(3)
+  permute-large = u32[8192,8192] collective-permute(p3), channel_id=4,
+    source_target_pairs={{0,1},{1,0}}
 
-  RunCollectiveTest(kProgram, num_ranks);
+  ROOT tuple = (f32[1024,1024], f32[8192,8192], u32[1024,1024], u32[8192,8192]) tuple(
+    all-reduce-small, all-reduce-large, permute-small, permute-large)
+})";
+
+TEST(CollectiveBackendAssignerTest, BackendAssignerTest) {
+  RunCollectiveTest(kHloModule, 2);
 }
 
-TEST(CollectiveBackendAssignerTest, CollectivePermuteSmallMessage) {
-  const int num_ranks = 2;
+TEST(CollectiveBackendAssignerTest, DetectCommunicationPattern) {
+  {
+    // Intranode: all replicas on same node
+    std::vector<ReplicaGroup> intranode_groups;
+    ReplicaGroup group1;
+    group1.add_replica_ids(0);
+    group1.add_replica_ids(1);
+    group1.add_replica_ids(2);
+    intranode_groups.push_back(group1);
+    EXPECT_FALSE(CollectiveBackendAssigner::HasInternodeCommunication(
+        intranode_groups, 4));
 
-  const std::string kProgram = R"(
-    HloModule module
+    // Internode: replicas across nodes
+    std::vector<ReplicaGroup> internode_groups;
+    ReplicaGroup group2;
+    group2.add_replica_ids(0);
+    group2.add_replica_ids(4);
+    group2.add_replica_ids(8);
+    internode_groups.push_back(group2);
+    EXPECT_TRUE(CollectiveBackendAssigner::HasInternodeCommunication(
+        internode_groups, 4));
 
-    ENTRY main {
-      p = u32[1024,1024] parameter(0)
-      ROOT permute = u32[1024,1024] collective-permute(p), channel_id=1,
-        source_target_pairs={{0,1},{1,0}}
-    })";
+    // Mixed: some replicas on same node, some across nodes
+    std::vector<ReplicaGroup> mixed_groups;
+    ReplicaGroup group3;
+    group3.add_replica_ids(0);
+    group3.add_replica_ids(1);
+    group3.add_replica_ids(4);
+    mixed_groups.push_back(group3);
+    EXPECT_TRUE(
+        CollectiveBackendAssigner::HasInternodeCommunication(mixed_groups, 4));
+  }
 
-  RunCollectiveTest(kProgram, num_ranks);
-}
+  {
+    // Intranode: all pairs within same node
+    std::vector<std::pair<int64_t, int64_t>> intranode_pairs = {
+        {0, 1},  // Node 0
+        {1, 2},  // Node 0
+        {2, 0}   // Node 0
+    };
+    EXPECT_FALSE(CollectiveBackendAssigner::HasInternodeCommunication(
+        intranode_pairs, 4));
 
-TEST(CollectiveBackendAssignerTest, CollectivePermuteLargeMessage) {
-  const int num_ranks = 2;
+    // Internode: pairs across nodes
+    std::vector<std::pair<int64_t, int64_t>> internode_pairs = {
+        {0, 4},  // Node 0 -> Node 1
+        {4, 8},  // Node 1 -> Node 2
+        {8, 0}   // Node 2 -> Node 0
+    };
+    EXPECT_TRUE(CollectiveBackendAssigner::HasInternodeCommunication(
+        internode_pairs, 4));
 
-  const std::string kProgram = R"(
-    HloModule module
-
-    ENTRY main {
-      p = u32[8192,8192] parameter(0)
-      ROOT permute = u32[8192,8192] collective-permute(p), channel_id=1,
-        source_target_pairs={{0,1},{1,0}}
-    })";
-
-  RunCollectiveTest(kProgram, num_ranks);
-}
-
-TEST(CollectiveBackendAssignerTest, PreexistingBackendConfig) {
-  const int num_ranks = 2;
-
-  const std::string kProgram = R"(
-    HloModule module
-
-    add {
-      lhs = f32[] parameter(0)
-      rhs = f32[] parameter(1)
-      ROOT add = f32[] add(lhs, rhs)
-    }
-
-    ENTRY main {
-      p0 = f32[1024,1024] parameter(0)
-      ROOT all-reduce = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1, backend_config={"collective_backend_config":{"backend":"NCCL"}}
-    })";
-
-  RunCollectiveTest(kProgram, num_ranks);
-}
-
-TEST(CollectiveBackendAssignerTest, DetectCommunicationType) {
-  // Test intranode communication (all devices on same node)
-  std::vector<ReplicaGroup> intranode_groups;
-  ReplicaGroup group1;
-  group1.add_replica_ids(0);
-  group1.add_replica_ids(1);
-  group1.add_replica_ids(2);
-  intranode_groups.push_back(group1);
-
-  EXPECT_FALSE(CollectiveBackendAssigner::HasInternodeCommunication(
-      intranode_groups, 4));
-
-  // Test internode communication (devices across nodes)
-  std::vector<ReplicaGroup> internode_groups;
-  ReplicaGroup group2;
-  group2.add_replica_ids(0);
-  group2.add_replica_ids(4);
-  group2.add_replica_ids(8);
-  internode_groups.push_back(group2);
-
-  EXPECT_TRUE(CollectiveBackendAssigner::HasInternodeCommunication(
-      internode_groups, 4));
-
-  // Test mixed intra/inter node communication
-  std::vector<ReplicaGroup> mixed_groups;
-  ReplicaGroup group3;
-  group3.add_replica_ids(0);
-  group3.add_replica_ids(1);
-  group3.add_replica_ids(4);
-  mixed_groups.push_back(group3);
-
-  EXPECT_TRUE(
-      CollectiveBackendAssigner::HasInternodeCommunication(mixed_groups, 4));
+    // Mixed: some pairs intranode, some internode
+    std::vector<std::pair<int64_t, int64_t>> mixed_pairs = {
+        {0, 1},  // Node 0 -> Node 0 (intranode)
+        {1, 4},  // Node 0 -> Node 1 (internode)
+        {4, 5}   // Node 1 -> Node 1 (intranode)
+    };
+    EXPECT_TRUE(
+        CollectiveBackendAssigner::HasInternodeCommunication(mixed_pairs, 4));
+  }
 }
 
 absl::Status CollectiveBackendAssignerTestBody(int rank_id, int num_ranks,
                                                absl::string_view hlo_module) {
-  VLOG(1) << "Starting CollectiveBackendAssignerTestBody";
-
   std::unique_ptr<xla::DistributedRuntimeService> service;
   if (rank_id == 0) {
     TF_ASSIGN_OR_RETURN(service,
@@ -261,70 +232,69 @@ absl::Status CollectiveBackendAssignerTestBody(int rank_id, int num_ranks,
                             "[::]:12345", xla::CoordinationServiceImpl::Options{
                                               .num_nodes = num_ranks}));
   }
-
   xla::DistributedRuntimeClient::Options distributed_options;
   distributed_options.node_id = rank_id;
   distributed_options.init_timeout = absl::Seconds(120);
   auto distributed_client =
       GetDistributedRuntimeClient("127.0.0.1:12345", distributed_options);
   TF_QCHECK_OK(distributed_client->Connect());
-
+  auto kv_store = GetDistributedKeyValueStore(distributed_client, "gpu:");
+  cudaSetDevice(rank_id);
   GpuClientOptions client_options;
   client_options.node_id = rank_id;
   client_options.allowed_devices = {rank_id};
   client_options.num_nodes = num_ranks;
-  client_options.kv_store = GetDistributedKeyValueStore(distributed_client,
-                                                        /*key_prefix=*/"gpu:");
+  client_options.kv_store = kv_store;
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
                       GetStreamExecutorGpuClient(client_options));
-
   xla::CompileOptions options;
   options.executable_build_options.mutable_debug_options()
       ->set_xla_gpu_experimental_enable_nvshmem(true);
   options.executable_build_options.set_use_spmd_partitioning(false);
   options.executable_build_options.set_num_replicas(num_ranks);
-
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
                       ParseAndReturnUnverifiedModule(hlo_module, {}));
-
   TF_ASSIGN_OR_RETURN(auto executable,
                       CompileExecutable(hlo_module, *client, options));
-
   TF_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
                       executable->GetHloModules());
   const auto* entry = hlo_modules[0]->entry_computation();
-  VLOG(1) << "Entry computation: " << entry->ToString();
+  std::map<int64_t, CollectiveBackendConfig::CollectiveBackend>
+      expected_backends = {
+          {1, CollectiveBackendConfig::NVSHMEM},  // all-reduce-small
+          {2, CollectiveBackendConfig::DEFAULT},  // all-reduce-large
+          {3, CollectiveBackendConfig::NVSHMEM},  // permute-small
+          {4, CollectiveBackendConfig::DEFAULT},  // permute-large
+      };
+
   for (const auto* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kAllReduceStart ||
         instr->opcode() == HloOpcode::kCollectivePermuteStart) {
-      if (instr->has_backend_config()) {
-        TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                            instr->backend_config<GpuBackendConfig>());
-        const auto& collective_backend_config =
-            gpu_config.collective_backend_config();
-
-        // For small tensors, expect NVSHMEM, for large tensors expect NCCL
-        const Shape& shape_to_check =
-            instr->opcode() == HloOpcode::kCollectivePermuteStart
-                ? instr->operand(0)->shape()
-                : instr->shape();
-        const bool is_large = shape_to_check.dimensions(0) >= 8192;
-        const auto expected_backend = is_large
-                                          ? CollectiveBackendConfig::NCCL
-                                          : CollectiveBackendConfig::NVSHMEM;
-        if (collective_backend_config.backend() != expected_backend) {
-          return absl::InvalidArgumentError(
-              absl::StrFormat("backend config does not specify expected "
-                              "backend. Got: %s, Expected: %s",
-                              CollectiveBackendConfig_CollectiveBackend_Name(
-                                  collective_backend_config.backend()),
-                              CollectiveBackendConfig_CollectiveBackend_Name(
-                                  expected_backend)));
-        }
-      } else {
-        return absl::InvalidArgumentError("backend config is missing");
+      int64_t channel_id = instr->channel_id().value_or(-1);
+      auto it = expected_backends.find(channel_id);
+      if (it == expected_backends.end()) {
+        continue;
       }
-      break;
+
+      if (!instr->has_backend_config()) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("backend config is missing for %s", instr->name()));
+      }
+
+      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      const auto& collective_backend_config =
+          gpu_config.collective_backend_config();
+
+      if (collective_backend_config.backend() != it->second) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "backend config does not specify expected "
+            "backend for %s. Got: %s, Expected: %s",
+            instr->name(),
+            CollectiveBackendConfig_CollectiveBackend_Name(
+                collective_backend_config.backend()),
+            CollectiveBackendConfig_CollectiveBackend_Name(it->second)));
+      }
     }
   }
 

@@ -389,16 +389,19 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "collective_backend_assigner_test",
     srcs = ["collective_backend_assigner_test.cc"],
     tags = [
+        "cuda-only",
         "gpu",
         "no_oss",
-        "noasan",
         "nomsan",
-        "requires-gpu-nvidia:2",
+        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
     ],
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+    },
     deps = [
         ":collective_backend_assigner",
         "//xla/pjrt/gpu:gpu_topology",
@@ -426,7 +429,6 @@ xla_cc_test(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
-        "//xla/service:gpu_plugin",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",

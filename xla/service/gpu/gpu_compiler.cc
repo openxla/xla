@@ -924,8 +924,7 @@ absl::Status RunCollectiveOptimizationPasses(
 
   if (debug_options.xla_gpu_experimental_enable_nvshmem() &&
       NvshmemCollectives::Default()->device_count_per_process() == 1) {
-    collectives_pipeline.AddPass<CollectiveBackendAssigner>(
-        /*threshold_in_bytes*/ 16 * 1024 * 1024);
+    collectives_pipeline.AddPass<CollectiveBackendAssigner>();
   }
 
   if (debug_options.xla_gpu_unsupported_enable_ragged_all_to_all_decomposer()) {
