@@ -76,7 +76,7 @@ class GpuCliqueKey : public CliqueKey {
   // Returns true if this clique is a subset of `other`: both cliques have the
   // same `stream_id` and all clique devices are part of `other` clique.
   bool IsSubsetOf(const CliqueKey& other) const final;
-  
+
   // Returns true if this clique will be used with p2p communicators.
   bool is_p2p() const;
 
