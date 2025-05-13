@@ -78,6 +78,16 @@ class AllToAllStartThunk : public CollectiveThunk {
   const std::vector<Buffer> buffers_;
   int64_t device_count_ = 1;
   bool p2p_memcpy_enabled_ = false;
+
+  absl::Mutex pointer_maps_mutex_;
+  // Maps from a device to a uint64_t array of size num_devices. The array is
+  // used in each call to RunCollective(), but is preallocated as CUDA host
+  // memory and written to in the first call to Initialize(), since addresses
+  // won't change across calls to RunCollective().
+  absl::flat_hash_map<se::StreamExecutor*,
+                      std::unique_ptr<se::MemoryAllocation>>
+      receive_pointer_maps_ ABSL_GUARDED_BY(pointer_maps_mutex_);
+
   absl::Mutex events_mutex_;
   // Events to synchronize steams on different devices at the start of the
   // kernel.
@@ -96,6 +106,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
                                bool has_split_dimension,
                                std::vector<DeviceBufferPair>& buffers,
                                se::Stream& stream, Communicator* comm,
+                               uint64_t receive_pointer_map[],
                                const GpuCliqueKey& clique_key, RankId rank,
                                se::Event* start_event, se::Event* end_event);
 

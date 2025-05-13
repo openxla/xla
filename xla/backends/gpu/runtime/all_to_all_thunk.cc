@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
+#include "xla/service/rendezvous.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -63,6 +64,16 @@ AllToAllConfig GetAllToAllConfig(const HloAllToAllInstruction* instr) {
   config.has_split_dimension = instr->split_dimension().has_value();
   return config;
 }
+
+// Contains the values that are passed between host threads with rendezvous.
+struct BufferRendezvousValue {
+  uint16_t rank;
+  uint64_t buffer;
+
+  bool operator<(const BufferRendezvousValue& other) const {
+    return rank < other.rank;
+  }
+};
 
 }  // namespace
 
@@ -122,6 +133,17 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
     se::StreamExecutor* executor = params.executor;
     {
+      absl::MutexLock lock(&pointer_maps_mutex_);
+      if (!receive_pointer_maps_.count(executor)) {
+        TF_ASSIGN_OR_RETURN(
+            std::unique_ptr<se::MemoryAllocation> alloc,
+            executor->HostMemoryAllocate(num_ranks * sizeof(uint64_t)));
+        bool inserted =
+            receive_pointer_maps_.insert({executor, std::move(alloc)}).second;
+        CHECK(inserted);
+      }
+    }
+    {
       absl::MutexLock lock(&events_mutex_);
       if (!start_events_.count(executor)) {
         TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Event> event,
@@ -134,6 +156,57 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
                             executor->CreateEvent());
         end_events_.insert({executor, std::move(event)});
       }
+    }
+    std::optional<RankId> rank =
+        comm_handle.clique_key.rank(params.collective_params->global_device_id);
+    TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                        GetGpuCollectives(params));
+    size_t chunk_element_count = buffers_[0].element_count / num_ranks;
+    TF_ASSIGN_OR_RETURN(
+        std::vector<DeviceBufferPair> device_buffers,
+        ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+                               config_.config.operand_element_type));
+    for (int peer = 0; peer < num_ranks; ++peer) {
+      BufferRendezvousValue buffer_rendezvous_value;
+      buffer_rendezvous_value.rank = rank.value().value();
+      int buffer_idx = (rank.value().value() + peer) % num_ranks;
+      if (config_.has_split_dimension) {
+        buffer_rendezvous_value.buffer = reinterpret_cast<uint64_t>(
+            collectives
+                ->Slice(
+                    se::DeviceMemoryBase(device_buffers[0].destination_buffer),
+                    device_buffers[0].element_type,
+                    buffer_idx * chunk_element_count, chunk_element_count)
+                .opaque());
+      } else {
+        buffer_rendezvous_value.buffer = reinterpret_cast<uint64_t>(
+            device_buffers[buffer_idx].destination_buffer.opaque());
+      }
+      TF_ASSIGN_OR_RETURN(
+          std::shared_ptr<std::vector<BufferRendezvousValue>>
+              rendezvous_results,
+          Rendezvous<std::vector<BufferRendezvousValue>>(
+              /*name=*/"memcpy all-to-all address population",
+              /*key=*/comm_handle.clique_key,
+              /*value=*/buffer_rendezvous_value,
+              /*num_threads=*/num_ranks,
+              [](absl::Span<const BufferRendezvousValue* const> values) {
+                std::vector<BufferRendezvousValue> values_copy;
+                for (const auto& value : values) {
+                  values_copy.push_back(*value);
+                }
+                // Sort to make sure that values are in the same order as the
+                // devices are ordered in the communicator.
+                absl::c_sort(values_copy);
+                return values_copy;
+              }));
+      int peer_buffer_idx =
+          (rank.value().value() - peer + num_ranks) % num_ranks;
+      reinterpret_cast<uint64_t*>(
+          receive_pointer_maps_[executor]
+              ->opaque())[config_.has_split_dimension ? peer_buffer_idx
+                                                      : peer] =
+          (*rendezvous_results)[peer_buffer_idx].buffer;
     }
   }
   return absl::OkStatus();
@@ -150,6 +223,12 @@ absl::Status AllToAllStartThunk::RunCollective(const ExecuteParams& params,
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
 
   if (is_local() && p2p_memcpy_enabled_) {
+    uint64_t* receive_pointer_map = nullptr;
+    {
+      absl::MutexLock lock(&pointer_maps_mutex_);
+      receive_pointer_map = reinterpret_cast<uint64_t*>(
+          receive_pointer_maps_[stream.parent()]->opaque());
+    }
     std::optional<RankId> rank =
         comm_handle.clique_key.rank(params.collective_params->global_device_id);
     se::Event* start_event = nullptr;
@@ -159,10 +238,10 @@ absl::Status AllToAllStartThunk::RunCollective(const ExecuteParams& params,
       start_event = start_events_[stream.parent()].get();
       end_event = end_events_[stream.parent()].get();
     }
-    return xla::gpu::RunMemCpyAllToAll(collectives, config_.has_split_dimension,
-                                       device_buffers, stream, comm_handle.comm,
-                                       comm_handle.clique_key, *rank,
-                                       start_event, end_event);
+    return xla::gpu::RunMemCpyAllToAll(
+        collectives, config_.has_split_dimension, device_buffers, stream,
+        comm_handle.comm, receive_pointer_map, comm_handle.clique_key, *rank,
+        start_event, end_event);
   }
   return xla::gpu::RunAllToAll(collectives, config_.has_split_dimension,
                                device_buffers, stream, comm_handle.comm);
@@ -304,6 +383,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
                                bool has_split_dimension,
                                std::vector<DeviceBufferPair>& buffers,
                                se::Stream& stream, Communicator* comm,
+                               uint64_t receive_pointer_map[],
                                const GpuCliqueKey& clique_key, RankId rank,
                                se::Event* start_event, se::Event* end_event) {
   int device_ordinal = stream.parent()->device_ordinal();
@@ -335,9 +415,8 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
         se::DeviceMemoryBase send_slice =
             collectives->Slice(buffer.source_buffer, buffer.element_type,
                                peer * chunk_element_count, chunk_element_count);
-        se::DeviceMemoryBase dst_addr = collectives->Slice(
-            (*rendezvous_values)[peer].buffer, buffer.element_type,
-            rank.value() * chunk_element_count, chunk_element_count);
+        se::DeviceMemoryBase dst_addr =
+            se::DeviceMemoryBase((void*)receive_pointer_map[peer]);
         TF_RETURN_IF_ERROR(
             stream.MemcpyD2D(&dst_addr, send_slice, send_slice.size()));
       }
@@ -358,11 +437,8 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
               /*name=*/"memcpy all-to-all", clique_key, rank, num_ranks,
               buffers[buffer_idx].destination_buffer, stream, start_event,
               end_event));
-
-      // double buffer, exchange data with peer
-      se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(
-          (*rendezvous_values)[(rank.value() - peer + num_ranks) % num_ranks]
-              .buffer);
+      se::DeviceMemoryBase dst_addr =
+          se::DeviceMemoryBase((void*)receive_pointer_map[peer]);
       TF_RETURN_IF_ERROR(
           stream.MemcpyD2D(&dst_addr, buffers[buffer_idx].source_buffer,
                            buffers[buffer_idx].source_buffer.size()));
