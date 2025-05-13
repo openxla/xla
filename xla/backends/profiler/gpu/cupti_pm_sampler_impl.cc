@@ -727,7 +727,7 @@ absl::Status CuptiPmSamplerImpl::StartSampler() {
 absl::Status CuptiPmSamplerImpl::StopSampler() {
   if (!enabled_) {
     return absl::FailedPreconditionError(
-        "StopSampler called before StartSampler, or failure during
+        "StopSampler called before StartSampler, or failure during "
         "StartSampler");
   }
 
