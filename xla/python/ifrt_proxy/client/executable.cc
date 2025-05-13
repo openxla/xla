@@ -499,7 +499,7 @@ absl::StatusOr<xla::ifrt::AttributeMap> LoadedExecutable::GetCostAnalysis()
 }
 
 absl::StatusOr<xla::ifrt::LoadedExecutable::ExecuteResult>
-LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
+LoadedExecutable::Execute(absl::Span<xla::ifrt::ArrayRef> args,
                           const ExecuteOptions& options,
                           std::optional<xla::ifrt::DeviceListRef> devices) {
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
@@ -509,7 +509,7 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
 
   TF_ASSIGN_OR_RETURN(auto info, metadata_future_.Await());
   for (int i = 0; i < args.size(); ++i) {
-    tsl::RCReference<xla::ifrt::Array>& arg = args[i];
+    xla::ifrt::ArrayRef& arg = args[i];
     auto* array = llvm::dyn_cast_or_null<Array>(arg.get());
     if (array == nullptr) {
       return absl::InvalidArgumentError(
@@ -606,47 +606,6 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
   }
 
   return result;
-}
-
-Future<> LoadedExecutable::Delete() {
-  tsl::profiler::TraceMe traceme_ifrt_entrypoint(
-      "IfrtProxyEntrypointLoadedExecutableDelete");
-  auto req = std::make_unique<LoadedExecutableDeleteRequest>();
-  req->set_loaded_executable_handle(handle_);
-
-  auto promise = Future<>::CreatePromise();
-  Future<> result(promise);
-
-  rpc_helper_->LoadedExecutableDelete(std::move(req))
-      .OnReady(
-          [promise = std::move(promise), rpc_helper = rpc_helper_](
-              absl::StatusOr<std::shared_ptr<LoadedExecutableDeleteResponse>>
-                  response) mutable {
-            if (!response.ok()) {
-              promise.Set(response.status());
-              return;
-            }
-            rpc_helper->CheckFuture((*response)->future_handle())
-                .OnReady([promise = std::move(promise)](
-                             absl::Status s) mutable { promise.Set(s); });
-          });
-  return result;
-}
-
-bool LoadedExecutable::IsDeleted() const {
-  tsl::profiler::TraceMe traceme_ifrt_entrypoint(
-      "IfrtProxyEntrypointLoadedExecutableIsDeleted");
-  auto req = std::make_unique<LoadedExecutableIsDeletedRequest>();
-  req->set_loaded_executable_handle(handle_);
-
-  absl::StatusOr<std::shared_ptr<LoadedExecutableIsDeletedResponse>> response =
-      rpc_helper_->LoadedExecutableIsDeleted(std::move(req)).Await();
-  if (!response.ok()) {
-    LOG(ERROR) << "Failed to query the deletion status of `LoadedExecutable`: "
-               << response.status();
-    return false;
-  }
-  return (*response)->is_deleted();
 }
 
 absl::Span<xla::ifrt::Device* const> LoadedExecutable::addressable_devices()

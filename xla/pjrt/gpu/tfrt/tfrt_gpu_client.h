@@ -46,11 +46,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/maybe_owning.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/gpu/tfrt/host_memory_allocator.h"
-#include "xla/pjrt/gpu/tfrt/stream_pool.h"
 #include "xla/pjrt/gpu/tfrt/tracked_tfrt_gpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -65,6 +66,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -127,8 +129,6 @@ class TfrtGpuDevice final : public PjRtDevice {
     PjRtLocalDeviceId local_device_id;
     PjRtLocalHardwareId local_hardware_id;
     se::StreamExecutor* executor;
-    std::unique_ptr<tsl::Allocator> allocator;
-    int stream_capacity;
     int max_inflight_computations;
     std::string platform_version;
     std::string compute_capability;
@@ -146,9 +146,7 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   PjRtClient* client() const override { return client_; }
 
-  bool IsAddressable() const override {
-    return process_index() == client()->process_index();
-  }
+  bool IsAddressable() const override { return local_device_id_ != -1; }
 
   int id() const override { return id_; }
 
@@ -165,7 +163,7 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   absl::Status TransferFromOutfeed(MutableBorrowingLiteral literal) override;
 
-  // Returns a semaphore for admission control on inflight computations.
+  // Returns the semaphore to control the max inflight computations.
   Semaphore& max_inflight_computations_semaphore() {
     return max_inflight_computations_semaphore_;
   }
@@ -189,37 +187,31 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   absl::StatusOr<tsl::AllocatorStats> GetAllocatorStats() const override;
 
-  tsl::Allocator* allocator() { return allocator_.get(); }
+  se::DeviceMemoryAllocator* allocator() const;
 
   // Returns a fresh, PRNG-generated random seed for an XLA computation.
   int GetNewPrngSeed();
 
-  BoundedStreamPool& stream_pool() { return stream_pool_; }
+  se::Stream* stream() const { return stream_.get(); }
 
-  BoundedStreamPool& compute_stream_pool() { return compute_stream_pool_; }
+  se::StreamExecutor* executor() const { return executor_; }
 
-  se::StreamExecutor* executor() { return executor_; }
-
-  tsl::AsyncValueRef<GpuEvent> GetLastCollectiveLaunchEvent();
-
-  void SetLastCollectiveLaunchEvent(tsl::AsyncValueRef<GpuEvent> event);
+  tsl::AsyncValueRef<GpuEvent> SetLastCollectiveLaunchEvent(
+      tsl::AsyncValueRef<GpuEvent> event);
 
  private:
   friend class TfrtGpuClient;
   friend class TfrtGpuExecutable;
   friend class TfrtGpuBuffer;
 
+  absl::StatusOr<TransferManager*> GetTransferManager();
+
   int id_;
   PjRtClient* client_ = nullptr;
   const PjRtLocalDeviceId local_device_id_;
   const PjRtLocalHardwareId local_hardware_id_;
   se::StreamExecutor* executor_;
-  BoundedStreamPool stream_pool_;
-  //  Have a dedicated compute stream pool to avoid blocking the stream pool
-  //  for H2D transfers.
-  BoundedStreamPool compute_stream_pool_;
-  std::unique_ptr<tsl::Allocator> allocator_;
-  std::unique_ptr<se::DeviceMemoryAllocator> se_allocator_;
+  std::unique_ptr<se::Stream> stream_;
   absl::InlinedVector<PjRtMemorySpace*, 1> memory_spaces_;
   absl::flat_hash_map<int, PjRtMemorySpace*> memory_spaces_by_kind_id_;
 
@@ -248,11 +240,14 @@ class TfrtGpuDevice final : public PjRtDevice {
 
 class TfrtGpuClient final : public PjRtClient {
  public:
-  TfrtGpuClient(int process_index, xla::LocalClient* xla_client,
+  TfrtGpuClient(std::string platform_name, int process_index,
+                xla::LocalClient* xla_client,
                 std::vector<std::unique_ptr<TfrtGpuDevice>> devices,
                 bool should_stage_host_to_device_transfers,
+                MaybeOwning<se::DeviceMemoryAllocator> allocator,
                 std::unique_ptr<tsl::Allocator> host_memory_allocator,
                 std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
+                std::shared_ptr<KeyValueStoreInterface> kv_store,
                 std::shared_ptr<const GpuTopology> gpu_topology);
 
   ~TfrtGpuClient() override;
@@ -280,6 +275,8 @@ class TfrtGpuClient final : public PjRtClient {
   absl::Span<PjRtMemorySpace* const> memory_spaces() const override;
 
   xla::LocalClient* xla_client() const { return xla_client_; }
+
+  se::DeviceMemoryAllocator* allocator() { return allocator_.get_mutable(); }
 
   bool should_stage_host_to_device_transfers() const {
     return should_stage_host_to_device_transfers_;
@@ -357,6 +354,11 @@ class TfrtGpuClient final : public PjRtClient {
     return &topology_;
   }
 
+  std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
+      const override {
+    return kv_store_;
+  }
+
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
@@ -384,6 +386,8 @@ class TfrtGpuClient final : public PjRtClient {
   bool IsDmaMapped(const void* data_start, int64_t transfer_size);
 
  private:
+  friend class TfrtGpuBuffer;
+
   // Helper function for creating PjRtStreamExecutorExecutables. Modifies
   // `options` in-place.
   struct ExecutableExtras {
@@ -427,9 +431,17 @@ class TfrtGpuClient final : public PjRtClient {
 
   int process_index_;
 
+  // Platform name must be initialized before SetClient is called on devices.
+  const std::string platform_name_;
+
   xla::LocalClient* xla_client_;
 
   bool should_stage_host_to_device_transfers_;
+
+  // Device memory allocator. If owned, the allocator must outlive the devices,
+  // because it is the device destructor that waits for any outstanding work to
+  // complete.
+  MaybeOwning<se::DeviceMemoryAllocator> allocator_;
   // Allocator to be used for staging memory transfers to devices.
   std::unique_ptr<HostMemoryAllocator> host_memory_allocator_;
 
@@ -460,8 +472,8 @@ class TfrtGpuClient final : public PjRtClient {
   absl::Mutex transpose_mu_;
   TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_mu_);
 
-  const std::string platform_name_;
   StreamExecutorGpuTopologyDescription topology_;
+  std::shared_ptr<KeyValueStoreInterface> kv_store_;
 
   absl::Mutex dma_maps_mutex_;
   // Maps dma mapped start pointers to their sizes.
@@ -770,7 +782,6 @@ class TfrtGpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const RunId& run_id, const ExecuteOptions& options,
-      tsl::AsyncValueRef<GpuEvent> last_collective_launch_event,
       bool fill_future, TfrtGpuDevice* device = nullptr);
 
   // Create shared pointers so we can free them after the execution: with

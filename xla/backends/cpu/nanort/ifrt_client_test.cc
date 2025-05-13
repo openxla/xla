@@ -106,7 +106,7 @@ TEST(NanoIfrtClientTest, BigResult) {
 // Performance benchmarks below
 //===----------------------------------------------------------------------===//
 
-static absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
+static absl::StatusOr<ifrt::LoadedExecutableRef> Compile(
     NanoIfrtClient* client, absl::string_view program) {
   auto compiler = client->GetDefaultCompiler();
 
@@ -131,7 +131,7 @@ static ifrt::DType DTypeFromPrimitiveType(PrimitiveType type) {
   }
 }
 
-static absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeArrayFromLiteral(
+static absl::StatusOr<ifrt::ArrayRef> MakeArrayFromLiteral(
     NanoIfrtClient* client, const Literal& literal,
     ifrt::ShardingRef sharding) {
   return client->MakeArrayFromHostBuffer(
@@ -171,8 +171,8 @@ static void BM_IfRtAddScalars(benchmark::State& state) {
     auto b_array = MakeArrayFromLiteral(client.get(), b, sharding);
     CHECK(a_array.ok() && b_array.ok());
 
-    std::array<tsl::RCReference<ifrt::Array>, 2> args = {std::move(*a_array),
-                                                         std::move(*b_array)};
+    std::array<ifrt::ArrayRef, 2> args = {std::move(*a_array),
+                                          std::move(*b_array)};
 
     auto result = (*executable)
                       ->Execute(absl::MakeSpan(args), execute_options,
@@ -225,8 +225,8 @@ static void BM_IfRtAddManyScalars(benchmark::State& state) {
     auto b_array = MakeArrayFromLiteral(client.get(), b, sharding);
     CHECK(a_array.ok() && b_array.ok());
 
-    std::array<tsl::RCReference<ifrt::Array>, 2> args = {std::move(*a_array),
-                                                         std::move(*b_array)};
+    std::array<ifrt::ArrayRef, 2> args = {std::move(*a_array),
+                                          std::move(*b_array)};
 
     auto result = (*executable)
                       ->Execute(absl::MakeSpan(args), execute_options,
@@ -245,6 +245,10 @@ int main(int argc, char** argv) {
       // This test expects copies to multiple devices to fail, but we only have
       // one device and it doesn't seem worth pretending that we have more.
       "-ArrayImplTest.CopyMixedSourceDevices:"
+      // String arrays are not supported in NanoIfrtClient.
+      "ArrayImplTest.MakeArrayFromHostBufferAndCopyToHostBufferWithString:"
+      "ArrayImplTest."
+      "MakeArraysFromHostBufferShardsAndCopyToHostBufferWithString:"
       // `MakeErrorArrays` is not supported in NanoIfrtClient.
       "ArrayImplTest.MakeErrorArrays";
   xla::ifrt::test_util::SetTestFilterIfNotUserSpecified(kFilter);
