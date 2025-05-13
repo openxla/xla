@@ -764,7 +764,6 @@ XLA_TEST_P(AsyncCollectiveOps, AsyncAllToAllMemCpyWithoutSplitDim) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_use_memcpy_local_p2p(true);
   HloModuleConfig config =

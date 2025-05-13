@@ -137,6 +137,8 @@ RendezvousBeforeKernelStart(absl::string_view name,
                             const se::DeviceMemoryBase& output_buffer,
                             se::Stream& stream, se::Event* start_event,
                             se::Event* end_event);
+// TODO: RaggedAllToAll and AllReduce may also use lightweight rendezvous when
+// addresses are exchanged at initialization.
 // Lightweight rendezvous that only records the event.
 absl::StatusOr<std::shared_ptr<std::vector<LightweightRendezvousValue>>>
 LightweightRendezvousBeforeKernelStart(absl::string_view name,
@@ -150,6 +152,8 @@ absl::Status RendezvousAfterKernelFinish(
     absl::string_view name, const GpuCliqueKey& clique_key, RankId rank,
     int64_t num_ranks, se::Stream& stream, se::Event* end_event,
     const std::shared_ptr<std::vector<RendezvousValue>>& rendezvous_values);
+// TODO: RaggedAllToAll and AllReduce may also use lightweight rendezvous when
+// addresses are exchanged at initialization.
 // Lightweight rendezvous that only records the event.
 absl::Status LightweightRendezvousAfterKernelFinish(
     absl::string_view name, const GpuCliqueKey& clique_key, RankId rank,
