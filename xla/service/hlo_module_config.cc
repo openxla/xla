@@ -70,8 +70,9 @@ std::string HloModuleConfig::compilation_cache_key() const {
          entry_computation_layout_->parameter_layouts()) {
       params.push_back(param_layout.shape().DebugString());
     }
-    StrAppend(&key, absl::StrJoin(params, ", "), ") => ",
-              entry_computation_layout_->result_shape().SerializeAsString());
+    auto shape_str = entry_computation_layout_->result_shape().ToString();
+          // .SerializeAsString();
+    StrAppend(&key, absl::StrJoin(params, ", "), ") => ", shape_str, "\n");
   }
   if (seed() != 0) {
     static std::atomic<int> counter{0};
