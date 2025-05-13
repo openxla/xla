@@ -49,14 +49,10 @@ TEST(GpuCliqueKeyTest, IsSubsetOf) {
   GlobalDeviceId id2 = GlobalDeviceId(2);
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
-  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/2,
-                    false);
-  GpuCliqueKey key1({id0, id1, id2, id3}, /*num_local_participants=*/4,
-                    false);
-  GpuCliqueKey key2({id0, id1, id2, id3}, /*num_local_participants=*/4,
-                    true);
-  GpuCliqueKey key3({id1, id2, id3}, /*num_local_participants=*/3,
-                    false);
+  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/2, false);
+  GpuCliqueKey key1({id0, id1, id2, id3}, /*num_local_participants=*/4, false);
+  GpuCliqueKey key2({id0, id1, id2, id3}, /*num_local_participants=*/4, true);
+  GpuCliqueKey key3({id1, id2, id3}, /*num_local_participants=*/3, false);
 
   EXPECT_TRUE(key0.IsSubsetOf(key1));
   EXPECT_FALSE(key0.IsSubsetOf(key2));
@@ -69,8 +65,7 @@ TEST(GpuCliqueKeyTest, GetSubKeys) {
   GlobalDeviceId id2 = GlobalDeviceId(2);
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
-  GpuCliqueKey key({id0, id1, id2, id3}, /*num_local_participants=*/1,
-                   true);
+  GpuCliqueKey key({id0, id1, id2, id3}, /*num_local_participants=*/1, true);
   std::array<int64_t, 4> nroots{1, 2, 3, 4};
   std::vector<std::vector<GlobalDeviceId>> exp_root_devs{
       {id0}, {id0, id2}, {id0, id2, id3}, {id0, id1, id2, id3}};
@@ -96,12 +91,9 @@ TEST(GpuCliqueKeyTest, Compare) {
   GlobalDeviceId id2 = GlobalDeviceId(2);
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
-  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1,
-                    false);
-  GpuCliqueKey key1({id1, id2, id3}, /*num_local_participants=*/1,
-                    false);
-  GpuCliqueKey key2({id1, id2, id3}, /*num_local_participants=*/1,
-                    true);
+  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1, false);
+  GpuCliqueKey key1({id1, id2, id3}, /*num_local_participants=*/1, false);
+  GpuCliqueKey key2({id1, id2, id3}, /*num_local_participants=*/1, true);
 
   EXPECT_LT(key0, key1);
   EXPECT_GT(key1, key0);
@@ -115,8 +107,7 @@ TEST(GpuCliqueKeyTest, CompareWithParticipantGroups) {
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
   // The keys are not equal because the replica groups are different.
-  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1,
-                    false,
+  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1, false,
                     std::vector<std::vector<GlobalDeviceId>>{{id0, id1}});
   GpuCliqueKey key1(
       {id0, id1}, /*num_local_participants=*/1, false,
@@ -124,10 +115,8 @@ TEST(GpuCliqueKeyTest, CompareWithParticipantGroups) {
   EXPECT_FALSE(key0 == key1);
 
   // With no replica groups, the keys are equal
-  GpuCliqueKey key0_nogroups({id0, id1}, /*num_local_participants=*/1,
-                             false);
-  GpuCliqueKey key1_nogroups({id0, id1}, /*num_local_participants=*/1,
-                             false);
+  GpuCliqueKey key0_nogroups({id0, id1}, /*num_local_participants=*/1, false);
+  GpuCliqueKey key1_nogroups({id0, id1}, /*num_local_participants=*/1, false);
   EXPECT_EQ(key0_nogroups, key1_nogroups);
 }
 
@@ -160,8 +149,7 @@ TEST(GpuCliqueKeyTest, BtreeIterationOrder) {
   GlobalDeviceId id2 = GlobalDeviceId(2);
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
-  GpuCliqueKey key0({id0, id2}, /*num_local_participants=*/1,
-                    false);
+  GpuCliqueKey key0({id0, id2}, /*num_local_participants=*/1, false);
   GpuCliqueKey key1({id0, id1, id2, id3},
                     /*num_local_participants=*/1, false);
 

@@ -116,9 +116,8 @@ ResourceRequests::AcquireCollectiveCliques(
                         params.collectives->GetCliqueIdCallback(
                             params.nccl_clique_id_callback, r.key.is_local()));
 
-    int64_t max_channels = r.key.is_p2p()
-                               ? params.collective_max_nchannels
-                               : params.p2p_max_nchannels;
+    int64_t max_channels = r.key.is_p2p() ? params.p2p_max_nchannels
+                                          : params.collective_max_nchannels;
 
     // Check if we have a persistent clique for this key.
     if (use_persistent_cliques) {
