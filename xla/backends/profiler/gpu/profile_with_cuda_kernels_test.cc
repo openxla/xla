@@ -47,7 +47,12 @@ class TestableCuptiTracer : public CuptiTracer {
       : CuptiTracer(new CuptiErrorManager(std::make_unique<CuptiWrapper>())) {}
 };
 
+std::atomic_uint64_t sampled_fp64 = 0;
 std::atomic_uint64_t atomic_total_fp64 = 0;
+std::atomic_uint64_t sampled_read = 0;
+std::atomic_uint64_t atomic_total_read = 0;
+std::atomic_uint64_t sampled_write = 0;
+std::atomic_uint64_t atomic_total_write = 0;
 std::atomic_bool skip_first = true;
 
 void HandleRecords(PmSamples* samples) {
@@ -78,7 +83,14 @@ void HandleRecords(PmSamples* samples) {
     }
 
     if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
+      sampled_fp64 = 1;
       atomic_total_fp64 += sum;
+    } else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
+      sampled_read = 1;
+      atomic_total_read += sum;
+    } else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
+      sampled_write = 1;
+      atomic_total_write += sum;
     }
   }
 
@@ -111,9 +123,12 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   CuptiPmSamplerOptions sampler_options;
   sampler_options.enable = true;
   // Metrics can be queried with Nsight Compute
-  // ncu --query-metrics
+  // ncu --query-metrics-collection pmsampling --chip <CHIP>
+  // Any metrics marked with a particular Triage group naming should be 
+  // configurable in a single pass on this chip.
   sampler_options.metrics = {"sm__cycles_active.sum",
-                             "sm__inst_executed_pipe_fp64.sum"};
+                             "sm__inst_executed_pipe_fp64.sum",
+                             "pcie__read_bytes.sum", "pcie__write_bytes.sum", "lts__average_t_sector_aperture_device_lookup_hit.pct", "lts__average_t_sector_aperture_device_lookup_miss.pct"};
   sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
@@ -133,6 +148,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
   tracer.Disable();
 
+  // Validate functional correctness - ie, the kernel ran
   EXPECT_EQ(vec.size(), kNumElements);
   for (int i = 0; i < kNumElements; ++i) {
     EXPECT_GT(vec[i], (0.0 - 0.001)) << "index: " << i;
@@ -140,9 +156,24 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   }
 
   // Expect 4 * elems / (32 elemn / warp) +- 5% double instructions
-  LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
-  EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100);
-  EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100);
+  // (if they were sampled)
+  if (sampled_fp64) {
+    LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
+    EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100);
+    EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100);
+  }
+
+  // Expect > 4 * elems * sizeof(double) bytes written to pcie
+  // 3 copies to device, 1 copy back
+  // This is just a basic algorithmic minimum, there are more loads and
+  // stores due to copying kernel itself, etc
+  if (sampled_read) {
+    LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
+  }
+  if (sampled_write) {
+    LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
+    EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
+  }
 }
 
 }  // namespace

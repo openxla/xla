@@ -87,6 +87,9 @@ class CuptiPmSamplerDevice {
   // Restores image from backup (faster than re-initializing)
   absl::Status RestoreCounterDataImage();
 
+  // Simple warning, needed in multiple spots
+  void WarnPmSamplingMetrics();
+
   // Constructor provides all configuration needed to set up sampling on a
   // single device
   CuptiPmSamplerDevice(int device_id, CuptiInterface* cupti_interface,
@@ -104,6 +107,7 @@ class CuptiPmSamplerDevice {
   std::vector<char const*> default_c_metrics_{
       "sm__cycles_active.sum", "sm__inst_executed_pipe_fmalite.sum",
       "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
+  bool warnedMetricsConfig_ = false;
 
   // CUPTI PM sampling objects
   // Declared roughly in order of initialization

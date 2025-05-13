@@ -366,6 +366,11 @@ CUptiResult CuptiErrorManager::ProfilerHostConfigAddMetrics(
     CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams) {
   IGNORE_CALL_IF_DISABLED;
   CUptiResult err = interface_->ProfilerHostConfigAddMetrics(pParams);
+  // INVALID_PARAMETER is expected when the metric is not supported in current
+  // CUPTI.  Can re-try with a different metric set.
+  ALLOW_ERROR(err, CUPTI_ERROR_INVALID_PARAMETER);
+  // Not currently returned but may be in the future.
+  ALLOW_ERROR(err, CUPTI_ERROR_INVALID_METRIC_NAME);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
