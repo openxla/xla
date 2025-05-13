@@ -1,3 +1,5 @@
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 
 package(
@@ -156,6 +158,65 @@ xla_test(
 )
 
 cc_library(
+    name = "custom_kernel",
+    srcs = ["custom_kernel.cc"],
+    hdrs = ["custom_kernel.h"],
+    deps = [
+        ":gpu_codegen_backend",
+        "//xla:autotune_results_proto_cc",
+        "//xla:autotuning_proto_cc",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:custom_kernel_fusion",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_test(
+    name = "custom_kernel_test",
+    srcs = ["custom_kernel_test.cc"],
+    backends = [
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_b200",
+    ],
+    tags = [
+        "cuda-only",
+        "no_mac",
+    ],
+    deps = [
+        ":custom_kernel",
+        "//xla:autotuning_proto_cc",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:nvptx_compiler_impl",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "triton",
     srcs = ["triton.cc"],
     hdrs = ["triton.h"],
@@ -187,16 +248,12 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "triton_test",
     srcs = ["triton_test.cc"],
-    backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
-    ],
     tags = [
-        "cuda-only",
+        "cuda-only",  # rocm support is not tested.
+        "gpu",
         "no_mac",
     ],
     deps = [
@@ -207,6 +264,7 @@ xla_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:compiler",
         "//xla/service:executable",
+        "//xla/service:gpu_plugin",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:nvptx_compiler_impl",
@@ -216,5 +274,7 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
-    ],
+    ] + if_cuda([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]),
 )

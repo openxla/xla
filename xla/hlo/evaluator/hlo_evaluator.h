@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 #define XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 
+#include "absl/log/log.h"
 #define _USE_MATH_DEFINES
 
 #include <complex>
@@ -361,6 +362,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault {
   absl::Status HandleReduceWindow(const HloInstruction* hlo) override;
   absl::Status HandleMap(const HloInstruction* map) override;
   absl::Status HandleCustomCall(const HloInstruction* custom_call) override;
+  absl::Status HandleOptimizationBarrier(const HloInstruction* hlo) override;
 
   // Unsupported HLOs, note some of them (such as BatchNorm*) are typically
   // expanded in a semantic-preserving way into other HLOs by adding expansion
