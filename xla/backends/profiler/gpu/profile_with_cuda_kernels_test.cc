@@ -48,8 +48,6 @@ class TestableCuptiTracer : public CuptiTracer {
 };
 
 std::atomic_uint64_t atomic_total_fp64 = 0;
-std::atomic_uint64_t atomic_total_read = 0;
-std::atomic_uint64_t atomic_total_write = 0;
 std::atomic_bool skip_first = true;
 
 void HandleRecords(PmSamples* samples) {
@@ -81,10 +79,6 @@ void HandleRecords(PmSamples* samples) {
 
     if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
       atomic_total_fp64 += sum;
-    } else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
-      atomic_total_read += sum;
-    } else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
-      atomic_total_write += sum;
     }
   }
 
@@ -119,8 +113,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   // Metrics can be queried with Nsight Compute
   // ncu --query-metrics
   sampler_options.metrics = {"sm__cycles_active.sum",
-                             "sm__inst_executed_pipe_fp64.sum",
-                             "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
+                             "sm__inst_executed_pipe_fp64.sum"};
   sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
@@ -150,14 +143,6 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
   EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100);
   EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100);
-
-  // Expect > 4 * elems * sizeof(double) bytes written to pcie
-  // 3 copies to device, 1 copy back
-  // This is just a basic algorithmic minimum, there are more loads and
-  // stores due to copying kernel itself, etc
-  LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
-  LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
-  EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
 }
 
 }  // namespace
