@@ -598,6 +598,49 @@ RendezvousBeforeKernelStart(absl::string_view name,
   return rendezvous_values;
 }
 
+// Lightweight rendezvous that only records the event.
+absl::StatusOr<std::shared_ptr<std::vector<LightweightRendezvousValue>>>
+LightweightRendezvousBeforeKernelStart(absl::string_view name,
+                                       const GpuCliqueKey& clique_key,
+                                       RankId rank, int64_t num_ranks,
+                                       se::Stream& stream, se::Event* event) {
+  LightweightRendezvousValue rendezvous_value;
+  rendezvous_value.event = event;
+
+  // Record that this device has started the kernel. We do this before the
+  // rendezvous to make sure that RecordEvent is called before WaitFor on
+  // another stream.
+  TF_RETURN_IF_ERROR(stream.RecordEvent(event));
+
+  auto rendezvous_fn =
+      [](absl::Span<const LightweightRendezvousValue* const> values) {
+        std::vector<LightweightRendezvousValue> values_copy;
+        for (const auto& value : values) {
+          values_copy.push_back(*value);
+        }
+        // No data exchange, so we do not care about the order.
+        return values_copy;
+      };
+
+  std::string start_rendezvous_key =
+      absl::StrFormat("start %s for rank %d, clique %s", name, rank.value(),
+                      clique_key.ToString());
+  TF_ASSIGN_OR_RETURN(std::shared_ptr<std::vector<LightweightRendezvousValue>>
+                          rendezvous_values,
+                      Rendezvous<std::vector<LightweightRendezvousValue>>(
+                          /*name=*/start_rendezvous_key, /*key=*/clique_key,
+                          /*value=*/rendezvous_value, /*num_threads=*/num_ranks,
+                          rendezvous_fn));
+
+  // Wait for all devices to reach the start event. This indicates that all
+  // buffers are ready for transfer.
+  for (auto& value : *rendezvous_values) {
+    TF_RETURN_IF_ERROR(stream.WaitFor(value.event));
+  }
+
+  return rendezvous_values;
+}
+
 // Executes the rendezvous after the kernel finish. Waits for all devices to
 // reach the end event.
 absl::Status RendezvousAfterKernelFinish(
@@ -622,6 +665,31 @@ absl::Status RendezvousAfterKernelFinish(
     TF_RETURN_IF_ERROR(stream.WaitFor(value.end_event));
   }
 
+  return absl::OkStatus();
+}
+// Lightweight rendezvous that only records the event.
+absl::Status LightweightRendezvousAfterKernelFinish(
+    absl::string_view name, const GpuCliqueKey& clique_key, RankId rank,
+    int64_t num_ranks, se::Stream& stream, se::Event* event,
+    const std::shared_ptr<std::vector<LightweightRendezvousValue>>&
+        rendezvous_values) {
+  // Record that this device has finished executing the kernel.
+  TF_RETURN_IF_ERROR(stream.RecordEvent(event));
+
+  // Do another rendezvous to make sure that we call RecordEvent for end_event
+  // before WaitFor on another stream.
+  std::string finish_rendezvous_key =
+      absl::StrFormat("finish %s for rank %d, clique %s", name, rank.value(),
+                      clique_key.ToString());
+  TF_RETURN_IF_ERROR(Rendezvous(/*name=*/finish_rendezvous_key,
+                                /*key=*/clique_key,
+                                /*num_threads=*/num_ranks));
+
+  // Wait for all devices to reach the end event. This indicates that all
+  // updates from other devices have arrived.
+  for (auto& value : *rendezvous_values) {
+    TF_RETURN_IF_ERROR(stream.WaitFor(value.event));
+  }
   return absl::OkStatus();
 }
 

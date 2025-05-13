@@ -89,13 +89,10 @@ class AllToAllStartThunk : public CollectiveThunk {
       receive_pointer_maps_ ABSL_GUARDED_BY(pointer_maps_mutex_);
 
   absl::Mutex events_mutex_;
-  // Events to synchronize steams on different devices at the start of the
+  // Events to synchronize steams on different devices at the start/end of the
   // kernel.
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
-      start_events_ ABSL_GUARDED_BY(events_mutex_);
-  // Events to synchronize steams on different devices at the end of the kernel.
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
-      end_events_ ABSL_GUARDED_BY(events_mutex_);
+  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>> events_
+      ABSL_GUARDED_BY(events_mutex_);
 };
 
 absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
@@ -108,7 +105,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
                                se::Stream& stream, Communicator* comm,
                                uint64_t receive_pointer_map[],
                                const GpuCliqueKey& clique_key, RankId rank,
-                               se::Event* start_event, se::Event* end_event);
+                               se::Event* event);
 
 }  // namespace gpu
 }  // namespace xla
