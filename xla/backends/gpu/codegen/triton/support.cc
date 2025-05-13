@@ -607,9 +607,10 @@ CodegenDecision IsTritonSupportedInstructionImpl(
       return CanTritonHandleReduce(*Cast<HloReduceInstruction>(&instr),
                                    gpu_version);
     }
+    case HloOpcode::kParameter:
+      return CodegenDecision::Allow();
     case HloOpcode::kBitcast:
     case HloOpcode::kBroadcast:
-    case HloOpcode::kParameter:
     case HloOpcode::kReshape:
     case HloOpcode::kSlice:
     case HloOpcode::kTranspose:
@@ -663,7 +664,6 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     case HloOpcode::kSendDone:
     case HloOpcode::kSetDimensionSize:
     case HloOpcode::kSort:
-    case HloOpcode::kTriangularSolve:
       return true;
     default:
       return false;
