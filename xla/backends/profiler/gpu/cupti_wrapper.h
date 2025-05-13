@@ -157,8 +157,7 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
       CUpti_Profiler_UnsetConfig_Params* params) override;
   CUptiResult ProfilerBeginPass(
       CUpti_Profiler_BeginPass_Params* params) override;
-  CUptiResult ProfilerEndPass(
-      CUpti_Profiler_EndPass_Params* params) override;
+  CUptiResult ProfilerEndPass(CUpti_Profiler_EndPass_Params* params) override;
   CUptiResult ProfilerEnableProfiling(
       CUpti_Profiler_EnableProfiling_Params* params) override;
   CUptiResult ProfilerDisableProfiling(
@@ -169,8 +168,7 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
       CUpti_Profiler_FlushCounterData_Params* params) override;
   CUptiResult ProfilerPushRange(
       CUpti_Profiler_PushRange_Params* params) override;
-  CUptiResult ProfilerPopRange(
-      CUpti_Profiler_PopRange_Params* params) override;
+  CUptiResult ProfilerPopRange(CUpti_Profiler_PopRange_Params* params) override;
   CUptiResult ProfilerGetCounterAvailability(
       CUpti_Profiler_GetCounterAvailability_Params* params) override;
   CUptiResult ProfilerDeviceSupported(
@@ -179,14 +177,11 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
   // PM sampling specific functions
   CUptiResult PmSamplingSetConfig(
       CUpti_PmSampling_SetConfig_Params* params) override;
-  CUptiResult PmSamplingEnable(
-      CUpti_PmSampling_Enable_Params* params) override;
+  CUptiResult PmSamplingEnable(CUpti_PmSampling_Enable_Params* params) override;
   CUptiResult PmSamplingDisable(
       CUpti_PmSampling_Disable_Params* params) override;
-  CUptiResult PmSamplingStart(
-      CUpti_PmSampling_Start_Params* params) override;
-  CUptiResult PmSamplingStop(
-      CUpti_PmSampling_Stop_Params* params) override;
+  CUptiResult PmSamplingStart(CUpti_PmSampling_Start_Params* params) override;
+  CUptiResult PmSamplingStop(CUpti_PmSampling_Stop_Params* params) override;
   CUptiResult PmSamplingDecodeData(
       CUpti_PmSampling_DecodeData_Params* params) override;
   CUptiResult PmSamplingGetCounterAvailability(
@@ -338,8 +333,7 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
       CUpti_Profiler_UnsetConfig_Params* params) override;
   CUptiResult ProfilerBeginPass(
       CUpti_Profiler_BeginPass_Params* params) override;
-  CUptiResult ProfilerEndPass(
-      CUpti_Profiler_EndPass_Params* params) override;
+  CUptiResult ProfilerEndPass(CUpti_Profiler_EndPass_Params* params) override;
   CUptiResult ProfilerEnableProfiling(
       CUpti_Profiler_EnableProfiling_Params* params) override;
   CUptiResult ProfilerDisableProfiling(
@@ -350,8 +344,7 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
       CUpti_Profiler_FlushCounterData_Params* params) override;
   CUptiResult ProfilerPushRange(
       CUpti_Profiler_PushRange_Params* params) override;
-  CUptiResult ProfilerPopRange(
-      CUpti_Profiler_PopRange_Params* params) override;
+  CUptiResult ProfilerPopRange(CUpti_Profiler_PopRange_Params* params) override;
   CUptiResult ProfilerGetCounterAvailability(
       CUpti_Profiler_GetCounterAvailability_Params* params) override;
   CUptiResult ProfilerDeviceSupported(
@@ -360,14 +353,11 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
   // PM sampling specific functions
   CUptiResult PmSamplingSetConfig(
       CUpti_PmSampling_SetConfig_Params* params) override;
-  CUptiResult PmSamplingEnable(
-      CUpti_PmSampling_Enable_Params* params) override;
+  CUptiResult PmSamplingEnable(CUpti_PmSampling_Enable_Params* params) override;
   CUptiResult PmSamplingDisable(
       CUpti_PmSampling_Disable_Params* params) override;
-  CUptiResult PmSamplingStart(
-      CUpti_PmSampling_Start_Params* params) override;
-  CUptiResult PmSamplingStop(
-      CUpti_PmSampling_Stop_Params* params) override;
+  CUptiResult PmSamplingStart(CUpti_PmSampling_Start_Params* params) override;
+  CUptiResult PmSamplingStop(CUpti_PmSampling_Stop_Params* params) override;
   CUptiResult PmSamplingDecodeData(
       CUpti_PmSampling_DecodeData_Params* params) override;
   CUptiResult PmSamplingGetCounterAvailability(

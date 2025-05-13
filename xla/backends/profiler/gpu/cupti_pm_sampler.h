@@ -65,8 +65,9 @@ class CuptiPmSampler {
   virtual ~CuptiPmSampler() = default;
 
   // Initialize the PM sampler
-  virtual absl::Status Initialize(CuptiInterface* cupti_interface, size_t num_gpus,
-      CuptiPmSamplerOptions* options);;
+  virtual absl::Status Initialize(CuptiInterface* cupti_interface,
+                                  size_t num_gpus,
+                                  CuptiPmSamplerOptions* options);
 
   // Start sampler
   virtual absl::Status StartSampler();
@@ -81,5 +82,4 @@ class CuptiPmSampler {
 }  // namespace profiler
 }  // namespace xla
 
-
-#endif // XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_H_

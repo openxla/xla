@@ -89,7 +89,8 @@ class CuptiPmSamplerDevice {
 
   // Constructor provides all configuration needed to set up sampling on a
   // single device
-  CuptiPmSamplerDevice(int device_id, CuptiInterface* cupti_interface, CuptiPmSamplerOptions* options);
+  CuptiPmSamplerDevice(int device_id, CuptiInterface* cupti_interface,
+                       CuptiPmSamplerOptions* options);
 
   // Destructor cleans up all images and objects
   ~CuptiPmSamplerDevice();
@@ -101,11 +102,8 @@ class CuptiPmSamplerDevice {
   size_t hw_buf_size_;
   size_t sample_interval_ns_;
   std::vector<char const*> default_c_metrics_{
-    "sm__cycles_active.sum",
-    "sm__inst_executed_pipe_fmalite.sum",
-    "pcie__read_bytes.sum",
-    "pcie__write_bytes.sum"
-  };
+      "sm__cycles_active.sum", "sm__inst_executed_pipe_fmalite.sum",
+      "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
 
   // CUPTI PM sampling objects
   // Declared roughly in order of initialization
@@ -128,7 +126,7 @@ class CuptiPmSamplerDevice {
   absl::Status CreateCounterAvailabilityImage();
 
   // Requires counter availability image
-  absl::Status CreateProfilerHostObj();           
+  absl::Status CreateProfilerHostObj();
 
   // Requires profiler host object
   absl::Status CreateConfigImage();
@@ -155,7 +153,8 @@ class CuptiPmSamplerDevice {
 // handler or other external container
 class CuptiPmSamplerDecodeThread {
  public:
-  CuptiPmSamplerDecodeThread(std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs,
+  CuptiPmSamplerDecodeThread(
+      std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs,
       CuptiPmSamplerOptions* options);
 
   // Signal thread to exit; join thread
@@ -209,7 +208,7 @@ class CuptiPmSamplerDecodeThread {
 
   // Current state of the thread (only set by worker thread)
   volatile ThdState current_thd_state_ = kStateUninitialized;
-    
+
   // State thread should transition to (only set by main thread)
   volatile ThdState nextThdState_ = kStateInitialized;
 
@@ -241,7 +240,7 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
 
   // Initialize the PM sampler, but do not start sampling or decoding
   absl::Status Initialize(CuptiInterface* cupti_interface, size_t num_gpus,
-      CuptiPmSamplerOptions* options) override;
+                          CuptiPmSamplerOptions* options) override;
 
   // Start sampling and decoding
   absl::Status StartSampler() override;
@@ -268,4 +267,4 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
 }  // namespace profiler
 }  // namespace xla
 
-#endif // XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_IMPL_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_IMPL_H_

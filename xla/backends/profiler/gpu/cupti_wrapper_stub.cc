@@ -199,8 +199,7 @@ CUptiResult CuptiWrapperStub::ProfilerHostGetNumOfPasses(
 }
 
 CUptiResult CuptiWrapperStub::ProfilerHostGetMaxNumHardwareMetricsPerPass(
-    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* params)
-    {
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* params) {
   return CUPTI_SUCCESS;
 }
 
@@ -227,14 +226,12 @@ CUptiResult CuptiWrapperStub::ProfilerCounterDataImageInitialize(
 
 CUptiResult
 CuptiWrapperStub::ProfilerCounterDataImageCalculateScratchBufferSize(
-    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
-        params) {
+    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params* params) {
   return CUPTI_SUCCESS;
 }
 
 CUptiResult CuptiWrapperStub::ProfilerCounterDataImageInitializeScratchBuffer(
-    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params*
-    params) {
+    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* params) {
   return CUPTI_SUCCESS;
 }
 

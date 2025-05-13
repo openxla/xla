@@ -24,23 +24,17 @@ namespace profiler {
 // Stub implementation of CuptiPmSampler
 // Full implementation is in cupti_pm_sampler_impl.h/.cc
 
-absl::Status CuptiPmSampler::Initialize(CuptiInterface *cupti_interface, 
+absl::Status CuptiPmSampler::Initialize(CuptiInterface* cupti_interface,
                                         size_t num_gpus,
                                         CuptiPmSamplerOptions* options) {
   return absl::OkStatus();
 }
 
-absl::Status CuptiPmSampler::StartSampler() {
-  return absl::OkStatus();
-}
+absl::Status CuptiPmSampler::StartSampler() { return absl::OkStatus(); }
 
-absl::Status CuptiPmSampler::StopSampler() {
-  return absl::OkStatus();
-}
+absl::Status CuptiPmSampler::StopSampler() { return absl::OkStatus(); }
 
-absl::Status CuptiPmSampler::Deinitialize() {
-  return absl::OkStatus();
-}
+absl::Status CuptiPmSampler::Deinitialize() { return absl::OkStatus(); }
 
 }  // namespace profiler
 }  // namespace xla

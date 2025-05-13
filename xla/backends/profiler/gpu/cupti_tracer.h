@@ -38,7 +38,7 @@ namespace profiler {
 
 // Provide safe types if CUPTI_PM_SAMPLING is not defined
 // (And therefor CUPTI PM sampling headers are not included)
-#if ! CUPTI_PM_SAMPLING_SUPPORTED
+#if !CUPTI_PM_SAMPLING_SUPPORTED
 enum CUpti_PmSampling_DecodeStopReason {
   CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT = 0
 };
@@ -62,7 +62,7 @@ struct CuptiTracerOptions {
   // Whether to enable NVTX tracking, we need this for TensorRT tracking.
   bool enable_nvtx_tracking = false;
   // PM sampling configuration (defaults are 2khz rate, 100ms decode)
-  // Only read during creation of a PM sampling object, later changes have 
+  // Only read during creation of a PM sampling object, later changes have
   // no effect
   CuptiPmSamplerOptions pm_sampler_options;
 };
@@ -98,8 +98,8 @@ class CuptiTracer {
   bool IsAvailable() const;
   bool NeedRootAccess() const { return need_root_access_; }
 
-  absl::Status Enable(const CuptiTracerOptions& option, CuptiTraceCollector*
-      collector);
+  absl::Status Enable(const CuptiTracerOptions& option,
+                      CuptiTraceCollector* collector);
   void Disable();
 
   // Control threads could periodically call this function to flush the

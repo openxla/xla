@@ -81,11 +81,9 @@ void HandleRecords(PmSamples* samples) {
 
     if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
       atomic_total_fp64 += sum;
-    }
-    else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
+    } else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
       atomic_total_read += sum;
-    }
-    else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
+    } else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
       atomic_total_write += sum;
     }
   }
@@ -114,18 +112,15 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   uint64_t start_walltime_ns = absl::GetCurrentTimeNanos();
   uint64_t start_gputime_ns = CuptiTracer::GetTimestamp();
   auto collector = CreateCuptiCollector(collector_options, start_walltime_ns,
-      start_gputime_ns);
+                                        start_gputime_ns);
 
   CuptiPmSamplerOptions sampler_options;
   sampler_options.enable = true;
   // Metrics can be queried with Nsight Compute
   // ncu --query-metrics
-  sampler_options.metrics = {
-    "sm__cycles_active.sum",
-    "sm__inst_executed_pipe_fp64.sum",
-    "pcie__read_bytes.sum",
-    "pcie__write_bytes.sum"
-  };
+  sampler_options.metrics = {"sm__cycles_active.sum",
+                             "sm__inst_executed_pipe_fp64.sum",
+                             "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
   sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
@@ -165,8 +160,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
 }
 
-}
-
+}  // namespace
 }  // namespace test
 }  // namespace profiler
 }  // namespace xla

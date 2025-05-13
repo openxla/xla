@@ -395,8 +395,7 @@ CUptiResult CuptiErrorManager::ProfilerHostGetNumOfPasses(
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetMaxNumHardwareMetricsPerPass(
-    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams)
-    {
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams) {
   IGNORE_CALL_IF_DISABLED;
   CUptiResult err =
       interface_->ProfilerHostGetMaxNumHardwareMetricsPerPass(pParams);
@@ -439,8 +438,7 @@ CUptiResult CuptiErrorManager::ProfilerCounterDataImageInitialize(
 
 CUptiResult
 CuptiErrorManager::ProfilerCounterDataImageCalculateScratchBufferSize(
-    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params*
-        params) {
+    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params* params) {
   IGNORE_CALL_IF_DISABLED;
   CUptiResult err =
       interface_->ProfilerCounterDataImageCalculateScratchBufferSize(params);
@@ -449,8 +447,7 @@ CuptiErrorManager::ProfilerCounterDataImageCalculateScratchBufferSize(
 }
 
 CUptiResult CuptiErrorManager::ProfilerCounterDataImageInitializeScratchBuffer(
-    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params*
-    params) {
+    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* params) {
   IGNORE_CALL_IF_DISABLED;
   CUptiResult err =
       interface_->ProfilerCounterDataImageInitializeScratchBuffer(params);
