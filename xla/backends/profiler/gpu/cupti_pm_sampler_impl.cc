@@ -634,7 +634,7 @@ absl::Status CuptiPmSamplerImpl::Initialize(
   // Wait > 1 decode periods at stop to ensure all data is flushed
   decode_stop_delay_ = options->decode_period * 1.5;
 
-  abs::Status status;
+  absl::Status status;
 
   // PM sampling has to be enabled on individual devices
   for (int dev_idx = 0; dev_idx < num_gpus; dev_idx++) {
