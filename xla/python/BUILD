@@ -136,6 +136,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
         "@tsl//tsl/platform:protobuf",
