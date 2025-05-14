@@ -1401,9 +1401,12 @@ absl::Status GpuCompiler::OptimizeHloModule(
           GetAlgebraicSimplifierOptions(hlo_module->config()));
 
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
-  TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
-                                   layout_insensitive_algsimp_opts,
-                                   options.slice_size));
+  // Set max_windowed_einsum_iteration to slice_size, as there will be
+  // siginificant overhead when scaled beyond the maximum size of the
+  // fast-interconnect domain.
+  TF_RETURN_IF_ERROR(RunSPMDPasses(
+      hlo_module, gpu_target_config, layout_insensitive_algsimp_opts,
+      /*max_windowed_einsum_iteration=*/options.slice_size));
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));

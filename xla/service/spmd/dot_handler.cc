@@ -1933,8 +1933,6 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
     }
   }
 
-  // Hard limit on iteration count based on empirical data (above this amount
-  // there's pretty significant overhead).
   std::optional<WindowedEinsumConfig> e_config = std::nullopt;
   if (!should_skip_windowed_einsum) {
     e_config = GetWindowedEinsumConfiguration(
