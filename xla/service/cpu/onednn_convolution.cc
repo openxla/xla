@@ -163,7 +163,10 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   for (const Shape& shape : fused_shapes) {
     memory::desc mem_desc = ShapeToMemDesc(shape);
     // The post-op argument must be oriented consistently with the output memory
-    // descriptor
+    // descriptor.
+    // Bias inputs are one-dimensional, as required by oneDNN. The broadcast
+    // dimensions of all binary post-op inputs are expanded in the rewriter.
+    // Hence, this condition should hold for all non-bias inputs.
     if (mem_desc.get_ndims() == new_out_md.get_ndims()) {
       mem_desc = mem_desc.permute_axes(ComputePermutations(
           conv_config.dims(), conv_config.output().data().batch_dim(),
