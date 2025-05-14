@@ -2314,8 +2314,7 @@ std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
     return nvptx::LibDevicePath(
         hlo_config.debug_options().xla_gpu_cuda_data_dir());
   }
-  return amdgpu::LibDevicePath(
-      device_info.rocm_compute_capability().gcn_arch_name(), tsl::RocdlRoot());
+  return "";
 }
 
 }  // namespace gpu
