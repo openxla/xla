@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -475,6 +476,12 @@ class Thunk {
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
 
+  // Returns any communicators used during execution.
+  virtual absl::StatusOr<std::vector<Communicator*>> GetCommunicators(
+      const ExecuteParams& params) const {
+    return std::vector<Communicator*>();
+  }
+
   // Invokes `fn` with this thunk and all nested thunks.
   virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
 
@@ -492,15 +499,14 @@ class Thunk {
     return params.collective_params->collectives;
   }
 
-  // Serializes the thunk into the given ThunkProto. `thunk_proto` is an
-  // out-parameter to make the API compatible with Protobuf Arena allocation.
-  virtual absl::Status ToProto(ThunkProto* thunk_proto) const {
-    thunk_proto->mutable_thunk_info()->set_execution_stream_id(
-        execution_stream_id_.value());
-    thunk_proto->mutable_thunk_info()->set_profile_annotation(
-        profile_annotation_);
-    return absl::OkStatus();
-  }
+  // Serializes the thunk into a `ThunkProto`.
+  virtual absl::StatusOr<ThunkProto> ToProto() const;
+
+  // This declares a deserializer callback that `FromProto` Thunk factory
+  // functions can use to deserialize sub messages.
+  using Deserializer =
+      absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
+          const ThunkProto&) const>;
 
  private:
   Kind kind_;

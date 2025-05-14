@@ -1255,6 +1255,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -1270,6 +1271,7 @@ cc_library(
         "//xla/service:hlo_cost_analysis",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu/transforms:fusion_block_level_rewriter",
+        "//xla/service/gpu/transforms:fusion_dynamic_memcpy_rewriter",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -1498,7 +1500,6 @@ cc_library(
         "//xla/service/gpu/transforms:async_collective_annotator",
         "//xla/service/gpu/transforms:async_wrapper",
         "//xla/service/gpu/transforms:collective_permute_cycle_decomposer",
-        "//xla/service/gpu/transforms:collective_permute_valid_iteration_annotator",
         "//xla/service/gpu/transforms:collective_select_folder",
         "//xla/service/gpu/transforms:command_buffer_scheduling",
         "//xla/service/gpu/transforms:conv_rewriter",
@@ -2597,6 +2598,7 @@ xla_cc_test(
     data = ["data/hlo_algorithm_denylist.pbtxt"],
     deps = [
         ":hlo_algorithm_denylist",
+        "//xla:debug_options_flags",
         "//xla/stream_executor:dnn",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/strings",

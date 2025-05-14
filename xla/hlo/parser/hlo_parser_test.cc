@@ -2691,104 +2691,6 @@ ENTRY test {
   ROOT root = f32[10,10]{1,0} sqrt(broadcast.anon)
 })"
 },
-
-{
-"SparseShape",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)})->f32[10,10]{1,0:D(D,C)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithIndexPrimitiveType",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u32)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)#(u32)})->f32[10,10]{1,0:D(D,C)#(u32)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u32)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithPointerPrimitiveType",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)*(u32)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)*(u32)})->f32[10,10]{1,0:D(D,C)*(u32)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)*(u32)} parameter(0)
-})",
-},
-
-{
-"SparseShapeWithPhysicalShape",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))})->f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-},
-
-{
-"SparseShapeFull",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))})->f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)#(u64)*(u32)S(42)P((s32[10]{0:T(100)}, s32[10]{0:T(100)}, f32[10]{0:T(100)}))} parameter(0)
-})",
-},
-
-{
-"SparseCOO",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C,S)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C,S)})->f32[10,10]{1,0:D(C,S)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C,S)} parameter(0)
-})",
-},
-
-{
-"SparseCOOUnordered",
-R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C~,S~)} parameter(0)
-})",
-R"(HloModule test, entry_computation_layout={(f32[10,10]{1,0:D(C~,S~)})->f32[10,10]{1,0:D(C~,S~)}}
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C~,S~)} parameter(0)
-})",
-},
 });
   // clang-format on
 }
@@ -4796,16 +4698,6 @@ TEST_F(HloParserTest, ParseDynamicTuple) {
       << "actual:   " << ShapeUtil::HumanString(actual);
 }
 
-TEST_F(HloParserTest, ParseInvalidDimLevel) {
-  constexpr absl::string_view shape_string = "f32[123]{0:D(D+~)}";
-  absl::StatusOr<Shape> result = ParseShape(shape_string);
-  ASSERT_THAT(result.status(),
-              tsl::testing::StatusIs(
-                  tsl::error::INVALID_ARGUMENT,
-                  testing::HasSubstr(
-                      "invalid DimLevelType/ordered combination in shape")));
-}
-
 TEST_F(HloParserTest, NegativeParameterNumber) {
   const std::string hlo_string = "par0 = f32[3,5] parameter(-1)";
   auto result = ParseAndReturnUnverifiedModule(hlo_string);
@@ -5215,31 +5107,6 @@ ENTRY test {
               tsl::testing::StatusIs(
                   tsl::error::INVALID_ARGUMENT,
                   HasSubstr("expected a DimLevelType abbreviation")));
-}
-
-TEST_F(HloParserTest, InvalidDimLevelTypeCount) {
-  const std::string original = R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(C)} parameter(0)
-})";
-  EXPECT_THAT(
-      ParseAndReturnUnverifiedModule(original).status(),
-      tsl::testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("Dimensions size is 2, but dim level types size is 1")));
-}
-
-TEST_F(HloParserTest, RejectSparseTiles) {
-  const std::string original = R"(HloModule test
-
-ENTRY test {
-  ROOT root = f32[10,10]{1,0:D(D,C)T(128,8)} parameter(0)
-})";
-  EXPECT_THAT(ParseAndReturnUnverifiedModule(original).status(),
-              tsl::testing::StatusIs(
-                  tsl::error::INVALID_ARGUMENT,
-                  HasSubstr("Layout has tiles, but is for a sparse array")));
 }
 
 TEST_F(HloParserTest, RejectDensePhysicalShape) {
@@ -5999,6 +5866,39 @@ TEST_F(HloParserTest, ResultAccuracyToProto) {
   EXPECT_TRUE(exp_hlo_inst_proto.has_result_accuracy());
   EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().rtol(), 0.5);
   EXPECT_EQ(exp_hlo_inst_proto.result_accuracy().tolerance().atol(), 1.0);
+}
+
+TEST_F(HloParserTest, ParseBufferEmptyElement) {
+  std::string shape_string = "b()";
+  auto result = ParseShape(shape_string);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(), "expected primitive type");
+}
+
+TEST_F(HloParserTest, ParseBufferMoreThanOneElement) {
+  std::string shape_string = "b(s32[], f32[])";
+  auto result = ParseShape(shape_string);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects ')' at the end of buffer shape");
+}
+
+TEST_F(HloParserTest, ParseBufferScalar) {
+  std::string shape_string = "b(s32[])";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeBufferShape(S32, {});
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
+}
+
+TEST_F(HloParserTest, ParseBufferArray) {
+  std::string shape_string = "b(f32[8,16]{1,0})";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected = ShapeUtil::MakeBufferShape(F32, {8, 16});
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
 }
 
 }  // namespace

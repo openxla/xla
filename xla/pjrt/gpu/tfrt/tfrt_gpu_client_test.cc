@@ -52,10 +52,11 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
-#include "xla/pjrt/gpu/tfrt/tracked_tfrt_gpu_device_buffer.h"
+#include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -77,9 +78,11 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -473,13 +476,13 @@ TEST(TfrtGpuClientTest, AcquireDonation) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref),
       tsl::MakeAvailableAsyncValueRef<GpuEvent>());
   auto memory_space = device->default_memory_space().value();
@@ -734,29 +737,92 @@ TEST(TfrtGpuClientTest, ToLiteralAsyncWithNonCompactLayout) {
           client->addressable_devices()[0]->memory_spaces()[0]));
   std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
 
-  absl::Mutex mu;
+  absl::Notification n;
   auto literal = std::make_shared<Literal>(
       ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
-  bool got_literal = false;
 
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
   buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
-    absl::MutexLock l(&mu);
     TF_ASSERT_OK(s);
-    got_literal = true;
+    n.Notify();
   });
   buffer.reset();
 
-  {
-    absl::MutexLock l(&mu);
-    mu.Await(absl::Condition(&got_literal));
-  }
+  n.WaitForNotification();
 
   EXPECT_TRUE(ShapeUtil::Compatible(src_literal.shape(), literal->shape()));
   EXPECT_EQ(src_literal.data<int32_t>(),
             literal->Relayout(src_literal.shape().layout()).data<int32_t>());
+}
+
+TEST(TfrtGpuClientTest, ToLiteralAsyncWithDifferentMajorToMinor) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetTfrtGpuClient(GpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
+      xla::S32, {2, 3}, /*minor_to_major=*/{1, 0});
+  xla::Literal src_literal = xla::LiteralUtil::CreateR2WithLayout<int32_t>(
+      {{3, 14, 25}, {36, 47, 58}}, shape.layout());
+
+  PjRtClient::ShapeSpec spec;
+  spec.element_type = src_literal.shape().element_type();
+  spec.dims = DimensionVector(src_literal.shape().dimensions().begin(),
+                              src_literal.shape().dimensions().end());
+  xla::Shape transposed_shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
+      xla::S32, {2, 3}, /*minor_to_major=*/{0, 1});
+  std::vector<std::optional<xla::Layout>> device_layouts = {
+      std::make_optional(transposed_shape.layout())};
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice(
+          {spec}, device_layouts,
+          client->addressable_devices()[0]->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+
+  absl::Notification n;
+  auto literal = std::make_shared<Literal>(shape);
+
+  TF_ASSERT_OK(
+      transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
+
+  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
+    TF_ASSERT_OK(s);
+    n.Notify();
+  });
+  buffer.reset();
+
+  n.WaitForNotification();
+
+  ASSERT_TRUE(ShapeUtil::Compatible(src_literal.shape(), literal->shape()));
+  ASSERT_EQ(src_literal.data<int32_t>(),
+            literal->Relayout(src_literal.shape().layout()).data<int32_t>());
+}
+
+TEST(TfrtGpuClientTest, ToLiteralAsyncToken) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetTfrtGpuClient(GpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(
+          literal, client->addressable_devices()[0]->memory_spaces()[0]));
+  TF_ASSERT_OK(buffer->GetReadyFuture().Await());
+
+  absl::Notification n;
+
+  buffer->ToLiteral(&literal).OnReady([&](absl::Status s) {
+    TF_ASSERT_OK(s);
+    n.Notify();
+  });
+  buffer.reset();
+
+  n.WaitForNotification();
 }
 
 TEST(TfrtGpuClientTest, ToLiteralAsyncBeforeBufferReady) {
@@ -1206,6 +1272,26 @@ TEST(GpuTopology, ToProto) {
   EXPECT_THAT(msg.num_devices_per_host(), 3);
 }
 
+TEST(TfrtGpuClientTest, DistributedInit) {
+  auto kv_store = std::make_shared<InMemoryKeyValueStore>();
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "DistributeInit", 4);
+
+  int num_nodes = 2;
+  for (int i = 0; i < num_nodes; i++) {
+    thread_pool.Schedule([kv_store, i, num_nodes] {
+      GpuClientOptions options;
+      options.node_id = i;
+      options.num_nodes = num_nodes;
+      options.kv_store = kv_store;
+      TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(options));
+      EXPECT_TRUE(client->platform_name() == "cuda" ||
+                  client->platform_name() == "rocm");
+      EXPECT_EQ(client->addressable_device_count(), 2);
+      EXPECT_EQ(client->device_count(), 4);
+    });
+  }
+}
+
 namespace {
 constexpr int32_t kData[] = {1, 2, 3, 4};
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateDeviceBufferForTest(
@@ -1386,9 +1472,17 @@ TEST(TfrtGpuClientTest, MlirParameterLayoutFromOptionsIsSetInHlo) {
 TEST(TfrtGpuClientTest, GetDefaultLayout) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
   auto shape = ShapeUtil::MakeShape(S4, {2, 2});
+
   TF_ASSERT_OK_AND_ASSIGN(
       auto layout,
       client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+  EXPECT_EQ(layout.element_size_in_bits(), 4);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto* const topology,
+                          client->GetTopologyDescription());
+  TF_ASSERT_OK_AND_ASSIGN(
+      layout,
+      topology->GetDefaultLayout(shape.element_type(), shape.dimensions()));
   EXPECT_EQ(layout.element_size_in_bits(), 4);
 }
 

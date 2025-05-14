@@ -558,8 +558,7 @@ class HloParserImpl : public HloParser {
   bool ParseLayoutIntAttribute(int64_t* attr_value,
                                absl::string_view attr_description);
   bool ParseDimLevelTypes(
-      absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types,
-      absl::InlinedVector<bool, InlineRank()>* dim_ordered);
+      absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types);
   bool ParseTiles(std::vector<Tile>* tiles);
   bool ParseSplitConfigs(std::vector<SplitConfig>& split_configs);
   bool ParsePhysicalShape(Shape* physical_shape);
@@ -5951,8 +5950,7 @@ bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
 //   ::= 'C'
 //   ::= 'S'
 bool HloParserImpl::ParseDimLevelTypes(
-    absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types,
-    absl::InlinedVector<bool, InlineRank()>* dim_ordered) {
+    absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types) {
   auto parse_and_add_item = [&]() {
     if (lexer_.GetKind() == TokKind::kIdent) {
       bool dim_level_type_valid = false;
@@ -5978,17 +5976,10 @@ bool HloParserImpl::ParseDimLevelTypes(
         if (lexer_.GetKind() == TokKind::kPlus) {
           lexer_.Lex();
         }
-        bool new_dim_ordered = true;
         if (lexer_.GetKind() == TokKind::kTilde) {
-          new_dim_ordered = false;
           lexer_.Lex();
         }
-        if (!LayoutUtil::ValidateDimLevel(dim_level_type, new_dim_ordered)) {
-          return Error(lexer_.GetLoc(),
-                       "invalid DimLevelType/ordered combination in shape");
-        }
         dim_level_types->push_back(dim_level_type);
-        dim_ordered->push_back(new_dim_ordered);
         return true;
       }
     }
@@ -6145,7 +6136,6 @@ bool HloParserImpl::ParseSplitConfigs(std::vector<SplitConfig>& split_configs) {
 bool HloParserImpl::ParseLayout(Layout* layout) {
   absl::InlinedVector<int64_t, InlineRank()> minor_to_major;
   DimLevelTypeVector dim_level_types;
-  absl::InlinedVector<bool, InlineRank()> dim_ordered;
   std::vector<Tile> tiles;
   PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID;
   PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID;
@@ -6185,7 +6175,7 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
 
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "D") {
         lexer_.Lex();
-        ParseDimLevelTypes(&dim_level_types, &dim_ordered);
+        ParseDimLevelTypes(&dim_level_types);
       }
 
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "T") {
@@ -6262,20 +6252,34 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
     vec_tiles[i] = Tile(tiles[i]);
   }
   *layout = LayoutUtil::MakeLayout(
-      minor_to_major, dim_level_types, dim_ordered, vec_tiles,
-      tail_padding_alignment_in_elements, index_primitive_type,
-      pointer_primitive_type, element_size_in_bits, memory_space, split_configs,
-      std::move(physical_shape), dynamic_shape_metadata_prefix_bytes);
+      minor_to_major, vec_tiles, tail_padding_alignment_in_elements,
+      index_primitive_type, pointer_primitive_type, element_size_in_bits,
+      memory_space, split_configs, std::move(physical_shape),
+      dynamic_shape_metadata_prefix_bytes);
   return true;
 }
 
 // shape ::= shape_val_
 // shape ::= '(' tuple_elements ')'
+// shape ::= 'b(' shape ')'
 // tuple_elements
 //   ::= /*empty*/
 //   ::= shape (',' shape)*
 bool HloParserImpl::ParseShape(Shape* result,
                                bool allow_fallback_to_default_layout) {
+  if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "b" &&
+      lexer_.LookAhead() == TokKind::kLparen) {  // Buffer shape
+    lexer_.Lex();
+    lexer_.Lex();
+    Shape shape;
+    if (!ParseShape(&shape, allow_fallback_to_default_layout)) {
+      return false;
+    }
+    *result = Shape::MakeBufferShape(shape);
+    return ParseToken(TokKind::kRparen,
+                      "expects ')' at the end of buffer shape.");
+  }
+
   if (EatIfPresent(TokKind::kLparen)) {  // Tuple
     std::vector<Shape> shapes;
     if (lexer_.GetKind() == TokKind::kRparen) {
@@ -6334,26 +6338,13 @@ bool HloParserImpl::ParseShape(Shape* result,
     if (!ParseLayout(&layout)) {
       return false;
     }
-    if (layout.dim_level_types_size() != 0 &&
-        layout.dim_level_types_size() != result->dimensions().size()) {
-      return Error(
-          lexer_.GetLoc(),
-          StrFormat("Dimensions size is %ld, but dim level types size is %ld.",
-                    result->dimensions().size(),
-                    layout.dim_level_types_size()));
-    }
     if (layout.minor_to_major_size() != result->dimensions().size()) {
       return Error(
           lexer_.GetLoc(),
           StrFormat("Dimensions size is %ld, but minor to major size is %ld.",
                     result->dimensions().size(), layout.minor_to_major_size()));
     }
-    if (LayoutUtil::IsSparse(layout) && layout.tiles_size() > 0) {
-      return Error(lexer_.GetLoc(),
-                   StrFormat("Layout has tiles, but is for a sparse array: %s",
-                             layout.ToString()));
-    }
-    if (!LayoutUtil::IsSparse(layout) && layout.has_physical_shape()) {
+    if (layout.has_physical_shape()) {
       return Error(
           lexer_.GetLoc(),
           StrFormat(
@@ -6369,7 +6360,9 @@ bool HloParserImpl::CanBeShape() {
   // A non-tuple shape starts with a kPrimitiveType token; a tuple shape starts
   // with '('.
   return lexer_.GetKind() == TokKind::kPrimitiveType ||
-         lexer_.GetKind() == TokKind::kLparen;
+         lexer_.GetKind() == TokKind::kLparen ||
+         (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "b" &&
+          lexer_.LookAhead() == TokKind::kLparen);
 }
 
 bool HloParserImpl::ParseName(std::string* result) {

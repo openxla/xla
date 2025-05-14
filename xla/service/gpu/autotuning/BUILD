@@ -192,6 +192,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -270,6 +271,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
         "//xla/tsl/lib/core:bits",
@@ -427,6 +429,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -434,7 +437,6 @@ cc_library(
     name = "redzone_buffers",
     srcs = ["redzone_buffers.cc"],
     hdrs = ["redzone_buffers.h"],
-    tags = ["gpu"],
     deps = [
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -454,6 +456,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 

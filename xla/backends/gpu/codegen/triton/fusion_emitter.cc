@@ -1173,6 +1173,10 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
+  if (hlo->IsRoot() && hlo->opcode() == HloOpcode::kParameter) {
+    hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
+  }
+
   if (fusion->IsUserOf(hlo)) {
     // If the fusion instruction is a user of `hlo`, then `hlo` is an operand
     // to the fusion instruction.
@@ -1648,7 +1652,7 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
       TF_ASSIGN_OR_RETURN(
           auto tma_desc,
           Create2DTmaDescriptor(attr.getGlobalShape(), attr.getBlockShape(),
-                                attr.getElementByteSize()));
+                                attr.getLayout(), attr.getElementByteSize()));
       tma_metadata.arg_index_to_tma_info.insert({idx, tma_desc});
     }
   }

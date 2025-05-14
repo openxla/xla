@@ -22,6 +22,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -42,6 +44,7 @@ namespace {
 
 using ::tsl::proto_testing::EqualsProto;
 using ::tsl::testing::IsOk;
+using ::tsl::testing::StatusIs;
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
 
 const char kHlo[] = R"(
@@ -85,10 +88,11 @@ TEST_F(TritonBackendTest, GetSupportedConfigs) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo));
 
-  std::vector<std::unique_ptr<BackendConfig>> configs =
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           *(module->entry_computation()->root_instruction()), nullptr);
-  EXPECT_GT(configs.size(), 0);
+  EXPECT_THAT(configs, IsOk());
+  EXPECT_GT(configs.value().size(), 0);
 }
 
 TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
@@ -98,9 +102,9 @@ TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
                                           ->root_instruction()
                                           ->called_computations()[0]
                                           ->root_instruction();
-  std::vector<std::unique_ptr<BackendConfig>> configs =
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(*unsupported_instr, nullptr);
-  EXPECT_THAT(configs, ::testing::IsEmpty());
+  EXPECT_THAT(configs, StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(TritonBackendTest, GetDefaultConfig) {
@@ -128,8 +132,7 @@ TEST_F(TritonBackendTest, GetDefaultConfigForUnsupportedInstruction) {
                                           ->root_instruction();
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(*unsupported_instr);
-  EXPECT_THAT(config.status(),
-              ::tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(config.status(), StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(TritonBackendTest, Compile) {

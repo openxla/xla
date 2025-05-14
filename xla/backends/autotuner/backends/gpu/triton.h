@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 
@@ -36,7 +37,8 @@ class TritonBackend : public GpuCodegenBackend {
                          const DebugOptions* debug_options, Compiler* compiler)
       : GpuCodegenBackend("Triton", target_config, debug_options, compiler) {}
 
-  std::vector<std::unique_ptr<BackendConfig>> GetSupportedConfigs(
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+  GetSupportedConfigs(
       const HloInstruction& instr,
       stream_executor::StreamExecutor* stream_executor) override;
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(

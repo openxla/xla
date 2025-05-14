@@ -786,7 +786,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCheckFutureRequest(
 
 Future<BackendInterface::Response> IfrtBackend::HandleCheckValueReadyRequest(
     std::unique_ptr<IfrtRequest> request) {
-  std::vector<tsl::RCReference<xla::ifrt::Value>> values;
+  std::vector<xla::ifrt::ValueRef> values;
   values.reserve(request->check_value_ready_request().value_handles_size());
   for (const auto& value_handle :
        request->check_value_ready_request().value_handles()) {
@@ -1424,7 +1424,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     }
 
     TF_ASSIGN_OR_RETURN(auto executable,
-                        client_->GetDefaultCompiler()->Compile(
+                        client_->GetDefaultCompiler()->CompileAndLoad(
                             std::move(program), std::move(options)));
 
     std::unique_ptr<IfrtResponse> ifrt_resp =
