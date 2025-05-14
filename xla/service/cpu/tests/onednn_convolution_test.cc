@@ -295,16 +295,32 @@ TEST_P(ConvolutionTest, ConvInsufficientScratchTest) {
     p0 = $dtype[1,1024,1] parameter(0)
     p1 = $dtype[3,1,3] parameter(1)
     ROOT conv = ($dtype[1,1022,3], u8[128]) custom-call(p0, p1),
-        custom_call_target="__onednn$convolution",
-        backend_config={"outer_dimension_partitions":[],
-        "onednn_conv_config":{"dims":"3","input":{"dims":"0",
-          "data":{"batch_dim":"0","feature_dim":"2","spatial_dims":["2"]}},
-          "kernel":{"dims":"0","filter":{"input_feature_dim":"1",
-            "output_feature_dim":"2","spatial_dims":["1"],"shape":[]}},
-          "output":{"dims":"0","data":{"batch_dim":"0","feature_dim":"2",
-            "spatial_dims":["2"]}}, "window":{"size":[],"pad_left":["1"],
-              "pad_right":["1"], "strides":["2"],"window_dilations":["2"]},
-          "feature_groups":"1","optimization_config":{"user_scratchpad":true}}}
+      custom_call_target="__onednn$convolution",
+        backend_config={
+          "outer_dimension_partitions":[],
+          "onednn_conv_config":{
+            "dims":"3",
+            "input":{
+              "dims":"3",
+              "data":{"batch_dim":"0","feature_dim":"2","spatial_dims":["2"]}
+            },
+            "kernel":{
+              "dims":"3",
+              "filter":{"input_feature_dim":"1","output_feature_dim":"2",
+                "spatial_dims":["1"],"shape":[]}
+            },
+            "output":{
+              "dims":"3",
+              "data":{"batch_dim":"0","feature_dim":"2","spatial_dims":["2"]}
+            },
+            "window":{
+              "size":[],"pad_left":["1"],"pad_right":["1"],
+              "strides":["2"],"window_dilations":["2"]
+            },
+            "feature_groups":"1",
+            "optimization_config":{"user_scratchpad":true}
+          }
+        }
   })";
 
   RunAndExpectExit(outline, SIGABRT);
