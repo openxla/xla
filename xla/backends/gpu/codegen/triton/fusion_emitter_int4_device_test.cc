@@ -198,6 +198,46 @@ TEST_F(TritonTest, DISABLED_FuseChannelDequantizationFused) {
       kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+TEST_F(TritonTest, DISABLED_FuseSubchannelDequantizationWithTranspose) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule FuseSubchannelDequantizationWithTranspose
+
+    ENTRY FuseSubchannelDequantizationWithTranspose {
+      w_s4 = s4[2,2048,64] parameter(1)
+      w_s8 = s8[2,2048,64] convert(w_s4)
+      w_s8_reshaped = s8[2,8,256,64] reshape(w_s8)
+      w_bf16 = bf16[2,8,256,64] convert(w_s8_reshaped)
+      s_bf16 = bf16[2,8,1,64]{3,1,0,2} parameter(0)
+      s_bf16_reshaped = bf16[2,8,64] reshape(s_bf16)
+      s_bf16_broadcasted = bf16[2,8,256,64] broadcast(s_bf16_reshaped),
+          dimensions={0,1,3}
+      w_bf16_scaled = bf16[2,8,256,64] multiply(w_bf16, s_bf16_broadcasted)
+      w_bf16_scaled_reshaped = bf16[2,2048,64] reshape(w_bf16_scaled)
+
+      a_bf16 = bf16[2,2048,2,32] parameter(2)
+      a_bf16_reshaped = bf16[2,2048,64] reshape(a_bf16)
+      dot = bf16[2,64,64] dot(w_bf16_scaled_reshaped, a_bf16_reshaped),
+          lhs_batch_dims={0}, lhs_contracting_dims={1},
+          rhs_batch_dims={0}, rhs_contracting_dims={1}
+      dot_reshaped = bf16[2,64,2,32] reshape(dot)
+      dot_transposed = bf16[64,2,2,32] transpose(dot_reshaped),
+          dimensions={1,0,2,3}
+      ROOT root = bf16[2,64,2,32]{3,2,0,1} reshape(dot_transposed)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+    CHECK:    %[[bitcast:.*]] = bf16[2,8,64]{2,1,0} bitcast({{.*}})
+    CHECK:    %[[transpose:.*]] = bf16[2,64,8]{2,1,0} transpose(%[[bitcast]]), dimensions={0,2,1}
+    CHECK:    %[[broadcast:.*]] = bf16[2,64,8,256]{3,2,1,0} broadcast(%[[transpose]]), dimensions={0,1,2}
+    CHECK:    %[[multiply:.*]] = bf16[2,64,8,256]{3,2,1,0} multiply({{.*}}, %[[broadcast]])
+  )"));
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), "CHECK: __triton_gemm"));
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
+}
+
 TEST_F(TritonTest, DISABLED_FuseSubchannelDequantization) {
   // This test is a Subchannel Dequantization fusion.
   // We run the non-fused version with the goal to fail if an hlo rewrite broke
@@ -207,34 +247,29 @@ TEST_F(TritonTest, DISABLED_FuseSubchannelDequantization) {
     HloModule FuseSubchannelDequantization
 
     ENTRY main {
-      w = s4[16,2048,4096] parameter(0)
-      w.s8 = s8[16,2048,4096] convert(w)
-      w.b16 = bf16[16,2048,4096] convert(w.s8)
-      w.b16.reshaped = bf16[16,8,256,4096] reshape(w.b16)
+      w = s4[2,2048,32] parameter(0)
+      w.s8 = s8[2,2048,32] convert(w)
+      w.b16 = bf16[2,2048,32] convert(w.s8)
+      w.b16.reshaped = bf16[2,8,256,32] reshape(w.b16)
 
-      s = bf16[16,8,1,4096] parameter(1)
-      s.reshaped = bf16[16,8,4096] reshape(s)
-      s.broadcasted = bf16[16,8,256,4096] broadcast(s.reshaped), dimensions={0,1,3}
-      w.scaled = bf16[16,8,256,4096] multiply(w.b16.reshaped, s.broadcasted)
-      w.scaled.reshaped = bf16[16,2048,4096] reshape(w.scaled)
+      s = bf16[2,8,1,32] parameter(1)
+      s.reshaped = bf16[2,8,32] reshape(s)
+      s.broadcasted = bf16[2,8,256,32] broadcast(s.reshaped),
+          dimensions={0,1,3}
+      w.scaled = bf16[2,8,256,32] multiply(w.b16.reshaped, s.broadcasted)
+      w.scaled.reshaped = bf16[2,2048,32] reshape(w.scaled)
 
-      a = bf16[2,16,1,2048] parameter(2)
-      a.reshaped = bf16[2,16,2048] reshape(a)
-      ROOT dot = f32[16,4096,2] dot(w.scaled.reshaped, a.reshaped),
+      a = bf16[2,2,1,2048] parameter(2)
+      a.reshaped = bf16[2,2,2048] reshape(a)
+      ROOT dot = f32[2,32,2] dot(w.scaled.reshaped, a.reshaped),
           lhs_batch_dims={0}, lhs_contracting_dims={1},
           rhs_batch_dims={1}, rhs_contracting_dims={2}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
-  // TODO(b/401515387): Remove this once emitter handles non-standard layouts.
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(false);
-  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), "CHECK: __triton_gemm"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(
-      std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonTest, DISABLED_FuseChannelDequantization) {
@@ -253,7 +288,8 @@ TEST_F(TritonTest, DISABLED_FuseChannelDequantization) {
       s = bf16[32,1,256] parameter(1)
       s.broadcast = bf16[32,1,256] broadcast(s), dimensions={0,1,2}
       s.reshape = bf16[32,256] reshape(s.broadcast)
-      s.broadcast.2 = bf16[32,128,256] broadcast(s.reshape), dimensions={0,2}
+      s.broadcast.2 = bf16[32,128,256] broadcast(s.reshape),
+          dimensions={0,2}
       w.scaled = bf16[32,128,256] multiply(w.bf16, s.broadcast.2)
 
       a = bf16[2,1,32,128,128] parameter(2)
@@ -263,13 +299,10 @@ TEST_F(TritonTest, DISABLED_FuseChannelDequantization) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
-  // TODO(b/401515387): Remove this once emitter handles non-standard layouts.
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(false);
-  EXPECT_TRUE(RunAndCompare(std::move(module),
-                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+                          GetOptimizedModule(kHloText));
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), "CHECK: __triton_gemm"));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonTest, DISABLED_FuseSubchannelDequantizationFused) {
@@ -281,29 +314,29 @@ TEST_F(TritonTest, DISABLED_FuseSubchannelDequantizationFused) {
     HloModule FuseSubchannelDequantizationFused
 
     fusion {
-      w.s4 = s4[16,2048,4096]{2,1,0:E(4)} parameter(0)
-      w.s8 = s8[16,2048,4096] convert(w.s4)
-      w.s8.bitcast = s8[16,8,256,4096] bitcast(w.s8)
-      w.bf16 = bf16[16,8,256,4096] convert(w.s8.bitcast)
+      w.s4 = s4[2,2048,32]{2,1,0:E(4)} parameter(0)
+      w.s8 = s8[2,2048,32] convert(w.s4)
+      w.s8.bitcast = s8[2,8,256,32] bitcast(w.s8)
+      w.bf16 = bf16[2,8,256,32] convert(w.s8.bitcast)
 
-      s.bf16 = bf16[16,8,1,4096] parameter(1)
-      s.bf16.bitcast = bf16[16,8,4096] bitcast(s.bf16)
-      s.bf16.broadcast = bf16[16,8,256,4096] broadcast(s.bf16.bitcast), dimensions={0,1,3}
-      w = bf16[16,8,256,4096] multiply(w.bf16, s.bf16.broadcast)
-      w.bitcast = bf16[16,2048,4096] bitcast(w)
+      s.bf16 = bf16[2,8,1,32] parameter(1)
+      s.bf16.bitcast = bf16[2,8,32] bitcast(s.bf16)
+      s.bf16.broadcast = bf16[2,8,256,32] broadcast(s.bf16.bitcast), dimensions={0,1,3}
+      w = bf16[2,8,256,32] multiply(w.bf16, s.bf16.broadcast)
+      w.bitcast = bf16[2,2048,32] bitcast(w)
 
-      a = bf16[2,16,1,2048] parameter(2)
-      a.bitcast = bf16[2,16,2048] bitcast(a)
-      ROOT dot = f32[16,4096,2] dot(w.bitcast, a.bitcast),
+      a = bf16[2,2,1,2048] parameter(2)
+      a.bitcast = bf16[2,2,2048] bitcast(a)
+      ROOT dot = f32[2,32,2] dot(w.bitcast, a.bitcast),
           lhs_batch_dims={0}, lhs_contracting_dims={1},
           rhs_batch_dims={1}, rhs_contracting_dims={2}
     } // fusion
 
     ENTRY main {
-      w.s4 = s4[16,2048,4096]{2,1,0:E(4)} parameter(0)
-      s.bf16 = bf16[16,8,1,4096] parameter(1)
-      a.bf16 = bf16[2,16,1,2048] parameter(2)
-      ROOT fusion = f32[16,4096,2] fusion(w.s4, s.bf16, a.bf16),
+      w.s4 = s4[2,2048,32]{2,1,0:E(4)} parameter(0)
+      s.bf16 = bf16[2,8,1,32] parameter(1)
+      a.bf16 = bf16[2,2,1,2048] parameter(2)
+      ROOT fusion = f32[2,32,2] fusion(w.s4, s.bf16, a.bf16),
         kind=kCustom,
         calls=fusion,
         backend_config={
@@ -339,29 +372,29 @@ TEST_F(TritonTest,
     HloModule FuseSubchannelDequantizationFusedWithSmallBlockKSize
 
     fusion {
-      w.s4 = s4[16,2048,4096]{2,1,0:E(4)} parameter(0)
-      w.s8 = s8[16,2048,4096] convert(w.s4)
-      w.s8.bitcast = s8[16,8,256,4096] bitcast(w.s8)
-      w.bf16 = bf16[16,8,256,4096] convert(w.s8.bitcast)
+      w.s4 = s4[2,2048,32]{2,1,0:E(4)} parameter(0)
+      w.s8 = s8[2,2048,32] convert(w.s4)
+      w.s8.bitcast = s8[2,8,256,32] bitcast(w.s8)
+      w.bf16 = bf16[2,8,256,32] convert(w.s8.bitcast)
 
-      s.bf16 = bf16[16,8,1,4096] parameter(1)
-      s.bf16.bitcast = bf16[16,8,4096] bitcast(s.bf16)
-      s.bf16.broadcast = bf16[16,8,256,4096] broadcast(s.bf16.bitcast), dimensions={0,1,3}
-      w = bf16[16,8,256,4096] multiply(w.bf16, s.bf16.broadcast)
-      w.bitcast = bf16[16,2048,4096] bitcast(w)
+      s.bf16 = bf16[2,8,1,32] parameter(1)
+      s.bf16.bitcast = bf16[2,8,32] bitcast(s.bf16)
+      s.bf16.broadcast = bf16[2,8,256,32] broadcast(s.bf16.bitcast), dimensions={0,1,3}
+      w = bf16[2,8,256,32] multiply(w.bf16, s.bf16.broadcast)
+      w.bitcast = bf16[2,2048,32] bitcast(w)
 
-      a = bf16[2,16,1,2048] parameter(2)
-      a.bitcast = bf16[2,16,2048] bitcast(a)
-      ROOT dot = f32[16,4096,2] dot(w.bitcast, a.bitcast), 
+      a = bf16[2,2,1,2048] parameter(2)
+      a.bitcast = bf16[2,2,2048] bitcast(a)
+      ROOT dot = f32[2,32,2] dot(w.bitcast, a.bitcast), 
           lhs_batch_dims={0}, lhs_contracting_dims={1},
           rhs_batch_dims={1}, rhs_contracting_dims={2}
     } // fusion
 
     ENTRY main {
-      w.s4 = s4[16,2048,4096]{2,1,0:E(4)} parameter(0)
-      s.bf16 = bf16[16,8,1,4096] parameter(1)
-      a.bf16 = bf16[2,16,1,2048] parameter(2)
-      ROOT fusion = f32[16,4096,2] fusion(w.s4, s.bf16, a.bf16),
+      w.s4 = s4[2,2048,32]{2,1,0:E(4)} parameter(0)
+      s.bf16 = bf16[2,8,1,32] parameter(1)
+      a.bf16 = bf16[2,2,1,2048] parameter(2)
+      ROOT fusion = f32[2,32,2] fusion(w.s4, s.bf16, a.bf16),
         kind=kCustom,
         calls=fusion,
         backend_config={
@@ -392,24 +425,24 @@ TEST_F(TritonTest, FuseBroadcastInPrologue) {
     HloModule FuseBroadcastInPrologue
 
     ENTRY main {
-      lhs = bf16[16,1024] parameter(0)
-      lhs.broadcast = bf16[16,256,1024] broadcast(lhs), dimensions={0,2}
+      lhs = bf16[2,1024] parameter(0)
+      lhs.broadcast = bf16[2,256,1024] broadcast(lhs), dimensions={0,2}
 
-      rhs = bf16[16,256,512] parameter(1)
+      rhs = bf16[2,256,512] parameter(1)
 
-      ROOT dot = f32[16,1024,512] dot(lhs.broadcast, rhs),
+      ROOT dot = f32[2,1024,512] dot(lhs.broadcast, rhs),
         lhs_batch_dims={0}, lhs_contracting_dims={1},
         rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
-    CHECK:    %[[broadcast:.*]] = bf16[16,256,1024]{2,1,0} broadcast
-    CHECK:    %[[dot:.*]] = f32[16,1024,512]{2,1,0} dot
+    CHECK:    %[[broadcast:.*]] = bf16[2,256,1024]{2,1,0} broadcast
+    CHECK:    %[[dot:.*]] = f32[2,1024,512]{2,1,0} dot
     CHECK:    ENTRY %main
   )"));
-  EXPECT_TRUE(RunAndCompare(std::move(module),
-                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonTest, DISABLED_FuseBroadcastBitcastInPrologue) {
@@ -430,13 +463,13 @@ TEST_F(TritonTest, DISABLED_FuseBroadcastBitcastInPrologue) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
-    CHECK:    %[[broadcast:.*]] = bf16[2,128,1024]{2,1,0} broadcast
-    CHECK:    %[[bitcast:.*]] = bf16[256,1024]{1,0} bitcast
-    CHECK:    ROOT %[[dot:.*]] = f32[1024,512]{1,0} dot
+    CHECK:    %[[broadcast:.*]] = bf16[{{.*}}]{2,1,0} broadcast
+    CHECK:    %[[bitcast:.*]] = bf16[{{.*}}]{1,0} bitcast
+    CHECK:    ROOT %[[dot:.*]] = f32[{{.*}}]{1,0} dot
     CHECK:    ENTRY %main
   )"));
-  EXPECT_TRUE(RunAndCompare(std::move(module),
-                            ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-5}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-5}));
 }
 
 TEST_F(TritonTest, DISABLED_FuseBroadcastBitcastMultiplyInPrologue) {
@@ -460,23 +493,16 @@ TEST_F(TritonTest, DISABLED_FuseBroadcastBitcastMultiplyInPrologue) {
         lhs_contracting_dims={0}, rhs_contracting_dims={0}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
-  // TODO(b/401515387): Remove this once emitter handles non-standard layouts.
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(false);
-  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
-  EXPECT_TRUE(*RunFileCheck(optimized_module->ToString(), R"(
+  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
     CHECK:    %[[broadcast:.*]] = bf16[2,128,1024]{2,1,0} broadcast
     CHECK:    %[[bitcast:.*]] = bf16[256,1024]{1,0} bitcast
     CHECK:    %[[multiply:.*]] = [[type:.*]][256,1024]{1,0} multiply
     CHECK:    %[[dot:.*]] = f32[1024,512]{1,0} dot
     CHECK:    ENTRY %main
   )"));
-  EXPECT_TRUE(RunAndCompare(std::move(optimized_module),
-                            ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-5}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-5}));
 }
 
 TEST_F(TritonTest, DISABLED_DotWithI4WeightsOnLhsWithBitcastTo3dTensor) {
@@ -603,17 +629,10 @@ TEST_F(TritonTest, FuseMultiplyInPrologue) {
         rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
-  // TODO(b/401515387): Remove this once emitter handles non-standard layouts.
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(false);
-  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   // On Ampere the multiply result type is f32, on Hopper it is bf16.
-  EXPECT_TRUE(*RunFileCheck(optimized_module->ToString(), R"(
-    CHECK:    %[[multiply:.*]] = [[type:.*]][32,64,128]{2,1,0} multiply
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+    CHECK:    %[[multiply:.*]] = [[type:.*]]{{.*}} multiply({{.*}}, {{.*}})
     CHECK:    %[[dot:.*]] = f32[32,128,256]{2,1,0} dot
     CHECK:    ENTRY %main
   )"));
@@ -656,7 +675,8 @@ TEST_F(TritonTest, DISABLED_NonstandardLayoutInt4) {
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 using ::testing::TestParamInfo;
@@ -843,7 +863,8 @@ TEST_F(TritonTest, NonstandardLayoutWithManyNonContractingDims) {
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-2}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-2}));
 }
 
 TEST_F(TritonTest, NonstandardLayoutWithManyNonContractingDimsReversedLayout) {
@@ -860,7 +881,8 @@ TEST_F(TritonTest, NonstandardLayoutWithManyNonContractingDimsReversedLayout) {
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonTest, DISABLED_NegatePlusConvertHLO) {
@@ -868,11 +890,11 @@ TEST_F(TritonTest, DISABLED_NegatePlusConvertHLO) {
     HloModule NegatePlusConvertHLO
 
     ENTRY main {
-      lhs = s4[16,32,64] parameter(0)
-      lhs_negated = s4[16,32,64] negate(lhs)
-      lhs_converted = bf16[16,32,64] convert(lhs_negated)
-      rhs = bf16[16,64,16] parameter(1)
-      ROOT dot = bf16[16,32,16] dot(lhs_converted, rhs),
+      lhs = s4[2,32,64] parameter(0)
+      lhs_negated = s4[2,32,64] negate(lhs)
+      lhs_converted = bf16[2,32,64] convert(lhs_negated)
+      rhs = bf16[2,64,16] parameter(1)
+      ROOT dot = bf16[2,32,16] dot(lhs_converted, rhs),
           lhs_batch_dims={0}, lhs_contracting_dims={2},
           rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
@@ -885,10 +907,10 @@ TEST_F(TritonTest, RejectTritonFusionForWithMinorBatchDim) {
     HloModule RejectTritonFusionForWithMinorBatchDim
 
     ENTRY main {
-      lhs = s4[32,64,16] parameter(0)
-      lhs_converted = bf16[32,64,16] convert(lhs)
-      rhs = bf16[16,64,16] parameter(1)
-      ROOT dot = bf16[16,32,16] dot(lhs_converted, rhs),
+      lhs = s4[32,64,2] parameter(0)
+      lhs_converted = bf16[32,64,2] convert(lhs)
+      rhs = bf16[2,64,16] parameter(1)
+      ROOT dot = bf16[2,32,16] dot(lhs_converted, rhs),
           lhs_batch_dims={2}, lhs_contracting_dims={1},
           rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
@@ -897,8 +919,7 @@ TEST_F(TritonTest, RejectTritonFusionForWithMinorBatchDim) {
   const std::string pattern =
       R"(CHECK-NOT: "kind":"__triton_gemm","triton_gemm_config")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), pattern));
-  EXPECT_TRUE(ok);
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), pattern));
 }
 
 TEST_F(TritonTest, DISABLED_LHSWithMinorDimEqualTo1) {
@@ -908,18 +929,18 @@ TEST_F(TritonTest, DISABLED_LHSWithMinorDimEqualTo1) {
     HloModule LHSWithMinorDimEqualTo1
 
     triton_computation {
-      lhs = s4[16,1024,1] parameter(0)
-      lhs_converted = bf16[16,1024,1] convert(lhs)
-      rhs = bf16[16,64,1024] parameter(1)
-      ROOT dot = bf16[16,1,64] dot(lhs_converted, rhs),
+      lhs = s4[2,1024,1] parameter(0)
+      lhs_converted = bf16[2,1024,1] convert(lhs)
+      rhs = bf16[2,64,1024] parameter(1)
+      ROOT dot = bf16[2,1,64] dot(lhs_converted, rhs),
           lhs_batch_dims={0}, lhs_contracting_dims={1},
           rhs_batch_dims={0}, rhs_contracting_dims={2}
     }
 
     ENTRY main {
-      lhs = s4[16,1024,1] parameter(0)
-      rhs = bf16[16,64,1024] parameter(1)
-      ROOT dot = bf16[16,1,64] fusion(lhs, rhs), kind=kCustom,
+      lhs = s4[2,1024,1] parameter(0)
+      rhs = bf16[2,64,1024] parameter(1)
+      ROOT dot = bf16[2,1,64] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }
@@ -935,18 +956,18 @@ TEST_F(TritonTest, DISABLED_RHSWithMinorDimEqualTo1) {
     HloModule RHSWithMinorDimEqualTo1
 
     triton_computation {
-      lhs = bf16[16,1024,64] parameter(0)
-      rhs = s4[16,1024,1] parameter(1)
-      rhs_converted = bf16[16,1024,1] convert(rhs)
-      ROOT dot = bf16[16,64,1] dot(lhs, rhs_converted),
+      lhs = bf16[2,1024,64] parameter(0)
+      rhs = s4[2,1024,1] parameter(1)
+      rhs_converted = bf16[2,1024,1] convert(rhs)
+      ROOT dot = bf16[2,64,1] dot(lhs, rhs_converted),
           lhs_batch_dims={0}, lhs_contracting_dims={1},
           rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
 
     ENTRY main {
-      lhs = bf16[16,1024,64] parameter(0)
-      rhs = s4[16,1024,1] parameter(1)
-      ROOT dot = bf16[16,64,1] fusion(lhs, rhs), kind=kCustom,
+      lhs = bf16[2,1024,64] parameter(0)
+      rhs = s4[2,1024,1] parameter(1)
+      ROOT dot = bf16[2,64,1] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }
@@ -990,18 +1011,18 @@ TEST_F(TritonTest, DISABLED_LHSNonMinorContractingDimWithBatchDim0) {
     HloModule LHSNonMinorContractingDimWithBatchDim0
 
     triton_computation {
-      lhs = s4[16,1024,8] parameter(0)
-      lhs_converted = bf16[16,1024,8] convert(lhs)
-      rhs = bf16[16,1024,4] parameter(1)
-      ROOT dot = bf16[16,8,4] dot(lhs_converted, rhs),
+      lhs = s4[2,1024,8] parameter(0)
+      lhs_converted = bf16[2,1024,8] convert(lhs)
+      rhs = bf16[2,1024,4] parameter(1)
+      ROOT dot = bf16[2,8,4] dot(lhs_converted, rhs),
         lhs_batch_dims={0}, lhs_contracting_dims={1},
         rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
 
     ENTRY main {
-      lhs = s4[16,1024,8] parameter(0)
-      rhs = bf16[16,1024,4] parameter(1)
-      ROOT dot = bf16[16,8,4] fusion(lhs, rhs), kind=kCustom,
+      lhs = s4[2,1024,8] parameter(0)
+      rhs = bf16[2,1024,4] parameter(1)
+      ROOT dot = bf16[2,8,4] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }
@@ -1066,18 +1087,18 @@ TEST_F(TritonTest, DISABLED_LHSMinorContractingDimWithBatchDim0) {
     HloModule LHSMinorContractingDimWithBatchDim0
 
     triton_computation {
-      lhs = s4[16,8,1024] parameter(0)
-      lhs_converted = bf16[16,8,1024] convert(lhs)
-      rhs = bf16[16,1024,4] parameter(1)
-      ROOT dot = bf16[16,8,4] dot(lhs_converted, rhs),
+      lhs = s4[2,8,1024] parameter(0)
+      lhs_converted = bf16[2,8,1024] convert(lhs)
+      rhs = bf16[2,1024,4] parameter(1)
+      ROOT dot = bf16[2,8,4] dot(lhs_converted, rhs),
         lhs_batch_dims={0}, lhs_contracting_dims={2},
         rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
 
     ENTRY main {
-      lhs = s4[16,8,1024] parameter(0)
-      rhs = bf16[16,1024,4] parameter(1)
-      ROOT dot = bf16[16,8,4] fusion(lhs, rhs), kind=kCustom,
+      lhs = s4[2,8,1024] parameter(0)
+      rhs = bf16[2,1024,4] parameter(1)
+      ROOT dot = bf16[2,8,4] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }
@@ -1139,18 +1160,18 @@ TEST_F(TritonTest, DISABLED_RHSTestWithMinorContractingDimWithBatchDim) {
     HloModule RHSTestWithMinorContractingDimWithBatchDim
 
     triton_computation {
-      lhs = bf16[16,8,1024] parameter(0)
-      rhs = s4[16,1024,4] parameter(1)
-      rhs_converted = bf16[16,1024,4] convert(rhs)
-      ROOT dot = bf16[16,8,4] dot(lhs, rhs_converted),
+      lhs = bf16[2,8,1024] parameter(0)
+      rhs = s4[2,1024,4] parameter(1)
+      rhs_converted = bf16[2,1024,4] convert(rhs)
+      ROOT dot = bf16[2,8,4] dot(lhs, rhs_converted),
           lhs_batch_dims={0}, lhs_contracting_dims={2},
           rhs_batch_dims={0}, rhs_contracting_dims={1}
     }
 
     ENTRY main {
-      lhs = bf16[16,8,1024] parameter(0)
-      rhs = s4[16,1024,4] parameter(1)
-      ROOT dot = bf16[16,8,4] fusion(lhs, rhs), kind=kCustom,
+      lhs = bf16[2,8,1024] parameter(0)
+      rhs = s4[2,1024,4] parameter(1)
+      ROOT dot = bf16[2,8,4] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }
@@ -1164,18 +1185,18 @@ TEST_F(TritonTest, DISABLED_RHSTestWithNotMinorContractingDimWithBatchDim0) {
     HloModule RHSTestWithNotMinorContractingDimWithBatchDim0
 
     triton_computation {
-      lhs = bf16[16,8,1024] parameter(0)
-      rhs = s4[16,4,1024] parameter(1)
-      rhs_converted = bf16[16,4,1024] convert(rhs)
-      ROOT dot = bf16[16,8,4] dot(lhs, rhs_converted),
+      lhs = bf16[2,8,1024] parameter(0)
+      rhs = s4[2,4,1024] parameter(1)
+      rhs_converted = bf16[2,4,1024] convert(rhs)
+      ROOT dot = bf16[2,8,4] dot(lhs, rhs_converted),
           lhs_batch_dims={0}, lhs_contracting_dims={2},
           rhs_batch_dims={0}, rhs_contracting_dims={2}
     }
 
     ENTRY main {
-      lhs = bf16[16,8,1024] parameter(0)
-      rhs = s4[16,4,1024] parameter(1)
-      ROOT dot = bf16[16,8,4] fusion(lhs, rhs), kind=kCustom,
+      lhs = bf16[2,8,1024] parameter(0)
+      rhs = s4[2,4,1024] parameter(1)
+      ROOT dot = bf16[2,8,4] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
     }

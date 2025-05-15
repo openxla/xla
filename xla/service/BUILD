@@ -1730,6 +1730,7 @@ xla_cc_test(
     srcs = ["buffer_assignment_test.cc"],
     deps = [
         ":buffer_assignment",
+        ":buffer_assignment_proto_cc",
         ":buffer_value",
         ":call_graph",
         ":copy_insertion",
@@ -4052,6 +4053,7 @@ cc_library(
         ":computation_layout",
         ":computation_placer",
         ":hlo_proto_cc",
+        ":schedule_config",
         ":sharding_config",
         "//xla:debug_options_flags",
         "//xla:shape_layout",
