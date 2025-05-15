@@ -26,10 +26,6 @@ frontends and hardware backends.
 If you'd like to contribute to XLA, review [How to Contribute](CONTRIBUTING.md)
 and then see the [developer guide](docs/developer_guide.md).
 
-## Contacts
-
-*   For questions, contact Thea Lamkin - thealamkin at google.com.
-
 ## Resources
 
 *   [Community Resources](https://github.com/openxla/community)
