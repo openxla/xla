@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -79,20 +80,16 @@ absl::StatusOr<const HloFusionInstruction*> AsTritonFusion(
   return nullptr;
 }
 
-// Extracts the fusion, disables Triton, and re-runs the fusion pass in order
-// to make sure that the fusions are suitable for the MLIR emitters and will be
+// Extracts the fusion computation and re-runs the fusion pass in order to make
+// sure that the fusions are suitable for the MLIR emitters and will be
 // reasonably fast. Without this the generated code can be extremely slow (e.g.
 // days instead of milliseconds).
-absl::StatusOr<std::unique_ptr<HloModule>> NewHloModuleWithoutTritonFromFusion(
+absl::StatusOr<std::unique_ptr<HloModule>> NewHloModuleFromFusionComputation(
     const HloFusionInstruction& fusion, const DebugOptions& debug_opts,
     const se::DeviceDescription& gpu_device_info) {
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion.fused_instructions_computation());
   new_module->mutable_config().set_debug_options(debug_opts);
-  new_module->mutable_config()
-      .mutable_debug_options()
-      .add_xla_disable_hlo_passes("triton-softmax-rewriter");
-
   TreeReductionRewriter tree_reduction_rewriter(gpu_device_info);
   TF_RETURN_IF_ERROR(tree_reduction_rewriter.Run(new_module.get()).status());
 
@@ -127,7 +124,7 @@ absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
       util.Compile([&](const DebugOptions& opts) {
-        return disable_triton ? NewHloModuleWithoutTritonFromFusion(
+        return disable_triton ? NewHloModuleFromFusionComputation(
                                     fusion, opts, config.GetDeviceDescription())
                               : NewHloModuleWithTritonFromFusion(fusion, opts);
       }));
@@ -156,16 +153,22 @@ absl::Status CompareBuffers(const ScopedShapedBuffer& current,
                             const ScopedShapedBuffer& expected,
                             const Shape& shape, const HloModuleConfig& config,
                             se::Stream* stream) {
-  BufferComparator comparator(
-      shape, config.debug_options().xla_gpu_autotune_gemm_rtol());
-  TF_ASSIGN_OR_RETURN(bool outputs_match,
-                      comparator.CompareEqual(stream, current.root_buffer(),
-                                              expected.root_buffer()));
+  return ShapeUtil::ForEachLeafShapeWithStatus(
+      shape,
+      [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
+        BufferComparator comparator(
+            subshape, config.debug_options().xla_gpu_autotune_gemm_rtol());
+        TF_ASSIGN_OR_RETURN(
+            bool outputs_match,
+            comparator.CompareEqual(stream, current.buffer(index),
+                                    expected.buffer(index)));
 
-  if (!outputs_match) {
-    return Internal("Triton fusion output does not match emitters output.");
-  }
-  return absl::OkStatus();
+        if (!outputs_match) {
+          return Internal(
+              "Triton fusion output does not match emitters output.");
+        }
+        return absl::OkStatus();
+      });
 }
 
 absl::Status ForAllTritonFusions(
