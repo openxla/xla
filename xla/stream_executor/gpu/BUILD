@@ -398,7 +398,6 @@ cc_library(
         "redzone_allocator_kernel.h",
         "redzone_allocator_kernel_stub.cc",
     ],
-    tags = ["manual"],
     deps = [
         ":gpu_asm_opts",
         "//xla/stream_executor:device_memory",

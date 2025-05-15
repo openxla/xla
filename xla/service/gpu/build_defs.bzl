@@ -3,7 +3,8 @@
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts", "rocm_library")
-load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_build_is_configured")
+load("@local_config_sycl//sycl:build_defs.bzl", "sycl_library")
+load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//xla/tests:build_defs.bzl", "prepare_gpu_backend_data")
@@ -63,7 +64,7 @@ register_extension_info(extension = build_cub_sort_kernels, label_regex_for_dep 
 def gpu_kernel_library(name, copts = [], srcs = [], local_defines = [], tags = [], **kwargs):
     cuda_library(
         name = name + "_cuda",
-        srcs = if_sycl_build_is_configured([], srcs),
+        srcs = srcs,
         local_defines = local_defines + if_cuda_is_configured(["GOOGLE_CUDA=1"]),
         copts = copts,
         tags = ["manual"] + tags,
@@ -71,15 +72,28 @@ def gpu_kernel_library(name, copts = [], srcs = [], local_defines = [], tags = [
     )
     rocm_library(
         name = name + "_rocm",
-        srcs = if_sycl_build_is_configured([], srcs),
+        srcs = srcs,
         local_defines = local_defines + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
         copts = copts + rocm_copts(),
         tags = ["manual"] + tags,
         **kwargs
     )
+    sycl_library(
+        name = name + "_sycl",
+        srcs = [],
+        local_defines = local_defines,
+        copts = copts,
+        tags = ["manual"] + tags,
+        **kwargs
+    )
+    native.alias(
+        name = name + "_gpu",
+        actual = if_rocm_is_configured(":%s_rocm" % name, "%s_cuda" % name),
+        tags = ["gpu", "no-sycl"] + tags,
+    )
     native.alias(
         name = name,
-        actual = if_rocm_is_configured(":%s_rocm" % name, "%s_cuda" % name),
+        actual = if_cuda_or_rocm_is_configured("%s_gpu" % name, "%s_sycl" % name),
         tags = ["gpu"] + tags,
     )
 

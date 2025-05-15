@@ -89,17 +89,14 @@ cc_library(
 
 cc_library(
     name = "sycl_solver_context",
-    srcs = if_sycl_is_configured(["sycl_solver_context.cc"]),
-    hdrs = if_sycl_is_configured(["sycl_solver_context.h"]),
-    local_defines = [
-        "TENSORFLOW_USE_SYCL=1",
-    ],
+    srcs = ["sycl_solver_context.cc"],
+    hdrs = ["sycl_solver_context.h"],
     tags = [
         "gpu",
         "manual",
         "sycl-only",
     ],
-    deps = if_sycl_is_configured([
+    deps = [
         "//xla:comparison_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -112,5 +109,5 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-    ]),
+    ],
 )
