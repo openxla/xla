@@ -124,11 +124,11 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   sampler_options.enable = true;
   // Metrics can be queried with Nsight Compute
   // ncu --query-metrics-collection pmsampling --chip <CHIP>
-  // Any metrics marked with a particular Triage group naming should be 
+  // Any metrics marked with a particular Triage group naming should be
   // configurable in a single pass on this chip.
   sampler_options.metrics = {"sm__cycles_active.sum",
                              "sm__inst_executed_pipe_fp64.sum",
-                             "pcie__read_bytes.sum", "pcie__write_bytes.sum", "lts__average_t_sector_aperture_device_lookup_hit.pct", "lts__average_t_sector_aperture_device_lookup_miss.pct"};
+                             "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
   sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
@@ -157,7 +157,7 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
   // Expect 4 * elems / (32 elemn / warp) +- 5% double instructions
   // (if they were sampled)
-  if (sampled_fp64) {
+  if (sampled_fp64 > 0) {
     LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
     EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100);
     EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100);
@@ -167,10 +167,10 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   // 3 copies to device, 1 copy back
   // This is just a basic algorithmic minimum, there are more loads and
   // stores due to copying kernel itself, etc
-  if (sampled_read) {
+  if (sampled_read > 0) {
     LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
   }
-  if (sampled_write) {
+  if (sampled_write > 0) {
     LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
     EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
   }

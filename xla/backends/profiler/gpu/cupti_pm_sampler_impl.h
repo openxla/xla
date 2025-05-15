@@ -163,28 +163,21 @@ class CuptiPmSamplerDecodeThread {
 
   // Signal thread to exit; join thread
   ~CuptiPmSamplerDecodeThread() {
-    nextThdState_ = kStateExiting;
+    next_state_ = kStateExiting;
     thd_->join();
   }
 
-  // Signal and test for state transitions
-  bool IsThdInitialized() { return current_thd_state_ == kStateInitialized; }
-  void ThdIsInitialized() { current_thd_state_ = kStateInitialized; }
+  // Transitions to disabled
+  void Initialize() { ChangeState(kStateInitialized); }
+  void AwaitInitialization() { AwaitState(kStateInitialized); }
 
-  void EnableThd() { nextThdState_ = kStateEnabled; }
-  bool ShouldThdEnable() { return nextThdState_ == kStateEnabled; }
-  void ThdIsEnabled() { current_thd_state_ = kStateEnabled; }
-  bool IsThdEnabled() { return current_thd_state_ == kStateEnabled; }
-
-  void DisableThd() { nextThdState_ = kStateDisabled; };
-  bool ShouldThdDisable() { return nextThdState_ == kStateDisabled; }
-  void ThdIsDisabled() { current_thd_state_ = kStateDisabled; }
-  bool IsThdDisabled() { return current_thd_state_ == kStateDisabled; }
-
-  void ExitThd() { nextThdState_ = kStateExiting; }
-  bool ShouldThdExit() { return nextThdState_ == kStateExiting; }
-  void ThdIsExiting() { current_thd_state_ = kStateExiting; }
-  bool IsThdExiting() { return current_thd_state_ == kStateExiting; }
+  // Straightforward state transitions
+  void Enable() { ChangeState(kStateEnabled); }
+  void AwaitEnablement() { AwaitState(kStateEnabled); }
+  void Disable() { ChangeState(kStateDisabled); }
+  void AwaitDisablement() { AwaitState(kStateDisabled); }
+  void Exit() { ChangeState(kStateExiting); }
+  void AwaitExit() { AwaitState(kStateExiting); }
 
  private:
   // Spin wait sleep period, set to the min of this and all device periods
@@ -197,33 +190,76 @@ class CuptiPmSamplerDecodeThread {
 
   void (*process_samples)(PmSamples* samples) = nullptr;
 
+  // Guard state change with mutexes
+  absl::Mutex state_mutex_;
+
+  // Efficient notifier for state changes
+  absl::CondVar stateChangeNotifier_;
+
+  // Thread state.  Initialization goes straight to disabled, hence they are
+  // equivalent.
   enum ThdState {
     // Thread is starting, not yet ready to be enabled
     kStateUninitialized,
     // Thread is ready for enablement but decoding has not yet been triggered
     kStateInitialized,
+    // Thread is disabled but could be re-enabled
+    kStateDisabled = kStateInitialized,
     // Thread is enabled, polling for metrics from all devices
     kStateEnabled,
-    // Thread is disabled, not polling for metrics, but could be re-enabled
-    kStateDisabled,
     // Thread is finishing and guaranteed to return, allowing join
     kStateExiting
   };
 
-  // Current state of the thread (only set by worker thread)
-  volatile ThdState current_thd_state_ = kStateUninitialized;
+  // Current state of the thread
+  ThdState current_state_ ABSL_GUARDED_BY(state_mutex_) = kStateUninitialized;
 
-  // State thread should transition to (only set by main thread)
-  volatile ThdState nextThdState_ = kStateInitialized;
+  // State thread should transition to
+  ThdState next_state_ ABSL_GUARDED_BY(state_mutex_) = kStateInitialized;
+
+  // Tell thread to change state
+  void ChangeState(ThdState state) {
+    absl::MutexLock lock(&state_mutex_);
+    next_state_ = state;
+    stateChangeNotifier_.SignalAll();
+  }
+
+  // Internal state change
+  void StateIs(ThdState state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mutex_) {
+    current_state_ = state;
+    stateChangeNotifier_.SignalAll();
+  }
+
+  void AwaitState(ThdState state) {
+    absl::MutexLock lock(&state_mutex_);
+    auto equals = [this, state] {
+      return current_state_ == state;
+    };
+    state_mutex_.Await(absl::Condition(&equals));
+  }
+
+  // Absl has no RAII way to release and then regain a lock, so implement here
+  // (Needed to release lock around long decode loop)
+  class MutexUnlock {
+   public:
+    explicit MutexUnlock(absl::Mutex* mu) ABSL_UNLOCK_FUNCTION() : mu_(mu) {
+      mu_->Unlock();
+    }
+
+    ~MutexUnlock() ABSL_EXCLUSIVE_LOCK_FUNCTION(mu_) { mu_->Lock(); }
+
+   private:
+    absl::Mutex* mu_;
+  };
 
   // Thread handle
   std::thread* thd_;
 
   // Function run by thd_
-  static void ThdFunc(CuptiPmSamplerDecodeThread* control);
+  void MainFunc();
 
   // Isolate the main decode loop
-  static void ThdFuncDecodeUntilDisabled(CuptiPmSamplerDecodeThread* control);
+  void DecodeUntilDisabled();
 
   // Devices to decode by this thread
   std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs_;

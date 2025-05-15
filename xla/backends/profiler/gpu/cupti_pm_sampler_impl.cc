@@ -21,6 +21,7 @@ limitations under the License.
 #include <thread>
 
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
@@ -168,7 +169,6 @@ absl::Status CuptiPmSamplerDevice::CreateProfilerHostObj() {
 
   return absl::OkStatus();
 }
-
 
 void CuptiPmSamplerDevice::WarnPmSamplingMetrics() {
   if (!warnedMetricsConfig_) {
@@ -574,26 +574,25 @@ CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
 
   process_samples = options->process_samples;
 
-  thd_ = new std::thread(ThdFunc, this);
+  thd_ = new std::thread(&CuptiPmSamplerDecodeThread::MainFunc, this);
 }
 
-void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
-    CuptiPmSamplerDecodeThread* control) {
-  // Signal that thread is enabled for decoding
-  control->ThdIsEnabled();
-
+void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
   // Test for exit condition on all devices
   bool all_devs_end_of_records = false;
-  int extra_attempts = 0;
+  bool final_pass = false;
+  bool disabling = false;
 
   // When enabled, loop over each device, decoding
-  // If an error is encountered, attempt to continue with next iteration
-  // instead of exiting thread
-  while ((!control->ShouldThdDisable()) || (!all_devs_end_of_records) ||
-         (extra_attempts < 2)) {
+  // Run until disabled, and then do one extra pass
+  while (! disabling) {
     VLOG(2) << "(Profiling::PM Sampling) Top of decode loop";
-    // Try a few extra times to decode
-    if (all_devs_end_of_records == true) extra_attempts++;
+
+    // If next state is not enabled, do one more pass
+    if (next_state_ != kStateEnabled) {
+      if (!final_pass) final_pass = true;
+      else disabling = true;
+    }
 
     all_devs_end_of_records = true;
     absl::Time begin = absl::Now();
@@ -601,7 +600,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
     size_t decoded_samples = 0;
 
     // Each decode period, decode all devices assigned to it
-    for (auto dev : control->devs_) {
+    for (auto dev : devs_) {
       VLOG(2) << "(Profiling::PM Sampling)  Beginning decode for device "
               << dev->device_id_;
 
@@ -612,7 +611,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
       absl::Time process_samples_time = start_time;
       absl::Time initialize_image_time = start_time;
 
-      CuptiPmSamplerDecodeInfo info{.metrics = control->c_metrics_};
+      CuptiPmSamplerDecodeInfo info{.metrics = c_metrics_};
       if (!dev->FillCounterDataImage(info).ok()) continue;
       fill_time = absl::Now();
       if (!dev->GetSampleCounts(info).ok()) continue;
@@ -663,7 +662,7 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
           info.sampler_ranges[i].metric_values.clear();
         } else {
           if (VLOG_IS_ON(4)) {
-            for (int j = 0; j < control->num_metrics_; j++) {
+            for (int j = 0; j < num_metrics_; j++) {
               LOG(INFO) << "            " << info.metrics[j] << "[" << i
                         << "] = " << info.sampler_ranges[i].metric_values[j];
             }
@@ -675,9 +674,9 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
 
       // info now contains a list of samples and metrics,
       // hand off to process or store elsewhere
-      if (control->process_samples != nullptr) {
-        PmSamples samples(control->metrics_, info.sampler_ranges);
-        control->process_samples(&samples);
+      if (process_samples != nullptr) {
+        PmSamples samples(metrics_, info.sampler_ranges);
+        process_samples(&samples);
       }
 
       process_samples_time = absl::Now();
@@ -706,15 +705,15 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
     // warning if decode took longer than alloted time
     absl::Time end = absl::Now();
     absl::Duration elapsed = end - begin;
-    if (elapsed < control->decode_period_) {
+    if (elapsed < decode_period_) {
       VLOG(2) << "(Profiling::PM Sampling)   decoded " << decoded_samples
               << ", took " << elapsed << ", sleeping for "
-              << (control->decode_period_ - elapsed);
-      absl::SleepFor(control->decode_period_ - elapsed);
+              << (decode_period_ - elapsed);
+      absl::SleepFor(decode_period_ - elapsed);
     } else {
       VLOG(2) << "(Profiling::PM Sampling)   decoded " << decoded_samples
               << ", took " << elapsed << ", decode period is "
-              << control->decode_period_;
+              << decode_period_;
       LOG(WARNING) << "(Profiling::PM Sampling) decode thread took longer than "
                    << "configured period to complete a single decode pass.  "
                    << "When this happens, hardware buffer may overflow and "
@@ -723,35 +722,67 @@ void CuptiPmSamplerDecodeThread::ThdFuncDecodeUntilDisabled(
                    << "the sample rate, or ensure decode threads have "
                    << "sufficient cpu resources to maintain decode faster than "
                    << "metric sampling.  Elapsed time: " << elapsed << ", "
-                   << "decode period: " << control->decode_period_;
+                   << "decode period: " << decode_period_;
     }
   }
 
   VLOG(2) << "(Profiling::PM Sampling) Exited decode loop";
 
-  // Signal thread decoding is disabled
-  control->ThdIsDisabled();
+  if (!all_devs_end_of_records) {
+    // If not all devices reached end of records, warn the user
+    LOG(WARNING) << "(Profiling::PM Sampling) Not all devices reached end of "
+                 << "records, some data may be lost.  This is expected if "
+                 << "sampling rate is too high or decode thread is not "
+                 << "sufficiently prioritized, or if decode thread is disabled "
+                 << "while sampling is enabled.";
+  }
 }
 
-// Control lifecycle of decode thread
-void CuptiPmSamplerDecodeThread::ThdFunc(CuptiPmSamplerDecodeThread* control) {
-  // Space allowed for initialization here
+// Entry function for decode thread
+void CuptiPmSamplerDecodeThread::MainFunc() {
+  // RAII lock to ensure mutex is released when thread exits
+  absl::MutexLock lock(&state_mutex_);
 
-  control->ThdIsInitialized();
-
-  // Wait for signal to enable decoding on devices, or exit out
+  // Control loop for decode thread
   do {
-    if (control->ShouldThdEnable()) {
-      ThdFuncDecodeUntilDisabled(control);
-    } else if (control->ShouldThdExit()) {
-      break;
+    // Wait for signal to change state.  Releases lock during wait
+    auto stateChanged = [this] {
+      return current_state_ != next_state_;
+    };
+    state_mutex_.Await(absl::Condition(&stateChanged));
+
+    switch (next_state_) {
+      case kStateInitialized:
+        // Space for thread initialization if needed
+        // ...
+        // Initialization done, transition to disabled state
+        StateIs(kStateDisabled);
+        break;
+      case kStateEnabled:
+        StateIs(kStateEnabled);
+        {
+          // Release lock but regain before returning to control loop
+          MutexUnlock unlock(&state_mutex_);
+          DecodeUntilDisabled();
+        }
+        // Returns when Disabled has been requested
+        StateIs(kStateDisabled);
+        break;
+      case kStateUninitialized:
+        // Initially both current and next state should be uninitialized so we
+        // should never get here
+        LOG(WARNING) << "(Profiling::PM Sampling) Decode thread transitioned "
+                     << "to uninitialized state";
+        StateIs(kStateUninitialized);
+        break;
+      case kStateExiting:
+        // Space for thread teardown if needed
+        // ...
+        // Thread is exiting, so return to allow joining
+        StateIs(kStateExiting);
+        return;
     }
-
-    absl::SleepFor(control->decode_period_);
   } while (true);
-
-  // Only reaches this point if it should exit
-  control->ThdIsExiting();
 }
 
 absl::Status CuptiPmSamplerImpl::Initialize(CuptiInterface* cupti_interface,
@@ -812,10 +843,12 @@ absl::Status CuptiPmSamplerImpl::Initialize(CuptiInterface* cupti_interface,
     threads_.push_back(std::move(thd));
   }
 
-  // Wait for signal that all threads are ready
+  // Request and wait for signal that all threads are ready
   for (auto& thd : threads_) {
-    while (!thd->IsThdInitialized()) {
-    }
+    thd->Initialize();
+  }
+  for (auto& thd : threads_) {
+    thd->AwaitInitialization();
   }
 
   initialized_ = true;
@@ -840,13 +873,12 @@ absl::Status CuptiPmSamplerImpl::StartSampler() {
 
   // Signal threads should be enabled
   for (auto& thd : threads_) {
-    thd->EnableThd();
+    thd->Enable();
   }
 
   // Wait for signal that decode thread is enabled
   for (auto& thd : threads_) {
-    while (!thd->IsThdEnabled()) {
-    }
+    thd->AwaitEnablement();
   }
 
   enabled_ = true;
@@ -869,14 +901,14 @@ absl::Status CuptiPmSamplerImpl::StopSampler() {
     }
   }
 
-  // Ensure there is at least one more decode pass
-  // TODO: This could be moved into the decode threads so the main thread
-  // does not have to wait for the decode period
-  absl::SleepFor(decode_stop_delay_);
-
   // Signal threads should be disabled
   for (auto& thd : threads_) {
-    thd->DisableThd();
+    thd->Disable();
+  }
+
+  // Wait for signal that decode thread is disabled
+  for (const auto& thd : threads_) {
+    thd->AwaitDisablement();
   }
 
   enabled_ = false;
@@ -893,21 +925,14 @@ absl::Status CuptiPmSamplerImpl::Deinitialize() {
         "Deinitialize called before Initialize, or failure during Initialize");
   }
 
-  // Wait for signal that decode thread is disabled
-  for (const auto& thd : threads_) {
-    while (!thd->IsThdDisabled()) {
-    }
-  }
-
   // Tell threads to exit
   for (auto& thd : threads_) {
-    thd->ExitThd();
+    thd->Exit();
   }
 
   // Threads will soon exit, ready to join
   for (auto& thd : threads_) {
-    while (!thd->IsThdExiting()) {
-    }
+    thd->AwaitExit();
 
     // Destroy decode thread (joins thread)
     thd.reset();
