@@ -228,6 +228,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/reduction_splitter.h"
 #include "xla/service/gpu/transforms/rename_fusions.h"
 #include "xla/service/gpu/transforms/sanitize_constant_names.h"
+#include "xla/service/gpu/transforms/scalar_constant_sinker.h"
 #include "xla/service/gpu/transforms/scatter_expander.h"
 #include "xla/service/gpu/transforms/scatter_slice_simplifier.h"
 #include "xla/service/gpu/transforms/softmax_rewriter_triton.h"
@@ -1169,6 +1170,7 @@ void AddDoubleBufferingPasses(const HloModule& module,
     pipeline.AddPass<DoubleBufferLoopUnrolling>(*unroll_strategy);
     pipeline.AddPass<TupleSimplifier>();
     pipeline.AddPass<HloDCE>();
+    pipeline.AddPass<ScalarConstantSinker>();
   }
 }
 
