@@ -141,12 +141,14 @@ class ReduceScatterStartThunk : public AllReduceReduceScatterThunkBase {
 absl::Status RunAllReduce(GpuCollectives* collectives,
                           ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator* comm);
+                          se::Stream& stream, Communicator* comm,
+                          bool use_symmetric_buffer = false);
 
 absl::Status RunReduceScatter(GpuCollectives* collectives,
                               ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream, Communicator* comm);
+                              se::Stream& stream, Communicator* comm,
+                              bool use_symmetric_buffer = false);
 
 }  // namespace gpu
 }  // namespace xla
