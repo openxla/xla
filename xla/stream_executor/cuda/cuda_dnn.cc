@@ -4787,8 +4787,8 @@ class ScoreModFunc {
           auto o1 = is_virtual(0) ? operand(1) : operand(0);
           if (hlo->opcode() == xla::HloOpcode::kAnd ||
               hlo->opcode() == xla::HloOpcode::kOr) {
-            // constraint of cudnn logical operations to only accept int32
-            // inputs remove this once cudnn supports boolean inputs
+            // Constraint of cudnn logical operations to only accept int32
+            // inputs. Remove this once cudnn supports boolean inputs.
             if (o0->get_data_type() != cudnn_frontend::DataType_t::INT32 &&
                 o1->get_data_type() != cudnn_frontend::DataType_t::INT32) {
               attrs.set_compute_data_type(cudnn_frontend::DataType_t::INT32);
