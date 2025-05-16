@@ -150,7 +150,6 @@ xla_cc_test(
         "@llvm-project//mlir:Support",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/dialect/sdy/ir:register",
-        "@tsl//tsl/platform:test",
     ],
 )
 
