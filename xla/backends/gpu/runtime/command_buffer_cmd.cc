@@ -274,10 +274,13 @@ CommandBufferCmdExecutor::CommandBufferCmdExecutor(
       commands_(std::move(commands)),
       execution_graph_(std::move(execution_graph)) {
   // Record all buffers used by commands in the sequence.
-  for (const std::unique_ptr<CommandBufferCmd>& cmd : commands_) {
+  for (CommandId id = 0; id < commands_.size(); ++id) {
+    const CommandBufferCmd* cmd = commands_[id].get();
+    command_allocations_[id] = {};
     for (const BufferUse& buffer : cmd->buffers()) {
       buffers_.insert(buffer);
       allocs_indices_.insert(buffer.slice().index());
+      command_allocations_[id].insert(buffer.slice().index());
     }
   }
 }
@@ -411,9 +414,23 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
 
   // Keep a state associated with commands in the sequence in the state manager.
   CommandBufferCmd::StateManager& state = record_params.state;
+  absl::flat_hash_set<BufferAllocation::Index>& changed_allocations =
+      record_params.changed_allocations;
 
   for (CommandId id = 0; id < commands_.size(); ++id) {
     CommandBufferCmd* command = commands_[id].get();
+
+    // If the command is not forced to be updated and there are no changed
+    // allocations, skip the command.
+    if (!command->force_update() &&
+        !absl::c_any_of(command_allocations_.at(id),
+                        [&](const BufferAllocation::Index& index) {
+                          return changed_allocations.contains(index);
+                        })) {
+      VLOG(3) << "Skipping update for command " << command->ToString()
+              << " because it has no changed allocations";
+      continue;
+    }
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
         GetKernelAnnotation(command->profile_annotation());
@@ -2082,9 +2099,31 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
       execute_params.stream->parent()
           ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested)
           .value();
+
+  // As DynamicSliceFusionCmd reconstructs the buffer allocations for its
+  // embedded commands, we also need to re-generate the changed allocations set,
+  // which is used to skip command update if a command does not have allocation
+  // change.
+  absl::MutexLock lock(&mutex_);
+  std::vector<se::DeviceMemoryBase>& recorded_allocs =
+      recorded_allocs_[execute_params.stream->parent()];
+  const BufferAllocations* allocs = new_params.buffer_allocations;
+  absl::flat_hash_set<BufferAllocation::Index> changed_allocations;
+  for (BufferAllocation::Index index : embedded_commands_.allocs_indices()) {
+    se::DeviceMemoryBase alloc = allocs->GetDeviceAddress(index);
+    if (recorded_allocs.size() <= index) {
+      recorded_allocs.resize(index + 1);
+      changed_allocations.insert(index);
+      recorded_allocs[index] = alloc;
+    } else if (!recorded_allocs[index].IsSameAs(alloc)) {
+      changed_allocations.insert(index);
+      recorded_allocs[index] = alloc;
+    }
+  }
+
+  record_params.changed_allocations = changed_allocations;
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, record_params,
                                                nested_command_buffer.get()));
-
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {

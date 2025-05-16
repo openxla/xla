@@ -65,10 +65,11 @@ class CommandBufferThunk : public Thunk {
     explicit ExecutorCommandBuffer(
         std::unique_ptr<se::CommandBuffer> command_buffer);
 
-    // Returns true if `commands` cmd sequence has to be recorded into
-    // `command_buffer` to update it (see `recorded_allocs` below).
-    bool ShouldUpdateCommandBuffer(const CommandBufferCmdExecutor& commands,
-                                   const Thunk::ExecuteParams& params)
+    // Returns a set of buffer allocations that has changed since last run of
+    // `commands` cmd sequence.
+    absl::flat_hash_set<BufferAllocation::Index> CheckChangedAllocations(
+        const CommandBufferCmdExecutor& commands,
+        const Thunk::ExecuteParams& params)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to

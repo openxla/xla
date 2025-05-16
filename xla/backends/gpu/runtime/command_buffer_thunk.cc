@@ -80,33 +80,25 @@ CommandBufferThunk::CommandBufferThunk(
   TrackCommandBuffers(state_);
 }
 
-bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
+absl::flat_hash_set<BufferAllocation::Index>
+CommandBufferThunk::ExecutorCommandBuffer::CheckChangedAllocations(
     const CommandBufferCmdExecutor& commands,
     const Thunk::ExecuteParams& params) {
-  if (commands.force_update()) {
-    return true;
-  }
-
-  bool should_update = false;
+  absl::flat_hash_set<BufferAllocation::Index> changed_allocations;
   const BufferAllocations* allocs = params.buffer_allocations;
-
-  // We check only allocations referenced by commands in a cmd sequence, and
-  // leave every other entry default initialized (nullptr device memory).
   for (BufferAllocation::Index index : commands.allocs_indices()) {
     se::DeviceMemoryBase alloc = allocs->GetDeviceAddress(index);
-
     if (recorded_allocs.size() <= index) {
       recorded_allocs.resize(index + 1);
-      should_update = true;
-    }
-
-    if (!recorded_allocs[index].IsSameAs(alloc)) {
+      changed_allocations.insert(index);
       recorded_allocs[index] = alloc;
-      should_update = true;
+    } else if (!recorded_allocs[index].IsSameAs(alloc)) {
+      recorded_allocs[index] = alloc;
+      changed_allocations.insert(index);
     }
   }
-
-  return should_update;
+  VLOG(3) << "Changed allocations: " << changed_allocations.size();
+  return changed_allocations;
 }
 
 absl::Status CommandBufferThunk::Prepare(
@@ -167,8 +159,17 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // update on each call.
   if ((cmd_buffer->command_buffer->state() ==
            se::CommandBuffer::State::kCreate ||
-       params.requires_exclusive_lock_on_gpu) &&
-      cmd_buffer->ShouldUpdateCommandBuffer(commands_, execute_params)) {
+       params.requires_exclusive_lock_on_gpu)) {
+    auto changed_allocations =
+        cmd_buffer->CheckChangedAllocations(commands_, execute_params);
+
+    if (changed_allocations.empty() && !commands_.force_update()) {
+      VLOG(3) << "Skipping command buffer update on device #"
+              << params.executor->device_ordinal()
+              << " because it has no changed allocations";
+      return absl::OkStatus();
+    }
+
     VLOG(3) << "Initialize/Update command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -184,7 +185,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
+    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state,
+                                                    changed_allocations};
     TF_RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
                                         cmd_buffer->command_buffer.get()));
 
@@ -200,13 +202,14 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 }
 
 absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
-  // We might end up with empty command sequence if all of the captured fusions
-  // are no-op (e.g. memcpy of size 0) and we have no emitted thunks for them.
+  // We might end up with empty command sequence if all of the captured
+  // fusions are no-op (e.g. memcpy of size 0) and we have no emitted thunks
+  // for them.
   if (commands_.empty()) return absl::OkStatus();
 
   // TODO(b/290773547): Profiler (CUPTI) + CUDA graphs lead to memory
-  // corruption. As a work around disable command buffers (CUDA graphs) and run
-  // everything in op-by-op mode.
+  // corruption. As a work around disable command buffers (CUDA graphs) and
+  // run everything in op-by-op mode.
   if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
       !enable_command_buffers_during_profiling_) {
     VLOG(1) << "Execute command buffer thunk as a regular thunk sequence "
@@ -220,32 +223,37 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
                       GetOrCreateCommandBuffer(executor));
 
   absl::MutexLock lock(&cmd_buffer->mutex);
+  if (!params.requires_exclusive_lock_on_gpu) {
+    auto changed_allocations =
+        cmd_buffer->CheckChangedAllocations(commands_, params);
 
-  if ((!params.requires_exclusive_lock_on_gpu) &&
-      cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
-    VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence after "
-            << cmd_buffer->num_executions << " executions since last update"
-            << "; num_commands=" << commands_.size();
+    if (!changed_allocations.empty() || commands_.force_update()) {
+      VLOG(3) << "Update command buffer on device #"
+              << executor->device_ordinal()
+              << " by recoding command buffer cmd sequence after "
+              << cmd_buffer->num_executions << " executions since last update"
+              << "; num_commands=" << commands_.size();
 
-    TraceMe trace([&] {
-      cmd_buffer->mutex.AssertHeld();
-      return TraceMeEncode("command_buffer::update",
-                           {{"device", executor->device_ordinal()},
-                            {"num_commands", commands_.size()},
-                            {"num_executions", cmd_buffer->num_executions}});
-    });
+      TraceMe trace([&] {
+        cmd_buffer->mutex.AssertHeld();
+        return TraceMeEncode("command_buffer::update",
+                             {{"device", executor->device_ordinal()},
+                              {"num_commands", commands_.size()},
+                              {"num_executions", cmd_buffer->num_executions}});
+      });
 
-    uint64_t start_micros = tsl::Env::Default()->NowMicros();
+      uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
-    TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
-                                        cmd_buffer->command_buffer.get()));
+      CommandBufferCmd::RecordParams record_params = {cmd_buffer->state,
+                                                      changed_allocations};
+      TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
+                                          cmd_buffer->command_buffer.get()));
 
-    uint64_t end_micros = tsl::Env::Default()->NowMicros();
-    VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
-            << " μs; num_commands=" << commands_.size();
-    cmd_buffer->num_executions = 0;
+      uint64_t end_micros = tsl::Env::Default()->NowMicros();
+      VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
+              << " μs; num_commands=" << commands_.size();
+      cmd_buffer->num_executions = 0;
+    }
   }
 
   ++cmd_buffer->num_executions;

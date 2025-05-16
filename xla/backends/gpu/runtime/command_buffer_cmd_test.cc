@@ -264,11 +264,12 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   BufferAllocations allocations({a, b}, 0, &allocator);
 
   CommandBufferCmd::StateManager state;
+  absl::flat_hash_set<BufferAllocation::Index> changed_allocations{0, 1};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
-  CommandBufferCmd::RecordParams record_params = {state};
+  CommandBufferCmd::RecordParams record_params = {state, changed_allocations};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
@@ -327,6 +328,7 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
                                     /*binary=*/fatbin};
 
   CommandBufferCmd::StateManager state;
+  absl::flat_hash_set<BufferAllocation::Index> changed_allocations{0, 1};
   TF_ASSERT_OK(executor.Initialize({stream_executor, source}, state));
 
   ServiceExecutableRunOptions run_options;
@@ -336,7 +338,7 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
-  CommandBufferCmd::RecordParams record_params = {state};
+  CommandBufferCmd::RecordParams record_params = {state, changed_allocations};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,

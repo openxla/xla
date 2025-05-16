@@ -202,6 +202,10 @@ class CommandBufferCmd {
     // An external state manager that gives efficient access to per-device state
     // to commands without a need to add expensive synchronization.
     StateManager& state;
+
+    // A set of buffer allocations that have changed since last run of the
+    // command sequence.
+    absl::flat_hash_set<BufferAllocation::Index>& changed_allocations;
   };
 
   // Create new commands in the command buffer using the given dependencies.
@@ -421,6 +425,10 @@ class CommandBufferCmdExecutor {
 
   // Buffer allocations indices referenced by commands in this sequence.
   absl::flat_hash_set<BufferAllocation::Index> allocs_indices_;
+
+  // Map from command id to buffer allocation indices that it references.
+  absl::flat_hash_map<CommandId, absl::flat_hash_set<BufferAllocation::Index>>
+      command_allocations_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1079,10 +1087,16 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
                       std::unique_ptr<se::MemoryAllocation>>
       offsets_allocs_ ABSL_GUARDED_BY(mutex_);
 
+  // Dynamic slice fusion command will reconstruction buffer allocations, so we
+  // need to re-save recorded allocations.
+  absl::flat_hash_map<se::StreamExecutor*, std::vector<se::DeviceMemoryBase>>
+      recorded_allocs_ ABSL_GUARDED_BY(mutex_);
+
   // Pre-computed size requirement for `offsets_allocs_`.
   int64_t offsets_allocs_size_ = 0;
 
-  // A mapping from argument index to the base offset in the `offsets_allocs_`.
+  // A mapping from argument index to the base offset in the
+  // `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
   // mapping from original allocation index to allocation index of embedded
