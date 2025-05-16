@@ -89,20 +89,6 @@ absl::Status FlattenNode(const CallGraphNode& node) {
   return absl::OkStatus();
 }
 
-// Annotates flatten computations with callee instruction types.
-absl::Status AnnotateNode(const CallGraphNode& node) {
-  for (auto& callsite : node.callsites()) {
-    HloInstruction* instruction = callsite.instruction();
-
-    if (instruction->opcode() == HloOpcode::kFusion) {
-      for (HloComputation* computation : instruction->called_computations()) {
-        computation->SetFusionInstruction(instruction);
-      }
-    }
-  }
-  return absl::OkStatus();
-}
-
 }  // namespace
 
 absl::StatusOr<bool> FlattenCallGraph::Run(
@@ -114,12 +100,6 @@ absl::StatusOr<bool> FlattenCallGraph::Run(
     std::unique_ptr<CallGraph> call_graph =
         CallGraph::Build(module, execution_threads);
     TF_RETURN_IF_ERROR(call_graph->VisitNodes(FlattenNode));
-  }
-
-  {  // Annotate flattened computations with callee types.
-    std::unique_ptr<CallGraph> call_graph =
-        CallGraph::Build(module, execution_threads);
-    TF_RETURN_IF_ERROR(call_graph->VisitNodes(AnnotateNode));
   }
 
   XLA_VLOG_LINES(3, "After flatten call graph:\n" + module->ToString());
