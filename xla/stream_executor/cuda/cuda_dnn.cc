@@ -4602,7 +4602,7 @@ class ScoreModFunc {
         UpdateHloConstantToCudnnMap(graph, fwd_hlo_to_cudnn_, fwd_comp_));
     if (bwd_comp_ != nullptr) {
       TF_RETURN_IF_ERROR(
-          UpdateHloConstantToCudnnMap(graph, fwd_hlo_to_cudnn_, fwd_comp_));
+          UpdateHloConstantToCudnnMap(graph, bwd_hlo_to_cudnn_, bwd_comp_));
     }
     return absl::OkStatus();
   }
