@@ -4931,9 +4931,9 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     const std::optional<dnn::TensorDescriptor> page_table_k_descriptor,
     const std::optional<dnn::TensorDescriptor> page_table_v_descriptor,
     double scale, const bool use_dropout,
-    const std::optional<double> dropout_rate,
-    const dnn::FMHAMaskKind mask_type, const int sliding_window_length,
-    const int max_seg_per_batch, const xla::HloComputation* fwd_comp) {
+    const std::optional<double> dropout_rate, const dnn::FMHAMaskKind mask_type,
+    const int sliding_window_length, const int max_seg_per_batch,
+    const xla::HloComputation* fwd_comp) {
   using cudnn_frontend::graph::Tensor_attributes;
 
 #if CUDNN_VERSION >= 90000
