@@ -113,7 +113,10 @@ CollectivePermuteStartThunk::CollectivePermuteStartThunk(
     int64_t partition_count) {
   P2PConfig collective_permute_config;
   auto& config = collective_permute_config.config;
-
+  config.use_symmetric_buffer = instr->GetModule()
+                                    ->config()
+                                    .debug_options()
+                                    .xla_gpu_enable_nccl_symmetric_buffers();
   config.operand_count = instr->operand_count();
   for (int i = 0; i < config.operand_count; ++i) {
     config.operand_element_type.push_back(
