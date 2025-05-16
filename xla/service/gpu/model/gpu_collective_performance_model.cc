@@ -59,7 +59,8 @@ const std::vector<double>& GetSpeeds(
 const std::vector<double>& GetSpeeds(
     const stream_executor::RocmComputeCapability& compute_cap) {
   static const std::vector<double> intraNodeSpeeds = {
-      40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
+      1225.0, 1000.0, 900.0, 800.0, 700.0, 600.0, 500.0,
+      400.0,  300.0,  200.0, 100.0, 80.0,  60.0};
   return intraNodeSpeeds;
 }
 
@@ -109,35 +110,38 @@ struct RocmBandwidthSettings {
   // Table for max system bandwidths GB/s for using NCCL's low latency
   // algorithm. This is used for intra-node estimate.
   static constexpr std::array<double, 4> kLowLatencyMaxBandwidths = {
-      39.0 /* MI100 */,
-      87.7 /* MI200 */,
-      141.0 /* MI300 */,
-      141.0 /* next_gen */,
+      122.0,  // MI100: ~122 GB/s peak (via Infinity Fabric)
+      220.0,  // MI200: dual-die, up to ~220 GB/s combined
+      340.0,  // MI300X: up to ~340 GB/s (HBM + IF bandwidth)
+      340.0   // next-gen: placeholder same as MI300
   };
 
   // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
   // single-node
   static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
-      20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
-      36.7 /* Blackwell */, 36.7 /* next-gen */,
+      20.0,  // legacy (placeholder, e.g., Vega/Volta)
+      25.0,  // MI100
+      35.0,  // MI200
+      45.0,  // MI300
+      45.0   // next-gen: same as MI300
   };
 
   // Nvlink unidirectional bandwidth for different compute cap. Note this is per
   // lane bandwidth.
-  static constexpr double kMi300NvlinkBandwidth = 64.0;
+  static constexpr double kMi300NvlinkBandwidth = 100.0;
 
   // PCIE bandwidth for PCI Gen3 x16
   static constexpr double kPciBandwidth = 12.0;
 
   // Discount factor for ring algorithm
-  static constexpr double kRingAlgorithmDiscountFactor = 0.92;
+  static constexpr double kRingAlgorithmDiscountFactor = 0.7;
 
   // Maximum number of channels allowed by NCCL
-  static constexpr int64_t kMaxNumChannelsRing = 56;
+  static constexpr int64_t kMaxNumChannelsRing = 16;
 
   // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
   // launches 640 threads.
-  static constexpr int64_t kLL128NumThreads = 640;
+  static constexpr int64_t kLL128NumThreads = 256;
 };
 
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
