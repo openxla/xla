@@ -149,11 +149,13 @@ limitations under the License.
 #include "xla/service/export_hlo.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gather_expander.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/custom_kernel_fusion_autotuner.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/custom_call_partitioners.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/fusion_dispatch_pipeline.h"
@@ -214,8 +216,10 @@ limitations under the License.
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/gemv_rewriter.h"
 #include "xla/service/gpu/transforms/layout_assignment.h"
+#include "xla/service/gpu/transforms/memory_space_propagation.h"
 #include "xla/service/gpu/transforms/move_copy_to_users.h"
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
+#include "xla/service/gpu/transforms/post_layout_custom_call_rewriter.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_decomposer.h"
 #include "xla/service/gpu/transforms/reduce_scatter_creator.h"
@@ -654,6 +658,17 @@ absl::Status RunSPMDPasses(
 
   const int64_t num_partitions = hlo_module->config().num_partitions();
   if (num_partitions > 1 && hlo_module->config().use_spmd_partitioning()) {
+    // Register custom-call partitioners.
+    ABSL_CONST_INIT static absl::once_flag did_registration;
+    absl::call_once(did_registration, [] {
+      RegisterCustomCallPartitioner(
+          memory_annotations::kAnnotateMemorySpace,
+          std::make_unique<spmd::PassThroughPartitioner>());
+      RegisterCustomCallPartitioner(
+          kNopCustomCallTarget,
+          std::make_unique<spmd::AllocateBufferPartitioner>());
+    });
+
     HloPassPipeline spmd_pipeline("spmd-partitioner");
     AddSPMDPasses(hlo_module, layout_insensitive_algsimp_opts,
                   gpu_target_config.device_description.gpu_compute_capability(),
@@ -1759,6 +1774,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         .AddPass<HloPassFix<GpuAlgebraicSimplifier>>(options, gpu_version);
   }
 
+  pipeline.AddPass<PostLayoutCustomCallRewriter>();
+  pipeline.AddPass<MemorySpacePropagation>();
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
 
   pipeline.AddPass<HostMemoryTransferAsyncifier>(
