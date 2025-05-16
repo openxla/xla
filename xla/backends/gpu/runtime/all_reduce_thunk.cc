@@ -376,7 +376,8 @@ absl::StatusOr<bool> AllReduceStartThunk::RunCollective(
   }
 
   TF_RETURN_IF_ERROR(RunAllReduce(collectives, config_.reduction_kind,
-                                  device_buffers, stream, comm_handle.comm, config_.config.use_symmetric_buffer));
+                                  device_buffers, stream, comm_handle.comm,
+                                  config_.config.use_symmetric_buffer));
   return true;
 }
 
@@ -409,8 +410,8 @@ absl::StatusOr<bool> ReduceScatterStartThunk::RunCollective(
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_RETURN_IF_ERROR(RunReduceScatter(collectives, config_.reduction_kind,
-                                      device_buffers, stream,
-                                      comm_handle.comm, config_.config.use_symmetric_buffer));
+                                      device_buffers, stream, comm_handle.comm,
+                                      config_.config.use_symmetric_buffer));
   return true;
 }
 

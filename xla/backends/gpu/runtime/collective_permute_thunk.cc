@@ -302,7 +302,8 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
 
   TF_RETURN_IF_ERROR(::xla::gpu::RunCollectivePermute(
       collectives, source_target, device_buffers, stream, comm_handle.comm,
-      device_string, current_id, use_memcpy, recv_ptr_map_, config_.config.use_symmetric_buffer));
+      device_string, current_id, use_memcpy, recv_ptr_map_,
+      config_.config.use_symmetric_buffer));
 
   if (use_memcpy) {
     std::optional<int64_t> source_id = source_target.source;
