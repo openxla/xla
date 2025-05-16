@@ -59,14 +59,13 @@ struct CollectiveConfig {
   RendezvousKey::CollectiveOpKind collective_op_kind;
   int64_t op_id;
   CollectiveOpGroupMode group_mode;
+  bool use_symmetric_buffer;
 
   template <typename OpT>
   void SetCollectiveOpKindAndID(OpT op);
   void SetCollectiveOpKindAndID(const HloCollectivePermuteInstruction* instr);
   void SetCollectiveOpKindAndID(const HloSendRecvInstruction* instr);
   bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
-
-  bool use_symmetric_buffer;
 };
 
 template <typename OpT>
@@ -361,10 +360,6 @@ absl::Status MaybeRegisterBuffers(se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
                                   Communicator* comm,
                                   bool use_symmetric_buffer = false);
-
-absl::StatusOr<int64_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<GlobalDeviceId>& participants);
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_

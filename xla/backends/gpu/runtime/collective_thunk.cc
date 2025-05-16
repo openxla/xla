@@ -387,7 +387,7 @@ absl::Status RegisterBufferOnce(se::StreamExecutor* executor,
     VLOG(5) << "Registering " << buffer.opaque()
             << " with size: " << buffer.size()
             << " and base pointer: " << base_buffer.opaque()
-            << ", is symmetric: " << use_symmetric_buffer;
+            << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
     // Symmetric buffer registration is a collective operation,
     // we need to do that before locking on a global.
     TF_ASSIGN_OR_RETURN(auto handle,
