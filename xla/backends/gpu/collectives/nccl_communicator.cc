@@ -373,6 +373,7 @@ NcclCommunicator::RegisterBuffer(stream_executor::DeviceMemoryBase buffer,
       TF_RETURN_IF_ERROR(PollUntilDone(comm_));
     }
 #else
+  LOG(ERROR) << "###NCCL VERSION: " << NCCL_VERSION_CODE;
   return Unimplemented("NCCL version does not support ncclCommWindowRegister");
 #endif  // NCCL_VERSION_CODE >= 22700
   }
