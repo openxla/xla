@@ -553,6 +553,7 @@ xla_cc_test(
         "data/input_literal_f32_2_2.pbtxt",
         "data/must_alias.hlo",
         "data/must_alias_with_sharding.hlo",
+        "data/large_constant.hlo",
         ":run_hlo_module",
     ],
     deps = [
