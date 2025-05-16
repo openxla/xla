@@ -243,9 +243,9 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
         event, events));
     return false;
   }
-  TF_RETURN_IF_ERROR(
-      xla::gpu::RunAllToAll(collectives, config_.has_split_dimension,
-                            device_buffers, stream, comm_handle.comm, config_.config.use_symmetric_buffer));
+  TF_RETURN_IF_ERROR(xla::gpu::RunAllToAll(
+      collectives, config_.has_split_dimension, device_buffers, stream,
+      comm_handle.comm, config_.config.use_symmetric_buffer));
   return true;
 }
 
