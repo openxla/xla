@@ -100,7 +100,8 @@ absl::StatusOr<bool> AllGatherStartThunk::RunCollective(
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   TF_RETURN_IF_ERROR(
-      xla::gpu::RunAllGather(device_buffers, stream, comm_handle.comm));
+      xla::gpu::RunAllGather(device_buffers, stream, comm_handle.comm,
+                             config_.config.use_symmetric_buffer));
   return true;
 }
 

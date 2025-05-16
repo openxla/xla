@@ -179,7 +179,7 @@ static ncclRedOp_t ToNcclReduction(ReductionKind kind) {
 class NcclCommunicator::NcclRegisteredBufferHandle
     : public Communicator::RegisteredBufferHandle {
  public:
-  NcclRegisteredBufferHandle(NcclCommunicator* comm, void* handle,
+  NcclRegisteredBufferHandle(NcclCommunicator& comm, void* handle,
                              tsl::AsyncValue::Executor* executor,
                              bool symmetric_handle)
       : comm_(comm),
@@ -217,11 +217,20 @@ class NcclCommunicator::NcclRegisteredBufferHandle
       VLOG(3) << absl::StreamFormat(
           "Deregister symmetric buffer for NCCL communicator; handle=%p; "
           "comm=%p",
-          handle_, comm_);
+          handle_, comm_.comm_);
 #if (NCCL_VERSION_CODE >= 22700)
-      XLA_NCCL_RETURN_IF_ERROR(
-          ncclCommWindowDeregister(comm_->comm(), *(ncclWindow_t*)(handle_)));
-      return PollUntilDone(comm_->comm());
+      auto f = [this]() -> absl::Status {
+        if (comm_.canceling_.load()) {
+          return FailedPrecondition("NcclCommunicator aborted");
+        }
+        XLA_NCCL_RETURN_IF_ERROR(
+            ncclCommWindowDeregister(comm_.comm(), *(ncclWindow_t*)(handle_)));
+        return comm_.PollUntilDone();
+      };
+      if (!executor_) {
+        return f();
+      }
+      return BlockAndGet(tsl::MakeAsyncValueRef(*executor_, f));
 #else
       return Unimplemented(
           "NCCL version does not support ncclCommWindowDeregister");
@@ -342,9 +351,9 @@ absl::StatusOr<std::unique_ptr<Communicator::RegisteredBufferHandle>>
 NcclCommunicator::RegisterBuffer(stream_executor::DeviceMemoryBase buffer,
                                  bool use_symmetric_buffer) {
 #if (NCCL_VERSION_CODE >= 21901)
-  void* handle = nullptr;
+  using Handle = std::unique_ptr<Communicator::RegisteredBufferHandle>;
+
   if (!use_symmetric_buffer) {
-    using Handle = std::unique_ptr<Communicator::RegisteredBufferHandle>;
     return BlockAndGet(
         Execute<Handle>([&buffer, this]() -> absl::StatusOr<Handle> {
           VLOG(3) << absl::StreamFormat(
@@ -360,33 +369,37 @@ NcclCommunicator::RegisterBuffer(stream_executor::DeviceMemoryBase buffer,
           if (group_nesting_level_ == 0) {
             TF_RETURN_IF_ERROR(PollUntilDone());
           }
-          return std::make_unique<NcclRegisteredBufferHandle>(*this, handle,
-                                                              executor_.get());
+          return std::make_unique<NcclRegisteredBufferHandle>(
+              *this, handle, executor_.get(), /*symmetric_buffer= */ false);
         }));
 #else
-    return Unimplemented("NCCL version does not support ncclCommRegister");
+  return Unimplemented("NCCL version does not support ncclCommRegister");
 #endif  // NCCL_VERSION_CODE >= 21901
   } else {
 #if (NCCL_VERSION_CODE >= 22700)
-    VLOG(3) << absl::StreamFormat(
-        "Register symmetric buffer for NCCL communicator; buffer=%p; size=%d; "
-        "comm=%p",
-        buffer.opaque(), buffer.size(), comm_);
-
-    XLA_NCCL_RETURN_IF_ERROR(ncclGroupStart());
-    XLA_NCCL_RETURN_IF_ERROR(ncclCommWindowRegister(
-        comm_, buffer.opaque(), buffer.size(), (ncclWindow_t*)&handle,
-        NCCL_WIN_COLL_SYMMETRIC));
-    XLA_NCCL_RETURN_IF_ERROR(ncclGroupEnd());
-    if (group_nesting_level_ == 0) {
-      TF_RETURN_IF_ERROR(PollUntilDone(comm_));
-    }
+    return BlockAndGet(
+        Execute<Handle>([&buffer, this]() -> absl::StatusOr<Handle> {
+          VLOG(3) << absl::StreamFormat(
+              "Register symmetric buffer for NCCL communicator; buffer=%p; "
+              "size=%d; "
+              "comm=%p",
+              buffer.opaque(), buffer.size(), comm_);
+          void* handle = nullptr;
+          XLA_NCCL_RETURN_IF_ERROR(ncclGroupStart());
+          XLA_NCCL_RETURN_IF_ERROR(ncclCommWindowRegister(
+              comm_, buffer.opaque(), buffer.size(), (ncclWindow_t*)&handle,
+              NCCL_WIN_COLL_SYMMETRIC));
+          XLA_NCCL_RETURN_IF_ERROR(ncclGroupEnd());
+          if (group_nesting_level_ == 0) {
+            TF_RETURN_IF_ERROR(PollUntilDone());
+          }
+          return std::make_unique<NcclRegisteredBufferHandle>(
+              *this, handle, executor_.get(), /*symmetric_buffer= */ true);
+        }));
 #else
   return Unimplemented("NCCL version does not support ncclCommWindowRegister");
 #endif  // NCCL_VERSION_CODE >= 22700
   }
-  return std::make_unique<NcclRegisteredBufferHandle>(
-      this, handle, executor_.get(), use_symmetric_buffer);
 }
 
 tsl::AsyncValueRef<Communicator::Event> NcclCommunicator::GroupExecute(
