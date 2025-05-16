@@ -1056,24 +1056,28 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
   EnableActivityTracing().IgnoreError();
   tsl::profiler::AnnotationStack::Enable(true);
 
+  if (option_->pm_sampler_options.enable) {
 #if CUPTI_PM_SAMPLING_SUPPORTED  // Defined in cupti_interface.h
-  // CuptiPmSamplerImpl can only build with CUDA 12.6 or higher
-  pm_sampler_ = std::make_unique<CuptiPmSamplerImpl>();
+    // CuptiPmSamplerImpl can only build with CUDA 12.6 or higher
+    pm_sampler_ = std::make_unique<CuptiPmSamplerImpl>();
 #else
-  // Default sampler is a safe stub implmeentation which builds everywhere
-  pm_sampler_ = std::make_unique<CuptiPmSampler>();
+    // Default sampler is a safe stub implmeentation which builds everywhere
+    pm_sampler_ = std::make_unique<CuptiPmSampler>();
 #endif
 
-  TF_RETURN_IF_ERROR(pm_sampler_->Initialize(cupti_interface_, num_gpus_,
-                                             &(option_->pm_sampler_options)));
-  TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
+    TF_RETURN_IF_ERROR(pm_sampler_->Initialize(cupti_interface_, num_gpus_,
+                                               &(option_->pm_sampler_options)));
+    TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
+  }
 
   return status;
 }
 
 void CuptiTracer::Disable() {
-  pm_sampler_->StopSampler().IgnoreError();
-  pm_sampler_->Deinitialize().IgnoreError();
+  if (option_->pm_sampler_options.enable) {
+    pm_sampler_->StopSampler().IgnoreError();
+    pm_sampler_->Deinitialize().IgnoreError();
+  }
 
   DisableApiTracing().IgnoreError();
   DisableActivityTracing().IgnoreError();

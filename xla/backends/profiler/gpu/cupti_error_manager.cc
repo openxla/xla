@@ -250,7 +250,8 @@ void CuptiErrorManager::UndoAndDisable() {
 
 CUptiResult CuptiErrorManager::GetResultString(CUptiResult result,
                                                const char** str) {
-  IGNORE_CALL_IF_DISABLED;
+  // This should be safe no matter the state of CUPTI and is useful to log even
+  // after errors
   CUptiResult error = interface_->GetResultString(result, str);
   LOG_AND_DISABLE_IF_ERROR(error);
   return error;

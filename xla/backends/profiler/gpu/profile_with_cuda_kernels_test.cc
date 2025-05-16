@@ -47,11 +47,11 @@ class TestableCuptiTracer : public CuptiTracer {
       : CuptiTracer(new CuptiErrorManager(std::make_unique<CuptiWrapper>())) {}
 };
 
-std::atomic_uint64_t sampled_fp64 = 0;
+std::atomic_uint64_t samples_fp64 = 0;
 std::atomic_uint64_t atomic_total_fp64 = 0;
-std::atomic_uint64_t sampled_read = 0;
+std::atomic_uint64_t samples_read = 0;
 std::atomic_uint64_t atomic_total_read = 0;
-std::atomic_uint64_t sampled_write = 0;
+std::atomic_uint64_t samples_write = 0;
 std::atomic_uint64_t atomic_total_write = 0;
 std::atomic_bool skip_first = true;
 
@@ -83,13 +83,13 @@ void HandleRecords(PmSamples* samples) {
     }
 
     if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
-      sampled_fp64 = 1;
+      samples_fp64 += 1;
       atomic_total_fp64 += sum;
     } else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
-      sampled_read = 1;
+      samples_read += 1;
       atomic_total_read += sum;
     } else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
-      sampled_write = 1;
+      samples_write += 1;
       atomic_total_write += sum;
     }
   }
@@ -148,6 +148,17 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
   tracer.Disable();
 
+  // Go for a second pass to ensure we can sample again, with an un-sampled func
+  absl::SleepFor(absl::Milliseconds(1000));
+  skip_first = true;
+  vec = SimpleAddSubWithProfiler(kNumElements);
+
+  err = tracer.Enable(tracer_options, collector.get());
+
+  vec = SimpleAddSubWithProfiler(kNumElements);
+
+  tracer.Disable();
+
   // Validate functional correctness - ie, the kernel ran
   EXPECT_EQ(vec.size(), kNumElements);
   for (int i = 0; i < kNumElements; ++i) {
@@ -157,22 +168,23 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
   // Expect 4 * elems / (32 elemn / warp) +- 5% double instructions
   // (if they were sampled)
-  if (sampled_fp64 > 0) {
+  // Double this as two kernels are sampled (middle kernel is not)
+  if (samples_fp64 > 0) {
     LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
-    EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100);
-    EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100);
+    EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100 * 2);
+    EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100 * 2);
   }
 
   // Expect > 4 * elems * sizeof(double) bytes written to pcie
   // 3 copies to device, 1 copy back
   // This is just a basic algorithmic minimum, there are more loads and
   // stores due to copying kernel itself, etc
-  if (sampled_read > 0) {
+  if (samples_read > 0) {
     LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
   }
-  if (sampled_write > 0) {
+  if (samples_write > 0) {
     LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
-    EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double));
+    EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double) * 2);
   }
 }
 

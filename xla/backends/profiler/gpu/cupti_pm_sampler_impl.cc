@@ -372,9 +372,9 @@ absl::Status CuptiPmSamplerDevice::DisableSampling() {
   // CUPTI, so do not disable here
   // TODO: Add CUPTI version test and disable once ordering is changed
   //
-  // DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Disable_Params, p);
-  // p.pPmSamplingObject = sampling_obj_;
-  // RETURN_IF_CUPTI_ERROR(PmSamplingDisable(&p));
+  DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Disable_Params, p);
+  p.pPmSamplingObject = sampling_obj_;
+  RETURN_IF_CUPTI_ERROR(PmSamplingDisable(&p));
 
   sampling_obj_ = nullptr;
 
