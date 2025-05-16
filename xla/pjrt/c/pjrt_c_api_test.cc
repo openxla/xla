@@ -504,34 +504,19 @@ TEST_F(PjrtCApiTest, PluginAttributes) {
 }
 
 TEST_F(PjrtCApiTest, ExecutableOutputDimensions) {
-  // First compile an executable
-  PJRT_Client_Compile_Args compile_args;
-  compile_args.struct_size = PJRT_Client_Compile_Args_STRUCT_SIZE;
-  compile_args.extension_start = nullptr;
-  compile_args.client = client_;
-  std::string options_str = BuildSingleDeviceCompileOptionStr();
-  compile_args.compile_options = options_str.c_str();
-  compile_args.compile_options_size = options_str.size();
+  // Create executable using the helper
+  auto executable_or = create_executable(api_, client_);
+  ASSERT_NE(executable_or.get(), nullptr);
 
-  std::string format(::pjrt::kMlirFormat);
-  std::string program_code{module_add_one};
-  PJRT_Program program;
-  program.struct_size = PJRT_Program_STRUCT_SIZE;
-  program.extension_start = nullptr;
-  program.code = program_code.data();
-  program.code_size = program_code.length();
-  program.format = format.c_str();
-  program.format_size = format.size();
-  compile_args.program = &program;
-
-  PJRT_Error* error = api_->PJRT_Client_Compile(&compile_args);
-  ASSERT_EQ(nullptr, error);
+  // Get the underlying PJRT_Executable
+  auto executable = GetExecutable(executable_or.get(), api_);
+  ASSERT_NE(executable.get(), nullptr);
 
   // Now test output dimensions
   PJRT_Executable_OutputDimensions_Args args;
   args.struct_size = PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
-  args.executable = compile_args.executable;
+  args.executable = executable.get();
   args.num_outputs = 0;  // Should be set by the API call
   args.dims = nullptr;
   args.dim_sizes = nullptr;
@@ -541,7 +526,8 @@ TEST_F(PjrtCApiTest, ExecutableOutputDimensions) {
   ASSERT_EQ(nullptr, dim_error);
 
   // Verify that num_outputs was set properly
-  EXPECT_GT(args.num_outputs, 0u);
+  const size_t expected_num_outputs = 1;  // The add_one computation has 1 output
+  EXPECT_EQ(args.num_outputs, expected_num_outputs);
   ASSERT_NE(args.dim_sizes, nullptr);
   ASSERT_NE(args.dims, nullptr);
 
@@ -551,9 +537,6 @@ TEST_F(PjrtCApiTest, ExecutableOutputDimensions) {
     total_dims += args.dim_sizes[i];
   }
   EXPECT_GT(total_dims, 0);
-
-  // Clean up
-  destroy_executable(compile_args.executable, api_);
 }
 
 // --------------------------------- Devices -----------------------------------
