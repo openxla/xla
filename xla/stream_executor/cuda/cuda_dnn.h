@@ -705,11 +705,6 @@ class CudnnSupport : public dnn::DnnSupport {
   void operator=(const CudnnSupport&) = delete;
 };
 
-using Tensor_t = std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>;
-using Graph_t = std::shared_ptr<cudnn_frontend::graph::Graph>;
-using AttentionScoreModifier_t =
-    std::function<Tensor_t(Graph_t, Tensor_t, std::vector<Tensor_t>)>;
-
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,
     const dnn::MatmulTensorDescriptor& q_descriptor,

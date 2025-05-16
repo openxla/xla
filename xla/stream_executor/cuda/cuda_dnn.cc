@@ -4586,154 +4586,240 @@ void FixDimsForRaggedOffset(std::vector<int64_t>& dims, int max_reg_per_batch) {
   dims[0] *= max_reg_per_batch;
 }
 
-inline std::optional<cudnn_frontend::PointwiseMode_t> GetElementwiseMode(
-    const xla::HloInstruction& instruction) {
-  const xla::HloOpcode opcode = instruction.opcode();
-  using m = cudnn_frontend::PointwiseMode_t;
-  switch (opcode) {
-    case xla::HloOpcode::kAbs:
-      return m::ABS;
-    case xla::HloOpcode::kAdd:
-      return m::ADD;
-    case xla::HloOpcode::kCeil:
-      return m::CEIL;
-    case xla::HloOpcode::kCompare:
-      switch (instruction.comparison_direction()) {
-        case xla::Comparison::Direction::kEq:
-          return m::CMP_EQ;
-        case xla::Comparison::Direction::kNe:
-          return m::CMP_NEQ;
-        case xla::Comparison::Direction::kGe:
-          return m::CMP_GE;
-        case xla::Comparison::Direction::kGt:
-          return m::CMP_GT;
-        case xla::Comparison::Direction::kLe:
-          return m::CMP_LE;
-        case xla::Comparison::Direction::kLt:
-          return m::CMP_LT;
-      }
-      break;
-    case xla::HloOpcode::kConvert:
-      return m::IDENTITY;
-    case xla::HloOpcode::kCos:
-      return m::COS;
-    case xla::HloOpcode::kDivide:
-      return m::DIV;
-    case xla::HloOpcode::kExp:
-      return m::EXP;
-    case xla::HloOpcode::kFloor:
-      return m::FLOOR;
-    case xla::HloOpcode::kLog:
-      return m::LOG;
-    case xla::HloOpcode::kMaximum:
-      return m::MAX;
-    case xla::HloOpcode::kMinimum:
-      return m::MIN;
-    case xla::HloOpcode::kMultiply:
-      return m::MUL;
-    case xla::HloOpcode::kNegate:
-      return m::NEG;
-    case xla::HloOpcode::kPower:
-      return m::POW;
-    case xla::HloOpcode::kRsqrt:
-      return m::RSQRT;
-#if CUDNN_VERSION >= 90100
-    case xla::HloOpcode::kSelect:
-      return m::BINARY_SELECT;
-#endif  // CUDNN_VERSION
-    case xla::HloOpcode::kSin:
-      return m::SIN;
-    case xla::HloOpcode::kSqrt:
-      return m::SQRT;
-    case xla::HloOpcode::kSubtract:
-      return m::SUB;
-    case xla::HloOpcode::kTan:
-      return m::TAN;
-    case xla::HloOpcode::kTanh:
-      return m::TANH_FWD;
-    case xla::HloOpcode::kAnd:
-      return m::LOGICAL_AND;
-    case xla::HloOpcode::kOr:
-      return m::LOGICAL_OR;
-    default:
-      return std::nullopt;
-  }
-}
-
-inline std::optional<cudnn_frontend::DataType_t> ToCudnnDataType(
-    const xla::PrimitiveType type) {
-  using t = cudnn_frontend::DataType_t;
-  switch (type) {
-    case xla::PrimitiveType::F32:
-      return t::FLOAT;
-    case xla::PrimitiveType::F16:
-      return t::HALF;
-    case xla::PrimitiveType::BF16:
-      return t::BFLOAT16;
-    case xla::PrimitiveType::S32:
-      return t::INT32;
-    case xla::PrimitiveType::S8:
-      return t::INT8;
-    case xla::PrimitiveType::PRED:
-      return t::INT8;
-    case xla::PrimitiveType::F8E5M2:
-      return t::FP8_E5M2;
-    case xla::PrimitiveType::F8E4M3FN:
-      return t::FP8_E4M3;
-    default:
-      return std::nullopt;
-  }
-}
-
-inline cudnn_frontend::DataType_t GetComputeDataType(
-    const xla::PrimitiveType type) {
-  cudnn_frontend::DataType_t compute_dtype = cudnn_frontend::DataType_t::FLOAT;
-  if (xla::primitive_util::IsIntegralType(type)) {
-    compute_dtype = cudnn_frontend::DataType_t::INT32;
-  } else if (type == xla::PrimitiveType::PRED) {
-    compute_dtype = cudnn_frontend::DataType_t::BOOLEAN;
-  }
-  return compute_dtype;
-}
-
 class ScoreModFunc {
- private:
-  std::vector<Tensor_t> fwd_parameters;
+  using Tensor_t = std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>;
+  using Graph_t = std::shared_ptr<cudnn_frontend::graph::Graph>;
 
  public:
-  Tensor_t forward(
-      Graph_t graph, Tensor_t attention_score,
-      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> hlo_to_cudnn,
-      const xla::HloComputation* computation) {
-    hlo_to_cudnn[computation->parameter_instruction(0)] = attention_score;
-    // save fwd parameters tensor attributes
-    for (int i = 0; i < computation->num_parameters(); i++) {
-      auto parameter = computation->parameter_instruction(i);
-      fwd_parameters.push_back(hlo_to_cudnn[parameter]);
+  ScoreModFunc(const xla::HloComputation* fwd_comp,
+               const xla::HloComputation* bwd_comp)
+      : fwd_comp_(fwd_comp), bwd_comp_(bwd_comp) {}
+
+  template <typename Functor>
+  absl::Status Initialize(cudnn_frontend::graph::Graph& graph,
+                          Functor* next_uid) {
+    TF_RETURN_IF_ERROR(UpdateHloParameterToCudnnMap(graph, fwd_hlo_to_cudnn_,
+                                                    fwd_comp_, next_uid));
+    TF_RETURN_IF_ERROR(
+        UpdateHloConstantToCudnnMap(graph, fwd_hlo_to_cudnn_, fwd_comp_));
+    if (bwd_comp_ != nullptr) {
+      TF_RETURN_IF_ERROR(
+          UpdateHloConstantToCudnnMap(graph, fwd_hlo_to_cudnn_, fwd_comp_));
     }
-    return compile(graph, hlo_to_cudnn, computation);
+    return absl::OkStatus();
   }
 
-  Tensor_t backward(
-      Graph_t graph, Tensor_t grad,
-      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> hlo_to_cudnn,
-      const xla::HloComputation* computation) {
-    hlo_to_cudnn[computation->parameter_instruction(0)] = grad;
-    // add fwd parameters tensor attribute to map
+  std::optional<cudnn_frontend::PointwiseMode_t> GetElementwiseMode(
+      const xla::HloInstruction& instruction) {
+    const xla::HloOpcode opcode = instruction.opcode();
+    using m = cudnn_frontend::PointwiseMode_t;
+    switch (opcode) {
+      case xla::HloOpcode::kAbs:
+        return m::ABS;
+      case xla::HloOpcode::kAdd:
+        return m::ADD;
+      case xla::HloOpcode::kCeil:
+        return m::CEIL;
+      case xla::HloOpcode::kCompare:
+        switch (instruction.comparison_direction()) {
+          case xla::Comparison::Direction::kEq:
+            return m::CMP_EQ;
+          case xla::Comparison::Direction::kNe:
+            return m::CMP_NEQ;
+          case xla::Comparison::Direction::kGe:
+            return m::CMP_GE;
+          case xla::Comparison::Direction::kGt:
+            return m::CMP_GT;
+          case xla::Comparison::Direction::kLe:
+            return m::CMP_LE;
+          case xla::Comparison::Direction::kLt:
+            return m::CMP_LT;
+        }
+        break;
+      case xla::HloOpcode::kConvert:
+        return m::IDENTITY;
+      case xla::HloOpcode::kCos:
+        return m::COS;
+      case xla::HloOpcode::kDivide:
+        return m::DIV;
+      case xla::HloOpcode::kExp:
+        return m::EXP;
+      case xla::HloOpcode::kFloor:
+        return m::FLOOR;
+      case xla::HloOpcode::kLog:
+        return m::LOG;
+      case xla::HloOpcode::kMaximum:
+        return m::MAX;
+      case xla::HloOpcode::kMinimum:
+        return m::MIN;
+      case xla::HloOpcode::kMultiply:
+        return m::MUL;
+      case xla::HloOpcode::kNegate:
+        return m::NEG;
+      case xla::HloOpcode::kPower:
+        return m::POW;
+      case xla::HloOpcode::kRsqrt:
+        return m::RSQRT;
+#if CUDNN_VERSION >= 90100
+      case xla::HloOpcode::kSelect:
+        return m::BINARY_SELECT;
+#endif  // CUDNN_VERSION
+      case xla::HloOpcode::kSin:
+        return m::SIN;
+      case xla::HloOpcode::kSqrt:
+        return m::SQRT;
+      case xla::HloOpcode::kSubtract:
+        return m::SUB;
+      case xla::HloOpcode::kTan:
+        return m::TAN;
+      case xla::HloOpcode::kTanh:
+        return m::TANH_FWD;
+      case xla::HloOpcode::kAnd:
+        return m::LOGICAL_AND;
+      case xla::HloOpcode::kOr:
+        return m::LOGICAL_OR;
+      default:
+        return std::nullopt;
+    }
+  }
+
+  std::optional<cudnn_frontend::DataType_t> ToCudnnDataType(
+      const xla::PrimitiveType type) {
+    using t = cudnn_frontend::DataType_t;
+    switch (type) {
+      case xla::PrimitiveType::F32:
+        return t::FLOAT;
+      case xla::PrimitiveType::F16:
+        return t::HALF;
+      case xla::PrimitiveType::BF16:
+        return t::BFLOAT16;
+      case xla::PrimitiveType::S32:
+        return t::INT32;
+      case xla::PrimitiveType::S8:
+        return t::INT8;
+      case xla::PrimitiveType::PRED:
+        return t::INT8;
+      case xla::PrimitiveType::F8E5M2:
+        return t::FP8_E5M2;
+      case xla::PrimitiveType::F8E4M3FN:
+        return t::FP8_E4M3;
+      default:
+        return std::nullopt;
+    }
+  }
+
+  cudnn_frontend::DataType_t GetComputeDataType(const xla::PrimitiveType type) {
+    cudnn_frontend::DataType_t compute_dtype =
+        cudnn_frontend::DataType_t::FLOAT;
+    if (xla::primitive_util::IsIntegralType(type)) {
+      compute_dtype = cudnn_frontend::DataType_t::INT32;
+    } else if (type == xla::PrimitiveType::PRED) {
+      compute_dtype = cudnn_frontend::DataType_t::BOOLEAN;
+    }
+    return compute_dtype;
+  }
+
+  template <xla::PrimitiveType XlaT, typename T>
+  Tensor_t LiteralToCudnnTensor(const xla::HloInstruction* hlo,
+                                cudnn_frontend::graph::Graph& graph) {
+    using NativeT =
+        typename xla::primitive_util::PrimitiveTypeToNative<XlaT>::type;
+    return graph.tensor(T(hlo->literal().GetFirstElement<NativeT>()));
+  }
+
+  template <typename Functor>
+  absl::Status UpdateHloParameterToCudnnMap(
+      cudnn_frontend::graph::Graph& graph,
+      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t>& hlo_to_cudnn,
+      const xla::HloComputation* computation, Functor* next_uid) {
     for (int i = 1; i < computation->num_parameters(); i++) {
       auto parameter = computation->parameter_instruction(i);
-      hlo_to_cudnn[parameter] = fwd_parameters[i - 1];
+      TF_ASSIGN_OR_RETURN(const dnn::DataType type,
+                          xla::gpu::GetDNNDataTypeFromPrimitiveType(
+                              parameter->shape().element_type()));
+      auto desc = dnn::TensorDescriptor::For(
+          type, parameter->shape().dimensions(),
+          parameter->shape().layout().minor_to_major());
+      auto dims = desc.dimensions();
+      auto strides = desc.GetLogicalStrides();
+      auto rank = dims.size();
+      for (int i = 0; i < 4 - rank; i++) {
+        // Pad dims and strides to rank 4
+        dims.push_back(1);
+        strides.push_back(1);
+      }
+      hlo_to_cudnn[parameter] = graph.tensor(
+          cudnn_frontend::graph::Tensor_attributes()
+              .set_dim(dims)
+              .set_stride(strides)
+              .set_data_type(ToCudnnFrontendDataType(desc.type()))
+              .set_name(absl::StrCat("score_mod_input_", std::to_string(i)))
+              .set_uid((*next_uid)()));
     }
-    return compile(graph, hlo_to_cudnn, computation);
+    return absl::OkStatus();
   }
 
-  Tensor_t compile(
+  absl::Status UpdateHloConstantToCudnnMap(
+      cudnn_frontend::graph::Graph& graph,
+      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t>& hlo_to_cudnn,
+      const xla::HloComputation* computation) {
+    for (auto instr : computation->MakeInstructionPostOrder()) {
+      if (xla::HloPredicateIsOp<xla::HloOpcode::kConstant>(instr)) {
+        if (!xla::ShapeUtil::IsScalar(instr->shape())) {
+          return absl::InternalError("Only support scalar.");
+        }
+        xla::PrimitiveType constant_type = instr->shape().element_type();
+        switch (constant_type) {
+          case xla::F16:
+            hlo_to_cudnn[instr] =
+                LiteralToCudnnTensor<xla::F16, __half>(instr, graph);
+            break;
+          case xla::BF16:
+            hlo_to_cudnn[instr] =
+                LiteralToCudnnTensor<xla::BF16, __nv_bfloat16>(instr, graph);
+            break;
+          case xla::F32:
+            hlo_to_cudnn[instr] =
+                LiteralToCudnnTensor<xla::F32, float>(instr, graph);
+            break;
+          case xla::S32:
+            hlo_to_cudnn[instr] =
+                LiteralToCudnnTensor<xla::S32, int>(instr, graph);
+            break;
+          default:
+            return absl::InternalError("Unsupported constant type.");
+        }
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  Tensor_t Forward(Graph_t graph, Tensor_t attention_score) {
+    fwd_hlo_to_cudnn_[fwd_comp_->parameter_instruction(0)] = attention_score;
+    // save fwd parameters tensor attributes
+    for (int i = 0; i < fwd_comp_->num_parameters(); i++) {
+      auto parameter = fwd_comp_->parameter_instruction(i);
+      fwd_parameters_.push_back(fwd_hlo_to_cudnn_[parameter]);
+    }
+    return Compile(graph, fwd_hlo_to_cudnn_, fwd_comp_);
+  }
+
+  Tensor_t Backward(Graph_t graph, Tensor_t grad) {
+    bwd_hlo_to_cudnn_[bwd_comp_->parameter_instruction(0)] = grad;
+    // add fwd parameters tensor attribute to map
+    for (int i = 1; i < bwd_comp_->num_parameters(); i++) {
+      auto parameter = bwd_comp_->parameter_instruction(i);
+      bwd_hlo_to_cudnn_[parameter] = fwd_parameters_[i - 1];
+    }
+    return Compile(graph, bwd_hlo_to_cudnn_, bwd_comp_);
+  }
+
+  Tensor_t Compile(
       Graph_t graph,
-      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> hlo_to_cudnn,
+      absl::flat_hash_map<const xla::HloInstruction*, Tensor_t>& hlo_to_cudnn,
       const xla::HloComputation* computation) {
     std::vector<xla::HloInstruction*> instructions =
         computation->MakeInstructionPostOrder();
-    std::cerr << computation->ToString() << "\n";
     for (const xla::HloInstruction* hlo : instructions) {
       auto operand = [&hlo_to_cudnn, &hlo](int i) {
         CHECK(hlo_to_cudnn.count(hlo->operand(i)));
@@ -4832,86 +4918,14 @@ class ScoreModFunc {
     CHECK(hlo_to_cudnn.contains(computation->root_instruction()));
     return hlo_to_cudnn[computation->root_instruction()];
   }
+
+ private:
+  std::vector<Tensor_t> fwd_parameters_;
+  const xla::HloComputation* fwd_comp_;
+  const xla::HloComputation* bwd_comp_;
+  absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> fwd_hlo_to_cudnn_;
+  absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> bwd_hlo_to_cudnn_;
 };
-
-absl::StatusOr<dnn::TensorDescriptor> TensorDescriptorFor(
-    const xla::Shape& shape) {
-  TF_ASSIGN_OR_RETURN(
-      const dnn::DataType type,
-      xla::gpu::GetDNNDataTypeFromPrimitiveType(shape.element_type()));
-  return dnn::TensorDescriptor::For(type, shape.dimensions(),
-                                    shape.layout().minor_to_major());
-}
-
-template <xla::PrimitiveType XlaT, typename T>
-std::shared_ptr<cudnn_frontend::graph::Tensor_attributes> LiteralToCudnnTensor(
-    const xla::HloInstruction* hlo, cudnn_frontend::graph::Graph& graph) {
-  using NativeT =
-      typename xla::primitive_util::PrimitiveTypeToNative<XlaT>::type;
-  return graph.tensor(T(hlo->literal().GetFirstElement<NativeT>()));
-}
-
-template <typename Functor>
-absl::Status UpdateHloParameterToCudnnMap(
-    cudnn_frontend::graph::Graph& graph,
-    absl::flat_hash_map<const xla::HloInstruction*, Tensor_t>& hlo_to_cudnn,
-    const xla::HloComputation* computation, Functor* next_uid) {
-  for (int i = 1; i < computation->num_parameters(); i++) {
-    auto parameter = computation->parameter_instruction(i);
-    TF_ASSIGN_OR_RETURN(auto desc, TensorDescriptorFor(parameter->shape()));
-    auto dims = desc.dimensions();
-    auto strides = desc.GetLogicalStrides();
-    auto rank = dims.size();
-    for (int i = 0; i < 4 - rank; i++) {
-      // Pad dims and strides to rank 4
-      dims.push_back(1);
-      strides.push_back(1);
-    }
-    hlo_to_cudnn[parameter] = graph.tensor(
-        cudnn_frontend::graph::Tensor_attributes()
-            .set_dim(dims)
-            .set_stride(strides)
-            .set_data_type(ToCudnnFrontendDataType(desc.type()))
-            .set_name(absl::StrCat("score_mod_input_", std::to_string(i)))
-            .set_uid((*next_uid)()));
-  }
-  return absl::OkStatus();
-}
-
-absl::Status UpdateHloConstantToCudnnMap(
-    cudnn_frontend::graph::Graph& graph,
-    absl::flat_hash_map<const xla::HloInstruction*, Tensor_t>& hlo_to_cudnn,
-    const xla::HloComputation* computation) {
-  for (auto instr : computation->MakeInstructionPostOrder()) {
-    if (xla::HloPredicateIsOp<xla::HloOpcode::kConstant>(instr)) {
-      if (!xla::ShapeUtil::IsScalar(instr->shape())) {
-        return absl::InternalError("Only support scalar.");
-      }
-      xla::PrimitiveType constant_type = instr->shape().element_type();
-      switch (constant_type) {
-        case xla::F16:
-          hlo_to_cudnn[instr] =
-              LiteralToCudnnTensor<xla::F16, __half>(instr, graph);
-          break;
-        case xla::BF16:
-          hlo_to_cudnn[instr] =
-              LiteralToCudnnTensor<xla::BF16, __nv_bfloat16>(instr, graph);
-          break;
-        case xla::F32:
-          hlo_to_cudnn[instr] =
-              LiteralToCudnnTensor<xla::F32, float>(instr, graph);
-          break;
-        case xla::S32:
-          hlo_to_cudnn[instr] =
-              LiteralToCudnnTensor<xla::S32, int>(instr, graph);
-          break;
-        default:
-          return absl::InternalError("Unsupported constant type.");
-      }
-    }
-  }
-  return absl::OkStatus();
-}
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,
@@ -5110,15 +5124,11 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
   }
 
   if (fwd_comp != nullptr) {
-    absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> hlo_to_cudnn;
-    TF_RETURN_IF_ERROR(
-        UpdateHloParameterToCudnnMap(graph, hlo_to_cudnn, fwd_comp, &next_uid));
-    TF_RETURN_IF_ERROR(
-        UpdateHloConstantToCudnnMap(graph, hlo_to_cudnn, fwd_comp));
-    auto score_mod = std::make_shared<ScoreModFunc>();
-    sdpa_options.set_score_mod(
-        std::bind(&ScoreModFunc::forward, score_mod, std::placeholders::_1,
-                  std::placeholders::_2, hlo_to_cudnn, fwd_comp));
+    auto score_mod = std::make_shared<ScoreModFunc>(fwd_comp, nullptr);
+    TF_RETURN_IF_ERROR(score_mod->Initialize(graph, &next_uid));
+    sdpa_options.set_score_mod(std::bind(&ScoreModFunc::Forward, score_mod,
+                                         std::placeholders::_1,
+                                         std::placeholders::_2));
   }
   // Add SDPA to the graph.
   auto [o_tensor, stats_tensor] =
@@ -5819,21 +5829,14 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
   }
 
   if (fwd_comp != nullptr && bwd_comp != nullptr) {
-    absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> fwd_hlo_to_cudnn;
-    absl::flat_hash_map<const xla::HloInstruction*, Tensor_t> bwd_hlo_to_cudnn;
-    TF_RETURN_IF_ERROR(UpdateHloParameterToCudnnMap(graph, fwd_hlo_to_cudnn,
-                                                    fwd_comp, &next_uid));
-    TF_RETURN_IF_ERROR(
-        UpdateHloConstantToCudnnMap(graph, fwd_hlo_to_cudnn, fwd_comp));
-    TF_RETURN_IF_ERROR(
-        UpdateHloConstantToCudnnMap(graph, bwd_hlo_to_cudnn, bwd_comp));
-    auto score_mod = std::make_shared<ScoreModFunc>();
+    auto score_mod = std::make_shared<ScoreModFunc>(fwd_comp, bwd_comp);
+    TF_RETURN_IF_ERROR(score_mod->Initialize(graph, &next_uid));
     sdpa_backward_options.set_score_mod(
-        std::bind(&ScoreModFunc::forward, score_mod, std::placeholders::_1,
-                  std::placeholders::_2, fwd_hlo_to_cudnn, fwd_comp));
+        std::bind(&ScoreModFunc::Forward, score_mod, std::placeholders::_1,
+                  std::placeholders::_2));
     sdpa_backward_options.set_score_mod_bprop(
-        std::bind(&ScoreModFunc::backward, score_mod, std::placeholders::_1,
-                  std::placeholders::_2, bwd_hlo_to_cudnn, bwd_comp));
+        std::bind(&ScoreModFunc::Backward, score_mod, std::placeholders::_1,
+                  std::placeholders::_2));
   }
   auto [dQ, dK, dV] =
       graph.sdpa_backward(q, k, v, o, dO, stats, sdpa_backward_options);
