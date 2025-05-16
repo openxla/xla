@@ -43,7 +43,7 @@ jobs:
       matrix:
         job_info: [
           {
-            pool: "linux-x86-g2-16-l4-1gpu",
+            pool: "linux-x86-g2-48-l4-4gpu",
             container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest",
             name: "TensorFlow Linux x86 GPU T4",
             repo: "tensorflow/tensorflow",
