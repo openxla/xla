@@ -1389,8 +1389,8 @@ class FlashAttentionPagedAttention : public MultiHeadedAttentionTest {
 
 class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
  protected:
-  const std::string                                  // NOLINT
-  GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16() {  // NOLINT
+  const std::string
+  GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16() {
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->bf16[4,1024,4,64]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
@@ -1417,8 +1417,8 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
     return hlo_text;
   }
 
-  const std::string                                            // NOLINT
-  GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16() {  // NOLINT
+  const std::string
+  GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16() {
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->bf16[4,1024,4,64]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
@@ -1482,10 +1482,10 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
     }
     // Extend cudnn sdpa soft capping using flex attention
     std::string hlo_string =
-        GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16();  // NOLINT
+        GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16();
     // Reference implementation is pure xla sdpa soft capping.
     std::string hlo_string_ref =
-        GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16();  // NOLINT
+        GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16();
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
                                         ErrorSpec{1e-3, 1e-3}));
   }
