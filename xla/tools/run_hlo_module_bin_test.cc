@@ -204,5 +204,48 @@ f32[2,2] {
 })"));
 }
 
+TEST_F(RunHloModuleTest, DumpAndParseDebugOptions) {
+  tsl::Env* env = tsl::Env::Default();
+  std::string tmpDir;
+  EXPECT_TRUE(env->LocalTempFilename(&tmpDir));
+  RunHlo("large_constant.hlo",
+         {"--xla_dump_to=" + tmpDir, "--xla_dump_large_constants=true",
+          "--xla_gpu_dot_merger_threshold_mb=1234"});
+  std::string data;
+  TF_ASSERT_OK(tsl::ReadFileToString(
+      env, tsl::io::JoinPath(tmpDir, "module_0000.f.debug_options"), &data));
+  EXPECT_THAT(data, testing::HasSubstr("xla_dump_large_constants: true"));
+  EXPECT_THAT(data,
+              testing::HasSubstr("xla_gpu_dot_merger_threshold_mb: 1234"));
+
+  std::string tmpDir2;
+  EXPECT_TRUE(env->LocalTempFilename(&tmpDir2));
+  EXPECT_NE(tmpDir2, tmpDir);
+  RunHlo("large_constant.hlo",
+         {"--xla_dump_to=" + tmpDir2,
+          "--debug_options_file=" +
+              tsl::io::JoinPath(tmpDir, "module_0000.f.debug_options"),
+          "--xla_gpu_dot_merger_threshold_mb=3253"});
+
+  // Check the new debug options. They should have the dump_large_constants set
+  // to true. This comes from the debug options file.
+  TF_ASSERT_OK(tsl::ReadFileToString(
+      env, tsl::io::JoinPath(tmpDir2, "module_0000.f.debug_options"), &data));
+  EXPECT_THAT(data, testing::HasSubstr("xla_dump_large_constants: true"));
+  // Check that the new debug options has xla_gpu_dot_merger_threshold_mb set to
+  // 3253. This comes from the command line (overriding the debug options file).
+  EXPECT_THAT(data,
+              testing::HasSubstr("xla_gpu_dot_merger_threshold_mb: 3253"));
+  EXPECT_THAT(data, testing::Not(testing::HasSubstr(
+                        "xla_gpu_dot_merger_threshold_mb: 1234")));
+  // Read the dumped module and we should see large constant.
+  TF_ASSERT_OK(tsl::ReadFileToString(
+      env,
+      tsl::io::JoinPath(tmpDir2, "module_0000.f.cpu_after_optimizations.txt"),
+      &data));
+  EXPECT_THAT(data, testing::HasSubstr(
+                        "constant({10, 6, 3, 2, 5, 3, 7, 4, 2, 3, 1, 0})"));
+}
+
 }  // namespace
 }  // namespace xla
