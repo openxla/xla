@@ -835,12 +835,31 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "kernel_thunk_test",
+    srcs = ["kernel_thunk_test.cc"],
+    deps = [
+        ":kernel_thunk",
+        ":thunk",
+        "//xla:shape_util",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:kernel_arguments",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -1380,6 +1399,7 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/gtl:int_type",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
