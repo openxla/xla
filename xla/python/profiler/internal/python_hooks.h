@@ -26,17 +26,13 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
-#include "pybind11/cast.h"
-#include "pybind11/pybind11.h"
-#include "pybind11/pytypes.h"
+#include "nanobind/nanobind.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
-
-namespace py = ::pybind11;
 
 struct PythonHooksOptions {
   bool enable_trace_python_function = false;
@@ -153,12 +149,14 @@ class PythonHooks {
   static PythonHooks* GetSingleton();
 
   void Start(const PythonHooksOptions& option) {
+    nanobind::ft_lock_guard lock(mutex);
     if (active_context_) return;
     active_context_ = std::make_unique<PythonHookContext>();
     active_context_->Start(option);
   }
 
   std::unique_ptr<PythonHookContext> Stop() {
+    nanobind::ft_lock_guard lock(mutex);
     if (e2e_context_) {
       auto* e2e_context = e2e_context_;
       e2e_context_ = nullptr;
@@ -175,10 +173,11 @@ class PythonHooks {
   friend class ::xla::profiler::PythonHookContext;
 
  private:
-  void ProfileSlow(const py::object& frame, const std::string& event,
-                   const py::object& arg);
+  void ProfileSlow(const nanobind::object& frame, const std::string& event,
+                   const nanobind::object& arg);
 
   void ProfileFast(PyFrameObject* frame, int what, PyObject* arg) {
+    nanobind::ft_lock_guard lock(mutex);
     if (TF_PREDICT_TRUE(active_context_)) {
       active_context_->ProfileFast(frame, what, arg);
     }
@@ -192,7 +191,8 @@ class PythonHooks {
                              PyObject* arg);
 
   // active_context_ are accessed when GIL is held, therefore no race
-  // conditions.
+  // conditions. Under free-threading ft_mutex is protecting it.
+  nanobind::ft_mutex mutex;
   std::unique_ptr<PythonHookContext> active_context_;
   static PythonHookContext* e2e_context_;
 };
