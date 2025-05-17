@@ -78,7 +78,7 @@ ENTRY e {
 )");
 }
 
-TEST_F(WithoutDotDimensionSorterTest, DimOrderCanBeChanged) {
+TEST_F(WithoutDotDimensionSorterTest, DimOrderCanBeChangedF16) {
   const char* hlo_text_ref = R"(
 HloModule m
 
@@ -102,7 +102,35 @@ ENTRY e {
 )";
 
   EXPECT_TRUE(RunAndCompareTwoModules(hlo_text_ref, hlo_text_modified,
-                                      ErrorSpec{1e-5, 1e-3},
+                                      ErrorSpec{1e-3, 2e-3},
+                                      /*run_hlo_passes=*/true));
+}
+
+TEST_F(WithoutDotDimensionSorterTest, DimOrderCanBeChangedF32) {
+  const char* hlo_text_ref = R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[1,14,9,32] parameter(0)
+  p1 = f32[12,9,32] parameter(1)
+  ROOT _ = f32[1,14,12] dot(p0, p1),
+    lhs_contracting_dims={3,2}, rhs_contracting_dims={2,1}
+}
+)";
+
+  const char* hlo_text_modified = R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[1,14,9,32] parameter(0)
+  p1 = f32[12,9,32] parameter(1)
+  ROOT _ = f32[1,14,12] dot(p0, p1),
+    lhs_contracting_dims={2,3}, rhs_contracting_dims={1,2}
+}
+)";
+
+  EXPECT_TRUE(RunAndCompareTwoModules(hlo_text_ref, hlo_text_modified,
+                                      ErrorSpec{1e-6, 1e-6},
                                       /*run_hlo_passes=*/true));
 }
 
