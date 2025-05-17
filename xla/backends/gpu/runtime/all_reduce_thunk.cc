@@ -214,6 +214,13 @@ absl::Status CheckImplementableInst(const HloInstruction* inst,
 }
 
 template <typename HloInstType>
+CollectiveOpGroupMode GetGroupModeInst(HloInstType* inst) {
+  return GetAllReduceConfigInst(inst).config.group_mode;
+}
+
+}  // namespace
+
+template <typename HloInstType>
 AllReduceConfig GetAllReduceConfigInst(HloInstType* inst) {
   std::optional<ReductionKind> reduction_kind =
       MatchReductionComputation(inst->called_computations().front());
@@ -224,13 +231,6 @@ AllReduceConfig GetAllReduceConfigInst(HloInstType* inst) {
   config.reduction_kind = *reduction_kind;
   return config;
 }
-
-template <typename HloInstType>
-CollectiveOpGroupMode GetGroupModeInst(HloInstType* inst) {
-  return GetAllReduceConfigInst(inst).config.group_mode;
-}
-
-}  // namespace
 
 absl::Status RunAllReduce(GpuCollectives* collectives,
                           ReductionKind reduction_kind,
