@@ -163,6 +163,7 @@ cc_library(
     visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":ifrt_ir_compile_options_proto_cc",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/python/ifrt",

@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
+#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/python/ifrt/basic_device_list.h"
