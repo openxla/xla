@@ -1373,6 +1373,7 @@ cc_library(
         ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
         ":cublas_cudnn",
+        ":custom_call_partitioners",
         ":executable_proto_cc",
         ":execution_stream_assignment",
         ":flag_utils",
@@ -1551,8 +1552,10 @@ cc_library(
         "//xla/service/gpu/transforms:gemm_rewriter",
         "//xla/service/gpu/transforms:gemv_rewriter",
         "//xla/service/gpu/transforms:layout_assignment",
+        "//xla/service/gpu/transforms:memory_space_propagation",
         "//xla/service/gpu/transforms:move_copy_to_users",
         "//xla/service/gpu/transforms:nest_gemm_fusion",
+        "//xla/service/gpu/transforms:post_layout_custom_call_rewriter",
         "//xla/service/gpu/transforms:ragged_all_to_all_canonicalizer",
         "//xla/service/gpu/transforms:ragged_all_to_all_decomposer",
         "//xla/service/gpu/transforms:reduce_scatter_creator",
@@ -3031,5 +3034,15 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+cc_library(
+    name = "custom_call_partitioners",
+    hdrs = ["custom_call_partitioners.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:custom_call_sharding_helper",
+        "//xla/service/spmd:spmd_partitioner",
     ],
 )
