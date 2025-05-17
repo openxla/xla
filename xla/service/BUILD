@@ -2654,6 +2654,7 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
     ],
 )
