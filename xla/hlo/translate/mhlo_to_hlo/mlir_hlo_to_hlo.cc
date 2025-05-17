@@ -142,6 +142,7 @@ constexpr char kReductionDim[] = "reduction_dim";
 constexpr char kReductionInputSizeOverride[] = "reduction_input_size_override";
 constexpr char kReplicaGroups[] = "replica_groups";
 constexpr char kTopK[] = "top_k";
+constexpr char kCudnnFMHA[] = "__cudnn$fmha";
 
 // MHLO attributes. Module level attributes require namespacing.
 constexpr char kMhloCrossProgramPrefetches[] = "mhlo.cross_program_prefetches";
@@ -4193,12 +4194,14 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     return op.emitOpError()
            << "cannot export with more than one called computations";
 
-  // Custom call can be exported either with called computation or with layout
-  // attributes. The XlaBuilder API does not allow both.
-  if (!op.getCalledComputations().empty() && op.getOperandLayouts() &&
-      op.getResultLayouts()) {
-    return op.emitOpError() << "cannot export if both called computation and "
-                               "layouts are specified";
+  if (op.getCallTargetName().str().find(kCudnnFMHA) == std::string::npos) {
+    // Custom call can be exported either with called computation or with layout
+    // attributes. The XlaBuilder API does not allow both.
+    if (!op.getCalledComputations().empty() && op.getOperandLayouts() &&
+        op.getResultLayouts()) {
+      return op.emitOpError() << "cannot export if both called computation and "
+                                 "layouts are specified";
+    }
   }
 
   auto xla_api_version = xla::ConvertCustomCallApiVersion(op.getApiVersion());
