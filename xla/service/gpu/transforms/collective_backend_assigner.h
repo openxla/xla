@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
@@ -37,8 +38,9 @@ constexpr int64_t kDefaultThresholdInBytes = 16 * 1024 * 1024;  // 16MB
 class CollectiveBackendAssigner : public HloModulePass {
  public:
   explicit CollectiveBackendAssigner(
+      const se::GpuComputeCapability& gpu_version,
       int64_t threshold_in_bytes = kDefaultThresholdInBytes)
-      : threshold_in_bytes_(threshold_in_bytes) {}
+      : gpu_version_(gpu_version), threshold_in_bytes_(threshold_in_bytes) {}
 
   absl::string_view name() const override {
     return "collective-backend-assigner";
@@ -48,21 +50,12 @@ class CollectiveBackendAssigner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  static bool HasInternodeCommunication(
-      const std::vector<ReplicaGroup>& replica_groups, int64_t num_processes);
-
-  static bool HasInternodeCommunication(
-      const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      int64_t num_processes);
-
-  static bool HasInternodeCommunication(const HloInstruction& instr,
-                                        int64_t num_processes);
-
   static bool IsCollectiveOp(const HloInstruction* instr);
 
  private:
   static int64_t GetShapeSize(const Shape& shape);
 
+  se::GpuComputeCapability gpu_version_;
   int64_t threshold_in_bytes_;
 };
 

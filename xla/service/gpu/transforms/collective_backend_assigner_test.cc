@@ -160,69 +160,6 @@ TEST(CollectiveBackendAssignerTest, BackendAssignerTest) {
   RunCollectiveTest(kHloModule, 2);
 }
 
-TEST(CollectiveBackendAssignerTest, DetectCommunicationPattern) {
-  {
-    // Intranode: all replicas on same node
-    std::vector<ReplicaGroup> intranode_groups;
-    ReplicaGroup group1;
-    group1.add_replica_ids(0);
-    group1.add_replica_ids(1);
-    group1.add_replica_ids(2);
-    intranode_groups.push_back(group1);
-    EXPECT_FALSE(CollectiveBackendAssigner::HasInternodeCommunication(
-        intranode_groups, 4));
-
-    // Internode: replicas across nodes
-    std::vector<ReplicaGroup> internode_groups;
-    ReplicaGroup group2;
-    group2.add_replica_ids(0);
-    group2.add_replica_ids(4);
-    group2.add_replica_ids(8);
-    internode_groups.push_back(group2);
-    EXPECT_TRUE(CollectiveBackendAssigner::HasInternodeCommunication(
-        internode_groups, 4));
-
-    // Mixed: some replicas on same node, some across nodes
-    std::vector<ReplicaGroup> mixed_groups;
-    ReplicaGroup group3;
-    group3.add_replica_ids(0);
-    group3.add_replica_ids(1);
-    group3.add_replica_ids(4);
-    mixed_groups.push_back(group3);
-    EXPECT_TRUE(
-        CollectiveBackendAssigner::HasInternodeCommunication(mixed_groups, 4));
-  }
-
-  {
-    // Intranode: all pairs within same node
-    std::vector<std::pair<int64_t, int64_t>> intranode_pairs = {
-        {0, 1},  // Node 0
-        {1, 2},  // Node 0
-        {2, 0}   // Node 0
-    };
-    EXPECT_FALSE(CollectiveBackendAssigner::HasInternodeCommunication(
-        intranode_pairs, 4));
-
-    // Internode: pairs across nodes
-    std::vector<std::pair<int64_t, int64_t>> internode_pairs = {
-        {0, 4},  // Node 0 -> Node 1
-        {4, 8},  // Node 1 -> Node 2
-        {8, 0}   // Node 2 -> Node 0
-    };
-    EXPECT_TRUE(CollectiveBackendAssigner::HasInternodeCommunication(
-        internode_pairs, 4));
-
-    // Mixed: some pairs intranode, some internode
-    std::vector<std::pair<int64_t, int64_t>> mixed_pairs = {
-        {0, 1},  // Node 0 -> Node 0 (intranode)
-        {1, 4},  // Node 0 -> Node 1 (internode)
-        {4, 5}   // Node 1 -> Node 1 (intranode)
-    };
-    EXPECT_TRUE(
-        CollectiveBackendAssigner::HasInternodeCommunication(mixed_pairs, 4));
-  }
-}
-
 absl::Status CollectiveBackendAssignerTestBody(int rank_id, int num_ranks,
                                                absl::string_view hlo_module) {
   std::unique_ptr<xla::DistributedRuntimeService> service;

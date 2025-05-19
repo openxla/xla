@@ -34,8 +34,14 @@ enum class GPUCommunicationType {
   SINGLE_HOST = 3
 };
 
+// Returns the type of communication pattern for a collective instruction.
 absl::StatusOr<GPUCommunicationType> CommunicationType(
     const HloCollectiveInstruction& instr,
+    const se::GpuComputeCapability& gpu_version);
+
+// Returns the type of communication pattern for a channel instruction.
+absl::StatusOr<GPUCommunicationType> CommunicationType(
+    const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version);
 
 // Returns true if instruction is a synchronous collective op.

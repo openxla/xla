@@ -290,7 +290,6 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 
 #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
@@ -922,9 +921,8 @@ absl::Status RunCollectiveOptimizationPasses(
   HloPassPipeline collectives_pipeline("collective-optimizations");
   collectives_pipeline.AddPass<RaggedAllToAllCanonicalizer>();
 
-  if (debug_options.xla_gpu_experimental_enable_nvshmem() &&
-      NvshmemCollectives::Default()->device_count_per_process() == 1) {
-    collectives_pipeline.AddPass<CollectiveBackendAssigner>();
+  if (debug_options.xla_gpu_experimental_enable_nvshmem()) {
+    collectives_pipeline.AddPass<CollectiveBackendAssigner>(gpu_version);
   }
 
   if (debug_options.xla_gpu_unsupported_enable_ragged_all_to_all_decomposer()) {

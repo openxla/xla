@@ -378,15 +378,14 @@ cc_library(
     srcs = ["collective_backend_assigner.cc"],
     hdrs = ["collective_backend_assigner.h"],
     deps = [
-        "//xla:shape_util",
+        "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status:statusor",
-        "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/backends/gpu/collectives:nvshmem_collectives_if_supported",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
+    tags = ["cuda-only", "gpu"],
 )
 
 xla_test(

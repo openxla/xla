@@ -151,6 +151,51 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
   return GPUCommunicationType::UNDEFINED;
 }
 
+absl::StatusOr<GPUCommunicationType> CommunicationType(
+    const HloChannelInstruction& instr,
+    const se::GpuComputeCapability& gpu_version) {
+  // Handle CollectivePermute instructions
+  if (instr.opcode() == HloOpcode::kCollectivePermute ||
+      instr.opcode() == HloOpcode::kCollectivePermuteStart) {
+    if (!std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
+      return absl::FailedPreconditionError("Only CUDA is supported.");
+    }
+
+    auto cuda_compute_capability =
+        std::get<se::CudaComputeCapability>(gpu_version);
+    if (!cuda_compute_capability.IsHopper()) {
+      return absl::FailedPreconditionError(
+          "Only Hopper is supported to get communication type");
+    }
+
+    // For CollectivePermute, we can determine if it's single host by checking
+    // if all source-target pairs are within the same host
+    const auto* permute_instr =
+        static_cast<const HloCollectivePermuteInstruction*>(&instr);
+    int num_devices_per_host = 8;  // Same assumption as in collective version
+
+    bool all_single_host = true;
+    for (const auto& [source, target] : permute_instr->source_target_pairs()) {
+      int64_t source_node = source / num_devices_per_host;
+      int64_t target_node = target / num_devices_per_host;
+      if (source_node != target_node) {
+        all_single_host = false;
+        break;
+      }
+    }
+
+    if (all_single_host) {
+      return GPUCommunicationType::SINGLE_HOST;
+    }
+    // For multi-host CollectivePermute, we can't easily determine if it's
+    // rail-aligned since it's a point-to-point communication pattern
+    return GPUCommunicationType::NON_RAIL_ALIGNED;
+  }
+
+  // For other channel instructions (like Send/Recv), return UNDEFINED
+  return GPUCommunicationType::UNDEFINED;
+}
+
 std::optional<bool> IsMultiHostTopology(
     const HloModuleConfig& config,
     const se::DeviceDescription& device_description) {
