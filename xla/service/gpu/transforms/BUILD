@@ -596,14 +596,12 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
