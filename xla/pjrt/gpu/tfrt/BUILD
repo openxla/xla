@@ -105,7 +105,14 @@ cc_library(
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
+    ] + if_cuda([
+        # keep sorted
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + if_rocm([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
+    ]),
 )
 
 xla_cc_test(
