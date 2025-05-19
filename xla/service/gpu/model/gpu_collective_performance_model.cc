@@ -58,10 +58,31 @@ const std::vector<double>& GetSpeeds(
 
 const std::vector<double>& GetSpeeds(
     const stream_executor::RocmComputeCapability& compute_cap) {
-  static const std::vector<double> intraNodeSpeeds = {
-      1225.0, 1000.0, 900.0, 800.0, 700.0, 600.0, 500.0,
-      400.0,  300.0,  200.0, 100.0, 80.0,  60.0};
-  return intraNodeSpeeds;
+  // Different tiers for intra-node bandwidth based on Infinity Fabric
+  // capabilities Values in GB/s
+
+  // MI300 series (Instinct MI300) - up to 896GB/s (8x112GB/s)
+  static const std::vector<double> intraNodeSpeedsMi300 = {
+      896.0, 784.0, 672.0, 560.0, 448.0, 336.0, 224.0, 112.0, 56.0, 32.0};
+
+  // MI200 series (Instinct MI200/MI250) - up to 600GB/s (8x75GB/s)
+  static const std::vector<double> intraNodeSpeedsMi200 = {
+      600.0, 525.0, 450.0, 375.0, 300.0, 225.0, 150.0, 75.0, 32.0};
+
+  // MI100 (Instinct MI100) - up to 300GB/s (8x37.5GB/s)
+  static const std::vector<double> intraNodeSpeedsMi100 = {
+      300.0, 262.5, 225.0, 187.5, 150.0, 112.5, 75.0, 37.5, 32.0};
+
+  if (compute_cap.gfx9_mi300()) {
+    return intraNodeSpeedsMi300;
+  } else if (compute_cap.gfx9_mi200()) {
+    return intraNodeSpeedsMi200;
+  } else if (compute_cap.gfx9_mi100()) {
+    return intraNodeSpeedsMi100;
+  }
+
+  // Default to MI300 speeds for unknown architectures
+  return intraNodeSpeedsMi300;
 }
 
 // Different algorithms that can be used to perform the collective.
@@ -110,38 +131,38 @@ struct RocmBandwidthSettings {
   // Table for max system bandwidths GB/s for using NCCL's low latency
   // algorithm. This is used for intra-node estimate.
   static constexpr std::array<double, 4> kLowLatencyMaxBandwidths = {
-      122.0,  // MI100: ~122 GB/s peak (via Infinity Fabric)
-      220.0,  // MI200: dual-die, up to ~220 GB/s combined
-      340.0,  // MI300X: up to ~340 GB/s (HBM + IF bandwidth)
-      340.0   // next-gen: placeholder same as MI300
+      300.0 /* MI100 (8x Infinity Fabric @ ~37.5GB/s each) */,
+      600.0 /* MI200 (8x IF @ ~75GB/s each) */,
+      896.0 /* MI300 (8x IF @ ~112GB/s each) */,
+      896.0 /* next_gen (same as MI300 for now) */,
   };
 
   // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
   // single-node
   static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
-      20.0,  // legacy (placeholder, e.g., Vega/Volta)
-      25.0,  // MI100
-      35.0,  // MI200
-      45.0,  // MI300
-      45.0   // next-gen: same as MI300
+      37.5 /* MI100 (per IF link) */,
+      75.0 /* MI200 (per IF link) */,
+      112.0 /* MI300 (per IF link) */,
+      112.0 /* next_gen */,
   };
 
-  // Nvlink unidirectional bandwidth for different compute cap. Note this is per
-  // lane bandwidth.
-  static constexpr double kMi300NvlinkBandwidth = 100.0;
+  // Infinity Fabric unidirectional bandwidth per link in GB/s
+  static constexpr double kMi100InfinityFabricBandwidth = 37.5;
+  static constexpr double kMi200InfinityFabricBandwidth = 75.0;
+  static constexpr double kMi300InfinityFabricBandwidth = 112.0;
 
-  // PCIE bandwidth for PCI Gen3 x16
-  static constexpr double kPciBandwidth = 12.0;
+  // PCIe bandwidth for PCI Gen4 x16 (approximate)
+  static constexpr double kPciBandwidth = 32.0;
 
-  // Discount factor for ring algorithm
-  static constexpr double kRingAlgorithmDiscountFactor = 0.7;
+  // Discount factor for ring algorithm (based on ROCm NCCL implementation)
+  static constexpr double kRingAlgorithmDiscountFactor = 0.90;
 
-  // Maximum number of channels allowed by NCCL
-  static constexpr int64_t kMaxNumChannelsRing = 16;
+  // Maximum number of channels allowed by ROCm NCCL
+  // MI300 supports up to 56 channels (matches CUDA_MAX_NCHANNELS)
+  static constexpr int64_t kMaxNumChannelsRing = 56;
 
-  // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
-  // launches 640 threads.
-  static constexpr int64_t kLL128NumThreads = 256;
+  // Default number of threads for ROCm NCCL
+  static constexpr int64_t kLL128NumThreads = 512;
 };
 
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
@@ -237,7 +258,14 @@ float GetMaxSysBwFromGpu(const se::RocmComputeCapability& cc,
 }
 
 float GetNvlinkBw(const se::RocmComputeCapability& compute_capability) {
-  return RocmBandwidthSettings::kMi300NvlinkBandwidth;
+  if (compute_capability.gfx9_mi100()) {
+    return RocmBandwidthSettings::kMi100InfinityFabricBandwidth;
+  } else if (compute_capability.gfx9_mi200()) {
+    return RocmBandwidthSettings::kMi200InfinityFabricBandwidth;
+  } else if (compute_capability.gfx9_mi300()) {
+    return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
+  }
+  return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
 }
 
 // Returns NVLink bw in GB/s
