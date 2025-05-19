@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/ir/ptrvec.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/map_util.h"
 #include "xla/service/hlo_buffer.h"
@@ -531,6 +530,12 @@ class HloGraphNode {
   bool OccupiesSelectiveResource() const {
     return occupies_selective_resource_;
   }
+  void SetReleasesSelectiveResource(bool releases_selective_resource) {
+    releases_selective_resource_ = releases_selective_resource;
+  }
+  void SetOccupiesSelectiveResource(bool occupies_selective_resource) {
+    occupies_selective_resource_ = occupies_selective_resource;
+  }
   int64_t GetNumHopsToClosestSelectiveResourceOccupier() const {
     return num_hops_to_closest_selective_resource_occupier_;
   }
@@ -680,7 +685,7 @@ class HloGraphNode {
   std::vector<HloEdge> successors_;
   // Instruction this Graph node represents
   const HloInstruction* instr_;
-  // The prosition of this node in the original order.
+  // The position of this node in the original order.
   int64_t original_position_;
   // Estimated time at which this node is gonna be ready to be scheduled.
   // The node should be added to the ready to be scheduled set when ready_time_
@@ -786,6 +791,14 @@ class BufferInfoTracker {
     const HloBuffer* value = nullptr;
     const HloInstruction* first_definition = nullptr;
     int64_t buffer_size = 0;
+
+    // Precomputed value of
+    //     value->values()[0]->shape().has_layout() &&
+    //     (value->values()[0]->shape().layout().memory_space() !=
+    //      kDefaultMemorySpace)
+    // This expression is invoked repeatedly and is responsible for many cache
+    // misses.
+    bool non_default_memory_space_layout = false;
   };
   BufferInfoTracker(const HloModule* module,
                     const HloAliasAnalysis* alias_analysis,
@@ -793,9 +806,16 @@ class BufferInfoTracker {
   static ValueInfo CreateBufferInfo(
       const HloBuffer* value, const HloInstruction* first_definition,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
+    const auto& shape = value->values()[0]->shape();
+    const bool non_default_memory_space_layout =
+        (shape.has_layout() &&
+         (shape.layout().memory_space() != Layout::kDefaultMemorySpace));
     return ValueInfo{
-        /*value=*/value, /*first_definition=*/first_definition,
-        /*buffer_size=*/shape_size_bytes(value->values()[0]->shape())};
+        /*value=*/value,
+        /*first_definition=*/first_definition,
+        /*buffer_size=*/shape_size_bytes(shape),
+        /*non_default_memory_space_layout=*/non_default_memory_space_layout,
+    };
   }
   const ValueInfo& GetBufferInfo(HloBuffer::Id id) const {
     return buffer_infos_[id];
@@ -859,7 +879,34 @@ class MemoryPressureTracker {
   // Returns pressure state object for this MemoryPressureTracker object.
   const MemoryPressureState& pressure_state() const { return pressure_state_; }
 
+  absl::Span<const HloBuffer::Id> allocated_buffer_ids(
+      const HloInstruction* i) const {
+    auto it = instruction_ids_.find(i);
+    CHECK(it != instruction_ids_.end());
+    NodeAllocReleaseSpan s = alloc_release_spans_[it->second];
+    return absl::MakeSpan(alloc_release_ids_).subspan(s.start, s.num_alloc);
+  }
+
+  absl::Span<const HloBuffer::Id> released_buffer_ids(
+      const HloInstruction* i) const {
+    auto it = instruction_ids_.find(i);
+    CHECK(it != instruction_ids_.end());
+    NodeAllocReleaseSpan s = alloc_release_spans_[it->second];
+    return absl::MakeSpan(alloc_release_ids_)
+        .subspan(s.start + s.num_alloc, s.num_release);
+  }
+
  private:
+  // Append to *dst the list of buffer ids allocated by instruction whose
+  // memory usage should be tracked. Returns number of ids added.
+  int32_t ComputeBufferAllocations(const HloInstruction* instruction,
+                                   std::vector<HloBuffer::Id>* dst);
+
+  // Append to *dst the list of buffer ids released by instruction whose
+  // memory usage should be tracked. Returns number of ids added.
+  int32_t ComputeBufferReleases(const HloInstruction* instruction,
+                                std::vector<HloBuffer::Id>* dst);
+
   static bool ShouldSkipBufferAllocations(
       const HloInstruction* instruction, const ShapeIndex& idx,
       const HloInstruction* first_definition) {
@@ -886,6 +933,28 @@ class MemoryPressureTracker {
     return false;
   }
   const HloAliasAnalysis* hlo_alias_analysis_;
+
+  // Mapping from instruction to dense id.
+  absl::flat_hash_map<const HloInstruction*, int32_t> instruction_ids_;
+
+  // Combined vector of buffers allocated/released by each node.
+  // See allocated_buffer_ids() and released_buffer_ids().
+  std::vector<HloBuffer::Id> alloc_release_ids_;
+
+  // Information kept per node that identifies allocated/released buffers.
+  struct NodeAllocReleaseSpan {
+    // Allocated buffers in alloc_release_ids_[start,start+num_alloc).
+    // Released buffers in
+    // alloc_release_ids_[start+num_alloc,start+num_alloc+num_release)
+    uint32_t start;
+    uint32_t num_alloc;
+    uint32_t num_release;
+  };
+
+  // Mapping from dense instruction id to span information within
+  // alloc_release_ids_.
+  std::vector<NodeAllocReleaseSpan> alloc_release_spans_;
+
   // Live buffer presence set. This is used to determine if a buffer is live or
   // not in a fast way. Because this is checked very often in the evaluation
   // function of the scheduler quering the live_buffer_set_ object is too slow.
@@ -1031,6 +1100,11 @@ class DefaultSchedulerCore : public SchedulerCore {
     // order (because we schedule bottom up). This will be required to be
     // reversed before assigning to the HloSchedule.
     std::vector<HloInstruction*> new_sequence_reversed;
+
+    // Memory pressure during and after an instruction in a schedule.
+    // (memory_after, memory_peak)
+    absl::flat_hash_map<const HloInstruction*, std::pair<int64_t, int64_t>>
+        memory_trace;
     // Units of time passed in the schedule. To keep track of latency hiding.
     HloGraphNode::TimeCost current_time = 0;
     // Resources and corresponding occupiers in flight.
@@ -1153,7 +1227,7 @@ class DefaultSchedulerCore : public SchedulerCore {
                                         int64_t annotation) const;
 
   ScheduleProto::ComputationScheduleProto ComputationScheduleToProto(
-      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+      const HloComputation* computation, const SchedulingState& sched_state,
       const LatencyEstimator& estimator,
       const std::vector<HloInstruction*>& instructions);
 
@@ -1224,8 +1298,8 @@ class LatencyHidingScheduler : public HloModulePass {
   };
 
   LatencyHidingScheduler(
-      std::unique_ptr<LatencyEstimator> latency_estimator,
-      std::unique_ptr<AsyncTracker> async_tracker,
+      std::shared_ptr<LatencyEstimator> latency_estimator,
+      std::shared_ptr<AsyncTracker> async_tracker,
       std::unique_ptr<SchedulerCore> scheduler_core,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes)
       : latency_estimator_(std::move(latency_estimator)),
@@ -1238,11 +1312,17 @@ class LatencyHidingScheduler : public HloModulePass {
   // Returns some printable statistics about the latency hiding for
   // operations that can run in parallel to help evaluating the performance of
   // the scheduler and improve it.
+  // Optionally the caller can pass in the alias analysis and module pressure
+  // state to save the time to construct them within the function. This is
+  // useful when we repeatedly call this function across computations within the
+  // same module.
   static SchedulerStatistics LatencyHidingStatistics(
       const HloComputation* computation,
       const LatencyEstimator* latency_estimator,
       const AsyncTracker* async_tracker,
-      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes);
+      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes,
+      const HloAliasAnalysis* alias_analysis = nullptr,
+      ModulePressureState* pressure_state = nullptr);
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(
@@ -1252,8 +1332,8 @@ class LatencyHidingScheduler : public HloModulePass {
   virtual void LogScheduleStatistics(const HloComputation* computation);
 
  private:
-  std::unique_ptr<LatencyEstimator> latency_estimator_;
-  std::unique_ptr<AsyncTracker> async_tracker_;
+  std::shared_ptr<LatencyEstimator> latency_estimator_;
+  std::shared_ptr<AsyncTracker> async_tracker_;
   std::unique_ptr<SchedulerCore> scheduler_core_;
   const HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   absl::flat_hash_set<HloComputation*> computations_to_schedule_;

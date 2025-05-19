@@ -30,11 +30,12 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace stream_executor {
 
 TfAllocatorAdapter::TfAllocatorAdapter(tsl::Allocator *wrapped, Stream *stream)
-    : DeviceMemoryAllocator(stream->parent()->GetPlatform()),
+    : DeviceMemoryAllocator(CHECK_NOTNULL(stream)->parent()->GetPlatform()),
       wrapped_(wrapped),
       stream_(stream) {}
 
@@ -74,10 +75,7 @@ absl::StatusOr<Stream *> TfAllocatorAdapter::GetStream(int device_ordinal) {
 
 absl::StatusOr<tsl::Allocator *> TfAllocatorAdapter::GetAllocator(
     int device_ordinal) {
-  if (stream_ == nullptr) {
-    return absl::UnavailableError("stream_ is null for TfAllocatorAdapter.");
-  }
-  if (stream_->parent()->device_ordinal() != device_ordinal) {
+  if (stream_ && stream_->parent()->device_ordinal() != device_ordinal) {
     return absl::InternalError(
         absl::StrCat("stream_->parent()->device_ordinal() ",
                      stream_->parent()->device_ordinal(),

@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal_util.h"
+#include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -217,7 +218,7 @@ HloInstruction* SplitKOperand(HloInstruction* operand,
   // Update the physical layout so the the physical layout is preserved (i.e.
   // the splitK dimension goes right before the contracting dimension, and all
   // remaining dimensions are kept).
-  if (new_shape.layout().minor_to_major_size() > 0) {
+  if (new_shape.layout().minor_to_major().size() > 0) {
     new_shape.mutable_layout()->clear_minor_to_major();
     for (int64_t dim_idx : old_shape.layout().minor_to_major()) {
       if (dim_idx >= contracting_dimension_idx) {
@@ -247,6 +248,9 @@ absl::StatusOr<HloInstruction*> ReduceDimension(HloInstruction* instr,
 
 absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
                                                      size_t split_k) {
+  PrimitiveType output_type = src_dot->shape().element_type();
+  PrimitiveType accumulator_type = GetGemmAccumulatorType(src_dot);
+
   // "split_k" is the number on chunks the K dimension is split into.
   const int64_t lhs_k_idx =
       src_dot->dot_dimension_numbers().lhs_contracting_dimensions(0);
@@ -277,15 +281,17 @@ absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
   TF_ASSIGN_OR_RETURN(
       HloInstruction * new_dot,
       MakeDotHlo(lhs, rhs, new_dnums, src_dot->precision_config(),
-                 src_dot->shape().element_type(), {}, {},
-                 &src_dot->metadata()));
+                 accumulator_type, {}, {}, &src_dot->metadata()));
 
   // Reduce along the new batch dimension.
   const int64_t splitk_dim_idx = new_dnums.lhs_batch_dimensions_size() - 1;
-  TF_ASSIGN_OR_RETURN(HloInstruction * reduced_dot,
+  TF_ASSIGN_OR_RETURN(HloInstruction * splitk_root,
                       ReduceDimension(new_dot, splitk_dim_idx));
-  *reduced_dot->mutable_shape()->mutable_layout() = src_dot->shape().layout();
-  return reduced_dot;
+  *splitk_root->mutable_shape()->mutable_layout() = src_dot->shape().layout();
+  if (output_type != accumulator_type) {
+    splitk_root = MakeConvertToHlo(splitk_root, output_type);
+  }
+  return splitk_root;
 }
 
 class SplitkRewriterVisitor : public DfsHloRewriteVisitor {

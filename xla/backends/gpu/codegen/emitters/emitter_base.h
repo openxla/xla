@@ -68,8 +68,7 @@ class EmitterBase : public KernelFusionInterface {
   absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateMLIRModule(
       mlir::MLIRContext& context, const HloFusionInstruction& fusion,
       const std::string& entry_function_name,
-      const BufferAssignment* buffer_assignment,
-      mlir::interpreter::MlirCompilationTrace* trace = nullptr) const;
+      const BufferAssignment* buffer_assignment) const;
 
  protected:
   // Returns the set of instructions that will be isolated in the partitioned,
@@ -108,6 +107,8 @@ class EmitterBase : public KernelFusionInterface {
   mlir::Value EmitBlockId(mlir::ImplicitLocOpBuilder& builder, int dim) const;
   mlir::Value EmitThreadId(mlir::ImplicitLocOpBuilder& builder, int dim) const;
   llvm::SmallVector<mlir::Value> EmitThreadAndBlockIds(
+      mlir::ImplicitLocOpBuilder& builder) const;
+  llvm::SmallVector<mlir::Value> EmitBlockIds(
       mlir::ImplicitLocOpBuilder& builder) const;
 
  private:

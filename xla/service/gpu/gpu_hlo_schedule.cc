@@ -396,6 +396,8 @@ std::optional<ProfiledInstructionsProto> ProfileFromPath(
     LOG(ERROR) << "Tried but failed to parse PGLE proto from "
                << (as_text ? "text" : "binary") << " file '" << path
                << "'. Error message: " << s.message();
+  } else {
+    LOG(ERROR) << "PGLE profile file does not exist: " << path;
   }
   return std::nullopt;
 }
@@ -563,6 +565,7 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
 absl::Status RunLatencyHidingSchedulerPasses(
     HloModule* module, int pointer_size, absl::string_view fingerprint,
     uint64_t memory_limit, const se::DeviceDescription& gpu_device_info) {
+  tsl::profiler::TraceMe traceme("RunLatencyHidingSchedulerPasses");
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
@@ -647,17 +650,16 @@ uint64_t GetSchedulerMemoryLimit(const HloModule& module,
         total_io_size -= get_device_shape_size(subshape);
       });
 
-  uint64_t limit = 0;
   if (total_io_size > base_limit) {
     LOG(ERROR) << "The byte size of input/output arguments (" << total_io_size
                << ") exceeds the base limit (" << base_limit
                << "). This indicates an error in the calculation!";
-  } else {
-    limit = (base_limit - total_io_size) *
-            module.config().debug_options().xla_gpu_memory_limit_slop_factor() /
-            100;
+    return 0;
   }
-  return limit;
+
+  return (base_limit - total_io_size) *
+         module.config().debug_options().xla_gpu_memory_limit_slop_factor() /
+         100;
 }
 
 bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint) {

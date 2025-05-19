@@ -20,7 +20,6 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
@@ -78,9 +77,9 @@ tsl::AsyncValueRef<AllToAllThunk::ExecuteEvent> AllToAllThunk::Execute(
         CpuCollectives::Executor executor(key, DefaultCollectiveTimeout());
         const Shape& shape = destination_shape(0);
 
-        return comm.AllToAll(data.source, data.destination,
-                             shape.element_type(), ShapeUtil::ElementsIn(shape),
-                             executor);
+        return comm.AllToAll(std::move(data.source),
+                             std::move(data.destination), shape.element_type(),
+                             ShapeUtil::ElementsIn(shape), executor);
       });
 }
 

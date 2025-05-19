@@ -85,7 +85,6 @@ xla_test(
             "//xla:shape_util",
             "//xla/ffi",
             "//xla/ffi:ffi_api",
-            "//xla/tests:hlo_test_base",
             "@com_google_absl//absl/algorithm:container",
             "@com_google_absl//absl/status",
             "@tsl//tsl/platform:test",
@@ -349,6 +348,7 @@ xla_test(
     srcs = ["gpu_triton_custom_call_test.cc"],
     backends = [
         "gpu_a100",
+        "gpu_h100",
         "gpu_v100",
         "gpu_b200",
         "gpu_amd_any",

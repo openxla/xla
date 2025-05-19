@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SHAPE_H_
 #define XLA_SHAPE_H_
 
+#include <stdbool.h>
+
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -25,6 +27,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -74,11 +77,12 @@ class Shape {
 
   // Constructs a shape from a ShapeProto. Results in an invalid shape (as
   // opposed to crashing) if the proto has logically invalid fields.
+  ABSL_DEPRECATED("Use FromProto instead.")
   explicit Shape(const ShapeProto& shape_proto);
 
-  // Creates a token or opaque shape.
+  // Creates a token, opaque or buffer shape.
   // Precondition:
-  //  - `element_type` must be TOKEN or OPAQUE_TYPE.
+  //  - `element_type` must be TOKEN, OPAQUE_TYPE or BUFFER.
   explicit Shape(PrimitiveType element_type);
 
   // Creates an array shape. `dimensions` can be empty, in which case the shape
@@ -94,10 +98,15 @@ class Shape {
   // shape is a nil shape (empty tuple).
   explicit Shape(std::vector<Shape> tuple_shapes);
 
+  // Constructs a shape from a ShapeProto. Results in an invalid shape (as
+  // opposed to crashing) if the proto has logically invalid fields.
+  static absl::StatusOr<Shape> FromProto(const ShapeProto& shape_proto);
+
+  // Creates a buffer shape. `element_shape` must be a valid array shape.
+  static Shape MakeBufferShape(Shape element_shape);
+
   // Returns a ShapeProto representation of the Shape.
   ShapeProto ToProto() const;
-  // Sets a ShapeProto to the representation of the Shape.
-  void SetProto(ShapeProto& proto) const;
 
   // Prints a human-readable string that represents the given shape, with or
   // without layout. e.g. "F32[42,12] {0, 1}" or "F32[64]".
@@ -120,6 +129,14 @@ class Shape {
     const bool result = element_type() == TUPLE;
     // We do this check in debug mode only to avoid performance regressions.
     DCHECK_EQ(result, if_tuple_state() != nullptr)
+        << "Shape " << ToString()
+        << " has inconsistent element_type and state.";
+    return result;
+  }
+  bool IsBuffer() const {
+    const bool result = element_type() == BUFFER;
+    // We do this check in debug mode only to avoid performance regressions.
+    DCHECK_EQ(result, if_buffer_state() != nullptr)
         << "Shape " << ToString()
         << " has inconsistent element_type and state.";
     return result;
@@ -311,9 +328,6 @@ class Shape {
   absl::Span<const int64_t> dimensions() const {
     return array_state().dimensions;
   }
-  absl::Span<int64_t> mutable_dimensions() {
-    return absl::MakeSpan(array_state().dimensions);
-  }
 
   // Returns the number of top-level tuple components in this shape.
   // Precondition: this is a tuple shape.
@@ -344,6 +358,10 @@ class Shape {
   std::vector<Shape>* mutable_tuple_shapes() {
     return &tuple_state().tuple_shapes;
   }
+
+  // Returns the underlying shape of the buffer.
+  const Shape& buffer_shape() const;
+  Shape* mutable_buffer_shape() { return &buffer_state().buffer_shape[0]; }
 
   // Returns true if the shape is an array and has a layout.
   bool has_layout() const {
@@ -399,10 +417,6 @@ class Shape {
   // Resets this to the default state (an invalid shape).
   void Clear();
 
-  std::string SerializeAsString() const {
-    return ToProto().SerializeAsString();
-  }
-  std::string ShortDebugString() const { return ToProto().ShortDebugString(); }
   std::string DebugString() const { return ToProto().DebugString(); }
 
   // Equal is a configurable functor to check the equality of two shapes.
@@ -468,6 +482,10 @@ class Shape {
       ignore_split_config_in_layout_ = true;
       return *this;
     }
+    Equal& IgnoreBuffer(bool ignore_buffer = true) {
+      ignore_buffer_ = ignore_buffer;
+      return *this;
+    }
 
    private:
     bool ignore_layout_ = false;
@@ -480,6 +498,7 @@ class Shape {
     bool ignore_dimensions_ = false;
     bool ignore_tail_padding_alignment_in_elements_in_layout_ = false;
     bool ignore_split_config_in_layout_ = false;
+    bool ignore_buffer_ = false;
   };
 
   // Test that all fields of the shape are the same, equivalent to Equal().
@@ -501,6 +520,9 @@ class Shape {
         h = H::combine(std::move(h), state->layout);
       }
       return h;
+    }
+    if (const auto* const state = s.if_buffer_state()) {
+      return H::combine(std::move(h), s.element_type_, state->buffer_shape);
     }
     return H::combine(std::move(h), s.element_type_);
   }
@@ -545,9 +567,14 @@ class Shape {
     // The tuple element subshapes.
     std::vector<Shape> tuple_shapes;
   };
-
+  struct BufferState {
+    // The underlying array shape for the buffer type, represented as a
+    // vector with one element. Using Shape directly or
+    // absl::InlinedVector<Shape, 1> here causes recursive definition.
+    std::vector<Shape> buffer_shape;
+  };
   using State = std::variant<InvalidState, TokenState, OpaqueState, ArrayState,
-                             TupleState>;
+                             TupleState, BufferState>;
 
   // CHECKs that the dimension size is valid.
   void CheckDimensionSize(int dim_index, int64_t size, bool is_dynamic);
@@ -587,6 +614,10 @@ class Shape {
     return std::get_if<TupleState>(&state_);
   }
   TupleState* if_tuple_state() { return std::get_if<TupleState>(&state_); }
+  const BufferState* if_buffer_state() const {
+    return std::get_if<BufferState>(&state_);
+  }
+  BufferState* if_buffer_state() { return std::get_if<BufferState>(&state_); }
 
   const InvalidState& invalid_state() const {
     const auto* const state = if_invalid_state();
@@ -603,26 +634,12 @@ class Shape {
     CHECK(state) << "Expected an opaque shape. Got " << ToString();
     return *state;
   }
-  const ArrayState& array_state() const {
-    const auto* const state = if_array_state();
-    CHECK(state) << "Expected an array shape. Got " << ToString();
-    return *state;
-  }
-  ArrayState& array_state() {
-    auto* const state = if_array_state();
-    CHECK(state) << "Expected an array shape. Got " << ToString();
-    return *state;
-  }
-  const TupleState& tuple_state() const {
-    const auto* const state = if_tuple_state();
-    CHECK(state) << "Expected a tuple shape. Got " << ToString();
-    return *state;
-  }
-  TupleState& tuple_state() {
-    auto* const state = if_tuple_state();
-    CHECK(state) << "Expected a tuple shape. Got " << ToString();
-    return *state;
-  }
+  const ArrayState& array_state() const;
+  ArrayState& array_state();
+  const TupleState& tuple_state() const;
+  TupleState& tuple_state();
+  const BufferState& buffer_state() const;
+  BufferState& buffer_state();
 
   // CHECK-fails if this shape's state is not empty.
   void CheckStateIsEmpty() const;
@@ -646,8 +663,12 @@ class ProgramShape {
   ProgramShape& operator=(const ProgramShape&);
   ProgramShape& operator=(ProgramShape&&);
 
-  // Creates a ProgramShape from a ProgramShapeProto protobuf.
+  ABSL_DEPRECATED("Use FromProto instead.")
   explicit ProgramShape(const ProgramShapeProto& program_shape_proto);
+
+  // Creates a ProgramShape from a ProgramShapeProto protobuf.
+  static absl::StatusOr<ProgramShape> FromProto(
+      const ProgramShapeProto& program_shape_proto);
 
   // Returns a proto representation of the object.
   ProgramShapeProto ToProto() const;
@@ -656,58 +677,44 @@ class ProgramShape {
 
   std::string ToString() const;
 
-  // The following methods mirror the protobuf generated code interface for the
-  // message ProgramShapeProto. This enabled easy migration of this data
-  // structure from a proto to a proper C++ class.
-  // TODO(b/29771030): Replace or augment these methods with a more ergonomic
-  // interface.
-
   // Methods for accessing and manipulating the Shape of the parameters.
   int parameters_size() const { return parameters_.size(); }
   const Shape& parameters(int index) const { return parameters_[index]; }
   Shape* mutable_parameters(int index) { return &parameters_[index]; }
-  Shape* add_parameters() {
-    parameters_.emplace_back();
-    return &parameters_.back();
+  void AddParameter(Shape shape, std::string name) {
+    parameters_.push_back(std::move(shape));
+    parameter_names_.push_back(std::move(name));
   }
-  void clear_parameters() { parameters_.clear(); }
+
+  void clear_parameters() {
+    parameters_.clear();
+    parameter_names_.clear();
+  }
   const std::vector<Shape>& parameters() const { return parameters_; }
-  std::vector<Shape>* mutable_parameters() { return &parameters_; }
 
   // Methods for accessing and manipulating the Shape of the result.
   const Shape& result() const { return result_; }
   Shape* mutable_result() { return &result_; }
 
   // Methods for accessing and manipulating the names of the parameters.
-  int parameter_names_size() const { return parameter_names_.size(); }
   const std::string& parameter_names(int index) const {
     return parameter_names_[index];
   }
   void set_parameter_names(int index, const std::string& value) {
     parameter_names_[index] = value;
   }
-  std::string* mutable_parameter_names(int index) {
-    return &parameter_names_[index];
+  void clear_parameter_names() {
+    for (auto& name : parameter_names_) {
+      name.clear();
+    }
   }
-  void add_parameter_names(const std::string& value) {
-    parameter_names_.push_back(value);
-  }
-  std::string* add_parameter_names() {
-    parameter_names_.push_back("");
-    return &parameter_names_.back();
-  }
-  void clear_parameter_names() { parameter_names_.clear(); }
   const std::vector<std::string>& parameter_names() const {
     return parameter_names_;
   }
-  std::vector<std::string>* mutable_parameter_names() {
-    return &parameter_names_;
-  }
-
-  std::string ShortDebugString() const { return ToProto().ShortDebugString(); }
-  std::string DebugString() const { return ToProto().DebugString(); }
 
  private:
+  // Invariant: parameters_ and parameter_names_ have the same size.
+
   // The shapes of the parameters of the computation represented by this object.
   std::vector<Shape> parameters_;
 

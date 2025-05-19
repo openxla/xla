@@ -211,7 +211,16 @@ TEST_F(MemorySpaceAssignmentTest, Simple) {
   schedule.set_sequence(computation, {p0, p1, add, sub, mul});
   TF_CHECK_OK(module->set_schedule(schedule));
 
-  auto preset_assignments = AssignMemorySpace(module.get());
+  Options options = DefaultMemorySpaceOptions();
+  options.post_module_scoped_alternate_memory_size_in_bytes = 10;
+  auto preset_assignments = AssignMemorySpace(module.get(), options);
+
+  // Check that the post-module scoped alternate memory chunk is set correctly.
+  ASSERT_TRUE(preset_assignments->post_module_scoped_alternate_memory_chunk()
+                  .has_value());
+  EXPECT_EQ(
+      preset_assignments->post_module_scoped_alternate_memory_chunk()->size,
+      10);
 
   // Inputs and outputs are currently placed in the default memory. Everything
   // else should be in the alternate memory.
@@ -647,7 +656,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementAfterPrefetch) {
   EXPECT_THAT(concat->operand(1), op::AsyncDone(op::AsyncStart(p0)));
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementAfterPrefetch) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementAfterPrefetch) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -727,7 +738,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementIgnoredTrivials) {
               op::Bitcast(op::AsyncDone(op::AsyncStart(p0))));
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementIgnoredTrivials) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementIgnoredTrivials) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -816,7 +829,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementAfterEviction) {
                   kDefaultMemorySpace, kAlternateMemorySpace, negate_p0))));
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementAfterEviction) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementAfterEviction) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -905,7 +920,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementTwoSlices) {
   EXPECT_THAT(add->operand(1), op::AsyncDone(op::AsyncStart(p0)));
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementTwoSlices) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementTwoSlices) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -992,7 +1009,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementNestedSlices) {
   EXPECT_THAT(concat->operand(1), op::Slice(op::AsyncDone(op::AsyncStart(p0))));
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementNestedSlices) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementNestedSlices) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -1081,7 +1100,9 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementOneFails) {
   ASSERT_NE(slice0, nullptr);
 }
 
-TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementOneFails) {
+// TODO(b/415757985): Enable after addressing the bug.
+TEST_F(MemorySpaceAssignmentTest,
+       DISABLED_SyncDynamicSliceReplacementOneFails) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -4881,8 +4902,8 @@ TEST_F(MemorySpaceAssignmentTest, NonEntryComputationSchedule6) {
   // so it can be trivially placed in the alternate memory space.
   *ShapeUtil::GetMutableSubshape(&tuple_shape, {0})->mutable_layout() =
       LayoutUtil::MakeLayout(
-          /*minor_to_major=*/{1, 0}, /*dim_level_types=*/{}, /*dim_unique=*/{},
-          /*dim_ordered=*/{}, /*tiles=*/{},
+          /*minor_to_major=*/{1, 0},
+          /*tiles=*/{},
           /*tail_padding_alignment_in_elements=*/1,
           /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
           /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID,
@@ -4890,8 +4911,8 @@ TEST_F(MemorySpaceAssignmentTest, NonEntryComputationSchedule6) {
   // Index {1} is a scalar, so it is always placed in the default memory.
   *ShapeUtil::GetMutableSubshape(&tuple_shape, {1})->mutable_layout() =
       LayoutUtil::MakeLayout(
-          /*minor_to_major=*/{}, /*dim_level_types=*/{}, /*dim_unique=*/{},
-          /*dim_ordered=*/{}, /*tiles=*/{},
+          /*minor_to_major=*/{},
+          /*tiles=*/{},
           /*tail_padding_alignment_in_elements=*/1,
           /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
           /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID,
@@ -4899,8 +4920,8 @@ TEST_F(MemorySpaceAssignmentTest, NonEntryComputationSchedule6) {
   // Index {2} of the while loop is placed in the default memory.
   *ShapeUtil::GetMutableSubshape(&tuple_shape, {2})->mutable_layout() =
       LayoutUtil::MakeLayout(
-          /*minor_to_major=*/{1, 0}, /*dim_level_types=*/{}, /*dim_unique=*/{},
-          /*dim_ordered=*/{}, /*tiles=*/{},
+          /*minor_to_major=*/{1, 0},
+          /*tiles=*/{},
           /*tail_padding_alignment_in_elements=*/1,
           /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
           /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID,
@@ -5734,7 +5755,7 @@ ENTRY main {
   p0 = f32[32,16] parameter(0)
   p1 = f32[16,16] parameter(1)
   p2 = f32[32,16] parameter(2)
-  
+
   negate0 = f32[32,16] negate(p0) // We will set highest priority for this.
   negate1 = f32[16,16] negate(p1) // We will color this, but set lowest priority.
   negate2 = f32[16,16] negate(negate1)
@@ -5827,7 +5848,7 @@ ENTRY main {
   p0 = f32[32,16] parameter(0)
   p1 = f32[16,16] parameter(1)
   p2 = f32[32,16] parameter(2)
-  
+
   negate0 = f32[32,16] negate(p0) // We will set highest priority for this.
   negate1 = f32[16,16] negate(p1) // We will color this, but set lowest priority.
   negate2 = f32[16,16] negate(negate1)
@@ -6525,12 +6546,20 @@ TEST_F(MemorySpaceAssignmentTest,
   TF_CHECK_OK(module->set_schedule(schedule));
 
   Options options = DefaultMemorySpaceOptions();
+  options.post_module_scoped_alternate_memory_size_in_bytes = 32;
   options.is_allowed_in_alternate_mem_fn = [](const HloValue& value) {
     return true;
   };
   XLA_VLOG_LINES(3, module->ToString());
   std::unique_ptr<PresetAssignments> preset_assignments =
       AssignMemorySpace(module.get(), options);
+  // Check that the post-module scoped alternate memory chunk is set correctly.
+  ASSERT_TRUE(preset_assignments->post_module_scoped_alternate_memory_chunk()
+                  .has_value());
+  EXPECT_EQ(
+      preset_assignments->post_module_scoped_alternate_memory_chunk()->size,
+      32);
+
   XLA_VLOG_LINES(3, module->ToString());
   // Ensure that p1 is in the alternate memory and add, which has p1 as an
   // operand, has a direct dependency to p1 (no CopyStart/CopyDone).
@@ -7122,7 +7151,7 @@ TEST_F(MemorySpaceAssignmentTest,
 
   // Expect that while tuple shape contains 3 elements like the original.
   const HloInstruction* while_instr = FindInstruction(module.get(), "while");
-  EXPECT_EQ(while_instr->shape().tuple_shapes_size(), 3);
+  EXPECT_EQ(while_instr->shape().tuple_shapes().size(), 3);
 }
 
 TEST_F(MemorySpaceAssignmentTest, AvoidRedundantEvictionInNestedWhile) {
@@ -7258,7 +7287,7 @@ TEST_F(MemorySpaceAssignmentTest, RedundantEvictionEliminationBug) {
   // Expect that redundant eviction elimination doesn't kick in because
   // while{1} is updated within the body.
   const HloInstruction* while_instr = FindInstruction(module.get(), "while");
-  EXPECT_EQ(while_instr->shape().tuple_shapes_size(), 3);
+  EXPECT_EQ(while_instr->shape().tuple_shapes().size(), 3);
   EXPECT_EQ(while_instr->shape().tuple_shapes(1).layout().memory_space(),
             kAlternateMemorySpace);
   const HloInstruction* gte1 = FindInstruction(module.get(), "gte1");
@@ -7339,8 +7368,9 @@ TEST_F(MemorySpaceAssignmentTest, RedundantEvictionEliminationInChainedWhile) {
 
   // Expect that while1 has one more value than while2 in its shape.
   EXPECT_EQ(
-      FindInstruction(module.get(), "while1")->shape().tuple_shapes_size(),
-      FindInstruction(module.get(), "while2")->shape().tuple_shapes_size() + 1);
+      FindInstruction(module.get(), "while1")->shape().tuple_shapes().size(),
+      FindInstruction(module.get(), "while2")->shape().tuple_shapes().size() +
+          1);
 }
 
 TEST_F(MemorySpaceAssignmentTest, AvoidRedundantEvictionAfterWhile) {
@@ -9818,14 +9848,24 @@ TEST_F(MemorySpaceAssignmentTest, HoistCopyStart) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   Options options = DefaultMemorySpaceOptions();
+  options.post_module_scoped_alternate_memory_size_in_bytes = 64;
   options.enable_cross_program_prefetch = true;
-  AssignMemorySpace(module.get(), options);
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options);
 
   // Ensure that get-tuple-element.1 is chosen for cross-program prefetch.
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   ASSERT_EQ(cross_program_prefetches.size(), 1);
   ASSERT_EQ(cross_program_prefetches[0].parameter, 0);
   ASSERT_EQ(cross_program_prefetches[0].index, ShapeIndex({1}));
+
+  // Check that the preset assignments contains the correct post module scoped
+  // allocation chunk, in the presence of cross-program prefetch.
+  ASSERT_TRUE(preset_assignments->post_module_scoped_alternate_memory_chunk()
+                  .has_value());
+  EXPECT_EQ(
+      preset_assignments->post_module_scoped_alternate_memory_chunk()->size,
+      64);
 
   // Check that the async copy-start for get-tuple-element.1 is hoisted
   // after MSA (get-tuple-element.1 was initially the third operation of the

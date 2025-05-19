@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -258,7 +259,7 @@ static absl::Status AllReduceOp(
   // Reduce all inputs into the destination buffer at rank 0.
   void* output = chunk_ptr(participants[0].dest);
 
-  TF_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch<absl::Status>(
+  TF_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
       [&](const auto type_tag) {
         return ReduceScatter<type_tag>(reduction_kind, inputs, output,
                                        chunk_count);
@@ -309,7 +310,7 @@ static absl::Status ReduceScatterOp(
   // Reduce all inputs into the destination buffer.
   void* output = participants[rank].dest.opaque();
 
-  TF_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch<absl::Status>(
+  TF_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
       [&](const auto type_tag) {
         return ReduceScatter<type_tag>(reduction_kind, inputs, output, count);
       },
@@ -468,9 +469,9 @@ InProcessCommunicator::CollectivePermute(se::DeviceMemoryBase send_buffer,
 
 tsl::AsyncValueRef<InProcessCommunicator::Event>
 InProcessCommunicator::AllToAll(
-    absl::Span<const se::DeviceMemoryBase> send_buffers,
-    absl::Span<const se::DeviceMemoryBase> recv_buffers, PrimitiveType dtype,
-    size_t count, const Executor& executor) {
+    absl::InlinedVector<se::DeviceMemoryBase, 4> send_buffers,
+    absl::InlinedVector<se::DeviceMemoryBase, 4> recv_buffers,
+    PrimitiveType dtype, size_t count, const Executor& executor) {
   TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
 

@@ -44,9 +44,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/call_frame.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -254,7 +256,7 @@ class CommandBufferCmd {
 
   // Returns all buffers used by the cmd. These will be used to track cmd
   // updates, thus they need to be consistent across calls to the function.
-  virtual BufferUseVector buffers() = 0;
+  virtual BufferUseVector buffers() const = 0;
 
   // Returns true if command implemented as a nested command buffer.
   virtual bool IsNestedCommandBuffer() const { return false; }
@@ -489,7 +491,7 @@ class ComputationIdCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice dest_;
@@ -515,7 +517,7 @@ class LaunchCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   std::string kernel_name_;
@@ -550,7 +552,7 @@ class CustomKernelLaunchCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   std::vector<BufferAllocation::Slice> args_;
@@ -579,7 +581,7 @@ class MemcpyDeviceToDeviceCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice dst_;
@@ -601,7 +603,7 @@ class MemzeroCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice dst_;
@@ -621,7 +623,7 @@ class Memset32Cmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice dst_;
@@ -647,7 +649,7 @@ class CaseCmd : public CommandBufferCmd {
 
   bool force_update() override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice index_;
@@ -675,7 +677,7 @@ class WhileCmd : public CommandBufferCmd {
 
   bool force_update() override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   BufferAllocation::Slice pred_;
@@ -703,7 +705,7 @@ class GemmCmd : public TracedCommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -739,7 +741,7 @@ class CublasLtCmd : public TracedCommandBufferCmd, public CublasLtMatmulThunk {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 };
@@ -762,7 +764,7 @@ class CuDnnCmd : public TracedCommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -800,13 +802,14 @@ class CustomCallCmd : public CommandBufferCmd {
                 XLA_FFI_Handler* handler,
                 std::vector<std::optional<Slice>> operands,
                 std::vector<std::optional<Slice>> results,
-                AttributesMap attributes,
+                ffi::CallFrame call_frame,
                 const HloComputation* called_computation)
       : CommandBufferCmd(CommandBufferCmdType::kCustomCallCmd,
                          execution_stream_id),
         target_name_(std::move(target_name)),
         handler_(handler),
-        attributes_(std::move(attributes)),
+        call_frame_(std::move(call_frame)),
+        call_frames_([this] { return call_frame_->Copy(); }),
         called_computation_(called_computation),
         operands_(std::move(operands)),
         results_(std::move(results)) {}
@@ -816,7 +819,7 @@ class CustomCallCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
   bool IsNestedCommandBuffer() const final { return true; }
 
  private:
@@ -841,7 +844,14 @@ class CustomCallCmd : public CommandBufferCmd {
   // functions with XLA runtime. It's under construction, and still misses
   // a lot of features. Long term it will replace legacy custom calls.
   XLA_FFI_Handler* handler_ = nullptr;
-  AttributesMap attributes_;
+
+  // Reference call frame pre-initialized at construction time.
+  std::optional<ffi::CallFrame> call_frame_;
+
+  // A pool of call frames used at run time. Newly created call frames are
+  // copied from the reference call frame and updated with buffer addresses.
+  std::optional<ObjectPool<ffi::CallFrame>> call_frames_;
+
   const HloComputation* called_computation_;
 
   std::vector<std::optional<Slice>> operands_;
@@ -911,7 +921,7 @@ class AllReduceCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
@@ -938,7 +948,7 @@ class ReduceScatterCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
@@ -965,7 +975,7 @@ class AllToAllCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
@@ -991,7 +1001,7 @@ class AllGatherCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
@@ -1017,7 +1027,7 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
  private:
   std::vector<CollectiveThunk::Buffer> buffers_;
@@ -1052,7 +1062,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() override;
+  BufferUseVector buffers() const override;
 
   bool force_update() override;
 

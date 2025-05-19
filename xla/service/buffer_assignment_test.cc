@@ -39,12 +39,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/service/buffer_assignment.pb.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/copy_insertion.h"
@@ -54,7 +56,6 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status.h"
@@ -64,7 +65,9 @@ namespace xla {
 namespace {
 
 using memory_space_assignment::PresetAssignments;
+using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAre;
+using tsl::testing::StatusIs;
 
 // DFS visitor that collects the instructions referenced by a computation
 // without descending into nested computations, i.e., only from the operands.
@@ -99,7 +102,11 @@ const std::vector<const HloInstruction*> GetInstructions(HloInstruction* root) {
   return main_list.GetInstructions();
 }
 
-class BufferAssignmentTest : public HloTestBase {
+int64_t BufferSizeBytes(const BufferValue& buffer) {
+  return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
+}
+
+class BufferAssignmentTest : public HloHardwareIndependentTestBase {
  protected:
   ~BufferAssignmentTest() override {}
 
@@ -107,7 +114,7 @@ class BufferAssignmentTest : public HloTestBase {
                                                         int64_t alignment = 1) {
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/true)
         .value();
@@ -118,9 +125,8 @@ class BufferAssignmentTest : public HloTestBase {
     // Dump proto for buffer assignments.
     auto proto = buffers->ToProto();
     // Recreate buffer assignment from proto.
-    return BufferAssignment::FromProto(
-        proto, module, backend().compiler()->BufferSizeBytesFunction(),
-        /*can_share_buffer=*/nullptr);
+    return BufferAssignment::FromProto(proto, module, &BufferSizeBytes,
+                                       /*can_share_buffer=*/nullptr);
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentWithSequentialOrdering(
@@ -132,7 +138,7 @@ class BufferAssignmentTest : public HloTestBase {
     return BufferAssigner::Run(
                module,
                std::make_unique<SequentialHloOrdering>(module->schedule()),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/true, colorer,
                /*must_not_live_out=*/std::nullopt, /*can_share_buffer=*/nullptr,
@@ -145,7 +151,7 @@ class BufferAssignmentTest : public HloTestBase {
       HloModule* module, int64_t alignment = 1) {
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/false)
         .value();
@@ -161,7 +167,7 @@ class BufferAssignmentTest : public HloTestBase {
 
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/false,
                /*colorer=*/BufferAssigner::DefaultColorer(),
@@ -174,7 +180,7 @@ class BufferAssignmentTest : public HloTestBase {
       int64_t alignment = 1) {
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/true, std::move(colorer))
         .value();
@@ -187,7 +193,7 @@ class BufferAssignmentTest : public HloTestBase {
     schedule.set_sequence(module->entry_computation(), instruction_sequence);
     return BufferAssigner::Run(
                module, std::make_unique<SequentialHloOrdering>(schedule),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/true)
         .value();
@@ -198,7 +204,7 @@ class BufferAssignmentTest : public HloTestBase {
       int64_t alignment = 1) {
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
-               backend().compiler()->BufferSizeBytesFunction(),
+               &BufferSizeBytes,
                [alignment](LogicalBuffer::Color) { return alignment; },
                /*allocate_buffers_for_constants=*/true,
                BufferAssigner::DefaultColorer(),
@@ -213,8 +219,7 @@ class BufferAssignmentTest : public HloTestBase {
     return BufferAssigner::Run(
                module,
                std::make_unique<SequentialHloOrdering>(module->schedule()),
-               backend().compiler()->BufferSizeBytesFunction(),
-               [](LogicalBuffer::Color) { return 1; },
+               &BufferSizeBytes, [](LogicalBuffer::Color) { return 1; },
                /*allocate_buffers_for_constants=*/true,
                BufferAssigner::DefaultColorer(),
                /*must_not_live_out=*/std::nullopt, /*can_share_buffer=*/nullptr,
@@ -2282,7 +2287,7 @@ ENTRY main {
   }
 }
 
-class WhileBufferAssignmentTest : public HloTestBase {
+class WhileBufferAssignmentTest : public HloHardwareIndependentTestBase {
  protected:
   std::unique_ptr<HloComputation> BuildWhileConditionComputation(
       const std::string& name) {
@@ -2638,8 +2643,7 @@ TEST_F(WhileBufferAssignmentTest, ColocatedBuffers) {
       auto assignment,
       BufferAssigner::Run(
           module.get(), std::make_unique<SequentialHloOrdering>(schedule),
-          backend().compiler()->BufferSizeBytesFunction(),
-          [](LogicalBuffer::Color) { return 1; },
+          &BufferSizeBytes, [](LogicalBuffer::Color) { return 1; },
           /*allocate_buffers_for_constants=*/true));
 
   // The result tuple elements must be assigned with different buffers.
@@ -3483,5 +3487,50 @@ ENTRY entry_computation {
   EXPECT_EQ(dus9_alloc_slice.allocation(), dus5_alloc_slice.allocation());
   EXPECT_EQ(dus9_alloc_slice, dus5_alloc_slice);
 }
+
+TEST(BufferAllocationSliceProtoTest, RoundTripProto) {
+  BufferAllocation original_alloc =
+      BufferAllocation(/*index=*/1, /*size=*/500, /*color=*/0);
+  BufferAllocation::Slice original_slice(&original_alloc, /*offset=*/50,
+                                         /*size=*/100);
+
+  // Convert to proto
+  TF_ASSERT_OK_AND_ASSIGN(
+      xla::buffer_assignment::BufferAllocationSliceProto proto,
+      original_slice.ToProto());
+
+  // Convert back from proto
+  std::vector<BufferAllocation> allocations_for_from_proto = {
+      BufferAllocation(/*index=*/0, /*size=*/50, /*color=*/0),
+      original_alloc,
+      BufferAllocation(/*index=*/2, /*size=*/600, /*color=*/0),
+  };
+  TF_ASSERT_OK_AND_ASSIGN(
+      BufferAllocation::Slice round_tripped_slice,
+      BufferAllocation::Slice::FromProto(proto, allocations_for_from_proto));
+
+  EXPECT_EQ(round_tripped_slice.allocation(), &allocations_for_from_proto[1]);
+  EXPECT_EQ(round_tripped_slice.offset(), original_slice.offset());
+  EXPECT_EQ(round_tripped_slice.size(), original_slice.size());
+}
+
+TEST(BufferAllocationSliceProtoTest, FromProtoErrorAllocationNotFound) {
+  xla::buffer_assignment::BufferAllocationSliceProto proto;
+  proto.set_buffer_allocation_index(2);
+  proto.set_offset(50);
+  proto.set_size(60);
+
+  std::vector<BufferAllocation> allocations;
+  allocations.push_back(
+      BufferAllocation(/*index=*/0, /*size=*/50, /*color=*/0));
+  allocations.push_back(
+      BufferAllocation(/*index=*/1, /*size=*/200, /*color=*/0));
+
+  EXPECT_THAT(
+      BufferAllocation::Slice::FromProto(proto, allocations),
+      StatusIs(absl::StatusCode::kOutOfRange,
+               HasSubstr("Buffer allocation index 2 is out of range.")));
+}
+
 }  // namespace
 }  // namespace xla

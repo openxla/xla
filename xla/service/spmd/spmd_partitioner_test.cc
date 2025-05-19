@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout_util.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/service/spmd/sharding_format_picker.h"
 #include "xla/service/spmd/spmd_prepare.h"
 #include "xla/shape.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -65,8 +65,19 @@ using ::testing::AllOf;
 using ::xla::test_only::ShardingFormatPicker;
 namespace op = xla::testing::opcode_matchers;
 
+std::vector<std::vector<int64_t>> ReplicaGroupsToVecOfVec(
+    const std::vector<ReplicaGroup>& replica_groups) {
+  std::vector<std::vector<int64_t>> result;
+  for (const auto& replica_group : replica_groups) {
+    auto& group = result.emplace_back();
+    group = std::vector<int64_t>(replica_group.replica_ids().begin(),
+                                 replica_group.replica_ids().end());
+  }
+  return result;
+}
+
 class SpmdPartitioningTest
-    : public HloTestBase,
+    : public HloHardwareIndependentTestBase,
       public ::testing::WithParamInterface<ShardingFormatPicker::ShardingType> {
  public:
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
@@ -421,6 +432,15 @@ ENTRY entry {
   EXPECT_THAT(all_to_all, op::Shape("s32[8,32,16,32,16]"));
   EXPECT_EQ(all_to_all->replica_groups().size(), 1);
   EXPECT_EQ(all_to_all->replica_groups()[0].replica_ids_size(), 8);
+  if (GetParam() == ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    EXPECT_EQ(all_to_all->device_list().iota_replica_group_list(),
+              IotaReplicaGroupList(1, 8, {4, 2}, {1, 0}));
+  } else {
+    std::vector<std::vector<int64_t>> expected_replica_groups = {
+        {0, 2, 4, 6, 1, 3, 5, 7}};
+    EXPECT_EQ(ReplicaGroupsToVecOfVec(all_to_all->replica_groups()),
+              expected_replica_groups);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, MultipleSourceTargetDimsInOneAllToAll2) {
@@ -11804,6 +11824,18 @@ ENTRY %module {
   auto gather = AllOf(op::Shape("s32[2,4,1,2]"), op::Gather(operand, indices));
   EXPECT_THAT(root, op::AllReduce(op::AllReduce(
                         op::DynamicUpdateSlice(_, gather, _, _, _, _))));
+  auto* all_to_all = FindInstruction(module.get(), "all-to-all");
+  EXPECT_TRUE(all_to_all != nullptr);
+  if (GetParam() ==
+      test_only::ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    EXPECT_EQ(all_to_all->device_list().iota_replica_group_list().value(),
+              IotaReplicaGroupList(4, 2, {2, 2, 2}, {0, 2, 1}));
+  } else {
+    std::vector<std::vector<int64_t>> expected_replica_groups = {
+        {0, 2}, {1, 3}, {4, 6}, {5, 7}};
+    EXPECT_EQ(ReplicaGroupsToVecOfVec(all_to_all->replica_groups()),
+              expected_replica_groups);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, GatherMergedIndexParallelAndTrivialSlicedOperand) {
@@ -14831,10 +14863,10 @@ TEST_P(SpmdPartitioningTest, CustomCallShardingRegistration) {
     }
     absl::Status Partition(spmd::SpmdPartitioningVisitor* partitioner,
                            HloInstruction* hlo) const override {
-      if (hlo->shape().dimensions_size() <= 2) {
+      if (hlo->shape().dimensions().size() <= 2) {
         return partitioner->DefaultAction(hlo);
       }
-      const int first_non_batch_dim = hlo->shape().dimensions_size() - 2;
+      const int first_non_batch_dim = hlo->shape().dimensions().size() - 2;
       HloInstruction* operand = hlo->mutable_operand(0);
       HloSharding target_sharding =
           hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
@@ -15069,7 +15101,7 @@ HloModule pjit
 
 ENTRY %main.21 {
   p0 = s32[8,64] parameter(0), sharding={devices=[4,1]<=[4]}
-  ROOT scatter = s32[8,64] scatter(p0, p0, p0), update_window_dims={}, 
+  ROOT scatter = s32[8,64] scatter(p0, p0, p0), update_window_dims={},
     input_batching_dims={0}, scatter_indices_batching_dims={0},
     inserted_window_dims={1}, scatter_dims_to_operand_dims={1},
     index_vector_dim=2, to_apply=s32_add, sharding={devices=[4,1]<=[4]}

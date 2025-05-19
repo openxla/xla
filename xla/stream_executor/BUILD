@@ -311,6 +311,7 @@ cc_library(
     srcs = ["blas.cc"],
     hdrs = ["blas.h"],
     deps = [
+        ":blas_proto_cc",
         ":data_type",
         ":device_memory",
         ":numeric_options",
@@ -357,6 +358,11 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ] + if_google(["@com_google_protobuf//:wrappers_cc_proto"]),
+)
+
+tf_proto_library(
+    name = "blas_proto",
+    srcs = ["blas.proto"],
 )
 
 cc_library(
@@ -498,6 +504,7 @@ cc_library(
     srcs = ["kernel_spec.cc"],
     hdrs = ["kernel_spec.h"],
     deps = [
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",

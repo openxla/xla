@@ -275,6 +275,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_rpath",
     ]),
@@ -307,6 +308,7 @@ cc_library(
 filegroup(
     name = "xla_cpu_runtime_srcs",
     srcs = [
+        "context.h",
         "integral_types.h",
     ] + if_not_windows(["env_time.cc"]),
 )

@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -112,7 +113,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -279,6 +282,12 @@ llvm::SmallVector<Value> EmitterBase::EmitThreadAndBlockIds(
           EmitBlockId(b, 0),  EmitBlockId(b, 1),  EmitBlockId(b, 2)};
 }
 
+llvm::SmallVector<mlir::Value> EmitterBase::EmitBlockIds(
+    mlir::ImplicitLocOpBuilder& builder) const {
+  return {EmitBlockId(builder, 0), EmitBlockId(builder, 1),
+          EmitBlockId(builder, 2)};
+}
+
 absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
     IrEmitterContext& ir_emitter_context,
     const HloFusionInstruction& fusion) const {
@@ -337,8 +346,8 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
 
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<KernelThunk>(
-      &fusion, entry->kernel_name, args.args(), launch_dims, entry->cluster_dim,
-      entry->shmem_bytes));
+      Thunk::ThunkInfo::WithProfileAnnotation(&fusion), entry->kernel_name,
+      args.args(), launch_dims, entry->cluster_dim, entry->shmem_bytes));
   return result;
 }
 
@@ -369,8 +378,7 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitterBase::CreateLLVMModule(
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
     mlir::MLIRContext& context, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
-    const BufferAssignment* buffer_assignment,
-    mlir::interpreter::MlirCompilationTrace* trace) const {
+    const BufferAssignment* buffer_assignment) const {
   context.loadDialect<
       mlir::DLTIDialect, mlir::NVVM::NVVMDialect, mlir::ROCDL::ROCDLDialect,
       mlir::affine::AffineDialect, mlir::arith::ArithDialect,
@@ -400,13 +408,10 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
   }
   // Annotate tensors with the buffer indices. This way, the buffer propagation
   // pass can clean them up later.
-  int next_slice_index = 0;
-  absl::flat_hash_map<BufferAllocation::Slice, std::optional<int>>
-      slice_indices;
-  auto get_arg_attrs = [&](int index) -> absl::StatusOr<mlir::Attribute> {
+  auto get_arg_attrs = [&](int index) -> mlir::Attribute {
     if (!args) {
       return builder.getDictionaryAttr({builder.getNamedAttr(
-          "xla.slice_index", builder.getIndexAttr(next_slice_index++))});
+          "xla.slice_index", builder.getIndexAttr(index))});
     }
 
     const auto& arg = args->args()[index];
@@ -426,24 +431,21 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitterBase::CreateMLIRModule(
     return builder.getDictionaryAttr(attrs);
   };
 
+  auto result_types = emitters::ShapeToMlirTypes(fusion.shape(), builder);
+
   SmallVector<mlir::Attribute> arg_attrs;
-  int arg_index = 0;
-  for (auto* param : fusion.operands()) {
+  arg_attrs.reserve(fusion.operands().size() + result_types.size());
+
+  for (auto [arg_index, param] : llvm::enumerate(fusion.operands())) {
     param_types.push_back(
         emitters::TensorShapeToMlirType(param->shape(), builder));
-    TF_ASSIGN_OR_RETURN(arg_attrs.emplace_back(), get_arg_attrs(arg_index++));
+    arg_attrs.push_back(get_arg_attrs(arg_index));
   }
 
-  auto result_types = emitters::ShapeToMlirTypes(fusion.shape(), builder);
-  param_types.append(result_types.begin(), result_types.end());
-  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
-      fusion.shape(), [&](const auto& shape, const ShapeIndex& index) {
-        if (shape.IsArray()) {
-          TF_ASSIGN_OR_RETURN(arg_attrs.emplace_back(),
-                              get_arg_attrs(arg_index++));
-        }
-        return absl::OkStatus();
-      }));
+  for (auto [result_index, type] : llvm::enumerate(result_types)) {
+    param_types.push_back(type);
+    arg_attrs.push_back(get_arg_attrs(fusion.operands().size() + result_index));
+  }
 
   builder.setInsertionPointToStart(module->getBody());
   auto entry_func = builder.create<FuncOp>(
@@ -607,6 +609,7 @@ void AddXlaGpuOpsOptimizationPasses(mlir::OpPassManager& pm) {
 
 void AddLoopTransformationPasses(mlir::OpPassManager& pm,
                                  const se::DeviceDescription& device) {
+  pm.addNestedPass<FuncOp>(CreateLowerXlaSharedPass());
   pm.addNestedPass<FuncOp>(
       emitters::CreateLowerXlaToScfPass(device.threads_per_warp()));
   pm.addNestedPass<FuncOp>(CreateFuseLoopsPass());

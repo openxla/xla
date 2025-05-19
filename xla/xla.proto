@@ -249,9 +249,7 @@ message DebugOptions {
     // Additionally, enable collective-permute cycle decomposer. This set of
     // optimizations will lead to best overlap for trivial pipeline parallelism
     // implementation.
-    // TODO(b/393127848): Remove these optimizations when all users implement
-    // cycle decomposition at the JAX level.
-    PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE_CYCLE_DECOMPOSER = 2;
+    reserved 2;  // Was PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE_CYCLE_DECOMPOSER
   }
 
   // Denylist for cuDNN convolutions.
@@ -551,6 +549,10 @@ message DebugOptions {
   // Pre-existing block-level fusions are left unmodified.
   bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
 
+  // Enable NVSHMEM. Must be set via XLA_FLAGS variable before XLA client is
+  // initialized and can't be set just through HLO Config->ExecutionOptions.
+  bool xla_gpu_experimental_enable_nvshmem = 388;
+
   // Enable the pass that splits GEMMs that underutilize the GPU load by
   // splitting the K dimension using a heuristic.
   bool xla_gpu_experimental_enable_split_k_rewrite = 386;
@@ -762,18 +764,9 @@ message DebugOptions {
   // `xla_gpu_cublas_fallback` set to false.
   bool xla_gpu_triton_gemm_any = 190;
 
-  // TODO(b/409940111): Remove this flag and use high precision reductions for
-  // Split-K GEMMs unconditionally.
-  bool xla_gpu_triton_gemm_disable_reduced_precision_reduction = 226;
-
   // It is usually preferable to not fallback to the driver; it can consume more
   // memory, or have bugs.
   bool xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found = 138;
-
-  // Recognises rotate-right patterns (slice, slice, concat) within a while
-  // loop and labels the while loop as a pipelined while loop. This is an
-  // unsafe flag.
-  bool xla_gpu_unsafe_pipelined_loop_annotator = 309;
 
   // If true, XLA will annotate instructions in the dumps with emitter code
   // location (source:line) annotations. This helps to identify the source of
@@ -820,6 +813,7 @@ message DebugOptions {
   // go/keep-sorted end
 
   reserved 276;  // xla_gpu_enable_nccl_per_stream_comms
+  reserved 226;  // xla_gpu_triton_gemm_disable_reduced_precision_reduction
 
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
@@ -1214,7 +1208,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 388
+  // Next id: 389
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1244,8 +1238,9 @@ message DebugOptions {
   // xla_gpu_unsupported_force_triton_gemm
   // xla_allow_get_default_platform
   // xla_gpu_ensure_minor_dot_contraction_dims
+  // xla_gpu_unsafe_pipelined_loop_annotator
   reserved 5, 117, 133, 139, 176, 178, 180, 193, 214, 194, 221, 242, 206, 320,
-      325, 326, 332, 361, 270, 229, 271, 279, 218, 369, 371, 249;
+      325, 326, 332, 361, 270, 229, 271, 279, 218, 369, 371, 249, 309;
 }
 
 // Contains flags which affects the GPU compilation result.
@@ -1431,7 +1426,7 @@ message ExecutionOptions {
 // Serialization of HloModuleConfig. See the C++ class definition for
 // descriptions of each field.
 // There are no guarantees of backwards or forwards compatibility.
-// Next id: 41.
+// Next id: 42.
 message HloModuleConfigProto {
   enum FusionConfigCollection {
     OFF = 0;       // Do not collect configuration.
@@ -1495,6 +1490,7 @@ message HloModuleConfigProto {
   int64 device_memory_size = 32;
   bool use_shardy_partitioner = 34;
   ShardingConfigProto sharding_config = 38;
+  ScheduleConfigProto schedule_config = 41;
 }
 
 message HloModuleProtoWithConfig {
@@ -1511,6 +1507,9 @@ message ScheduleProto {
     // Start and end timestamps in cycles.
     double start_timestamp_cycles = 2;
     double end_timestamp_cycles = 3;
+
+    int64 memory_usage_after = 5;
+    int64 peak_memory_after = 6;
   }
 
   message SchedulerStatisticsProto {
@@ -1550,4 +1549,15 @@ message NodeShardingConfigProto {
 message ShardingConfigProto {
   // Configuration for each HLO instruction.
   repeated NodeShardingConfigProto nodes = 1;
+}
+
+// Message that captures schedule configuration of an HLO module.
+message ScheduleConfigProto {
+  message Instruction {
+    // Instruction name.
+    string name = 1;
+  }
+
+  // The schedule of the HLO module.
+  repeated Instruction sequence = 1;
 }

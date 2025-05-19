@@ -40,13 +40,10 @@ limitations under the License.
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Triple.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -63,13 +60,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -436,7 +431,7 @@ std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
   if (permutation.size() < 2) {
     return std::nullopt;
   }
-  auto byte_width = primitive_util::ByteWidth(hero.shape().element_type());
+  auto bit_width = GetBitwidth(hero.shape().element_type());
   absl::InlinedVector<int64_t, 3> dimensions(hero.shape().dimensions().begin(),
                                              hero.shape().dimensions().end());
   int64_t operand_most_minor_dim = hero.operand(0)->shape().dimensions().back();
@@ -448,28 +443,33 @@ std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
     return TransposeDescription{&hero, dimensions, permutation,
                                 shmem_usage_bytes};
   }
+  int64_t num_elements_after_transposed_dims = 1;
+  std::pair<int64_t, int64_t> transposed_dims;
   if (permutation.back() == dimensions.size() - 1) {
-    operand_most_minor_dim =
-        hero.operand(0)->shape().dimensions(dimensions.size() - 2);
-    if (byte_width * dimensions.back() <= kMaxBytesInMostMinorDimension &&
-        byte_width * dimensions.back() *
-                std::min(operand_most_minor_dim,
-                         dimensions[dimensions.size() - 2]) >=
-            kMinDimensionToTransposeTiled) {
-      // Tile size for transposition.
-      int64_t shmem_usage_bytes = kNumShmemBanks * (kNumShmemBanks + 1) *
-                                  byte_width * dimensions.back();
-      return TransposeDescription{&hero, dimensions, permutation,
-                                  shmem_usage_bytes};
+    if (bit_width * dimensions.back() > kMaxBitsInMostMinorDimension) {
+      return std::nullopt;
     }
-  } else if ((operand_most_minor_dim >= kMinDimensionToTransposeTiled &&
-              dimensions.back() >= kMinDimensionToTransposeTiled) ||
-             (operand_most_minor_dim >= kMinDimensionToTransposeTiled2 &&
-              dimensions.back() >= kMinDimensionToTransposeTiled2 &&
-              operand_most_minor_dim * dimensions.back() >=
-                  kMinTotalDimensionsToTransposeTiled)) {
+    num_elements_after_transposed_dims = dimensions.back();
+    transposed_dims = {
+        hero.operand(0)->shape().dimensions(dimensions.size() - 2),
+        dimensions[dimensions.size() - 2]};
+  } else {
+    // TODO(b/415741994): TransposeEmitter is regressing for S4 when the last
+    // dimension is being transposed. The issue seems to be related to bank
+    // conflicts but a proper investigation is needed.
+    if (bit_width == 4) {
+      return std::nullopt;
+    }
+    transposed_dims = {operand_most_minor_dim, dimensions.back()};
+  }
+  if ((std::min(transposed_dims.first, transposed_dims.second) >=
+       kMinDimensionToTransposeTiled) &&
+      (transposed_dims.first * transposed_dims.second >=
+       kMinTotalDimensionsToTransposeTiled)) {
     int64_t shmem_usage_bytes =
-        kNumShmemBanks * (kNumShmemBanks + 1) * byte_width;
+        CeilOfRatio(kNumShmemBanks * (kNumShmemBanks + 1LL) * bit_width *
+                        num_elements_after_transposed_dims,
+                    8LL);
     return TransposeDescription{&hero, dimensions, permutation,
                                 shmem_usage_bytes};
   }
@@ -486,7 +486,7 @@ TransposeSpec GetTransposeSpec(const HloTransposeInstruction* transpose) {
 
   // If the last dimension is transposed, add a size-1 B dimension.
   if (canonical_permutation.back() != canonical_output_shape.size() - 1) {
-    canonical_permutation.push_back(output_shape.dimensions_size());
+    canonical_permutation.push_back(output_shape.dimensions().size());
     canonical_output_shape.push_back(1);
   }
   int64_t dim_t1 = -1;
@@ -817,45 +817,37 @@ bool IsDynamicMemcpyFusion(const HloInstruction* instr) {
              kDynamicMemcpyFusionKind;
 }
 
-std::optional<InductionVariableFunctionalDependency>
-ResolveFunctionalDependencyOnInductionVariable(
-    absl::Span<const HloInstruction* const> call_stack,
-    const HloInstruction* parameter) {
-  if (call_stack.empty()) {
-    return std::nullopt;
-  }
+namespace {
 
-  VLOG(5) << "Looking for defining while loop of " << parameter->name();
+// Whether the instruction is semantically a call.
+bool IsCallLike(const HloInstruction* caller) {
+  return caller->opcode() == HloOpcode::kFusion ||
+         caller->opcode() == HloOpcode::kAsyncStart ||
+         caller->opcode() == HloOpcode::kCall;
+}
 
-  // Walk up the call stack, tracking the origin of `parameter`.
-  const HloInstruction* argument = parameter;
-  auto call_stack_it = call_stack.rbegin();
-  auto call_stack_end = call_stack.rend();
-  for (; call_stack_it != call_stack_end &&
-         argument->opcode() == HloOpcode::kParameter &&
-         ((*call_stack_it)->opcode() == HloOpcode::kFusion ||
-          (*call_stack_it)->opcode() == HloOpcode::kAsyncStart ||
-          (*call_stack_it)->opcode() == HloOpcode::kCall);
-       ++call_stack_it) {
-    argument = (*call_stack_it)->operand(argument->parameter_number());
-  }
+const HloInstruction* GetUniqueCallerOrNull(const HloComputation* callee) {
+  auto callers = callee->caller_instructions();
+  return callers.size() == 1 ? callers.front() : nullptr;
+}
 
-  if (call_stack_it == call_stack_end) {
-    return std::nullopt;
-  }
-
-  VLOG(5) << "Arrived at " << argument->name() << " in "
-          << (*call_stack_it)->name();
-
-  // Find a unique parameter and a gte in the transitive dependencies of
-  // `argument`.
-  const HloInstruction* unique_param = nullptr;
-  const HloInstruction* unique_gte = nullptr;
-  absl::flat_hash_set<const HloInstruction*> seen{argument};
+// Returns the transitive dependencies of `root`, including those of callers.
+// Returns nullopt if any dependencies have side effects.
+std::optional<absl::flat_hash_set<const HloInstruction*>>
+GetTransitiveFunctionalDependencies(const HloInstruction* root) {
+  absl::flat_hash_set<const HloInstruction*> seen{root};
   std::queue<const HloInstruction*> queue;
-  queue.push(argument);
+  queue.push(root);
+
+  auto enqueue = [&](const HloInstruction* instr) {
+    if (seen.insert(instr).second) {
+      queue.push(instr);
+    }
+  };
+
   while (!queue.empty()) {
     const auto* instruction = queue.front();
+    VLOG(5) << "Visiting " << instruction->name() << ".";
     queue.pop();
 
     if (instruction->opcode() == HloOpcode::kCustomCall ||
@@ -865,71 +857,129 @@ ResolveFunctionalDependencyOnInductionVariable(
     }
 
     if (instruction->opcode() == HloOpcode::kParameter) {
-      if (unique_param || !instruction->shape().IsTuple()) {
-        VLOG(5) << "Failed to match parameters.";
+      const HloInstruction* caller =
+          GetUniqueCallerOrNull(instruction->parent());
+      if (!caller) {
+        VLOG(5) << "Failed to determine unique caller, aborting traversal.";
         return std::nullopt;
       }
-      unique_param = instruction;
-    }
 
-    if (instruction->opcode() == HloOpcode::kGetTupleElement) {
-      if (unique_gte) {
-        VLOG(5) << "Found non-unique GTEs.";
-        return std::nullopt;
+      // If this is semantically a call, continue the traversal at the call
+      // site.
+      if (IsCallLike(caller)) {
+        int64_t index = instruction->parameter_number();
+        enqueue(caller->operand(index));
       }
-      unique_gte = instruction;
     }
 
     for (auto* operand : instruction->operands()) {
-      if (seen.insert(operand).second) {
-        queue.push(operand);
-      }
+      enqueue(operand);
     }
   }
 
-  if (!unique_param || !unique_gte || unique_gte->operand(0) != unique_param) {
-    VLOG(5) << "Did not find a parameter or GTE or they don't match.";
-    return std::nullopt;
-  }
-
-  VLOG(5) << "Parameter and GTE: " << unique_param->name() << ", "
-          << unique_gte->name();
-
-  // Continue walking up through call instructions.
-  while (call_stack_it != call_stack_end &&
-         (*call_stack_it)->opcode() == HloOpcode::kCall &&
-         unique_param->opcode() == HloOpcode::kParameter) {
-    unique_param = (*call_stack_it)->operand(unique_param->parameter_number());
-    ++call_stack_it;
-  }
-
-  // Find the while loop for 'unique_param'.
-  auto while_instr_it = std::find_if(
-      call_stack_it, call_stack_end, [&](const HloInstruction* instr) {
-        return instr->opcode() == HloOpcode::kWhile &&
-               unique_param == instr->while_body()->parameter_instruction(0);
-      });
-
-  if (while_instr_it == call_stack_end) {
-    VLOG(5) << "Did not find a while loop.";
-    return std::nullopt;
-  }
-
-  auto config =
-      (*while_instr_it)->backend_config<xla::WhileLoopBackendConfig>();
-  if (!config.ok() || !config->has_known_induction_variable() ||
-      unique_gte->tuple_index() !=
-          config->known_induction_variable().tuple_index()) {
-    VLOG(5) << "Failed to verify that the offset depends on the induction "
-               "variable.";
-    return std::nullopt;
-  }
-
-  VLOG(5) << "While loop for " << parameter->name() << ": "
-          << (*while_instr_it)->name();
-  return InductionVariableFunctionalDependency{argument, *while_instr_it,
-                                               unique_gte};
+  return seen;
 }
 
+// Returns true if `dependency` contains a valid functional dependency: `loop`
+// and `induction_var` are set, and `induction_var` actually points to the
+// loop's induction variable.
+bool VerifyFunctionalDependency(
+    const InductionVariableFunctionalDependency& dependency) {
+  if (!dependency.loop || !dependency.induction_var) {
+    VLOG(5) << "Loop or induction variable not set.";
+    return false;
+  }
+
+  if (dependency.induction_var->opcode() != HloOpcode::kGetTupleElement ||
+      dependency.loop->while_body()->parameter_instruction(0) !=
+          dependency.induction_var->operand(0)) {
+    VLOG(5) << "induction_var does not point to the loop's parameter.";
+    return false;
+  }
+
+  auto config = dependency.loop->backend_config<xla::WhileLoopBackendConfig>();
+  if (!config.ok() || !config->has_known_induction_variable() ||
+      dependency.induction_var->tuple_index() !=
+          config->known_induction_variable().tuple_index()) {
+    VLOG(5) << "induction_var does not access the loop's induction variable.";
+    return false;
+  }
+
+  return true;
+}
+
+}  // namespace
+
+std::optional<InductionVariableFunctionalDependency>
+ResolveFunctionalDependencyOnInductionVariable(const HloInstruction* instr) {
+  VLOG(5) << "Looking for defining while loop of " << instr->name();
+
+  auto dependencies = GetTransitiveFunctionalDependencies(instr);
+  // If there is a side effect in the dependencies, the result will be nullopt.
+  if (!dependencies) {
+    return std::nullopt;
+  }
+
+  // In the dependencies, there should be exactly one parameter of a while loop,
+  // and exactly one GTE for that parameter. We already verified that there are
+  // no side-effecting dependencies.
+  InductionVariableFunctionalDependency result{};
+  for (const HloInstruction* dep : *dependencies) {
+    if (dep->opcode() == HloOpcode::kParameter) {
+      const HloComputation* callee = dep->parent();
+      const HloInstruction* caller = GetUniqueCallerOrNull(callee);
+      if (caller && IsCallLike(caller)) {
+        // Register the parameter as a required intermediate value.
+        auto& required = result.required_parameters[callee];
+        if (required.empty()) {
+          required.resize(callee->num_parameters());
+        }
+        required[dep->parameter_number()] = true;
+      } else if (caller && caller->opcode() == HloOpcode::kWhile) {
+        if (result.loop) {
+          LOG(WARNING) << "While loop not unique. This should never happen.";
+          return std::nullopt;
+        }
+        result.loop = caller;
+      } else {
+        // We arrived at an unexpected parameter. This likely means we're not in
+        // a while loop, or there's an unsupported instruction between the while
+        // loop and `instr`.
+        VLOG(5) << "Unsupported parameter: " << dep->name() << ".";
+        return std::nullopt;
+      }
+    }
+
+    if (dep->opcode() == HloOpcode::kGetTupleElement) {
+      // Note that this may not actually be the induction variable. We will
+      // verify this later (in VerifyFunctionalDependency). We can't do it here
+      // because we may not have visited the loop yet.
+      if (result.induction_var) {
+        VLOG(5) << "Found non-unique GTEs.";
+        return std::nullopt;
+      }
+      result.induction_var = dep;
+    }
+  }
+
+  if (!VerifyFunctionalDependency(result)) {
+    return std::nullopt;
+  }
+  VLOG(5) << "While loop for " << instr->name() << ": " << result.loop->name();
+  return result;
+}
+
+DenseDataIntermediateProto DenseDataIntermediate::ToProto() const {
+  DenseDataIntermediateProto proto;
+  absl::Span<const uint8_t> data = span();
+  proto.mutable_data()->assign(data.begin(), data.end());
+  return proto;
+}
+DenseDataIntermediate DenseDataIntermediate::FromProto(
+    const DenseDataIntermediateProto& proto) {
+  const std::string& data = proto.data();
+  return DenseDataIntermediate::Own(
+      std::vector<uint8_t>(data.begin(), data.end()));
+}
 }  // namespace gpu
 }  // namespace xla

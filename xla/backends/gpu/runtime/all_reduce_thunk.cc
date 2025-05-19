@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -240,19 +241,23 @@ absl::Status RunAllReduce(GpuCollectives* collectives,
   TF_RETURN_IF_ERROR(
       MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
 
-  TF_RETURN_IF_ERROR(collectives->GroupStart());
-  for (DeviceBufferPair& buffer : buffers) {
-    auto event = comm->AllReduce(
-        buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-        buffer.element_count, reduction_kind, GpuCollectives::On(stream));
-
-    tsl::BlockUntilReady(event);
-    if (event.IsError()) {
-      return event.GetError();
-    }
+  TF_ASSIGN_OR_RETURN(GpuCommunicator * gpu_comm, collectives->TryCast(comm));
+  tsl::AsyncValueRef<Communicator::Event> event =
+      gpu_comm->GroupExecute([reduction_kind, &buffers,
+                              &stream](GpuCommunicator* comm) -> absl::Status {
+        for (DeviceBufferPair& buffer : buffers) {
+          TF_RETURN_IF_ERROR(comm->LaunchAllReduce(
+              buffer.source_buffer, buffer.destination_buffer,
+              buffer.element_type, buffer.element_count, reduction_kind,
+              GpuCollectives::On(stream)));
+        }
+        return absl::OkStatus();
+      });
+  tsl::BlockUntilReady(event);
+  if (event.IsError()) {
+    return event.GetError();
   }
-
-  return collectives->GroupEnd();
+  return absl::OkStatus();
 }
 
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
@@ -322,6 +327,7 @@ absl::StatusOr<bool> AllReduceStartThunk::ShouldUseOneShotAllReduceKernel(
   }
 
   return IsAllReduceKernelSupported(clique_key.num_local_participants(),
+                                    num_elements,
                                     config().operand_element_type[0]);
 }
 
@@ -371,7 +377,7 @@ absl::Status AllReduceStartThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status AllReduceStartThunk::RunCollective(
+absl::StatusOr<bool> AllReduceStartThunk::RunCollective(
     const ExecuteParams& params, se::Stream& stream,
     CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
@@ -398,13 +404,15 @@ absl::Status AllReduceStartThunk::RunCollective(
     std::optional<RankId> rank =
         comm_handle.clique_key.rank(params.collective_params->global_device_id);
 
-    return RunOneShotAllReduce(comm_handle.clique_key, *rank, device_buffers,
-                               stream, comm_handle.comm, local_buffer,
-                               start_event, end_event);
+    TF_RETURN_IF_ERROR(RunOneShotAllReduce(
+        comm_handle.clique_key, *rank, device_buffers, stream, comm_handle.comm,
+        local_buffer, start_event, end_event));
+    return false;
   }
 
-  return RunAllReduce(collectives, config_.reduction_kind, device_buffers,
-                      stream, comm_handle.comm);
+  TF_RETURN_IF_ERROR(RunAllReduce(collectives, config_.reduction_kind,
+                                  device_buffers, stream, comm_handle.comm));
+  return true;
 }
 
 ReduceScatterStartThunk::ReduceScatterStartThunk(
@@ -427,7 +435,7 @@ ReduceScatterStartThunk::ReduceScatterStartThunk(
   return GetGroupModeInst(inst);
 }
 
-absl::Status ReduceScatterStartThunk::RunCollective(
+absl::StatusOr<bool> ReduceScatterStartThunk::RunCollective(
     const ExecuteParams& params, se::Stream& stream,
     CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
@@ -435,8 +443,10 @@ absl::Status ReduceScatterStartThunk::RunCollective(
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  return RunReduceScatter(collectives, config_.reduction_kind, device_buffers,
-                          stream, comm_handle.comm);
+  TF_RETURN_IF_ERROR(RunReduceScatter(collectives, config_.reduction_kind,
+                                      device_buffers, stream,
+                                      comm_handle.comm));
+  return true;
 }
 
 absl::Status RunReduceScatter(GpuCollectives* collectives,
@@ -451,27 +461,29 @@ absl::Status RunReduceScatter(GpuCollectives* collectives,
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
-  TF_RETURN_IF_ERROR(collectives->GroupStart());
+  TF_ASSIGN_OR_RETURN(GpuCommunicator * gpu_comm, collectives->TryCast(comm));
+  tsl::AsyncValueRef<Communicator::Event> event =
+      gpu_comm->GroupExecute([num_ranks, reduction_kind, &buffers,
+                              &stream](GpuCommunicator* comm) -> absl::Status {
+        for (DeviceBufferPair& buffer : buffers) {
+          // buffer.element_count is the source buffers element count. For
+          // ncclReduceScatter, we need the destination buffers element count.
+          TF_RET_CHECK(buffer.element_count % num_ranks == 0)
+              << "Source buffer was not an exact multiple of the number of "
+                 "participants.";
 
-  for (DeviceBufferPair& buffer : buffers) {
-    // buffer.element_count is the source buffers element count. For
-    // ncclReduceScatter, we need the destination buffers element count.
-    TF_RET_CHECK(buffer.element_count % num_ranks == 0)
-        << "Source buffer was not an exact multiple of the number of "
-           "participants.";
-
-    auto event = comm->ReduceScatter(
-        buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-        buffer.element_count / num_ranks, reduction_kind,
-        GpuCollectives::On(stream));
-
-    tsl::BlockUntilReady(event);
-    if (event.IsError()) {
-      return event.GetError();
-    }
+          TF_RETURN_IF_ERROR(comm->LaunchReduceScatter(
+              buffer.source_buffer, buffer.destination_buffer,
+              buffer.element_type, buffer.element_count / num_ranks,
+              reduction_kind, GpuCollectives::On(stream)));
+        }
+        return absl::OkStatus();
+      });
+  tsl::BlockUntilReady(event);
+  if (event.IsError()) {
+    return event.GetError();
   }
-
-  return collectives->GroupEnd();
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

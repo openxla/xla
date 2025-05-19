@@ -22,16 +22,16 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {
 
 namespace op = xla::testing::opcode_matchers;
 using ::testing::_;
-using WhileLoopFusibleSinkingTest = HloTestBase;
+using WhileLoopFusibleSinkingTest = HloHardwareIndependentTestBase;
 
 TEST_F(WhileLoopFusibleSinkingTest, SinkOneFusible) {
   const char* const hlo_string = R"(
@@ -341,7 +341,7 @@ TEST_F(WhileLoopFusibleSinkingTest, TestNoPlumbWithBadCondition) {
     y = s32[] parameter(1)
     ROOT add = s32[] add(x, y)
   }
-  
+
   loop.body {
     loop_var.1 = (s32[]{:T(128)}, s32[1,1,1,4,3,5]{5,4,3,2,1,0}, s32[1,1,1,4,3,5]{5,4,3,2,1,0}, s32[4,3,5]{2,1,0}) parameter(0)
     get-tuple-element.1 = s32[]{:T(128)} get-tuple-element(loop_var.1), index=0
@@ -389,7 +389,7 @@ TEST_F(WhileLoopFusibleSinkingTest, TestNoPlumbWithUnknonwnTripCount) {
     y = s32[] parameter(1)
     ROOT add = s32[] add(x, y)
   }
-  
+
   loop.body {
     loop_var.1 = (s32[]{:T(128)}, s32[1,1,1,4,3,5]{5,4,3,2,1,0}, s32[1,1,1,4,3,5]{5,4,3,2,1,0}, s32[4,3,5]{2,1,0}) parameter(0)
     get-tuple-element.1 = s32[]{:T(128)} get-tuple-element(loop_var.1), index=0

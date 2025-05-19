@@ -43,6 +43,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -83,6 +84,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -119,6 +121,7 @@ cc_library(
         ":autotuner_status_key",
         ":autotuner_util",
         ":dot_search_space",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
@@ -189,6 +192,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -267,6 +271,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
         "//xla/tsl/lib/core:bits",
@@ -279,10 +284,10 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "dot_search_space_test",
     srcs = ["dot_search_space_test.cc"],
-    backends = ["gpu"],
+    tags = ["gpu"],
     deps = [
         ":dot_search_space",
         "//xla/hlo/ir:hlo",
@@ -305,8 +310,8 @@ cc_library(
     hdrs = ["gemm_algorithm_picker.h"],
     tags = ["gpu"],
     deps = [
-        ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
@@ -424,19 +429,48 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
+    name = "redzone_buffers",
+    srcs = ["redzone_buffers.cc"],
+    hdrs = ["redzone_buffers.h"],
+    deps = [
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/stream_executor/gpu:redzone_allocator",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
 xla_test(
-    name = "autotuner_compile_util_test",
-    srcs = ["autotuner_compile_util_test.cc"],
+    name = "redzone_buffers_test",
+    srcs = ["redzone_buffers_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":autotuner_compile_util",
-        ":autotuner_util",
+        ":redzone_buffers",
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -486,6 +520,7 @@ cc_library(
         ":autotuner_compile_util",
         ":autotuner_util",
         ":gpu_autotuning_proto_cc",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:debug_options_flags",
@@ -588,6 +623,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:status_macros",
         "//xla:util",

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -82,7 +84,7 @@ struct TestOnlyCommandBufferCmd : public CommandBufferCmd {
     return nullptr;
   }
 
-  BufferUseVector buffers() override { return buffer_usage; }
+  BufferUseVector buffers() const override { return buffer_usage; }
 
   BufferUseVector buffer_usage;
 };
@@ -98,7 +100,8 @@ class FakeCmd : public CommandBufferCmd {
       se::CommandBuffer*) override {
     return nullptr;
   }
-  BufferUseVector buffers() override { return BufferUseVector{}; }
+
+  BufferUseVector buffers() const override { return BufferUseVector{}; }
 };
 
 TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
@@ -372,9 +375,14 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     se::StreamExecutorMemoryAllocator allocator(executor);
     BufferAllocations allocations({mem0, mem1}, 0, &allocator);
 
-    // No-op trace callback to count how many times it was called.
+    se::DeviceMemory<int32_t> mem = executor->AllocateArray<int32_t>(16, 0);
+
+    // Count how many times trace callback was called. We also need to record
+    // something on the given stream because we can't leave traced command
+    // buffer empty.
     int64_t num_calls = 0;
-    auto trace = [&](se::Stream*) {
+    auto trace = [&](se::Stream* stream) -> absl::Status {
+      TF_RETURN_IF_ERROR(stream->Memset32(&mem, 42, 16));
       num_calls++;
       return absl::OkStatus();
     };

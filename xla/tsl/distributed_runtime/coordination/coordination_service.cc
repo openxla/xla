@@ -21,8 +21,8 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
-#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/flags/flag.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -49,6 +50,10 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/device_name_utils.h"
+
+ABSL_FLAG(bool, leave_barriers_on_recoverable_agent_restart, false,
+          "If true, allow the recoverable agent to leave ongoing barriers on "
+          "restart.");
 
 namespace tsl {
 namespace {
@@ -268,6 +273,43 @@ void CoordinationService::CheckHeartbeatTimeout() {
   }
 }
 
+void CoordinationService::CheckBarrierStatusWithRecoverableTasks() {
+  absl::MutexLock l(&state_mu_);
+  if (!absl::GetFlag(FLAGS_leave_barriers_on_recoverable_agent_restart)) {
+    return;
+  }
+  // Gather barriers which are ready to pass except for the recoverable tasks
+  // reconnected during the barrier. When the flag
+  // leave_barriers_on_recoverable_agent_restart is set, the recoverable tasks
+  // will be removed from the barrier and the barrier will be passed.
+  absl::flat_hash_set<BarrierState*> passing_barriers;
+  for (absl::string_view barrier_id : ongoing_barriers_) {
+    auto* barrier = &barriers_[barrier_id];
+    if (barrier->num_pending_tasks ==
+        barrier->recoverable_tasks_restarted_during_barrier.size()) {
+      LOG(INFO) << "Barrier " << barrier_id << " has no pending tasks, this "
+                << "might be because recoverable tasks have disconnected/"
+                << "restarted and were removed from the barrier.";
+      passing_barriers.insert(barrier);
+    }
+  }
+  for (auto* barrier : passing_barriers) {
+    for (auto& task : barrier->recoverable_tasks_restarted_during_barrier) {
+      const std::string task_name = GetTaskName(task);
+      const std::unique_ptr<TaskState>& task_state = cluster_state_[task_name];
+      if (!barrier->tasks_at_barrier[task]) {
+        --barrier->num_pending_tasks;
+      }
+      barrier->done_callbacks.erase(task);
+      task_state->ExitBarrier(barrier->id);
+      LOG(INFO) << "Removed the recoverable task " << task_name
+                << " from the barrier: " << barrier->id;
+    }
+    PassBarrier(barrier, absl::OkStatus());
+    barrier->recoverable_tasks_restarted_during_barrier.clear();
+  }
+}
+
 void CoordinationService::CheckBarrierTimeout() {
   absl::flat_hash_map<std::string, BarrierState*> expired_barriers;
   uint64_t current_time_micros = Env::Default()->NowMicros();
@@ -322,6 +364,7 @@ void CoordinationService::CheckStaleness() {
       }
     }
     CheckHeartbeatTimeout();
+    CheckBarrierStatusWithRecoverableTasks();
     CheckBarrierTimeout();
   }
 }
@@ -335,18 +378,6 @@ void CoordinationService::Stop() {
   // Prevent recursion.
   if (shutting_down_) {
     return;
-  }
-  {
-    absl::MutexLock l(&kv_mu_);
-    for (const auto& [key, get_kv_callbacks] : get_cb_) {
-      for (const auto& get_kv_callback : get_kv_callbacks) {
-        get_kv_callback(absl::CancelledError(
-            absl::StrCat("Coordination service is shutting down. Cancelling "
-                         "GetKeyValue() for key: ",
-                         key)));
-      }
-    }
-    get_cb_.clear();
   }
   // Indicate that the service is shutting down and stop accepting new RPCs.
   shutting_down_ = true;
@@ -878,109 +909,48 @@ std::string NormalizeKey(absl::string_view orig_key) {
 
 absl::Status CoordinationService::InsertKeyValue(absl::string_view key,
                                                  absl::string_view value) {
-  return InsertKeyValue(key, value, /*allow_overwrite=*/false);
+  VLOG(3) << "CoordinationService::InsertKeyValue(key=" << key
+          << ", value=" << value << ")";
+  return store_.Put(NormalizeKey(key), value, /*allow_overwrite=*/false);
 }
 
 absl::Status CoordinationService::InsertKeyValue(absl::string_view key,
                                                  absl::string_view value,
                                                  bool allow_overwrite) {
-  VLOG(3) << "InsertKeyValue(): " << key << ": " << value
-          << " allow_overwrite: " << allow_overwrite;
-  const std::string norm_key = NormalizeKey(key);
-  absl::MutexLock l(&kv_mu_);
-  if (!allow_overwrite && kv_store_.find(norm_key) != kv_store_.end()) {
-    return MakeCoordinationError(absl::AlreadyExistsError(
-        absl::StrCat("Config key ", key, " already exists.")));
-  }
-  kv_store_.insert_or_assign(norm_key, value);
-  auto iter = get_cb_.find(norm_key);
-  if (iter != get_cb_.end()) {
-    for (const auto& cb : iter->second) {
-      cb(value);
-    }
-    get_cb_.erase(iter);
-  }
-  return absl::OkStatus();
+  VLOG(3) << "CoordinationService::InsertKeyValue(key=" << key
+          << ", value=" << value << ", allow_overwrite=" << allow_overwrite
+          << ")";
+  return store_.Put(NormalizeKey(key), value, allow_overwrite);
 }
 
 void CoordinationService::GetKeyValueAsync(absl::string_view key,
                                            StatusOrValueCallback done) {
-  VLOG(3) << "GetKeyValue(): " << key;
-  const std::string norm_key = NormalizeKey(key);
-  absl::MutexLock l(&kv_mu_);
-  const auto& iter = kv_store_.find(norm_key);
-  if (iter != kv_store_.end()) {
-    done(iter->second);
-    return;
-  }
-  auto cb_iter = get_cb_.find(norm_key);
-  if (cb_iter == get_cb_.end()) {
-    cb_iter =
-        get_cb_.emplace(norm_key, std::vector<StatusOrValueCallback>()).first;
-  }
-  cb_iter->second.emplace_back(std::move(done));
+  VLOG(3) << "CoordinationService::GetKeyValueAsync(key=" << key << ")";
+  store_.AddCallbackForKey(NormalizeKey(key), done);
 }
 
 absl::StatusOr<std::string> CoordinationService::TryGetKeyValue(
     absl::string_view key) {
-  VLOG(3) << "TryGetKeyValue(): " << key;
-  const std::string norm_key = NormalizeKey(key);
-  absl::MutexLock l(&kv_mu_);
-  const auto& iter = kv_store_.find(norm_key);
-  if (iter == kv_store_.end()) {
+  VLOG(3) << "CoordinationService::TryGetKeyValue(key=" << key << ")";
+  std::optional<std::string> s = store_.Get(NormalizeKey(key));
+  if (!s.has_value()) {
     return absl::NotFoundError(absl::StrCat("Config key ", key, " not found."));
   }
-  return iter->second;
+  return *std::move(s);
 }
 
 std::vector<KeyValueEntry> CoordinationService::GetKeyValueDir(
     absl::string_view directory_key) {
-  VLOG(3) << "TryGetKeyValueDir(): " << directory_key;
-  std::vector<KeyValueEntry> kvs_in_directory;
-  const std::string norm_key = NormalizeKey(directory_key);
-  const std::string dir = absl::StrCat(norm_key, "/");
-
-  absl::MutexLock l(&kv_mu_);
-  // Find first key in ordered map that has the directory prefix.
-  auto begin = kv_store_.lower_bound(dir);
-  auto it = begin;
-  // Iterate through key range that match directory prefix.
-  for (; it != kv_store_.end(); ++it) {
-    // Stop once the next key does not have the directory prefix. Since keys are
-    // ordered, none of the other keys would have a matching prefix.
-    if (std::mismatch(dir.begin(), dir.end(), it->first.begin(),
-                      it->first.end())
-            .first != dir.end()) {
-      break;
-    }
-    KeyValueEntry kv;
-    kv.set_key(it->first);
-    kv.set_value(it->second);
-    kvs_in_directory.push_back(kv);
-  }
-
-  return kvs_in_directory;
+  VLOG(3) << "CoordinationService::GetKeyValueDir(directory_key="
+          << directory_key << ")";
+  return store_.GetPrefix(NormalizeKey(directory_key) + "/");
 }
 
 absl::Status CoordinationService::DeleteKeyValue(absl::string_view key) {
-  VLOG(3) << "DeleteKeyValue(): " << key;
-  const std::string norm_key = NormalizeKey(key);
-  absl::MutexLock l(&kv_mu_);
-  // Delete directory: find key range that match directory prefix
-  const std::string dir = absl::StrCat(norm_key, "/");
-  auto begin = kv_store_.lower_bound(dir);
-  auto end = begin;
-  for (; end != kv_store_.end(); end++) {
-    if (std::mismatch(dir.begin(), dir.end(), end->first.begin(),
-                      end->first.end())
-            .first != dir.end())
-      break;
-  }
-  kv_store_.erase(begin, end);
-  auto iter = kv_store_.find(norm_key);
-  if (iter != kv_store_.end()) {
-    kv_store_.erase(iter);
-  }
+  VLOG(3) << "CoordinationService::DeleteKeyValue(key=" << key << ")";
+  const std::string normalized = NormalizeKey(key);
+  store_.Delete(normalized);
+  store_.DeletePrefix(normalized + "/");
   return absl::OkStatus();
 }
 
@@ -1601,10 +1571,18 @@ void CoordinationService::LeaveOngoingBarriers(const CoordinatedTask& task,
     for (const auto& barrier_id : task_state->GetOngoingBarriers()) {
       BarrierState* barrier = &barriers_[barrier_id];
       // Unregister task from barrier.
-      if (barrier->tasks_at_barrier[task]) {
-        barrier->tasks_at_barrier[task] = false;
-        ++barrier->num_pending_tasks;
+      if (absl::GetFlag(FLAGS_leave_barriers_on_recoverable_agent_restart)) {
+        if (barrier->tasks_at_barrier.contains(task)) {
+          // Remove task from barrier.
+          barrier->recoverable_tasks_restarted_during_barrier.insert(task);
+        }
+      } else {
+        if (barrier->tasks_at_barrier[task]) {
+          barrier->tasks_at_barrier[task] = false;
+          ++barrier->num_pending_tasks;
+        }
       }
+
       // Cancel any pending callbacks.
       auto it = barrier->done_callbacks.find(task);
       if (it != barrier->done_callbacks.end()) {

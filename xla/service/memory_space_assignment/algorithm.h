@@ -313,8 +313,8 @@ class MsaInstructionFingerprint {
 // method which is overridden in this class.
 class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
  public:
-  MsaAlgorithm(AllocationSequence* allocations, const Options& options,
-               const HloAliasAnalysis& alias_analysis,
+  MsaAlgorithm(HloModule* module, AllocationSequence* allocations,
+               const Options& options, const HloAliasAnalysis& alias_analysis,
                const HloLiveRange& hlo_live_range);
 
   // Allocates a buffer in preferred memory with whole program lifetime and
@@ -381,23 +381,6 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // make importing repacked offsets easier.
   struct RepackAllocationBlock : AllocationBlock {
     Allocation* allocation;
-  };
-
-  struct ColoredAllocationRequestProperties {
-    // Indicates if the AllocationRequest is for allocating the buffer output
-    // (given by request.start_time == definition_time of the buffer) and the
-    // output has an alternate memory color requirement.
-    bool require_start_colored_in_alternate_memmory = false;
-    // Indicates if the use has an alternate memory color requirement.
-    bool require_end_colored_in_alternate_memory = false;
-    // Indicates if the AllocationRequest is for allocating the buffer output
-    // (given by request.start_time == definition_time of the buffer) and the
-    // output has a default memory color requirement.
-    bool require_start_colored_in_default_memory = false;
-    // Indicates if the use has a default memory color requirement.
-    bool require_end_colored_in_default_memory = false;
-
-    ColoredAllocationRequestProperties() = default;
   };
 
   // This struct contains mandatory memory assignments at a given time. E.g., an
@@ -637,6 +620,9 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // Allocates buffers for instructions that need reserved scoped allocations in
   // the alternate memory space.
   void AllocateReservedScopedAllocations();
+  void AllocateScopedAllocation(HloInstruction* instruction,
+                                bool is_post_module, int64_t size,
+                                int64_t time);
 
   // Returns the AliasedOffset object associated with the allocation.
   AliasedOffset* GetAliasedOffset(const Allocation& allocation);
@@ -1122,12 +1108,22 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   void ReleaseReservedAllocationForAlternateMemoryColorings(
       ReservedAllocation* allocation);
 
-  // Returns the coloring properties associated with the given allocation
-  // request. For all the reserved allocations associated with the request,
-  // marks them as free and removes the reserved chunk from interval_tree_.
-  ColoredAllocationRequestProperties
-  UpdateReservedAllocationsAndGetColoringProperties(AllocationRequest& request);
+  // Frees the reserved allocations that are used to satisfy alternate memory
+  // coloring requirements, for the given allocation request.
+  void FreeAlternateMemoryColoringReservedAllocations(
+      AllocationRequest& request);
 
+  // Sets the alternate memory coloring requirements for the given allocation
+  // request.
+  void UpdateRequestWithAlternateMemoryColoringRequirements(
+      AllocationRequest& request);
+
+  // Sets the default memory coloring requirements for the given allocation
+  // request.
+  void UpdateRequestWithDefaultMemoryColoringRequirements(
+      AllocationRequest& request);
+
+  HloModule* module_ = nullptr;
   AllocationSequence* allocations_;
   const Options& options_;
   const HloAliasAnalysis& alias_analysis_;

@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ostream>
@@ -44,6 +43,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -373,6 +373,14 @@ bool Thunk::IsCollective() const {
 
 void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
   fn(this);
+}
+
+absl::StatusOr<ThunkProto> Thunk::ToProto() const {
+  ThunkProto proto;
+  proto.mutable_thunk_info()->set_execution_stream_id(
+      execution_stream_id_.value());
+  proto.mutable_thunk_info()->set_profile_annotation(profile_annotation_);
+  return proto;
 }
 
 }  // namespace gpu

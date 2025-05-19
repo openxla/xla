@@ -147,8 +147,8 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
@@ -270,8 +270,8 @@ xla_cc_test(
     deps = [
         ":hlo_slicer",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
@@ -380,7 +380,7 @@ xla_cc_test(
     srcs = ["hlo_module_loader_test.cc"],
     deps = [
         ":hlo_module_loader",
-        "//xla/tests:hlo_test_base",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest",
@@ -413,8 +413,8 @@ xla_cc_test(
     deps = [
         ":prepare_reference_module",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
-        "//xla/tests:hlo_test_base",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
     ],
@@ -588,6 +588,7 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/service:call_graph",
         "//xla/service:collective_ops_utils",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:tuple_util",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -605,14 +606,13 @@ xla_cc_test(
     srcs = ["hlo_control_flow_flattening_test.cc"],
     deps = [
         ":hlo_control_flow_flattening",
-        "//xla:literal_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/transforms:despecializer",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_verifier",
         "//xla/service/spmd:spmd_partitioner",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log",
@@ -842,6 +842,35 @@ xla_cc_binary(
     ],
 )
 
+xla_test(
+    name = "matmul_perf_table_gen_run",
+    timeout = "eternal",
+    srcs = ["matmul_perf_table_gen_run.cc"],
+    # TODO(b/372714955): Fix the memory leak.
+    args = if_google(["--heap_check="]),
+    backends = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
+    tags = [
+        "gpu",
+        "manual",
+        "notap",
+    ],
+    deps = [
+        ":matmul_perf_table_gen",
+        ":matmul_perf_table_gen_main_lib",
+        "//xla/service:hlo_runner",
+        "//xla/service:platform_util",
+        "//xla/service/gpu/model:hlo_op_profiles",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
 build_test(
     name = "compute_cost_build_test",
     targets = [
@@ -1002,7 +1031,7 @@ xla_test(
     ],
     data = [
         ":data/add.hlo",
-        "//xla/service:xla_aot_compile_test_gpu_target_config.prototxt",
+        "//xla/service:xla_aot_compile_test_gpu_target_config.txtpb",
         "//xla/service/gpu:gpu_compiler_test_autotune_db.textproto",
     ],
     deps = [
@@ -1049,7 +1078,7 @@ xla_test(
 xla_cc_binary(
     name = "print_indexing",
     srcs = ["print_indexing.cc"],
-    visibility = ["//xla/backends/gpu/codegen:__subpackages__"],
+    visibility = ["//visibility:private"],
     deps = [
         ":hlo_module_loader",
         "//xla/hlo/analysis:indexing_analysis",
@@ -1102,5 +1131,25 @@ xla_cc_binary(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_cc_binary(
+    name = "extract_dots_for_benchmark",
+    srcs = ["extract_dots_for_benchmark.cc"],
+    deps = [
+        ":hlo_module_loader",
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service/gpu/model:gpu_hlo_cost_analysis",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:protobuf",
     ],
 )

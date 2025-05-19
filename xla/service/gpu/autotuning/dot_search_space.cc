@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/shape.h"
@@ -96,6 +98,8 @@ TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
           primitive_util::BitWidth(dot->operand(0)->shape().element_type())),
       compute_bitwidth_(primitive_util::BitWidth(dot->shape().element_type())),
       // Figure out some basic limitations on tiling based on the above.
+      lhs_has_expensive_op_(HasExpensiveTransitiveParent(dot->operand(0))),
+      rhs_has_expensive_op_(HasExpensiveTransitiveParent(dot->operand(1))),
       desired_total_warps_(GetDesiredTotalWarps()),
       max_out_tile_(GetMaxOutputTile()),
       should_optimize_for_occupancy_(ShouldOptimizeForOccupancy()),
@@ -215,6 +219,22 @@ std::string TritonDotFusionSearchSpace::ToString() const {
       should_optimize_for_occupancy_, min_warps_per_cta_);
 }
 
+bool TritonDotFusionSearchSpace::HasExpensiveTransitiveParent(
+    const HloInstruction* operand) const {
+  return HloBfsAnyOf({operand}, [](const HloInstruction* instr) {
+    // XLA uses old absl that doesn't have absl:NoDestructor, so have to use
+    // new instead to prevent the destructor from being called.
+    static const auto kExpensiveOps = new absl::flat_hash_set<HloOpcode>{
+        HloOpcode::kAtan2,    HloOpcode::kCos,   HloOpcode::kExp,
+        HloOpcode::kExpm1,    HloOpcode::kLog,   HloOpcode::kLog1p,
+        HloOpcode::kLogistic, HloOpcode::kPower, HloOpcode::kRsqrt,
+        HloOpcode::kSin,      HloOpcode::kSqrt,  HloOpcode::kTan,
+        HloOpcode::kTanh,
+    };
+    return kExpensiveOps->contains(instr->opcode());
+  });
+}
+
 int TritonDotFusionSearchSpace::GetDesiredTotalWarps() const {
   constexpr int kSchedulersPerCore = 4;
   constexpr int kDesiredWarpsPerCore =
@@ -321,8 +341,9 @@ int TritonDotFusionSearchSpace::GetMaxWarpsPerCta(OutputTile tile) const {
   // also holds for wgmma: the warp-group level instruction is at least
   // 64x8, and split 4-ways across the 4 warps in the group).
   constexpr OutputTile kMmaSubTile = {16, 8};
-  const int max_warps = device_description_.threads_per_block_limit() /
-                        device_description_.threads_per_warp();
+  const int max_warps =
+      device_description_.threads_per_block_limit() /
+      std::max<int>(device_description_.threads_per_warp(), 1);
   const int lhs_warps = CeilOfRatio(tile.lhs_dim, kMmaSubTile.lhs_dim);
   const int rhs_warps = CeilOfRatio(tile.rhs_dim, kMmaSubTile.rhs_dim);
   return std::max(min_warps_per_cta_,
@@ -335,7 +356,7 @@ int TritonDotFusionSearchSpace::GetMinContractingTileSize() const {
   // https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-shape
   constexpr int kMmaContractingBitwidth = 128;
   /// TODO: b/395572776 - Triton currently requires at least 16 elements, but we
-  // shouldbe able to relax this and remove this limit here.
+  // should be able to relax this and remove this limit here.
   constexpr int kTritonLowerLimit = 16;
   const int min_contracting_tile_size =
       std::max(kMmaContractingBitwidth / operand_bitwidth_, kTritonLowerLimit);
@@ -387,16 +408,15 @@ int TritonDotFusionSearchSpace::GetContractingSizeLimitToFitSharedMemory(
 int TritonDotFusionSearchSpace::GetMaxContractingTileSize(
     OutputTile output_tile, int contracting_split) const {
   const int64_t available_size = contracting_size_ / contracting_split;
-  const int64_t size_limit =
-      GetContractingSizeLimitToFitSharedMemory(output_tile);
-  const int64_t max_size =
+  const int size_limit = GetContractingSizeLimitToFitSharedMemory(output_tile);
+  const int max_size =
       std::min(NextPowerOfTwo(available_size), PreviousPowerOfTwo(size_limit));
   VLOG(5) << "Computing max_contracting_tile_size for tiling BxMxN = "
           << contracting_split << "x" << output_tile.lhs_dim << "x"
           << output_tile.rhs_dim << ": limit based on problem is "
           << available_size << ", limit based on available shared memory is "
           << size_limit << ", max_contracting_tile_size = " << max_size;
-  return max_size;
+  return std::max(min_contracting_tile_size_, max_size);
 }
 
 int TritonDotFusionSearchSpace::GetMaxNumStages(OutputTile output_tile,
@@ -404,9 +424,9 @@ int TritonDotFusionSearchSpace::GetMaxNumStages(OutputTile output_tile,
                                                 int contracting_split) const {
   const int64_t available_stages = CeilOfRatio<int64_t>(
       contracting_size_, contracting_split * contracting_tile_size);
-  const int64_t stage_limit =
-      CeilOfRatio(GetContractingSizeLimitToFitSharedMemory(output_tile),
-                  contracting_tile_size);
+  const int64_t stage_limit = std::max(
+      1, CeilOfRatio(GetContractingSizeLimitToFitSharedMemory(output_tile),
+                     contracting_tile_size));
   // Number of stages is basically a replacement for oversubscription, so
   // the maximum number we want is also limited by kMaxWarpsPerScheduler.
   const int stages = std::min({available_stages, stage_limit,
@@ -470,8 +490,15 @@ void TritonDotFusionSearchSpace::AddOutputTilings(
       return !(a.second < b.first || b.second < a.first);
     };
     if (m < lhs_parallel_size_ && overlaps({m / 2, m * 2}, {min_n, max_n})) {
-      min_n = std::max(m / 2, min_n);
-      max_n = std::min(m * 2, max_n);
+      // If one of the sides has an expensive op fused in, then we should allow
+      // the tile of the other side to be larger, as that reduce the amount of
+      // recomputation of the expensive op.
+      if (!rhs_has_expensive_op_) {
+        min_n = std::max(m / 2, min_n);
+      }
+      if (!lhs_has_expensive_op_) {
+        max_n = std::min(m * 2, max_n);
+      }
       VLOG(5) << "Computing output tile: For m = " << m
               << ", restricting n-space to [" << min_n << "," << max_n
               << "] to have square-ish tiles.";
