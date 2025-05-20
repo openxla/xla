@@ -129,7 +129,12 @@ constexpr char kSliceMemcpyModule[] = R"(
       offset2 = s32[] get-tuple-element(p0), index=3
 
       slice = s32[1,1,8] fusion(input, offset1, offset2), kind=kLoop, calls=dynamic_slice,
-          backend_config={"fusion_backend_config":{"kind":"__dynamic_memcpy"}}
+          backend_config={"fusion_backend_config":{
+              "kind":"__dynamic_memcpy",
+              "dynamic_memcpy_config":{
+                  "depends_on_loop":true,
+                  "src_offset_bytes":["288","544","800","800","800","288"],
+                  "dst_offset_bytes":["0","0","0","0","0","0"]}}}
       next_ivar = s32[] fusion(ivar_copy), kind=kLoop, calls=add
       next_offset_2 = s32[] fusion(offset2), kind=kLoop, calls=times_two
 
@@ -220,7 +225,12 @@ constexpr char kDynamicUpdateSliceModule[] = R"(
 
       updated = s32[4,8,8] fusion(input-copy, acc_copy, ivar_copy), kind=kLoop,
           calls=dynamic_update_slice,
-          backend_config={"fusion_backend_config":{"kind":"__dynamic_memcpy"}}
+          backend_config={"fusion_backend_config":{
+              "kind":"__dynamic_memcpy",
+              "dynamic_memcpy_config":{
+                  "depends_on_loop":true,
+                  "src_offset_bytes":["0","0","0","0","0","0"],
+                  "dst_offset_bytes":["0","256","512","768","768","768"]}}}
       next_ivar = s32[] fusion(ivar_copy), kind=kLoop, calls=add
 
       next_acc = s32[1,1,8] fusion(acc_copy), kind=kLoop, calls=add_slices
@@ -296,7 +306,12 @@ constexpr char kDynamicUpdateSliceWithBitcastModule[] = R"(
 
       updated_bc = s32[8,8] fusion(input-copy, update, ivar-copy), kind=kLoop,
           calls=dynamic_update_slice,
-          backend_config={"fusion_backend_config":{"kind":"__dynamic_memcpy"}}
+          backend_config={"fusion_backend_config":{
+              "kind":"__dynamic_memcpy",
+              "dynamic_memcpy_config":{
+                  "depends_on_loop":true,
+                  "src_offset_bytes":["0","0","0","0","0","0"],
+                  "dst_offset_bytes":["0","4","8","12","16","20"]}}}
       next_ivar = s32[] fusion(ivar-copy), kind=kLoop, calls=add
 
       ROOT result = (s32[], s32[8,8], s32[1,4])
