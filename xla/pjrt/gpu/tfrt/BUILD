@@ -108,10 +108,6 @@ cc_library(
     ] + if_cuda([
         # keep sorted
         "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocm_config",
     ]),
 )
 
