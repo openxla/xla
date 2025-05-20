@@ -105,7 +105,8 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
                                se::Stream& stream, Communicator* comm,
                                uint64_t receive_pointer_map[],
                                const GpuCliqueKey& clique_key, RankId rank,
-                               se::Event* event);
+                               se::Event* event,
+                               std::vector<se::Event*>& events);
 
 }  // namespace gpu
 }  // namespace xla

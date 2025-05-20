@@ -111,27 +111,6 @@ struct CommunicatorHandle {
   GpuCliqueKey clique_key;  // clique key
 };
 
-struct LightweightRendezvousValue {
-  se::Event* event;
-};
-
-// Executes the rendezvous before the kernel start.
-// Inserts CUDA events into the stream to ensure that all devices have reached
-// the start event before the kernel starts.
-absl::StatusOr<std::shared_ptr<std::vector<LightweightRendezvousValue>>>
-LightweightRendezvousBeforeKernelStart(absl::string_view name,
-                                       const GpuCliqueKey& clique_key,
-                                       RankId rank, int64_t num_ranks,
-                                       se::Stream& stream, se::Event* event);
-
-// Executes the rendezvous after the kernel finish. Waits for all devices to
-// reach the end event.
-absl::Status LightweightRendezvousAfterKernelFinish(
-    absl::string_view name, const GpuCliqueKey& clique_key, RankId rank,
-    int64_t num_ranks, se::Stream& stream, se::Event* event,
-    const std::shared_ptr<std::vector<LightweightRendezvousValue>>&
-        rendezvous_values);
-
 //===----------------------------------------------------------------------===//
 // CollectiveThunk
 //===----------------------------------------------------------------------===//
