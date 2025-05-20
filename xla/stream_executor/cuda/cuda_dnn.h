@@ -27,16 +27,13 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
