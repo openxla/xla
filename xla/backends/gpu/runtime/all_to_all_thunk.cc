@@ -191,10 +191,13 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
               }));
       int peer_buffer_idx =
           (rank.value().value() - peer + num_ranks) % num_ranks;
-      reinterpret_cast<uint64_t*>(
-          receive_pointer_maps_[executor]
-              ->opaque())[config_.has_split_dimension ? peer_buffer_idx
-                                                      : peer] =
+      uint64_t* recv_ptr;
+      {
+        absl::MutexLock lock(&pointer_maps_mutex_);
+        recv_ptr = reinterpret_cast<uint64_t*>(
+            receive_pointer_maps_[executor]->opaque());
+      }
+      recv_ptr[config_.has_split_dimension ? peer_buffer_idx : peer] =
           (*rendezvous_results)[peer_buffer_idx].buffer;
     }
   }
@@ -398,10 +401,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
           << device_ordinal;
   TF_RETURN_IF_ERROR(
       MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
-
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
-  TF_ASSIGN_OR_RETURN(GpuCommunicator * gpu_comm, collectives->TryCast(comm));
-
   TF_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key, rank,
                                   num_ranks, stream, event, events));
 
