@@ -3429,6 +3429,7 @@ xla_test(
         "//xla/service:stream_pool",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tests:xla_test_backend_predicates",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_benchmark",
