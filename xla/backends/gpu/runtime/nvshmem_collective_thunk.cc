@@ -138,6 +138,7 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
   se::StreamExecutor* executor = params.stream->parent();
   int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
+
   if (IsAsync()) {
     // Launch collective operation on an async stream.
     se::Stream& async_stream =
@@ -157,40 +158,6 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
     TF_RETURN_IF_ERROR(RunNvshmemCollective(params, *params.stream));
   }
 
-  // After a first execution of this instance of collective operation do a
-  // rendezvous with other participants to make sure that all of them allocated
-  // required state (internal to nvshmem) and ready to continue. Going too far
-  // ahead on one rank leads to deadlocks in nvshmem.
-  if (NeedFirstCallRendzevous() && !first_call_rendezvous_flag_.IsCompleted()) {
-    TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
-                        GetGpuCollectives(params));
-    TF_ASSIGN_OR_RETURN(
-        GpuCliqueKey clique_key,
-        GetGpuCliqueKey(collectives, *params.collective_params,
-                        config().replica_groups, config().group_mode,
-                        stream_kind, /*use_nccl= */ false));
-    size_t num_local_participants = clique_key.num_local_participants();
-
-    auto global_device_id = params.collective_params->global_device_id;
-    RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
-    VLOG(1) << "Do a rendezvous after a first call to "
-            << Thunk::KindToString(kind())
-            << "; run_id=" << params.collective_params->run_id.ToInt()
-            << "; op_id=" << config().op_id
-            << "; num_local_participants=" << num_local_participants
-            << "; rank=" << rank.value()
-            << "; clique_key=" << clique_key.ToString();
-
-    auto rendezvous_key = FirstCallRendezvousKey{std::move(clique_key)};
-    auto rendezvous_name = absl::StrFormat(
-        "first call to collective operation %d; run_id=%d", config().op_id,
-        params.collective_params->run_id.ToInt());
-
-    TF_RETURN_IF_ERROR(Rendezvous(first_call_rendezvous_flag_, rendezvous_name,
-                                  rendezvous_key, num_local_participants,
-                                  /*warn_stuck_timeout=*/absl::Seconds(20),
-                                  /*terminate_timeout=*/absl::Seconds(40)));
-  }
   if (barrier_called_) {
     barrier_called_ = false;
   }

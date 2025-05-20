@@ -58,9 +58,6 @@ namespace gpu {
 // NvshmemCollectiveThunk
 //===----------------------------------------------------------------------===//
 
-// Forward declare.
-class NvshmemCollectiveDoneThunk;
-
 // Thunk base class for NVSHMEM collective operations.
 // TODO tixxx refactor Collective and NvshmemCollective thunks
 // to have a single parent class for all gpu comm backends.
@@ -91,21 +88,9 @@ class NvshmemCollectiveThunk : public Thunk {
     return AsyncStreamKind::kCollective;
   }
 
-  // A collective thunk is normally an independent operation in a sense that
-  // different instances of the same collective thunk communicate each other.
-  // The only exception are SendThunk and RecvThunk. Assume two devices are
-  // executing a program contains the following instructions, the Recv from
-  // device 1 will release the Send from device 0. Adding first call
-  // rendezvous on the SendThunk would cause a runtime deadlock.
-  //  Send(src_target={0,1})
-  //  Recv(src_target={0,1})
-  virtual bool NeedFirstCallRendzevous() const { return true; }
-
  private:
   bool IsAsync() const { return async_events_ != nullptr; }
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
-
-  RendezvousFlag first_call_rendezvous_flag_;
 
   // The nvshmem barrier needs to be called by the very first nvshmem collective
   // of each iteration of running an executable to make sure the buffers are
