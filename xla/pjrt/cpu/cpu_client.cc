@@ -71,12 +71,11 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/pjrt/compile_options.pb.h"
-#include "xla/pjrt/cpu/abstract_tfrt_cpu_buffer.h"
+#include "xla/pjrt/cpu/abstract_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_async_execution_tracker.h"
 #include "xla/pjrt/cpu/cpu_device.h"
 #include "xla/pjrt/cpu/cpu_event.h"
-#include "xla/pjrt/cpu/tfrt_raw_buffer.h"
+#include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/host_callback.h"
@@ -94,6 +93,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/cpu_execute_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/transpose.h"
@@ -144,7 +144,7 @@ namespace {
 // Converts the shape used to represent the host buffer to the shape used to
 // represent the on-device buffer.
 Shape HostShapeToOnDeviceShape(const Shape& shape) {
-  // AbstractTfrtCpuBuffer packs sub-byte non-pred types. The on-device shape
+  // AbstractCpuBuffer packs sub-byte non-pred types. The on-device shape
   // should reflect this so that our memory allocation and overflow checks are
   // correct.
   if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
@@ -164,25 +164,11 @@ absl::StatusOr<std::unique_ptr<TfrtCpuBuffer>> AllocateDestinationBuffer(
     TfrtCpuDevice* device, TfrtCpuClient* client) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-      AbstractTfrtCpuBuffer::AllocateTrackedDeviceBuffer(
+      AbstractCpuBuffer::AllocateTrackedDeviceBuffer(
           on_device_shape, std::move(definition_events)));
   return std::make_unique<TfrtCpuBuffer>(
       on_device_shape, std::move(tracked_device_buffer), client, device,
       *device->default_memory_space());
-}
-
-absl::StatusOr<std::unique_ptr<TfrtCpuBuffer>> AllocateDestinationBufferAndAvs(
-    const Shape& on_device_shape,
-    absl::InlinedVector<tsl::RCReference<tsl::AsyncValue>, 4>* avs,
-    TfrtCpuDevice* device, TfrtCpuClient* client) {
-  // Add a placeholder definition event for each leaf buffer when creating the
-  // buffer.
-  absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> definition_events;
-  AbstractTfrtCpuBuffer::AllocateAvsAndEvents(on_device_shape, avs,
-                                              &definition_events);
-  return AllocateDestinationBuffer(
-      on_device_shape, std::move(definition_events),
-      tensorflow::down_cast<TfrtCpuDevice*>(device), client);
 }
 
 void EnqueueWork(tsl::thread::ThreadPool* pool,
@@ -248,9 +234,9 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetTfrtCpuClient(
     devices.push_back(std::move(device));
   }
 
-  return std::unique_ptr<PjRtClient>(std::make_unique<TfrtCpuClient>(
+  return std::unique_ptr<PjRtClient>(new TfrtCpuClient(
       options.process_id, std::move(devices), std::move(options.collectives),
-      num_threads, options.asynchronous,
+      num_threads, options.asynchronous, options.legacy_memory_space_behavior,
       std::move(options.customize_hlo_module_config)));
 }
 
@@ -285,7 +271,7 @@ static std::vector<CpuTopology::CpuDevice> GetCpuDevices(
 TfrtCpuClient::TfrtCpuClient(
     int process_index, std::vector<std::unique_ptr<TfrtCpuDevice>> devices,
     std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
-    bool asynchronous,
+    bool asynchronous, bool legacy_memory_space_behavior,
     std::function<void(HloModuleConfig&)> customize_hlo_module_config)
     : process_index_(process_index),
       owned_devices_(std::move(devices)),
@@ -328,17 +314,38 @@ TfrtCpuClient::TfrtCpuClient(
   for (int idx = 0; idx < addressable_devices_.size(); ++idx) {
     auto* const device = addressable_devices_[idx];
     CHECK(device != nullptr) << idx;
+    auto* cpu_device = tensorflow::down_cast<TfrtCpuDevice*>(device);
 
-    // Use the device id to construct a globally unique memory space id. We
-    // do not promise that memory space ids and device ids are the same.
+    // Use the device id to construct a globally unique memory space id.
     const int id = device->id();
-    auto memory_space = std::make_unique<UnpinnedHostMemorySpace>(id, device);
-    tensorflow::down_cast<TfrtCpuDevice*>(device)->AttachMemorySpace(
-        memory_space.get());
-    memory_spaces_.push_back(memory_space.get());
-    owned_memory_spaces_.push_back(std::move(memory_space));
-  }
 
+    if (legacy_memory_space_behavior) {
+      auto memory_space = std::make_unique<UnpinnedHostMemorySpace>(id, device);
+      cpu_device->AttachMemorySpace(memory_space.get());
+      memory_spaces_.push_back(memory_space.get());
+      owned_memory_spaces_.push_back(std::move(memory_space));
+    } else {
+      // The first attached memory space is returned as the default by
+      // TfrtCpuDevice, so attach the device memory space first.
+      auto cpu_device_memory_space =
+          std::make_unique<CpuDeviceMemorySpace>(id * 3 + 0, device);
+      cpu_device->AttachMemorySpace(cpu_device_memory_space.get());
+      memory_spaces_.push_back(cpu_device_memory_space.get());
+      owned_memory_spaces_.push_back(std::move(cpu_device_memory_space));
+
+      auto unpinned_memory_space =
+          std::make_unique<UnpinnedHostMemorySpace>(id * 3 + 1, device);
+      cpu_device->AttachMemorySpace(unpinned_memory_space.get());
+      memory_spaces_.push_back(unpinned_memory_space.get());
+      owned_memory_spaces_.push_back(std::move(unpinned_memory_space));
+
+      auto pinned_memory_space =
+          std::make_unique<PinnedHostMemorySpace>(id * 3 + 2, device);
+      cpu_device->AttachMemorySpace(pinned_memory_space.get());
+      memory_spaces_.push_back(pinned_memory_space.get());
+      owned_memory_spaces_.push_back(std::move(pinned_memory_space));
+    }
+  }
   VLOG(1) << "TfrtCpuClient created.";
 }
 
@@ -902,34 +909,13 @@ static bool IsAlignedData(void* ptr) {
           (cpu_function_runtime::MinAlign() - 1)) == 0;
 }
 
-absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-TfrtCpuClient::CreateViewOfDeviceBuffer(
-    void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
-    std::function<void()> on_delete_callback,
-    std::optional<std::intptr_t> stream) {
-  if (stream) {
-    return Unimplemented(
-        "TfrtCpuClient::CreateViewOfDeviceBuffer does not support `stream` "
-        "argument.");
-  }
-  if (!IsAlignedData(device_ptr)) {
-    return InvalidArgument(
-        "Can't create a view of buffer with unaligned data, ptr: %#x is not "
-        "aligned to %d bytes. ",
-        reinterpret_cast<std::uintptr_t>(device_ptr),
-        cpu_function_runtime::MinAlign());
-  }
-  size_t byte_size = ShapeUtil::ByteSizeOf(shape);
-  auto non_owning_buffer = CpuDeviceMemory::CreateForeignMemory(
-      device_ptr, byte_size, std::move(on_delete_callback));
-  auto tracked_device_buffer = std::make_unique<TrackedCpuDeviceBuffer>(
-      /*owns_buffers=*/false, std::move(non_owning_buffer),
-      /*definition_event=*/tsl::MakeAvailableAsyncValueRef<CpuEvent>());
-  CHECK_EQ(memory_space->devices().size(), 1);
-  auto* device = memory_space->devices().front();
-  return std::unique_ptr<PjRtBuffer>(std::make_unique<TfrtCpuBuffer>(
-      shape, std::move(tracked_device_buffer), this,
-      tensorflow::down_cast<TfrtCpuDevice*>(device), memory_space));
+absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
+TfrtCpuClient::ImportForeignMemory(
+    void* device_ptr, absl::AnyInvocable<void() &&> on_delete_callback,
+    size_t on_device_bytes_count, PjRtMemorySpace* memory_space) {
+  return CpuRawBuffer::ImportForeignMemory(device_ptr,
+                                           std::move(on_delete_callback),
+                                           on_device_bytes_count, memory_space);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
@@ -954,20 +940,6 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
       *device->default_memory_space());
 }
 
-absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-TfrtCpuClient::CreateUninitializedBuffer(const Shape& shape,
-                                         PjRtMemorySpace* memory_space) {
-  tsl::profiler::TraceMe traceme("TfrtCpuClient::CreateUninitializedBuffer");
-  VLOG(1) << "TfrtCpuClient::CreateUninitializedBuffer: shape: "
-          << shape.DebugString()
-          << " memory_space: " << memory_space->DebugString();
-  CHECK_EQ(memory_space->devices().size(), 1);
-  PjRtDevice* device = memory_space->devices().front();
-  return AllocateDestinationBuffer(
-      HostShapeToOnDeviceShape(shape), /*definition_events=*/{},
-      tensorflow::down_cast<TfrtCpuDevice*>(device), this);
-}
-
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 TfrtCpuClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const PjRtClient::ShapeSpec> shape_specs,
@@ -977,39 +949,33 @@ TfrtCpuClient::CreateBuffersForAsyncHostToDevice(
       shape_specs, device_layouts, memory_space);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::BufferFromHostBuffer(
+bool TfrtCpuClient::BufferFromHostBufferSupportsZeroCopy(
+    const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+    std::optional<absl::Span<int64_t const>> byte_strides, const Shape& shape,
+    PjRtMemorySpace* memory_space, const Layout* device_layout) const {
+  return AbstractCpuBuffer::BufferFromHostBufferSupportsZeroCopy(
+      data, type, dims, byte_strides, shape);
+}
+
+absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+TfrtCpuClient::LinearizeHostBufferInto(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-    PjRtMemorySpace* memory_space, const Layout* device_layout) {
-  CHECK_EQ(memory_space->devices().size(), 1);
-  PjRtDevice* device = memory_space->devices().front();
-  tsl::profiler::TraceMe traceme("TfrtCpuClient::BufferFromHostBuffer");
-  Shape shape = ShapeUtil::MakeShape(type, dims);
-  VLOG(2) << "TfrtCpuClient::BufferFromHostBuffer: shape: " << shape.ToString()
-          << " device: " << device->DebugString();
-
-  if (!device->IsAddressable()) {
-    return InvalidArgument("Cannot copy array to non-addressable device %s",
-                           device->DebugString());
-  }
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-      AbstractTfrtCpuBuffer::BufferFromHostBufferHelper(
+    const xla::Shape& device_shape,
+    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+  return tensorflow::down_cast<CpuRawBuffer*>(raw_buffer.get())
+      ->CopyFromHostBuffer(
           data, type, dims, byte_strides, host_buffer_semantics,
-          std::move(on_done_with_host_buffer), shape, async_work_runner(),
-          &transpose_mu_, &transpose_cache_));
-
-  return std::unique_ptr<PjRtBuffer>(std::make_unique<TfrtCpuBuffer>(
-      shape, std::move(tracked_device_buffer), this,
-      tensorflow::down_cast<TfrtCpuDevice*>(device), memory_space));
+          std::move(on_done_with_host_buffer), device_shape,
+          async_work_runner(), &transpose_mu_, &transpose_cache_);
 }
 
 absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> TfrtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Layout& layout,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
-  return tensorflow::down_cast<TfrtCpuRawBuffer*>(raw_buffer.get())
+  return tensorflow::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromLiteral(literal, layout, async_work_runner());
 }
 
@@ -1018,9 +984,9 @@ absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
 TfrtCpuClient::CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                                         absl::string_view debug_info) {
   auto definition_event_promise = tsl::MakeIndirectAsyncValue();
-  auto definition_event = tsl::MakeRef<TfrtCpuTrackedDeviceEvent>(
+  auto definition_event = tsl::MakeRef<CpuTrackedDeviceEvent>(
       tsl::AsyncValueRef<CpuEvent>(definition_event_promise));
-  return std::make_pair(tsl::MakeRef<TfrtCpuTrackedDeviceEventPromise>(
+  return std::make_pair(tsl::MakeRef<CpuTrackedDeviceEventPromise>(
                             std::move(definition_event_promise)),
                         std::move(definition_event));
 }
@@ -1029,17 +995,18 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::DefineBuffer(
     const Shape& on_device_shape,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-        definition_device_events) {
+        definition_device_events,
+    bool raw_buffer_is_mutable) {
   absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> definition_events;
   for (auto& ev : definition_device_events) {
     definition_events.push_back(
-        tensorflow::down_cast<TfrtCpuTrackedDeviceEvent*>(ev.get())->event());
+        tensorflow::down_cast<CpuTrackedDeviceEvent*>(ev.get())->event());
   }
   return std::unique_ptr<PjRtBuffer>(std::make_unique<TfrtCpuBuffer>(
       on_device_shape,
       std::make_unique<TrackedCpuDeviceBuffer>(
-          /*owns_buffers=*/true,
-          tensorflow::down_cast<TfrtCpuRawBuffer*>(raw_buffer.get())->buffer(),
+          /*owns_buffers=*/raw_buffer_is_mutable,
+          tensorflow::down_cast<CpuRawBuffer*>(raw_buffer.get())->buffer(),
           std::move(definition_events)),
       this,
       tensorflow::down_cast<TfrtCpuDevice*>(
@@ -1053,7 +1020,7 @@ TfrtCpuClient::AllocateRawBuffer(PjRtMemorySpace* memory_space,
                                  tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr) << "allocate_after is not supported for "
                                       "TfrtCpuClient.";
-  return xla::TfrtCpuRawBuffer::Allocate(memory_space, on_device_bytes_count);
+  return xla::CpuRawBuffer::Allocate(memory_space, on_device_bytes_count);
 }
 
 absl::StatusOr<int64_t> TfrtCpuClient::GetOnDeviceBytesCount(
@@ -1061,42 +1028,18 @@ absl::StatusOr<int64_t> TfrtCpuClient::GetOnDeviceBytesCount(
   return xla::ShapeUtil::ByteSizeOf(shape);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-TfrtCpuClient::BufferFromHostLiteral(const LiteralSlice& literal,
-                                     PjRtMemorySpace* memory_space,
-                                     const Layout* device_layout) {
-  if (device_layout) {
-    return absl::UnimplementedError(absl::StrCat(
-        "BufferFromHostLiteral with device_layout is not implemented on "
-        "platform: ",
-        platform_name()));
-  }
-  CHECK_EQ(memory_space->devices().size(), 1);
-  PjRtDevice* device = memory_space->devices().front();
-
-  tsl::profiler::TraceMe traceme("TfrtCpuClient::BufferFromHostLiteral");
-  VLOG(1) << "TfrtCpuClient::BufferFromHostLiteral: shape: "
-          << literal.shape().DebugString()
-          << " device: " << device->DebugString();
-  const Shape& shape = literal.shape();
-
-  absl::InlinedVector<tsl::RCReference<tsl::AsyncValue>, 4> avs;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<TfrtCpuBuffer> output_buffer,
-                      AllocateDestinationBufferAndAvs(
-                          HostShapeToOnDeviceShape(shape), &avs,
-                          tensorflow::down_cast<TfrtCpuDevice*>(device), this));
-
-  output_buffer->CopyFromLiteral(literal, shape, &avs, async_work_runner());
-
-  return std::unique_ptr<PjRtBuffer>(std::move(output_buffer));
+absl::StatusOr<xla::Shape> TfrtCpuClient::MakeDefaultShapeForMemorySpace(
+    PjRtMemorySpace* memory_space, xla::Shape shape,
+    const xla::Layout* layout) const {
+  return MakeDefaultCpuBufferShape(std::move(shape), layout);
 }
 
 TfrtCpuBuffer::TfrtCpuBuffer(
     Shape on_device_shape,
     std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
     TfrtCpuClient* client, TfrtCpuDevice* device, PjRtMemorySpace* memory_space)
-    : AbstractTfrtCpuBuffer(std::move(on_device_shape),
-                            std::move(tracked_device_buffer)),
+    : AbstractCpuBuffer(std::move(on_device_shape),
+                        std::move(tracked_device_buffer)),
       client_(client),
       device_(device),
       memory_space_(memory_space) {}

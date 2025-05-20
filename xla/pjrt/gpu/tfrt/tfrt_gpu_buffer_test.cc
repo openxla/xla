@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_client.h"
-#include "xla/pjrt/gpu/tfrt/tracked_tfrt_gpu_device_buffer.h"
+#include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/shape.h"
@@ -55,13 +55,13 @@ TEST(TfrtGpuBufferTest, CreateBuffer) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref),
       tsl::MakeAvailableAsyncValueRef<GpuEvent>());
   auto memory_space = device->default_memory_space().value();
@@ -86,14 +86,14 @@ TEST(TfrtGpuBufferTest, AcquireExternalReference) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref), definition_event);
   auto memory_space = device->default_memory_space().value();
   auto buffer = std::make_unique<TfrtGpuBuffer>(
@@ -132,16 +132,16 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   void* device_memory_opaque = device_buffer.buffer().opaque();
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref), definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
@@ -180,16 +180,16 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   void* device_memory_opaque = device_buffer.buffer().opaque();
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref), definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
@@ -249,15 +249,15 @@ TEST(TfrtGpuBufferTest, Delete) {
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      MaybeOwningGpuMemory::AllocateShared(device->allocator(),
-                                           device->local_device_id().value(),
-                                           size_in_bytes));
+      GpuDeviceMemory::Allocate(device->allocator(),
+                                device->local_device_id().value(),
+                                size_in_bytes));
   auto buffer_async_value_ref =
-      tsl::MakeAvailableAsyncValueRef<MaybeOwningGpuMemory>(
+      tsl::MakeAvailableAsyncValueRef<GpuDeviceMemory>(
           std::move(device_buffer));
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
-  auto tracked_device_buffer = std::make_unique<TrackedTfrtGpuDeviceBuffer>(
+  auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref), definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();

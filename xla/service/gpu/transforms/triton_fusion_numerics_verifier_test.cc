@@ -135,6 +135,90 @@ TEST_P(TritonFusionNumericsVerifierTest, VerifyExactSoftmaxFusionNumerics) {
   TF_EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
+TEST_P(TritonFusionNumericsVerifierTest, VerifyNestedGemmNumerics) {
+  constexpr absl::string_view kNestedGemmFusionHloText = R"(
+flhs {
+  ROOT flhs.p0 = $0[16,16] parameter(0)
+}
+
+frhs {
+  frhs.p0 = $0[16,16] parameter(0)
+  ROOT frhs.root = $0[16,16] abs(frhs.p0)
+}
+
+fdot {
+  fdot.p0 = $0[16,16] parameter(0)
+  fdot.p1 = $0[16,16] parameter(1)
+  fdot.lhs = $0[16,16] fusion(fdot.p0), kind=kCustom, calls=flhs, backend_config={
+    "fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "16"]}]
+      }
+    }
+  }
+  fdot.rhs = $0[16,16]{1,0} fusion(fdot.p1), kind=kCustom, calls=frhs, backend_config={
+    "fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "16"]}]
+      }
+    }
+  }
+  ROOT fdot.root = $0[16,16]{1,0} dot(fdot.lhs, fdot.rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    algorithm=dot_$0_$0_$0
+}
+
+ENTRY entry {
+  entry.p0 = $0[16,16] parameter(0)
+  entry.p1 = $0[16,16] parameter(1)
+  ROOT fusion = $0[16,16] fusion(entry.p0, entry.p1),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16","16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
+  auto module = Module(kNestedGemmFusionHloText,
+                       primitive_util::LowercasePrimitiveTypeName(GetParam()));
+
+  EXPECT_NE(TritonFusion(*module), nullptr);
+  auto verifier = TritonFusionNumericsVerifier(CreateAutotuneConfig());
+  TF_EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
+}
+
+TEST_P(TritonFusionNumericsVerifierTest, VerifyMultiOutputFusionNumerics) {
+  constexpr absl::string_view kMultiOutputFusionHloText = R"(
+HloModule m
+fusion_computation {
+  param_0 = $0[127,125]{1,0} parameter(0)
+  exponential = $0[127,125]{1,0} exponential(param_0)
+  negate = $0[127,125]{1,0} negate(exponential)
+  ROOT res = ($0[127,125]{1,0}, $0[127,125]{1,0}) tuple(exponential, negate)
+}
+
+ENTRY main{
+  p = $0[127,125] parameter(0)
+  ROOT result = ($0[127,125], $0[127,125]) fusion(p), kind=kCustom,
+    calls=fusion_computation, backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["1","125"]}, {"sizes":["1","125"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
+})";
+  auto module = Module(kMultiOutputFusionHloText,
+                       primitive_util::LowercasePrimitiveTypeName(GetParam()));
+
+  EXPECT_NE(TritonFusion(*module), nullptr);
+  auto verifier = TritonFusionNumericsVerifier(CreateAutotuneConfig());
+  TF_EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
+}
+
 TEST_F(TritonFusionNumericsVerifierTest, CheckMismatch) {
   // This test intentionally compares two different Triton modules to each
   // other. This is to test that the verifier functions correctly catch and
@@ -163,12 +247,12 @@ TEST_F(TritonFusionNumericsVerifierTest, CheckMismatch) {
 
   auto f64_result = triton_fusion_numerics_pass_internal::CompileAndRunFusion(
       compile_util, *fusion_f64, autotune_config, debug_options,
-      /*clear_backend_config=*/false);
+      /*disable_triton=*/false);
   TF_EXPECT_OK(f64_result);
 
   auto f32_result = triton_fusion_numerics_pass_internal::CompileAndRunFusion(
       compile_util, *fusion_f32, autotune_config, debug_options,
-      /*clear_backend_config=*/false);
+      /*disable_triton=*/false);
   TF_EXPECT_OK(f32_result);
 
   auto stream = autotune_config.GetStream();
@@ -177,8 +261,7 @@ TEST_F(TritonFusionNumericsVerifierTest, CheckMismatch) {
   // Intentionally compare the fusions from the different modules, triggering a
   // mismatch.
   auto cmp = triton_fusion_numerics_pass_internal::CompareBuffers(
-      *f64_result, *f32_result, fusion_f64->shape(),
-      fusion_f64->GetModule()->config(), *stream);
+      *f64_result, *f32_result, fusion_f64->shape(), debug_options, *stream);
 
   EXPECT_FALSE(cmp.ok());
 }

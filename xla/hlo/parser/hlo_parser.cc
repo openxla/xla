@@ -558,9 +558,7 @@ class HloParserImpl : public HloParser {
   bool ParseLayoutIntAttribute(int64_t* attr_value,
                                absl::string_view attr_description);
   bool ParseDimLevelTypes(
-      absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types,
-      absl::InlinedVector<bool, InlineRank()>* dim_unique,
-      absl::InlinedVector<bool, InlineRank()>* dim_ordered);
+      absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types);
   bool ParseTiles(std::vector<Tile>* tiles);
   bool ParseSplitConfigs(std::vector<SplitConfig>& split_configs);
   bool ParsePhysicalShape(Shape* physical_shape);
@@ -740,15 +738,28 @@ absl::Status HloParserImpl::Run(HloModule* module) {
           "Syntax error when trying to parse the text as a HloModule:\n%s",
           GetError());
     }
-    return absl::OkStatus();
+  } else {
+    // This means that the text is a single HLO instruction.
+    if (!ParseSingleInstruction(module)) {
+      return InvalidArgument(
+          "Syntax error when trying to parse the text as a single "
+          "HloInstruction:\n%s",
+          GetError());
+    }
   }
-  // This means that the text is a single HLO instruction.
-  if (!ParseSingleInstruction(module)) {
-    return InvalidArgument(
-        "Syntax error when trying to parse the text as a single "
-        "HloInstruction:\n%s",
-        GetError());
+
+  // There should be a 1:1 correspondence between async-start ops and
+  // async wrapped computations. Verify that each async computation has exactly
+  // one caller.
+  for (HloComputation* computation : module->computations()) {
+    if (computation->IsAsyncComputation() &&
+        !computation->GetUniqueCaller(HloOpcode::kAsyncStart)) {
+      return InvalidArgument(
+          "Computation %s is called by more than one async op.",
+          computation->name());
+    }
   }
+
   return absl::OkStatus();
 }
 
@@ -1948,7 +1959,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       auto is_async_shape_correct = [](const Shape& shape) {
-        return shape.IsTuple() && shape.tuple_shapes_size() >= 2 &&
+        return shape.IsTuple() && shape.tuple_shapes().size() >= 2 &&
                shape.tuple_shapes(0).IsTuple();
       };
       // Verify operand/resulting shapes
@@ -2066,16 +2077,6 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
                         (*async_computation)->name()));
           return nullptr;
         }
-      }
-      // There should be a 1:1 correspondence between async-start ops and
-      // async wrapped computations. At this stage, the computation should
-      // not be referenced by any other async op.
-      if (opcode == HloOpcode::kAsyncStart &&
-          (*async_computation)->IsAsyncComputation()) {
-        TokenError(StrFormat(
-            "Computation %s is already referenced by another async op",
-            (*async_computation)->name()));
-        return nullptr;
       }
       if (opcode == HloOpcode::kAsyncStart) {
         // async_execution_thread only needs to be populated for async-start,
@@ -2198,9 +2199,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     }
     case HloOpcode::kTuple: {
       if ((!preset_operands &&
-           !(shape.has_value()
-                 ? ParseOperands(&operands, builder, shape->tuple_shapes_size())
-                 : ParseOperands(&operands, builder))) ||
+           !(shape.has_value() ? ParseOperands(&operands, builder,
+                                               shape->tuple_shapes().size())
+                               : ParseOperands(&operands, builder))) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
         return nullptr;
       }
@@ -5949,9 +5950,7 @@ bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
 //   ::= 'C'
 //   ::= 'S'
 bool HloParserImpl::ParseDimLevelTypes(
-    absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types,
-    absl::InlinedVector<bool, InlineRank()>* dim_unique,
-    absl::InlinedVector<bool, InlineRank()>* dim_ordered) {
+    absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types) {
   auto parse_and_add_item = [&]() {
     if (lexer_.GetKind() == TokKind::kIdent) {
       bool dim_level_type_valid = false;
@@ -5974,25 +5973,13 @@ bool HloParserImpl::ParseDimLevelTypes(
         dim_level_type_valid = true;
       }
       if (dim_level_type_valid) {
-        bool new_dim_unique = true;
         if (lexer_.GetKind() == TokKind::kPlus) {
-          new_dim_unique = false;
           lexer_.Lex();
         }
-        bool new_dim_ordered = true;
         if (lexer_.GetKind() == TokKind::kTilde) {
-          new_dim_ordered = false;
           lexer_.Lex();
-        }
-        if (!LayoutUtil::ValidateDimLevel(dim_level_type, new_dim_unique,
-                                          new_dim_ordered)) {
-          return Error(
-              lexer_.GetLoc(),
-              "invalid DimLevelType/unique/ordered combination in shape");
         }
         dim_level_types->push_back(dim_level_type);
-        dim_unique->push_back(new_dim_unique);
-        dim_ordered->push_back(new_dim_ordered);
         return true;
       }
     }
@@ -6149,8 +6136,6 @@ bool HloParserImpl::ParseSplitConfigs(std::vector<SplitConfig>& split_configs) {
 bool HloParserImpl::ParseLayout(Layout* layout) {
   absl::InlinedVector<int64_t, InlineRank()> minor_to_major;
   DimLevelTypeVector dim_level_types;
-  absl::InlinedVector<bool, InlineRank()> dim_unique;
-  absl::InlinedVector<bool, InlineRank()> dim_ordered;
   std::vector<Tile> tiles;
   PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID;
   PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID;
@@ -6190,7 +6175,7 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
 
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "D") {
         lexer_.Lex();
-        ParseDimLevelTypes(&dim_level_types, &dim_unique, &dim_ordered);
+        ParseDimLevelTypes(&dim_level_types);
       }
 
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "T") {
@@ -6267,20 +6252,34 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
     vec_tiles[i] = Tile(tiles[i]);
   }
   *layout = LayoutUtil::MakeLayout(
-      minor_to_major, dim_level_types, dim_unique, dim_ordered, vec_tiles,
-      tail_padding_alignment_in_elements, index_primitive_type,
-      pointer_primitive_type, element_size_in_bits, memory_space, split_configs,
-      std::move(physical_shape), dynamic_shape_metadata_prefix_bytes);
+      minor_to_major, vec_tiles, tail_padding_alignment_in_elements,
+      index_primitive_type, pointer_primitive_type, element_size_in_bits,
+      memory_space, split_configs, std::move(physical_shape),
+      dynamic_shape_metadata_prefix_bytes);
   return true;
 }
 
 // shape ::= shape_val_
 // shape ::= '(' tuple_elements ')'
+// shape ::= 'b(' shape ')'
 // tuple_elements
 //   ::= /*empty*/
 //   ::= shape (',' shape)*
 bool HloParserImpl::ParseShape(Shape* result,
                                bool allow_fallback_to_default_layout) {
+  if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "b" &&
+      lexer_.LookAhead() == TokKind::kLparen) {  // Buffer shape
+    lexer_.Lex();
+    lexer_.Lex();
+    Shape shape;
+    if (!ParseShape(&shape, allow_fallback_to_default_layout)) {
+      return false;
+    }
+    *result = Shape::MakeBufferShape(shape);
+    return ParseToken(TokKind::kRparen,
+                      "expects ')' at the end of buffer shape.");
+  }
+
   if (EatIfPresent(TokKind::kLparen)) {  // Tuple
     std::vector<Shape> shapes;
     if (lexer_.GetKind() == TokKind::kRparen) {
@@ -6339,26 +6338,13 @@ bool HloParserImpl::ParseShape(Shape* result,
     if (!ParseLayout(&layout)) {
       return false;
     }
-    if (layout.dim_level_types_size() != 0 &&
-        layout.dim_level_types_size() != result->dimensions().size()) {
-      return Error(
-          lexer_.GetLoc(),
-          StrFormat("Dimensions size is %ld, but dim level types size is %ld.",
-                    result->dimensions().size(),
-                    layout.dim_level_types_size()));
-    }
     if (layout.minor_to_major_size() != result->dimensions().size()) {
       return Error(
           lexer_.GetLoc(),
           StrFormat("Dimensions size is %ld, but minor to major size is %ld.",
                     result->dimensions().size(), layout.minor_to_major_size()));
     }
-    if (LayoutUtil::IsSparse(layout) && layout.tiles_size() > 0) {
-      return Error(lexer_.GetLoc(),
-                   StrFormat("Layout has tiles, but is for a sparse array: %s",
-                             layout.ToString()));
-    }
-    if (!LayoutUtil::IsSparse(layout) && layout.has_physical_shape()) {
+    if (layout.has_physical_shape()) {
       return Error(
           lexer_.GetLoc(),
           StrFormat(
@@ -6374,7 +6360,9 @@ bool HloParserImpl::CanBeShape() {
   // A non-tuple shape starts with a kPrimitiveType token; a tuple shape starts
   // with '('.
   return lexer_.GetKind() == TokKind::kPrimitiveType ||
-         lexer_.GetKind() == TokKind::kLparen;
+         lexer_.GetKind() == TokKind::kLparen ||
+         (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "b" &&
+          lexer_.LookAhead() == TokKind::kLparen);
 }
 
 bool HloParserImpl::ParseName(std::string* result) {

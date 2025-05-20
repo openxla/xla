@@ -508,6 +508,8 @@ cc_library(
     hdrs = ["gpu_blas_lt.h"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
+        ":gpu_blas_lt_proto_cc",
+        "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
@@ -519,13 +521,17 @@ cc_library(
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
@@ -542,6 +548,19 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:blas_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_blas_lt_test",
+    srcs = ["gpu_blas_lt_test.cc"],
+    deps = [
+        ":gpu_blas_lt",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:blas",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

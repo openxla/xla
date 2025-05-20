@@ -23,8 +23,7 @@ cc_library(
     deps = [
         ":gpu_event",
         ":host_memory_allocator",
-        ":stream_pool",
-        ":tracked_tfrt_gpu_device_buffer",
+        ":tracked_gpu_device_buffer",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:literal",
@@ -35,13 +34,17 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/client:executable_build_options",
         "//xla/client:local_client",
+        "//xla/core/collectives",
+        "//xla/core/collectives:collectives_registry",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:host_memory_spaces",
+        "//xla/pjrt:layout_mode",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
@@ -55,6 +58,10 @@ cc_library(
         "//xla/pjrt:transpose",
         "//xla/pjrt:utils",
         "//xla/pjrt:worker_thread",
+        "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/pjrt/distributed:protocol_proto_cc",
+        "//xla/pjrt/distributed:topology_util",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:gpu_topology_proto_cc",
@@ -65,6 +72,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:executable",
         "//xla/service:generic_transfer_manager",
+        "//xla/service:global_device_id",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "//xla/service:maybe_owning_device_memory",
@@ -104,11 +112,13 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
@@ -118,6 +128,7 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -135,7 +146,7 @@ xla_cc_test(
     deps = [
         ":gpu_event",
         ":tfrt_gpu_client",
-        ":tracked_tfrt_gpu_device_buffer",
+        ":tracked_gpu_device_buffer",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -171,6 +182,7 @@ xla_cc_test(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:raw_buffer",
+        "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:gpu_topology_proto_cc",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
@@ -184,6 +196,7 @@ xla_cc_test(
         "//xla/tsl/concurrency:async_value",
         # copybara:uncomment "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
@@ -219,9 +232,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "tracked_tfrt_gpu_device_buffer",
-    srcs = ["tracked_tfrt_gpu_device_buffer.cc"],
-    hdrs = ["tracked_tfrt_gpu_device_buffer.h"],
+    name = "tracked_gpu_device_buffer",
+    srcs = ["tracked_gpu_device_buffer.cc"],
+    hdrs = ["tracked_gpu_device_buffer.h"],
     deps = [
         ":gpu_event",
         "//xla:shape_tree",
@@ -231,10 +244,12 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
@@ -243,8 +258,8 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "tracked_tfrt_gpu_device_buffer_test",
-    srcs = ["tracked_tfrt_gpu_device_buffer_test.cc"],
+    name = "tracked_gpu_device_buffer_test",
+    srcs = ["tracked_gpu_device_buffer_test.cc"],
     tags = [
         "gpu",
         "no_oss",
@@ -254,7 +269,7 @@ xla_cc_test(
     ],
     deps = [
         ":gpu_event",
-        ":tracked_tfrt_gpu_device_buffer",
+        ":tracked_gpu_device_buffer",
         "@com_google_googletest//:gtest_main",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -295,7 +310,7 @@ xla_cc_test(
     deps = [
         ":gpu_event",
         ":tfrt_gpu_client",
-        ":tracked_tfrt_gpu_device_buffer",
+        ":tracked_gpu_device_buffer",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
@@ -309,43 +324,6 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",
-    ],
-)
-
-cc_library(
-    name = "stream_pool",
-    srcs = ["stream_pool.cc"],
-    hdrs = ["stream_pool.h"],
-    deps = [
-        "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-    ],
-)
-
-xla_cc_test(
-    name = "stream_pool_test",
-    srcs = ["stream_pool_test.cc"],
-    tags = [
-        "gpu",
-        "no_oss",
-        "noasan",
-        "nomsan",
-        "requires-gpu-nvidia:2",
-    ],
-    deps = [
-        ":stream_pool",
-        "//xla/service:backend",
-        "//xla/service:gpu_plugin",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor:stream_executor_h",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_PJRT_STREAM_EXECUTOR_CLIENT_H_
 #define XLA_PJRT_PJRT_STREAM_EXECUTOR_CLIENT_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -23,6 +24,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -62,11 +64,11 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -425,22 +427,32 @@ class PjRtStreamExecutorClient : public PjRtClient {
   };
 
   // Updates `options` for compilation.
-  absl::Status UpdateCompileOptions(CompileOptions* options);
+  absl::Status UpdateCompileOptions(CompileOptions* options,
+                                    bool lookup_addressable_devices);
 
   // Same as above, but also returns the executable extras.
   absl::StatusOr<ExecutableExtras> UpdateCompileOptionsAndGetExecutableExtras(
       CompileOptions* options);
 
   // Updates `options` for compilation, and gets the executable extras if
-  // `returned_extras` is not null.
+  // `returned_extras` is not null. It skips addressable device lookup if
+  // `lookup_addressable_devices` is false.
   absl::Status UpdateCompileOptionsInternal(CompileOptions* options,
-                                            ExecutableExtras* returned_extras);
+                                            ExecutableExtras* returned_extras,
+                                            bool lookup_addressable_devices);
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      const XlaComputation& computation, CompileOptions options,
+      bool lookup_addressable_devices);
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      mlir::ModuleOp mlir_module, CompileOptions options,
+      bool lookup_addressable_devices);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
       const XlaComputation& computation,
       const std::vector<const Shape*>& argument_layout_pointers,
       LayoutCanonicalizationCallback layout_canonicalization_callback,
-      CompileOptions options);
+      CompileOptions options, bool lookup_addressable_devices);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> BuildPjRtExecutable(
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
@@ -738,9 +750,10 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     }
     CompiledMemoryStats memory_stats = CompiledMemoryStats();
     memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
-    const HloProto* proto = executables_[0]->executable()->hlo_proto();
+    const BufferAssignmentProto* proto =
+        executables_[0]->executable()->buffer_assignment_proto();
     if (proto != nullptr) {
-      memory_stats.serialized_hlo_proto = proto->SerializeAsString();
+      memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
     }
     memory_stats.PopulateBufferStatsFromAllocations(
         executables_[0]->executable()->GetAllocations());

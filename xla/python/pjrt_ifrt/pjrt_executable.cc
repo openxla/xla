@@ -189,10 +189,9 @@ char PjRtCompatibleLoadedExecutable::ID = 0;
 char PjRtExecutable::ID = 0;
 char PjRtLoadedExecutable::ID = 0;
 
-absl::StatusOr<std::unique_ptr<Executable>> PjRtExecutable::Create(
+absl::StatusOr<ExecutableRef> PjRtExecutable::Create(
     std::shared_ptr<xla::PjRtExecutable> pjrt_executable) {
-  return std::unique_ptr<Executable>(
-      new PjRtExecutable(std::move(pjrt_executable)));
+  return ExecutableRef(new PjRtExecutable(std::move(pjrt_executable)));
 }
 
 absl::StatusOr<std::optional<std::string>> PjRtExecutable::Fingerprint() const {
@@ -205,7 +204,7 @@ absl::StatusOr<std::string> PjRtExecutable::Serialize() const {
   return pjrt_executable_->SerializeExecutable();
 }
 
-absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
+absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
     PjRtCompatibleClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
@@ -246,7 +245,7 @@ static absl::StatusOr<std::vector<xla::Shape>> ResultShapesOfModule(
   return result_shapes;
 }
 
-absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
+absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
     PjRtCompatibleClient* client, mlir::ModuleOp module,
     xla::CompileOptions compile_options,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
@@ -318,8 +317,7 @@ absl::StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
   }
 }
 
-absl::StatusOr<std::unique_ptr<LoadedExecutable>>
-PjRtLoadedExecutable::CreateInternal(
+absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::CreateInternal(
     PjRtCompatibleClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
     absl::Span<const xla::PrimitiveType> result_element_types,
@@ -482,7 +480,7 @@ PjRtLoadedExecutable::CreateInternal(
     addressable_devices.push_back(ifrt_device);
   }
 
-  return std::unique_ptr<LoadedExecutable>(new PjRtLoadedExecutable(
+  return LoadedExecutableRef(new PjRtLoadedExecutable(
       client, std::move(pjrt_loaded_executable), std::move(executable_devices),
       std::move(addressable_devices), std::move(loaded_host_callbacks),
       std::move(host_send_and_recv_callbacks), std::move(output_dtypes),
@@ -513,7 +511,7 @@ PjRtLoadedExecutable::PjRtLoadedExecutable(
 PjRtLoadedExecutable::~PjRtLoadedExecutable() = default;
 
 absl::StatusOr<PjRtLoadedExecutable::ExecuteResult>
-PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
+PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
                               const ExecuteOptions& options,
                               std::optional<DeviceListRef> devices) {
   DCHECK(this);
@@ -670,7 +668,7 @@ PjRtLoadedExecutable::Execute(absl::Span<tsl::RCReference<Array>> args,
   }
 
   // Convert 2-level PjRtBuffer vectors into an Array vector.
-  std::vector<tsl::RCReference<Array>> outputs;
+  std::vector<ArrayRef> outputs;
   // TODO(hyeontaek): Check output dtype/shape consistency with the actual
   // output.
   if (pjrt_outputs.size() != num_computations) {
@@ -791,13 +789,6 @@ absl::StatusOr<std::optional<std::string>> PjRtLoadedExecutable::Fingerprint()
 absl::StatusOr<std::string> PjRtLoadedExecutable::Serialize() const {
   DCHECK(this);
   return pjrt_loaded_executable_->SerializeExecutable();
-}
-
-Future<> PjRtLoadedExecutable::Delete() {
-  DCHECK(this);
-  pjrt_loaded_executable_->Delete();
-  // TODO(hyeontaek): Return a correct future.
-  return Future<>(absl::OkStatus());
 }
 
 }  // namespace ifrt

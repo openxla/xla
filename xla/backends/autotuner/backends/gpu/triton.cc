@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -62,11 +64,13 @@ constexpr std::array<int, 5> kNumCtas = {1, 2, 4, 8, 16};
 
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
 
-std::vector<std::unique_ptr<BackendConfig>> TritonBackend::GetSupportedConfigs(
-    const HloInstruction& instr) {
+absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+TritonBackend::GetSupportedConfigs(
+    const HloInstruction& instr,
+    stream_executor::StreamExecutor* stream_executor) {
   if (!IsSupported(instr)) {
-    VLOG(1) << "TritonBackend does not support " << instr.opcode();
-    return {};
+    return absl::InvalidArgumentError(
+        "TritonBackend does not support this instruction.");
   }
   se::GpuComputeCapability gcc =
       target_config().device_description.gpu_compute_capability();

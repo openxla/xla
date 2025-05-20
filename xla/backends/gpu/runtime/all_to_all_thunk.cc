@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -200,9 +201,9 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status AllToAllStartThunk::RunCollective(const ExecuteParams& params,
-                                               se::Stream& stream,
-                                               CommunicatorHandle comm_handle) {
+absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
+    const ExecuteParams& params, se::Stream& stream,
+    CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
@@ -230,13 +231,16 @@ absl::Status AllToAllStartThunk::RunCollective(const ExecuteParams& params,
       absl::c_transform(events_, std::back_inserter(events),
                         [](const auto& pair) { return pair.second.get(); });
     }
-    return xla::gpu::RunMemCpyAllToAll(
+    TF_RETURN_IF_ERROR(xla::gpu::RunMemCpyAllToAll(
         collectives, config_.has_split_dimension, device_buffers, stream,
         comm_handle.comm, receive_pointer_map, comm_handle.clique_key, *rank,
-        event, events);
+        event, events));
+    return false;
   }
-  return xla::gpu::RunAllToAll(collectives, config_.has_split_dimension,
-                               device_buffers, stream, comm_handle.comm);
+  TF_RETURN_IF_ERROR(
+      xla::gpu::RunAllToAll(collectives, config_.has_split_dimension,
+                            device_buffers, stream, comm_handle.comm));
+  return true;
 }
 
 AsyncStreamKind AllToAllStartThunk::GetAsyncStreamKind() const {
@@ -335,38 +339,24 @@ absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
   return absl::OkStatus();
 }
 
-static absl::Status SendPtrToPeer(void* ptr, RankId peer, Communicator* comm,
+static absl::Status SendPtrToPeer(void* ptr, RankId peer, GpuCommunicator* comm,
                                   se::Stream& stream) {
   VLOG(3) << absl::StreamFormat(
       "RecvPtrFromPeer on device #%d; peer=%d; comm=%p; stream=%p",
       stream.parent()->device_ordinal(), peer.value(), comm, &stream);
 
-  auto event = comm->Send(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
+  return comm->LaunchSend(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
                           peer, GpuCollectives::On(stream));
-
-  tsl::BlockUntilReady(event);
-  if (event.IsError()) {
-    return event.GetError();
-  }
-
-  return absl::OkStatus();
 }
 
-static absl::Status RecvPtrFromPeer(void* ptr, RankId peer, Communicator* comm,
-                                    se::Stream& stream) {
+static absl::Status RecvPtrFromPeer(void* ptr, RankId peer,
+                                    GpuCommunicator* comm, se::Stream& stream) {
   VLOG(3) << absl::StreamFormat(
       "RecvPtrFromPeer on device #%d; peer=%d; comm=%p; stream=%p",
       stream.parent()->device_ordinal(), peer.value(), comm, &stream);
 
-  auto event = comm->Recv(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
+  return comm->LaunchRecv(se::DeviceMemoryBase(ptr, sizeof(void*)), U64, 1,
                           peer, GpuCollectives::On(stream));
-
-  tsl::BlockUntilReady(event);
-  if (event.IsError()) {
-    return event.GetError();
-  }
-
-  return absl::OkStatus();
 }
 
 // Syncs the execution progress across all devices.
@@ -410,6 +400,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
       MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
+  TF_ASSIGN_OR_RETURN(GpuCommunicator * gpu_comm, collectives->TryCast(comm));
 
   TF_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key, rank,
                                   num_ranks, stream, event, events));
@@ -423,6 +414,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
       TF_RET_CHECK(buffer.element_count % num_ranks == 0)
           << "Buffer was not an exact multiple of the number of participants.";
       size_t chunk_element_count = buffer.element_count / num_ranks;
+
       for (int peer = 0; peer < num_ranks; ++peer) {
         se::DeviceMemoryBase send_slice =
             collectives->Slice(buffer.source_buffer, buffer.element_type,
@@ -439,6 +431,7 @@ absl::Status RunMemCpyAllToAll(GpuCollectives* collectives,
 
     for (int peer = 0; peer < num_ranks; ++peer) {
       auto buffer_idx = (rank.value() + peer) % num_ranks;
+      // double buffer, exchange data with peer
       se::DeviceMemoryBase dst_addr =
           se::DeviceMemoryBase((void*)receive_pointer_map[peer]);
       TF_RETURN_IF_ERROR(

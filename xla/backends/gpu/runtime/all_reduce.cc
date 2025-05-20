@@ -28,12 +28,12 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
-#include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/typed_kernel_factory.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -43,7 +43,7 @@ template <typename T>
 absl::Status LaunchTypedKernel(
     se::Stream* stream, se::StreamExecutor* executor,
     const se::ThreadDim& thread_dims, const se::BlockDim& block_dims,
-    const std::array<void*, stream_executor::gpu::kMaxNumAllReduceInputPtrs>&
+    const std::array<T*, stream_executor::gpu::kMaxNumAllReduceInputPtrs>&
         input_ptrs,
     se::DeviceMemoryBase output_buffer, int64_t num_inputs,
     int64_t num_elements) {
@@ -56,10 +56,19 @@ absl::Status LaunchTypedKernel(
 }
 }  // namespace
 
-bool IsAllReduceKernelSupported(int64_t num_inputs,
+bool IsAllReduceKernelSupported(int64_t num_inputs, int64_t num_elements,
                                 PrimitiveType element_type) {
-  return num_inputs <= stream_executor::gpu::kMaxNumAllReduceInputPtrs &&
-         element_type == F32;
+  // The kernel always vectorizes to 4 elements per thread.
+  if (num_elements % 4 != 0) {
+    return false;
+  }
+
+  // The kernel is only supported for up to 8 devices.
+  if (num_inputs > stream_executor::gpu::kMaxNumAllReduceInputPtrs) {
+    return false;
+  }
+
+  return element_type == BF16 || element_type == F32;
 }
 
 absl::Status RunAllReduceKernel(
@@ -81,19 +90,23 @@ absl::Status RunAllReduceKernel(
   se::ThreadDim thread_dims(kThreads, 1, 1);
   se::BlockDim block_dims(kBlocks, 1, 1);
 
-  std::array<void*, stream_executor::gpu::kMaxNumAllReduceInputPtrs> input_ptrs;
-  absl::c_transform(
-      input_buffers, input_ptrs.begin(),
-      [](se::DeviceMemoryBase buffer) { return buffer.opaque(); });
-
   auto launch_kernel = [&](auto type) -> absl::Status {
     using T = decltype(type);
+
+    std::array<T*, stream_executor::gpu::kMaxNumAllReduceInputPtrs> input_ptrs;
+    absl::c_transform(input_buffers, input_ptrs.begin(),
+                      [](se::DeviceMemoryBase buffer) {
+                        return tsl::safe_reinterpret_cast<T*>(buffer.opaque());
+                      });
+
     return LaunchTypedKernel<T>(stream, executor, thread_dims, block_dims,
                                 input_ptrs, output_buffer, num_inputs,
                                 num_elements);
   };
 
   switch (element_type) {
+    case BF16:
+      return launch_kernel(xla::bfloat16{});
     case F32:
       return launch_kernel(float{});
     default:

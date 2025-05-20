@@ -35,10 +35,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/layout.h"
-#include "xla/pjrt/compile_options.pb.h"
-#include "xla/pjrt/execute_options.pb.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/execute_options.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -221,7 +221,7 @@ CompiledMemoryStatsProto CompiledMemoryStats::ToProto() const {
   proto.set_output_size_in_bytes(output_size_in_bytes);
   proto.set_alias_size_in_bytes(alias_size_in_bytes);
   proto.set_temp_size_in_bytes(temp_size_in_bytes);
-  proto.mutable_hlo_proto()->ParseFromString(serialized_hlo_proto);
+  proto.set_serialized_buffer_assignment(serialized_buffer_assignment);
   proto.set_host_generated_code_size_in_bytes(
       host_generated_code_size_in_bytes);
   proto.set_host_argument_size_in_bytes(host_argument_size_in_bytes);
@@ -239,7 +239,7 @@ CompiledMemoryStats CompiledMemoryStats::FromProto(
   stats.output_size_in_bytes = proto.output_size_in_bytes();
   stats.alias_size_in_bytes = proto.alias_size_in_bytes();
   stats.temp_size_in_bytes = proto.temp_size_in_bytes();
-  stats.serialized_hlo_proto = proto.hlo_proto().SerializeAsString();
+  stats.serialized_buffer_assignment = proto.serialized_buffer_assignment();
   stats.host_generated_code_size_in_bytes =
       proto.host_generated_code_size_in_bytes();
   stats.host_argument_size_in_bytes = proto.host_argument_size_in_bytes();

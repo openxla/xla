@@ -7,7 +7,7 @@ load(
     "if_rocm_is_configured",
 )
 load("//xla:package_groups.bzl", "xla_test_friend_package_group")
-load("//xla:xla.default.bzl", "tests_build_defs_bzl_deps", "xla_cc_test")
+load("//xla:xla.default.bzl", "tests_build_defs_bzl_deps", "xla_cc_test", "xla_internal")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -223,7 +223,6 @@ cc_library(
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:computation_placer_hdr",
-        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_module_util",
         "//xla/service:hlo_runner_interface",
@@ -291,12 +290,12 @@ cc_library(
     hdrs = ["hlo_pjrt_test_base.h"],
     deps = [
         ":hlo_runner_agnostic_test_base",
+        ":hlo_runner_pjrt_test_utils",
         ":pjrt_client_registry",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/service:hlo_runner_interface",
-        "//xla/service:hlo_runner_pjrt",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -467,7 +466,7 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "bad_rng_shape_validation_test",
     srcs = ["bad_rng_shape_validation_test.cc"],
     tags = ["test_xla_cpu_no_thunks"],
@@ -611,7 +610,7 @@ xla_test(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "query_inferred_shape_test",
     srcs = ["query_inferred_shape_test.cc"],
     tags = ["test_xla_cpu_no_thunks"],
@@ -3011,14 +3010,21 @@ xla_test(
         ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla/client",
         "//xla/client:client_library",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test",
+        "//xla/stream_executor:platform",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
@@ -3032,17 +3038,19 @@ xla_test(
         ":client_library_test_base",
         ":literal_test_util",
         ":test_macros_header",
-        ":test_utils",
         ":xla_internal_test_main",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test_helpers",
-        "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:test",
+        "//xla/service",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -3809,5 +3817,36 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
+    ],
+)
+
+cc_library(
+    name = "hlo_runner_pjrt_test_utils",
+    testonly = True,
+    srcs = ["hlo_runner_pjrt_test_utils.cc"],
+    hdrs = ["hlo_runner_pjrt_test_utils.h"],
+    deps = [
+        "//xla/pjrt:pjrt_client",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_runner_pjrt",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "xla_test_backend_predicates",
+    testonly = True,
+    srcs = ["xla_test_backend_predicates.cc"],
+    hdrs = ["xla_test_backend_predicates.h"],
+    visibility = if_google(
+        xla_internal(["tests:__pkg__"]),
+        ["//visibility:public"],
+    ),
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )

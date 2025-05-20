@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/types/span.h"
@@ -58,6 +59,13 @@ class IotaReplicaGroupList {
         num_replica_groups_(num_replica_groups),
         num_devices_per_group_(num_devices_per_group) {}
 
+  bool operator==(const IotaReplicaGroupList& other) const {
+    return num_replica_groups() == other.num_replica_groups() &&
+           num_devices_per_group() == other.num_devices_per_group() &&
+           reshape_dims() == other.reshape_dims() &&
+           transpose_perm() == other.transpose_perm();
+  }
+
   int64_t num_replica_groups() const;
   int64_t num_devices_per_group() const;
   absl::Span<const int64_t> reshape_dims() const {
@@ -89,6 +97,10 @@ class CollectiveDeviceList {
  public:
   explicit CollectiveDeviceList()
       : replica_groups_(std::make_shared<std::vector<ReplicaGroup>>()) {};
+
+  explicit CollectiveDeviceList(std::vector<ReplicaGroup> replica_groups)
+      : replica_groups_(std::make_shared<std::vector<ReplicaGroup>>(
+            std::move(replica_groups))) {};
 
   explicit CollectiveDeviceList(absl::Span<const ReplicaGroup> replica_groups)
       : replica_groups_(std::make_shared<std::vector<ReplicaGroup>>(

@@ -92,6 +92,16 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "utils_test",
+    srcs = ["utils_test.cc"],
+    deps = [
+        ":utils",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 cc_library(
     name = "constants",
     hdrs = ["constants.h"],
@@ -131,7 +141,6 @@ xla_cc_binary(
         "//xla/service/spmd/shardy/sdy_round_trip:dedup_meshes",
         "//xla/service/spmd/shardy/sdy_round_trip:export_ops",
         "//xla/service/spmd/shardy/sdy_round_trip:export_shardy_attrs",
-        "//xla/service/spmd/shardy/sdy_round_trip:import_callback_custom_calls",
         "//xla/service/spmd/shardy/sdy_round_trip:import_shardy_attrs",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/service/spmd/shardy/sdy_round_trip:remove_size_one_axes",

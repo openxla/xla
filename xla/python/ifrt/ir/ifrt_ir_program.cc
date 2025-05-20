@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -78,7 +78,7 @@ IfrtIRCompileOptions::FromProto(const IfrtIrCompileOptionsProto& proto) {
   }
   return std::make_unique<IfrtIRCompileOptions>(
       std::move(device_ids),
-      absl::flat_hash_map<std::string, std::shared_ptr<LoadedExecutable>>(),
+      absl::flat_hash_map<std::string, LoadedExecutableRef>(),
       std::move(compile_options_overrides), proto.propagate_shardings());
 }
 

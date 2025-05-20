@@ -1,4 +1,4 @@
-load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/service/cpu:build_defs.bzl", "runtime_copts")
 load("//xla/tsl:tsl.bzl", "if_google", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -88,6 +88,7 @@ cc_library(
         ":kernel_c_api",
         ":work_queue",
         "//xla:util",
+        "//xla/runtime:work_group",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/concurrency:async_value",
@@ -96,6 +97,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
     ],
@@ -107,6 +109,7 @@ xla_cc_test(
     deps = [
         ":kernel",
         ":kernel_c_api",
+        "//xla/runtime:work_group",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
@@ -175,6 +178,7 @@ tf_proto_library(
     create_grpc_library = True,
     make_default_target_header_only = True,
     protodeps = [
+        "//xla/service:buffer_assignment_proto",
         "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
     ] + if_google(["@com_google_protobuf//:any"]),
@@ -202,6 +206,7 @@ cc_library(
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/profiler/lib:traceme",
@@ -271,7 +276,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
+    ] + xla_internal(["service:execution_graph_visualizer_google"]),
 )
 
 xla_cc_test(
@@ -316,6 +321,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -335,6 +341,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
     ],
 )
@@ -922,6 +929,7 @@ cc_library(
         "//xla:util",
         "//xla/codegen:kernel_spec",
         "//xla/runtime:buffer_use",
+        "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
@@ -952,11 +960,13 @@ xla_cc_test(
     deps = [
         ":buffer_allocations",
         ":function_library",
+        ":kernel",
         ":kernel_c_api",
         ":kernel_thunk",
         ":thunk",
         ":thunk_testlib",
         "//xla:literal_util",
+        "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
@@ -1186,6 +1196,7 @@ cc_library(
         ":dot_thunk",
         ":fft_thunk",
         ":infeed_thunk",
+        ":kernel",
         ":kernel_thunk",
         ":logical_id_thunk",
         ":outfeed_thunk",
@@ -1203,6 +1214,7 @@ cc_library(
         "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
         "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
         "//xla/runtime:resource_use",
+        "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:launch_dim",
@@ -1268,6 +1280,7 @@ xla_cc_test(
         ":dot_thunk",
         ":fft_thunk",
         ":infeed_thunk",
+        ":kernel",
         ":kernel_thunk",
         ":logical_id_thunk",
         ":outfeed_thunk",
@@ -1277,6 +1290,7 @@ xla_cc_test(
         ":sort_thunk",
         ":thunk",
         ":thunk_executor",
+        ":thunk_proto_cc",
         ":thunk_proto_serdes",
         ":thunk_testlib",
         ":topk_thunk",
@@ -1292,6 +1306,7 @@ xla_cc_test(
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/runtime:resource_use",
+        "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_proto_cc",

@@ -740,7 +740,9 @@ void MemoryPressureTracker::Initialize(
   output_buffers_.clear();
   defined_buffers_.clear();
   live_buffers_set_.clear();
+  int32_t next_id = 0;
   for (auto* instruction : computation->instructions()) {
+    instruction_ids_[instruction] = next_id++;
     auto& output_values = this->output_buffers_[instruction];
     auto& defined_values = this->defined_buffers_[instruction];
     ShapeUtil::ForEachSubshape(
@@ -773,6 +775,54 @@ void MemoryPressureTracker::Initialize(
     absl::c_fill(live_buffers_, 0);
   }
   pressure_state_.live_ids_at_bottom = live_buffers_set_;
+
+  // Precompute allocated and released buffers per instruction.
+  alloc_release_spans_.resize(next_id);
+  for (auto* instruction : computation->instructions()) {
+    NodeAllocReleaseSpan s;
+    s.start = alloc_release_ids_.size();
+    s.num_alloc = ComputeBufferAllocations(instruction, &alloc_release_ids_);
+    s.num_release = ComputeBufferReleases(instruction, &alloc_release_ids_);
+    alloc_release_spans_[instruction_ids_[instruction]] = s;
+  }
+}
+
+int32_t MemoryPressureTracker::ComputeBufferAllocations(
+    const HloInstruction* instruction, std::vector<HloBuffer::Id>* dst) {
+  int32_t added = 0;
+  for (auto* op : instruction->operands()) {
+    auto it = output_buffers_.find(op);
+    CHECK(it != output_buffers_.end());
+    for (auto& b : it->second) {
+      if (ShouldSkipBufferAllocations(instruction, b.second,
+                                      b.first.first_definition) ||
+          b.first.non_default_memory_space_layout) {
+        continue;
+      }
+      dst->push_back(b.first.value->id());
+      added++;
+    }
+  }
+  return added;
+}
+
+int32_t MemoryPressureTracker::ComputeBufferReleases(
+    const HloInstruction* instruction, std::vector<HloBuffer::Id>* dst) {
+  int32_t added = 0;
+  if (!ShouldSkipBufferReleases(instruction)) {
+    auto it = defined_buffers_.find(instruction);
+    CHECK(it != defined_buffers_.end());
+    for (auto& b : it->second) {
+      if (b.non_default_memory_space_layout) {
+        continue;
+      }
+      if (InstructionFirstDefinesBuffer(instruction, b)) {
+        dst->push_back(b.value->id());
+        added++;
+      }
+    }
+  }
+  return added;
 }
 
 void MemoryPressureTracker::UpdateBuffers(const HloInstruction* instruction) {
@@ -788,36 +838,19 @@ void MemoryPressureTracker::UpdateBuffers(const HloInstruction* instruction) {
   if (pressure_state_.memory_peak < live_memory_usage_ + computations_peak) {
     pressure_state_.memory_peak = live_memory_usage_ + computations_peak;
   }
-  for (auto* op : instruction->operands()) {
-    const auto& output_values = output_buffers_[op];
-    for (const auto& info : output_values) {
-      if (ShouldSkipBufferAllocations(instruction, info.second,
-                                      info.first.first_definition) ||
-          info.first.non_default_memory_space_layout) {
-        continue;
-      }
-      if (live_buffers_[info.first.value->id()] == 0) {
-        live_buffers_[info.first.value->id()] = 1;
-        live_buffers_set_.insert(info.first.value->id());
-        live_memory_usage_ += info.first.buffer_size;
-      }
+  for (HloBuffer::Id id : allocated_buffer_ids(instruction)) {
+    if (live_buffers_[id] == 0) {
+      live_buffers_[id] = 1;
+      live_buffers_set_.insert(id);
+      live_memory_usage_ += buffer_tracker_.GetBufferInfo(id).buffer_size;
     }
   }
   pressure_state_.memory_peak =
       std::max(live_memory_usage_, pressure_state_.memory_peak);
-  auto it = defined_buffers_.find(instruction);
-  CHECK(it != defined_buffers_.end());
-  if (!ShouldSkipBufferReleases(instruction)) {
-    for (auto& b : it->second) {
-      if (b.non_default_memory_space_layout) {
-        continue;
-      }
-      if (live_buffers_[b.value->id()] != 0) {
-        if (InstructionFirstDefinesBuffer(instruction, b)) {
-          live_memory_usage_ -= b.buffer_size;
-          live_buffers_set_.erase(b.value->id());
-        }
-      }
+  for (HloBuffer::Id id : released_buffer_ids(instruction)) {
+    if (live_buffers_[id] != 0) {
+      live_memory_usage_ -= buffer_tracker_.GetBufferInfo(id).buffer_size;
+      live_buffers_set_.erase(id);
     }
   }
 }
@@ -842,35 +875,17 @@ std::pair<int64_t, int64_t> MemoryPressureTracker::MemoryPressureDifference(
           std::max(called_comp_peak, it->second.memory_peak);
     }
   }
-  // Allocate memory increase from the operand and record increase in peak.
-  for (auto* op : instruction->operands()) {
-    auto it = output_buffers_.find(op);
-    CHECK(it != output_buffers_.end());
-    for (auto& b : it->second) {
-      if (ShouldSkipBufferAllocations(instruction, b.second,
-                                      b.first.first_definition) ||
-          b.first.non_default_memory_space_layout) {
-        continue;
-      }
-      if (!live_buffers_[b.first.value->id()]) {
-        increase += b.first.buffer_size;
-      }
+  // Allocate memory increase from the operands and record increase in peak.
+  for (HloBuffer::Id id : allocated_buffer_ids(instruction)) {
+    if (!live_buffers_[id]) {
+      increase += buffer_tracker_.GetBufferInfo(id).buffer_size;
     }
   }
   peak = std::max(increase, peak);
-  auto it = defined_buffers_.find(instruction);
-  CHECK(it != defined_buffers_.end());
   // Decrease memory pressure if some buffers are released.
-  if (!ShouldSkipBufferReleases(instruction)) {
-    for (auto& b : it->second) {
-      if (b.non_default_memory_space_layout) {
-        continue;
-      }
-      if (live_buffers_[b.value->id()]) {
-        if (InstructionFirstDefinesBuffer(instruction, b)) {
-          increase -= b.buffer_size;
-        }
-      }
+  for (HloBuffer::Id id : released_buffer_ids(instruction)) {
+    if (live_buffers_[id]) {
+      increase -= buffer_tracker_.GetBufferInfo(id).buffer_size;
     }
   }
   return std::make_pair(increase, peak);
@@ -2518,12 +2533,10 @@ DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
       sched_state.sched_graph.GetOriginalInstrList()[0]->parent();
   for (const HloInstruction* instr :
        annotation_tracker_->GetInstructions(comp, annotation)) {
-    absl::Span<const ResourcePair> rv =
-        sched_state.async_tracker->GetResourcesFromInstruction(*instr);
-    for (const auto& [resource, usage] : rv) {
-      if (usage == ResourceUsageType::kResourceOccupy) {
-        num_resources_needed[resource]++;
-      }
+    auto num_resources_needed_per_instr =
+        sched_state.async_tracker->GetNumResourcesPerInstruction(*instr);
+    for (const auto& [resource, usage] : num_resources_needed_per_instr) {
+      num_resources_needed[resource] += usage;
     }
   }
   return num_resources_needed;
@@ -2729,7 +2742,9 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     const HloComputation* computation,
     const LatencyEstimator* latency_estimator,
     const AsyncTracker* async_tracker,
-    const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
+    const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes,
+    const HloAliasAnalysis* alias_analysis,
+    ModulePressureState* module_pressure_state) {
   const HloModule* module = computation->parent();
   // A map keyed by outstanding collective op's opcode, with value of a tuple
   // including {instruction, scheduled_time, position in the original order}.
@@ -2801,8 +2816,6 @@ LatencyHidingScheduler::LatencyHidingStatistics(
   SchedulerConfig config;
   config.schedule_send_recvs = true;
   config.use_real_cost_model = true;
-  std::unique_ptr<HloAliasAnalysis> hlo_alias_analysis =
-      HloAliasAnalysis::Run(module).value();
   auto instructions_post_order = computation->MakeInstructionPostOrder();
   HloScheduleGraph schedule_graph(&instructions_post_order,
                                   /*alias_analysis=*/nullptr, latency_estimator,
@@ -2836,16 +2849,37 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     }
     curr_pos++;
   }
-  ModulePressureState module_pressure_state(module, hlo_alias_analysis.get(),
-                                            shape_size_bytes);
-  module_pressure_state.InitializePressureStates();
+  // Check if the optional arguments alias_analysis and module_pressure_state
+  // are null. If so, create a new instance of them.
+  std::unique_ptr<HloAliasAnalysis> alias_analysis_ptr;
+  std::unique_ptr<ModulePressureState> module_pressure_state_ptr;
+  if (alias_analysis == nullptr) {
+    alias_analysis_ptr = HloAliasAnalysis::Run(module).value();
+  }
+  if (module_pressure_state == nullptr) {
+    module_pressure_state_ptr = std::make_unique<ModulePressureState>(
+        module, alias_analysis ? alias_analysis : alias_analysis_ptr.get(),
+        shape_size_bytes);
+    module_pressure_state_ptr->InitializePressureStates();
+  }
+  bool memory_tracked =
+      module_pressure_state
+          ? module_pressure_state->ComputationIsMemoryTracked(computation)
+          : module_pressure_state_ptr->ComputationIsMemoryTracked(computation);
+  const MemoryPressureTracker::MemoryPressureState& computation_pressure_state =
+      module_pressure_state
+          ? module_pressure_state->GetPressureStateForComputation(computation)
+          : module_pressure_state_ptr->GetPressureStateForComputation(
+                computation);
   const MemoryPressureTracker::MemoryPressureState* memory_pressure_state =
-      module_pressure_state.ComputationIsMemoryTracked(computation)
-          ? &module_pressure_state.GetPressureStateForComputation(computation)
-          : nullptr;
+      memory_tracked ? &computation_pressure_state : nullptr;
   MemoryPressureTracker mem_pressure_tracker(
-      hlo_alias_analysis.get(), module_pressure_state.buffer_tracker(),
-      module_pressure_state.pressure_state_cache());
+      alias_analysis ? alias_analysis : alias_analysis_ptr.get(),
+      module_pressure_state ? module_pressure_state->buffer_tracker()
+                            : module_pressure_state_ptr->buffer_tracker(),
+      module_pressure_state
+          ? module_pressure_state->pressure_state_cache()
+          : module_pressure_state_ptr->pressure_state_cache());
   if (memory_pressure_state != nullptr) {
     mem_pressure_tracker.Initialize(computation,
                                     memory_pressure_state->live_ids_at_bottom);
@@ -2999,13 +3033,42 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
             << " LatencyHidingScheduler current memory usage: "
             << scheduler_core_->GetMemoryPeak()
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
-  for (HloComputation* computation : computations_to_schedule) {
-    VLOG(1) << "[" << name() << "] Statistics before scheduling:";
-    LogScheduleStatistics(computation);
-    module->schedule().set_sequence(
-        computation, absl::MakeConstSpan(saved_schedules[computation]));
-    VLOG(1) << "[" << name() << "] Statistics after scheduling:";
-    LogScheduleStatistics(computation);
+  if (VLOG_IS_ON(1)) {
+    // Log the statistics before and after scheduling. We batch the
+    // per-computation statistics to speed up the calculation.
+    std::unique_ptr<HloAliasAnalysis> alias_analysis =
+        HloAliasAnalysis::Run(module).value();
+    ModulePressureState pressure_state =
+        ModulePressureState(module, alias_analysis.get(), shape_size_bytes_);
+    pressure_state.InitializePressureStates();
+    for (HloComputation* computation : computations_to_schedule) {
+      VLOG(1) << "[" << name() << "] Statistics before scheduling:";
+      XLA_VLOG_LINES(
+          1, LatencyHidingStatistics(computation, latency_estimator_.get(),
+                                     async_tracker_.get(), shape_size_bytes_,
+                                     alias_analysis.get(), &pressure_state)
+                 .ToString());
+      module->schedule().set_sequence(
+          computation, absl::MakeConstSpan(saved_schedules[computation]));
+    }
+    // Get the states after scheduling.
+    ModulePressureState post_scheduling_pressure_state =
+        ModulePressureState(module, alias_analysis.get(), shape_size_bytes_);
+    post_scheduling_pressure_state.InitializePressureStates();
+    for (HloComputation* computation : computations_to_schedule) {
+      VLOG(1) << "[" << name() << "] Statistics after scheduling:";
+      XLA_VLOG_LINES(
+          1, LatencyHidingStatistics(computation, latency_estimator_.get(),
+                                     async_tracker_.get(), shape_size_bytes_,
+                                     alias_analysis.get(),
+                                     &post_scheduling_pressure_state)
+                 .ToString());
+    }
+  } else {
+    for (HloComputation* computation : computations_to_schedule) {
+      module->schedule().set_sequence(
+          computation, absl::MakeConstSpan(saved_schedules[computation]));
+    }
   }
   if (debug_options.xla_dump_latency_hiding_schedule()) {
     TF_ASSIGN_OR_RETURN(ScheduleProto proto,

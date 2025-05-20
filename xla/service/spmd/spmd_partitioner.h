@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/custom_call_sharding_helper.h"
@@ -225,6 +226,15 @@ struct SPMDCollectiveOpsCreator {
       int64_t channel_id, std::optional<int64_t> split_dimension)>
       create_cross_partition_all_to_all;
 
+  // Function used to create a cross-partition all-to-all HLO using device list
+  // in iota format. This function is optional: if it is a nullptr, use
+  // create_cross_partition_all_to_all.
+  std::function<HloInstruction*(
+      SpmdBuilder*, absl::Span<HloInstruction* const> operands,
+      const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
+      std::optional<int64_t> split_dimension)>
+      create_cross_partition_all_to_all_with_iota_device_list;
+
   // Function used to create a cross-partition all-gather HLO. This is optional:
   // if it is nullptr, the partitioner will use all-reduce instead.
   std::function<HloInstruction*(
@@ -355,6 +365,9 @@ class SpmdPartitioner : public HloModulePass {
   // Update module's parameter and output sharding information, based on the
   // sharding information of the module's parameters and outptuts.
   static void RecordInputsOutputsSharding(HloModule* module);
+
+  int64_t num_partitions() const { return num_partitions_; }
+  int64_t num_replicas() const { return num_replicas_; }
 
  protected:
   // This is the internal implementation for AllGatherShards(), returns a pair
@@ -706,17 +719,20 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   }
 
   virtual double GetCommunicationTimeInMilliSec(
-      int64_t bytes, absl::Span<const ReplicaGroup> device_groups) {
+      int64_t bytes, const CollectiveDeviceList& collective_device_list) {
     return 0.0;
   }
 
   virtual int GetCommunicationMultiplier(
-      absl::Span<const ReplicaGroup> device_groups) {
+      const CollectiveDeviceList& collective_device_list) {
     return 1;
   }
 
   std::vector<ReplicaGroup> CreateReplicaGroups(
       std::vector<std::vector<int64_t>>& groups);
+
+  std::vector<ReplicaGroup> CreateReplicaGroups(
+      const hlo_sharding_util::DeviceGroupTileAssignment& groups);
 
   const CallGraph& call_graph() { return call_graph_; }
   int64_t num_partitions() const { return num_partitions_; }
@@ -791,7 +807,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   std::optional<SPMDCollectiveOpsCreator> visiting_collective_ops_creator_;
   std::optional<HloInstruction*> visiting_partition_id_;
   std::vector<PartitionedHlo::PartitioningState> visiting_state_;
-  std::vector<std::vector<int64_t>> device_groups_;
+  std::optional<hlo_sharding_util::DeviceGroupTileAssignment> device_groups_;
   const CallGraph& call_graph_;
 };
 

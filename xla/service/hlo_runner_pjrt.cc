@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/hlo_runner_pjrt.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -29,12 +30,15 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/escaping.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -55,6 +59,8 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 
@@ -200,8 +206,8 @@ class HloRunnerPjRtExecutable : public OpaqueExecutable {
                           std::unique_ptr<PjRtExecutable> executable)
       : OpaqueExecutable(creator), executable_(std::move(executable)) {}
   // Construct an internal executable with a pre-loaded PjRt executable. This
-  // only exists to support PjRt clients that do not implement Compile()
-  // functionality.
+  // only exists to support PjRt clients that do not implement Compile() and
+  // DeserializeExecutable() functionality.
   HloRunnerPjRtExecutable(
       const HloRunnerPjRt* absl_nonnull creator,
       std::unique_ptr<PjRtLoadedExecutable> loaded_executable)
@@ -494,10 +500,24 @@ HloRunnerPjRt::DeserializeExecutable(const absl::string_view serialized) const {
   // handling the default case where it is not present. The options are
   // serialized with the executable and we can read them from there.
   // Remove this comment once the bug is closed.
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                      pjrt_client_->DeserializeExecutable(
-                          serialized, /*options=*/std::nullopt));
-  return std::make_unique<HloRunnerPjRtExecutable>(this, std::move(executable));
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> pjrt_executable =
+      pjrt_client_->DeserializeExecutable(serialized, /*options=*/std::nullopt);
+  if (pjrt_executable.ok()) {
+    return std::make_unique<HloRunnerPjRtExecutable>(
+        this, *std::move(pjrt_executable));
+  }
+  if (!absl::IsUnimplemented(pjrt_executable.status())) {
+    return pjrt_executable.status();
+  }
+
+  // Fall back to deserialize + load if DeserializeExecutable() was not
+  // implemented. This is similar to how we handle CreateExecutable above.
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtLoadedExecutable> pjrt_loaded_executable,
+      pjrt_client_->LoadSerializedExecutable(
+          serialized, /*options=*/std::nullopt, LoadOptions()));
+  return std::make_unique<HloRunnerPjRtExecutable>(
+      this, std::move(pjrt_loaded_executable));
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
@@ -828,6 +848,69 @@ bool HloRunnerPjRt::ExecutablesAreEquivalent(
     return false;
   }
   return *lhs_fingerprint == *rhs_fingerprint;
+}
+
+// Split-phase HloRunnerPjRt implementations:
+
+namespace {
+std::string MakeFilename(const HloModule& module, const bool run_hlo_passes) {
+  // TODO: b/415841352 - We need a better way to calculate this fingerprint.
+  // Right now, this fingerprint does not take into account the compilation
+  // environment, flags, etc. Since we don't intend to re-use the compilation
+  // artifacts across test runs, this should probably be fine. Each environment
+  // gets a fresh artifact directory. The fingerprint may need to be generated
+  // within PjRt itself since the environment is not easily accessed at this
+  // level of abstraction.
+  const tsl::Fprint128 module_fingerprint =
+      tsl::Fingerprint128(module.ToString(HloPrintOptions::Fingerprint()));
+  const tsl::Fprint128 run_hlo_passes_fingerprint =
+      tsl::Fingerprint128(run_hlo_passes ? "true" : "false");
+  const tsl::Fprint128 fingerprint =
+      tsl::FingerprintCat128(module_fingerprint, run_hlo_passes_fingerprint);
+  const std::array<char, 16> fingerprint_bytes =
+      tsl::Fprint128ToBytes(fingerprint);
+  const absl::string_view fingerprint_bytes_view(fingerprint_bytes.data(),
+                                                 fingerprint_bytes.size());
+  return absl::StrCat(absl::BytesToHexString(fingerprint_bytes_view), ".bin");
+}
+}  // namespace
+
+absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
+CompilePhaseHloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
+                                            const bool run_hlo_passes) {
+  const std::string filename =
+      tsl::io::JoinPath(artifact_dir_, MakeFilename(*module, run_hlo_passes));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<OpaqueExecutable> wrapped_executable,
+      HloRunnerPjRt::CreateExecutable(std::move(module), run_hlo_passes));
+  TF_ASSIGN_OR_RETURN(
+      HloRunnerPjRtExecutable* const executable,
+      HloRunnerPjRtExecutable::TryUnwrap(*this, wrapped_executable.get()));
+
+  TF_ASSIGN_OR_RETURN(const std::string serialized_executable,
+                      executable->executable()->SerializeExecutable());
+  TF_RETURN_IF_ERROR(tsl::WriteStringToFile(tsl::Env::Default(), filename,
+                                            serialized_executable));
+  return wrapped_executable;
+}
+
+absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
+ExecutePhaseHloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
+                                            const bool run_hlo_passes) {
+  const std::string filename =
+      tsl::io::JoinPath(artifact_dir_, MakeFilename(*module, run_hlo_passes));
+  std::string serialized_executable;
+  if (const absl::Status status = tsl::ReadFileToString(
+          tsl::Env::Default(), filename, &serialized_executable);
+      !status.ok()) {
+    if (!compile_if_not_found_) {
+      return absl::NotFoundError(absl::StrCat(
+          "Failed to read serialized executable. ", status.message()));
+    }
+    LOG(INFO) << "Failed to read serialized executable. " << status;
+    return HloRunnerPjRt::CreateExecutable(std::move(module), run_hlo_passes);
+  }
+  return DeserializeExecutable(serialized_executable);
 }
 
 }  // namespace xla
