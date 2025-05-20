@@ -62,6 +62,95 @@ namespace {
 
 constexpr int64_t kMaxOneShotAllReduceSizeBytes = 256 * 1024;
 
+// Contains the values that are passed between host threads with rendezvous.
+struct RendezvousValue {
+  RankId rank;
+  se::DeviceMemoryBase input_buffer;
+  se::Event* start_event;
+  se::Event* end_event;
+
+  bool operator<(const RendezvousValue& other) const {
+    return rank < other.rank;
+  }
+};
+
+// Executes the rendezvous before the kernel start.
+// Inserts CUDA events into the stream to ensure that all devices have reached
+// the start event before the kernel starts.
+absl::StatusOr<std::shared_ptr<std::vector<RendezvousValue>>>
+RendezvousBeforeKernelStart(const GpuCliqueKey& clique_key, RankId rank,
+                            int64_t num_ranks,
+                            const se::DeviceMemoryBase& input_buffer,
+                            se::Stream& stream, se::Event* start_event,
+                            se::Event* end_event) {
+  RendezvousValue rendezvous_value;
+  rendezvous_value.rank = rank;
+  rendezvous_value.input_buffer = input_buffer;
+  rendezvous_value.start_event = start_event;
+  rendezvous_value.end_event = end_event;
+
+  // Record that this device has started executing the kernel. We do
+  // this before the rendezvous to make sure that RecordEvent is called before
+  // WaitFor on another stream.
+  TF_RETURN_IF_ERROR(stream.RecordEvent(start_event));
+
+  auto rendezvous_fn = [](absl::Span<const RendezvousValue* const> values) {
+    std::vector<RendezvousValue> values_copy;
+    for (const auto& value : values) {
+      values_copy.push_back(*value);
+    }
+    // Sort to make sure that values are in the same order as the devices are
+    // ordered in the communicator.
+    absl::c_sort(values_copy);
+    return values_copy;
+  };
+
+  std::string start_rendezvous_key =
+      absl::StrFormat("start one-shot all-reduce for rank %d, clique %s",
+                      rank.value(), clique_key.ToString());
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<std::vector<RendezvousValue>> rendezvous_values,
+      Rendezvous<std::vector<RendezvousValue>>(
+          /*name=*/start_rendezvous_key, /*key=*/clique_key,
+          /*value=*/rendezvous_value, /*num_threads=*/num_ranks,
+          rendezvous_fn));
+
+  // Wait for all devices to reach the start event. This indicates that all
+  // output buffers are ready for transfer.
+  for (auto& value : *rendezvous_values) {
+    TF_RETURN_IF_ERROR(stream.WaitFor(value.start_event));
+  }
+
+  return rendezvous_values;
+}
+
+// Executes the rendezvous after the kernel finish. Waits for all devices to
+// reach the end event.
+absl::Status RendezvousAfterKernelFinish(
+    const GpuCliqueKey& clique_key, RankId rank, int64_t num_ranks,
+    se::Stream& stream, se::Event* end_event,
+    const std::shared_ptr<std::vector<RendezvousValue>>& rendezvous_values) {
+  // Record that this device has finished executing the kernel.
+  TF_RETURN_IF_ERROR(stream.RecordEvent(end_event));
+
+  // Do another rendezvous to make sure that we call RecordEvent for end_event
+  // before WaitFor on another stream.
+  std::string finish_rendezvous_key =
+      absl::StrFormat("finish one-shot all-reduce for rank %d, clique %s",
+                      rank.value(), clique_key.ToString());
+  TF_RETURN_IF_ERROR(Rendezvous(/*name=*/finish_rendezvous_key,
+                                /*key=*/clique_key,
+                                /*num_threads=*/num_ranks));
+
+  // Wait for all devices to reach the end event. This indicates that all
+  // updates from other devices have arrived.
+  for (auto& value : *rendezvous_values) {
+    TF_RETURN_IF_ERROR(stream.WaitFor(value.end_event));
+  }
+
+  return absl::OkStatus();
+}
+
 absl::Status RunOneShotAllReduce(const GpuCliqueKey& clique_key, RankId rank,
                                  std::vector<DeviceBufferPair>& buffers,
                                  se::Stream& stream, Communicator* comm,
@@ -91,13 +180,12 @@ absl::Status RunOneShotAllReduce(const GpuCliqueKey& clique_key, RankId rank,
 
   TF_ASSIGN_OR_RETURN(
       std::shared_ptr<std::vector<RendezvousValue>> rendezvous_values,
-      RendezvousBeforeKernelStart(/*name=*/"one-shot all-reduce", clique_key,
-                                  rank, num_ranks, local_buffer, stream,
-                                  start_event, end_event));
+      RendezvousBeforeKernelStart(clique_key, rank, num_ranks, local_buffer,
+                                  stream, start_event, end_event));
 
   absl::InlinedVector<se::DeviceMemoryBase, 4> input_ptrs;
   for (auto& value : *rendezvous_values) {
-    input_ptrs.push_back(value.buffer);
+    input_ptrs.push_back(value.input_buffer);
   }
 
   TF_RETURN_IF_ERROR(RunAllReduceKernel(&stream, buffer.element_type,
@@ -105,8 +193,7 @@ absl::Status RunOneShotAllReduce(const GpuCliqueKey& clique_key, RankId rank,
                                         num_ranks, buffer.element_count));
 
   TF_RETURN_IF_ERROR(RendezvousAfterKernelFinish(
-      /*name=*/"one-shot all-reduce", clique_key, rank, num_ranks, stream,
-      end_event, rendezvous_values));
+      clique_key, rank, num_ranks, stream, end_event, rendezvous_values));
 
   return absl::OkStatus();
 }
