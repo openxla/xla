@@ -733,7 +733,6 @@ ENTRY main {
   HloPrintOptions print_options =
       HloPrintOptions().set_print_operand_shape(true);
 
-  {
   if (is_cuda) {
     // Triton enabled, no fallback.
     TF_ASSERT_OK_AND_ASSIGN(auto optimized_module_no_fallback,
