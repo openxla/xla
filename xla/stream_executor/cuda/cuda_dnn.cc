@@ -59,6 +59,9 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/tensor_float_32_utils.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -4897,7 +4900,7 @@ class ScoreModFunc {
           }
           hlo_to_cudnn[hlo] = graph->pointwise(o0, o1, attrs);
         } else if (hlo->operand_count() == 3) {
-          if (HloPredicateIsNotOp<xla::HloOpcode::kSelect>(hlo)) {
+          if (xla::HloPredicateIsNotOp<xla::HloOpcode::kSelect>(hlo)) {
             LOG(FATAL) << "Unimplemented elementwise operation:"
                        << hlo->ToString() << "\n";
           }

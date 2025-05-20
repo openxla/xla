@@ -359,12 +359,11 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
     score_mod_bwd_comp = computations[0];
     auto softmax_aux = custom_call->mutable_operand(3);
     HloInstruction *fwd_custom_call;
-    if (Match(softmax_aux,
-              m::GetTupleElement(m::CustomCall(&fwd_custom_call), 1))) {
-      score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
-    } else {
+    if (!Match(softmax_aux,
+               m::GetTupleElement(m::CustomCall(&fwd_custom_call), 1))) {
       return absl::InternalError("Can't find fmha fwd custom call.");
     }
+    score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
     input_index += score_mod_fwd_comp->num_parameters() - 1;
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
