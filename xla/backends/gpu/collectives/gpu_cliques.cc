@@ -146,11 +146,14 @@ static void CheckClique(const GpuCliqueKey& clique_key,
   }
 }
 
+static std::atomic<bool> run_heartbeat{true};
 // TODO(ezhulenev): We need a mechanism to destroy whole clique when one of the
 // communicators is aborted to be able to recover from errors.
 static void GpuCliqueHeartBeatMonitorThread() {
   VLOG(5) << "Starting GPU cliques heart beat monitor";
   while (true) {
+    auto run = run_heartbeat.load();
+    if (!run) break;
     absl::SleepFor(absl::Seconds(30));
     ProcessGpuCliques& cliques = GetProcessGpuCliques();
     absl::MutexLock lock(&cliques.mu);
@@ -162,11 +165,10 @@ static void GpuCliqueHeartBeatMonitorThread() {
   }
 }
 
-static void StartGpuCliqueHeartBeatMonitor() {
-  static auto* monitor_thread = tsl::Env::Default()->StartThread(
+static tsl::Thread* StartGpuCliqueHeartBeatMonitor() {
+  return tsl::Env::Default()->StartThread(
       tsl::ThreadOptions(), "gpu_clique_heart_beat_monitor",
       GpuCliqueHeartBeatMonitorThread);
-  (void)monitor_thread;  // suppress unused variable warning
 }
 
 //===----------------------------------------------------------------------===//
@@ -234,7 +236,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
           << rank << "; num_local_participants=" << num_local_participants;
 
   // Start GPU clique heart beat monitor when create a first clique.
-  StartGpuCliqueHeartBeatMonitor();
+  tsl::Thread *heartbeat_thread = StartGpuCliqueHeartBeatMonitor();
 
   using RendezvousArg = std::pair<DeviceRank, /*synchronized=*/bool>;
 
@@ -348,10 +350,15 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
   // processes are not able to synchronize device activity.
   RendezvousArg rendezvous_arg = std::make_pair(device_rank, synchronized);
 
-  return Rendezvous<LockableGpuClique::Lock>(
+  auto ret_val = Rendezvous<LockableGpuClique::Lock>(
       initialization_rendezvous_name, rendezvous_key, rendezvous_arg,
       num_local_participants, initialize, WarnStuckTimeout(),
       TerminateTimeout());
+
+  run_heartbeat.store(false);
+  delete heartbeat_thread;
+
+  return ret_val;
 }
 
 // Computes a unique GPU communicator split color from a clique key. We use a

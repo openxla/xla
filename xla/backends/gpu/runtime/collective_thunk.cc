@@ -491,6 +491,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
             ));
   }
 
+  TF_ASSIGN_OR_RETURN(std::vector<Communicator*> comms, GetCommunicators(params));
+  for (auto comm : comms) { delete comm; }
   return absl::OkStatus();
 }
 
