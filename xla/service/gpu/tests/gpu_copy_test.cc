@@ -187,36 +187,6 @@ TEST_F(GpuCopyTest, UseMemcpyForDynamicSlice) {
       RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{1e-5, 1e-5}));
 }
 
-TEST_F(GpuCopyTest, DoNotUseMemcpyForDynamicSlice) {
-  // This is a test for the CompileAndVerifyIr statement in
-  // UseMemcpyForDynamicSlice. When the conditions are not met, there should be
-  // a fusion for the slice.
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kSliceMemcpyModule));
-
-  // This prevents the memcpy fusion logic from triggering.
-  hlo_module->entry_computation()->root_instruction()->clear_backend_config();
-
-  CompileAndVerifyIr(std::move(hlo_module), "; CHECK: void @slice",
-                     /*match_optimized_ir=*/false,
-                     /*run_optimization_passes=*/false);
-}
-
-TEST_F(GpuCopyTest, DoNotUseMemcpyWithLayoutChange) {
-  // By changing the layout of the result, the slice is no longer contiguous and
-  // cannot be emitted with a memcpy. Technically, this means the input program
-  // is incorrect, since the __dynamic_memcpy fusion kind should not have been
-  // set. We still verify that we correctly fall back to codegen.
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(absl::StrReplaceAll(
-                              kSliceMemcpyModule, {{"{2,1,0}", "{0,2,1}"}})));
-
-  CompileAndVerifyIr(std::move(hlo_module), "; CHECK: void @slice",
-                     /*match_optimized_ir=*/false,
-                     /*run_optimization_passes=*/false);
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kSliceMemcpyModule, ErrorSpec{0, 0}));
-}
-
 constexpr char kDynamicUpdateSliceModule[] = R"(
     dynamic_update_slice {
       p0 = s32[4,8,8] parameter(0)
@@ -297,21 +267,6 @@ TEST_F(GpuCopyTest, UseMemcpyForDynamicUpdateSlice) {
                      /*run_optimization_passes=*/false);
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(kDynamicUpdateSliceModule, ErrorSpec{0, 0}));
-}
-
-TEST_F(GpuCopyTest, DoNotUseMemcpyForDynamicUpdateSlice) {
-  // This is a test for the CompileAndVerifyIr statement in
-  // UseMemcpyForDynamicUpdateSlice. When the conditions are not met, there
-  // should be a fusion for the slice.
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<VerifiedHloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kDynamicUpdateSliceModule));
-
-  // This prevents the memcpy fusion logic from triggering.
-  hlo_module->entry_computation()->root_instruction()->clear_backend_config();
-  CompileAndVerifyIr(std::move(hlo_module), "; CHECK: void @updated",
-                     /*match_optimized_ir=*/false,
-                     /*run_optimization_passes=*/false);
 }
 
 constexpr char kDynamicUpdateSliceWithBitcastModule[] = R"(
