@@ -385,7 +385,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
-    tags = ["cuda-only", "gpu"],
+    tags = ["gpu"],
 )
 
 xla_test(
