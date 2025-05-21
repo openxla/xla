@@ -383,8 +383,9 @@ cc_library(
     deps = [
         "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_module_group",
+        "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/backends/gpu/collectives:nvshmem_collectives_if_supported",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],

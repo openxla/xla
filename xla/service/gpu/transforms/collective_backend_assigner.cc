@@ -18,11 +18,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/shape_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -69,12 +68,14 @@ absl::StatusOr<bool> CollectiveBackendAssigner::Run(
       if (instr->opcode() == HloOpcode::kAllReduce ||
           instr->opcode() == HloOpcode::kAllReduceStart) {
         TF_ASSIGN_OR_RETURN(
-            comm_type, CommunicationType(*Cast<HloCollectiveInstruction>(instr),
-                                         gpu_version_));
+            comm_type,
+            CommunicationType(*xla::Cast<HloCollectiveInstruction>(instr),
+                              gpu_version_));
       } else {
         TF_ASSIGN_OR_RETURN(
-            comm_type, CommunicationType(*Cast<HloChannelInstruction>(instr),
-                                         gpu_version_));
+            comm_type,
+            CommunicationType(*xla::Cast<HloChannelInstruction>(instr),
+                              gpu_version_));
       }
 
       auto backend = comm_type == GPUCommunicationType::SINGLE_HOST &&
