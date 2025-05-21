@@ -88,8 +88,9 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
   absl::Status Initialize(const InitializeParams& params) override;
 
  protected:
-  absl::Status RunCollective(const ExecuteParams& params, se::Stream& stream,
-                             CommunicatorHandle comm_handle) override;
+  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     se::Stream& stream,
+                                     CommunicatorHandle comm) override;
 
  private:
   bool one_shot_kernel_enabled_ = false;
@@ -100,15 +101,9 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
   absl::flat_hash_map<se::StreamExecutor*, se::DeviceMemoryHandle>
       local_buffer_allocs_ ABSL_GUARDED_BY(mutex_);
 
-  // Events to synchronize steams on different devices at the start of the
-  // one-shot kernel.
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
-      start_events_ ABSL_GUARDED_BY(mutex_);
-
-  // Events to synchronize steams on different devices at the end of the
-  // one-shot kernel.
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>>
-      end_events_ ABSL_GUARDED_BY(mutex_);
+  // Allocation for signal flags to synchronize blocks on different devices.
+  absl::flat_hash_map<se::StreamExecutor*, se::DeviceMemoryHandle>
+      signal_flags_allocs_ ABSL_GUARDED_BY(mutex_);
 };
 
 // -----------------------------------------------------------------------------
@@ -132,8 +127,9 @@ class ReduceScatterStartThunk : public AllReduceReduceScatterThunkBase {
       const HloReduceScatterInstruction* inst);
 
  protected:
-  absl::Status RunCollective(const ExecuteParams& params, se::Stream& stream,
-                             CommunicatorHandle comm_handle) override;
+  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     se::Stream& stream,
+                                     CommunicatorHandle comm) override;
 };
 
 // -----------------------------------------------------------------------------

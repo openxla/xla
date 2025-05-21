@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 
 #include "mlir/Pass/Pass.h"
+#include "xla/codegen/emitters/ir/xla_dialect.h"  // IWYU pragma: keep
 
 namespace xla::cpu {
 
@@ -26,6 +27,7 @@ namespace xla::cpu {
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h.inc"
 
 std::unique_ptr<mlir::Pass> CreateLowerToLLVMPass();
+std::unique_ptr<mlir::Pass> CreateLowerXlaSharedPass();
 
 #define GEN_PASS_REGISTRATION
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h.inc"

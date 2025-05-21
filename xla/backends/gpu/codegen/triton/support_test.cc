@@ -653,7 +653,11 @@ ENTRY triton_computation {
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
+  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
+                            data_type == PrimitiveType::F8E5M2;
+  RunSupportTest(
+      std::move(ti), /*output_tile_sizes=*/{1}, cc,
+      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
 }
 
 TEST_F(ReduceTest, IsTritonSupportedReductionWithMultidimensionalTile) {
@@ -720,7 +724,11 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
+  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
+                            data_type == PrimitiveType::F8E5M2;
+  RunSupportTest(
+      std::move(ti), /*output_tile_sizes=*/{1}, cc,
+      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
 }
 
 TEST_P(ReduceTest,
@@ -833,10 +841,11 @@ ENTRY triton_computation {
 
   // TODO(b/361526623): Reduce the cases where emitter crashes.
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (opcode == HloOpcode::kDivide &&
-      (data_type == BF16 || data_type == F16 || data_type == F8E4M3FN ||
-       data_type == F8E5M2)) {
+  if (opcode == HloOpcode::kDivide && (data_type == BF16 || data_type == F16)) {
     fail_mode = ExpectedFailMode::kCrash;
+  }
+  if (data_type == F8E4M3FN || data_type == F8E5M2) {
+    fail_mode = ExpectedFailMode::kFailOrCrash;
   }
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc, fail_mode);
 }
@@ -1488,13 +1497,12 @@ using RngGetAndUpdateStateTest = TritonSupportTestWithDeviceParam;
 TEST_P(RngGetAndUpdateStateTest, RngGetAndUpdateState) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-  ENTRY triton_computation {
-    ROOT root = u64[2]{0} rng-get-and-update-state(), delta=4096
-  })";
+ENTRY triton_computation {
+  ROOT root = u64[2]{0} rng-get-and-update-state(), delta=4096
+})";
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate,
-                                     F16,  // data_type doesn't matter here
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
                                      HloOpcode::kRngGetAndUpdateState));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
@@ -1586,8 +1594,7 @@ ENTRY triton_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate,
-                                     F16,  // data_type doesn't matter here
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
                                      HloOpcode::kWhile));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc);
 }
@@ -1726,8 +1733,7 @@ ENTRY triton_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate,
-                                     F16,  // data_type doesn't matter here
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
                                      HloOpcode::kGetDimensionSize));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc);
 }
@@ -2469,8 +2475,8 @@ ENTRY triton_computation {
     hlo_text = absl::Substitute(
         R"(
 ENTRY triton_computation {
-parameter = $0[33, $1] parameter(0)
-ROOT bc_convert = $2[33] bitcast-convert(parameter)
+  parameter = $0[33, $1] parameter(0)
+  ROOT bc_convert = $2[33] bitcast-convert(parameter)
 })",
         data_type_in_str, bit_width_out / bit_width_in, data_type_out_str);
     output_tile_sizes = {1};
@@ -2496,15 +2502,15 @@ using AddDependencyTest = TritonSupportTestWithDeviceParam;
 TEST_P(AddDependencyTest, AddDependency) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      param = f32[10] parameter(0)
-      token0 = token[] after-all()
-      ROOT add_dep = f32[10] add-dependency(param, token0)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
-                                                    kHloTestTemplate,
-                                                    F32,  // Type is irrelevant.
-                                                    HloOpcode::kAddDependency));
+ENTRY triton_computation {
+  param = f32[10] parameter(0)
+  token0 = token[] after-all()
+  ROOT add_dep = f32[10] add-dependency(param, token0)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kAddDependency));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
@@ -2517,15 +2523,15 @@ using AfterAllTest = TritonSupportTestWithDeviceParam;
 TEST_P(AfterAllTest, AfterAll) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      token0 = token[] after-all()
-      token1 = token[] after-all()
-      ROOT token2 = token[] after-all(token0, token1)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
-                                                    kHloTestTemplate,
-                                                    F32,  // Type is irrelevant.
-                                                    HloOpcode::kAfterAll));
+ENTRY triton_computation {
+  token0 = token[] after-all()
+  token1 = token[] after-all()
+  ROOT token2 = token[] after-all(token0, token1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kAfterAll));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc);
 }
 
@@ -2538,16 +2544,15 @@ using TupleTest = TritonSupportTestWithDeviceParam;
 TEST_P(TupleTest, Tuple) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      p0 = f32[10] parameter(0)
-      p1 = s32[5] parameter(1)
-      ROOT tuple_op = (f32[10], s32[5]) tuple(p0, p1)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
-                          ParseTemplateAndGetInstruction(
-                              kHloTestTemplate,
-                              PRIMITIVE_TYPE_INVALID,  // Type is irrelevant.
-                              HloOpcode::kTuple));
+ENTRY triton_computation {
+  p0 = f32[10] parameter(0)
+  p1 = s32[5] parameter(1)
+  ROOT tuple_op = (f32[10], s32[5]) tuple(p0, p1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kTuple));
   RunSupportTestMultipleOutputTiles(std::move(ti),
                                     /*output_tile_sizes=*/{{1}, {1}}, cc);
 }
@@ -2561,15 +2566,14 @@ using GetTupleElementTest = TritonSupportTestWithDeviceParam;
 TEST_P(GetTupleElementTest, GetTupleElement) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      tuple_op = (f32[10], s32[5]) parameter(0)
-      ROOT gte = f32[10] get-tuple-element(tuple_op), index=0
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
-                          ParseTemplateAndGetInstruction(
-                              kHloTestTemplate,
-                              PRIMITIVE_TYPE_INVALID,  // Type is irrelevant.
-                              HloOpcode::kGetTupleElement));
+ENTRY triton_computation {
+  tuple_op = (f32[10], s32[5]) parameter(0)
+  ROOT gte = f32[10] get-tuple-element(tuple_op), index=0
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kGetTupleElement));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
@@ -2582,14 +2586,14 @@ using CustomCallTest = TritonSupportTestWithDeviceParam;
 TEST_P(CustomCallTest, CustomCall) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      parameter = f32[10] parameter(0)
-      ROOT custom_call_op = f32[10] custom-call(parameter), custom_call_target="SomeTarget"
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
-                                                    kHloTestTemplate,
-                                                    F32,  // Type is irrelevant.
-                                                    HloOpcode::kCustomCall));
+ENTRY triton_computation {
+  parameter = f32[10] parameter(0)
+  ROOT custom_call_op = f32[10] custom-call(parameter), custom_call_target="SomeTarget"
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kCustomCall));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
@@ -2608,10 +2612,10 @@ TEST_P(CholeskyTest, Cholesky) {
 
   const std::string kHloTestTemplate = absl::Substitute(
       R"(
-    ENTRY triton_computation {
-      parameter = $0[4,4] parameter(0)
-      ROOT cholesky_op = $0[4,4] cholesky(parameter), lower=$1
-    })",
+ENTRY triton_computation {
+  parameter = $0[4,4] parameter(0)
+  ROOT cholesky_op = $0[4,4] cholesky(parameter), lower=$1
+})",
       primitive_util::LowercasePrimitiveTypeName(data_type), lower);
 
   TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
@@ -2716,10 +2720,10 @@ TEST_P(FftTest, FFT) {
   auto [data_type, cc] = GetParam();
 
   const std::string hlo_text = R"(
-    ENTRY triton_computation {
-      parameter = $0[16,16] parameter(0)
-      ROOT fft_op = $0[16,16] fft(parameter), fft_type=FFT, fft_length={16}
-    })";
+ENTRY triton_computation {
+  parameter = $0[16,16] parameter(0)
+  ROOT fft_op = $0[16,16] fft(parameter), fft_type=FFT, fft_length={16}
+})";
 
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
@@ -2732,10 +2736,10 @@ TEST_P(FftTest, IFFT) {
   auto [data_type, cc] = GetParam();
 
   const std::string hlo_text = R"(
-    ENTRY triton_computation {
-      parameter = $0[16,16] parameter(0)
-      ROOT fft_op = $0[16,16] fft(parameter), fft_type=IFFT, fft_length={16}
-    })";
+ENTRY triton_computation {
+  parameter = $0[16,16] parameter(0)
+  ROOT fft_op = $0[16,16] fft(parameter), fft_type=IFFT, fft_length={16}
+})";
 
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
@@ -2755,10 +2759,10 @@ TEST_P(FftTest, RFFT) {
 
   const std::string hlo_text = absl::Substitute(
       R"(
-    ENTRY triton_computation {
-      parameter = $0[16,16,32] parameter(0)
-      ROOT fft_op = $1[16,16,17] fft(parameter), fft_type=RFFT, fft_length={16,32}
-    })",
+ENTRY triton_computation {
+  parameter = $0[16,16,32] parameter(0)
+  ROOT fft_op = $1[16,16,17] fft(parameter), fft_type=RFFT, fft_length={16,32}
+})",
       real_data_type_str, complex_data_type_str);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2779,10 +2783,10 @@ TEST_P(FftTest, IRFFT) {
 
   const std::string hlo_text = absl::Substitute(
       R"(
-  ENTRY triton_computation {
-    parameter = $0[16,16,32,33] parameter(0)
-    ROOT fft_op = $1[16,16,32,64] fft(parameter), fft_type=IRFFT, fft_length={16,32,64}
-  })",
+ENTRY triton_computation {
+  parameter = $0[16,16,32,33] parameter(0)
+  ROOT fft_op = $1[16,16,32,64] fft(parameter), fft_type=IRFFT, fft_length={16,32,64}
+})",
       complex_data_type_str, real_data_type_str);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2806,11 +2810,11 @@ using CopyStartDoneTest = TritonSupportTestWithTypeAndDeviceParam;
 TEST_P(CopyStartDoneTest, CopyStartDone) {
   auto [data_type, cc] = GetParam();
   const std::string kHloTestTemplate = R"(
-    ENTRY triton_computation {
-      parameter = $0[10,10,10] parameter(0)
-      cp_start = ($0[10,10,10], $0[10,10,10], u32[]) copy-start(parameter)
-      ROOT cp_done = $0[10,10,10] copy-done(cp_start)
-    })";
+ENTRY triton_computation {
+  parameter = $0[10,10,10] parameter(0)
+  cp_start = ($0[10,10,10], $0[10,10,10], u32[]) copy-start(parameter)
+  ROOT cp_done = $0[10,10,10] copy-done(cp_start)
+})";
 
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti_start,
@@ -2838,10 +2842,10 @@ using InfeedTest = TritonSupportTestWithTypeAndDeviceParam;
 TEST_P(InfeedTest, Infeed) {
   auto [data_type, cc] = GetParam();
   const std::string kHloTestTemplate = R"(
-        ENTRY triton_computation {
-          token0 = token[] after-all()
-          ROOT infeed_op = ($0[10], token[]) infeed(token0)
-        })";
+ENTRY triton_computation {
+  token0 = token[] after-all()
+  ROOT infeed_op = ($0[10], token[]) infeed(token0)
+})";
   TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
                           ParseTemplateAndGetInstruction(
                               kHloTestTemplate, data_type, HloOpcode::kInfeed));
@@ -2860,11 +2864,11 @@ using OutfeedTest = TritonSupportTestWithTypeAndDeviceParam;
 TEST_P(OutfeedTest, Outfeed) {
   auto [data_type, cc] = GetParam();
   const std::string kHloTestTemplate = R"(
-        ENTRY triton_computation {
-          data = $0[10] parameter(0)
-          token0 = token[] after-all()
-          ROOT outfeed_op = token[] outfeed(data, token0)
-        })";
+ENTRY triton_computation {
+  data = $0[10] parameter(0)
+  token0 = token[] after-all()
+  ROOT outfeed_op = token[] outfeed(data, token0)
+})";
   TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
                                                     kHloTestTemplate, data_type,
                                                     HloOpcode::kOutfeed));
@@ -2921,20 +2925,19 @@ TEST_P(StochasticConvertTest, StochasticConvert) {
 
   const std::string hlo_text = absl::Substitute(
       R"(
-      ENTRY triton_computation {
-        operand = $0[33,68] parameter(0)
-        random = $1[33,68] parameter(1)
-        ROOT result = $2[33,68] stochastic-convert(operand, random)
-      })",
+ENTRY triton_computation {
+  operand = $0[33,68] parameter(0)
+  random = $1[33,68] parameter(1)
+  ROOT result = $2[33,68] stochastic-convert(operand, random)
+})",
       primitive_util::LowercasePrimitiveTypeName(operand_type),
       primitive_util::LowercasePrimitiveTypeName(random_type),
       primitive_util::LowercasePrimitiveTypeName(new_element_type));
 
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
-      ParseTemplateAndGetInstruction(
-          hlo_text, PRIMITIVE_TYPE_INVALID,  // Type is irrelevant.
-          HloOpcode::kStochasticConvert));
+      ParseTemplateAndGetInstruction(hlo_text, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kStochasticConvert));
 
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }

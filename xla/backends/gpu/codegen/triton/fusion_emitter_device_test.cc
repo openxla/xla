@@ -616,8 +616,8 @@ ENTRY main {
 
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
                                           "triton_softmax_computation", R"(
-CHECK:        #[[MAP:.*]] = #xla.indexing_map<"(d0) -> (d0 floordiv 125), domain: d0 in [0, 1249]">
-CHECK:        #[[MAP1:.*]] = #xla.indexing_map<"(d0) -> (d0 mod 125), domain: d0 in [0, 1249]">
+CHECK:        #[[MAP:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 125), domain: pid_0 in [0, 1249]">
+CHECK:        #[[MAP1:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 mod 125), domain: pid_0 in [0, 1249]">
 CHECK:        func.func @triton_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[P2:.*]]: {{.*}}, %[[P3:.*]]: {{.*}})
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
@@ -815,8 +815,8 @@ ENTRY main {
 
   TF_ASSERT_OK(CreateTritonIrAndFileCheck(this, kHloText,
                                           "triton_softmax_computation", R"(
-// CHECK:         #xla.indexing_map<"(d0) -> (d0 floordiv 32), domain: d0 in [0, 2047]">
-// CHECK:         #xla.indexing_map<"(d0) -> (d0 mod 32), domain: d0 in [0, 2047]">
+// CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 32), domain: pid_0 in [0, 2047]">
+// CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 mod 32), domain: pid_0 in [0, 2047]">
 // CHECK-LABEL:   func.func @triton_fn(
 // CHECK-SAME:                       %[[P0:[A-Za-z0-9_]*]]: tensor<64x32x16xf32>
 // CHECK-SAME:                       %[[P1:[A-Za-z0-9_]*]]: tensor<f32>
@@ -1103,12 +1103,6 @@ ENTRY entry_computation {
 // Parameterized to make sure that slices are also handled correctly when TMA is
 // enabled.
 TEST_P(TmaParameterizedTritonEmitterTest, TestSliceWithTileThatNeedsMasking) {
-  bool tma_enabled = GetParam();
-  if (tma_enabled) {
-    GTEST_SKIP()
-        << "TODO(b/413301521): Skipping TMA due to: contiguous dimension "
-           "size too small.";
-  }
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1129,7 +1123,33 @@ ENTRY entry_computation {
         "num_ctas":"1",
         "num_stages":"1"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
+// Parameterized to make sure that tile strides are handled correctly when TMA
+// is enabled.
+TEST_P(TmaParameterizedTritonEmitterTest, TestSliceWithNonMinorDimStrides) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_computation {
+  p = f32[128,32] parameter(0)
+  ROOT slice = f32[12,16] slice(p), slice={[102:126:2], [16:32]}
+}
+
+ENTRY entry_computation {
+  p = f32[128,32] parameter(0)
+  ROOT fusion = f32[12,16] fusion(p), kind=kCustom, calls=fused_computation,
+    backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["4","4"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
+})";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguous) {
@@ -1208,16 +1228,16 @@ ENTRY entry_computation {
           "num_ctas":"1",
           "num_stages":"1"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
+// Parameterized to make sure that when TMA flag is enabled, this test would
+// correctly fall back to normal loads. This is due to the fact that the most
+// minor dimension is not contiguous.
+// TODO(b/419025213): To FileCheck here, we need to create a test wrapper that
+// also invokes TritonXlaExtractInsertPass to check TTIR.
 TEST_P(TmaParameterizedTritonEmitterTest,
        TestSlice2DWithTileElementsNotAllContiguousUnaligned) {
-  bool tma_enabled = GetParam();
-  if (tma_enabled) {
-    GTEST_SKIP() << "TODO(b/413351837): Skipping TMA due to: "
-                    "CUDA_ERROR_ILLEGAL_INSTRUCTION";
-  }
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1373,15 +1393,34 @@ backend_config={
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
-// Parameterized to provide coverage for strided access with TMA.
+// When TMA is enabled, it is important to test this in an end-to-end fashion.
+// This test covers the logic that adjusts box_dims based on the swizzle mode.
+// See tensorflow/compiler/xla/backends/gpu/codegen/triton/tma_utils.cc.
 TEST_P(TmaParameterizedTritonEmitterTest,
-       BitcastNormalizedLayoutsIsLoweredCorrectly) {
-  bool tma_enabled = GetParam();
-  if (tma_enabled) {
-    GTEST_SKIP() << "TODO(b/417021441): Skipping TMA due to: "
-                    "CUDA_ERROR_ILLEGAL_INSTRUCTION. "
-                    "Potentially due to incorrect strides handling.";
-  }
+       ContiguousDimensionExceedsSwizzleLimitIsLoweredCorrectly) {
+  constexpr absl::string_view kHloText = R"(
+triton_computation {
+p = s32[16,128] parameter(0)
+ROOT bitcast = s32[16,128] bitcast(p)
+}
+
+ENTRY entry_computation {
+p = s32[16,128] parameter(0)
+ROOT fusion = s32[16,128] fusion(p), kind=kCustom, calls=triton_computation,
+backend_config={
+"fusion_backend_config":{
+ "kind":"__triton",
+ "block_level_fusion_config":{
+ "output_tiles":[{"sizes":["16","64"]}],
+ "num_warps":"1",
+ "num_ctas":"1",
+ "num_stages":"1"}}}
+})";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
+TEST_F(TritonEmitterTest, BitcastNormalizedLayoutsIsLoweredCorrectly) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   p = f32[8,48]{1,0} parameter(0)
@@ -1412,16 +1451,7 @@ CHECK:     triton_xla.insert
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
-// Parameterized to provide coverage for both strided access and non-canonical
-// layouts with TMA.
-TEST_P(TmaParameterizedTritonEmitterTest,
-       BitcastNonNormalizedInputLayoutIsLoweredCorrectly) {
-  bool tma_enabled = GetParam();
-  if (tma_enabled) {
-    GTEST_SKIP() << "TODO(b/417021441): Skipping TMA due to: "
-                    "CUDA_ERROR_ILLEGAL_INSTRUCTION. "
-                    "Potentially due to incorrect strides handling.";
-  }
+TEST_F(TritonEmitterTest, BitcastNonNormalizedInputLayoutIsLoweredCorrectly) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   p = s32[48,16]{0,1} parameter(0)
@@ -2015,7 +2045,7 @@ CHECK:     tt.reduce{{.*}}axis = 0
 CHECK:     tensor.insert {{.*}} tensor<f32>
 )"));
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
 // Reproducer from b/380277401.
@@ -2063,11 +2093,6 @@ CHECK:     triton_xla.insert
 }
 
 TEST_P(TmaParameterizedTritonEmitterTest, BroadcastWorksCorrectly) {
-  bool tma_enabled = GetParam();
-  if (tma_enabled) {
-    GTEST_SKIP() << "TODO(b/415758695): Skipping TMA due to incorrect handling "
-                    "of swizzle. Re-enable once fixed.";
-  }
   constexpr absl::string_view kTritonHloText = R"(
 computation {
   p0 = s32[256]{0} parameter(0)

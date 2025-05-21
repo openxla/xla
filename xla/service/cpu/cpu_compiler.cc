@@ -522,6 +522,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // Run some IR cleanup passes before running the SPMD partitioning
     // passes.
     AddHloVerifier(&spmd_pipeline);
+    spmd_pipeline.AddPass<FlattenCallGraph>();
     spmd_pipeline.AddPass<CallInliner>();
     spmd_pipeline.AddPass<ZeroSizedHloElimination>();
     spmd_pipeline.AddPass<ConditionalCanonicalizer>();
@@ -539,6 +540,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
     AddHloVerifier(&sharding_removal_pipeline);
+    sharding_removal_pipeline.AddPass<FlattenCallGraph>();
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
     // Run ShardyXLA without propagation, which enforces use-tuple-args.

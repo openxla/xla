@@ -24,11 +24,28 @@ def LowerToLLVMPass : Pass<"xla-cpu-lower-to-llvm", "mlir::ModuleOp"> {
   }];
 
   let dependentDialects = [
-    "mlir::LLVM::LLVMDialect",
     "mlir::func::FuncDialect",
+    "mlir::LLVM::LLVMDialect",
     "mlir::tensor::TensorDialect",
     "xla::cpu::XlaCpuDialect",
+    "xla::XlaDialect",
   ];
 
   let constructor = "::xla::cpu::CreateLowerToLLVMPass()";
+}
+
+def LowerXlaSharedPass :
+   Pass<"xla-cpu-lower-xla-shared", "mlir::func::FuncOp"> {
+  let summary = "Lowers XLA shared dialect ops to XLA cpu compatable ops.";
+
+  let description = [{
+    Lowers XLA shared dialect ops to XLA cpu compatable ops.
+  }];
+
+  let dependentDialects = [
+    "xla::XlaDialect",
+    "mlir::scf::SCFDialect",
+  ];
+
+  let constructor = "CreateLowerXlaSharedPass()";
 }

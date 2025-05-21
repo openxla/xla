@@ -202,6 +202,11 @@ class CommandBufferCmd {
     // An external state manager that gives efficient access to per-device state
     // to commands without a need to add expensive synchronization.
     StateManager& state;
+
+    // Buffer allocations that changed since the last call to `Record`. Buffer
+    // allocation indices are sorted. CommandBufferCmdExecutor and individual
+    // commands rely on this information to skip unnecessary updates.
+    std::optional<std::vector<BufferAllocation::Index>> updated_allocs;
   };
 
   // Create new commands in the command buffer using the given dependencies.
@@ -370,7 +375,7 @@ class CommandBufferCmdExecutor {
   const absl::flat_hash_set<BufferUse>& buffers() const;
 
   // Returns buffer allocations indices referenced by commands in this sequence.
-  const absl::flat_hash_set<BufferAllocation::Index>& allocs_indices() const;
+  absl::Span<const BufferAllocation::Index> allocs_indices() const;
 
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
@@ -419,8 +424,13 @@ class CommandBufferCmdExecutor {
   // Buffers referenced by commands in this sequence.
   absl::flat_hash_set<BufferUse> buffers_;
 
-  // Buffer allocations indices referenced by commands in this sequence.
-  absl::flat_hash_set<BufferAllocation::Index> allocs_indices_;
+  // Unique buffer allocations indices referenced by all commands in this
+  // sequence (sorted by the buffer allocation index).
+  std::vector<BufferAllocation::Index> allocs_indices_;
+
+  // A mapping from command id to unique buffer allocations indices referenced
+  // by the command (sorted by the buffer allocation index).
+  std::vector<std::vector<BufferAllocation::Index>> cmd_allocs_indices_;
 };
 
 //===----------------------------------------------------------------------===//
