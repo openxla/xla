@@ -2129,6 +2129,7 @@ cc_library(
         "//xla/service/gpu/autotuning:gemm_fusion_autotuner",
         "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
         "//xla/service/gpu/transforms:algebraic_simplifier",
+        "//xla/service/gpu/transforms:block_scaling_rewriter",
         "//xla/service/gpu/transforms:conv_padding_legalization",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:cublas_pad_for_gemms",

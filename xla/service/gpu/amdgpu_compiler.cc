@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
+#include "xla/service/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/service/gpu/transforms/conv_padding_legalization.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
@@ -178,16 +179,18 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const TargetConfig& gpu_target_config,
     tsl::thread::ThreadPool* thread_pool) {
-  HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1");
-
-  auto rocm_compute_capability = std::get<se::RocmComputeCapability>(
+  auto rocm_cc = std::get<se::RocmComputeCapability>(
       gpu_target_config.device_description.gpu_compute_capability());
 
+  HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1");
+  pre_pipeline.AddPass<BlockScalingRewriter>(
+      gpu_target_config.device_description, /*allow_cudnn*/ false,
+      rocm_cc.has_hipblaslt_mx_support());
   pre_pipeline.AddPass<DotDimensionMerger>();
 
   for (const auto& req : HipblasPaddingRequirements) {
-    pre_pipeline.AddPass<CublasPadForGemms>(rocm_compute_capability,
-                                            req.data_type, req.multiple_of);
+    pre_pipeline.AddPass<CublasPadForGemms>(rocm_cc, req.data_type,
+                                            req.multiple_of);
   }
   // Padding a gemm operand that's a constant results in pad(constant).  Run
   // constant-folding to simplify this into a new constant.

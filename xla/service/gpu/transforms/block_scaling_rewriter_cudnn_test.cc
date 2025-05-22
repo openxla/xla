@@ -19,16 +19,20 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/transforms/block_scaling_rewriter.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/status_matchers.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::tsl::testing::IsOkAndHolds;
-using BlockScalingRewriterCudnnTest =
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+
+class BlockScalingRewriterCudnnTest : public GpuCodegenTest {
+ protected:
+  const auto& device_desc() const {
+    return backend().default_stream_executor()->GetDeviceDescription();
+  }
+};
 
 TEST_F(BlockScalingRewriterCudnnTest, Mxfp8) {
   constexpr absl::string_view hlo_string = R"(
@@ -46,20 +50,28 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(
       hlo_string, ErrorSpec(/*aabs=*/1e-4, /*arel=*/1e-5),
       /*reference_preprocessor=*/
-      [](HloModule* reference_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/false);
+      [&](HloModule* reference_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/false,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, reference_module), IsOkAndHolds(true));
       },
       /*test_preprocessor=*/
-      [](HloModule* test_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/true);
+      [&](HloModule* test_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/true,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, test_module), IsOkAndHolds(true));
       }));
 
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(false),
-                            "CHECK-NOT: __cudnn$blockScaledDot");
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(true),
-                            "CHECK: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/false,
+                           /*allow_hipblaslt=*/false),
+      "CHECK-NOT: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/true,
+                           /*allow_hipblaslt=*/false),
+      "CHECK: __cudnn$blockScaledDot");
 }
 
 TEST_F(BlockScalingRewriterCudnnTest, Mxfp8_MixedTypes) {
@@ -78,20 +90,28 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(
       hlo_string, ErrorSpec(/*aabs=*/1e-4, /*arel=*/1e-5),
       /*reference_preprocessor=*/
-      [](HloModule* reference_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/false);
+      [&](HloModule* reference_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/false,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, reference_module), IsOkAndHolds(true));
       },
       /*test_preprocessor=*/
-      [](HloModule* test_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/true);
+      [&](HloModule* test_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/true,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, test_module), IsOkAndHolds(true));
       }));
 
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(false),
-                            "CHECK-NOT: __cudnn$blockScaledDot");
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(true),
-                            "CHECK: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/false,
+                           /*allow_hipblaslt=*/false),
+      "CHECK-NOT: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/true,
+                           /*allow_hipblaslt=*/false),
+      "CHECK: __cudnn$blockScaledDot");
 }
 
 // Scale E2M1FN inputs, as otherwise they become all zeros for the random
@@ -120,20 +140,28 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(
       hlo_string, ErrorSpec(/*aabs=*/1e-4, /*arel=*/1e-5),
       /*reference_preprocessor=*/
-      [](HloModule* reference_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/false);
+      [&](HloModule* reference_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/false,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, reference_module), IsOkAndHolds(true));
       },
       /*test_preprocessor=*/
-      [](HloModule* test_module) {
-        BlockScalingRewriter pass(/*allow_cudnn=*/true);
+      [&](HloModule* test_module) {
+        BlockScalingRewriter pass(this->device_desc(), /*allow_cudnn=*/true,
+                                  /*allow_hipblaslt=*/false);
         EXPECT_THAT(RunHloPass(&pass, test_module), IsOkAndHolds(true));
       }));
 
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(false),
-                            "CHECK-NOT: __cudnn$blockScaledDot");
-  RunAndFilecheckHloRewrite(hlo_string, BlockScalingRewriter(true),
-                            "CHECK: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/false,
+                           /*allow_hipblaslt=*/false),
+      "CHECK-NOT: __cudnn$blockScaledDot");
+  RunAndFilecheckHloRewrite(
+      hlo_string,
+      BlockScalingRewriter(this->device_desc(), /*allow_cudnn=*/true,
+                           /*allow_hipblaslt=*/false),
+      "CHECK: __cudnn$blockScaledDot");
 }
 
 }  // namespace

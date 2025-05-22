@@ -106,7 +106,9 @@ message GemmBackendConfig {
   optional bool grad_y = 17;
   bool damax_output = 18;
 
-  reserved 19;
+  bool mx_mode = 19;
+
+  reserved 20;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.

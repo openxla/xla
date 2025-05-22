@@ -129,6 +129,7 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   std::optional<int64_t> algorithm;
   bool grad_x;
   bool grad_y;
+  bool mx_mode;
   std::optional<blas::ComputationType> compute_type;
 
   static absl::StatusOr<GemmConfig> FromProto(
