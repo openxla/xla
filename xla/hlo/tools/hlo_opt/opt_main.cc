@@ -294,6 +294,12 @@ int main(int argc, char** argv) {
   // from xla.proto.
   xla::AppendDebugOptionsFlags(&flag_list);
 
+  // The usage string includes the message at the top of the file, the
+  // DebugOptions flags and the flags defined above.
+  const std::string kUsageString =
+      absl::StrCat(kUsage, "\n\n", tsl::Flags::Usage(argv[0], flag_list));
+  tsl::port::InitMain(kUsageString.c_str(), &argc, &argv);
+
   std::optional<absl::string_view> debugOptionsFilename =
       xla::GetDebugOptionsFileName(argc, argv);
   if (debugOptionsFilename.has_value()) {
@@ -301,13 +307,7 @@ int main(int argc, char** argv) {
   }
   xla::ParseDebugOptionFlagsFromEnv(true);
 
-  // The usage string includes the message at the top of the file, the
-  // DebugOptions flags and the flags defined above.
-  const std::string kUsageString =
-      absl::StrCat(kUsage, "\n\n", tsl::Flags::Usage(argv[0], flag_list));
   bool parse_ok = tsl::Flags::Parse(&argc, argv, flag_list);
-  tsl::port::InitMain(kUsageString.c_str(), &argc, &argv);
-
   if (!parse_ok) {
     LOG(QFATAL) << kUsageString;
   }
