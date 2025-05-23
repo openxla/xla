@@ -917,3 +917,22 @@ cc_library(
         "//xla/stream_executor:kernel",
     ],
 )
+
+xla_test(
+    name = "gpu_kernel_args_test",
+    srcs = ["gpu_kernel_args_test.cc"],
+    backends = ["gpu"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    deps = [
+        "//xla/service:platform_util",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+    ] + if_cuda([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]) + if_rocm([
+        "//xla/stream_executor/rocm:rocm_platform",
+    ]),
+)
