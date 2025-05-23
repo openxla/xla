@@ -1065,7 +1065,7 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
     pm_sampler_ = std::make_unique<CuptiPmSampler>();
 #endif
 
-    TF_RETURN_IF_ERROR(pm_sampler_->Initialize(cupti_interface_, num_gpus_,
+    TF_RETURN_IF_ERROR(pm_sampler_->Initialize(num_gpus_,
                                                &(option_->pm_sampler_options)));
     TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
   }

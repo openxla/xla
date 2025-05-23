@@ -39,6 +39,9 @@ using xla::profiler::CuptiTracer;
 using xla::profiler::CuptiTracerCollectorOptions;
 using xla::profiler::CuptiTracerOptions;
 using xla::profiler::CuptiWrapper;
+using ::testing::Each;
+using ::testing::DistanceFrom;
+using ::testing::Lt;
 
 // Needed to create different cupti tracer for each test cases.
 class TestableCuptiTracer : public CuptiTracer {
@@ -47,12 +50,10 @@ class TestableCuptiTracer : public CuptiTracer {
       : CuptiTracer(new CuptiErrorManager(std::make_unique<CuptiWrapper>())) {}
 };
 
-std::atomic_uint64_t samples_fp64 = 0;
-std::atomic_uint64_t atomic_total_fp64 = 0;
-std::atomic_uint64_t samples_read = 0;
-std::atomic_uint64_t atomic_total_read = 0;
-std::atomic_uint64_t samples_write = 0;
-std::atomic_uint64_t atomic_total_write = 0;
+std::atomic_uint64_t records_fp64 = 0;
+std::atomic_uint64_t total_fp64 = 0;
+std::atomic_uint64_t records_cycles = 0;
+std::atomic_uint64_t total_cycles = 0;
 std::atomic_bool skip_first = true;
 
 void HandleRecords(PmSamples* samples) {
@@ -82,15 +83,17 @@ void HandleRecords(PmSamples* samples) {
       sum += sampler_ranges[j].metric_values[i];
     }
 
-    if (strcmp("sm__inst_executed_pipe_fp64.sum", metrics[i].c_str()) == 0) {
-      samples_fp64 += 1;
-      atomic_total_fp64 += sum;
-    } else if (strcmp("pcie__read_bytes.sum", metrics[i].c_str()) == 0) {
-      samples_read += 1;
-      atomic_total_read += sum;
-    } else if (strcmp("pcie__write_bytes.sum", metrics[i].c_str()) == 0) {
-      samples_write += 1;
-      atomic_total_write += sum;
+    if ("sm__inst_executed_pipe_fp64.sum" == metrics[i]) {
+      records_fp64 += 1;
+      total_fp64 += sum;
+    } else if ("sm__inst_executed_pipe_fmaheavy.sum" == metrics[i]) {
+      records_fp64 += 1;
+      total_fp64 += sum;
+    } else if ("sm__cycles_active.sum" == metrics[i]) {
+      records_cycles += 1;
+      total_cycles += sum;
+    } else {
+      GTEST_FAIL() << "Unknown metric: " << metrics[i];
     }
   }
 
@@ -125,10 +128,10 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
   // Metrics can be queried with Nsight Compute
   // ncu --query-metrics-collection pmsampling --chip <CHIP>
   // Any metrics marked with a particular Triage group naming should be
-  // configurable in a single pass on this chip.
+  // configurable in a single pass on this chip.  Other combinations may not be
+  // possible in a single pass and are not valid for pm sampling.
   sampler_options.metrics = {"sm__cycles_active.sum",
-                             "sm__inst_executed_pipe_fp64.sum",
-                             "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
+                             "sm__inst_executed_pipe_fp64.sum"};
   sampler_options.process_samples = HandleRecords;
 
   CuptiTracerOptions tracer_options;
@@ -161,30 +164,15 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
 
   // Validate functional correctness - ie, the kernel ran
   EXPECT_EQ(vec.size(), kNumElements);
-  for (int i = 0; i < kNumElements; ++i) {
-    EXPECT_GT(vec[i], (0.0 - 0.001)) << "index: " << i;
-    EXPECT_LT(vec[i], (0.0 + 0.001)) << "index: " << i;
-  }
+  EXPECT_THAT(vec, Each(DistanceFrom(0, Lt(0.001))));
 
   // Expect 4 * elems / (32 elemn / warp) +- 5% double instructions
   // (if they were sampled)
   // Double this as two kernels are sampled (middle kernel is not)
-  if (samples_fp64 > 0) {
-    LOG(INFO) << "Sampled " << atomic_total_fp64 << " fp64 instructions";
-    EXPECT_GT(atomic_total_fp64, kNumElements * 4 * 95 / 32 / 100 * 2);
-    EXPECT_LT(atomic_total_fp64, kNumElements * 4 * 105 / 32 / 100 * 2);
-  }
-
-  // Expect > 4 * elems * sizeof(double) bytes written to pcie
-  // 3 copies to device, 1 copy back
-  // This is just a basic algorithmic minimum, there are more loads and
-  // stores due to copying kernel itself, etc
-  if (samples_read > 0) {
-    LOG(INFO) << "Sampled " << atomic_total_read << "B pcie reads";
-  }
-  if (samples_write > 0) {
-    LOG(INFO) << "Sampled " << atomic_total_write << "B pcie writes";
-    EXPECT_GE(atomic_total_write, kNumElements * 4 * sizeof(double) * 2);
+  if (records_fp64 > 0) {
+    LOG(INFO) << "Sampled " << total_fp64 << " fp64 instructions";
+    double target = kNumElements * 4 * 2 / 32;
+    EXPECT_THAT(total_fp64, DistanceFrom(target, Lt(target * 5 / 100)));
   }
 }
 

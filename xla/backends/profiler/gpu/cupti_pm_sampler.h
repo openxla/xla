@@ -65,8 +65,7 @@ class CuptiPmSampler {
   virtual ~CuptiPmSampler() = default;
 
   // Initialize the PM sampler
-  virtual absl::Status Initialize(CuptiInterface* cupti_interface,
-                                  size_t num_gpus,
+  virtual absl::Status Initialize(size_t num_gpus,
                                   CuptiPmSamplerOptions* options);
 
   // Start sampler

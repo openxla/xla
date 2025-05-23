@@ -78,7 +78,6 @@ namespace profiler {
 // Constructor provides all configuration needed to set up sampling on a
 // single device
 CuptiPmSamplerDevice::CuptiPmSamplerDevice(int device_id,
-                                           CuptiInterface* cupti_interface,
                                            CuptiPmSamplerOptions* options)
     : device_id_(device_id), cupti_interface_(GetCuptiInterface()) {
   // Provide some defaults for metrics and handler
@@ -88,19 +87,9 @@ CuptiPmSamplerDevice::CuptiPmSamplerDevice(int device_id,
     c_metrics_ = options->metrics;
   }
 
-  num_metrics_ = c_metrics_.size();
   max_samples_ = options->max_samples;
   hw_buf_size_ = options->hw_buf_size;
   sample_interval_ns_ = options->sample_interval_ns;
-
-  if (options->process_samples == nullptr) {
-    options->process_samples = [](PmSamples* info) {
-      LOG(WARNING) << "(Profiling::PM Sampling) No decode handler specified, "
-                   << "discarding " << info->GetSamplerRanges().size()
-                   << " samples";
-      return;
-    };
-  }
 }
 
 // Destructor cleans up all images and objects
@@ -118,7 +107,7 @@ absl::Status CuptiPmSamplerDevice::GetChipName() {
   p.deviceIndex = device_id_;
   RETURN_IF_CUPTI_ERROR(DeviceGetChipName(&p));
 
-  chipName_ = std::string(p.pChipName);
+  chip_name_ = std::string(p.pChipName);
 
   return absl::OkStatus();
 }
@@ -161,7 +150,7 @@ absl::Status CuptiPmSamplerDevice::CreateCounterAvailabilityImage() {
 absl::Status CuptiPmSamplerDevice::CreateProfilerHostObj() {
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_Initialize_Params, p);
   p.profilerType = CUPTI_PROFILER_TYPE_PM_SAMPLING;
-  p.pChipName = chipName_.c_str();
+  p.pChipName = chip_name_.c_str();
   p.pCounterAvailabilityImage = counter_availability_image_.data();
   RETURN_IF_CUPTI_ERROR(ProfilerHostInitialize(&p));
 
@@ -171,29 +160,41 @@ absl::Status CuptiPmSamplerDevice::CreateProfilerHostObj() {
 }
 
 void CuptiPmSamplerDevice::WarnPmSamplingMetrics() {
-  if (!warnedMetricsConfig_) {
+  static bool warned_already = false;
+  if (!warned_already) {
     LOG(WARNING) << "(Profiling::PM Sampling)  Valid metrics can by queried "
                  << "using Nsight Compute:";
     LOG(WARNING) << "(Profiling::PM Sampling)   ncu --query-metrics-collection "
-                 << "pmsampling --chip " << chipName_;
+                 << "pmsampling --chip " << chip_name_;
     LOG(WARNING) << "(Profiling::PM Sampling)   Note that some metrics may not "
                  << "be available on other devices, and that Triage<> named "
-                 << "metrics should be available in a single pass.  Nsight "
-                 << "Compute can be run remotely and list metrics for any "
-                 << "device.";
-    warnedMetricsConfig_ = true;
+                 << "metrics should be available in a single pass.  Other "
+                 << "combinations of metrics may not be valid if they require "
+                 << "more than a single pass to collect.  Nsight Compute can "
+                 << "be run remotely and list metrics for any device.";
+    warned_already = true;
   }
+}
+
+// Add a metrics list to the host object (destructive, requires new host obj)
+CUptiResult CuptiPmSamplerDevice::AddMetricsToHostObj(
+    std::vector<const char*> metrics) {
+  // Add metrics to the host obj
+  DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, pm);
+  pm.pHostObject = host_obj_;
+  pm.ppMetricNames = metrics.data();
+  pm.numMetrics = metrics.size();
+  CUptiResult status;
+  WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&pm), status);
+
+  return status;
 }
 
 // Register metrics, resize config image, and initialize it
 absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
-  // Add metrics to the host obj
-  DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, pm);
-  pm.pHostObject = host_obj_;
-  pm.ppMetricNames = c_metrics_.data();
-  pm.numMetrics = num_metrics_;
-  CUptiResult status;
-  WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&pm), status);
+  // Add metrics to the host obj, requires initializing host obj
+  TF_RETURN_IF_ERROR(CreateProfilerHostObj());
+  CUptiResult status = AddMetricsToHostObj(c_metrics_);
 
   // If the metric name is invalid, we need to log it and remove it from the
   // list of metrics.  Attempt to recover from invalid metric configuration
@@ -210,7 +211,7 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
     // Log current device number
     LOG(WARNING) << "(Profiling::PM Sampling)  Device number: " << device_id_;
     // Log current device name
-    LOG(WARNING) << "(Profiling::PM Sampling)  Device name: " << chipName_;
+    LOG(WARNING) << "(Profiling::PM Sampling)  Device name: " << chip_name_;
     // Log current metric set
     LOG(WARNING) << "(Profiling::PM Sampling)  Specified metric set: ";
     for (const auto& metric : c_metrics_) {
@@ -224,15 +225,9 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
     // Use ConfigAddMetrics to test each metric, log invalid ones, add valid
     // ones to valid vector
     for (auto& metric : c_metrics_) {
-      // First re-initialize the host object
+      // Reset host object and add a single metric
       TF_RETURN_IF_ERROR(CreateProfilerHostObj());
-
-      // Add one metric to the host object
-      DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, ps);
-      ps.pHostObject = host_obj_;
-      ps.ppMetricNames = &metric;
-      ps.numMetrics = 1;
-      WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&ps), status);
+      status = AddMetricsToHostObj({metric});
 
       // Test validity
       if (status == CUPTI_ERROR_INVALID_PARAMETER ||
@@ -256,19 +251,26 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
       return absl::FailedPreconditionError("No valid metrics for PM sampling");
     }
 
-    // Reset c_metrics_ to valid ones and num_metrics_ to valid size
+    // Reset c_metrics_ to valid ones
     c_metrics_ = valid_c_metrics;
-    num_metrics_ = c_metrics_.size();
 
-    // Re-initialize the host object again
+    // Recreate host object with valid metrics
     TF_RETURN_IF_ERROR(CreateProfilerHostObj());
-
-    // Run ConfigAddMetrics again with valid metrics
-    DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, pm);
-    pm.pHostObject = host_obj_;
-    pm.ppMetricNames = c_metrics_.data();
-    pm.numMetrics = num_metrics_;
-    RETURN_IF_CUPTI_ERROR(ProfilerHostConfigAddMetrics(&pm));
+    status = AddMetricsToHostObj(c_metrics_);
+    if (status != CUPTI_SUCCESS) {
+      LOG(WARNING) << "(Profiling::PM Sampling)   Failed to add valid metrics";
+      const char* errstr = "";
+      cuptiGetResultString(status, &errstr);
+      return absl::UnknownError(
+          absl::StrCat("CUPTI error ", errstr, " for metric set"));
+    }
+  } else if (status != CUPTI_SUCCESS) {
+    // If we get here, we have an unknown error
+    LOG(WARNING) << "(Profiling::PM Sampling)   Unknown error for metric set";
+    const char* errstr = "";
+    cuptiGetResultString(status, &errstr);
+    return absl::UnknownError(
+        absl::StrCat("CUPTI error ", errstr, " for metric set"));
   }
 
   // Resize and create config image
@@ -302,6 +304,7 @@ size_t CuptiPmSamplerDevice::NumPasses() {
 
 // Initialize profiler APIs - required before PM sampler specific calls.
 // No visible side effects.
+// FIXME: Remove?
 absl::Status CuptiPmSamplerDevice::InitializeProfilerAPIs() {
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Initialize_Params, p);
   RETURN_IF_CUPTI_ERROR(ProfilerInitialize(&p));
@@ -324,7 +327,7 @@ absl::Status CuptiPmSamplerDevice::CreatePmSamplerObject() {
 absl::Status CuptiPmSamplerDevice::CreateCounterDataImage() {
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataSize_Params, p);
   p.pPmSamplingObject = sampling_obj_;
-  p.numMetrics = num_metrics_;
+  p.numMetrics = c_metrics_.size();
   p.pMetricNames = c_metrics_.data();
   p.maxSamples = max_samples_;
   RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataSize(&p));
@@ -437,7 +440,7 @@ absl::Status CuptiPmSamplerDevice::GetSample(SamplerRange& sample,
   sample.range_index = index;
   sample.start_timestamp_ns = ps.startTimestamp;
   sample.end_timestamp_ns = ps.endTimestamp;
-  sample.metric_values.resize(num_metrics_);
+  sample.metric_values.resize(c_metrics_.size());
 
   // Second, get the final metric values
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_EvaluateToGpuValues_Params, p);
@@ -445,7 +448,7 @@ absl::Status CuptiPmSamplerDevice::GetSample(SamplerRange& sample,
   p.pCounterDataImage = counter_data_image_.data();
   p.counterDataImageSize = counter_data_image_.size();
   p.ppMetricNames = c_metrics_.data();
-  p.numMetrics = num_metrics_;
+  p.numMetrics = c_metrics_.size();
   p.rangeIndex = index;
   p.pMetricValues = sample.metric_values.data();
   RETURN_IF_CUPTI_ERROR(ProfilerHostEvaluateToGpuValues(&p));
@@ -512,42 +515,41 @@ absl::Status CuptiPmSamplerDevice::CreateConfig() {
   // Create counter availability image
   TF_RETURN_IF_ERROR(CreateCounterAvailabilityImage());
 
-  // Create profiler host object
-  TF_RETURN_IF_ERROR(CreateProfilerHostObj());
-
-  // Create config image
-  TF_RETURN_IF_ERROR(CreateConfigImage());
-
-  // Test for single pass configuration, attempt to truncate if needed
-  bool warnedSinglePass = false;
-  while (NumPasses() > 1) {
-    if (!warnedSinglePass) {
-      LOG(WARNING) << "(Profiling::PM Sampling) Device " << device_id_
-                   << " requires more than one pass for pm sampling";
-      warnedSinglePass = true;
-    }
-
-    WarnPmSamplingMetrics();
-
-    // Error if removal would remove last metric
-    if (num_metrics_ == 1) {
-      LOG(WARNING) << "(Profiling::PM Sampling)  Last metric required more "
-                   << "than one pass";
-      return absl::InvalidArgumentError(
-          "Primary metric requires more than one pass");
-    }
-
-    // Remove last metric from list and try again
-    LOG(WARNING) << "(Profiling::PM Sampling)  Removing " << c_metrics_.back()
-                 << " from metric list";
-
-    c_metrics_.pop_back();
-    num_metrics_ = c_metrics_.size();
-
-    // Re-create config image
-    TF_RETURN_IF_ERROR(CreateProfilerHostObj());
+  // Attempt to handle invalid metrics and multiple passes
+  size_t passes;
+  do {
+    // Create a host object and add current set of metrics; create config image
     TF_RETURN_IF_ERROR(CreateConfigImage());
-  }
+
+    // Test config image for number of passes
+    passes = NumPasses();
+
+    if (passes > 1) {
+      // If on last metric, return error
+      if (c_metrics_.size() == 1) {
+        LOG(WARNING) << "(Profiling::PM Sampling) Device " << device_id_ << " "
+                     << "requires more than one pass even for the first "
+                     << "metric, " << c_metrics_.back() << ", and cannot be "
+                     << "configured";
+        return absl::InvalidArgumentError(
+            "Primary metric requires more than one pass");
+      }
+      // Remove last metric from list and try again
+      LOG(WARNING) << "(Profiling::PM Sampling) Device " << device_id_
+                   << " metrics configuration requires more than one pass, "
+                   << "removing last metric " << c_metrics_.back() << " and "
+                   << "trying to configure again";
+
+      WarnPmSamplingMetrics();
+
+      c_metrics_.pop_back();
+    } else if (passes == 0) {
+      LOG(WARNING) << "(Profiling::PM Sampling) Device " << device_id_
+                   << " metrics configuration is invalid, cannot configure";
+      return absl::InvalidArgumentError(
+          "Invalid metric configuration for PM sampling");
+    }
+  } while (passes != 1);
 
   // Create PM sampler object
   TF_RETURN_IF_ERROR(CreatePmSamplerObject());
@@ -564,7 +566,6 @@ CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
     CuptiPmSamplerOptions* options) {
   c_metrics_ = options->metrics;
   devs_ = devs;
-  num_metrics_ = c_metrics_.size();
 
   for (auto metric : c_metrics_) {
     metrics_.emplace_back(metric);
@@ -572,7 +573,16 @@ CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
 
   decode_period_ = options->decode_period;
 
-  process_samples = options->process_samples;
+  if (options->process_samples == nullptr) {
+    process_samples = [](PmSamples* info) {
+      LOG(WARNING) << "(Profiling::PM Sampling) No decode handler specified, "
+                   << "discarding " << info->GetSamplerRanges().size()
+                   << " samples";
+      return;
+    };
+  } else {
+    process_samples = options->process_samples;
+  }
 
   thd_ = new std::thread(&CuptiPmSamplerDecodeThread::MainFunc, this);
 }
@@ -585,13 +595,16 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
 
   // When enabled, loop over each device, decoding
   // Run until disabled, and then do one extra pass
-  while (! disabling) {
+  while (!disabling) {
     VLOG(2) << "(Profiling::PM Sampling) Top of decode loop";
 
     // If next state is not enabled, do one more pass
     if (next_state_ != kStateEnabled) {
-      if (!final_pass) final_pass = true;
-      else disabling = true;
+      if (!final_pass) {
+        final_pass = true;
+      } else {
+        disabling = true;
+      }
     }
 
     all_devs_end_of_records = true;
@@ -662,7 +675,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
           info.sampler_ranges[i].metric_values.clear();
         } else {
           if (VLOG_IS_ON(4)) {
-            for (int j = 0; j < num_metrics_; j++) {
+            for (int j = 0; j < c_metrics_.size(); j++) {
               LOG(INFO) << "            " << info.metrics[j] << "[" << i
                         << "] = " << info.sampler_ranges[i].metric_values[j];
             }
@@ -746,9 +759,7 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
   // Control loop for decode thread
   do {
     // Wait for signal to change state.  Releases lock during wait
-    auto stateChanged = [this] {
-      return current_state_ != next_state_;
-    };
+    auto stateChanged = [this] { return current_state_ != next_state_; };
     state_mutex_.Await(absl::Condition(&stateChanged));
 
     switch (next_state_) {
@@ -785,14 +796,12 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
   } while (true);
 }
 
-absl::Status CuptiPmSamplerImpl::Initialize(CuptiInterface* cupti_interface,
-                                            size_t num_gpus,
+absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
                                             CuptiPmSamplerOptions* options) {
   // Ensure not already initialized
-  if (initialized_) return absl::AlreadyExistsError("Already initialized");
-
-  // Wait > 1 decode periods at stop to ensure all data is flushed
-  decode_stop_delay_ = options->decode_period * 1.5;
+  if (initialized_) {
+    return absl::AlreadyExistsError("PM sampler already initialized");
+  }
 
   absl::Status status;
 
@@ -800,12 +809,7 @@ absl::Status CuptiPmSamplerImpl::Initialize(CuptiInterface* cupti_interface,
   for (int dev_idx = 0; dev_idx < num_gpus; dev_idx++) {
     // Create a new PM sampling instance for this device
     std::shared_ptr<CuptiPmSamplerDevice> dev =
-        std::make_shared<CuptiPmSamplerDevice>(dev_idx, cupti_interface,
-                                               options);
-
-    // FIXME: track error codes, tear down cleanly if needed,
-    // return error codes so caller can handle whether the
-    // code should continue or not
+        std::make_shared<CuptiPmSamplerDevice>(dev_idx, options);
 
     // Create all configuration needed for this device, or skip device on error
     if (status = dev->CreateConfig(); !status.ok()) break;

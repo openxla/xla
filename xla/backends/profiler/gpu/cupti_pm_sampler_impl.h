@@ -92,26 +92,23 @@ class CuptiPmSamplerDevice {
 
   // Constructor provides all configuration needed to set up sampling on a
   // single device
-  CuptiPmSamplerDevice(int device_id, CuptiInterface* cupti_interface,
-                       CuptiPmSamplerOptions* options);
+  CuptiPmSamplerDevice(int device_id, CuptiPmSamplerOptions* options);
 
   // Destructor cleans up all images and objects
   ~CuptiPmSamplerDevice();
 
  private:
   // Internal state
-  size_t num_metrics_;
   size_t max_samples_;
   size_t hw_buf_size_;
   size_t sample_interval_ns_;
   std::vector<char const*> default_c_metrics_{
       "sm__cycles_active.sum", "sm__inst_executed_pipe_fmalite.sum",
       "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
-  bool warnedMetricsConfig_ = false;
 
   // CUPTI PM sampling objects
   // Declared roughly in order of initialization
-  std::string chipName_;
+  std::string chip_name_;
   std::vector<char const*> c_metrics_;
   std::vector<uint8_t> counter_availability_image_;
   CUpti_Profiler_Host_Object* host_obj_ = nullptr;
@@ -134,6 +131,9 @@ class CuptiPmSamplerDevice {
 
   // Requires profiler host object
   absl::Status CreateConfigImage();
+
+  // Set metrics for host object
+  CUptiResult AddMetricsToHostObj(std::vector<const char*> metrics);
 
   // Requires config image
   size_t NumPasses();
@@ -184,7 +184,6 @@ class CuptiPmSamplerDecodeThread {
   // Space to asynchronously initialize this class and the thread it spawns
   absl::Duration decode_period_ = absl::Seconds(1);
 
-  size_t num_metrics_;
   std::vector<char const*> c_metrics_;
   std::vector<std::string> metrics_;
 
@@ -279,8 +278,8 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
   ~CuptiPmSamplerImpl() override = default;
 
   // Initialize the PM sampler, but do not start sampling or decoding
-  absl::Status Initialize(CuptiInterface* cupti_interface, size_t num_gpus,
-                          CuptiPmSamplerOptions* options) override;
+  absl::Status Initialize(size_t num_gpus, CuptiPmSamplerOptions* options)
+      override;
 
   // Start sampling and decoding
   absl::Status StartSampler() override;
@@ -300,8 +299,6 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
   std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devices_;
   // All PM sampler per-decode-thread objects
   std::vector<std::unique_ptr<CuptiPmSamplerDecodeThread>> threads_;
-  // How long to sleep before ending the decode threads
-  absl::Duration decode_stop_delay_;
 };
 
 }  // namespace profiler
