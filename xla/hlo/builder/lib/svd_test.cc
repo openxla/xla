@@ -19,6 +19,7 @@ limitations under the License.
 #include <numeric>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/statusor.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -31,17 +32,20 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/test_macros.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
-class SVDTest : public ClientLibraryTestRunnerMixin<HloTestBase> {
+class SVDTest : public ClientLibraryTestRunnerMixin<
+                    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {
  protected:
   void SetUp() override {
-    ClientLibraryTestRunnerMixin<HloTestBase>::SetUp();
+    ClientLibraryTestRunnerMixin<
+        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>::SetUp();
     batch_3d_4x5_ = Array3D<float>{
         {
             {4, 6, 8, 10, 1},
@@ -186,7 +190,10 @@ TEST_F(SVDTest, TestSingleValuesMatchNumpy) {
 }
 
 // Too slow on the interpreter backend.
-TEST_F(SVDTest, DISABLED_ON_INTERPRETER(Various_Size_Random_Matrix_512x128)) {
+TEST_F(SVDTest, Various_Size_Random_Matrix_512x128) {
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
   Array2D<float> a_val = GenerateRandomMatrix(512, 128);
   XlaOp a;
@@ -220,7 +227,10 @@ TEST_F(SVDTest, Various_Size_Random_Matrix_256x128) {
 }
 
 // Too slow on the interpreter backend.
-TEST_F(SVDTest, DISABLED_ON_INTERPRETER(Various_Size_Random_Matrix_128x512)) {
+TEST_F(SVDTest, Various_Size_Random_Matrix_128x512) {
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
   Array2D<float> a_val = GenerateRandomMatrix(128, 512);
   XlaOp a;
@@ -232,8 +242,10 @@ TEST_F(SVDTest, DISABLED_ON_INTERPRETER(Various_Size_Random_Matrix_128x512)) {
 }
 
 // Too slow on the interpreter and CPU backends.
-TEST_F(SVDTest, DISABLED_ON_CPU(DISABLED_ON_INTERPRETER(
-                    Various_Size_Random_Matrix_512x256))) {
+TEST_F(SVDTest, Various_Size_Random_Matrix_512x256) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kInterpreter})) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
   Array2D<float> a_val = GenerateRandomMatrix(512, 256);
   XlaOp a;
@@ -245,8 +257,10 @@ TEST_F(SVDTest, DISABLED_ON_CPU(DISABLED_ON_INTERPRETER(
 }
 
 // Too slow on the CPU, GPU and interpreter backends.
-TEST_F(SVDTest, DISABLED_ON_GPU(DISABLED_ON_CPU(DISABLED_ON_INTERPRETER(
-                    Various_Size_Random_Matrix_512x512)))) {
+TEST_F(SVDTest, Various_Size_Random_Matrix_512x512) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
   Array2D<float> a_val = GenerateRandomMatrix(512, 512);
   XlaOp a;

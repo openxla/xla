@@ -129,9 +129,16 @@ HloSharding::HloSharding(DeviceListRef devices, MemoryKind memory_kind,
                          xla::HloSharding xla_hlo_sharding)
     : llvm::RTTIExtends<HloSharding, XlaCompatibleSharding>(
           std::move(devices), memory_kind,
-          (xla_hlo_sharding.IsReplicated() ||
-           (xla_hlo_sharding.IsTiled() && xla_hlo_sharding.NumTiles() == 1))),
-      xla_hlo_sharding_(std::move(xla_hlo_sharding)) {}
+          // Computed in the constructor because it needs to access `devices` or
+          // `devices_`; this access would be unsafe unless `device` is not
+          // moved.
+          /*is_fully_replicated=*/false),
+      xla_hlo_sharding_(std::move(xla_hlo_sharding)) {
+  is_fully_replicated_ =
+      xla_hlo_sharding_.IsReplicated() ||
+      ((xla_hlo_sharding_.IsTiled() || xla_hlo_sharding_.IsTileMaximal()) &&
+       devices_->size() == 1);
+}
 
 absl::StatusOr<Shape> HloSharding::GetShardShape(const Shape& shape) const {
   if (xla_hlo_sharding_.IsTileMaximal() || xla_hlo_sharding_.IsManual() ||
@@ -188,13 +195,13 @@ absl::StatusOr<std::unique_ptr<Sharding>> HloSharding::WithDeviceAssignment(
   return Create(devices.value_or(devices_), memory_kind.value_or(memory_kind_),
                 xla_hlo_sharding_);
 }
-absl::StatusOr<std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>>>
+absl::StatusOr<std::vector<std::pair<Shape, ShardingRef>>>
 HloSharding::Disassemble(const Shape& shape) const {
   DCHECK(this);
   return Disassemble(shape, SingleDeviceShardSemantics::kAllShards);
 }
 
-absl::StatusOr<std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>>>
+absl::StatusOr<std::vector<std::pair<Shape, ShardingRef>>>
 HloSharding::Disassemble(
     const Shape& shape,
     SingleDeviceShardSemantics single_device_shard_semantics) const {
@@ -228,7 +235,7 @@ HloSharding::Disassemble(
   if (is_even_sharding) {
     // Fast path for even sharding.
     TF_ASSIGN_OR_RETURN(xla::ifrt::Shape shard_shape, GetShardShape(shape));
-    std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>> result;
+    std::vector<std::pair<Shape, ShardingRef>> result;
     if (single_device_shard_semantics ==
         SingleDeviceShardSemantics::kAllShards) {
       result.reserve(devices_->size());
@@ -246,41 +253,37 @@ HloSharding::Disassemble(
       }
     }
     return result;
-  } else {
-    // Slow path that uses `IndexDomains()` to handle uneven sharding.
-    TF_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains,
-                        IndexDomains(shape));
-    CHECK_EQ(index_domains.size(), devices_->size());
-    std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>> result;
-    if (single_device_shard_semantics ==
-        SingleDeviceShardSemantics::kAllShards) {
-      result.reserve(devices_->size());
-    } else {
-      result.reserve(devices_->AddressableDeviceList()->size());
-    }
-    for (int i = 0; i < index_domains.size(); ++i) {
-      if (single_device_shard_semantics ==
-              SingleDeviceShardSemantics::kAllShards ||
-          devices[i]->IsAddressable()) {
-        result.push_back({
-            index_domains[i].shape(),
-            SingleDeviceSharding::Create(devices[i], memory_kind_),
-        });
-      }
-    }
-    return result;
   }
+  // Slow path that uses `IndexDomains()` to handle uneven sharding.
+  TF_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains,
+                      IndexDomains(shape));
+  CHECK_EQ(index_domains.size(), devices_->size());
+  std::vector<std::pair<Shape, ShardingRef>> result;
+  if (single_device_shard_semantics == SingleDeviceShardSemantics::kAllShards) {
+    result.reserve(devices_->size());
+  } else {
+    result.reserve(devices_->AddressableDeviceList()->size());
+  }
+  for (int i = 0; i < index_domains.size(); ++i) {
+    if (single_device_shard_semantics ==
+            SingleDeviceShardSemantics::kAllShards ||
+        devices[i]->IsAddressable()) {
+      result.push_back({
+          index_domains[i].shape(),
+          SingleDeviceSharding::Create(devices[i], memory_kind_),
+      });
+    }
+  }
+  return result;
 }
 
-absl::StatusOr<
-    std::vector<std::pair<DynamicShape, std::shared_ptr<const Sharding>>>>
+absl::StatusOr<std::vector<std::pair<DynamicShape, ShardingRef>>>
 HloSharding::Disassemble(const DynamicShape& dynamic_shape) const {
   DCHECK(this);
   return Disassemble(dynamic_shape, SingleDeviceShardSemantics::kAllShards);
 }
 
-absl::StatusOr<
-    std::vector<std::pair<DynamicShape, std::shared_ptr<const Sharding>>>>
+absl::StatusOr<std::vector<std::pair<DynamicShape, ShardingRef>>>
 HloSharding::Disassemble(
     const DynamicShape& dynamic_shape,
     SingleDeviceShardSemantics single_device_shard_semantics) const {

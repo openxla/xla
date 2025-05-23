@@ -33,8 +33,8 @@ xla_cc_test(
     deps = [
         ":hlo_gumgraph_renderer_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -65,16 +65,32 @@ cc_library(
     deps = [
         ":graph_url_generator",
         ":hlo_gumgraph_renderer_util",
+        ":op_metric_getter",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/tools/hlo_diff:hlo_diff_result",
         "//xla/hlo/tools/hlo_diff:hlo_diff_summary",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_gumgraph_html_renderer_test",
+    srcs = ["hlo_gumgraph_html_renderer_test.cc"],
+    deps = [
+        ":hlo_gumgraph_html_renderer",
+        ":op_metric_getter",
+        "//xla/hlo/tools/hlo_diff:hlo_diff_result",
+        "//xla/hlo/tools/hlo_diff:hlo_diff_summary",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -83,6 +99,15 @@ cc_library(
     hdrs = ["graph_url_generator.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "op_metric_getter",
+    hdrs = ["op_metric_getter.h"],
+    deps = [
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
 )

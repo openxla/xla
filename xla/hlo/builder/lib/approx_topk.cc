@@ -55,12 +55,12 @@ absl::StatusOr<std::vector<PrimitiveType>> GetOperandTypes(
     if (!ShapeUtil::CompatibleIgnoringElementType(operands_shapes[0],
                                                   op_shape)) {
       return InvalidArgument("operands shape mismatch: %s vs %s",
-                             operands_shapes[0].DebugString(),
-                             op_shape.DebugString());
+                             operands_shapes[0].ToString(),
+                             op_shape.ToString());
     }
     if (op_shape.element_type() != init_shape.element_type()) {
       return InvalidArgument("operands type mismatch: %s vs %s",
-                             op_shape.DebugString(), init_shape.DebugString());
+                             op_shape.ToString(), init_shape.ToString());
     }
     op_types.push_back(op_shape.element_type());
   }
@@ -130,7 +130,7 @@ XlaOp AggregateToTopKBuilder(XlaBuilder* builder,
     auto val_args = Reduce(builder, operands, init_values,
                            reduction_computation, {reduction_dim});
     Shape op_shape = operands_shapes[0];
-    op_shape.mutable_dimensions()[reduction_dim] = 1;
+    op_shape.set_dimensions(reduction_dim, 1);
     auto top1_vals =
         Reshape(GetTupleElement(val_args, 0), op_shape.dimensions());
     auto top1_args =
@@ -226,7 +226,7 @@ XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
   std::vector<const Shape*> approx_output_shapes;
   approx_output_shapes.reserve(operands_shapes.size());
   for (auto& op_shape : operands_shapes) {
-    op_shape.mutable_dimensions()[reduction_dim] = approx_output_size;
+    op_shape.set_dimensions(reduction_dim, approx_output_size);
     approx_output_shapes.push_back(&op_shape);
   }
   auto approx_output_shape =

@@ -1268,6 +1268,9 @@ class HloInstruction {
   // Returns if instruction has any control dependencies.
   bool HasControlDependencies() const;
 
+  // Returns if instruction has successor control dependencies.
+  bool HasSuccessorControlDependencies() const;
+
   // Copies the control predecessors and successors on this HLO instruction to
   // `inst`.  Does not do a deep copy so this makes sense only if `inst` and
   // this HLO are in the same module.
@@ -1719,9 +1722,8 @@ class HloInstruction {
   }
 
   // Returns the computations this instruction directly calls (if any).
-  const PtrVec<HloComputation*>& called_computations() const {
-    return rare()->called_computations;
-  }
+  const PtrVec<HloComputation*>& called_computations() const;
+
   bool has_called_computations() const {
     return has_rare() && !called_computations().empty();
   }
@@ -1869,8 +1871,7 @@ class HloInstruction {
   }
 
   // Adds or overrides a single attribute in the HloInstruction.
-  void set_frontend_attribute(const std::string& key,
-                              const std::string& value) {
+  void set_frontend_attribute(absl::string_view key, absl::string_view value) {
     (*mutable_rare()->frontend_attributes.mutable_map())[key] = value;
   }
 
@@ -1883,7 +1884,7 @@ class HloInstruction {
   }
 
   std::optional<std::string> get_frontend_attribute(
-      const std::string& key) const {
+      absl::string_view key) const {
     auto it = rare()->frontend_attributes.map().find(key);
     if (it == rare()->frontend_attributes.map().end()) {
       return std::nullopt;
@@ -2750,7 +2751,6 @@ bool HloPredicateIsNotOp(const HloInstruction* instruction) {
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSort:
-    case HloOpcode::kTopK:
     case HloOpcode::kCustomCall:
       return true;
     default:

@@ -266,7 +266,7 @@ static tsl::thread::ThreadPool* GetCompilationThreadPool() {
   tsl::ThreadOptions thread_options;
   thread_options.stack_size = 4 * 1024 * 1024;  // 4 MB
 
-  static auto* thread_pool = new tsl::thread::ThreadPool(
+  static auto* const thread_pool = new tsl::thread::ThreadPool(
       tsl::Env::Default(), thread_options, "xla-cpu-llvm-codegen",
       std::min(kMaxCompilationThreads, tsl::port::MaxParallelism()));
   return thread_pool;
@@ -460,9 +460,9 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
 
   AlgebraicSimplifierOptions options;
   options.set_enable_dot_strength_reduction(false);
-  // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
-  // other platforms do, so it should be changed.
-  options.set_minmax_propagate_nan(false);
+  // "slow" minmax means we propagate nan.
+  options.set_minmax_propagate_nan(
+      !module->config().debug_options().xla_cpu_enable_fast_min_max());
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
@@ -511,6 +511,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   const bool is_fusion_emitters =
       is_thunk_runtime &&
       module->config().debug_options().xla_cpu_use_fusion_emitters();
+  bool use_shardy_partitioner = module->config().use_shardy_partitioner();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -521,10 +522,11 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // Run some IR cleanup passes before running the SPMD partitioning
     // passes.
     AddHloVerifier(&spmd_pipeline);
+    spmd_pipeline.AddPass<FlattenCallGraph>();
     spmd_pipeline.AddPass<CallInliner>();
     spmd_pipeline.AddPass<ZeroSizedHloElimination>();
     spmd_pipeline.AddPass<ConditionalCanonicalizer>();
-    if (module->config().use_shardy_partitioner()) {
+    if (use_shardy_partitioner) {
       spmd_pipeline.AddPass<sdy::ShardyXLA>();
     } else {
       spmd_pipeline.AddPass<ShardingPropagation>(
@@ -540,6 +542,11 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     AddHloVerifier(&sharding_removal_pipeline);
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
+    // Run ShardyXLA without propagation, which enforces use-tuple-args.
+    if (use_shardy_partitioner) {
+      sharding_removal_pipeline.AddPass<sdy::ShardyXLA>(
+          /*runSdyShardingPropagation=*/false);
+    }
     sharding_removal_pipeline.AddPass<HloDCE>();
     TF_RETURN_IF_ERROR(sharding_removal_pipeline.Run(module).status());
   }
@@ -863,7 +870,8 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   // Run this to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
-       "simplification after layout assignment")] {
+       "simplification after layout assignment"),
+   &module] {
     AddHloVerifier(
         &pipeline,
         HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
@@ -873,9 +881,9 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_is_layout_sensitive(true);
     options.set_supports_non_canonical_dots(false);
     options.set_enable_dot_strength_reduction(false);
-    // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
-    // other platforms do, so it should be changed.
-    options.set_minmax_propagate_nan(false);
+    // "slow" minmax means we propagate nan.
+    options.set_minmax_propagate_nan(
+        !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();

@@ -106,7 +106,7 @@ message GemmBackendConfig {
   optional bool grad_y = 17;
   bool damax_output = 18;
 
-  repeated ReificationCost reification_cost = 19;
+  reserved 19;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.
@@ -124,10 +124,14 @@ message CollectiveBackendConfig {
   // Determines whether the collective op of interested has been pipelined
   // within a loop.
   bool is_pipelined = 3;
-  // Cost model prediction.
-  repeated ReificationCost reification_cost = 4;
 
-  reserved 2;
+  enum CollectiveBackend {
+    // Default backend is NCCL.
+    DEFAULT = 0;
+    NVSHMEM = 1;
+  }
+  CollectiveBackend backend = 5;
+  reserved 2, 4;
 }
 
 // Backend config for cost model estimates.
@@ -190,6 +194,22 @@ message BlockLevelFusionConfig {
   int32 num_stages = 5;
 }
 
+message DynamicMemcpyConfig {
+  // If true, the offsets depend on the innermost while loop's induction
+  // variable. `src_offset_bytes` and `dst_offset_bytes` contain one entry
+  // for each iteration.
+  // Otherwise, `src_offset_bytes` and `dst_offset_bytes` contain one entry
+  // each, and the offset is static.
+  bool depends_on_loop = 1;
+
+  // Source offsets for each invocation of the fusion.
+  repeated int64 src_offset_bytes = 2;
+
+  // Destination offsets for invocation of the fusion.
+  repeated int64 dst_offset_bytes = 3;
+}
+
+// Next id: 8
 message FusionBackendConfig {
   // kLoop, kInput, or kOutput (from HloInstruction::FusionKind), or your own
   // custom string.
@@ -214,9 +234,12 @@ message FusionBackendConfig {
   CustomFusionConfig custom_fusion_config = 4;
 
   // Cost model prediction.
-  ReificationCost reification_cost = 3;
 
   CuDnnFusionConfig cudnn_fusion_config = 5;
+
+  DynamicMemcpyConfig dynamic_memcpy_config = 7;
+
+  reserved 3;
 }
 
 // Backed config for norm executed by cuDNN.
@@ -291,6 +314,9 @@ message CudnnfMHABackendConfig {
   // Only used with packed layout
   // ignored if the valued <= 1
   int32 max_seg_per_batch = 25;
+
+  // Is Paged Attention
+  bool is_paged_attention = 26;
 }
 
 // Backend config for a general custom call instruction, e.g. XLA FFI.
@@ -305,7 +331,7 @@ message CustomCallBackendConfig {
 }
 
 // Generic backend config for XLA:GPU
-// Next-Id: 12
+// Next-Id: 13
 message GpuBackendConfig {
   // Specifies which operation queue the current instruction will run on.
   // A backend may have multiple operation queues to run instructions
@@ -348,4 +374,8 @@ message GpuBackendConfig {
   // is always scheduled first as it's not SM-heavy.
   // In this case we can use this flag to enforce the ordering.
   bool force_earliest_schedule = 10;
+
+  // Reification cost for the instruction which attaches this
+  // `GpuBackendConfig`.
+  repeated ReificationCost reification_cost = 12;
 }

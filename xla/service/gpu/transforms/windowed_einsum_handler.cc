@@ -231,7 +231,7 @@ absl::StatusOr<HloInstruction*> ShiftDequantizationF8(
     TF_ASSIGN_OR_RETURN(
         HloInstruction * operand_scale,
         MakeGetTupleElementHlo(
-            body_param, body_param->shape().tuple_shapes_size() - 2 + k));
+            body_param, body_param->shape().tuple_shapes().size() - 2 + k));
 
     // Also add the scaling factor to the output tuple of the while body.
     while_root->AppendOperand(operand_scale);
@@ -349,7 +349,7 @@ static int64_t GetAgActivationCacheIndex(const HloInstruction* while_loop) {
   const HloInstruction* loop_tuple = while_loop->operand(0);
   const Shape& tuple_shape = loop_tuple->shape();
   CHECK(tuple_shape.IsTuple());
-  return tuple_shape.tuple_shapes_size() - 1;
+  return tuple_shape.tuple_shapes().size() - 1;
 }
 
 bool FindDusSliceForCachedActivation(HloInstruction* inst,
@@ -649,7 +649,7 @@ absl::Status MoveAccumulationOutsideLoop(
   // The final reduction
   HloInstruction* concat_result_gte =
       comp->AddInstruction(HloInstruction::CreateGetTupleElement(
-          loop, (loop->operand(0)->shape().tuple_shapes_size() - 1)));
+          loop, (loop->operand(0)->shape().tuple_shapes().size() - 1)));
   HloInstruction* reduced_result =
       comp->AddInstruction(HloInstruction::CreateReduce(
           partial_accumulations[0]->shape(), concat_result_gte, zero, {0},
@@ -1404,9 +1404,10 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
     // Since we get the loop directly from SPMD patitioner,
     // the induction variable pattern doesn't conform to what unroller
     // expects until the passes are applied.
-    TF_ASSIGN_OR_RETURN(bool applied_algsimp,
-                        AlgebraicSimplifier(AlgebraicSimplifierOptions())
-                            .Run(module, execution_threads));
+    AlgebraicSimplifierOptions options;
+    options.set_run_to_fixed_point(false);
+    TF_ASSIGN_OR_RETURN(bool applied_algsimp, AlgebraicSimplifier(options).Run(
+                                                  module, execution_threads));
     changed |= applied_algsimp;
     TF_ASSIGN_OR_RETURN(bool applied_cf,
                         HloConstantFolding().Run(module, execution_threads));

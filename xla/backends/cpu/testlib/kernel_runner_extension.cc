@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/concatenate_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/elemental_kernel_emitter.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -45,12 +46,14 @@ limitations under the License.
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/codegen/testlib/kernel_runner.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/runtime/work_group.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/fusion_wrapper.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/stream_executor/launch_dim.h"
 
 namespace xla::cpu {
 
@@ -79,31 +82,33 @@ NB_MODULE(_extension, kernel_runner_module) {
   // register the derived versions.
   ImportBaseClasses(kernel_runner_module);
 
-  // Use a tuple and cast to ThreadDim to take advantage of built in bindings.
-  using NbThreadDim = std::tuple<uint64_t, uint64_t, uint64_t>;
+  // Use a tuple and cast to NumWorkGroups to take advantage of built in
+  // bindings.
+  using NbNumWorkGroups = std::tuple<uint64_t, uint64_t, uint64_t>;
   nb::class_<LlvmIrKernelEmitter, KernelEmitter>(kernel_runner_module,
                                                  "LlvmIrKernelEmitter")
       .def("__init__",
            [](LlvmIrKernelEmitter* self, absl::string_view ir,
-              absl::string_view kernel_name, NbThreadDim thread_dim) {
-             new (self) LlvmIrKernelEmitter(
-                 ir, kernel_name,
-                 se::ThreadDim{std::get<0>(thread_dim), std::get<1>(thread_dim),
-                               std::get<2>(thread_dim)},
-                 {});
+              absl::string_view kernel_name, NbNumWorkGroups num_workgroups) {
+             new (self)
+                 LlvmIrKernelEmitter(ir, kernel_name,
+                                     NumWorkGroups{std::get<0>(num_workgroups),
+                                                   std::get<1>(num_workgroups),
+                                                   std::get<2>(num_workgroups)},
+                                     {});
            });
 
   nb::class_<MlirKernelEmitter, KernelEmitter>(kernel_runner_module,
                                                "MlirKernelEmitter")
-      .def("__init__",
-           [](MlirKernelEmitter* self, absl::string_view ir,
-              absl::string_view kernel_name, NbThreadDim thread_dim) {
-             new (self) MlirKernelEmitter(
-                 ir, kernel_name,
-                 se::ThreadDim{std::get<0>(thread_dim), std::get<1>(thread_dim),
-                               std::get<2>(thread_dim)},
-                 {});
-           });
+      .def("__init__", [](MlirKernelEmitter* self, absl::string_view ir,
+                          absl::string_view kernel_name,
+                          NbNumWorkGroups num_workgroups) {
+        new (self) MlirKernelEmitter(ir, kernel_name,
+                                     NumWorkGroups{std::get<0>(num_workgroups),
+                                                   std::get<1>(num_workgroups),
+                                                   std::get<2>(num_workgroups)},
+                                     {});
+      });
 
   kernel_runner_module.def("lower_to_llvm", [](MlirKernelSource& source) {
     absl::StatusOr<LlvmIrKernelSource> llvm_ir_kernel_source =
@@ -178,6 +183,16 @@ NB_MODULE(_extension, kernel_runner_module) {
            nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
            nb::keep_alive<1, 4>());
 
+  nb::class_<CpuScatterFusion, KernelEmitter>(kernel_runner_module,
+                                              "ScatterKernelEmitter")
+      .def(
+          "__init__",
+          [](CpuScatterFusion* self, const HloFusionInstruction* instruction,
+             const BufferAssignment* bufffer_assignment) {
+            new (self) CpuScatterFusion(*bufffer_assignment, instruction);
+          },
+          nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>());
+
   nb::class_<JitCompiler>(kernel_runner_module, "JitCompiler")
       .def(nb::new_([](const HloModuleConfig& config) {
              absl::StatusOr<JitCompiler> compiler =
@@ -217,6 +232,18 @@ NB_MODULE(_extension, kernel_runner_module) {
 
             return std::move(runner).value();
           });
+
+  kernel_runner_module.def(
+      "run_fusion_wrapper_pass",
+      [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module) {
+        FusionWrapper fusion_wrapper;
+        absl::StatusOr<bool> result = fusion_wrapper.Run(hlo_module.get());
+        if (!result.ok()) {
+          throw std::runtime_error(std::string(result.status().message()));
+        }
+
+        return hlo_module->Clone();
+      });
 }
 
 }  // namespace xla::cpu

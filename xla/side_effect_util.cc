@@ -77,7 +77,11 @@ const char kXlaMultiRecvCountAttr[] = "_xla_multi_recv_count";
 
 const char kXlaSchedulingGroupIdAttr[] = "_scheduling_group_id";
 
+const char kXlaNoOpSchedulingGroup[] = "noop";
+
 const char kMustFuseAttr[] = "MUST_FUSE";
+
+const char kFuseLimitAttr[] = "FUSE_LIMIT";
 
 const char kMaximalFuseAttr[] = "MAXIMAL_FUSE";
 

@@ -152,6 +152,24 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "cpu_ffi_test",
+    srcs = ["cpu_ffi_test.cc"],
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
+        "//xla/ffi",
+        "//xla/ffi:ffi_api",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:pjrt_cpu_client_registry",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+xla_cc_test(
     name = "cpu_intrinsic_test",
     srcs = ["cpu_intrinsic_test.cc"],
     deps = [
@@ -160,8 +178,8 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/cpu:cpu_compiler",
-        "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
@@ -321,8 +339,8 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/cpu:cpu_compiler",
-        "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
@@ -377,6 +395,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -481,7 +500,9 @@ xla_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:platform_port",
     ],
 )

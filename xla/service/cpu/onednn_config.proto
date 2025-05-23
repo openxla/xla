@@ -56,7 +56,7 @@ message OneDnnFusionConfig {
   repeated FusionKind ops = 1;
   // To avoid protobuf failures for specific decimal values,
   // the original float value alpha is type-casted to int32.
-  int32 alpha_typecast = 2;
+  repeated int32 alpha_typecast = 2;
 }
 
 message OneDnnTensorLayoutProto {
@@ -84,6 +84,9 @@ message OneDnnMatMulConfig {
   reserved 7;  // was user_scratchpad
 
   OneDnnOptimizationConfig optimization_config = 8;
+  OneDnnTensorLayoutProto lhs = 9;
+  OneDnnTensorLayoutProto rhs = 10;
+  OneDnnTensorLayoutProto result = 11;
 }
 
 message OneDnnWindowProto {

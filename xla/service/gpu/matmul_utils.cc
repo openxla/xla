@@ -386,17 +386,17 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                           output_shape.element_type()));
   }
 
-  return GemmConfig{lhs_layout,
-                    rhs_layout,
-                    c_layout,
-                    output_layout,
-                    {alpha_real, alpha_imag},
-                    beta,
-                    compute_precision,
-                    precision_algorithm,
-                    algorithm,
-                    grad_x,
-                    grad_y};
+  return GemmConfig(se::gpu::GemmConfig{lhs_layout,
+                                        rhs_layout,
+                                        c_layout,
+                                        output_layout,
+                                        {alpha_real, alpha_imag},
+                                        beta,
+                                        compute_precision,
+                                        precision_algorithm,
+                                        algorithm,
+                                        grad_x,
+                                        grad_y});
 }
 
 namespace {
@@ -864,6 +864,27 @@ bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
       return true;
     default:
       return false;
+  }
+}
+
+PrimitiveType GetGemmAccumulatorType(HloDotInstruction* dot) {
+  // Return the accumulator type if it is explicitly specified as dot algorithm.
+  auto accumulator_type = algorithm_util::GetDotAccumulatorType(
+      dot->precision_config().algorithm());
+  if (accumulator_type.ok()) {
+    return accumulator_type.value();
+  }
+  // Otherwise, return the default accumulator type for the output type.
+  PrimitiveType output_type = dot->shape().element_type();
+  switch (output_type) {
+    case PrimitiveType::F16:
+    case PrimitiveType::BF16:
+      return PrimitiveType::F32;
+    case PrimitiveType::F32:
+    case PrimitiveType::F64:
+    case PrimitiveType::S32:
+    default:
+      return output_type;
   }
 }
 

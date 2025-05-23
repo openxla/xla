@@ -402,31 +402,8 @@ HloAsyncStartInstruction::HloAsyncStartInstruction(
                           async_computation->root_instruction()->opcode()) {
   CHECK(async_computation->caller_instructions(HloOpcode::kCustomCall).empty());
   CHECK(!async_computation->IsFusionComputation());
-  CHECK(!async_computation->IsAsyncComputation());
   AppendComputation(async_computation);
-  async_computation->AddAsyncStart(this);
   HloAsyncStartInstruction::set_async_execution_thread(async_execution_thread);
-}
-
-HloAsyncStartInstruction::~HloAsyncStartInstruction() {
-  ClearAsyncComputationInstruction();
-}
-
-void HloAsyncStartInstruction::ClearCalledComputations() {
-  ClearAsyncComputationInstruction();
-  HloInstruction::ClearCalledComputations();
-}
-
-void HloAsyncStartInstruction::ClearAsyncComputationInstruction() {
-  // Each async instruction calls a single computation, but we use
-  // called_computations() instead of async_wrapped_instruction(), because the
-  // order in which things get destructed can vary; the async computation's
-  // back-pointer may already be null, which violates a check in
-  // async_wrapped_instruction.
-  if (!called_computations().empty() &&
-      async_wrapped_computation()->AsyncStart() == this) {
-    async_wrapped_computation()->RemoveAsyncStart();
-  }
 }
 
 void HloAsyncStartInstruction::set_async_execution_thread(
@@ -934,8 +911,8 @@ void HloCollectiveInstruction::PrintExtraAttributesImpl(
     VLOG(4) << name() << " replica_groups="
             << device_list_.ToString(options.print_full_replica_group_list());
 
-    AppendCat(printer, "replica_groups=",
-              device_list_.ToString(options.print_full_replica_group_list()));
+    printer->Append("replica_groups=");
+    device_list_.Print(printer, options.print_full_replica_group_list());
   });
   if (constrain_layout_) {
     printer.Next(
@@ -1831,9 +1808,11 @@ void HloConstantInstruction::PrintOperandsWithCanonicalNameMap(
       // large constant tensors; for example: b/265669625. The limit of 500k was
       // chosen empirically to make sure that serialization of the `literal_` is
       // less than a second.
-      if (auto num_constants =
-              absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>());
-          num_constants <= 500'000) {
+      const auto num_constants =
+          shape().IsArray()
+              ? absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>())
+              : 1;
+      if (num_constants <= 500'000) {
         literal_->PrintWithoutShapeOneline(printer);
         return;
       }

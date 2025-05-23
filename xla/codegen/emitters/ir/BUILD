@@ -83,7 +83,10 @@ cc_library(
         "xla_dialect.cc",
         "xla_ops.cc",
     ],
-    hdrs = ["xla_ops.h"],
+    hdrs = [
+        "xla_dialect.h",
+        "xla_ops.h",
+    ],
     deps = [
         ":xla_attrs_inc_gen",
         ":xla_dialect_inc_gen",
@@ -111,12 +114,13 @@ xla_test(
     name = "xla_ops_test",
     srcs = ["xla_ops_test.cc"],
     backends = ["cpu"],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/testlib:filecheck",
         "//xla/mlir/utils:error_util",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",

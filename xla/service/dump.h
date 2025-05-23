@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_DUMP_H_
 
 #include <string>
+#include <vector>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_graph_dumper.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/xla.pb.h"
 
 // Consolidated utilities for logging information during compilation, usually
@@ -201,12 +203,14 @@ absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
 void DumpHloConfigIfEnabled(const HloModule& module);
 
 // Dumps the non-default debug options to a file in the xla_dump_to directory
-// specified by the module's DebugOptions.
-void DumpNonDefaultDebugOptions(const HloModule& module,
-                                absl::string_view suffix);
+// specified by the module's DebugOptions. Returns the full file path of the
+// dump. If unable to dump, returns std::nullopt.
+std::optional<std::string> DumpNonDefaultDebugOptions(const HloModule& module,
+                                                      absl::string_view suffix);
 
 // Returns the non-default debug options as a string. The default debug options
 // are received from DefaultDebugOptionsIgnoringFlags().
+// TODO: move this to xla/debug_options_flags.cc
 std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options);
 
 }  // namespace xla

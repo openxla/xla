@@ -6,6 +6,7 @@ load(
     "rocm_library",
 )
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/service/gpu:build_defs.bzl", "get_cub_sort_kernel_types")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
@@ -38,7 +39,6 @@ cc_library(
         "rocm-only",
     ],
     deps = [
-        "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -146,7 +146,7 @@ cc_library(
     deps = [
         ":rocm_command_buffer",
         ":rocm_context",
-        ":rocm_diagnostics",  # buildcleaner: keep
+        ":rocm_diagnostics",
         ":rocm_driver_wrapper",
         ":rocm_event",
         ":rocm_kernel",
@@ -295,7 +295,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":rocm_diagnostics",  # buildcleaner: keep
+        ":rocm_diagnostics",
         ":rocm_driver_wrapper",
         ":rocm_executor",
         ":rocm_platform_id",
@@ -305,7 +305,6 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/stream_executor/platform:initialize",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
@@ -314,6 +313,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = True,  # Registers itself with the PlatformManager.
 )
@@ -503,7 +503,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":miopen_if_static",  # build_cleaner: keep
-        ":rocm_diagnostics",  # build_cleaner: keep
+        ":rocm_diagnostics",
         ":rocm_executor",
         ":rocm_helpers",
         ":rocm_platform_id",
@@ -827,7 +827,8 @@ cc_library(
         ":rocblas_plugin",
         ":rocm_helpers",
         ":rocm_platform",
-    ],
+        ":topk_kernel_rocm",
+    ] + [":cub_sort_kernel_rocm_" + suffix for suffix in get_cub_sort_kernel_types()],
     alwayslink = 1,
 )
 
@@ -987,6 +988,7 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:typed_kernel_factory",
+        "//xla/stream_executor/gpu:gpu_test_kernels",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
@@ -1133,6 +1135,51 @@ rocm_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:ragged_all_to_all_kernel",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+    alwayslink = 1,
+)
+
+[rocm_library(
+    name = "cub_sort_kernel_rocm_{}".format(typename),
+    srcs = ["cub_sort_kernel_rocm.cu.cc"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    local_defines = ["CUB_TYPE_" + typename.upper()],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        "//xla/ffi",
+        "//xla/ffi:ffi_api",
+        "//xla/stream_executor/rocm:rocm_status",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@eigen_archive//:eigen3",
+        "@local_config_rocm//rocm:rocprim",
+        "@tsl//tsl/platform:bfloat16",
+    ],
+    alwayslink = 1,
+) for typename in get_cub_sort_kernel_types()]
+
+rocm_library(
+    name = "topk_kernel_rocm",
+    srcs = [
+        "topk_kernel_rocm_bfloat16.cu.cc",
+        "topk_kernel_rocm_common.cu.h",
+        "topk_kernel_rocm_float.cu.cc",
+    ],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_platform_id",
+        "//xla:types",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/gpu:topk_kernel",
+        "//xla/tsl/lib/math:math_util",
         "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,

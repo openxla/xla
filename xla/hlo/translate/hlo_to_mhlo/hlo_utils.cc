@@ -37,11 +37,11 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/mlir/utils/type_util.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/statusor.h"
@@ -115,7 +115,7 @@ absl::StatusOr<AffineMap> GetPermutationIfAvailable(const Shape& shape,
     return Internal("Permutations for dynamic shapes are not yet supported");
   }
   int64_t accumulated_stride = 1;
-  llvm::SmallVector<int64_t, 4> strides(shape.dimensions_size(), 1);
+  llvm::SmallVector<int64_t, 4> strides(shape.dimensions().size(), 1);
   for (int64_t dim : LayoutUtil::MinorToMajor(shape)) {
     strides[dim] = accumulated_stride;
     accumulated_stride *= shape.dimensions(dim);
@@ -175,27 +175,10 @@ mlir::DenseIntElementsAttr CreateDenseIntElementsAttrFromVector(
       vector);
 }
 
-namespace {
-bool HasMhloTokenType(mlir::TypeRange types) {
-  bool use_mhlo = false;
-  for (auto type : types) {
-    if (!use_mhlo) {
-      type.walk([&](mlir::Type type) {
-        use_mhlo |= llvm::isa<mlir::mhlo::TokenType>(type);
-        if (use_mhlo) return mlir::WalkResult::interrupt();
-        return mlir::WalkResult::advance();
-      });
-    }
-  }
-  return use_mhlo;
-}
-
-}  // namespace
-
 mlir::Value CreateTupleValue(mlir::OpBuilder* func_builder, mlir::Location loc,
                              mlir::ValueRange& flatten_values,
                              mlir::Type type) {
-  auto tuple_type = type.dyn_cast<mlir::TupleType>();
+  auto tuple_type = mlir::dyn_cast<mlir::TupleType>(type);
   if (!tuple_type) {
     assert(!flatten_values.empty());
     auto retval = flatten_values.front();
@@ -208,10 +191,6 @@ mlir::Value CreateTupleValue(mlir::OpBuilder* func_builder, mlir::Location loc,
     flatten_sub_values.push_back(
         CreateTupleValue(func_builder, loc, flatten_values, child_type));
 
-  if (HasMhloTokenType(mlir::TypeRange(flatten_sub_values))) {
-    return func_builder->create<mlir::mhlo::TupleOp>(loc, flatten_sub_values)
-        .getResult();
-  }
   return func_builder->create<mlir::stablehlo::TupleOp>(loc, flatten_sub_values)
       .getResult();
 }
@@ -220,15 +199,12 @@ mlir::Operation* CreateTupleFromOpResults(mlir::OpBuilder* func_builder,
                                           mlir::Location loc,
                                           mlir::Operation* op,
                                           mlir::Type type) {
-  if (!type.isa<mlir::TupleType>()) return op;
+  if (!mlir::isa<mlir::TupleType>(type)) return op;
 
   mlir::ValueRange flattened_results_ref(op->getResults());
   auto result =
       CreateTupleValue(func_builder, loc, flattened_results_ref, type);
-  mlir::Operation* tuple_op = result.getDefiningOp<mlir::mhlo::TupleOp>();
-  if (!tuple_op) {
-    tuple_op = result.getDefiningOp<mlir::stablehlo::TupleOp>();
-  }
+  mlir::Operation* tuple_op = result.getDefiningOp<mlir::stablehlo::TupleOp>();
   assert(tuple_op && "builder didn't return the right type");
   return tuple_op;
 }
