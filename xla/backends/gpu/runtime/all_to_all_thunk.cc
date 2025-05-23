@@ -157,6 +157,9 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
         std::vector<DeviceBufferPair> device_buffers,
         ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                config_.config.operand_element_type));
+    if (config_.has_split_dimension) {
+      CHECK_EQ(device_buffers.size(), 1);
+    }
     for (int peer = 0; peer < num_ranks; ++peer) {
       BufferRendezvousValue buffer_rendezvous_value;
       buffer_rendezvous_value.rank = rank.value().value();
