@@ -30,18 +30,16 @@ namespace gpu {
 
 namespace m = ::xla::match;
 
-auto MakeDeviceDescriptor() {
-  stream_executor::DeviceDescription device_description{
-      stream_executor::GpuDeviceInfoProto{}};
-  device_description.set_threads_per_warp(32);
-  return device_description;
-}
-
 class CopyFusionTest : public HloHardwareIndependentTestBase {
  public:
-  CopyFusionTest()
-      : device_description_(MakeDeviceDescriptor()), cf_(device_description_) {}
-  const stream_executor::DeviceDescription device_description_;
+  CopyFusionTest() : cf_(device_description_) {
+    stream_executor::GpuDeviceInfoProto proto;
+    proto.set_shared_memory_per_block(1024 * 1024);  // 1MB
+    proto.set_shared_memory_per_core(1024 * 1024);   // 1MB
+    device_description_ = stream_executor::DeviceDescription(proto);
+  }
+
+  stream_executor::DeviceDescription device_description_;
   CopyFusion cf_;
 };
 
@@ -506,6 +504,55 @@ TEST_F(CopyFusionTest, CopyFusionWithFusionReturningTupleAndOtherUser) {
                                   m::GetTupleElement(m::Fusion(&fusion)))));
   EXPECT_THAT(fusion->fused_expression_root(),
               GmockMatch(m::Tuple(m::Negate(), m::Negate(), m::Copy())));
+}
+
+TEST_F(CopyFusionTest, FusionFitsInBudget) {
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_computation {
+      p1.1 = f32[128,512,28,28]{3,2,1,0} parameter(0)
+      mul = f32[128,512,28,28]{3,2,1,0} multiply(p1.1, p1.1)
+      ROOT neg = f32[128,512,28,28]{3,2,1,0} negate(mul)
+    }
+
+    ENTRY entry {
+      p0 = f32[128,512,28,28]{3,2,1,0} parameter(0)
+      fusion = f32[128,512,28,28]{3,2,1,0} fusion(p0), kind=kInput, calls=fused_computation
+      copy.1 = f32[128,512,28,28]{3,2,1,0} copy(fusion)
+      copy.2 = f32[128,512,28,28]{3,2,1,0} copy(fusion)
+      ROOT root = (f32[128,512,28,28]{3,2,1,0}, f32[128,512,28,28]{3,2,1,0}) tuple(copy.1, copy.2)
+    })"))
+                    .value();
+  ASSERT_TRUE(cf_.Run(module.get()).value());
+  SCOPED_TRACE(module->ToString());
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(root, GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
+                                        m::GetTupleElement())));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Negate(), m::Copy(), m::Copy())));
+}
+
+TEST_F(CopyFusionTest, FusionExceedsBudget) {
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_computation {
+      p1.1 = f32[128,128,128]{2,1,0} parameter(0)
+      transpose = f32[128,128,128]{2,1,0} transpose(p1.1), dimensions={2,1,0}
+      const = f32[] constant(0.0)
+      reduce = f32[128]{0} reduce(transpose, const), dimensions={0,1}, to_apply=scalar_add_computation
+      broadcast = f32[128,128,128]{2,1,0} broadcast(reduce), dimensions={0}
+      transpose2 = f32[128,128,128]{2,1,0} transpose(broadcast), dimensions={2,1,0}
+      ROOT add = f32[128,128,128]{2,1,0} add(transpose2, transpose2)
+    }
+
+    ENTRY entry {
+      p0 = f32[128,128,128]{2,1,0} parameter(0)
+      fusion = f32[128,128,128]{2,1,0} fusion(p0), kind=kInput, calls=fused_computation
+      copy.1 = f32[128,128,128]{2,1,0} copy(fusion)
+      copy.2 = f32[128,128,128]{2,1,0} copy(fusion)
+      ROOT root = (f32[128,128,128]{2,1,0}, f32[128,128,128]{2,1,0}) tuple(copy.1, copy.2)
+    })"))
+                    .value();
+  ASSERT_FALSE(cf_.Run(module.get()).value());
 }
 
 }  // namespace gpu
