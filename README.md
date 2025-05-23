@@ -24,7 +24,7 @@ documentation for your ML framework:
 * [JAX](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
 
 If you're not contributing code to the XLA compiler, you don't need to clone and
-build this repo. Everything here is intended for XLA contributors who want to
+build this repository. Everything here is intended for XLA contributors who want to
 develop the compiler and XLA integrators who want to debug or add support for ML
 frontends and hardware backends.
 
