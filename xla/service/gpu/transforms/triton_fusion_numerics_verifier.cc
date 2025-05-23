@@ -39,7 +39,9 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/redzone_buffers.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
+#include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/gpu/transforms/tree_reduction_rewriter.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -90,9 +92,34 @@ absl::StatusOr<std::unique_ptr<HloModule>> NewHloModuleFromFusionComputation(
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion.fused_instructions_computation());
   new_module->mutable_config().set_debug_options(debug_opts);
+  // Make sure that nested fusions do not trigger the generic triton emitter. We
+  // can do that by clearing the backend config and setting the fusion kind to
+  // loop.
+  for (HloComputation* computation : new_module->computations()) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kFusion) {
+        instruction->clear_backend_config();
+        instruction->set_fusion_kind(HloInstruction::FusionKind::kLoop);
+      }
+    }
+  }
   TreeReductionRewriter tree_reduction_rewriter(gpu_device_info);
   TF_RETURN_IF_ERROR(tree_reduction_rewriter.Run(new_module.get()).status());
-
+  TF_RETURN_IF_ERROR(DotAlgorithmRewriter().Run(new_module.get()).status());
+  TF_RETURN_IF_ERROR(
+      GemmRewriter(gpu_device_info.gpu_compute_capability(),
+                   gpu_device_info.runtime_version(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only,
+                                       GemmRewriterOptions::BiasMode::kBias})
+          .Run(new_module.get())
+          .status());
+  TF_RETURN_IF_ERROR(
+      GemmRewriter(gpu_device_info.gpu_compute_capability(),
+                   gpu_device_info.runtime_version(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kNonFp8Only,
+                                       GemmRewriterOptions::BiasMode::kBias})
+          .Run(new_module.get())
+          .status());
   PriorityFusion fusion_pass(
       /*thread_pool=*/nullptr, gpu_device_info, HloCostAnalysis::Options{});
   TF_RETURN_IF_ERROR(fusion_pass.Run(new_module.get()).status());
@@ -119,7 +146,7 @@ namespace triton_fusion_numerics_pass_internal {
 
 absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
     AutotunerCompileUtil& util, const HloFusionInstruction& fusion,
-    const AutotuneConfig& config, const DebugOptions& debug_opts,
+    const DeviceOrDevicelessConfig& config, const DebugOptions& debug_opts,
     bool disable_triton) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
@@ -132,8 +159,10 @@ absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
     return Internal("Failed to compile Triton fusion.");
   }
 
-  bool should_init_buffers = config.should_init_buffers();
-  bool should_check_correctness = config.should_check_correctness();
+  // We always want to initialize buffers and check for correctness. That is the
+  // whole point of running TritonFusionNumericsVerifier.
+  bool should_init_buffers = true;
+  bool should_check_correctness = true;
   int redzone_padding_bytes = debug_opts.xla_gpu_redzone_padding_bytes();
   TF_ASSIGN_OR_RETURN(se::Stream * stream, config.GetStream());
   TF_ASSIGN_OR_RETURN(auto rz_buffers,
@@ -151,13 +180,13 @@ absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
 
 absl::Status CompareBuffers(const ScopedShapedBuffer& current,
                             const ScopedShapedBuffer& expected,
-                            const Shape& shape, const HloModuleConfig& config,
+                            const Shape& shape, const DebugOptions& debug_opts,
                             se::Stream* stream) {
   return ShapeUtil::ForEachLeafShapeWithStatus(
       shape,
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
-        BufferComparator comparator(
-            subshape, config.debug_options().xla_gpu_autotune_gemm_rtol());
+        BufferComparator comparator(subshape,
+                                    debug_opts.xla_gpu_autotune_gemm_rtol());
         TF_ASSIGN_OR_RETURN(
             bool outputs_match,
             comparator.CompareEqual(stream, current.buffer(index),
@@ -192,7 +221,7 @@ absl::Status ForAllTritonFusions(
 namespace {
 absl::Status VerifyTritonFusion(AutotunerCompileUtil& util,
                                 const HloFusionInstruction& fusion,
-                                const AutotuneConfig& config,
+                                const DeviceOrDevicelessConfig& config,
                                 const DebugOptions& debug_opts) {
   TF_ASSIGN_OR_RETURN(auto triton_result,
                       triton_fusion_numerics_pass_internal::CompileAndRunFusion(
@@ -205,8 +234,7 @@ absl::Status VerifyTritonFusion(AutotunerCompileUtil& util,
 
   TF_ASSIGN_OR_RETURN(auto stream, config.GetStream());
   auto status = triton_fusion_numerics_pass_internal::CompareBuffers(
-      triton_result, emitters_result, fusion.shape(),
-      fusion.GetModule()->config(), stream);
+      triton_result, emitters_result, fusion.shape(), debug_opts, stream);
 
   if (!status.ok()) {
     LOG(ERROR) << "Triton numerics verification failed with: "

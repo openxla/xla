@@ -122,12 +122,18 @@ double MinimumMemoryBudgetRequired(const AutoShardingSolverRequest& request) {
 
 AutoShardingSolverParams GetParams(const AutoShardingSolverRequest& request) {
   AutoShardingSolverParams params;
+  params.compute_iis = request.compute_iis();
+  params.crash_at_infinity_costs_check =
+      request.crash_at_infinity_costs_check();
   for (const auto& departure_cost : request.departure_costs()) {
-    std::vector<double> departure_cost_vector(departure_cost.costs().begin(),
-                                              departure_cost.costs().end());
-    params.departure_costs.push_back(departure_cost_vector);
+    params.departure_costs.push_back(
+        {departure_cost.costs().begin(), departure_cost.costs().end()});
   }
   params.deterministic_mode = request.deterministic_mode();
+  params.enable_output = request.enable_output();
+  params.max_cost = request.has_max_cost()
+                        ? std::make_optional(request.max_cost().coeff())
+                        : std::nullopt;
   params.max_departures =
       request.has_max_departures()
           ? std::make_optional(request.max_departures().coeff())
@@ -137,6 +143,7 @@ AutoShardingSolverParams GetParams(const AutoShardingSolverRequest& request) {
       request.has_overbudget_coeff()
           ? std::make_optional(request.overbudget_coeff().coeff())
           : std::nullopt;
+  params.s_hint = {request.s_hint().begin(), request.s_hint().end()};
   params.solver_timeout =
       request.has_solver_timeout()
           ? absl::Seconds(request.solver_timeout().solver_timeout_in_seconds())
@@ -236,7 +243,7 @@ absl::StatusOr<AutoShardingSolverOutput> SolveAndExtractSolution(
   if (status == operations_research::MPSolver::INFEASIBLE) {
     LOG(ERROR) << "MPSolver could not find any feasible solution.";
 #ifdef PLATFORM_GOOGLE
-    if (request.compute_iis()) {
+    if (params.compute_iis) {
       operations_research::MPModelRequest model_request;
       solver.ExportModelToProto(model_request.mutable_model());
       if (solver.ProblemType() ==
@@ -652,7 +659,9 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
   // objective value so large that other solution choices do not matter anymore.
   // Also eliminate strategies that are known to be dominated by others.
   const NodeStrategies shaved_strategies =
-      StrategyShaverForRequest(request).FindShavedStrategies();
+      params.shave_strategies
+          ? StrategyShaverForRequest(params, request).FindShavedStrategies()
+          : NodeStrategies();
   for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
     if (s[node_idx].empty() || request.s_follow(node_idx) >= 0) continue;
     bool all_infinity = true;
@@ -688,7 +697,7 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
       auto err_msg = absl::StrCat("All of e[", request.edges(edge_idx).first(),
                                   "][", request.edges(edge_idx).second(),
                                   "][*] have infinity costs");
-      if (request.crash_at_infinity_costs_check()) {
+      if (params.crash_at_infinity_costs_check) {
         LOG(FATAL) << err_msg;
       } else {
         LOG(WARNING) << err_msg;
@@ -807,8 +816,8 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
       }
     }
   }
-  if (request.has_max_cost() && request.max_cost().coeff() < kMaxCostValue) {
-    double max_cost = kMaxCostEpsilon * request.max_cost().coeff();
+  if (params.max_cost.has_value() && *params.max_cost < kMaxCostValue) {
+    double max_cost = kMaxCostEpsilon * (*params.max_cost);
     max_cost -= solver->Objective().offset();
     MPConstraint* cost_constraint = solver->MakeRowConstraint(
         -MPSolver::infinity(), max_cost, "cost_constraint");
@@ -817,15 +826,15 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
     }
   }
 
-  if (!request.s_hint().empty() && !request.deterministic_mode() &&
-      (!request.has_max_cost() || request.max_cost().coeff() < kMaxCostValue)) {
+  if (!params.s_hint.empty() && !params.deterministic_mode &&
+      (!params.max_cost.has_value() || *params.max_cost < kMaxCostValue)) {
     std::vector<std::pair<const MPVariable*, double>> hint;
     for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
       if (request.s_follow(node_idx) >= 0) {
         continue;
       }
       for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-        double hint_val = (request.s_hint(node_idx) == j) ? 1.0 : 0.0;
+        double hint_val = (params.s_hint[node_idx] == j) ? 1.0 : 0.0;
         hint.push_back({s[node_idx][j], hint_val});
       }
     }
@@ -868,7 +877,7 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
     SolverRequestCallback(request);
   }
 #endif
-  if (request.enable_output()) {
+  if (params.enable_output) {
     solver->EnableOutput();
   }
   VLOG(0) << "Starting solver " << solver->ProblemType() << "\n"
@@ -888,11 +897,11 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
           << request.memory_budget() / (1024 * 1024 * 1024) << "GB)\n"
           << "Number variables for ILP: " << solver->NumVariables() << "\n"
           << "Number of ILP constraints: " << solver->NumConstraints() << "\n"
-          << "Deterministic mode: " << request.deterministic_mode() << "\n"
+          << "Deterministic mode: " << params.deterministic_mode << "\n"
           << "Minimize departures: " << params.minimize_departures << "\n"
           << "Module name: " << request.module_name();
-  if (request.has_max_cost()) {
-    VLOG(0) << "Max cost: " << request.max_cost().coeff();
+  if (params.max_cost.has_value()) {
+    VLOG(0) << "Max cost: " << *params.max_cost;
   }
   if (params.max_departures.has_value()) {
     VLOG(0) << "Max departures: " << *params.max_departures;
@@ -1266,24 +1275,6 @@ std::optional<AutoShardingViolationCode> ShardingStrategyHasViolation(
   return std::nullopt;
 }
 
-// TODO(ykook): Change the name of a function calling this to
-// ComputeShardingCostWithNegativeErrorCodes().
-double ComputeShardingCost(
-    const AutoShardingSolverRequest& request,
-    const std::vector<NodeStrategyIdx>& node_strategies) {
-  double cost = 0.0;
-  for (NodeIdx v = 0; v < request.num_nodes(); ++v) {
-    NodeStrategyIdx strategy = node_strategies[v];
-    cost += request.computation_costs(v).costs(strategy) +
-            request.communication_costs(v).costs(strategy);
-  }
-  for (EdgeIdx e = 0; e < request.edges_size(); ++e) {
-    EdgeStrategyIdx strategy = GetEdgeStrategy(request, node_strategies, e);
-    cost += request.resharding_costs(e).costs(strategy);
-  }
-  return cost;
-}
-
 // Assigns all nodes to their first sharding configuration. If the assignment is
 // infeasible, the output cost is negative and encodes the violation code.
 AutoShardingSolverOutput SolveTrivial(
@@ -1292,7 +1283,7 @@ AutoShardingSolverOutput SolveTrivial(
 
   AutoShardingSolverOutput output;
   output.s_val = node_strategies;
-  output.cost = ComputeShardingStrategyCost(request, node_strategies);
+  output.cost = ComputeShardingCost(request, node_strategies);
   return output;
 }
 
@@ -1311,7 +1302,7 @@ AutoShardingSolverOutput SolveRandom(const AutoShardingSolverRequest& request,
       NodeStrategyIdx strategy = dist(rng);
       node_strategies[v] = strategy;
     }
-    double cost = ComputeShardingStrategyCost(request, node_strategies);
+    double cost = ComputeShardingCost(request, node_strategies);
 
     bool have_feasible_solution = (best_cost >= 0.0);
     bool candidate_is_feasible = (cost >= 0.0);
@@ -1374,7 +1365,7 @@ AutoShardingSolverOutput SolveGreedy(const AutoShardingSolverRequest& request,
 
   AutoShardingSolverOutput output;
   output.s_val = node_strategies;
-  output.cost = ComputeShardingStrategyCost(request, node_strategies);
+  output.cost = ComputeShardingCost(request, node_strategies);
   return output;
 }
 
@@ -1405,7 +1396,8 @@ AutoShardingSolverOutput SolveRandomPathGreedy(
       GetAdjacencyMatrix(request);
   std::vector<std::vector<LivenessIdx>> node_to_active_times;
   std::vector<double> memory_slack;
-  double current_cost = ComputeShardingCost(request, node_strategies);
+  double current_cost = ComputeShardingCost(
+      request, node_strategies, /*use_negative_violation_codes=*/false);
   if (memory_mode == "active") {
     node_to_active_times = GetNodeToActiveTimes(request);
     memory_slack = TrackMemorySlack(request, node_strategies);
@@ -1454,7 +1446,7 @@ AutoShardingSolverOutput SolveRandomPathGreedy(
   }
 
   output.s_val = node_strategies;
-  output.cost = ComputeShardingStrategyCost(request, node_strategies);
+  output.cost = ComputeShardingCost(request, node_strategies);
   return output;
 }
 
@@ -1487,8 +1479,7 @@ absl::StatusOr<AutoShardingSolverOutput> RunHeuristicSolver(
   auto duration = absl::Now() - start_time;
   LOG(INFO) << "Solver took " << absl::ToInt64Milliseconds(duration) << " ms";
   LOG(INFO) << "Objective value: " << output.cost;
-  LOG(INFO) << "Total Cost: "
-            << ComputeShardingStrategyCost(request, output.s_val);
+  LOG(INFO) << "Total Cost: " << ComputeShardingCost(request, output.s_val);
   return output;
 }
 
@@ -1633,14 +1624,25 @@ AutoShardingEvaluation Evaluate(const AutoShardingSolverRequest& request,
   return evaluation;
 }
 
-double ComputeShardingStrategyCost(
-    const AutoShardingSolverRequest& request,
-    const std::vector<NodeStrategyIdx>& node_strategies) {
-  double cost = ComputeShardingCost(request, node_strategies);
-  std::optional<AutoShardingViolationCode> violation_code =
-      ShardingStrategyHasViolation(request, node_strategies);
-  if (violation_code.has_value()) {
-    cost = -1 * (*violation_code);
+double ComputeShardingCost(const AutoShardingSolverRequest& request,
+                           const std::vector<NodeStrategyIdx>& node_strategies,
+                           const bool use_negative_violation_codes) {
+  double cost = 0.0;
+  for (NodeIdx v = 0; v < request.num_nodes(); ++v) {
+    NodeStrategyIdx strategy = node_strategies[v];
+    cost += request.computation_costs(v).costs(strategy) +
+            request.communication_costs(v).costs(strategy);
+  }
+  for (EdgeIdx e = 0; e < request.edges_size(); ++e) {
+    EdgeStrategyIdx strategy = GetEdgeStrategy(request, node_strategies, e);
+    cost += request.resharding_costs(e).costs(strategy);
+  }
+  if (use_negative_violation_codes) {
+    std::optional<AutoShardingViolationCode> violation_code =
+        ShardingStrategyHasViolation(request, node_strategies);
+    if (violation_code.has_value()) {
+      cost = -1 * (*violation_code);
+    }
   }
   return cost;
 }

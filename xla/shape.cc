@@ -84,18 +84,6 @@ Shape::Shape(std::vector<Shape> tuple_shapes) {
   tuple_state().tuple_shapes = std::move(tuple_shapes);
 }
 
-/* static */ Shape Shape::MakeBufferShape(Shape element_shape) {
-  CHECK(element_shape.IsArray())
-      << "element_shape must be an array shape to create a buffer shape.";
-  Shape shape(BUFFER);
-  shape.buffer_state().buffer_shape = {std::move(element_shape)};
-  return shape;
-}
-
-Shape::Shape(const ShapeProto& shape_proto) {
-  *this = FromProto(shape_proto).value_or(Shape());
-}
-
 absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& shape_proto) {
   Shape shape;
   shape.set_element_type(shape_proto.element_type());
@@ -575,16 +563,6 @@ ProgramShape::ProgramShape(const ProgramShape&) = default;
 ProgramShape::ProgramShape(ProgramShape&&) = default;
 ProgramShape& ProgramShape::operator=(const ProgramShape&) = default;
 ProgramShape& ProgramShape::operator=(ProgramShape&&) = default;
-
-ProgramShape::ProgramShape(const ProgramShapeProto& program_shape_proto) {
-  auto program_shape = FromProto(program_shape_proto);
-  if (!program_shape.ok()) {
-    LOG(ERROR) << "Failed to parse ProgramShapeProto: "
-               << program_shape_proto.DebugString();
-    return;
-  }
-  *this = std::move(*program_shape);
-}
 
 absl::StatusOr<ProgramShape> ProgramShape::FromProto(
     const ProgramShapeProto& program_shape_proto) {

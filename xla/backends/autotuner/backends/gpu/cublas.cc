@@ -36,8 +36,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
@@ -115,6 +113,7 @@ CublasBackend::GetSupportedConfigs(
   return configs;
 }
 
+namespace {
 HloCostAnalysis::Options PriorityFusionOptions() {
   // The real pointer size is set in GpuCompiler. In HloCostAnalysis, the
   // pointer size is used only to determine the size of tuple types. We
@@ -124,6 +123,7 @@ HloCostAnalysis::Options PriorityFusionOptions() {
   options.count_multiple_input_accesses = true;
   return options;
 }
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<HloModule>> RewriteToCublasCustomCall(
     std::unique_ptr<HloModule> hlo_module,
@@ -156,14 +156,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> RewriteToCublasCustomCall(
   return hlo_module;
 }
 
-void SubstituteCublasAlgorithms(const HloInstruction* gemm,
-                                se::blas::AlgorithmType algorithm) {
-  GpuBackendConfig gpu_config =
-      gemm->backend_config<GpuBackendConfig>().value();
-  GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
-  backend_config.set_selected_algorithm(algorithm);
-}
-
 absl::StatusOr<std::unique_ptr<BackendConfig>> CublasBackend::GetDefaultConfig(
     const HloInstruction& instr) {
   if (!IsLegacyCublasMatmul(instr)) {
@@ -177,15 +169,16 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CublasBackend::GetDefaultConfig(
   return gemm_key;
 }
 
-absl::StatusOr<std::unique_ptr<HloModule>> CublasBackend::WrapInModule(
-    const HloInstruction& hlo_instruction, const BackendConfig& config) {
-  return absl::UnimplementedError("Not implemented.");
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>> CublasBackend::RunHloPasses(
-    std::unique_ptr<HloModule> hlo_module,
-    const Compiler::CompileOptions& options) {
-  return absl::UnimplementedError("Not implemented.");
+absl::Status CublasBackend::ApplyConfig(HloInstruction& instr,
+                                        const BackendConfig& config) {
+  const CublasBackendConfig& gemm_key =
+      static_cast<const CublasBackendConfig&>(config);
+  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                      instr.backend_config<GpuBackendConfig>());
+  GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
+  backend_config.set_selected_algorithm(gemm_key.algorithm());
+  TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

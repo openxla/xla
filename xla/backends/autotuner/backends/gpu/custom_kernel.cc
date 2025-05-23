@@ -28,13 +28,13 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
@@ -44,6 +44,7 @@ namespace se = ::stream_executor;
 
 using CustomKernelBackendConfig = AutotuneResult::CustomKernelFusionKey;
 
+namespace {
 bool IsSupported(const HloInstruction& instr) {
   if (instr.opcode() != HloOpcode::kFusion) {
     LOG(ERROR)
@@ -60,6 +61,7 @@ bool IsSupported(const HloInstruction& instr) {
 
   return true;
 }
+}  // namespace
 
 absl::StatusOr<std::vector<CustomKernel>> LoadKernels(
     const HloInstruction* fusion_instruction,
@@ -124,17 +126,25 @@ CustomKernelBackend::GetDefaultConfig(const HloInstruction& instr) {
   return config;
 }
 
-absl::StatusOr<std::unique_ptr<HloModule>> CustomKernelBackend::WrapInModule(
-    const HloInstruction& hlo_instruction, const BackendConfig& config) {
-  return absl::InvalidArgumentError(
-      "CustomKernelBackend doesn't support wrapping in a module.");
-}
+absl::Status CustomKernelBackend::ApplyConfig(HloInstruction& instr,
+                                              const BackendConfig& config) {
+  if (!IsSupported(instr)) {
+    return absl::InvalidArgumentError(
+        "CustomKernelBackend does not support this instruction.");
+  }
 
-absl::StatusOr<std::unique_ptr<HloModule>> CustomKernelBackend::RunHloPasses(
-    std::unique_ptr<HloModule> hlo_module,
-    const Compiler::CompileOptions& options) {
-  return absl::InvalidArgumentError(
-      "CustomKernelBackend doesn't support wrapping in a module.");
+  const CustomKernelBackendConfig custom_kernel_config =
+      static_cast<const CustomKernelBackendConfig&>(config);
+
+  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                      instr.backend_config<GpuBackendConfig>());
+  FusionBackendConfig* backend_config =
+      gpu_config.mutable_fusion_backend_config();
+  backend_config->mutable_custom_fusion_config()->set_kernel_index(
+      custom_kernel_config.kernel_index());
+  TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
+
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

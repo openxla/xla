@@ -1,9 +1,11 @@
-
 /* Copyright 2025 The OpenXLA Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -11,18 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-syntax = "proto3";
+#ifndef XLA_PJRT_PLUGIN_PLUGIN_NAMES_H_
+#define XLA_PJRT_PLUGIN_PLUGIN_NAMES_H_
 
-package xla;
+#include "absl/strings/string_view.h"
 
-import "xla/service/buffer_assignment.proto";
-import "xla/stream_executor/gpu/gpu_blas_lt.proto";
+inline constexpr absl::string_view kGpuPjrtName = "GPU";
+inline constexpr absl::string_view kCpuPjrtName = "CPU";
+inline constexpr absl::string_view kTpuPjrtName = "TPU";
 
-message GemmThunk {
-  xla.GemmConfigProto gemm_config = 1;
-  xla.buffer_assignment.BufferAllocationSliceProto lhs_buffer = 2;
-  xla.buffer_assignment.BufferAllocationSliceProto rhs_buffer = 3;
-  xla.buffer_assignment.BufferAllocationSliceProto output_buffer = 4;
-  optional xla.buffer_assignment.BufferAllocationSliceProto workspace = 5;
-  bool deterministic = 6;
-}
+#endif  // XLA_PJRT_PLUGIN_PLUGIN_NAMES_H_

@@ -77,8 +77,9 @@ class Shape {
 
   // Constructs a shape from a ShapeProto. Results in an invalid shape (as
   // opposed to crashing) if the proto has logically invalid fields.
-  ABSL_DEPRECATED("Use FromProto instead.")
-  explicit Shape(const ShapeProto& shape_proto);
+  ABSL_DEPRECATE_AND_INLINE()
+  explicit Shape(const ShapeProto& shape_proto)
+      : Shape(FromProto(shape_proto).value_or(Shape())) {}
 
   // Creates a token, opaque or buffer shape.
   // Precondition:
@@ -90,9 +91,11 @@ class Shape {
   // Precondition:
   //  - `element_type` must be a valid array type.
   //  - `dynamic_dimensions` must be either empty or have the same size as
-  //    `dimensions`. If it's empty, all dimensions are static.
+  //    `dimensions`. If it's empty (the default), all dimensions are static.
+  //    Otherwise, `dynamic_dimensions[i]` is true if the `i`th dimension is
+  //    dynamic.
   Shape(PrimitiveType element_type, absl::Span<const int64_t> dimensions,
-        absl::Span<const bool> dynamic_dimensions);
+        absl::Span<const bool> dynamic_dimensions = {});
 
   // Creates a tuple shape. `tuple_shapes` can be empty, in which case the
   // shape is a nil shape (empty tuple).
@@ -101,9 +104,6 @@ class Shape {
   // Constructs a shape from a ShapeProto. Results in an invalid shape (as
   // opposed to crashing) if the proto has logically invalid fields.
   static absl::StatusOr<Shape> FromProto(const ShapeProto& shape_proto);
-
-  // Creates a buffer shape. `element_shape` must be a valid array shape.
-  static Shape MakeBufferShape(Shape element_shape);
 
   // Returns a ShapeProto representation of the Shape.
   ShapeProto ToProto() const;
@@ -417,8 +417,6 @@ class Shape {
   // Resets this to the default state (an invalid shape).
   void Clear();
 
-  std::string DebugString() const { return ToProto().DebugString(); }
-
   // Equal is a configurable functor to check the equality of two shapes.
   //
   // Examples:
@@ -533,6 +531,7 @@ class Shape {
   }
 
  private:
+  friend class ShapeUtil;
   friend absl::Status ValidateNonLayoutProperties(const Shape& shape);
 
   // Define one state struct for each shape category. Depending on the element
@@ -656,15 +655,21 @@ class Shape {
 // to a traditional function signature.
 class ProgramShape {
  public:
+  // Constructs an empty ProgramShape, which has 0 parameters and an empty
+  // (invalid) result shape.
   ProgramShape();
   ~ProgramShape();
+
   ProgramShape(const ProgramShape&);
   ProgramShape(ProgramShape&&);
   ProgramShape& operator=(const ProgramShape&);
   ProgramShape& operator=(ProgramShape&&);
 
-  ABSL_DEPRECATED("Use FromProto instead.")
-  explicit ProgramShape(const ProgramShapeProto& program_shape_proto);
+  // Constructs a ProgramShape from a ProgramShapeProto protobuf. If the
+  // ProgramShapeProto is invalid, an empty ProgramShape is constructed.
+  ABSL_DEPRECATE_AND_INLINE()
+  explicit ProgramShape(const ProgramShapeProto& program_shape_proto)
+      : ProgramShape(FromProto(program_shape_proto).value_or(ProgramShape())) {}
 
   // Creates a ProgramShape from a ProgramShapeProto protobuf.
   static absl::StatusOr<ProgramShape> FromProto(
