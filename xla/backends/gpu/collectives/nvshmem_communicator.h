@@ -96,7 +96,6 @@ class NvshmemCommunicator : public Communicator {
       absl::Span<const RankId> target_ranks, const Executor& executor) final {
     return absl::UnimplementedError("Not implemented.");
   };
-  ;
 
   tsl::AsyncValueRef<Event> Send(se::DeviceMemoryBase send_buffer,
                                  PrimitiveType dtype, size_t count, RankId peer,
@@ -110,9 +109,30 @@ class NvshmemCommunicator : public Communicator {
     return absl::UnimplementedError("Not implemented.");
   };
 
+  absl::Status RegisterBuffer(void* addr, size_t length) final;
+
+  tsl::AsyncValueRef<Event> Send(se::DeviceMemoryBase recv_buffer,
+                                 se::DeviceMemoryBase send_buffer,
+                                 PrimitiveType dtype, size_t count, RankId peer,
+                                 const Executor& executor) final;
+
+  tsl::AsyncValueRef<Event> Recv(se::DeviceMemoryBase recv_buffer,
+                                 se::DeviceMemoryBase send_buffer,
+                                 PrimitiveType dtype, size_t count, RankId peer,
+                                 const Executor& executor) final;
+
+  absl::Status Quiet(const Executor& executor) final;
+
+  absl::Status Fence() final;
+
   std::string ToString() const final;
 
  private:
+  absl::Status P2P(const char* op_name, PrimitiveType type,
+                   se::DeviceMemoryBase send_buffer,
+                   se::DeviceMemoryBase recv_buffer, size_t count, RankId peer,
+                   const Executor& executor);
+
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
   NvshmemCollectives* collectives_;  // Parent NvshmemCollectives instance
