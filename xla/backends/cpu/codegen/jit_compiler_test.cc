@@ -24,8 +24,10 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/AsmParser/Parser.h"
@@ -38,12 +40,15 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/runtime/function_library.h"
+#include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -156,6 +161,145 @@ TEST(JitCompilerTest, Compile) {
 
   mul_in_place(&value);
   EXPECT_EQ(value, 4.0f);
+}
+
+TEST(JitCompilerTest, OverrideIrCompilerCompileOptions) {
+  constexpr int kNumModules = 2;
+  auto context = std::make_unique<llvm::LLVMContext>();
+  llvm::orc::ThreadSafeContext tsc(std::move(context));
+
+  JitCompiler::Options options;
+  options.num_dylibs = kNumModules;
+
+  // Use thread pool to run compilation tasks in parallel.
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test", kNumModules);
+  std::atomic<int32_t> num_tasks = 0;
+  JitCompiler::TaskRunner task_runner = [&](JitCompiler::Task task) {
+    num_tasks++;
+    thread_pool.Schedule(std::move(task));
+  };
+
+  IrCompiler::CompilationHooks compilation_hooks;
+
+  absl::flat_hash_map<std::string, std::string> module_name_to_optimized_ir;
+  compilation_hooks.post_optimization =
+      [&module_name_to_optimized_ir](const llvm::Module& optimized_module) {
+        module_name_to_optimized_ir[optimized_module.getName().str()] =
+            llvm_ir::DumpToString(&optimized_module);
+      };
+
+  std::unique_ptr<IrCompiler> ir_compiler = IrCompiler::Create(
+      llvm::TargetOptions(),
+      IrCompiler::Options(/*opt_level=*/llvm::CodeGenOptLevel::Aggressive),
+      compilation_hooks);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto compiler,
+      JitCompiler::Create(std::move(options), std::move(ir_compiler),
+                          std::move(task_runner)));
+
+  absl::flat_hash_map<const llvm::Module*, LLVMCompilationOptions>
+      llvm_compilation_options;
+
+  std::vector<std::pair<llvm::orc::ThreadSafeModule, size_t>>
+      module_and_dylib_indices;
+  module_and_dylib_indices.reserve(kNumModules);
+
+  auto add_module_with_options =
+      [&](absl::string_view ir, absl::string_view name, size_t dylib_index,
+          const LLVMCompilationOptions& options) -> absl::Status {
+    TF_ASSIGN_OR_RETURN(llvm::orc::ThreadSafeModule tsm,
+                        ParseModule(tsc, ir, name));
+
+    llvm_compilation_options[tsm.getModuleUnlocked()] = options;
+    module_and_dylib_indices.emplace_back(std::move(tsm), dylib_index);
+
+    return absl::OkStatus();
+  };
+
+  constexpr absl::string_view unoptimized_ir_format = R"(
+define void @{{FUNCTION_NAME}}(ptr noalias %a, ptr noalias %b, ptr noalias %c, i64 %n) {
+entry:
+  br label %loop.header
+
+loop.header:
+  %i = phi i64 [ 0, %entry ], [ %i.next, %loop.body ]
+  %cmp = icmp ult i64 %i, %n
+  br i1 %cmp, label %loop.body, label %loop.exit
+
+loop.body:
+  %a.ptr = getelementptr inbounds float, ptr %a, i64 %i
+  %b.ptr = getelementptr inbounds float, ptr %b, i64 %i
+  %c.ptr = getelementptr inbounds float, ptr %c, i64 %i
+
+  %a.val = load float, ptr %a.ptr, align 4
+  %b.val = load float, ptr %b.ptr, align 4
+
+  %sum = fadd float %a.val, %b.val
+
+  store float %sum, ptr %c.ptr, align 4
+
+  %i.next = add nuw i64 %i, 1
+  br label %loop.header
+
+loop.exit:
+  ret void
+}
+
+)";
+
+  constexpr absl::string_view vectorization_disabled_name =
+      "vectorization_disabled";
+  {
+    LLVMCompilationOptions override_options;
+    override_options.set_optimize_for_size(true);
+
+    TF_ASSERT_OK(add_module_with_options(
+        absl::StrReplaceAll(
+            unoptimized_ir_format,
+            {{"{{FUNCTION_NAME}}", vectorization_disabled_name}}),
+        vectorization_disabled_name, 0, override_options));
+  }
+
+  constexpr absl::string_view vectorization_enabled_name =
+      "vectorization_enabled";
+  {
+    LLVMCompilationOptions override_options;
+    override_options.set_optimize_for_size(false);
+    TF_ASSERT_OK(add_module_with_options(
+        absl::StrReplaceAll(
+            unoptimized_ir_format,
+            {{"{{FUNCTION_NAME}}", vectorization_enabled_name}}),
+        vectorization_enabled_name, 0, override_options));
+  }
+
+  tsl::down_cast<IrCompiler&>(compiler.ir_compiler())
+      .SetCompilationOptionsOverrides(llvm_compilation_options);
+
+  for (auto& [module, dylib_index] : module_and_dylib_indices) {
+    TF_ASSERT_OK(compiler.AddModule(std::move(module), dylib_index));
+  }
+
+  using ScalarFn = void(float*);
+  std::vector<FunctionLibrary::Symbol> symbols = {
+      FunctionLibrary::Sym<ScalarFn>(std::string(vectorization_enabled_name)),
+      FunctionLibrary::Sym<ScalarFn>(std::string(vectorization_disabled_name))};
+
+  TF_ASSERT_OK_AND_ASSIGN(auto function_library,
+                          Compile(std::move(compiler), symbols));
+
+  EXPECT_GE(num_tasks, kNumModules);
+
+  // We check that the IR is different for the modules with different
+  // compilation options.
+  // We replace the function name with "entry" so that we ensure the only
+  // difference isn't in the function name.
+  EXPECT_NE(absl::StrReplaceAll(
+                module_name_to_optimized_ir[vectorization_enabled_name],
+                {{vectorization_enabled_name, "entry"}}),
+            absl::StrReplaceAll(
+                module_name_to_optimized_ir[vectorization_disabled_name],
+                {{vectorization_disabled_name, "entry"}}));
 }
 
 class ExternalDefinitionGenerator : public llvm::orc::DefinitionGenerator {
