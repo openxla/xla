@@ -13,7 +13,12 @@ load(
 )
 load(
     "//xla/stream_executor:build_defs.bzl",
+    "if_cuda_or_rocm_is_configured",
     "if_gpu_is_configured",
+)
+load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
@@ -313,8 +318,12 @@ cc_library(
     name = "ir_emitter_unnested",
     srcs = ["ir_emitter_unnested.cc"],
     hdrs = ["ir_emitter_unnested.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
+    ]) + if_sycl_is_configured([
+        "XLA_USE_SYCL=1",
     ]),
     tags = ["gpu"],
     deps = [
@@ -443,6 +452,8 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_solver_context",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:rocm_solver_context",
+    ]) + if_sycl_is_configured([
+        "//xla/stream_executor/sycl:sycl_solver_context",
     ]),
 )
 
@@ -2357,10 +2368,10 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + if_gpu_is_configured(
+    ] + if_cuda_or_rocm_is_configured(
         if_false = [":stream_executor_util_kernel_stub"],
         if_true = [":stream_executor_util_kernel"],
-    ),
+    ),  # Using if_cuda_or_rocm_is_configured guard to prevent sycl target build / link errors.
 )
 
 xla_cc_test(
