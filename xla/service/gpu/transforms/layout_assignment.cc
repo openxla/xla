@@ -354,7 +354,8 @@ bool IsCustomCallToMemoryPlacement(const HloInstruction* hlo) {
   }
   const std::string& target = hlo->custom_call_target();
   return target == memory_annotations::kMoveToDeviceCustomCallTarget ||
-         target == memory_annotations::kMoveToHostCustomCallTarget;
+         target == memory_annotations::kMoveToHostCustomCallTarget ||
+         target == memory_annotations::kAnnotateMemorySpace;
 }
 
 }  // namespace
