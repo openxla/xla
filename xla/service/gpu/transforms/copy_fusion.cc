@@ -104,7 +104,8 @@ absl::StatusOr<bool> CopyFusion::DoCopyFusion(HloComputation* computation) {
       if (HloPredicateIsOp<HloOpcode::kCopy>(copy_user) &&
           copy_user->shape() == copy_user->operand(0)->shape() &&
           !copy_user->shape().IsTuple() &&
-          !copy_user->HasControlDependencies()) {
+          !copy_user->HasControlDependencies() &&
+          FusionFitsInBudget(*hlo, *copy_user, device_description_)) {
         copies.push_back(copy_user);
       } else {
         other_users.push_back(user);

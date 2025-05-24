@@ -586,8 +586,11 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
 template <typename ArgType>
 inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
 PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
+#if GOOGLE_CUDA
+  static constexpr int kKernelArgsLimit = 4096;
+#else
   static constexpr int kKernelArgsLimit = 1024;
-
+#endif
   if (args.size() > kKernelArgsLimit)
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't pack device memory arguments array of size ", args.size(),
