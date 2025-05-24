@@ -1532,6 +1532,7 @@ cc_library(
         "//xla/service/gpu/transforms:algorithm_checker",
         "//xla/service/gpu/transforms:async_collective_annotator",
         "//xla/service/gpu/transforms:async_wrapper",
+        "//xla/service/gpu/transforms:collective_backend_assigner",
         "//xla/service/gpu/transforms:command_buffer_scheduling",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",

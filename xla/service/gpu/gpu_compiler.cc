@@ -183,6 +183,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/algorithm_checker.h"
 #include "xla/service/gpu/transforms/async_wrapper.h"
+#include "xla/service/gpu/transforms/collective_backend_assigner.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_optimizer.h"
@@ -916,6 +917,11 @@ absl::Status RunCollectiveOptimizationPasses(
 
   HloPassPipeline collectives_pipeline("collective-optimizations");
   collectives_pipeline.AddPass<RaggedAllToAllCanonicalizer>();
+
+  if (debug_options.xla_gpu_experimental_enable_nvshmem()) {
+    collectives_pipeline.AddPass<CollectiveBackendAssigner>(gpu_version);
+  }
+
   if (debug_options.xla_gpu_unsupported_enable_ragged_all_to_all_decomposer()) {
     collectives_pipeline.AddPass<RaggedAllToAllDecomposer>();
   }
