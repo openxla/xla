@@ -38,6 +38,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "lld/Common/CommonLinkerContext.h"
+#include "lld/Common/Driver.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LazyCallGraph.h"
@@ -85,6 +87,8 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
+
+LLD_HAS_DRIVER(elf)
 
 namespace xla {
 namespace gpu {
@@ -181,7 +185,8 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
 absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
-    llvm::Module* module, llvm::TargetMachine* target_machine) {
+    llvm::Module* module, llvm::TargetMachine* target_machine,
+    const DebugOptions& debug_options) {
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -242,32 +247,64 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     module->print(*ir_fs, nullptr);
     ir_fs->flush();
   }
-  // Locate lld.
-  std::string lld_path;
-  if (std::getenv("LLVM_PATH")) {
-    lld_path = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
-  } else {
-    lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
-  }
-  auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
-  if (!lld_program) {
-    return xla::Internal("unable to find ld.lld in PATH: %s",
-                         lld_program.getError().message());
-  }
-  std::vector<llvm::StringRef> lld_args{
-      llvm_ir::AsStringRef("ld.lld"),    llvm_ir::AsStringRef("-flavor"),
-      llvm_ir::AsStringRef("gnu"),       llvm_ir::AsStringRef("-shared"),
-      llvm_ir::AsStringRef(isabin_path), llvm_ir::AsStringRef("-o"),
-      llvm_ir::AsStringRef(hsaco_path),
-  };
 
-  std::string error_message;
-  int lld_result =
-      llvm::sys::ExecuteAndWait(*lld_program, llvm_ir::AsArrayRef(lld_args),
-                                std::nullopt, {}, 0, 0, &error_message);
-  if (lld_result) {
-    return xla::Internal("ld.lld execute fail: %s, error code %d",
-                         error_message, lld_result);
+  if (debug_options.xla_gpu_use_inprocess_lld()) {
+    std::array<const char*, 7> args{
+        "ld.lld",
+        "--threads=1",
+        "-shared",
+        "--no-undefined",
+        isabin_path.c_str(),
+        "-o",
+        hsaco_path.c_str(),
+    };
+
+    std::string error_message;
+    llvm::raw_string_ostream os(error_message);
+    lld::Result result;
+    {
+      result =
+          lld::lldMain(args, llvm::nulls(), os, {{lld::Gnu, &lld::elf::link}});
+    }
+    CHECK(result.canRunAgain)
+        << "ld.lld (in-process) failed with fatal error " << error_message;
+    if (result.retCode) {
+      return xla::Internal(
+          "ld.lld (in-process) execute fail: %s, error code %d", error_message,
+          result.retCode);
+    }
+  } else {
+    // Locate lld.
+    std::string lld_path;
+    if (std::getenv("LLVM_PATH")) {
+      lld_path = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
+    } else {
+      lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+    }
+    auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
+    if (!lld_program) {
+      return xla::Internal("unable to find ld.lld in PATH: %s",
+                           lld_program.getError().message());
+    }
+    std::vector<llvm::StringRef> lld_args{
+        llvm_ir::AsStringRef("ld.lld"),
+        llvm_ir::AsStringRef("-flavor"),
+        llvm_ir::AsStringRef("gnu"),
+        llvm_ir::AsStringRef("-shared"),
+        llvm_ir::AsStringRef("--no-undefined"),
+        llvm_ir::AsStringRef(isabin_path),
+        llvm_ir::AsStringRef("-o"),
+        llvm_ir::AsStringRef(hsaco_path),
+    };
+
+    std::string error_message;
+    int lld_result =
+        llvm::sys::ExecuteAndWait(*lld_program, llvm_ir::AsArrayRef(lld_args),
+                                  std::nullopt, {}, 0, 0, &error_message);
+    if (lld_result) {
+      return xla::Internal("ld.lld execute fail: %s, error code %d",
+                           error_message, lld_result);
+    }
   }
 
   // Read HSACO.
@@ -530,7 +567,7 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
         kAMDGPUInlineThreshold));
 
     // Lower optimized LLVM module to HSA code object.
-    TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get()));
+    TF_ASSIGN_OR_RETURN(hsaco, EmitModuleToHsaco(module, target_machine.get(), debug_options));
     HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
   }
   return hsaco;
