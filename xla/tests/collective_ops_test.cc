@@ -386,7 +386,7 @@ XLA_TEST_F(CollectiveOpsTest, AllReduce_AllCombinations) {
   const int64_t kNumElems = 1024;
 
   for (std::vector<int64_t> devices :
-       PowerSetOfIota(std::min(num_devices(), static_cast<int64_t>(4)))) {
+       PowerSetOfIota(std::min(num_devices(), static_cast<int64_t>(10)))) {
     SCOPED_TRACE(absl::StrFormat("Running on devices {%s}",
                                  absl::StrJoin(devices, ", ")));
 
