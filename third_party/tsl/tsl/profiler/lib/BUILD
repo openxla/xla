@@ -270,6 +270,7 @@ cc_library(
         ":traceme_encode",
         "//tsl/platform",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:source_location",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
