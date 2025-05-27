@@ -77,8 +77,8 @@ absl::StatusOr<bool> AllGatherRemoveDegenerateDims::Run(
               new_all_gather_shape, {reshaped_operand})));
       new_all_gather->set_all_gather_dimension(all_gather_dim);
 
-      computation->ReplaceWithNewInstruction(
-          inst, HloInstruction::CreateReshape(inst->shape(), new_all_gather));
+      TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
+          inst, HloInstruction::CreateReshape(inst->shape(), new_all_gather)));
       changed = true;
     }
   }
