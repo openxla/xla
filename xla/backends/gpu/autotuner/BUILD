@@ -70,9 +70,9 @@ xla_test(
     name = "cublas_test",
     srcs = ["cublas_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
@@ -138,9 +138,9 @@ xla_test(
     name = "cublaslt_test",
     srcs = ["cublaslt_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
@@ -217,9 +217,9 @@ xla_test(
     name = "cudnn_test",
     srcs = ["cudnn_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
@@ -281,9 +281,9 @@ xla_test(
     name = "custom_kernel_test",
     srcs = ["custom_kernel_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
@@ -359,9 +359,9 @@ xla_test(
     name = "fission_test",
     srcs = ["fission_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
