@@ -675,6 +675,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
     if (cc->has_fp8_support()) {
       pm.addPass(CreateConvertFloatAMDPass(*cc));
     }
+    pm.addPass(CreateRecoverExp2Pass());
   }
 
   pm.addPass(emitters::CreateExpandFloatOpsPass());
