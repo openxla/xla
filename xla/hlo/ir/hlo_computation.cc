@@ -182,10 +182,6 @@ HloComputation::~HloComputation() {
     CHECK(FusionInstruction()->fused_instructions_computation() == this);
     FusionInstruction()->ClearCalledComputations();
   }
-  if (IsAsyncComputation()) {
-    CHECK(async_start_->async_wrapped_computation() == this);
-    async_start_->ClearCalledComputations();
-  }
   Cleanup();
   ClearCalledComputations();
 
@@ -906,9 +902,6 @@ HloComputation::ChannelDependencies HloComputation::ComputeChannelDependencies()
         std::optional<int64_t> channel_id = instruction->channel_id();
         if (channel_id) {
           Instructions& group = channel_groups[*channel_id];
-          for (const HloInstruction* group_inst : group) {
-            dependencies[group_inst].push_back(instruction);
-          }
           dependencies[instruction] = group;
           group.push_back(instruction);
         }
@@ -965,7 +958,7 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
   std::vector<HloInstruction*> frontier_std;
   std::vector<HloInstruction*> frontier_reshapes;
   std::vector<HloInstruction*> sorted;
-  absl::flat_hash_map<int, uint32_t> visitations;
+  absl::flat_hash_map<int, uint64_t> visitations;
   sorted.reserve(instruction_count());
   visitations.reserve(instruction_count());
 
@@ -1011,8 +1004,8 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
     sorted.push_back(inst);
     for (HloInstruction* const child : inst->operands()) {
       // Will increment, or set to 1 if not present
-      visitations[child->unique_id()]++;
-      if (child->user_count() == visitations[child->unique_id()]) {
+      visitations[child->unique_id_64_bits()]++;
+      if (child->user_count() == visitations[child->unique_id_64_bits()]) {
         add_to_frontier(child);
       }
     }

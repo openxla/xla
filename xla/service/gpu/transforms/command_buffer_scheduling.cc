@@ -102,6 +102,42 @@ static bool IsNoOp(const HloInstruction* hlo) {
 // done operation is not part of the same command buffer, we would change the
 // execution semantics and create additional synchronization point.
 
+static bool AsyncStartOrDoneCommandIsSupported(
+    const HloInstruction* hlo, const CommandBufferConfig& config) {
+  CHECK(hlo->opcode() == HloOpcode::kAsyncStart ||
+        hlo->opcode() == HloOpcode::kAsyncDone);
+
+  if (IsCublasGemm(*hlo->async_wrapped_instruction())) {
+    return config.enabled_commands.contains(DebugOptions::CUBLAS);
+  }
+
+  if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
+    // We don't currently support dynamic memcpy fusions in command buffers.
+    if (IsDynamicMemcpyFusion(hlo->async_wrapped_instruction())) {
+      return false;
+    }
+
+    // We currently only support static address computations in command
+    // buffers.
+    if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
+      bool is_static_ds_fusion =
+          GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
+          kDynamicSliceFusionWithStaticAddressComputationConfigName;
+      return is_static_ds_fusion && config.enabled_commands.contains(
+                                        DebugOptions::DYNAMIC_SLICE_FUSION);
+    }
+
+    return config.enabled_commands.contains(DebugOptions::FUSION);
+  }
+
+  if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
+      hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
+    return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
+  }
+
+  return false;
+}
+
 static bool IsAsyncStartCommand(const HloInstruction* hlo,
                                 const CommandBufferConfig& config) {
   if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
@@ -110,26 +146,7 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
   }
 
   if (HloPredicateIsOp<HloOpcode::kAsyncStart>(hlo)) {
-    if (IsCublasGemm(*hlo->async_wrapped_instruction())) {
-      return config.enabled_commands.contains(DebugOptions::CUBLAS);
-    }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      // We currently only support static address computations in command
-      // buffers.
-      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
-        bool is_static_ds_fusion =
-            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
-            kDynamicSliceFusionWithStaticAddressComputationConfigName;
-        return is_static_ds_fusion && config.enabled_commands.contains(
-                                          DebugOptions::DYNAMIC_SLICE_FUSION);
-      } else {
-        return config.enabled_commands.contains(DebugOptions::FUSION);
-      }
-    }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
-        hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
-      return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
-    }
+    return AsyncStartOrDoneCommandIsSupported(hlo, config);
   }
 
   if (HloPredicateIsOp<HloOpcode::kReduceScatter, HloOpcode::kAllToAll>(hlo)) {
@@ -147,26 +164,7 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
   }
 
   if (HloPredicateIsOp<HloOpcode::kAsyncDone>(hlo)) {
-    if (IsCublasGemm(*hlo->async_wrapped_instruction())) {
-      return config.enabled_commands.contains(DebugOptions::CUBLAS);
-    }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      // We currently only support static address computations in command
-      // buffers.
-      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
-        bool is_static_ds_fusion =
-            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
-            kDynamicSliceFusionWithStaticAddressComputationConfigName;
-        return is_static_ds_fusion && config.enabled_commands.contains(
-                                          DebugOptions::DYNAMIC_SLICE_FUSION);
-      } else {
-        return config.enabled_commands.contains(DebugOptions::FUSION);
-      }
-    }
-    if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
-        hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
-      return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
-    }
+    return AsyncStartOrDoneCommandIsSupported(hlo, config);
   }
 
   return false;
@@ -711,18 +709,15 @@ absl::StatusOr<CommandBuffer> CommandBufferScheduling::PrepareCommandBuffer(
     // Cloned instructions should call the same computations as original
     // instructions will be dead code eliminated.
     for (HloComputation* called_computation : inst->called_computations()) {
-      // Async computations can only be referenced by a single async chain at
-      // a time. Detach the current chain to let its copy bind to the
-      // computation.
-      if (called_computation->IsAsyncComputation()) {
-        called_computation->RemoveAsyncStart();
-      }
       ctx.MapComputation(called_computation, called_computation);
     }
-
     inst_mapping[inst] = builder.AddInstruction(
         inst->CloneWithNewOperands(inst->shape(), mapped_operands(inst), &ctx));
     inst_mapping[inst]->UniquifyId(module);
+
+    // Clear the called computations of the old instruction, because it is
+    // typically not legal for one computation to have more than one caller.
+    inst->ClearCalledComputations();
   }
 
   // Convert parameters to command buffer arguments.

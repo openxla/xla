@@ -206,7 +206,8 @@ class StatelessAutotunerTest : public HloTestBase {
 
     DeviceConfig test_config{backend().default_stream_executor(),
                              backend().memory_allocator()};
-    AutotuneConfig autotune_config{test_config, debug_options};
+    AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+        DeviceOrDevicelessConfig{test_config}, debug_options);
     GemmFusionAutotunerImpl autotuner(autotune_config, toolkit_version,
                                       debug_options, nullptr);
     return autotuner.GenerateConfigs(fusion);
@@ -242,7 +243,8 @@ class StatelessAutotunerTest : public HloTestBase {
   GetPossibleMatmulAutotuneConfigs(const HloModule& module) {
     DeviceConfig device_config{backend().default_stream_executor(),
                                backend().memory_allocator()};
-    AutotuneConfig autotune_config{device_config, GetDebugOptionsForTest()};
+    AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+        DeviceOrDevicelessConfig{device_config}, GetDebugOptionsForTest());
     GemmFusionAutotunerImpl autotuner(autotune_config, GetToolkitVersion(),
                                       GetDebugOptionsForTest(), nullptr);
     const HloFusionInstruction& fusion = *Cast<HloFusionInstruction>(
@@ -361,9 +363,11 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
     DebugOptions opts;
     MultiProcessKeyValueStore key_value_store;
     pipeline.AddPass<GemmFusionAutotuner>(
-        AutotuneConfig{DeviceConfig{backend().default_stream_executor(),
-                                    backend().memory_allocator()},
-                       opts},
+        AutotuneConfig::FromDebugOptions(
+            DeviceOrDevicelessConfig{
+                DeviceConfig{backend().default_stream_executor(),
+                             backend().memory_allocator()}},
+            opts),
         GetToolkitVersion(), &thread_pool, key_value_store);
 
     RunAndFilecheckHloRewrite(
@@ -390,18 +394,6 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
                      0);
           }
         });
-  }
-};
-
-class GemmFusionAutotunerTestWithMorePreciseReduction
-    : public GemmFusionAutotunerTest {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        GemmFusionAutotunerTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(
-        true);
-    return debug_options;
   }
 };
 
@@ -448,7 +440,8 @@ GetPossibleMatmulAutotuneTritonConfigs(
   device_description.set_threads_per_warp(32);
   device_description.set_shared_memory_per_block_optin(227 * 1024);
   DevicelessConfig test_config = {device_description};
-  AutotuneConfig autotune_config{test_config, debug_options};
+  AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{test_config}, debug_options);
   GemmFusionAutotunerImpl autotuner(autotune_config, toolkit_version,
                                     debug_options, nullptr);
   return autotuner.GenerateTritonConfigs(dot);
@@ -571,31 +564,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTest, SelectsSplitK) {
-  // Shapes with K >> M, N have to force split-K configurations.
-  const std::string kHloText = R"(
-HloModule t
-
-ENTRY e {
-  p0 = s8[7,8192] parameter(0)
-  p0c = f16[7,8192] convert(p0)
-  p1 = f16[8192,18] parameter(1)
-  ROOT dot.0 = f16[7,18] dot(p0c, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  MatchOptimizedHlo(kHloText, R"(
-; CHECK: reduce
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: kCustom
-; CHECK-NEXT: {{kLoop|kInput}}
-)");
-
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1, /*arel=*/0.5}));
-}
-
-TEST_F(GemmFusionAutotunerTestWithMorePreciseReduction, SelectsSplitK) {
   // Shapes with K >> M, N have to force split-K configurations.
   constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -788,10 +756,10 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kHloText));
 
   DebugOptions opts;
-  AutotuneConfig autotune_config{
-      DeviceConfig{backend().default_stream_executor(),
-                   backend().memory_allocator()},
-      opts};
+  AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{DeviceConfig{backend().default_stream_executor(),
+                                            backend().memory_allocator()}},
+      opts);
   AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
                              *module->entry_computation()->root_instruction());
 
@@ -971,6 +939,10 @@ ENTRY e {
 }
 
 TEST_P(GemmFusionAutotunerLevelTest, Deviceless) {
+  if (GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "TODO: b/407494653 - Re-enable for Blackwell once this is "
+                    "no longer fragile.";
+  }
   const std::string hlo = R"(
 HloModule module
 
@@ -992,10 +964,10 @@ ENTRY e {
   DebugOptions opts;
   MultiProcessKeyValueStore key_value_store;
   pipeline.AddPass<GemmFusionAutotuner>(
-      AutotuneConfig{
-          DevicelessConfig{
-              backend().default_stream_executor()->GetDeviceDescription()},
-          opts},
+      AutotuneConfig::FromDebugOptions(
+          DeviceOrDevicelessConfig{DevicelessConfig{
+              backend().default_stream_executor()->GetDeviceDescription()}},
+          opts),
       GetToolkitVersion(), &thread_pool, key_value_store);
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
@@ -1006,12 +978,16 @@ ENTRY e {
     EXPECT_TRUE(changed);
 
     // Check default configuration.
+    // TODO: b/407494653 - This is a bad test because it relies on particular
+    // implementation details to succeed. Thus, it tests that there is no
+    // autotuning happening in a brittle way. Fix this when refactoring the
+    // autotuner.
     TF_ASSERT_OK_AND_ASSIGN(
         bool filecheck_matches,
         RunFileCheck(
             module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
             R"(
-// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"32","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}},"force_earliest_schedule":false}
+// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"16","split_k":"1","num_stages":"1","num_warps":"2","num_ctas":"1"
             )"));
     EXPECT_TRUE(filecheck_matches);
   } else {
@@ -1100,12 +1076,14 @@ TEST_F(GemmFusionAutotunerTest, SplitKFLoatNormalization) {
   ccc->set_minor(compute_capability.minor);
   DeviceConfig test_config{backend().default_stream_executor(),
                            backend().memory_allocator()};
-  AutotuneConfig autotune_config{test_config, GetDebugOptionsForTest()};
+  AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{test_config}, GetDebugOptionsForTest());
   GemmFusionAutotunerImpl autotuner(autotune_config, GetToolkitVersion(),
                                     GetDebugOptionsForTest(), nullptr);
   TF_ASSERT_OK_AND_ASSIGN(
       AutotunerCompileUtil compile_util,
-      AutotunerCompileUtil::Create(autotune_config, GetDebugOptionsForTest()))
+      AutotunerCompileUtil::Create(autotune_config.DeviceConfig(),
+                                   GetDebugOptionsForTest()))
 
   std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
 HloModule module
@@ -1405,9 +1383,10 @@ absl::StatusOr<MultiProcessKeyValueStore> KeyValueStoreFromAutotuneResults(
 class GemmFusionShardedAutotunerTest : public GemmFusionAutotunerTest {
  protected:
   AutotuneConfig GetAutotuneConfigForTest() const {
-    return AutotuneConfig{DeviceConfig{backend().default_stream_executor(),
-                                       backend().memory_allocator()},
-                          GetDebugOptionsForTest()};
+    return AutotuneConfig::FromDebugOptions(
+        DeviceOrDevicelessConfig{DeviceConfig{
+            backend().default_stream_executor(), backend().memory_allocator()}},
+        GetDebugOptionsForTest());
   }
 
   GemmFusionAutotuner GemmFusionAutotunerForKeyValueStore(
@@ -1586,10 +1565,10 @@ TEST_F(GemmFusionAutotunerTest, RewritesGemmFusionToCustomKernelFusion) {
       ParseAndReturnVerifiedModule(kHlo).value();
 
   DebugOptions opts;
-  AutotuneConfig autotune_config{
-      DeviceConfig{backend().default_stream_executor(),
-                   backend().memory_allocator()},
-      opts};
+  AutotuneConfig autotune_config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{DeviceConfig{backend().default_stream_executor(),
+                                            backend().memory_allocator()}},
+      opts);
   AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
                              *module->entry_computation()->root_instruction());
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
@@ -1646,6 +1625,23 @@ ENTRY e {
 // CHECK: __triton_gemm
 // CHECK-NOT: "split_k":"1"
 // CHECK: ROOT
+)");
+}
+
+TEST_F(DynamicSearchSpaceAutotunerTest,
+       FindsValidConfigForSlicedContractingDimension) {
+  const std::string hlo = R"(
+ENTRY e {
+  p0 = f16[32,16400] parameter(0)
+  s0 = f16[32,16384] slice(p0), slice={[0:32], [11:16395]}
+  p1 = f16[16384,32] parameter(1)
+  ROOT _ = f16[32,32] dot(s0, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  CheckTritonAutotuning(hlo, R"(
+// CHECK: ENTRY
+// CHECK: __triton_gemm
 )");
 }
 

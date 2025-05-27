@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ops.h"
-
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -23,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/builder/lib/svd.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
@@ -314,14 +314,37 @@ struct type_caster<xla::ResultAccuracy> {
 
 namespace xla {
 
-void BuildOpsSubmodule(nb::module_& m) {
-  // ops submodule, containing free functions that add operators to an
-  // XlaBuilder.
-  nb::module_ ops = m.def_submodule("ops", "XLA operations");
-  BuildOpsModule(ops);
-}
+NB_MODULE(_ops, m) {
+  nb::class_<ShapeIndex>(m, "ShapeIndex", R"(Represents an XLA ShapeIndex.
 
-void BuildOpsModule(nb::module_& m) {
+  An index for specifying a particular nested subshape within a shape. Used in
+  ShapeUtil::GetSubshape and other interfaces. ShapeIndex defines a path through
+  the Shape tree where each element of ShapeIndex indexes into a tuple (or
+  nested tuple) within the shape. For a non-nested tuple, an index has a single
+  element.)")
+      .def("__init__",
+           [](ShapeIndex* self, const std::vector<int64_t>& v) {
+             new (self) ShapeIndex(v.begin(), v.end());
+           })
+      .def("__repr__", &ShapeIndex::ToString)
+      .def("__eq__", [](const ShapeIndex& shape_ind,
+                        const ShapeIndex& other) { return shape_ind == other; })
+      .def("__ne__", [](const ShapeIndex& shape_ind,
+                        const ShapeIndex& other) { return shape_ind != other; })
+      .def("__hash__",
+           [](const ShapeIndex& shape_ind) { return absl::HashOf(shape_ind); });
+
+  nb::enum_<FftType>(m, "FftType")
+      .value("FFT", FftType::FFT)
+      .value("IFFT", FftType::IFFT)
+      .value("RFFT", FftType::RFFT)
+      .value("IRFFT", FftType::IRFFT);
+
+  nb::enum_<PrecisionConfig::Precision>(m, "PrecisionConfig_Precision")
+      .value("DEFAULT", PrecisionConfig::DEFAULT)
+      .value("HIGH", PrecisionConfig::HIGH)
+      .value("HIGHEST", PrecisionConfig::HIGHEST);
+
   nb::enum_<TriangularSolveOptions::Transpose>(
       m, "TriangularSolveOptions_Transpose")
       .value("TRANSPOSE_INVALID", TriangularSolveOptions::TRANSPOSE_INVALID)
@@ -333,6 +356,10 @@ void BuildOpsModule(nb::module_& m) {
       .value("RNG_DEFAULT", RandomAlgorithm::RNG_DEFAULT)
       .value("RNG_THREE_FRY", RandomAlgorithm::RNG_THREE_FRY)
       .value("RNG_PHILOX", RandomAlgorithm::RNG_PHILOX);
+
+  nb::enum_<ResultAccuracy::Mode>(m, "ResultAccuracy_Mode")
+      .value("DEFAULT", ResultAccuracy::DEFAULT)
+      .value("HIGHEST", ResultAccuracy::HIGHEST);
 
   nb::enum_<CustomCallSchedule>(m, "CustomCallSchedule")
       .value("SCHEDULE_NONE", CustomCallSchedule::SCHEDULE_NONE)
@@ -366,23 +393,37 @@ void BuildOpsModule(nb::module_& m) {
         nb::arg("channel_id") = std::nullopt,
         nb::arg("shape_with_layout") = std::nullopt,
         nb::arg("use_global_device_ids") = std::nullopt);
-  m.def("ReduceScatter", &ReduceScatter, nb::arg("operand"),
-        nb::arg("computation"), nb::arg("scatter_dimension"),
-        nb::arg("shard_count"), nb::arg("replica_groups") = nb::list(),
+  m.def("ReduceScatter",
+        static_cast<XlaOp (*)(
+            XlaOp, const XlaComputation&, int64_t, int64_t,
+            absl::Span<const ReplicaGroup>, const std::optional<ChannelHandle>&,
+            const std::optional<Layout>& layout,
+            std::optional<bool> use_global_device_ids)>(&ReduceScatter),
+        nb::arg("operand"), nb::arg("computation"),
+        nb::arg("scatter_dimension"), nb::arg("shard_count"),
+        nb::arg("replica_groups") = nb::list(),
         nb::arg("channel_id") = std::nullopt, nb::arg("layout") = std::nullopt,
         nb::arg("use_global_device_ids") = std::nullopt);
   m.def("AllToAll", &AllToAll, nb::arg("operand"), nb::arg("split_dimension"),
         nb::arg("concat_dimension"), nb::arg("split_count"),
         nb::arg("replica_groups") = nb::list(),
         nb::arg("layout") = std::nullopt, nb::arg("channel_id") = std::nullopt);
-  m.def("ApproxTopK", &ApproxTopK, nb::arg("builder"), nb::arg("operands"),
-        nb::arg("init_values"), nb::arg("top_k"), nb::arg("reduction_dim"),
-        nb::arg("comparator"), nb::arg("recall_target") = 0.9,
-        nb::arg("aggregate_to_topk") = true,
+  m.def("ApproxTopK",
+        static_cast<XlaOp (*)(XlaBuilder*, absl::Span<const XlaOp>,
+                              absl::Span<const XlaOp>, int64_t, int64_t,
+                              const XlaComputation&, float, bool, int64_t)>(
+            &ApproxTopK),
+        nb::arg("builder"), nb::arg("operands"), nb::arg("init_values"),
+        nb::arg("top_k"), nb::arg("reduction_dim"), nb::arg("comparator"),
+        nb::arg("recall_target") = 0.9, nb::arg("aggregate_to_topk") = true,
         nb::arg("reduction_input_size_override") = -1);
-  m.def("ApproxTopKFallback", &ApproxTopKFallback, nb::arg("builder"),
-        nb::arg("operands"), nb::arg("init_values"), nb::arg("top_k"),
-        nb::arg("reduction_dim"), nb::arg("comparator"),
+  m.def("ApproxTopKFallback",
+        static_cast<XlaOp (*)(XlaBuilder*, absl::Span<const XlaOp>,
+                              absl::Span<const XlaOp>, int64_t, int64_t,
+                              const XlaComputation&, float, bool, int64_t)>(
+            &ApproxTopKFallback),
+        nb::arg("builder"), nb::arg("operands"), nb::arg("init_values"),
+        nb::arg("top_k"), nb::arg("reduction_dim"), nb::arg("comparator"),
         nb::arg("recall_target") = 0.9, nb::arg("aggregate_to_topk") = true,
         nb::arg("reduction_input_size_override") = -1);
   m.def("ApproxTopKReductionOutputSize",
@@ -395,8 +436,10 @@ void BuildOpsModule(nb::module_& m) {
   m.def("Broadcast", &Broadcast, nb::arg("operand"), nb::arg("sizes"));
   m.def("BroadcastInDim", &BroadcastInDim, nb::arg("operand"), nb::arg("shape"),
         nb::arg("broadcast_dimensions"));
-  m.def("Call", &Call, nb::arg("builder"), nb::arg("computation"),
-        nb::arg("operands"));
+  m.def("Call",
+        static_cast<XlaOp (*)(XlaBuilder*, const XlaComputation&,
+                              absl::Span<const XlaOp>)>(&Call),
+        nb::arg("builder"), nb::arg("computation"), nb::arg("operands"));
   m.def("Cholesky", &Cholesky, nb::arg("a"), nb::arg("lower") = true);
   m.def("Clamp", &Clamp, nb::arg("min"), nb::arg("operand"), nb::arg("max"));
   m.def("Collapse", &Collapse, nb::arg("operand"), nb::arg("dimensions"));
@@ -576,9 +619,12 @@ void BuildOpsModule(nb::module_& m) {
         return std::make_tuple(lu.lu, lu.pivots, lu.permutation);
       },
       nb::arg("operand"));
-  m.def("Map", &Map, nb::arg("builder"), nb::arg("operands"),
-        nb::arg("computation"), nb::arg("dimensions"),
-        nb::arg("static_operands") = nb::list());
+  m.def("Map",
+        static_cast<XlaOp (*)(XlaBuilder*, absl::Span<const XlaOp>,
+                              const XlaComputation&, absl::Span<const int64_t>,
+                              absl::Span<const XlaOp>)>(&Map),
+        nb::arg("builder"), nb::arg("operands"), nb::arg("computation"),
+        nb::arg("dimensions"), nb::arg("static_operands") = nb::list());
   m.def("MultiCollectivePermute", &MultiCollectivePermute, nb::arg("operands"),
         nb::arg("source_target_pairs"), nb::arg("channel_id") = std::nullopt,
         nb::arg("inplace") = false);
@@ -679,8 +725,12 @@ void BuildOpsModule(nb::module_& m) {
   m.def("Select", &Select, nb::arg("pred"), nb::arg("on_true"),
         nb::arg("on_false"));
   m.def("SelectAndScatterWithGeneralPadding",
-        &SelectAndScatterWithGeneralPadding, nb::arg("operand"),
-        nb::arg("select"), nb::arg("window_dimensions"),
+        static_cast<XlaOp (*)(
+            XlaOp, const XlaComputation&, absl::Span<const int64_t>,
+            absl::Span<const int64_t>,
+            absl::Span<const std::pair<int64_t, int64_t>>, XlaOp, XlaOp,
+            const XlaComputation&)>(&SelectAndScatterWithGeneralPadding),
+        nb::arg("operand"), nb::arg("select"), nb::arg("window_dimensions"),
         nb::arg("window_strides"), nb::arg("padding"), nb::arg("source"),
         nb::arg("init_value"), nb::arg("scatter"));
   m.def("SendToHost", &SendToHost, nb::arg("operand"), nb::arg("token"),
@@ -734,8 +784,10 @@ void BuildOpsModule(nb::module_& m) {
         nb::arg("left_side"), nb::arg("lower"), nb::arg("unit_diagonal"),
         nb::arg("transpose_a"));
   m.def("Tuple", &Tuple, nb::arg("builder"), nb::arg("elements"));
-  m.def("While", &While, nb::arg("condition"), nb::arg("body"),
-        nb::arg("init"));
+  m.def("While",
+        static_cast<XlaOp (*)(const XlaComputation&, const XlaComputation&,
+                              XlaOp)>(&While),
+        nb::arg("condition"), nb::arg("body"), nb::arg("init"));
 
   m.def("Igamma", &Igamma, nb::arg("a"), nb::arg("x"));
   m.def("Igammac", &Igammac, nb::arg("a"), nb::arg("x"));

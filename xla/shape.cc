@@ -33,7 +33,9 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -48,7 +50,8 @@ Shape& Shape::operator=(const Shape&) = default;
 Shape& Shape::operator=(Shape&&) noexcept = default;
 
 Shape::Shape(const PrimitiveType element_type) {
-  CHECK(element_type == TOKEN || element_type == OPAQUE_TYPE)
+  CHECK(element_type == TOKEN || element_type == OPAQUE_TYPE ||
+        element_type == BUFFER)
       << "Invalid element type for token or opaque shape: " << element_type_;
   set_element_type(element_type);
 }
@@ -81,29 +84,20 @@ Shape::Shape(std::vector<Shape> tuple_shapes) {
   tuple_state().tuple_shapes = std::move(tuple_shapes);
 }
 
-Shape::Shape(const ShapeProto& shape_proto) {
-  set_element_type(shape_proto.element_type());
-  if (auto* const state = if_array_state()) {
+absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& shape_proto) {
+  Shape shape;
+  shape.set_element_type(shape_proto.element_type());
+  if (auto* const state = shape.if_array_state()) {
     const int num_dims = shape_proto.dimensions_size();
     const int num_is_dynamic_dims = shape_proto.is_dynamic_dimension_size();
     state->dimensions.reserve(num_dims);
     state->dynamic_dimensions.reserve(num_dims);
-    // A malformed proto may have different is_dynamic_dimension_size and
-    // dimensions_size. Since C++ is evil, and we have no good way of bailing
-    // out in a constructor, conservatively trim the is_dynamic_dimension size.
-    // TODO(b/120111794): Make this a hard error when we have a factory method
-    // instead of a constructor.
-    if (num_dims != num_is_dynamic_dims) {
-      if (num_is_dynamic_dims != 0) {
-        LOG(ERROR) << "Malformed shape proto: number of is_dynamic_dimension "
-                      "fields ("
-                   << num_is_dynamic_dims
-                   << ") does not match number of dimension fields ("
-                   << num_dims << ").";
-      } else {
-        LOG(WARNING) << "Malformed shape proto: is_dynamic_dimension is empty "
-                        "- assuming all dimensions are static.";
-      }
+    if (num_is_dynamic_dims != 0) {
+      TF_RET_CHECK(num_dims == num_is_dynamic_dims)
+          << "Malformed shape proto: number of is_dynamic_dimension "
+             "fields ("
+          << num_is_dynamic_dims << ") does not match number of dimension "
+          << "fields (" << num_dims << ").";
     }
     for (int i = 0; i < num_dims; ++i) {
       const bool is_dynamic =
@@ -112,27 +106,29 @@ Shape::Shape(const ShapeProto& shape_proto) {
       // UnsafeAddDimension. We expect that the caller will eventually call a
       // validation routine that will detect the error in case the dimension
       // value is invalid.
-      UnsafeAddDimension(shape_proto.dimensions(i), is_dynamic);
+      shape.UnsafeAddDimension(shape_proto.dimensions(i), is_dynamic);
     }
-  } else if (auto* const state = if_tuple_state()) {
+  } else if (auto* const state = shape.if_tuple_state()) {
     state->tuple_shapes.reserve(shape_proto.tuple_shapes_size());
     for (const ShapeProto& element_shape : shape_proto.tuple_shapes()) {
-      state->tuple_shapes.emplace_back(element_shape);
+      TF_ASSIGN_OR_RETURN(Shape tuple_shape, Shape::FromProto(element_shape));
+      state->tuple_shapes.emplace_back(std::move(tuple_shape));
     }
+  } else if (auto* const state = shape.if_buffer_state()) {
+    state->buffer_shape.emplace_back(shape_proto.tuple_shapes(0));
   }
   if (shape_proto.has_layout()) {
-    if (!IsArray()) {
-      LOG(ERROR) << "Malformed shape proto: element_type "
-                 << PrimitiveType_Name(element_type())
-                 << " should not have a layout.";
-    } else {
-      *mutable_layout() = Layout::CreateFromProto(shape_proto.layout());
-    }
+    TF_RET_CHECK(shape.IsArray()) << "Malformed shape proto: element_type "
+                                  << PrimitiveType_Name(shape.element_type())
+                                  << " should not have a layout.";
+    TF_ASSIGN_OR_RETURN(*shape.mutable_layout(),
+                        Layout::FromProto(shape_proto.layout()));
   }
+  return shape;
 }
 
-void Shape::SetProto(ShapeProto& proto) const {
-  proto.Clear();
+ShapeProto Shape::ToProto() const {
+  ShapeProto proto;
   proto.set_element_type(element_type_);
 
   if (const auto* const state = if_array_state()) {
@@ -144,20 +140,72 @@ void Shape::SetProto(ShapeProto& proto) const {
       proto.add_is_dynamic_dimension(dynamic);
     }
     if (state->layout.has_value()) {
-      state->layout->SetProto(*proto.mutable_layout());
+      *proto.mutable_layout() = state->layout->ToProto();
     }
   } else if (const auto* const state = if_tuple_state()) {
     proto.mutable_tuple_shapes()->Reserve(state->tuple_shapes.size());
     for (const Shape& shape : state->tuple_shapes) {
-      shape.SetProto(*proto.add_tuple_shapes());
+      *proto.add_tuple_shapes() = shape.ToProto();
     }
+  } else if (const auto* const state = if_buffer_state()) {
+    proto.mutable_tuple_shapes()->Reserve(1);
+    *proto.add_tuple_shapes() = state->buffer_shape[0].ToProto();
   }
+  return proto;
 }
 
-ShapeProto Shape::ToProto() const {
-  ShapeProto proto;
-  SetProto(proto);
-  return proto;
+const Shape::ArrayState& Shape::array_state() const {
+  const auto* const state = if_array_state();
+  CHECK(state) << "Expected an array shape. Got " << ToString()
+               << "\nThis is a programmer error. Please read "
+                  "the Shape object's array properties (e.g. dimensions) "
+                  "only when it's an array shape.";
+  return *state;
+}
+
+Shape::ArrayState& Shape::array_state() {
+  auto* const state = if_array_state();
+  CHECK(state) << "Expected an array shape. Got " << ToString()
+               << "\nThis is a programmer error. Please mutate "
+                  "the Shape object's array properties (e.g. dimensions) "
+                  "only when it's an array shape.";
+  return *state;
+}
+
+const Shape::TupleState& Shape::tuple_state() const {
+  const auto* const state = if_tuple_state();
+  CHECK(state) << "Expected a tuple shape. Got " << ToString()
+               << "\nThis is a programmer error. Please read "
+                  "the Shape object's tuple properties (e.g. tuple_shapes) "
+                  "only when it's a tuple shape.";
+  return *state;
+}
+
+Shape::TupleState& Shape::tuple_state() {
+  auto* const state = if_tuple_state();
+  CHECK(state) << "Expected a tuple shape. Got " << ToString()
+               << "\nThis is a programmer error. Please mutate "
+                  "the Shape object's tuple properties (e.g. tuple_shapes) "
+                  "only when it's a tuple shape.";
+  return *state;
+}
+
+const Shape::BufferState& Shape::buffer_state() const {
+  const auto* const state = if_buffer_state();
+  CHECK(state) << "Expected a buffer shape. Got " << ToString()
+               << "\nThis is a programmer error. Please read "
+                  "the Shape object's buffer properties (e.g. buffer_shapes) "
+                  "only when it's a buffer shape.";
+  return *state;
+}
+
+Shape::BufferState& Shape::buffer_state() {
+  auto* const state = if_buffer_state();
+  CHECK(state) << "Expected a buffer shape. Got " << ToString()
+               << "\nThis is a programmer error. Please mutate "
+                  "the Shape object's buffer properties (e.g. buffer_shapes) "
+                  "only when it's a buffer shape.";
+  return *state;
 }
 
 void Shape::Print(Printer* printer, bool print_layout) const {
@@ -320,6 +368,10 @@ const std::vector<Shape>& Shape::tuple_shapes() const {
   return tuple_state().tuple_shapes;
 }
 
+const Shape& Shape::buffer_shape() const {
+  return buffer_state().buffer_shape[0];
+}
+
 void Shape::Clear() {
   // Before setting the element type to invalid, we need to clear the state
   // because the state may be non-empty if the shape was previously valid.
@@ -359,6 +411,13 @@ void Shape::set_element_type(const PrimitiveType value) {
     }
     return;
   }
+  if (element_type_ == BUFFER) {
+    if (!if_buffer_state()) {
+      CheckStateIsEmpty();
+      state_ = BufferState();
+    }
+    return;
+  }
   if (primitive_util::IsArrayType(element_type_)) {
     if (!if_array_state()) {
       CheckStateIsEmpty();
@@ -393,7 +452,22 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
            absl::c_equal(
                lhs.tuple_shapes(), rhs.tuple_shapes(),
                [=](const Shape& l, const Shape& r) { return (*this)(l, r); });
-  } else if (!lhs.IsArray()) {
+  }
+  if (lhs.IsBuffer() || rhs.IsBuffer()) {
+    if (!ignore_buffer_) {
+      return lhs.IsBuffer() && rhs.IsBuffer() &&
+             lhs.buffer_shape() == rhs.buffer_shape();
+    }
+    auto underline_shape = [](const Shape& shape) {
+      if (shape.IsBuffer()) {
+        return shape.buffer_shape();
+      }
+      return shape;
+    };
+    return underline_shape(lhs) == underline_shape(rhs);
+  }
+
+  if (!lhs.IsArray()) {
     // Non-tuple, non-array tupes such as opaque and token types are trivially
     // the same.
     return lhs.element_type() == rhs.element_type();
@@ -490,22 +564,27 @@ ProgramShape::ProgramShape(ProgramShape&&) = default;
 ProgramShape& ProgramShape::operator=(const ProgramShape&) = default;
 ProgramShape& ProgramShape::operator=(ProgramShape&&) = default;
 
-ProgramShape::ProgramShape(const ProgramShapeProto& program_shape_proto) {
+absl::StatusOr<ProgramShape> ProgramShape::FromProto(
+    const ProgramShapeProto& program_shape_proto) {
+  ProgramShape program_shape;
   const int num_params = program_shape_proto.parameters_size();
   const int num_param_names = program_shape_proto.parameter_names_size();
-  if (num_params != num_param_names) {
-    LOG(ERROR) << "ProgramShapeProto has different numbers of parameters and "
-                  "parameter names: "
-               << num_params << " vs " << num_param_names;
-  }
-  parameters_.reserve(num_params);
-  parameter_names_.reserve(num_params);
+  TF_RET_CHECK(num_params == num_param_names)
+      << "ProgramShapeProto has different numbers of parameters and "
+         "parameter names: "
+      << num_params << " vs " << num_param_names;
+  program_shape.parameters_.reserve(num_params);
+  program_shape.parameter_names_.reserve(num_params);
   for (int i = 0; i < num_params; ++i) {
     const std::string& name =
         i < num_param_names ? program_shape_proto.parameter_names(i) : "";
-    AddParameter(Shape(program_shape_proto.parameters(i)), name);
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        Shape::FromProto(program_shape_proto.parameters(i)));
+    program_shape.AddParameter(shape, name);
   }
-  *mutable_result() = Shape(program_shape_proto.result());
+  TF_ASSIGN_OR_RETURN(*program_shape.mutable_result(),
+                      Shape::FromProto(program_shape_proto.result()));
+  return program_shape;
 }
 
 ProgramShapeProto ProgramShape::ToProto() const {

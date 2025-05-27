@@ -1207,16 +1207,9 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
   }
 
   auto callee = call_target_provider(operand);
-  SmallVector<Value> operands;
-  if (auto backend_kind = GetBackendKind(this_fn);
-      backend_kind == xla::BackendKind::kCpu && this_fn->getAttr("xla.entry")) {
-    operands =
-        SmallVector<Value>{this_fn.getArguments().drop_front().take_front(
-            instr->parent()->num_parameters())};
-  } else {
-    operands = SmallVector<Value>{
-        this_fn.getArguments().take_front(instr->parent()->num_parameters())};
-  }
+  SmallVector<Value> operands(
+      this_fn.getArguments().take_front(instr->parent()->num_parameters()));
+
   absl::c_copy(indices, std::back_inserter(operands));
   auto results = builder.create<PureCallOp>(callee, operands).getResults();
   auto callee_subgraph = computation.FindSubgraph(operand);
@@ -1230,7 +1223,7 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
   int offset = 0;
   for (auto root : callee_subgraph.roots) {
     int root_arity =
-        root->shape().IsTuple() ? root->shape().tuple_shapes_size() : 1;
+        root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
     if (root == operand) {
       return results.slice(offset, root_arity);
     }
@@ -1313,7 +1306,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::Convert() {
       auto injected =
           this_fn_.getArguments().take_back(subgraph_.num_injected_values);
       int arity =
-          root->shape().IsTuple() ? root->shape().tuple_shapes_size() : 1;
+          root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
       absl::c_copy(injected.slice(it->second, arity),
                    std::back_inserter(results));
       continue;

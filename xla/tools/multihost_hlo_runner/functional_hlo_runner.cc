@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "xla/client/executable_build_options.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/translate/hlo_to_mhlo/translate.h"
 #include "xla/hlo/translate/stablehlo.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -66,6 +68,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/slow_operation_alarm.h"
+#include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -113,6 +116,14 @@ absl::StatusOr<Literal> MakeFakeLiteralWithSameValue(const Shape& shape,
             PopulateWithSameValue(
                 &literal,
                 static_cast<NativeT>(type == PRED ? (value % 2) == 0 : value));
+            for (int i = 0; i < shape.dimensions().size(); i++) {
+              if (shape.is_dynamic_dimension(i)) {
+                // TODO(b/378917570): We might need to set the dynamic size to
+                // the actual bound i.e., shape.dimensions(i) when HybridSim
+                // supports SparseCore.
+                literal.SetDynamicSize(i, 0);
+              }
+            }
             return literal;
           }
           return Unimplemented(
@@ -427,8 +438,10 @@ FunctionalHloRunner::CreateExecutableBuildOptionsFromExecutionOptions(
     build_options.mutable_debug_options()->set_xla_dump_to("");
   }
   if (execution_options.has_shape_with_output_layout()) {
-    build_options.set_result_layout(
-        Shape(execution_options.shape_with_output_layout()));
+    absl::StatusOr<Shape> shape =
+        Shape::FromProto(execution_options.shape_with_output_layout());
+    TF_CHECK_OK(shape.status());
+    build_options.set_result_layout(*shape);
   }
   build_options.set_num_replicas(execution_options.num_replicas());
   build_options.set_num_partitions(execution_options.num_partitions());
@@ -793,13 +806,23 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
   return absl::OkStatus();
 }
 
-CompileOptions FunctionalHloRunner::CompleteCompileOptions(
+absl::StatusOr<CompileOptions> FunctionalHloRunner::CompleteCompileOptions(
     const HloModule& hlo_module, CompileOptions compile_options,
     const PreprocessingOptions& preproc_options) {
   ParameterType parameter_type = GetParameterType(hlo_module);
   compile_options.parameter_is_tupled_arguments =
       (parameter_type == ParameterType::kOneTupleOfArrays);
-  if (preproc_options.use_layouts_from_hlo_module) {
+  if (preproc_options.force_auto_layout) {
+    XlaComputation computation(hlo_module.ToProto());
+    TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
+    LayoutUtil::ClearLayout(&program_shape);
+    compile_options.argument_layouts = program_shape.parameters();
+    compile_options.executable_build_options.set_result_layout(
+        program_shape.result());
+    compile_options.executable_build_options.mutable_debug_options()
+        ->set_xla_pjrt_allow_auto_layout_in_hlo(true);
+  } else if (preproc_options.use_layouts_from_hlo_module) {
     const ComputationLayout& layout = hlo_module.entry_computation_layout();
     std::vector<Shape> parameter_shapes;
     parameter_shapes.reserve(layout.parameter_count());
@@ -853,8 +876,9 @@ FunctionalHloRunner::Compile(PjRtClient& client, HloModule* hlo_module,
                              const CompileOptions& compile_options) {
   TF_RETURN_IF_ERROR(PrepareHloModuleForCompilation(hlo_module, debug_options,
                                                     preproc_options));
-  CompileOptions modified_compile_options =
-      CompleteCompileOptions(*hlo_module, compile_options, preproc_options);
+  TF_ASSIGN_OR_RETURN(
+      CompileOptions modified_compile_options,
+      CompleteCompileOptions(*hlo_module, compile_options, preproc_options));
 
   return ConvertAndCallCompiler<PjRtLoadedExecutable>(
       preproc_options.compile_as_stablehlo, hlo_module,
@@ -871,8 +895,9 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> FunctionalHloRunner::Compile(
     const PjRtTopologyDescription& topology) {
   TF_RETURN_IF_ERROR(PrepareHloModuleForCompilation(hlo_module, debug_options,
                                                     preproc_options));
-  CompileOptions modified_compile_options =
-      CompleteCompileOptions(*hlo_module, compile_options, preproc_options);
+  TF_ASSIGN_OR_RETURN(
+      CompileOptions modified_compile_options,
+      CompleteCompileOptions(*hlo_module, compile_options, preproc_options));
 
   return ConvertAndCallCompiler<PjRtExecutable>(
       preproc_options.compile_as_stablehlo, hlo_module,

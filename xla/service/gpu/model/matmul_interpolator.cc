@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/algorithm/container.h"
@@ -106,8 +107,10 @@ absl::StatusOr<InterpolationSpecification> Spec(
         "Expected dot, got: ", profile.instruction().DebugString()));
   }
 
-  Shape lhs_shape = Shape(profile.operands(0).shape());
-  Shape rhs_shape = Shape(profile.operands(1).shape());
+  TF_ASSIGN_OR_RETURN(Shape lhs_shape,
+                      Shape::FromProto(profile.operands(0).shape()));
+  TF_ASSIGN_OR_RETURN(Shape rhs_shape,
+                      Shape::FromProto(profile.operands(1).shape()));
   DotDimensionNumbers dot_dims = profile.instruction().dot_dimension_numbers();
   return ExtractDotSpec(dot_dims, lhs_shape, rhs_shape);
 }
@@ -168,7 +171,7 @@ MatmulInterpolator::Create(const HloInstructionProfileList& profiles,
 }
 
 std::optional<absl::Duration> MatmulInterpolator::EstimatedRuntime(
-    const HloInstruction& instr) {
+    const HloInstruction& instr) const {
   InterpolationSpecification spec;
   if (instr.opcode() == HloOpcode::kDot) {
     auto* dot = Cast<HloDotInstruction>(&instr);

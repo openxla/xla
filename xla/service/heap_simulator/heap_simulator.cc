@@ -1071,6 +1071,11 @@ int64_t BufferIntervalTree::HeapSizeInInterval(const int64_t start,
   return max_memory_used;
 }
 
+void BufferIntervalTree::Clear() {
+  root_ = nullptr;
+  node_storage_.clear();
+}
+
 template <typename BufferType>
 std::string
 GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval::ToString() const {
@@ -2587,7 +2592,7 @@ ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
     multi_heap_result.heap_size += result_.heap_size;
     multi_heap_result.heap_results.push_back(std::move(result_));
     result_ = {};
-    interval_tree_ = {};
+    interval_tree_.Clear();
   } while (!sorted_buffer_intervals.empty());
 
   VLOG(1) << "Number of heaps produced = "
@@ -2612,6 +2617,42 @@ ChooseBestHeapAlgorithm<BufferType>::Finish() {
 
   DCHECK_GE(min_size_index, 0);
   return results[min_size_index];
+}
+
+BreadthFirstMidpointIterator::BreadthFirstMidpointIterator(int start, int end)
+    : initial_work_item_({start, end}) {
+  Begin();
+}
+
+int BreadthFirstMidpointIterator::value() const {
+  CHECK(value_.has_value());
+  return *value_;
+}
+
+void BreadthFirstMidpointIterator::Begin() {
+  work_items_.clear();
+  value_ = std::nullopt;
+
+  work_items_.push_back(initial_work_item_);
+  Next();
+}
+
+void BreadthFirstMidpointIterator::Next() {
+  if (work_items_.empty()) {
+    value_ = std::nullopt;
+    return;
+  }
+
+  WorkItem work_item = work_items_.front();
+  work_items_.pop_front();
+  if (work_item.start > work_item.end) {
+    Next();
+    return;
+  }
+  int midpoint = CeilOfRatio(work_item.start + work_item.end, 2);
+  value_ = midpoint;
+  work_items_.push_back({work_item.start, midpoint - 1});
+  work_items_.push_back({midpoint + 1, work_item.end});
 }
 
 template class GlobalDecreasingSizeBestFitHeap<HloValue>;

@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
+#include "xla/tsl/distributed_runtime/coordination/key_value_store.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
@@ -363,6 +364,9 @@ class CoordinationService {
     absl::flat_hash_map<tensorflow::CoordinatedTask, bool, CoordinatedTaskHash,
                         CoordinatedTaskEqual>
         tasks_at_barrier;
+    absl::flat_hash_set<tensorflow::CoordinatedTask, CoordinatedTaskHash,
+                        CoordinatedTaskEqual>
+        recoverable_tasks_restarted_during_barrier;
     absl::flat_hash_map<tensorflow::CoordinatedTask, BarrierCallback,
                         CoordinatedTaskHash, CoordinatedTaskEqual>
         done_callbacks;
@@ -447,6 +451,12 @@ class CoordinationService {
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
   bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+
+  // Checks if the barrier can be passed, if recoverable tasks reconnected or
+  // disconnected to the service while barrier is ongoing.
+  // This is only applicable if leave_barriers_on_recoverable_agent_restart flag
+  // is set to true.
+  void CheckBarrierStatusWithRecoverableTasks();
 
   class ErrorPollingState {
    public:
@@ -611,11 +621,7 @@ class CoordinationService {
       ABSL_GUARDED_BY(state_mu_);
   tensorflow::DeviceInfo cluster_devices_ ABSL_GUARDED_BY(state_mu_);
 
-  absl::Mutex kv_mu_;
-  // Ordered map to store config key-values
-  absl::btree_map<std::string, std::string> kv_store_ ABSL_GUARDED_BY(kv_mu_);
-  absl::flat_hash_map<std::string, std::vector<StatusOrValueCallback>> get_cb_
-      ABSL_GUARDED_BY(kv_mu_);
+  KeyValueStore store_;
 
   absl::flat_hash_map<std::string, BarrierState> barriers_
       ABSL_GUARDED_BY(state_mu_);

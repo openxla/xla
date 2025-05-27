@@ -1,4 +1,5 @@
 load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain", "use_cpp_toolchain")
+load("@rules_python//python:py_library.bzl", "py_library")
 
 PywrapInfo = provider(
     fields = {
@@ -249,7 +250,7 @@ def pywrap_library(
     all_binaries_data.append(":%s" % pywrap_binaries_name)
     all_binaries_data.extend([shared_objects[-1]])
 
-    native.py_library(
+    py_library(
         name = name,
         srcs = [":%s" % info_collector_name],
         data = all_binaries_data,
@@ -1061,11 +1062,6 @@ def _pywrap_binaries_impl(ctx):
         output = ctx.outputs.wheel_locations_json,
         content = str(wheel_locations),
     )
-
-    original_to_final_binaries.append(
-        "^^^ Shared objects correspondence map^^^\n\n",
-    )
-    print("\n".join(original_to_final_binaries))
 
     return [DefaultInfo(files = depset(direct = final_binaries))]
 

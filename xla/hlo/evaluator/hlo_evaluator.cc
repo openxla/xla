@@ -69,7 +69,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
-#include "xla/service/call_graph.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/service/cpu/runtime_single_threaded_matmul.h"
 #include "xla/service/gather_scatter_utils.h"
@@ -934,7 +933,6 @@ absl::StatusOr<Literal> HloEvaluator::Evaluate(
   // Reset evaluation state with the argument literals.
   ScopedEvaluateState evaluate_state(&state_, args);
 
-  call_graph_cache_.reset();
   tuple_points_to_analysis_cache_.reset();
 
   // Re-seed RNG, either from the configuration's seed or a monotonic
@@ -976,7 +974,6 @@ absl::StatusOr<Literal> HloEvaluator::Evaluate(
     SetEvaluatedLiteralFor(substituted_instr, literal_value->Clone());
   }
 
-  call_graph_cache_.reset();
   tuple_points_to_analysis_cache_.reset();
   auto enable_partial_evaluation_cleanup =
       absl::MakeCleanup([this] { enable_partial_evaluation_ = false; });
@@ -1005,7 +1002,6 @@ bool HloEvaluator::TryEvaluate(const HloInstruction* instruction,
   *result = std::move(result_or).value();
   return true;
 }
-
 
 absl::StatusOr<Literal> HloEvaluator::EvaluateElementwiseBinaryOp(
     HloOpcode opcode, const Literal& lhs, const Literal& rhs) {
@@ -1095,8 +1091,7 @@ absl::Status HloEvaluator::EvaluateParameterFromCallerArgument(
     PrecomputedAnalyses analyses) {
   CHECK(!state_.has_evaluated(parameter));
   const HloComputation* parent_computation = parameter->parent();
-  std::vector<HloInstruction*> computation_callers =
-      analyses.call_graph->GetComputationCallers(parent_computation);
+  auto computation_callers = parent_computation->caller_instructions();
   // If the parent computation has multiple callers, we cannot determine from
   // which caller the arguments are passed.
   if (computation_callers.size() != 1) {
@@ -1116,14 +1111,28 @@ absl::Status HloEvaluator::EvaluateParameterFromCallerArgument(
         ", which is not yet supported.");
   }
   if (computation_caller->opcode() == HloOpcode::kWhile) {
+    if (!analyses.tuple_points_to && !tuple_points_to_analysis_cache_) {
+      absl::StatusOr<std::unique_ptr<TuplePointsToAnalysis>> tuple_points_to =
+          TuplePointsToAnalysis::Run(parameter->GetModule());
+      if (!tuple_points_to.ok()) {
+        return absl::FailedPreconditionError(
+            "Failed to run TuplePointsToAnalysis.");
+      }
+      tuple_points_to_analysis_cache_ = *std::move(tuple_points_to);
+    }
+    TuplePointsToAnalysis* tuple_points_to_analysis =
+        analyses.tuple_points_to != nullptr
+            ? analyses.tuple_points_to
+            : tuple_points_to_analysis_cache_.get();
+
     HloComputation* while_body = computation_caller->while_body();
     TF_ASSIGN_OR_RETURN(
         const LogicalBuffer* logical_buffer,
-        analyses.tuple_points_to->GetBufferDefinedAt(
+        tuple_points_to_analysis->GetBufferDefinedAt(
             while_body->parameter_instruction(parameter->parameter_number()),
             shape_index));
     const TuplePointsToAnalysis::BufferAliasVector& buffer_aliases =
-        analyses.tuple_points_to->GetBufferAliases(*logical_buffer);
+        tuple_points_to_analysis->GetBufferAliases(*logical_buffer);
     bool unchanged_in_return = false;
     for (const BufferAlias& buffer_alias : buffer_aliases) {
       if (buffer_alias.instruction() == while_body->root_instruction() &&
@@ -1217,38 +1226,13 @@ absl::Status HloEvaluator::EvaluateInternal(
                            precomputed_analyses, new_shape_index,
                            /*recursively_evaluate_nonconstant_operands=*/true));
     } else if (instruction->opcode() == HloOpcode::kParameter) {
-      CallGraph* call_graph =
-          (precomputed_analyses.call_graph != nullptr)
-              ? precomputed_analyses.call_graph
-              : std::invoke([this, instruction]() -> CallGraph* {
-                  call_graph_cache_ =
-                      CallGraph::Build(instruction->GetModule());
-                  return call_graph_cache_.get();
-                });
-      TuplePointsToAnalysis* tuple_points_to_analysis =
-          (precomputed_analyses.tuple_points_to != nullptr)
-              ? precomputed_analyses.tuple_points_to
-              : std::invoke([this, instruction]() -> TuplePointsToAnalysis* {
-                  absl::StatusOr<std::unique_ptr<TuplePointsToAnalysis>>
-                      tuple_points_to_analysis =
-                          TuplePointsToAnalysis::Run(instruction->GetModule());
-                  if (!tuple_points_to_analysis.ok()) {
-                    return nullptr;
-                  }
-                  tuple_points_to_analysis_cache_ =
-                      *std::move(tuple_points_to_analysis);
-                  return tuple_points_to_analysis_cache_.get();
-                });
-      if (call_graph && tuple_points_to_analysis) {
-        absl::Status argument_eval_status = EvaluateParameterFromCallerArgument(
-            instruction, shape_index, {tuple_points_to_analysis, call_graph});
-        if (!argument_eval_status.ok()) {
-          VLOG(4) << "Failed to evaluate parameter " << instruction->name()
-                  << " from caller. Reason: " << argument_eval_status.message();
-        } else {
-          VLOG(4) << "Successfully evaluated parameter: "
-                  << instruction->name();
-        }
+      absl::Status argument_eval_status = EvaluateParameterFromCallerArgument(
+          instruction, shape_index, precomputed_analyses);
+      if (!argument_eval_status.ok()) {
+        VLOG(4) << "Failed to evaluate parameter " << instruction->name()
+                << " from caller. Reason: " << argument_eval_status.message();
+      } else {
+        VLOG(4) << "Successfully evaluated parameter: " << instruction->name();
       }
     } else {
       for (HloInstruction* operand : instruction->operands()) {
@@ -1974,7 +1958,7 @@ class FftTransform {
     const int64_t num_dimensions = lengths.size();
 
     // Make sure that the layout length matches the number of dimensions.
-    CHECK_EQ(num_dimensions, layout.minor_to_major_size());
+    CHECK_EQ(num_dimensions, layout.minor_to_major().size());
 
     // Calculate strides using layout-specified ordering of the dimensions and
     // place the stride for axis 0 at index 0, for axis 1 at index 1, etc.
@@ -3200,9 +3184,14 @@ absl::Status HloEvaluator::HandleBroadcast(const HloInstruction* broadcast) {
         broadcast->ToString());
   }
 
-  TF_ASSIGN_OR_RETURN(
-      Literal literal,
-      operand.Broadcast(broadcast->shape(), broadcast->dimensions()));
+  auto shape = broadcast->shape();
+  // operand.Broadcast requires a layout, but there may not be one if we're in a
+  // fusion.
+  if (!shape.has_layout()) {
+    LayoutUtil::SetToDefaultLayout(&shape);
+  }
+  TF_ASSIGN_OR_RETURN(Literal literal,
+                      operand.Broadcast(shape, broadcast->dimensions()));
   SetEvaluatedLiteralFor(broadcast, std::move(literal));
 
   return absl::OkStatus();
@@ -3386,39 +3375,26 @@ absl::Status HloEvaluator::HandleCall(const HloInstruction* call) {
 }
 
 absl::Status HloEvaluator::HandleFusion(const HloInstruction* fusion) {
-  HloModuleConfig config;
-  // Attach cloned computation to an empty HLO module so the existing ones are
-  // not modified.
-  HloModule empty_hlo_module("EmptyModuleForFusion", config,
-                             std::make_unique<CompilationEnvironments>(
-                                 fusion->GetModule()->comp_envs()));
-  HloCloneContext context(&empty_hlo_module);
-  auto cloned_fused_computation =
-      fusion->fused_instructions_computation()->Clone(
-          /*suffix=*/"clone_with_layout", &context);
-  for (auto* instruction : cloned_fused_computation->instructions()) {
-    if (!LayoutUtil::HasLayout(instruction->shape())) {
-      LayoutUtil::SetToDefaultLayout(instruction->mutable_shape());
-    }
-  }
-  auto readded_computation =
-      empty_hlo_module.AddEntryComputation(std::move(cloned_fused_computation));
-
-  auto operands = fusion->operands();
-  std::vector<const Literal*> arg_literals;
-  arg_literals.reserve(operands.size());
-  for (auto operand : operands) {
-    const Literal& arg_literal = GetEvaluatedLiteralFor(operand);
-    arg_literals.push_back(&arg_literal);
-  }
+  auto* computation = fusion->fused_instructions_computation();
 
   std::unique_ptr<HloEvaluator> embedded_evaluator =
       CreateEmbedded(max_loop_iterations_);
   embedded_evaluator->set_dynamic_dimension_inference(
       dynamic_dimension_inference_);
-  TF_ASSIGN_OR_RETURN(Literal result, embedded_evaluator->Evaluate(
-                                          *readded_computation, arg_literals));
 
+  absl::flat_hash_map<const HloInstruction*, const LiteralBase*> substitutions;
+  const auto& operands = fusion->operands();
+  for (int i = 0; i < operands.size(); ++i) {
+    substitutions[computation->parameter_instruction(i)] =
+        &GetEvaluatedLiteralFor(operands[i]);
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      Literal result,
+      embedded_evaluator->Evaluate(
+          fusion->fused_expression_root(),
+          /*precomputed_analyses=*/{},
+          /*recursively_evaluate_nonconstant_operands=*/true, substitutions));
   SetEvaluatedLiteralFor(fusion, std::move(result));
   return absl::OkStatus();
 }
@@ -3621,10 +3597,10 @@ absl::StatusOr<Literal> TryParseAndEvaluateWhileInductionVar(
       Literal result,
       CreateScalarLiteral(induction_var_value, result_shape.element_type()));
   std::vector<Literal*> while_result_element_ptrs;
-  while_result_element_ptrs.reserve(while_hlo->shape().tuple_shapes_size());
+  while_result_element_ptrs.reserve(while_hlo->shape().tuple_shapes().size());
   std::vector<Literal> while_result_elements(
-      while_hlo->shape().tuple_shapes_size());
-  for (int i = 0; i < while_hlo->shape().tuple_shapes_size(); ++i) {
+      while_hlo->shape().tuple_shapes().size());
+  for (int i = 0; i < while_hlo->shape().tuple_shapes().size(); ++i) {
     if (i == parsed_while_loop->static_while_loop->induction_var_index) {
       while_result_element_ptrs.push_back(&result);
     } else {
@@ -4031,7 +4007,8 @@ absl::Status HloEvaluator::HandleSelectAndScatter(
   return absl::OkStatus();
 }
 
-absl::Status HloEvaluator::HandleSlice(const HloInstruction* slice) {
+absl::Status HloEvaluator::HandleSlice(const HloInstruction* hlo) {
+  const HloSliceInstruction* slice = Cast<HloSliceInstruction>(hlo);
   auto operand = slice->operand(0);
   const Shape& shape = slice->shape();
   TF_ASSIGN_OR_RETURN(auto inferred_return_shape,

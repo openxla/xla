@@ -58,6 +58,8 @@ gentbl_cc_library(
     name = "triton_xla_attrs_inc_gen",
     strip_include_prefix = ".",
     tbl_outs = {
+        "triton_xla_enums.h.inc": ["-gen-enum-decls"],
+        "triton_xla_enums.cc.inc": ["-gen-enum-defs"],
         "triton_xla_attrs.h.inc": [
             "-gen-attrdef-decls",
             "-attrdefs-dialect=triton_xla",
@@ -88,10 +90,12 @@ cc_library(
         ":triton_xla_dialect_inc_gen",
         ":triton_xla_ops_inc_gen",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ViewLikeInterface",
         "@triton//:TritonDialects",
     ],
 )

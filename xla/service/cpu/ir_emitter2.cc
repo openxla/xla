@@ -19,7 +19,6 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -486,7 +485,7 @@ IrEmitter2::ParallelPartitionBounds IrEmitter2::EmitParallelPartitionBounds(
   // Construct IR to load bounds for all parallel dimensions.
   ParallelPartitionBounds bounds;
   for (size_t i = 0; i < num_parallel_dimensions; ++i) {
-    llvm::Value* partition = kernel_prototype.thread_id.x;
+    llvm::Value* partition = kernel_prototype.workgroup_id.x;
     llvm::Value* parallel_dim = b.getInt32(i);
 
     llvm::Value* lower_gep = b.CreateInBoundsGEP(

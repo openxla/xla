@@ -243,6 +243,15 @@ void HloInstruction::set_called_computation(int index,
   }
 }
 
+const PtrVec<HloComputation*>& HloInstruction::called_computations() const {
+  if (has_rare()) {
+    return rare()->called_computations;
+  }
+
+  static PtrVec<HloComputation*>* empty = new PtrVec<HloComputation*>;
+  return *empty;
+}
+
 void HloInstruction::ReplaceCalledComputations(
     absl::FunctionRef<HloComputation*(HloComputation*)> map_function) {
   for (int64_t i = 0; i < called_computations().size(); ++i) {
@@ -366,7 +375,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                      [&](int64_t id) { return computation_map.contains(id); }))
       << proto.name() << " instruction references invalid computation id(s)";
 
-  Shape shape(proto.shape());
+  TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.shape()));
   TF_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(shape));
 
   std::optional<int> arity = HloOpcodeArity(opcode);
@@ -715,7 +724,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           CreateInfeed(data_shape, operands(0), proto.infeed_config());
     } break;
     case HloOpcode::kOutfeed: {
-      Shape outfeed_shape(proto.outfeed_shape());
+      TF_ASSIGN_OR_RETURN(Shape outfeed_shape,
+                          Shape::FromProto(proto.outfeed_shape()));
       TF_RETURN_IF_ERROR(
           ShapeUtil::ValidateShapeWithOptionalLayout(outfeed_shape));
       instruction = CreateOutfeed(outfeed_shape, operands(0), operands(1),
@@ -851,8 +861,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         HloInstruction* input = operands(0);
         HloInstruction* input_start_indices = operands(2);
         if (input->shape().IsTuple() &&
-            input->shape().tuple_shapes_size() > 1) {
-          slice_sizes.resize(input->shape().tuple_shapes_size());
+            input->shape().tuple_shapes().size() > 1) {
+          slice_sizes.resize(input->shape().tuple_shapes().size());
         } else {
           slice_sizes.resize(1);
         }
@@ -862,8 +872,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                   .tuple_shapes(0)
                   .tuple_shapes(0)
                   .IsArray()) {
-            slice_sizes.resize(input->shape().tuple_shapes_size());
-            for (int i = 0; i < input->shape().tuple_shapes_size(); ++i) {
+            slice_sizes.resize(input->shape().tuple_shapes().size());
+            for (int i = 0; i < input->shape().tuple_shapes().size(); ++i) {
               slice_sizes[i].resize(
                   input->shape().tuple_shapes(i).dimensions().size());
               for (int j = 0;
@@ -876,11 +886,11 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             }
           } else {
             slice_sizes.resize(
-                input->shape().tuple_shapes_size() *
+                input->shape().tuple_shapes().size() *
                 ShapeUtil::TupleElementCount(
                     input_start_indices->shape().tuple_shapes(0)));
             int slice_sizes_count = 0;
-            for (int i = 0; i < input->shape().tuple_shapes_size(); ++i) {
+            for (int i = 0; i < input->shape().tuple_shapes().size(); ++i) {
               for (int j = 0;
                    j < ShapeUtil::TupleElementCount(
                            input_start_indices->shape().tuple_shapes(i));
@@ -1347,8 +1357,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   TF_RET_CHECK(proto.id() >= 0)
       << "Instruction with negative id: " << proto.id();
-  TF_RET_CHECK(proto.id() <= INT_MAX)
-      << "Instruction with id > INT_MAX: " << proto.id();
+  // TODO(b/399394039): Reinforce the condition on INT64_MAX when upgrading
+  // unique_id_ to int64_t.
+  LOG_IF(INFO, proto.id() > INT_MAX)
+      << "Instruction with id > INT_MAX: " << proto.id()
+      << " this is not intended behavior and might indicate a bug in the HLO "
+         "proto serialization.";
   instruction->unique_id_ = proto.id();
 
   if (proto.has_sharding()) {
@@ -1369,16 +1383,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
   }
 
   if (proto.has_original_value()) {
-    const xla::OriginalValueProto& original_value_proto =
-        proto.original_value();
-    auto original_value = std::make_shared<OriginalValue>(shape);
-
-    for (const auto& leaf : original_value_proto.leaves()) {
-      *original_value->mutable_element(ShapeIndex(leaf.leaf_shape_index())) = {
-          leaf.instruction_name(), ShapeIndex(leaf.shape_index())};
-    }
-
-    instruction->set_original_value(original_value);
+    instruction->set_original_value(
+        OriginalValue::FromProto(proto.original_value()));
   }
 
   return instruction;
@@ -2129,7 +2135,7 @@ HloInstruction::CreateStochasticConvert(const Shape& shape,
                         dimensions_to_reduce, reduce_computation);
   }
   absl::InlinedVector<HloInstruction*, 4> inputs;
-  for (int idx = 0; idx < tuple_of_instructions->shape().tuple_shapes_size();
+  for (int idx = 0; idx < tuple_of_instructions->shape().tuple_shapes().size();
        idx++) {
     std::unique_ptr<HloInstruction> gte =
         HloInstruction::CreateGetTupleElement(tuple_of_instructions, idx);
@@ -3924,7 +3930,7 @@ void HloInstruction::PrintWithCanonicalNameMap(
 
   if (options.print_original_value() && original_value_) {
     printer->Append(", origin={");
-    printer->Append(OriginalValueToString(*original_value()));
+    printer->Append(original_value()->ToString());
     printer->Append("}");
   }
 
@@ -4087,7 +4093,7 @@ void HloInstruction::PrintExtraAttributes(
                opcode() == HloOpcode::kReduceScatter ||
                opcode() == HloOpcode::kAllReduceStart ||
                opcode() == HloOpcode::kScatter ||
-               opcode() == HloOpcode::kTopK || opcode() == HloOpcode::kSort) {
+               opcode() == HloOpcode::kSort) {
       if (!called_computations().empty()) {
         printer.Next([this, &options](Printer* printer) {
           printer->Append("to_apply=");
@@ -4187,7 +4193,6 @@ void HloInstruction::PrintExtraAttributes(
       case HloOpcode::kAllReduceStart:
       case HloOpcode::kScatter:
       case HloOpcode::kSort:
-      case HloOpcode::kTopK:
         if (!called_computations().empty()) {
           printer.Next([this, &new_options](Printer* printer) {
             printer->Append("to_apply=\n");
@@ -4352,7 +4357,7 @@ HloInstructionProto HloInstruction::ToProto() const {
   *proto.mutable_statistics_viz() = statistics_viz();
 
   if (original_value_) {
-    *proto.mutable_original_value() = OriginalValueToProto(*original_value_);
+    *proto.mutable_original_value() = original_value_->ToProto();
   }
 
   if (has_result_accuracy()) {

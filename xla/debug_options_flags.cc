@@ -42,6 +42,8 @@ limitations under the License.
 #include "xla/service/collective_utils.h"
 #include "xla/stream_executor/cuda/nvjitlink_support.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/cpu_info.h"  // NOLINT
@@ -92,9 +94,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_full_hlo_config(true);
   opts.set_xla_gpu_unsupported_annotate_with_emitter_loc(false);
   opts.set_xla_debug_buffer_assignment_show_max(15);
-#ifdef ENABLE_MKL
-  opts.set_xla_cpu_use_mkl_dnn(true);
-#endif  // ENABLE_MKL
+  opts.set_xla_cpu_use_onednn(false);
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
@@ -223,7 +223,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_triton_gemm(true);
   opts.set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(false);
-  opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(false);
+  opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
@@ -241,8 +241,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
-  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(true);
-  opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_gpu_collect_cost_model_stats(false);
@@ -264,7 +262,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(-1);
 
   opts.set_xla_gpu_enable_triton_hopper(false);
-  opts.set_xla_gpu_experimental_enable_dynamic_dot_search_space(false);
+  opts.set_xla_gpu_experimental_enable_dynamic_dot_search_space(true);
   opts.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(false);
 
   opts.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
@@ -373,7 +371,7 @@ static thread_local std::unique_ptr<
 // Logs a warning if a pass's fuel was never consumed, on the theory that this
 // may be a typo in the flag value.  Called atexit.
 static void WarnIfFuelWasNeverConsumed() {
-  CHECK(fuel_ever_consumed != nullptr);
+  CHECK_NOTNULL(fuel_ever_consumed);
   for (const auto& kv : *fuel_ever_consumed) {
     absl::string_view pass = kv.first;
     bool was_consumed = kv.second;
@@ -970,10 +968,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Extra options to pass to a backend; comma-separated list of 'key=val' "
       "strings (=val may be omitted); no whitespace around commas."));
   flag_list->push_back(
-      tsl::Flag("xla_cpu_use_mkl_dnn",
-                bool_setter_for(&DebugOptions::set_xla_cpu_use_mkl_dnn),
-                debug_options->xla_cpu_use_mkl_dnn(),
-                "Generate calls to MKL-DNN in the CPU backend."));
+      tsl::Flag("xla_cpu_use_onednn",
+                bool_setter_for(&DebugOptions::set_xla_cpu_use_onednn),
+                debug_options->xla_cpu_use_onednn(),
+                "Call oneDNN thunks for matmul and convolution fusions in the "
+                "CPU backend."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_use_acl", bool_setter_for(&DebugOptions::set_xla_cpu_use_acl),
       debug_options->xla_cpu_use_acl(),
@@ -1296,16 +1295,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "that falling back to the driver can have drawbacks like using more "
       "memory and/or other bugs during compilation, so we recommend setting "
       "this flag to false."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_unsafe_pipelined_loop_annotator",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_unsafe_pipelined_loop_annotator),
-      debug_options->xla_gpu_unsafe_pipelined_loop_annotator(),
-      "If this option is true, then the while loop with rotate right "
-      "pattern will be considered a pipelined while loop and the "
-      "operations within the pipeline bubbles may be considered no-ops. "
-      "Specifically, collective-permute may become a no-op for the iterations "
-      "within pipeline bubble. This is an unsafe flag."));
   flag_list->push_back(tsl::Flag(
       "xla_multiheap_size_constraint_per_heap",
       int32_setter_for(
@@ -1870,15 +1859,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_auto_spmd_partitioning_memory_budget_ratio times the estimated "
       "memory usage lower bound."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_triton_gemm_disable_reduced_precision_reduction",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_triton_gemm_disable_reduced_precision_reduction),
-      debug_options->xla_gpu_triton_gemm_disable_reduced_precision_reduction(),
-      "Forces any reductions during matrix multiplications to use the "
-      "accumulator type and not the output type. The precision of the dot "
-      "operation may not increase that much if there is output fusion."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotuned_gemm_fusions",
       bool_setter_for(&DebugOptions::set_xla_gpu_dump_autotuned_gemm_fusions),
       debug_options->xla_gpu_dump_autotuned_gemm_fusions(),
@@ -2399,6 +2379,57 @@ static void AllocateFlags(DebugOptions* defaults) {
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects);
 }
 
+void ParseDebugOptionFlagsFromEnv(bool reset_envvar) {
+  absl::call_once(flags_init, &AllocateFlags, nullptr);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", *flag_objects, reset_envvar);
+}
+
+bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
+  absl::call_once(flags_init, &AllocateFlags, nullptr);
+  VLOG(2) << "Parsing flags from file: " << filename;
+  // Read the file content
+  std::string file_content;
+  absl::Status status = tsl::ReadFileToString(
+      tsl::Env::Default(), std::string(filename), &file_content);
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to read file: " << filename
+               << ", error: " << status.ToString();
+    return false;
+  }
+  DebugOptions new_debug_options;
+  tsl::protobuf::TextFormat::Parser parser;
+  tsl::protobuf::TextFormat::ParseInfoTree tree;
+  parser.WriteLocationsTo(&tree);
+  VLOG(1) << "Debug options file contents: " << file_content;
+  if (!parser.ParseFromString(file_content, &new_debug_options)) {
+    LOG(ERROR) << "Ill formed debug options file, unable to parse: "
+               << filename;
+    return false;
+  }
+
+  // Read from new_debug_options, and overwrite the flags in debug_options that
+  // are actually mentioned in file_contents.
+  std::vector<const tsl::protobuf::FieldDescriptor*> overwritten_fields;
+  int field_count = new_debug_options.GetDescriptor()->field_count();
+  for (int i = 0; i < field_count; i++) {
+    const tsl::protobuf::FieldDescriptor* field =
+        new_debug_options.GetDescriptor()->field(i);
+    if (tree.GetLocation(field, field->is_repeated() ? 0 : -1).line != -1) {
+      VLOG(2) << "Non default field: " << field->name();
+      overwritten_fields.push_back(field);
+    }
+  }
+  flag_values->GetReflection()->SwapFields(flag_values, &new_debug_options,
+                                           overwritten_fields);
+  return true;
+};
+
+void ResetFlagValues() {
+  if (flag_values != nullptr) {
+    *flag_values = DefaultDebugOptionsIgnoringFlags();
+  }
+}
+
 void AppendDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                              DebugOptions* debug_options) {
   absl::call_once(flags_init, &AllocateFlags, debug_options);
@@ -2420,7 +2451,7 @@ void ResetThreadLocalFuel() {
 
   thread_fuel = std::make_unique<
       absl::node_hash_map<std::string, std::atomic<int64_t>>>();
-  CHECK(initial_fuel != nullptr);
+  CHECK_NOTNULL(initial_fuel);
   for (const auto& kv : *initial_fuel) {
     thread_fuel->emplace(kv.first, kv.second);
   }

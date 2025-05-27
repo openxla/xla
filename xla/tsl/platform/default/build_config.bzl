@@ -5,6 +5,7 @@
 
 load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
 load("@com_google_protobuf//:protobuf.bzl", "proto_gen")
+load("@rules_python//python:py_library.bzl", "py_library")
 load("@xla//third_party/py/rules_pywrap:pywrap.default.bzl", "use_pywrap_rules")
 load(
     "@xla//xla/tsl:tsl.bzl",
@@ -137,7 +138,7 @@ def pyx_library(
         shared_objects.append(shared_object_name)
 
     # Now create a py_library with these shared objects as data.
-    native.py_library(
+    py_library(
         name = name,
         srcs = py_srcs,
         deps = py_deps,
@@ -453,7 +454,7 @@ def py_proto_library(
     if default_runtime and not default_runtime in py_libs + deps:
         py_libs = py_libs + [default_runtime]
 
-    native.py_library(
+    py_library(
         name = name,
         srcs = outs + py_extra_srcs,
         deps = py_libs + deps,
@@ -591,7 +592,7 @@ def tf_proto_library_py(
             visibility = ["//visibility:public"],
             deps = [s + "_genproto" for s in py_deps],
         )
-        native.py_library(
+        py_library(
             name = py_name,
             deps = py_deps + [clean_dep("@com_google_protobuf//:protobuf_python")],
             testonly = testonly,

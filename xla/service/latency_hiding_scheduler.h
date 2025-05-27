@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -433,6 +434,9 @@ class HloEdge {
   HloGraphNode& Target() { return *target_; }
   HloGraphNode* TargetPtr() { return target_; }
   std::string ToString() const;
+  std::optional<std::vector<int64_t>>& GetMutableSharableResources() {
+    return sharable_resources_;
+  }
 
  private:
   // Latency between the two nodes connected by this edge. The other end of the
@@ -444,6 +448,8 @@ class HloEdge {
   LatencyEstimator::TimeCost original_latency_;
   // Target node of this edge.
   HloGraphNode* target_;
+  // List of shareable resources on this edge.
+  std::optional<std::vector<int64_t>> sharable_resources_;
 };
 
 // Node in the schedule graph, plus information used for scheduling.
@@ -496,14 +502,29 @@ class HloGraphNode {
                             const LatencyEstimator* latency_estimator) {
     AddDependency(from, to, latency_estimator->GetLatencyBetween(*from, *to));
   }
-
+  size_t GetReadyNodesIfScheduled() const { return ready_nodes_if_scheduled_; }
+  void UpdateReadyNodesIfScheduled() {
+    ready_nodes_if_scheduled_ = 0;
+    for (auto& pred : GetPredecessors()) {
+      if (pred.Target().GetOutdegree() == 1) {
+        ++ready_nodes_if_scheduled_;
+      }
+    }
+  }
   const HloInstruction& GetInstr() const { return *instr_; }
   bool IsScheduled() const { return scheduled_; }
   int32_t GetIndegree() const { return indegree_; }
   int32_t GetOutdegree() const { return outdegree_; }
   TimeCost GetReadyTime() const { return ready_time_; }
-  void SetIndegree(int64_t indeg) { indegree_ = indeg; }
-  void SetOutdegree(int64_t outdeg) { outdegree_ = outdeg; }
+  void SetIndegree(int32_t indeg) { indegree_ = indeg; }
+  void SetOutdegree(int32_t outdeg) {
+    outdegree_ = outdeg;
+    if (outdeg == 1) {
+      for (HloEdge& succ : GetSuccessors()) {
+        succ.Target().UpdateReadyNodesIfScheduled();
+      }
+    }
+  }
   void SetScheduled() { scheduled_ = true; }
   void SetReadyTime(TimeCost ready_time) { ready_time_ = ready_time; }
   TimeCost GetCost() const { return cost_; }
@@ -512,6 +533,8 @@ class HloGraphNode {
   TimeCost GetDepth() const { return depth_; }
   TimeCost GetGraphDepth() const { return graph_depth_; }
   void SetAsyncDepth(TimeCost async_depth) { async_depth_ = async_depth; }
+  bool IsSupportedAsyncDone() const { return is_supported_async_done_; }
+  bool IsSupportedAsyncStart() const { return is_supported_async_start_; }
   void SetDepth(TimeCost depth) { depth_ = depth; }
   void SetGraphDepth(TimeCost graph_depth) { graph_depth_ = graph_depth; }
   bool GetForceDelay() const { return force_delay_; }
@@ -530,6 +553,12 @@ class HloGraphNode {
   bool OccupiesSelectiveResource() const {
     return occupies_selective_resource_;
   }
+  void SetReleasesSelectiveResource(bool releases_selective_resource) {
+    releases_selective_resource_ = releases_selective_resource;
+  }
+  void SetOccupiesSelectiveResource(bool occupies_selective_resource) {
+    occupies_selective_resource_ = occupies_selective_resource;
+  }
   int64_t GetNumHopsToClosestSelectiveResourceOccupier() const {
     return num_hops_to_closest_selective_resource_occupier_;
   }
@@ -539,16 +568,8 @@ class HloGraphNode {
         num_hops_to_closest_selective_resource_occupier;
   }
   ResourcesVector GetResources() const { return resources_; }
-  bool DoesOccupyAnyResource() const {
-    return absl::c_any_of(resources_, [](const ResourcePair& resource) {
-      return resource.second == ResourceUsageType::kResourceOccupy;
-    });
-  }
-  bool DoesReleaseAnyResource() const {
-    return absl::c_any_of(resources_, [](const ResourcePair& resource) {
-      return resource.second == ResourceUsageType::kResourceRelease;
-    });
-  }
+  bool DoesOccupyAnyResource() { return does_occupy_any_resource_; }
+  bool DoesReleaseAnyResource() { return does_release_any_resource_; }
   bool DoesOccupyShareableResource(int64_t resource) const {
     return absl::c_linear_search(occupied_shareable_resources_, resource);
   }
@@ -607,17 +628,26 @@ class HloGraphNode {
     }
     return std::nullopt;
   }
-  std::vector<int64_t> GetShareableResourcesOnEdge(const HloEdge& edge) const {
-    HloGraphNode to = edge.Target();
-    std::vector<int64_t> resources;
+  const std::vector<int64_t>& GetShareableResourcesOnEdge(HloEdge& edge) const {
+    HloGraphNode& to = edge.Target();
+    std::optional<std::vector<int64_t>>& resources =
+        edge.GetMutableSharableResources();
+    if (resources.has_value()) {
+      return *resources;
+    }
+    resources = std::vector<int64_t>();
     absl::c_for_each(released_shareable_resources_,
                      [this, &to, &resources](const int64_t resource) {
                        if (to.DoesOccupyShareableResource(resource) &&
                            this->DoesReleaseResource(resource)) {
-                         resources.push_back(resource);
+                         resources->push_back(resource);
                        }
                      });
-    return resources;
+    return *resources;
+  }
+  const absl::InlinedVector<int64_t, 1>& GetReleasedNonExtendableResources()
+      const {
+    return released_non_extendable_resources_;
   }
   absl::Span<HloEdge> GetPredecessors() {
     return absl::MakeSpan(predecessors_);
@@ -670,6 +700,12 @@ class HloGraphNode {
     }
     return result;
   }
+  const absl::flat_hash_map<int64_t, int64_t>& GetRecursiveResources() const {
+    return recursive_resources_;
+  }
+  bool HasOperandThatIsSupportedAsyncDone() const {
+    return has_operand_that_is_supported_async_done_;
+  }
 
  private:
   friend class HloScheduleGraph;
@@ -679,7 +715,7 @@ class HloGraphNode {
   std::vector<HloEdge> successors_;
   // Instruction this Graph node represents
   const HloInstruction* instr_;
-  // The prosition of this node in the original order.
+  // The position of this node in the original order.
   int64_t original_position_;
   // Estimated time at which this node is gonna be ready to be scheduled.
   // The node should be added to the ready to be scheduled set when ready_time_
@@ -702,12 +738,26 @@ class HloGraphNode {
   int64_t graph_depth_ = 0;
   // AsyncResources used by the node.
   ResourcesVector resources_;
+  // Does the node occupy any resource.
+  bool does_occupy_any_resource_ = false;
+  // Does the node release any resource.
+  bool does_release_any_resource_ = false;
+  // Recursive resources used by the node.
+  absl::flat_hash_map<int64_t, int64_t> recursive_resources_;
+  // Is the node a supported async done.
+  bool is_supported_async_done_ = false;
+  // Is the node a supported async start.
+  bool is_supported_async_start_ = false;
+  // Whether the instruction has an operand which is a supported async done.
+  bool has_operand_that_is_supported_async_done_ = false;
   // Force the scheduling of the nodes with attribute set as late as possible.
   bool force_delay_ = false;
   // Force the scheduling of the nodes with attribute set as early as possible.
   bool force_early_ = false;
   // Whether this node has been scheduled or not yet.
   bool scheduled_ = false;
+  // Non-extendable resources released by this node.
+  absl::InlinedVector<int64_t, 1> released_non_extendable_resources_;
   // Shareable resources released by this node.
   absl::InlinedVector<int64_t, 1> released_shareable_resources_;
   // Shareable resources occupied by this node.
@@ -723,6 +773,8 @@ class HloGraphNode {
   int64_t num_hops_to_closest_selective_resource_occupier_ =
       std::numeric_limits<int64_t>::max();
   int64_t annotation_ = kInvalidAnnotation;
+  // Number of ready nodes if this node is scheduled.
+  size_t ready_nodes_if_scheduled_ = 0;
 };
 
 // Schedule graph that can be used to drive scheduling
@@ -785,6 +837,14 @@ class BufferInfoTracker {
     const HloBuffer* value = nullptr;
     const HloInstruction* first_definition = nullptr;
     int64_t buffer_size = 0;
+
+    // Precomputed value of
+    //     value->values()[0]->shape().has_layout() &&
+    //     (value->values()[0]->shape().layout().memory_space() !=
+    //      kDefaultMemorySpace)
+    // This expression is invoked repeatedly and is responsible for many cache
+    // misses.
+    bool non_default_memory_space_layout = false;
   };
   BufferInfoTracker(const HloModule* module,
                     const HloAliasAnalysis* alias_analysis,
@@ -792,9 +852,16 @@ class BufferInfoTracker {
   static ValueInfo CreateBufferInfo(
       const HloBuffer* value, const HloInstruction* first_definition,
       const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
+    const auto& shape = value->values()[0]->shape();
+    const bool non_default_memory_space_layout =
+        (shape.has_layout() &&
+         (shape.layout().memory_space() != Layout::kDefaultMemorySpace));
     return ValueInfo{
-        /*value=*/value, /*first_definition=*/first_definition,
-        /*buffer_size=*/shape_size_bytes(value->values()[0]->shape())};
+        /*value=*/value,
+        /*first_definition=*/first_definition,
+        /*buffer_size=*/shape_size_bytes(shape),
+        /*non_default_memory_space_layout=*/non_default_memory_space_layout,
+    };
   }
   const ValueInfo& GetBufferInfo(HloBuffer::Id id) const {
     return buffer_infos_[id];
@@ -823,7 +890,7 @@ class MemoryPressureTracker {
         pressure_state_cache_(pressure_state_cache),
         live_memory_usage_(0),
         initial_memory_pressure_(0) {}
-  // Intiialize object to be ready to start tracking of computation.
+  // Initialize object to be ready to start tracking of computation.
   void Initialize(const HloComputation* computation,
                   const LiveBufferSet& initial_live_buffers);
   // After an instruction is scheduled, update the memory pressure effect on
@@ -858,7 +925,34 @@ class MemoryPressureTracker {
   // Returns pressure state object for this MemoryPressureTracker object.
   const MemoryPressureState& pressure_state() const { return pressure_state_; }
 
+  absl::Span<const HloBuffer::Id> allocated_buffer_ids(
+      const HloInstruction* i) const {
+    auto it = instruction_ids_.find(i);
+    CHECK(it != instruction_ids_.end());
+    NodeAllocReleaseSpan s = alloc_release_spans_[it->second];
+    return absl::MakeSpan(alloc_release_ids_).subspan(s.start, s.num_alloc);
+  }
+
+  absl::Span<const HloBuffer::Id> released_buffer_ids(
+      const HloInstruction* i) const {
+    auto it = instruction_ids_.find(i);
+    CHECK(it != instruction_ids_.end());
+    NodeAllocReleaseSpan s = alloc_release_spans_[it->second];
+    return absl::MakeSpan(alloc_release_ids_)
+        .subspan(s.start + s.num_alloc, s.num_release);
+  }
+
  private:
+  // Append to *dst the list of buffer ids allocated by instruction whose
+  // memory usage should be tracked. Returns number of ids added.
+  int32_t ComputeBufferAllocations(const HloInstruction* instruction,
+                                   std::vector<HloBuffer::Id>* dst);
+
+  // Append to *dst the list of buffer ids released by instruction whose
+  // memory usage should be tracked. Returns number of ids added.
+  int32_t ComputeBufferReleases(const HloInstruction* instruction,
+                                std::vector<HloBuffer::Id>* dst);
+
   static bool ShouldSkipBufferAllocations(
       const HloInstruction* instruction, const ShapeIndex& idx,
       const HloInstruction* first_definition) {
@@ -885,6 +979,28 @@ class MemoryPressureTracker {
     return false;
   }
   const HloAliasAnalysis* hlo_alias_analysis_;
+
+  // Mapping from instruction to dense id.
+  absl::flat_hash_map<const HloInstruction*, int32_t> instruction_ids_;
+
+  // Combined vector of buffers allocated/released by each node.
+  // See allocated_buffer_ids() and released_buffer_ids().
+  std::vector<HloBuffer::Id> alloc_release_ids_;
+
+  // Information kept per node that identifies allocated/released buffers.
+  struct NodeAllocReleaseSpan {
+    // Allocated buffers in alloc_release_ids_[start,start+num_alloc).
+    // Released buffers in
+    // alloc_release_ids_[start+num_alloc,start+num_alloc+num_release)
+    uint32_t start;
+    uint32_t num_alloc;
+    uint32_t num_release;
+  };
+
+  // Mapping from dense instruction id to span information within
+  // alloc_release_ids_.
+  std::vector<NodeAllocReleaseSpan> alloc_release_spans_;
+
   // Live buffer presence set. This is used to determine if a buffer is live or
   // not in a fast way. Because this is checked very often in the evaluation
   // function of the scheduler quering the live_buffer_set_ object is too slow.
@@ -986,31 +1102,24 @@ class DefaultSchedulerCore : public SchedulerCore {
   };
 
   struct CandidateResult {
-    ScheduleCandidate result;
+    const ScheduleCandidate& result;
     const char* reason;
   };
 
   using TargetSchedulingRule = std::function<std::optional<CandidateResult>(
       ScheduleCandidate&, ScheduleCandidate&)>;
 
-  // Returns nullopt if both parameters are equal, otherwise true if the first
-  // parameter is true and false if the second is true
-  static std::optional<bool> TrueForOneOnly(bool first, bool second) {
-    if (first == second) {
-      return std::nullopt;
-    }
-    return first;
-  }
-
-  static std::optional<CandidateResult> ChooseBestCandidate(
+  // Returns nullopt if both conditions are equal, otherwise returns the
+  // candidate corresponding to the true condition.
+  static inline std::optional<CandidateResult> ChooseBestCandidate(
       bool first_cond, const ScheduleCandidate& first_candidate,
       bool second_cond, const ScheduleCandidate& second_candidate,
       const char* reason) {
-    if (auto cond = TrueForOneOnly(first_cond, second_cond)) {
-      return CandidateResult{*cond ? first_candidate : second_candidate,
-                             reason};
+    if (first_cond == second_cond) {
+      return std::nullopt;
     }
-    return std::nullopt;
+    return CandidateResult{first_cond ? first_candidate : second_candidate,
+                           reason};
   }
 
   // The scheduling state contains everything that is required for the
@@ -1030,6 +1139,11 @@ class DefaultSchedulerCore : public SchedulerCore {
     // order (because we schedule bottom up). This will be required to be
     // reversed before assigning to the HloSchedule.
     std::vector<HloInstruction*> new_sequence_reversed;
+
+    // Memory pressure during and after an instruction in a schedule.
+    // (memory_after, memory_peak)
+    absl::flat_hash_map<const HloInstruction*, std::pair<int64_t, int64_t>>
+        memory_trace;
     // Units of time passed in the schedule. To keep track of latency hiding.
     HloGraphNode::TimeCost current_time = 0;
     // Resources and corresponding occupiers in flight.
@@ -1152,7 +1266,7 @@ class DefaultSchedulerCore : public SchedulerCore {
                                         int64_t annotation) const;
 
   ScheduleProto::ComputationScheduleProto ComputationScheduleToProto(
-      const HloComputation* computation, const HloScheduleGraph& schedule_graph,
+      const HloComputation* computation, const SchedulingState& sched_state,
       const LatencyEstimator& estimator,
       const std::vector<HloInstruction*>& instructions);
 
@@ -1237,11 +1351,17 @@ class LatencyHidingScheduler : public HloModulePass {
   // Returns some printable statistics about the latency hiding for
   // operations that can run in parallel to help evaluating the performance of
   // the scheduler and improve it.
+  // Optionally the caller can pass in the alias analysis and module pressure
+  // state to save the time to construct them within the function. This is
+  // useful when we repeatedly call this function across computations within the
+  // same module.
   static SchedulerStatistics LatencyHidingStatistics(
       const HloComputation* computation,
       const LatencyEstimator* latency_estimator,
       const AsyncTracker* async_tracker,
-      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes);
+      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes,
+      const HloAliasAnalysis* alias_analysis = nullptr,
+      ModulePressureState* pressure_state = nullptr);
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(

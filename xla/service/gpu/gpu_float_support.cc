@@ -91,6 +91,7 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kGather:
     case HloOpcode::kPad:
+    case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReshape:
     case HloOpcode::kReverse:
     case HloOpcode::kScatter:
@@ -109,6 +110,15 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
         auto* cuda_compute_capability =
             std::get_if<se::CudaComputeCapability>(&compute_capability_);
         return cuda_compute_capability != nullptr;
+      }
+      return false;
+    case HloOpcode::kMaximum:
+    case HloOpcode::kMinimum:
+      if (LowPrecisionType() == BF16) {
+        auto* cuda_compute_capability =
+            std::get_if<se::CudaComputeCapability>(&compute_capability_);
+        return cuda_compute_capability != nullptr &&
+               cuda_compute_capability->IsAtLeastAmpere();
       }
       return false;
     case HloOpcode::kAdd:

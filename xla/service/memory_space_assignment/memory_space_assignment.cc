@@ -36,7 +36,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
@@ -644,7 +643,7 @@ absl::Status MemorySpaceAssignment::ExportAndColorBuffers(
           shape->mutable_layout()->set_memory_space(
               options_.alternate_memory_space);
           if (split_result != split_map_.end()) {
-            CHECK_EQ(shape->layout().split_configs_size(), 0);
+            CHECK_EQ(shape->layout().split_configs().size(), 0);
             shape->mutable_layout()->add_split_configs(
                 split_result->second->split_configs(0));
           }

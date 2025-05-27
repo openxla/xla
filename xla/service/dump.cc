@@ -28,6 +28,8 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/const_init.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
@@ -55,6 +57,7 @@ limitations under the License.
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/file_system_helper.h"
 #include "xla/util.h"
@@ -290,12 +293,11 @@ static absl::Status WriteStringToFile(tsl::Env* env, const std::string& fname,
       TF_RETURN_IF_ERROR(gz_file.Append(next_producer()));
     }
     return gz_file.Close();
-  } else {
-    while (auto next_producer = data_producer.Next()) {
-      TF_RETURN_IF_ERROR(file->Append(next_producer()));
-    }
-    return file->Close();
   }
+  while (auto next_producer = data_producer.Next()) {
+    TF_RETURN_IF_ERROR(file->Append(next_producer()));
+  }
+  return file->Close();
 }
 
 static absl::Status WriteStringToFile(tsl::Env* env, const std::string& fname,
@@ -369,7 +371,9 @@ static std::optional<std::string> DumpToFileInDirImpl(
     string_view filename, string_view contents,
     const CanonicalDebugOptions& opts, bool compress = false) {
   auto file_path = GetDumpFilePath(filename, opts);
-  if (!file_path) return std::nullopt;
+  if (!file_path) {
+    return std::nullopt;
+  }
 
   auto status =
       WriteStringToFile(tsl::Env::Default(), *file_path, contents, compress);
@@ -386,7 +390,9 @@ static std::optional<std::string> DumpToFileInDirImpl(
     string_view filename, DataProducer& data_producer,
     const CanonicalDebugOptions& opts, bool compress = false) {
   auto file_path = GetDumpFilePath(filename, opts);
-  if (!file_path) return std::nullopt;
+  if (!file_path) {
+    return std::nullopt;
+  }
 
   auto status = WriteStringToFile(tsl::Env::Default(), *file_path,
                                   data_producer, compress);
@@ -605,6 +611,23 @@ int64_t StepNumberForModule(const HloModule& module) {
   return module_id_to_step_number[module.unique_id()]++;
 }
 
+std::vector<std::string> DumpHloModuleIfEnabledImpl(
+    const HloModule& module, const BufferAssignment* buffer_assn,
+    string_view name) {
+  CanonicalDebugOptions opts(module.config().debug_options());
+  if (opts.should_dump_module(module.name())) {
+    std::vector<std::string> filepaths = DumpHloModuleImpl(
+        module, /*buffer_assn=*/buffer_assn, TimestampFor(module), name, opts);
+    std::optional<std::string> maybe_debug_options_filepath =
+        DumpNonDefaultDebugOptions(module, kNonDefaultDebugOptionsDumpSuffix);
+    if (maybe_debug_options_filepath.has_value()) {
+      filepaths.push_back(*maybe_debug_options_filepath);
+    }
+    return filepaths;
+  }
+  return {};
+}
+
 }  // namespace
 
 // Get a timestamp which we can use as a filename prefix specific to this
@@ -680,7 +703,9 @@ void DumpToFileInDirOrStdout(const DebugOptions& debug_options, int unique_id,
 void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
                              mlir::Operation* op) {
   CanonicalDebugOptions opts(module.config().debug_options());
-  if (opts.dumping_to_stdout()) return op->dump();
+  if (opts.dumping_to_stdout()) {
+    return op->dump();
+  }
 
   mlir::OpPrintingFlags print_flags = mlir::OpPrintingFlags();
   // Enable debug info so that it is easier to see the corresponding HLO node.
@@ -743,16 +768,6 @@ void DumpPerModuleProtobufToFile(const HloModule& module,
                                      text_formatter) {
   const std::string filename = FilenameFor(module, TimestampFor(module), name);
   DumpProtobufToFile(proto, debug_options, filename, std::move(text_formatter));
-}
-
-std::vector<std::string> DumpHloModuleIfEnabled(const HloModule& module,
-                                                string_view name) {
-  CanonicalDebugOptions opts(module.config().debug_options());
-  if (opts.should_dump_module(module.name())) {
-    return DumpHloModuleImpl(module, /*buffer_assn=*/nullptr,
-                             TimestampFor(module), name, opts);
-  }
-  return {};
 }
 
 std::string GetRepeatedValueAsString(
@@ -896,23 +911,24 @@ std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options) {
   return non_default_options;
 }
 
-void DumpNonDefaultDebugOptions(const HloModule& module,
-                                absl::string_view suffix) {
+std::optional<std::string> DumpNonDefaultDebugOptions(
+    const HloModule& module, absl::string_view suffix) {
   const DebugOptions& debug_options = module.config().debug_options();
-  auto filename = FilenameFor(module, "", suffix);
-  auto nonDefaultDebugOptions = GetNonDefaultDebugOptions(debug_options);
-  DumpToFileInDir(debug_options, filename, nonDefaultDebugOptions);
+  std::string filename = FilenameFor(module, "", suffix);
+  std::string nonDefaultDebugOptions = GetNonDefaultDebugOptions(debug_options);
+  return DumpToFileInDirImpl(filename, nonDefaultDebugOptions,
+                             CanonicalDebugOptions(debug_options));
+}
+
+std::vector<std::string> DumpHloModuleIfEnabled(const HloModule& module,
+                                                string_view name) {
+  return DumpHloModuleIfEnabledImpl(module, /*buffer_assn=*/nullptr, name);
 }
 
 std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, const BufferAssignment& buffer_assn,
     string_view name) {
-  CanonicalDebugOptions opts(module.config().debug_options());
-  if (opts.should_dump_module(module.name())) {
-    DumpHloModuleImpl(module, &buffer_assn, TimestampFor(module), name, opts);
-    DumpNonDefaultDebugOptions(module, kNonDefaultDebugOptionsDumpSuffix);
-  }
-  return {};
+  return DumpHloModuleIfEnabledImpl(module, &buffer_assn, name);
 }
 
 std::vector<std::string> DumpHloModuleProtoIfEnabled(

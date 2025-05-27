@@ -1022,23 +1022,31 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
 }
 
 DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
+  VLOG(1) << "CudaExecutor::Allocate size: " << size
+          << " memory_space: " << memory_space;
+
   if (memory_space == static_cast<int64_t>(MemoryType::kCollective)) {
     auto result = CollectiveMemoryAllocate(this, size);
     if (!result.ok()) {
-      LOG(ERROR) << result.status();
+      LOG(ERROR) << "Failed to allocate collective memory: " << result.status();
       return DeviceMemoryBase(nullptr, 0);
     }
+    VLOG(1) << "CudaExecutor::Allocate returns " << result.value();
     return DeviceMemoryBase(result.value(), size);
   } else if (memory_space ==
              static_cast<int64_t>(stream_executor::MemoryType::kHost)) {
     auto result = HostAllocate(cuda_context_, numa_node_, size);
     if (!result.ok()) {
+      LOG(ERROR) << "Failed to allocate host memory: " << result.status();
       return DeviceMemoryBase(nullptr, 0);
     }
+    VLOG(1) << "CudaExecutor::Allocate returns " << result.value();
     return DeviceMemoryBase(result.value(), size);
   }
   CHECK_EQ(memory_space, 0);
-  return DeviceMemoryBase(DeviceAllocate(cuda_context_, size), size);
+  auto device_buf_base = DeviceAllocate(cuda_context_, size);
+  VLOG(1) << "CudaExecutor::Allocate returns " << device_buf_base;
+  return DeviceMemoryBase(device_buf_base, size);
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
@@ -1047,6 +1055,8 @@ CudaExecutor::HostMemoryAllocate(uint64_t size) {
 }
 
 void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
+  VLOG(1) << "CudaExecutor::Deallocate mem: " << mem->opaque();
+
   auto status_or_memory_space = GetPointerMemorySpace(mem->opaque());
   if (!status_or_memory_space.ok()) {
     LOG(ERROR) << status_or_memory_space.status();
@@ -1240,6 +1250,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
                    reinterpret_cast<uintptr_t>(module_handle.id()), ")"));
 }
 
+namespace {
 absl::Status FillBlockDimLimit(CUdevice device, BlockDim* block_dim_limit) {
   // The BlockDim name is a mismatch against these GRID_DIM_* queries because
   // we use BlockDims to express the dimensions of blocks within a grid
@@ -1252,6 +1263,7 @@ absl::Status FillBlockDimLimit(CUdevice device, BlockDim* block_dim_limit) {
   block_dim_limit->z = z;
   return absl::OkStatus();
 }
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<Event>> CudaExecutor::CreateEvent() {
   TF_ASSIGN_OR_RETURN(auto event, CudaEvent::Create(this, false));

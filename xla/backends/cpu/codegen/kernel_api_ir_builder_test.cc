@@ -22,6 +22,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Constants.h"
@@ -144,17 +145,17 @@ TEST_F(KernelApiIrBuilderTest, BuildKernelPrototype) {
     CHECK: define ptr @test(ptr %0) #0 {
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
@@ -355,17 +356,17 @@ TEST_F(KernelApiIrBuilderTestNoBufferValidation, PartialOverlap) {
     CHECK: define ptr @test(ptr %0) #0 {
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64

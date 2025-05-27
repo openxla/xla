@@ -25,6 +25,7 @@
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_mappings.h"
+#include "xla/hlo/tools/hlo_diff/proto/diff_result.pb.h"
 #include "xla/hlo/tools/hlo_diff/utils/test_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tsl/platform/statusor.h"
@@ -294,6 +295,62 @@ ENTRY entry {
                Pointee(Property(&HloInstruction::name, "parameter.0"))),
           Pair(Pointee(Property(&HloInstruction::name, "add.0")),
                Pointee(Property(&HloInstruction::name, "add.0")))));
+}
+
+TEST_F(HloDiffTest, DiffResultToAndFromProtoWorks) {
+  DiffResult diff_result;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  add.0 = f32[] add(parameter.0, parameter.1)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  add.0 = f32[] add(parameter.1, parameter.0)
+}
+)"));
+  diff_result.unchanged_instructions.insert(
+      {module_l->entry_computation()->root_instruction(),
+       module_r->entry_computation()->root_instruction()});
+  diff_result.changed_instructions.insert(
+      {module_l->entry_computation()->parameter_instruction(0),
+       module_r->entry_computation()->parameter_instruction(1)});
+  diff_result.left_module_unmatched_instructions.insert(
+      module_l->entry_computation()->parameter_instruction(1));
+  diff_result.right_module_unmatched_instructions.insert(
+      module_r->entry_computation()->parameter_instruction(0));
+
+  DiffResultProto proto = diff_result.ToProto();
+
+  EXPECT_EQ(proto.unchanged_instructions_size(), 1);
+  EXPECT_EQ(proto.unchanged_instructions(0).left(), "add.0");
+  EXPECT_EQ(proto.unchanged_instructions(0).right(), "add.0");
+  EXPECT_EQ(proto.changed_instructions_size(), 1);
+  EXPECT_EQ(proto.changed_instructions(0).left(), "parameter.0");
+  EXPECT_EQ(proto.changed_instructions(0).right(), "parameter.1");
+  EXPECT_EQ(proto.left_unmatched_instructions_size(), 1);
+  EXPECT_EQ(proto.left_unmatched_instructions(0), "parameter.1");
+  EXPECT_EQ(proto.right_unmatched_instructions_size(), 1);
+  EXPECT_EQ(proto.right_unmatched_instructions(0), "parameter.0");
+
+  DiffResult diff_result_from_proto =
+      DiffResult::FromProto(proto, *module_l, *module_r);
+  EXPECT_EQ(diff_result_from_proto.unchanged_instructions.size(), 1);
+  EXPECT_EQ(diff_result_from_proto.changed_instructions.size(), 1);
+  EXPECT_EQ(diff_result_from_proto.left_module_unmatched_instructions.size(),
+            1);
+  EXPECT_EQ(diff_result_from_proto.right_module_unmatched_instructions.size(),
+            1);
 }
 
 }  // namespace

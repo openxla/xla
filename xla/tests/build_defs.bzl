@@ -1,4 +1,6 @@
-"""Build rules for XLA testing. This file is only used for the OSS build."""
+"""Build rules for XLA testing. This file is only used for the OSS build and running tests on
+github.
+"""
 
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -197,16 +199,17 @@ def xla_test(
         tags = [],
         copts = [],
         data = [],
+        env = {},
         backend_tags = {},
         backend_args = {},
         backend_kwargs = {},
-        # Inside Google, we link statically to catch duplicate main() definitions.
-        # However, this increases the size of the test binary, which breaks Nvidia's build.
-        # Therefore we use dynamic linking outside Google.
-        linkstatic = False,
+        linkstatic = None,
         fail_if_no_test_linked = True,
         **kwargs):
     """Generates strict_cc_test targets for the given XLA backends.
+
+    This rule is similar to platforms/.../build_defs.bzl but only meant for running the tests on
+    github.
 
     This rule generates a cc_test target for one or more XLA backends. The arguments
     are identical to cc_test with two additions: 'backends' and 'backend_args'.
@@ -267,6 +270,7 @@ def xla_test(
       tags: Tags for the target.
       copts: Additional copts to pass to the build.
       data: Additional data to pass to the build.
+      env: Env vars to set for the test.
       backend_tags: A dict mapping backend name to list of additional tags to
         use for that target.
       backend_args: A dict mapping backend name to list of additional args to
@@ -274,7 +278,8 @@ def xla_test(
       backend_kwargs: A dict mapping backend name to list of additional keyword
         arguments to pass to strict_cc_test. Only use for kwargs that don't have a
         dedicated argument, like setting per-backend flaky or timeout attributes.
-      linkstatic: Whether to link the test statically.
+      linkstatic: Whether to link the test statically. Can be set to None to use
+        the default value decided by strict_cc_test.
       fail_if_no_test_linked: Whether to fail if no test case is linked into the test.
       **kwargs: Additional keyword arguments to pass to strict_cc_test.
     """
@@ -354,6 +359,10 @@ def xla_test(
             for lib_dep in xla_test_library_deps:
                 backend_deps += ["%s_%s" % (lib_dep, backend)]  # buildifier: disable=list-append
 
+        device_and_modifiers = backend.split("_")
+        device = device_and_modifiers[0]
+        modifiers = device_and_modifiers[1:]
+
         xla_cc_test(
             name = test_name,
             srcs = srcs,
@@ -363,6 +372,10 @@ def xla_test(
             args = args + this_backend_args,
             deps = deps + backend_deps,
             data = data + this_backend_data,
+            env = env | {
+                "XLA_TEST_DEVICE": device,
+                "XLA_TEST_MODIFIERS": ",".join(modifiers),
+            },
             linkstatic = linkstatic,
             fail_if_no_test_linked = fail_if_no_test_linked,
             **this_backend_kwargs

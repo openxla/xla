@@ -185,6 +185,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:FuncExtensions",
         "@tsl//tsl/platform:protobuf",
@@ -194,6 +195,11 @@ cc_library(
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
+)
+
+filegroup(
+    name = "hlo_file",
+    srcs = glob(["data/**"]),
 )
 
 xla_test(
@@ -210,18 +216,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    data = [
-        "data/auto_layout.hlo",
-        "data/multiple_gemm_fusions.hlo",
-        "data/sharded_16_devices.hlo",
-        "data/sharded_2_devices.hlo",
-        "data/sharded_computation.hlo",
-        "data/sharded_unoptimized_hlo_snapshot.pbtxt",
-        "data/single_device.hlo",
-        "data/single_device_tupled.hlo",
-        "data/single_gemm_fusion.hlo",
-        "data/while_with_known_trip_count.hlo",
-    ],
+    data = [":hlo_file"],
     tags = ["no_mac"],
     deps = [
         ":create_client",
@@ -245,6 +240,7 @@ xla_test(
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/platform:test",
         "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

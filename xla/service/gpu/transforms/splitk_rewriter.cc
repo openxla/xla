@@ -218,7 +218,7 @@ HloInstruction* SplitKOperand(HloInstruction* operand,
   // Update the physical layout so the the physical layout is preserved (i.e.
   // the splitK dimension goes right before the contracting dimension, and all
   // remaining dimensions are kept).
-  if (new_shape.layout().minor_to_major_size() > 0) {
+  if (new_shape.layout().minor_to_major().size() > 0) {
     new_shape.mutable_layout()->clear_minor_to_major();
     for (int64_t dim_idx : old_shape.layout().minor_to_major()) {
       if (dim_idx >= contracting_dimension_idx) {
@@ -248,15 +248,8 @@ absl::StatusOr<HloInstruction*> ReduceDimension(HloInstruction* instr,
 
 absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
                                                      size_t split_k) {
-  const bool disable_reduced_precision_reduction =
-      src_dot->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_triton_gemm_disable_reduced_precision_reduction();
   PrimitiveType output_type = src_dot->shape().element_type();
-  PrimitiveType accumulator_type = disable_reduced_precision_reduction
-                                       ? GetGemmAccumulatorType(src_dot)
-                                       : output_type;
+  PrimitiveType accumulator_type = GetGemmAccumulatorType(src_dot);
 
   // "split_k" is the number on chunks the K dimension is split into.
   const int64_t lhs_k_idx =

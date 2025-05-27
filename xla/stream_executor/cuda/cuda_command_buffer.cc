@@ -19,13 +19,11 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iterator>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -45,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -402,11 +399,14 @@ absl::Status CudaCommandBuffer::PopulateDnnGraphNode(
 absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
     dnn::DnnGraph& dnn_graph, Stream& stream,
     absl::Span<DeviceMemoryBase> operands, GraphNodeHandle node_handle) {
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphChildGraphNodeGetGraph(ToCudaGraphHandle(node_handle), &graph_)));
-  is_owned_graph_ = false;
-  return dnn_graph.PopulateOrUpdateRawCommandBuffer(stream, operands, graph_,
-                                                    true);
+  CUgraph child_graph;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuGraphChildGraphNodeGetGraph(
+      ToCudaGraphHandle(node_handle), &child_graph)));
+  TF_RETURN_IF_ERROR(dnn_graph.PopulateOrUpdateRawCommandBuffer(
+      stream, operands, child_graph, true));
+  return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
+                            exec_, ToCudaGraphHandle(node_handle), child_graph),
+                        "Failed to set CUDA graph child node params");
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
@@ -548,7 +548,8 @@ absl::Status CudaCommandBuffer::Trace(
   VLOG(5) << "Trace into GPU command buffer graph " << graph_
           << " on a stream: " << stream;
 
-  CUstream stream_handle = AsGpuStreamValue(stream);
+  CUstream stream_handle =
+      absl::bit_cast<CUstream>(stream->platform_specific_handle().stream);
 
   // Switch stream into the capture mode.
   uint64_t start_nanos = tsl::Env::Default()->NowNanos();
@@ -571,12 +572,26 @@ absl::Status CudaCommandBuffer::Trace(
   DCHECK(captured_graph == graph_) << "Stream capture should update graph_";
   uint64_t end_nanos = tsl::Env::Default()->NowNanos();
 
-  if (!traced.ok())
+  if (!traced.ok()) {
     return absl::InternalError(
         absl::StrCat("Failed to capture gpu graph: ", traced.message()));
+  }
 
   VLOG(5) << "Traced into the GPU command buffer graph " << graph_ << " (took "
           << (end_nanos - start_nanos) / 1000 << " μs)";
+
+  // Check that traced graph is not empty. Trying to instantiate a CUDA graph
+  // with empty child node leads to a crash.
+  size_t num_root_nodes = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphGetRootNodes(captured_graph, nullptr, &num_root_nodes)));
+
+  if (num_root_nodes == 0) {
+    return absl::InternalError(
+        "Traced CUDA graph is empty. Traced function (custom call) did not "
+        "launch any CUDA operations on the captured CUDA stream. Instantiating "
+        "empty child nodes leads to CUDA crashes.");
+  }
 
   return absl::OkStatus();
 #endif
@@ -585,8 +600,10 @@ absl::Status CudaCommandBuffer::Trace(
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   VLOG(3) << "Launch command buffer executable graph " << exec_
           << " on a stream: " << stream;
-  return cuda::ToStatus(cuGraphLaunch(exec_, AsGpuStreamValue(stream)),
-                        "Failed to launch CUDA graph");
+  return cuda::ToStatus(
+      cuGraphLaunch(exec_, absl::bit_cast<CUstream>(
+                               stream->platform_specific_handle().stream)),
+      "Failed to launch CUDA graph");
 }
 
 absl::StatusOr<size_t> CudaCommandBuffer::GetNodeCount() const {
@@ -597,16 +614,19 @@ absl::StatusOr<size_t> CudaCommandBuffer::GetNodeCount() const {
 }
 
 absl::Status CudaCommandBuffer::PrepareFinalization() {
-  // TODO(b/362769658): Remove this workaround when cuda supports conditionals
-  // with empty graphs.
-  TF_ASSIGN_OR_RETURN(auto node_count, GetNodeCount());
-  if (node_count > 0) {
-    return absl::OkStatus();
+  if (parent_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 8, 0}) {
+    // For CUDA < 12080, cuda graph conditional node does not support
+    // empty body graph.
+    TF_ASSIGN_OR_RETURN(auto node_count, GetNodeCount());
+    if (node_count > 0) {
+      return absl::OkStatus();
+    }
+
+    TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
+    TF_RETURN_IF_ERROR(
+        CreateLaunch(*noop, ThreadDim(), BlockDim(), {}).status());
   }
-
-  TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
-  TF_RETURN_IF_ERROR(CreateLaunch(*noop, ThreadDim(), BlockDim(), {}).status());
-
   return absl::OkStatus();
 }
 
@@ -710,6 +730,5 @@ absl::Status CudaCommandBuffer::CheckCanBeUpdated() {
   }
   return absl::OkStatus();
 }
-
 
 }  // namespace stream_executor::gpu
