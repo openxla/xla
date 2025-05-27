@@ -51,11 +51,6 @@ absl::StatusOr<bool> AllGatherRemoveDegenerateDims::Run(
       }
 
       int64_t all_gather_dim = all_gather->all_gather_dimension();
-      // Skip degenerate all-gathers. These don't do anything.
-      if (inst->shape().dimensions(all_gather_dim) == 1) {
-        continue;
-      }
-
       Shape new_operand_shape = inst->operand(0)->shape();
       Shape new_all_gather_shape = inst->shape();
       for (int i = inst->shape().dimensions().size() - 1; i >= 0; --i) {
