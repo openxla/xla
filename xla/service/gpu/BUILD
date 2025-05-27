@@ -1426,6 +1426,7 @@ cc_library(
         "//xla/hlo/transforms:operand_upcaster",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:all_gather_broadcast_reorder",
+        "//xla/hlo/transforms/collectives:all_gather_remove_degenerate_dims",
         "//xla/hlo/transforms/collectives:all_gather_combiner",
         "//xla/hlo/transforms/collectives:all_reduce_combiner",
         "//xla/hlo/transforms/collectives:all_reduce_contiguous",

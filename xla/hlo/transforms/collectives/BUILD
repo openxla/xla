@@ -282,6 +282,24 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "all_gather_remove_degenerate_dims",
+    srcs = ["all_gather_remove_degenerate_dims.cc"],
+    hdrs = ["all_gather_remove_degenerate_dims.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
     name = "all_reduce_combiner",
     srcs = ["all_reduce_combiner.cc"],
     hdrs = ["all_reduce_combiner.h"],
