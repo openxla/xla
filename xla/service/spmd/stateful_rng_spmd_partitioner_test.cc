@@ -198,12 +198,30 @@ TEST_F(StatefulRngSpmdPartitionerTest, VerifyThresholdSetCorrectly) {
   debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
 
   StatefulRngSpmdPartitioner rng_spmd_partitioner(
-      /*num_partitions=*/2, /*num_replicas*/ 1,
+      /*num_partitions=*/2, /*num_replicas=*/1,
+      /*threshold_for_windowed_einsum_mib=*/
       debug_options.xla_gpu_threshold_for_windowed_einsum_mib(),
+      /*windowed_einsum_use_multiple_streams=*/
       debug_options.xla_gpu_multi_streamed_windowed_einsum());
   EXPECT_EQ(rng_spmd_partitioner.options().threshold_for_windowed_einsum_mib,
             threshold);
   EXPECT_EQ(rng_spmd_partitioner.options().unroll_windowed_einsum, true);
+}
+
+TEST_F(StatefulRngSpmdPartitionerTest,
+       VerifyMaxWindowedEinsumIterationSetCorrectly) {
+  const int64_t max_windowed_einsum_iteration = 100;
+
+  StatefulRngSpmdPartitioner rng_spmd_partitioner(
+      /*num_partitions=*/2, /*num_replicas=*/1,
+      /*threshold_for_windowed_einsum_mib*/ 100000,
+      /*windowed_einsum_use_multiple_streams=*/false,
+      /*skip_checking_windowed_einsum_users=*/false,
+      /*disable_ag_rewrite_for_multiple_consumers=*/false,
+      /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
+      /*max_windowed_einsum_iteration=*/max_windowed_einsum_iteration);
+  EXPECT_EQ(rng_spmd_partitioner.options().max_windowed_einsum_iteration,
+            max_windowed_einsum_iteration);
 }
 
 TEST_F(StatefulRngSpmdPartitionerTest,
