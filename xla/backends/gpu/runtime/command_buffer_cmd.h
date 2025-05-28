@@ -99,6 +99,10 @@ enum class CommandBufferCmdType : int32_t {
 #undef DECLARE_ENUM
 };
 
+// Command priority in command buffer, currently only support default, low and
+// high priority.
+enum class CommandBufferCmdPriority { kDefault, kLow, kHigh };
+
 std::string CommandBufferCmdString(CommandBufferCmdType type);
 
 //===----------------------------------------------------------------------===//
@@ -116,9 +120,13 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 // buffers concurrently on different stream executors.
 class CommandBufferCmd {
  public:
-  CommandBufferCmd(CommandBufferCmdType cmd_type,
-                   ExecutionStreamId execution_stream_id)
-      : cmd_type_(cmd_type), execution_stream_id_(execution_stream_id) {}
+  CommandBufferCmd(
+      CommandBufferCmdType cmd_type, ExecutionStreamId execution_stream_id,
+      CommandBufferCmdPriority priority = CommandBufferCmdPriority::kDefault)
+      : cmd_type_(cmd_type),
+        execution_stream_id_(execution_stream_id),
+        priority_(priority) {}
+
   virtual ~CommandBufferCmd() = default;
 
   using BufferUseVector = absl::InlinedVector<BufferUse, 4>;
@@ -281,6 +289,8 @@ class CommandBufferCmd {
   }
 
   CommandBufferCmdType command_type() const { return cmd_type_; }
+  CommandBufferCmdPriority priority() const { return priority_; }
+  void set_priority(CommandBufferCmdPriority priority) { priority_ = priority; }
 
   virtual std::string ToString() const {
     return CommandBufferCmdString(cmd_type_);
@@ -292,6 +302,7 @@ class CommandBufferCmd {
   std::string profile_annotation_;
   CommandBufferCmdType cmd_type_;
   ExecutionStreamId execution_stream_id_;
+  CommandBufferCmdPriority priority_ = CommandBufferCmdPriority::kDefault;
 };
 
 // A sequence of commands (corresponds to a ThunkSequence from the Thunk API).
@@ -461,7 +472,8 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
   // traces and caches a new command buffer using user provided callback.
   absl::StatusOr<se::CommandBuffer*> GetOrTraceCommandBuffer(
       const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace);
+      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+      CommandBufferCmdPriority priority = CommandBufferCmdPriority::kDefault);
 
  private:
   std::vector<BufferAllocation::Index> allocs_indices_;

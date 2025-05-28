@@ -113,8 +113,8 @@ class GpuCommandBuffer : public CommandBuffer {
 
   absl::StatusOr<const Command*> CreateLaunch(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
-      const KernelArgs& args,
-      absl::Span<const Command* const> dependencies) override;
+      const KernelArgs& args, absl::Span<const Command* const> dependencies,
+      Priority priority = Priority::kDefault) override;
 
   absl::Status UpdateLaunch(const Command* command, const ThreadDim& threads,
                             const BlockDim& blocks, const Kernel& kernel,
@@ -243,7 +243,7 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::StatusOr<const Command*> CreateLaunchWithPackedArgs(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& packed_args,
-      absl::Span<const Command* const> dependencies);
+      absl::Span<const Command* const> dependencies, Priority priority);
 
   // Updates a kernel launch command with packed arguments.
   absl::Status UpdateLaunchWithPackedArgs(
@@ -335,8 +335,8 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Adds a new kernel launch node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      absl::Span<const GraphNodeHandle> dependencies, const ThreadDim& threads,
-      const BlockDim& blocks, const Kernel& kernel,
+      absl::Span<const GraphNodeHandle> dependencies, Priority priority,
+      const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) = 0;
 
   // Updates the kernel launch node with the given parameters. Will return an

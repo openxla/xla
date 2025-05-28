@@ -64,6 +64,10 @@ class CommandBuffer {
     Command& operator=(Command&&) = default;
   };
 
+  // Command priority in command buffer, currently only support default and
+  // low and high priority.
+  enum class Priority { kDefault, kLow, kHigh };
+
   // A callback to construct a nested `command_buffer` by creating commands in
   // it. Created commands must execute after `dependencies`, and the callback
   // must return a vector of commands that will be used as external dependencies
@@ -142,8 +146,8 @@ class CommandBuffer {
   // Creates a kernel launch command.
   virtual absl::StatusOr<const Command*> CreateLaunch(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
-      const KernelArgs& args,
-      absl::Span<const Command* const> dependencies) = 0;
+      const KernelArgs& args, absl::Span<const Command* const> dependencies,
+      Priority priority = Priority::kDefault) = 0;
 
   // Updates a kernel launch command.
   virtual absl::Status UpdateLaunch(const Command* command,
@@ -263,6 +267,9 @@ class CommandBuffer {
                                    DeviceMemory<bool> pred,
                                    UpdateCommands update_cond,
                                    UpdateCommands update_body) = 0;
+
+  // Set the priority of all nodes in the command buffer.
+  virtual absl::Status SetPriority(Priority priority) = 0;
 
   // Submits the command buffer for execution.
   virtual absl::Status Submit(Stream* stream) {

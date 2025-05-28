@@ -139,8 +139,8 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
                                const CommandBuffer& nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      absl::Span<const GraphNodeHandle> dependencies, const ThreadDim& threads,
-      const BlockDim& blocks, const Kernel& kernel,
+      absl::Span<const GraphNodeHandle> dependencies, Priority priority,
+      const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) override;
 
   absl::Status UpdateKernelNode(GraphNodeHandle node_handle,
@@ -154,6 +154,10 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   absl::Status LaunchGraph(Stream* stream) override;
 
   absl::StatusOr<size_t> GetNodeCount() const override;
+
+  // Set the nodes inside the command buffer to the target priority, cuda
+  // currently only support kernel node's priority.
+  absl::Status SetPriority(Priority priority) override;
 
   absl::Status PrepareFinalization() override;
 
