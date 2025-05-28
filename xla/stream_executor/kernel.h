@@ -617,13 +617,7 @@ PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
     return internal::PackKernelArgs<512>(args, shared_mem_bytes);
   }
 
-#if GOOGLE_CUDA && CUDA_VERSION >= 12010
-  return internal::PackKernelArgs<32764>(args, shared_mem_bytes);
-#elif GOOGLE_CUDA
-  return internal::PackKernelArgs<4096>(args, shared_mem_bytes);
-#else
-  return internal::PackKernelArgs<1024>(args, shared_mem_bytes);
-#endif
+  return internal::PackKernelArgs<kKernelArgsLimit>(args, shared_mem_bytes);
 }
 
 template <typename ArgType>
