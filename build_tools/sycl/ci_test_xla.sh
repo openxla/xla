@@ -13,13 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-workspace=$1
-cd $workspace/xla
-
-if [ -z ${SYCL_TOOLKIT_PATH+x} ];
-then
-  export SYCL_TOOLKIT_PATH=$workspace/oneapi/compiler/2024.1/
-fi
-bazel_bin=$(ls $workspace/bazel/)
 ./configure.py --backend=SYCL --host_compiler=GCC
-$workspace/bazel/$bazel_bin build --config=verbose_logs -s --verbose_failures --nocheck_visibility //xla/tools:run_hlo_module
+bazel build \
+      --config=sycl_hermetic \
+      --build_tag_filters=gpu,sycl,requires-intel-gpu,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
+      --test_tag_filters=gpu,sycl,requires-intel-gpu,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
+      //xla/stream_executor/... 
