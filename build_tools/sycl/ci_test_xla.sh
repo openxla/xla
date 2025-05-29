@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+#set the configuration to select the host compiler
 ./configure.py --backend=SYCL --host_compiler=GCC
 bazel build \
       --config=sycl_hermetic \
