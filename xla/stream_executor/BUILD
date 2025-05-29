@@ -611,6 +611,7 @@ cc_library(
         ":dnn",
         ":kernel",
         ":launch_dim",
+        ":platform",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
