@@ -533,26 +533,47 @@ TEST_F(CopyFusionTest, FusionFitsInBudget) {
 }
 
 TEST_F(CopyFusionTest, FusionExceedsBudget) {
-  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
-    fused_computation {
-      p1.1 = f32[128,128,128]{2,1,0} parameter(0)
-      transpose = f32[128,128,128]{2,1,0} transpose(p1.1), dimensions={2,1,0}
-      const = f32[] constant(0.0)
-      reduce = f32[128]{0} reduce(transpose, const), dimensions={0,1}, to_apply=scalar_add_computation
-      broadcast = f32[128,128,128]{2,1,0} broadcast(reduce), dimensions={0}
-      transpose2 = f32[128,128,128]{2,1,0} transpose(broadcast), dimensions={2,1,0}
-      ROOT add = f32[128,128,128]{2,1,0} add(transpose2, transpose2)
-    }
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder fusion_builder("fusion");
+  std::vector<HloInstruction*> fusion_params;
+  std::vector<Shape> param_shapes;
 
-    ENTRY entry {
-      p0 = f32[128,128,128]{2,1,0} parameter(0)
-      fusion = f32[128,128,128]{2,1,0} fusion(p0), kind=kInput, calls=fused_computation
-      copy.1 = f32[128,128,128]{2,1,0} copy(fusion)
-      copy.2 = f32[128,128,128]{2,1,0} copy(fusion)
-      ROOT root = (f32[128,128,128]{2,1,0}, f32[128,128,128]{2,1,0}) tuple(copy.1, copy.2)
-    })"))
-                    .value();
-  ASSERT_FALSE(cf_.Run(module.get()).value());
+  for (int i = 0; i < 97; ++i) {
+    param_shapes.push_back(ShapeUtil::MakeShape(F32, {1}));
+    fusion_params.push_back(
+        fusion_builder.AddInstruction(HloInstruction::CreateParameter(
+            i, param_shapes.back(), absl::StrFormat("param%d", i))));
+  }
+
+  HloInstruction* sum = fusion_params[0];
+  for (int i = 1; i < 97; ++i) {
+    sum = fusion_builder.AddInstruction(
+        HloInstruction::CreateBinary(ShapeUtil::MakeShape(F32, {1}),
+                                     HloOpcode::kAdd, sum, fusion_params[i]));
+  }
+
+  HloComputation* fusion_computation =
+      module->AddEmbeddedComputation(fusion_builder.Build(sum));
+
+  HloComputation::Builder builder(TestName());
+  std::vector<HloInstruction*> params;
+
+  for (int i = 0; i < 97; ++i) {
+    params.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
+        i, param_shapes[i], absl::StrFormat("param%d", i))));
+  }
+
+  HloInstruction* fusion = builder.AddInstruction(HloInstruction::CreateFusion(
+      ShapeUtil::MakeShape(F32, {1}), HloInstruction::FusionKind::kLoop, params,
+      fusion_computation));
+
+  HloInstruction* copy = builder.AddInstruction(
+      HloInstruction::CreateUnary(fusion->shape(), HloOpcode::kCopy, fusion));
+
+  HloComputation* computation =
+      module->AddEntryComputation(builder.Build(copy));
+
+  EXPECT_FALSE(cf_.Run(module.get()).value());
 }
 
 }  // namespace gpu
