@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/platform.h"
 
 namespace stream_executor::gpu {
 
@@ -114,7 +115,7 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::StatusOr<const Command*> CreateLaunch(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgs& args, absl::Span<const Command* const> dependencies,
-      Priority priority = Priority::kDefault) override;
+      StreamPriority priority = StreamPriority::Default) override;
 
   absl::Status UpdateLaunch(const Command* command, const ThreadDim& threads,
                             const BlockDim& blocks, const Kernel& kernel,
@@ -243,7 +244,8 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::StatusOr<const Command*> CreateLaunchWithPackedArgs(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& packed_args,
-      absl::Span<const Command* const> dependencies, Priority priority);
+      absl::Span<const Command* const> dependencies,
+      StreamPriority priority = StreamPriority::Default);
 
   // Updates a kernel launch command with packed arguments.
   absl::Status UpdateLaunchWithPackedArgs(
@@ -335,7 +337,7 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Adds a new kernel launch node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      absl::Span<const GraphNodeHandle> dependencies, Priority priority,
+      absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) = 0;
 

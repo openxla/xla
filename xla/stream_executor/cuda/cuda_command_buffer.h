@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 
 #if CUDA_VERSION < 12030
@@ -139,7 +140,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
                                const CommandBuffer& nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      absl::Span<const GraphNodeHandle> dependencies, Priority priority,
+      absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) override;
 
@@ -157,7 +158,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
 
   // Set the nodes inside the command buffer to the target priority, cuda
   // currently only support kernel node's priority.
-  absl::Status SetPriority(Priority priority) override;
+  absl::Status SetPriority(StreamPriority priority) override;
 
   absl::Status PrepareFinalization() override;
 

@@ -78,14 +78,16 @@ CUgraphNode ToCudaGraphHandle(GraphNodeHandle handle) {
   return absl::bit_cast<CUgraphNode>(handle);
 }
 
-int ToCudaGraphKernelNodePriority(CommandBuffer::Priority priority) {
+int ToCudaGraphKernelNodePriority(StreamPriority priority) {
   switch (priority) {
-    case CommandBuffer::Priority::kDefault:
+    case StreamPriority::Default:
       return 0;
-    case CommandBuffer::Priority::kLow:
+    case StreamPriority::Lowest:
       return -1;
-    case CommandBuffer::Priority::kHigh:
+    case StreamPriority::Highest:
       return 1;
+    default:
+      return 0;
   }
 }
 
@@ -168,7 +170,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetWhileConditionNode(
 
   auto kernel_args = PackKernelArgs(set_while_condition_kernel_,
                                     ToCudaGraphHandle(conditional), predicate);
-  return CreateKernelNode(dependencies, Priority::kDefault, ThreadDim(),
+  return CreateKernelNode(dependencies, StreamPriority::Default, ThreadDim(),
                           BlockDim(), *set_while_condition_kernel_,
                           *kernel_args);
 }
@@ -222,7 +224,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetCaseConditionNode(
   auto kernel_args = PackCaseConditionKernelArgs(
       set_case_condition_kernel_, conditionals, index, index_is_bool,
       batch_offset, enable_conditional_default);
-  return CreateKernelNode(dependencies, Priority::kDefault, ThreadDim(),
+  return CreateKernelNode(dependencies, StreamPriority::Default, ThreadDim(),
                           BlockDim(), *set_case_condition_kernel_,
                           *kernel_args);
 }
@@ -454,7 +456,7 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
-    absl::Span<const GraphNodeHandle> dependencies, Priority priority,
+    absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
     const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
@@ -499,7 +501,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
                                           deps.size(), &params),
                      "Failed to add kernel node to a CUDA graph"));
 
-  if (priority != Priority::kDefault) {
+  if (priority != StreamPriority::Default) {
     CUlaunchAttributeValue value;
     value.priority = ToCudaGraphKernelNodePriority(priority);
     TF_RETURN_IF_ERROR(
@@ -635,7 +637,7 @@ absl::StatusOr<size_t> CudaCommandBuffer::GetNodeCount() const {
   return num_nodes;
 }
 
-absl::Status CudaCommandBuffer::SetPriority(Priority priority) {
+absl::Status CudaCommandBuffer::SetPriority(StreamPriority priority) {
   size_t num_nodes;
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cuGraphGetNodes(graph_, /*nodes=*/nullptr, &num_nodes)));

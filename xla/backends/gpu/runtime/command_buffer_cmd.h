@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
@@ -99,10 +100,6 @@ enum class CommandBufferCmdType : int32_t {
 #undef DECLARE_ENUM
 };
 
-// Command priority in command buffer, currently only support default, low and
-// high priority.
-enum class CommandBufferCmdPriority { kDefault, kLow, kHigh };
-
 std::string CommandBufferCmdString(CommandBufferCmdType type);
 
 //===----------------------------------------------------------------------===//
@@ -120,9 +117,9 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 // buffers concurrently on different stream executors.
 class CommandBufferCmd {
  public:
-  CommandBufferCmd(
-      CommandBufferCmdType cmd_type, ExecutionStreamId execution_stream_id,
-      CommandBufferCmdPriority priority = CommandBufferCmdPriority::kDefault)
+  CommandBufferCmd(CommandBufferCmdType cmd_type,
+                   ExecutionStreamId execution_stream_id,
+                   se::StreamPriority priority = se::StreamPriority::Default)
       : cmd_type_(cmd_type),
         execution_stream_id_(execution_stream_id),
         priority_(priority) {}
@@ -289,8 +286,8 @@ class CommandBufferCmd {
   }
 
   CommandBufferCmdType command_type() const { return cmd_type_; }
-  CommandBufferCmdPriority priority() const { return priority_; }
-  void set_priority(CommandBufferCmdPriority priority) { priority_ = priority; }
+  se::StreamPriority priority() const { return priority_; }
+  void set_priority(se::StreamPriority priority) { priority_ = priority; }
 
   virtual std::string ToString() const {
     return CommandBufferCmdString(cmd_type_);
@@ -302,7 +299,10 @@ class CommandBufferCmd {
   std::string profile_annotation_;
   CommandBufferCmdType cmd_type_;
   ExecutionStreamId execution_stream_id_;
-  CommandBufferCmdPriority priority_ = CommandBufferCmdPriority::kDefault;
+
+  // Command priority, currently only support default, lowest and highest
+  // priority.
+  se::StreamPriority priority_ = se::StreamPriority::Default;
 };
 
 // A sequence of commands (corresponds to a ThunkSequence from the Thunk API).
@@ -473,7 +473,7 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
   absl::StatusOr<se::CommandBuffer*> GetOrTraceCommandBuffer(
       const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
       se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-      CommandBufferCmdPriority priority = CommandBufferCmdPriority::kDefault);
+      se::StreamPriority priority = se::StreamPriority::Default);
 
  private:
   std::vector<BufferAllocation::Index> allocs_indices_;

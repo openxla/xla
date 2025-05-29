@@ -128,7 +128,7 @@ absl::StatusOr<const CommandBuffer::Command*>
 GpuCommandBuffer::CreateLaunchWithPackedArgs(
     const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& packed_args,
-    absl::Span<const Command* const> dependencies, Priority priority) {
+    absl::Span<const Command* const> dependencies, StreamPriority priority) {
   TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
   CHECK_EQ(kernel.Arity() + (packed_args.number_of_shared_bytes() > 0),
@@ -155,7 +155,7 @@ absl::Status GpuCommandBuffer::UpdateLaunchWithPackedArgs(
 absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateLaunch(
     const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
     const KernelArgs& args, absl::Span<const Command* const> dependencies,
-    Priority priority) {
+    StreamPriority priority) {
   TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
   // If arguments are already packed we can just launch the kernel.

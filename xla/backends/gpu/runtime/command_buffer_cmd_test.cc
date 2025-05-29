@@ -384,7 +384,7 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
-  commands.back()->set_priority(CommandBufferCmdPriority::kHigh);
+  commands.back()->set_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,

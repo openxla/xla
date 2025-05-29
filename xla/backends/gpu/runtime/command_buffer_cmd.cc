@@ -595,7 +595,7 @@ TracedCommandBuffer::TracedCommandBuffer(
 absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
     se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-    CommandBufferCmdPriority priority) {
+    se::StreamPriority priority) {
   // Collect memory addresses for relevant allocations.
   absl::InlinedVector<se::DeviceMemoryBase, 4> allocs;
   allocs.reserve(allocs_indices_.size());
@@ -635,9 +635,8 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
           entries_[i].command_buffer,
           se::TraceCommandBufferFactory::Create(executor, stream, trace));
       entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
-      if (priority != CommandBufferCmdPriority::kDefault) {
-        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(
-            static_cast<se::CommandBuffer::Priority>(priority)));
+      if (priority != se::StreamPriority::Default) {
+        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
       }
       VLOG(6) << "Command buffer trace cache create new item for command "
               << trace_cmd_->ToString();
@@ -813,8 +812,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
         return command_buffer->CreateLaunch(
             dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
-            *kernel_args, dependencies,
-            static_cast<se::CommandBuffer::Priority>(priority()));
+            *kernel_args, dependencies, priority());
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateLaunch(
@@ -896,8 +894,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
         return command_buffer->CreateLaunch(
             custom_kernel_.thread_dims(), custom_kernel_.block_dims(), *kernel,
-            kernel_args, dependencies,
-            static_cast<se::CommandBuffer::Priority>(priority()));
+            kernel_args, dependencies, priority());
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateLaunch(
@@ -1569,7 +1566,7 @@ CollectiveCmd::CollectiveCmd(CommandBufferCmdType cmd_type,
                              ExecutionStreamId async_from_stream_id,
                              CollectiveConfig config)
     : CommandBufferCmd(cmd_type, execution_stream_id,
-                       CommandBufferCmdPriority::kHigh),
+                       se::StreamPriority::Highest),
       async_from_stream_id_(async_from_stream_id),
       config_(std::move(config)) {}
 
@@ -1597,9 +1594,8 @@ CollectiveCmd::RecordTracedCommand(
                           execute_params.stream->parent(),
                           execute_params.command_buffer_trace_stream, trace));
 
-  if (priority() != CommandBufferCmdPriority::kDefault) {
-    TF_RETURN_IF_ERROR(nested_cmd->SetPriority(
-        static_cast<se::CommandBuffer::Priority>(priority())));
+  if (priority() != se::StreamPriority::Default) {
+    TF_RETURN_IF_ERROR(nested_cmd->SetPriority(priority()));
   }
 
   return Handle(

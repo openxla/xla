@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/platform.h"
 
 namespace stream_executor {
 
@@ -47,6 +48,7 @@ class Stream;
 // device.
 class CommandBuffer {
  public:
+
   // Command represents an operation recorded into a command buffer. It's owned
   // by the command buffer and returned to the caller to enable efficient
   // command buffer updates.
@@ -63,10 +65,6 @@ class CommandBuffer {
     Command(Command&&) = default;
     Command& operator=(Command&&) = default;
   };
-
-  // Command priority in command buffer, currently only support default and
-  // low and high priority.
-  enum class Priority { kDefault, kLow, kHigh };
 
   // A callback to construct a nested `command_buffer` by creating commands in
   // it. Created commands must execute after `dependencies`, and the callback
@@ -147,7 +145,7 @@ class CommandBuffer {
   virtual absl::StatusOr<const Command*> CreateLaunch(
       const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgs& args, absl::Span<const Command* const> dependencies,
-      Priority priority = Priority::kDefault) = 0;
+      StreamPriority priority = StreamPriority::Default) = 0;
 
   // Updates a kernel launch command.
   virtual absl::Status UpdateLaunch(const Command* command,
@@ -269,7 +267,7 @@ class CommandBuffer {
                                    UpdateCommands update_body) = 0;
 
   // Set the priority of all nodes in the command buffer.
-  virtual absl::Status SetPriority(Priority priority) = 0;
+  virtual absl::Status SetPriority(StreamPriority priority) = 0;
 
   // Submits the command buffer for execution.
   virtual absl::Status Submit(Stream* stream) {
