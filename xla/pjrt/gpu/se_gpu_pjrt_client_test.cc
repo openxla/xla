@@ -1232,7 +1232,7 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
                   &executor->GetDeviceDescription().gpu_compute_capability())) {
             if (cc->IsAtLeastHopper()) {
               TF_ASSERT_OK_AND_ASSIGN(
-                  auto fabric_info,
+                  std::string fabric_info,
                   GetDeviceFabricInfo(executor->device_ordinal()));
               // Hopper devices have empty fabric info, MNNVL Blackwell devices
               // have meaningful fabric info.
