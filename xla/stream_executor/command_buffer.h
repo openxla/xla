@@ -48,7 +48,6 @@ class Stream;
 // device.
 class CommandBuffer {
  public:
-
   // Command represents an operation recorded into a command buffer. It's owned
   // by the command buffer and returned to the caller to enable efficient
   // command buffer updates.
