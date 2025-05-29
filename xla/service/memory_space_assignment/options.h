@@ -393,6 +393,131 @@ struct Options {
   // If set, this is the size of scoped alternate memory that we require MSA to
   // allocate for post-module operations.
   uint64_t post_module_scoped_alternate_memory_size_in_bytes = 0;
+
+  std::string ToString(bool verbose = false) const {
+    std::string result;
+    absl::StrAppend(&result, "default_memory_space: ", default_memory_space,
+                    "\n");
+    absl::StrAppend(&result, "alternate_memory_space: ", alternate_memory_space,
+                    "\n");
+    absl::StrAppend(&result, "max_size_in_bytes: ", max_size_in_bytes, "\n");
+    absl::StrAppend(&result, "alignment_in_bytes: ", alignment_in_bytes, "\n");
+    absl::StrAppend(&result,
+                    "replicated_split_dimension: ", replicated_split_dimension,
+                    "\n");
+    absl::StrAppend(&result, "any_split_dimension: ", any_split_dimension,
+                    "\n");
+    absl::StrAppend(&result,
+                    "reduce_scoped_memory_limit: ", reduce_scoped_memory_limit,
+                    "\n");
+    absl::StrAppend(&result, "allocate_reserved_scoped_memory_at_same_offset: ",
+                    allocate_reserved_scoped_memory_at_same_offset, "\n");
+    absl::StrAppend(&result,
+                    "max_outstanding_prefetches: ", max_outstanding_prefetches,
+                    "\n");
+    absl::StrAppend(&result,
+                    "max_outstanding_evictions: ", max_outstanding_evictions,
+                    "\n");
+    absl::StrAppend(&result, "while_use_extra_outstanding_prefetch_limit: ",
+                    while_use_extra_outstanding_prefetch_limit, "\n");
+    absl::StrAppend(&result, "max_retries: ", max_retries, "\n");
+    absl::StrAppend(&result, "max_repacks: ", max_repacks, "\n");
+    absl::StrAppend(&result, "repack_after_every_allocation: ",
+                    repack_after_every_allocation, "\n");
+    absl::StrAppend(&result, "verify: ", verify, "\n");
+    absl::StrAppend(&result, "enable_cross_program_prefetch: ",
+                    enable_cross_program_prefetch, "\n");
+    absl::StrAppend(&result, "default_cross_program_prefetch_heuristic: ",
+                    default_cross_program_prefetch_heuristic, "\n");
+    absl::StrAppend(&result, "enable_cross_program_prefetch_freeing: ",
+                    enable_cross_program_prefetch_freeing, "\n");
+    absl::StrAppend(&result, "max_cross_program_prefetches: ",
+                    max_cross_program_prefetches, "\n");
+    absl::StrAppend(&result, "cross_program_prefetch_permissive_mode: ",
+                    cross_program_prefetch_permissive_mode, "\n");
+    absl::StrAppend(&result, "enable_while_redundant_eviction_elimination: ",
+                    enable_while_redundant_eviction_elimination, "\n");
+    absl::StrAppend(&result,
+                    "use_repeated_instance_for_preferred_prefetch_time: ",
+                    use_repeated_instance_for_preferred_prefetch_time, "\n");
+    absl::StrAppend(&result, "enforce_prefetch_fifo_order: ",
+                    enforce_prefetch_fifo_order, "\n");
+    absl::StrAppend(&result, "enable_sync_copy_replacement: ",
+                    enable_sync_copy_replacement, "\n");
+    absl::StrAppend(&result, "enable_sync_slice_replacement: ",
+                    enable_sync_slice_replacement, "\n");
+    absl::StrAppend(&result,
+                    "extend_async_copies_limit_for_sync_mem_op_conversion: ",
+                    extend_async_copies_limit_for_sync_mem_op_conversion, "\n");
+    absl::StrAppend(&result, "inefficient_use_to_copy_ratio: ",
+                    inefficient_use_to_copy_ratio, "\n");
+    absl::StrAppend(&result, "always_spill_to_default_memory: ",
+                    always_spill_to_default_memory, "\n");
+    absl::StrAppend(&result, "enable_window_prefetch: ", enable_window_prefetch,
+                    "\n");
+    absl::StrAppend(&result, "window_prefetch_mode: ",
+                    window_prefetch_mode == WindowPrefetchMode::kWindowExposure
+                        ? "kWindowExposure"
+                        : "kWindowPrefetch",
+                    "\n");
+    absl::StrAppend(&result, "expanded_scoped_alternate_memory_mode: ",
+                    ExpandedScopedAlternateMemoryMode::Value_Name(
+                        expanded_scoped_alternate_memory_mode),
+                    "\n");
+    absl::StrAppend(&result, "buffer_colorings: ", buffer_colorings.size(),
+                    " elements\n");
+    absl::StrAppend(&result,
+                    "post_module_scoped_alternate_memory_size_in_bytes: ",
+                    post_module_scoped_alternate_memory_size_in_bytes, "\n");
+    if (verbose) {
+      absl::StrAppend(&result, "buffer_interval_comparator: ",
+                      buffer_interval_comparator ? "present" : "nullptr", "\n");
+      absl::StrAppend(&result, "prefetch_interval_picker: ",
+                      prefetch_interval_picker ? "present" : "nullptr", "\n");
+      absl::StrAppend(&result,
+                      "cost_analysis: ", cost_analysis ? "present" : "nullptr",
+                      "\n");
+      absl::StrAppend(&result, "size_fn: address\n");
+      absl::StrAppend(&result, "shape_size_fn: address\n");
+      absl::StrAppend(&result, "get_equivalent_s8_shape_fn: address\n");
+      absl::StrAppend(&result, "is_allowed_in_alternate_mem_fn: address\n");
+      absl::StrAppend(&result, "is_use_allowed_in_alternate_mem_fn: address\n");
+      absl::StrAppend(&result,
+                      "is_position_allowed_in_alternate_mem_fn: address\n");
+      absl::StrAppend(&result, "reserved_scoped_memory_fn: address\n");
+      absl::StrAppend(&result,
+                      "position_requires_contiguous_allocation_fn: address\n");
+      absl::StrAppend(&result, "window_prefetch_detail_fn: address\n");
+      absl::StrAppend(&result, "notify_operand_appended_fn: address\n");
+      absl::StrAppend(&result, "is_async_slice_implemented_fn: address\n");
+      absl::StrAppend(&result,
+                      "allocation_result_modifier_testing_fn: address\n");
+      absl::StrAppend(&result,
+                      "allocation_request_modifier_testing_fn: address\n");
+      absl::StrAppend(&result, "determine_split_dimension_fn: address\n");
+      absl::StrAppend(&result, "init_split_tree_fn: address\n");
+      absl::StrAppend(&result, "bitcast_split_fn: address\n");
+      absl::StrAppend(&result, "post_allocation_transformation_fn: address\n");
+      absl::StrAppend(&result, "repacker: ", repacker ? "present" : "nullptr",
+                      "\n");
+      absl::StrAppend(&result, "dump_fn: address\n");
+      absl::StrAppend(&result, "autotuning_config: ",
+                      autotuning_config.has_value() ? "present" : "not present",
+                      "\n");
+      absl::StrAppend(&result,
+                      "get_inefficient_allocation_sites_fn: address\n");
+      absl::StrAppend(&result, "preferred_prefetch_overrides: ",
+                      preferred_prefetch_overrides.DebugString(), "\n");
+      absl::StrAppend(&result, "sliced_prefetch_options: ",
+                      sliced_prefetch_options.DebugString(), "\n");
+      absl::StrAppend(&result, "memory_bound_loop_optimizer_options: ",
+                      memory_bound_loop_optimizer_options.DebugString(), "\n");
+      absl::StrAppend(&result, "propose_slice_fn: address\n");
+      absl::StrAppend(&result, "msa_sort_order_overrides: ",
+                      msa_sort_order_overrides.DebugString(), "\n");
+    }
+    return result;
+  }
 };
 
 }  // namespace memory_space_assignment

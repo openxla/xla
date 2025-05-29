@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_value.h"
@@ -287,6 +288,83 @@ struct AllocationRequest {
   // Indicates if the AllocationRequest end time (use time) has a default
   // memory color requirement.
   bool require_end_colored_in_default_memory = false;
+
+  std::string ToString() const {
+    std::string result;
+    absl::StrAppend(&result, "inclusive_start_time: ", inclusive_start_time,
+                    "\n");
+    absl::StrAppend(&result, "end_time: ", end_time, "\n");
+    absl::StrAppend(&result, "latest_prefetch_time: ", latest_prefetch_time,
+                    "\n");
+    absl::StrAppend(&result, "required_copy_allocation_latest_time: ",
+                    required_copy_allocation_latest_time, "\n");
+    absl::StrAppend(&result, "size: ", size, "\n");
+    absl::StrAppend(&result, "prefer_no_copy_alternate_mem_allocation: ",
+                    prefer_no_copy_alternate_mem_allocation, "\n");
+    absl::StrAppend(&result, "allow_no_copy_alternate_mem_allocation: ",
+                    allow_no_copy_alternate_mem_allocation, "\n");
+    absl::StrAppend(&result, "require_no_copy_alternate_mem_allocation: ",
+                    require_no_copy_alternate_mem_allocation, "\n");
+    absl::StrAppend(&result,
+                    "require_copy_allocation: ", require_copy_allocation, "\n");
+    absl::StrAppend(&result, "allow_prefetch: ", allow_prefetch, "\n");
+    absl::StrAppend(&result, "earliest_prefetch_time: ",
+                    earliest_prefetch_time.has_value()
+                        ? absl::StrCat(*earliest_prefetch_time)
+                        : "not present",
+                    "\n");
+    absl::StrAppend(&result, "preferred_prefetch_time: ",
+                    preferred_prefetch_time.has_value()
+                        ? absl::StrCat(*preferred_prefetch_time)
+                        : "not present",
+                    "\n");
+    absl::StrAppend(
+        &result, "preferred_offset: ",
+        preferred_offset
+            ? absl::StrCat(preferred_offset->offset, " allocations: ",
+                           preferred_offset->allocations.size())
+            : "nullptr",
+        "\n");
+    absl::StrAppend(&result, "use: ", use ? use->hlo_use.ToString() : "nullptr",
+                    "\n");
+    absl::StrAppend(&result, "allocation_value: ",
+                    allocation_value ? allocation_value->ToString() : "nullptr",
+                    "\n");
+    absl::StrAppend(&result, "all_use_times: ", all_use_times.size(),
+                    " elements\n");
+    absl::StrAppend(&result, "required_copy_allocation_for: ",
+                    required_copy_allocation_for
+                        ? required_copy_allocation_for->ToString()
+                        : "nullptr",
+                    "\n");
+    absl::StrAppend(&result,
+                    "required_copy_for_slice: ", required_copy_for_slice, "\n");
+    absl::StrAppend(&result, "allocation_value_to_update: ",
+                    allocation_value_to_update
+                        ? allocation_value_to_update->ToString()
+                        : "nullptr",
+                    "\n");
+    absl::StrAppend(&result, "only_extend_existing_allocation: ",
+                    only_extend_existing_allocation, "\n");
+    absl::StrAppend(&result, "window_prefetch_options: ",
+                    window_prefetch_options ? "address" : "nullptr", "\n");
+    absl::StrAppend(&result, "processed_allocation_values: ",
+                    processed_allocation_values.size(), " elements\n");
+    absl::StrAppend(&result, "no_copy_chunk_inclusive_start_time: ",
+                    no_copy_chunk_inclusive_start_time.has_value()
+                        ? absl::StrCat(*no_copy_chunk_inclusive_start_time)
+                        : "not present",
+                    "\n");
+    absl::StrAppend(&result, "require_start_colored_in_alternate_memmory: ",
+                    require_start_colored_in_alternate_memory, "\n");
+    absl::StrAppend(&result, "require_end_colored_in_alternate_memory: ",
+                    require_end_colored_in_alternate_memory, "\n");
+    absl::StrAppend(&result, "require_start_colored_in_default_memory: ",
+                    require_start_colored_in_default_memory, "\n");
+    absl::StrAppend(&result, "require_end_colored_in_default_memory: ",
+                    require_end_colored_in_default_memory, "\n");
+    return result;
+  }
 };
 
 // Result of an allocation, prefetch, eviction etc. request.  The result is
