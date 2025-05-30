@@ -4205,14 +4205,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     return op.emitOpError()
            << "cannot export with more than one called computations";
 
-  // Custom call can be exported either with called computation or with layout
-  // attributes. The XlaBuilder API does not allow both.
-  if (!op.getCalledComputations().empty() && op.getOperandLayouts() &&
-      op.getResultLayouts()) {
-    return op.emitOpError() << "cannot export if both called computation and "
-                               "layouts are specified";
-  }
-
   auto xla_api_version = xla::ConvertCustomCallApiVersion(op.getApiVersion());
   if (!xla_api_version.ok()) return failure();
 
