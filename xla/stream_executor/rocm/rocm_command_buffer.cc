@@ -251,8 +251,8 @@ absl::Status RocmCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
-    absl::Span<const GraphNodeHandle> dependencies, const ThreadDim& threads,
-    const BlockDim& blocks, const Kernel& kernel,
+    absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
+    const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
