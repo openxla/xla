@@ -2988,6 +2988,7 @@ cc_library(
     hdrs = ["dynamic_padder.h"],
     deps = [
         ":call_graph",
+        ":call_inliner",
         ":dynamic_dimension_inference",
         ":dynamic_window_utils",
         ":hlo_creation_utils",
@@ -3004,6 +3005,7 @@ cc_library(
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/tsl/lib/monitoring:gauge",
         "@com_google_absl//absl/algorithm:container",
