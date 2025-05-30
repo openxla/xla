@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/typed_kernel_factory.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
