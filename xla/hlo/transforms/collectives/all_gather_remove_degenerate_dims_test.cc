@@ -16,10 +16,8 @@ limitations under the License.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #include "xla/hlo/transforms/collectives/all_gather_remove_degenerate_dims.h"
 
-#include <memory>
 #include <optional>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
@@ -77,6 +75,52 @@ TEST_F(AllGatherRemoveDegenerateDimsTest, KeepsAllGatherWithConstrainedLayout) {
             constrain_layout=true
       })",
                             AllGatherRemoveDegenerateDims(), std::nullopt);
+}
+
+TEST_F(AllGatherRemoveDegenerateDimsTest, DropsDimensionsFromTupleAllGather) {
+  RunAndFilecheckHloRewrite(R"(
+      ENTRY entry {
+        // CHECK-DAG:   %[[P0:.*]] = {{.*}} parameter(0)
+        // CHECK-DAG:   %[[P1:.*]] = {{.*}} parameter(1)
+        // CHECK-DAG:   %[[RP0:.*]] = f32[1,128]{1,0} reshape(%[[P0]])
+        // CHECK-DAG:   %[[RP1:.*]] = f32[1,64]{1,0} reshape(%[[P1]])
+        // CHECK:       %[[AG:.*]] = (f32[4,128]{1,0}, f32[4,64]{1,0})
+        // CHECK-SAME:      all-gather(%[[RP0]], %[[RP1]])
+        // CHECK-DAG:   %[[T0:.*]] = {{.*}} get-tuple-element(%[[AG]]), index=0
+        // CHECK-DAG:   %[[T1:.*]] = {{.*}} get-tuple-element(%[[AG]]), index=1
+        // CHECK-DAG:   %[[RT0:.*]] = f32[1,4,128]{2,1,0} reshape(%[[T0]])
+        // CHECK-DAG:   %[[RT1:.*]] = f32[1,4,64,1]{3,2,1,0} reshape(%[[T1]])
+        // CHECK:       ROOT {{.*}} tuple(%[[RT0]], %[[RT1]])
+
+        %p0 = f32[1,1,128] parameter(0)
+        %p1 = f32[1,1,64,1] parameter(1)
+        ROOT %all_gather = (f32[1,4,128], f32[1,4,64,1]) all-gather(p0, p1),
+          dimensions={1}
+      })",
+                            AllGatherRemoveDegenerateDims());
+}
+
+TEST_F(AllGatherRemoveDegenerateDimsTest, OnlyDropsMixedMinorDims) {
+  RunAndFilecheckHloRewrite(R"(
+      ENTRY entry {
+        // CHECK-DAG:   %[[P0:.*]] = {{.*}} parameter(0)
+        // CHECK-DAG:   %[[P1:.*]] = {{.*}} parameter(1)
+        // CHECK-DAG:   %[[RP0:.*]] = f32[1,1,64]{2,1,0} reshape(%[[P0]])
+        // CHECK-DAG:   %[[RP1:.*]] = f32[2,1,64]{2,1,0} reshape(%[[P1]])
+        // CHECK:       %[[AG:.*]] = (f32[1,4,64]{2,1,0}, f32[2,4,64]{2,1,0})
+        // CHECK-SAME:      all-gather(%[[RP0]], %[[RP1]])
+        // CHECK-DAG:   %[[T0:.*]] = {{.*}} get-tuple-element(%[[AG]]), index=0
+        // CHECK-DAG:   %[[T1:.*]] = {{.*}} get-tuple-element(%[[AG]]), index=1
+        // CHECK-DAG:   %[[RT0:.*]] = f32[1,4,1,64]{3,2,1,0} reshape(%[[T0]])
+        // CHECK-DAG:   %[[RT1:.*]] = f32[2,4,64,1]{3,2,1,0} reshape(%[[T1]])
+        // CHECK:       ROOT {{.*}} tuple(%[[RT0]], %[[RT1]])
+
+        %p0 = f32[1,1,1,64] parameter(0)
+        %p1 = f32[2,1,64,1] parameter(1)
+        ROOT %all_gather = (f32[1,4,1,64], f32[2,4,64,1]) all-gather(p0, p1),
+          dimensions={1}
+      })",
+                            AllGatherRemoveDegenerateDims());
 }
 
 }  // namespace
