@@ -620,13 +620,10 @@ TEST_F(CustomCallTest, WithCalledComputationAndLayouts) {
   auto copy_computation = copy.Build().value();
 
   XlaBuilder b(TestName());
-  auto operand = Broadcast(ConstantR0WithType(&b, F32, 42.0), {128});
-  // auto shape_or = b.GetShapePtr(operand);
-  // EXPECT_TRUE(shape_or.ok());
-  // shape_or->mutable_layout()->mutable_minor_to_major() = {0};
   CustomCallWithComputationAndLayouts(
       &b, "xla.gpu.ext.memcpy_with_called_computation",
-      /*operands=*/{operand}, copy_computation, shape, {shape}, /*opaque=*/"",
+      /*operands=*/{Broadcast(ConstantR0WithType(&b, F32, 42.0), {128})},
+      copy_computation, shape, {shape}, /*opaque=*/"",
       /*has_side_effect=*/false, /*output_operand_aliasing=*/{},
       /*literal=*/nullptr, /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
       /*api_version=*/CustomCallApiVersion::API_VERSION_TYPED_FFI);
