@@ -77,6 +77,10 @@ cc_library(
 
 cc_library(
     name = "stream_executor_sycl",
+    tags = [
+        "gpu",
+        "sycl-only",
+    ],
     deps = [
         ":sycl_platform_id",
         ":sycl_rpath",
