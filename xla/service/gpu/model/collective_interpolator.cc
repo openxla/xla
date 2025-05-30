@@ -115,7 +115,7 @@ std::unique_ptr<HloModule> AllReduceModule(
 
   HloComputation::Builder wrapped_computation("wrapped_computation");
   HloComputation::Builder entry_builder("entry");
-  Shape s(shape->element_type(), {}, {});
+  Shape s(shape->element_type(), /*dimensions=*/{});
   HloInstruction* a = wrapped_computation.AddInstruction(
       HloInstruction::CreateParameter(0, s, "p0.1"));
   HloInstruction* b = wrapped_computation.AddInstruction(
@@ -156,7 +156,7 @@ std::unique_ptr<HloModule> ReduceScatterModule(
 
   HloComputation::Builder wrapped_computation("wrapped_computation");
   HloComputation::Builder entry_builder("entry");
-  Shape s(shape->element_type(), {}, {});
+  Shape s(shape->element_type(), /*dimensions=*/{});
   HloInstruction* a = wrapped_computation.AddInstruction(
       HloInstruction::CreateParameter(0, s, "p0.1"));
   HloInstruction* b = wrapped_computation.AddInstruction(
@@ -188,7 +188,8 @@ std::unique_ptr<HloModule> ReduceScatterModule(
     return nullptr;
   }
   new_dims[0] = new_dims.front() * *num_participating_devices;
-  Shape p_shape = ShapeUtil::MakeShape(shape->element_type(), new_dims);
+  Shape p_shape =
+      ShapeUtil::MakeValidatedShape(shape->element_type(), new_dims).value();
   HloInstruction* p0 = entry_builder.AddInstruction(
       HloInstruction::CreateParameter(0, p_shape, "p0"));
   entry_builder.AddInstruction(HloInstruction::CreateReduceScatter(
@@ -232,7 +233,8 @@ std::unique_ptr<HloModule> AllGatherModule(
   std::vector<int64_t> new_dims(shape->dimensions().begin(),
                                 shape->dimensions().end());
   new_dims[0] = new_dims.front() / *num_participating_devices;
-  Shape p_shape = ShapeUtil::MakeShape(shape->element_type(), new_dims);
+  Shape p_shape =
+      ShapeUtil::MakeValidatedShape(shape->element_type(), new_dims).value();
   HloInstruction* p0 = entry_builder.AddInstruction(
       HloInstruction::CreateParameter(0, p_shape, "p0"));
   entry_builder.AddInstruction(HloInstruction::CreateAllGather(

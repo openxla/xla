@@ -22,6 +22,7 @@ limitations under the License.
 #include <random>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "xla/error_spec.h"
@@ -418,7 +419,8 @@ TEST_F(ConvertTest, ConvertS32Extremes) {
 TEST_F(ConvertTest, ConvertMapToS32) {
   XlaBuilder builder(TestName());
   auto b = builder.CreateSubBuilder("convert");
-  auto param = Parameter(b.get(), 0, ShapeUtil::MakeShape(F32, {}), "in");
+  auto param = Parameter(b.get(), 0,
+                         ShapeUtil::MakeValidatedShape(F32, {}).value(), "in");
   ConvertElementType(param, S32);
   auto a = ConstantR1<float>(&builder, {42.0f, 64.0f});
   Map(&builder, {a}, b->BuildAndNoteError(), {0});
@@ -430,7 +432,8 @@ TEST_F(ConvertTest, ConvertMapToS32) {
 TEST_F(ConvertTest, ConvertMapToF32) {
   XlaBuilder builder(TestName());
   auto b = builder.CreateSubBuilder("convert");
-  auto param = Parameter(b.get(), 0, ShapeUtil::MakeShape(S32, {}), "in");
+  auto param = Parameter(b.get(), 0,
+                         ShapeUtil::MakeValidatedShape(S32, {}).value(), "in");
   ConvertElementType(param, F32);
   auto a = ConstantR1<int32_t>(&builder, {42, 64});
   Map(&builder, {a}, b->BuildAndNoteError(), {0});
@@ -482,11 +485,12 @@ XLA_TEST_F(ConvertTest, ConvertR1F16ToR1F32) {
   Literal dot_lhs_literal = LiteralUtil::CreateR1<half>(input);
 
   XlaBuilder builder(TestName());
-  ConvertElementType(
-      Parameter(&builder, 0,
-                ShapeUtil::MakeShape(F16, {static_cast<int64_t>(input.size())}),
-                "param"),
-      F32);
+  ConvertElementType(Parameter(&builder, 0,
+                               ShapeUtil::MakeValidatedShape(
+                                   F16, {static_cast<int64_t>(input.size())})
+                                   .value(),
+                               "param"),
+                     F32);
 
   ComputeAndCompareR1<float>(&builder, expected_output, {&dot_lhs_literal});
 }
@@ -500,11 +504,12 @@ XLA_TEST_F(ConvertTest, ConvertR1F32ToR1F16) {
   Literal dot_lhs_literal = LiteralUtil::CreateR1<float>(input);
 
   XlaBuilder builder(TestName());
-  ConvertElementType(
-      Parameter(&builder, 0,
-                ShapeUtil::MakeShape(F32, {static_cast<int64_t>(input.size())}),
-                "param"),
-      F16);
+  ConvertElementType(Parameter(&builder, 0,
+                               ShapeUtil::MakeValidatedShape(
+                                   F32, {static_cast<int64_t>(input.size())})
+                                   .value(),
+                               "param"),
+                     F16);
 
   ComputeAndCompareR1<half>(&builder, expected_output, {&dot_lhs_literal});
 }
@@ -799,7 +804,10 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e5m2Roundtrip) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F8e5m2Roundtrip)) {
+XLA_TEST_F(ConvertTest, ConvertF32F8e5m2Roundtrip) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP8, then back to FP32.
   XlaBuilder builder(TestName());
   float nan = std::numeric_limits<float>::quiet_NaN();
@@ -973,7 +981,10 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e4m3Roundtrip) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F8e4m3Roundtrip)) {
+XLA_TEST_F(ConvertTest, ConvertF32F8e4m3Roundtrip) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP8, then back to FP32.
   XlaBuilder builder(TestName());
   float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1141,7 +1152,10 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e4m3fnRoundtrip) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F8e4m3fnRoundtrip)) {
+XLA_TEST_F(ConvertTest, ConvertF32F8e4m3fnRoundtrip) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP8, then back to FP32.
   XlaBuilder builder(TestName());
   float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1304,7 +1318,10 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e4m3b11fnuzRoundtrip) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F8e4m3b11fnuzRoundtrip)) {
+XLA_TEST_F(ConvertTest, ConvertF32F8e4m3b11fnuzRoundtrip) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP8, then back to FP32.
   XlaBuilder builder(TestName());
   float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1807,7 +1824,10 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e3m4Roundtrip) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F8e3m4Roundtrip)) {
+XLA_TEST_F(ConvertTest, ConvertF32F8e3m4Roundtrip) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP8, then back to FP32.
   XlaBuilder builder(TestName());
   float nan = std::numeric_limits<float>::quiet_NaN();
@@ -1973,8 +1993,10 @@ XLA_TEST_F(ConvertTest, DISABLED_ON_TPU(ConvertF16F4e2m1fnRoundtrip)) {
                                    ErrorSpec(0.));
 }
 
-XLA_TEST_F(ConvertTest,
-           DISABLED_ON_TPU(DISABLED_ON_CPU(ConvertF32F4e2m1fnRoundtrip))) {
+XLA_TEST_F(ConvertTest, DISABLED_ON_TPU(ConvertF32F4e2m1fnRoundtrip)) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   // Convert from FP32 to FP4, then back to FP32.
   XlaBuilder builder(TestName());
   float inf = std::numeric_limits<float>::infinity();

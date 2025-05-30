@@ -25,6 +25,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
@@ -119,7 +120,7 @@ TEST(PremappedCopierState, RoundTrip) {
 
   for (size_t i = 0; i < src_work_units.size(); ++i) {
     cstate->ScheduleCopy(
-        src_work_units[i],
+        std::move(src_work_units[i]),
         [&mu, &local_queue](PremappedCopierState* state, void* buf,
                             const DmaCopyChunk& chunk) {
           absl::MutexLock l(&mu);
@@ -151,9 +152,15 @@ TEST(PremappedCopierState, RoundTrip) {
 TEST(Semaphore, Basic) {
   internal::IsLastSemaphore semaphore(15);
   for (size_t i = 0; i < 10; ++i) {
-    semaphore.DoWork(1, [&](bool is_last) { EXPECT_FALSE(is_last); });
+    CHECK_OK(semaphore.DoWork(1, [&](bool is_last) -> absl::Status {
+      EXPECT_FALSE(is_last);
+      return absl::OkStatus();
+    }));
   }
-  semaphore.DoWork(5, [&](bool is_last) { EXPECT_TRUE(is_last); });
+  CHECK_OK(semaphore.DoWork(5, [&](bool is_last) -> absl::Status {
+    EXPECT_TRUE(is_last);
+    return absl::OkStatus();
+  }));
 }
 
 TEST(Semaphore, Async) {
@@ -177,24 +184,26 @@ TEST(Semaphore, Async) {
       tsl::Env::Default()->StartThread({}, "t1", [&]() {
         for (size_t i = 0; i < 8; ++i) {
           thread_wait_flip(0);
-          o_semaphore.DoWork(1, [&](bool is_last) {
+          CHECK_OK(o_semaphore.DoWork(1, [&](bool is_last) -> absl::Status {
             thread_flip(0);
             EXPECT_FALSE(is_last);
-          });
+            return absl::OkStatus();
+          }));
         }
       }));
   std::unique_ptr<tsl::Thread> t2(
       tsl::Env::Default()->StartThread({}, "t2", [&]() {
         for (size_t i = 0; i < 8; ++i) {
           thread_wait_flip(1);
-          o_semaphore.DoWork(1, [&](bool is_last) {
+          CHECK_OK(o_semaphore.DoWork(1, [&](bool is_last) -> absl::Status {
             thread_flip(1);
             if (i == 7) {
               EXPECT_TRUE(is_last);
             } else {
               EXPECT_FALSE(is_last);
             }
-          });
+            return absl::OkStatus();
+          }));
         }
       }));
 }

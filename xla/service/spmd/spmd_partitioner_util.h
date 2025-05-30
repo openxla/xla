@@ -98,7 +98,7 @@ HloInstruction* CreateConstantBase(const Shape& shape, Literal value, T* b,
   }
   auto c = b->AddInstruction(HloInstruction::CreateConstant(
       literal_creator(std::move(value), shape.element_type())));
-  if (shape.dimensions_size() == 0) {
+  if (shape.dimensions().size() == 0) {
     return c;
   }
   return b->AddInstruction(HloInstruction::CreateBroadcast(shape, c, {}));
@@ -135,9 +135,10 @@ HloInstruction* CreateOne(const Shape& shape, T* b) {
 
 template <typename NativeT, typename T, typename = IsCompOrCompBuilder<T>>
 HloInstruction* CreateR0WithType(PrimitiveType type, NativeT value, T* b) {
-  auto literal = LiteralUtil::CreateR0(value)
-                     .ConvertToShape(ShapeUtil::MakeShape(type, {}))
-                     .value();
+  auto literal =
+      LiteralUtil::CreateR0(value)
+          .ConvertToShape(ShapeUtil::MakeValidatedShape(type, {}).value())
+          .value();
   return b->AddInstruction(HloInstruction::CreateConstant(std::move(literal)));
 }
 
@@ -184,9 +185,10 @@ HloInstruction* TableLookup(absl::Span<const NativeT> table, PrimitiveType type,
   HloInstruction* table_hlo = b->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR1<NativeT>(table)));
   HloInstruction* value = b->AddInstruction(HloInstruction::CreateDynamicSlice(
-      ShapeUtil::MakeShape(type, {1}), table_hlo, {ordinal}, {1}));
-  return b->AddInstruction(
-      HloInstruction::CreateReshape(ShapeUtil::MakeShape(type, {}), value));
+      ShapeUtil::MakeValidatedShape(type, {1}).value(), table_hlo, {ordinal},
+      {1}));
+  return b->AddInstruction(HloInstruction::CreateReshape(
+      ShapeUtil::MakeValidatedShape(type, {}).value(), value));
 }
 
 // Returns the shard shape for a partition without padding due to uneven
@@ -217,7 +219,7 @@ HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape, T* b,
     return hlo;
   }
   PaddingConfig padding_config;
-  for (int64_t i = 0; i < padded_shape.dimensions_size(); ++i) {
+  for (int64_t i = 0; i < padded_shape.dimensions().size(); ++i) {
     auto padding_config_dim = padding_config.add_dimensions();
     padding_config_dim->set_edge_padding_low(0);
     padding_config_dim->set_interior_padding(0);
@@ -225,7 +227,7 @@ HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape, T* b,
                                               hlo->shape().dimensions(i));
   }
   const Shape padding_shape =
-      ShapeUtil::MakeScalarShape(hlo->shape().element_type());
+      ShapeUtil::MakeValidatedScalarShape(hlo->shape().element_type()).value();
   HloInstruction* padding =
       value.has_value() ? CreateConstant(padding_shape, std::move(*value), b)
                         : CreateZero(padding_shape, b);
@@ -466,18 +468,20 @@ Shape GetPerGroupBaseShape(
 // Returns the partition id within a group.
 HloInstruction* GetInGroupPartitionId(
     HloInstruction* partition_id,
-    const std::vector<std::vector<int64_t>>& device_groups, SpmdBuilder* b);
+    const hlo_sharding_util::DeviceGroupTileAssignment& device_groups,
+    SpmdBuilder* b);
 
 // Creates the nested partitioner state for in-group partitioning.
 PartitionedHlo::PartitioningState CreatePerGroupPartitioningState(
     const PartitionedHlo::PartitioningState& state,
-    const std::vector<std::vector<int64_t>>& device_groups, SpmdBuilder* b);
+    const hlo_sharding_util::DeviceGroupTileAssignment& device_groups,
+    SpmdBuilder* b);
 
 // Partially shards a replicated HLO into groups along the group dimensions, and
 // within each group data is still replicated.
 HloInstruction* PerGroupSliceFromReplicated(
     HloInstruction* replicated, HloInstruction* partition_id,
-    const std::vector<std::vector<int64_t>>& device_groups,
+    const hlo_sharding_util::DeviceGroupTileAssignment& device_groups,
     absl::Span<const int64_t> group_dims,
     absl::Span<const int64_t> group_dim_sizes, SpmdBuilder* b);
 
@@ -518,7 +522,7 @@ std::optional<HloInstruction*> TileToPartialReplicateHaloExchange(
 // specified device groups. Group order and dimension order are ignored.
 std::optional<std::vector<int64_t>> FindMatchingPartitionedDimsForGrouping(
     const HloSharding& sharding,
-    const std::vector<std::vector<int64_t>>& device_groups);
+    const hlo_sharding_util::DeviceGroupTileAssignment& device_groups);
 
 // Create a sharding that matches the provided source sharding on the
 // specified dimensions. 'target_dims' and 'source_dims' represent the
@@ -904,7 +908,7 @@ absl::StatusOr<std::pair<int64_t, int64_t>> EvaluatePartitionCost(
   HloModule fake_module("fake_module", module->config(), std::move(comp_env));
   auto temp_b = HloComputation::Builder("temp_entry");
   auto temp_p = temp_b.AddInstruction(HloInstruction::CreateParameter(
-      0, ShapeUtil::MakeShape(F32, {}), "input"));
+      0, ShapeUtil::MakeValidatedShape(F32, {}).value(), "input"));
   HloComputation* temp_entry = fake_module.AddEntryComputation(temp_b.Build());
 
   TF_ASSIGN_OR_RETURN(SpmdPartitioningVisitor * visitor,

@@ -330,7 +330,7 @@ void PopulateWithFloatingPointData(
     bool use_large_range, std::optional<int64_t> max_bits_of_precision) {
   using ComputeT =
       std::conditional_t<sizeof(FloatT) < sizeof(float), float, FloatT>;
-  CHECK(engine != nullptr);
+  CHECK_NOTNULL(engine);
   CHECK_EQ(literal->shape().element_type(),
            primitive_util::NativeToPrimitiveType<FloatT>());
   if (max_bits_of_precision.has_value()) {
@@ -360,7 +360,7 @@ template <typename ComplexT>
 void PopulateWithComplexData(Literal* result, std::minstd_rand0* engine,
                              bool no_duplicates, bool use_large_range) {
   using InnerFloatT = typename ComplexT::value_type;
-  CHECK(engine != nullptr);
+  CHECK_NOTNULL(engine);
   CHECK_EQ(result->shape().element_type(),
            primitive_util::NativeToPrimitiveType<ComplexT>());
   Shape floating_point_shape = ShapeUtil::ChangeElementType(
@@ -396,7 +396,7 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
                                               std::minstd_rand0* engine,
                                               bool no_duplicates, IntT min,
                                               IntT max) {
-  CHECK(engine != nullptr);
+  CHECK_NOTNULL(engine);
   CHECK_EQ(literal->shape().element_type(),
            primitive_util::NativeToPrimitiveType<IntT>());
   if (no_duplicates &&
@@ -419,7 +419,7 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
 /* static */ Literal LiteralUtil::CreateFromDimensions(
     PrimitiveType primitive_type, absl::Span<const int64_t> dimensions) {
   return Literal::CreateFromShape(
-      ShapeUtil::MakeShape(primitive_type, dimensions));
+      ShapeUtil::MakeValidatedShape(primitive_type, dimensions).value());
 }
 
 /* static */ Literal LiteralUtil::ConvertS8ToF32(
@@ -538,14 +538,16 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
 
 /* static */ Literal LiteralUtil::CreateR1(const tsl::core::Bitmap& values) {
   Literal literal(
-      ShapeUtil::MakeShape(PRED, {static_cast<int64_t>(values.bits())}));
+      ShapeUtil::MakeValidatedShape(PRED, {static_cast<int64_t>(values.bits())})
+          .value());
   literal.PopulateR1(values);
   return literal;
 }
 
 /* static */ Literal LiteralUtil::CreateR1U8(absl::string_view value) {
   Literal literal(
-      ShapeUtil::MakeShape(U8, {static_cast<int64_t>(value.size())}));
+      ShapeUtil::MakeValidatedShape(U8, {static_cast<int64_t>(value.size())})
+          .value());
   for (int i = 0, end = value.size(); i < end; ++i) {
     literal.Set<uint8_t>({i}, value[i]);
   }
@@ -569,8 +571,9 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
   CHECK_EQ(ShapeUtil::ElementsIn(literal.shape()), new_num_elements);
   CHECK_EQ(new_dimensions.size(), minor_to_major.size());
 
-  Literal new_literal(
-      ShapeUtil::MakeShape(literal.shape().element_type(), new_dimensions));
+  Literal new_literal(ShapeUtil::MakeValidatedShape(
+                          literal.shape().element_type(), new_dimensions)
+                          .value());
 
   // Create a new shape with the given minor-to-major layout. This shape is used
   // solely for converting linear address to multi-dimensional addresses when
@@ -646,7 +649,8 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
   for (const auto* element : elements) {
     element_shapes.push_back(&element->shape());
   }
-  Literal literal(ShapeUtil::MakeTupleShapeWithPtrs(element_shapes));
+  Literal literal(
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(element_shapes).value());
   for (int i = 0, end = elements.size(); i < end; ++i) {
     TF_CHECK_OK(literal.CopyFrom(*elements[i], /*dest_shape_index=*/{i}));
   }
@@ -660,7 +664,8 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
   for (const auto& element : elements) {
     element_shapes.push_back(&element.shape());
   }
-  Literal literal(ShapeUtil::MakeTupleShapeWithPtrs(element_shapes));
+  Literal literal(
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(element_shapes).value());
   for (int i = 0, end = elements.size(); i < end; ++i) {
     TF_CHECK_OK(literal.CopyFrom(elements[i], /*dest_shape_index=*/{i}));
   }
@@ -674,7 +679,8 @@ void PopulateWithRandomIntegralDataWithBounds(Literal* literal,
   for (const auto& element : elements) {
     element_shapes.push_back(&element.shape());
   }
-  Literal literal(ShapeUtil::MakeTupleShapeWithPtrs(element_shapes));
+  Literal literal(
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(element_shapes).value());
   for (int64_t i = 0, end = elements.size(); i < end; ++i) {
     TF_CHECK_OK(
         literal.MoveFrom(std::move(elements[i]), /*dest_shape_index=*/{i}));

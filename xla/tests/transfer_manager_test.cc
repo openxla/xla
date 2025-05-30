@@ -17,6 +17,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout_util.h"
@@ -142,7 +143,7 @@ XLA_TEST_F(TransferManagerTest, TransferR1LargeF32) {
 XLA_TEST_F(TransferManagerTest, TransferR1LargeUnalignedF32) {
   std::vector<float> test_vector(1025);
   std::iota(test_vector.begin(), test_vector.end(), 0);
-  Shape shape = ShapeUtil::MakeShape(F32, {1024});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {1024}).value();
   BorrowingLiteral literal(reinterpret_cast<const char*>(&test_vector[1]),
                            shape);
   auto device_buffer = AllocateDeviceBuffer(shape);
@@ -309,7 +310,10 @@ XLA_TEST_F(TransferManagerTest, TransferTokenFromDevice) {
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateToken(), result));
 }
 
-XLA_TEST_F(TransferManagerTest, OVERSIZE_ON_GRM(MultiStreamRoundTripSoak)) {
+XLA_TEST_F(TransferManagerTest, MultiStreamRoundTripSoak) {
+  if (test::HasModifiers({test::kGrm})) {
+    GTEST_SKIP();
+  }
   const int64_t kIterationCount = 5000;
   Literal literal1 = LiteralUtil::MakeTupleFromSlices(
       {LiteralUtil::CreateR0<float>(123.0f),

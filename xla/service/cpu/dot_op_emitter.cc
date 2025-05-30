@@ -81,9 +81,7 @@ bool ShouldUseMultiThreadedEigen(const HloModuleConfig& config) {
 // Return whether the given shape is rank 2.
 bool IsRank2(const Shape& shape) { return shape.dimensions().size() == 2; }
 
-bool IsSimpleLayout(const Layout& layout) {
-  return layout.tiles().empty() && LayoutUtil::IsDense(layout);
-}
+bool IsSimpleLayout(const Layout& layout) { return layout.tiles().empty(); }
 
 // In a gemm operation where output = lhs * rhs, check whether the given shapes
 // are valid for the operation.
@@ -91,11 +89,11 @@ bool AreGemmShapes(const Shape& lhs_shape, const Shape& rhs_shape,
                    const Shape& output_shape,
                    const TargetMachineFeatures& target_machine_features) {
   CHECK(!lhs_shape.has_layout() || IsSimpleLayout(lhs_shape.layout()))
-      << lhs_shape.DebugString();
+      << lhs_shape.ToString();
   CHECK(!rhs_shape.has_layout() || IsSimpleLayout(rhs_shape.layout()))
-      << rhs_shape.DebugString();
+      << rhs_shape.ToString();
   CHECK(!output_shape.has_layout() || IsSimpleLayout(output_shape.layout()))
-      << output_shape.DebugString();
+      << output_shape.ToString();
 
   switch (output_shape.element_type()) {
     case F16:
@@ -1096,8 +1094,9 @@ absl::Status EmitNonBatchDotOperation(
 Shape DropFirstDim(const Shape& shape) {
   absl::Span<int64_t const> array_shape_dims(shape.dimensions());
   array_shape_dims.remove_prefix(1);
-  return ShapeUtil::MakeShapeWithDescendingLayout(shape.element_type(),
-                                                  array_shape_dims);
+  return ShapeUtil::MakeValidatedShapeWithDescendingLayout(shape.element_type(),
+                                                           array_shape_dims)
+      .value();
 }
 
 Shape CollapseFirstNDims(const Shape& shape, int64_t n) {
@@ -1109,8 +1108,9 @@ Shape CollapseFirstNDims(const Shape& shape, int64_t n) {
   result_dims.push_back(prefix_dim);
   std::copy(input_shape_dims.begin() + n, input_shape_dims.end(),
             std::back_inserter(result_dims));
-  return ShapeUtil::MakeShapeWithDescendingLayout(shape.element_type(),
-                                                  result_dims);
+  return ShapeUtil::MakeValidatedShapeWithDescendingLayout(shape.element_type(),
+                                                           result_dims)
+      .value();
 }
 
 llvm_ir::IrArray CollapseFirstNDims(llvm::IRBuilderBase* b,

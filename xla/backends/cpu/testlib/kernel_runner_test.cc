@@ -27,15 +27,16 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 #include "xla/backends/cpu/testlib/llvm_ir_kernel_emitter.h"
 #include "xla/codegen/kernel_definition.h"
+#include "xla/codegen/llvm_ir_kernel_source.h"
 #include "xla/codegen/testlib/kernel_runner.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/work_group.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
@@ -74,14 +75,15 @@ TEST(KernelRunnerTest, Add) {
 
   constexpr int64_t kNumElements = 8;
   constexpr size_t kArgSizeBytes = kNumElements * sizeof(int32_t);
-  LlvmIrKernelEmitter::KernelArg read_arg{kArgSizeBytes, BufferUse::kRead};
-  LlvmIrKernelEmitter::KernelArg write_arg{kArgSizeBytes, BufferUse::kWrite};
-  LlvmIrKernelEmitter emitter(kLlvmAddI32, "LlvmAddI32",
-                              se::ThreadDim(kNumElements),
-                              {read_arg, read_arg, write_arg});
+  LlvmTestKernelEmitter::KernelArg read_arg{kArgSizeBytes, BufferUse::kRead};
+  LlvmTestKernelEmitter::KernelArg write_arg{kArgSizeBytes, BufferUse::kWrite};
+  LlvmTestKernelEmitter emitter(kLlvmAddI32, "LlvmAddI32",
+                                NumWorkGroups{kNumElements},
+                                {read_arg, read_arg, write_arg});
 
-  TF_ASSERT_OK_AND_ASSIGN(KernelDefinition kernel_definition,
-                          emitter.EmitKernelDefinition());
+  TF_ASSERT_OK_AND_ASSIGN(
+      KernelDefinition<LlvmIrKernelSource> kernel_definition,
+      emitter.EmitKernelDefinition());
   TF_ASSERT_OK_AND_ASSIGN(JitCompiler compiler,
                           KernelRunner::CreateJitCompiler(HloModuleConfig()));
 
@@ -90,7 +92,7 @@ TEST(KernelRunnerTest, Add) {
       KernelRunner::Create(std::move(kernel_definition), std::move(compiler)));
 
   std::minstd_rand0 engine;
-  Shape shape = ShapeUtil::MakeShape(S32, {kNumElements});
+  Shape shape = ShapeUtil::MakeValidatedShape(S32, {kNumElements}).value();
   TF_ASSERT_OK_AND_ASSIGN(
       Literal in_arg1,
       LiteralUtil::CreateRandomLiteral<S32>(shape, &engine, 10, 10));

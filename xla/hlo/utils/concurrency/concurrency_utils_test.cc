@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::concurrency {
 namespace {
@@ -172,7 +173,7 @@ class HloComputationTest : public HloHardwareIndependentTestBase {
     return module;
   };
 
-  Shape r0f32_ = ShapeUtil::MakeShape(F32, {});
+  Shape r0f32_ = ShapeUtil::MakeValidatedShape(F32, {}).value();
 
   TslTaskExecutor task_executor_{5};
 };

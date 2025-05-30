@@ -162,7 +162,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
-#include "xla/service/gpu/gpu_p2p_pipeliner.h"
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -184,8 +183,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/algorithm_checker.h"
 #include "xla/service/gpu/transforms/async_wrapper.h"
-#include "xla/service/gpu/transforms/collective_permute_cycle_decomposer.h"
-#include "xla/service/gpu/transforms/collective_select_folder.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_optimizer.h"
@@ -194,6 +191,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/all_reduce_decomposer.h"
 #include "xla/service/gpu/transforms/collectives/all_reduce_splitter.h"
 #include "xla/service/gpu/transforms/collectives/collective_combiner_annotator.h"
+#include "xla/service/gpu/transforms/collectives/collective_permute_cycle_decomposer.h"
 #include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
@@ -218,7 +216,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/layout_assignment.h"
 #include "xla/service/gpu/transforms/move_copy_to_users.h"
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
-#include "xla/service/gpu/transforms/pipelined_p2p_rewriter.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_decomposer.h"
 #include "xla/service/gpu/transforms/reduce_scatter_creator.h"
@@ -228,6 +225,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/reduction_splitter.h"
 #include "xla/service/gpu/transforms/rename_fusions.h"
 #include "xla/service/gpu/transforms/sanitize_constant_names.h"
+#include "xla/service/gpu/transforms/scalar_constant_sinker.h"
 #include "xla/service/gpu/transforms/scatter_expander.h"
 #include "xla/service/gpu/transforms/scatter_slice_simplifier.h"
 #include "xla/service/gpu/transforms/softmax_rewriter_triton.h"
@@ -332,16 +330,15 @@ MaybeOwningThreadPool CreateMaybeOwningThreadPool(
   }
 }
 
-absl::StatusOr<AutotuneConfig> GetAutotuneConfig(
-    se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
-    const GpuCompiler::CompileOptions& options,
+DeviceOrDevicelessConfig GetDeviceConfig(
+    se::StreamExecutor* stream_exec, const GpuCompiler::CompileOptions& options,
     const Compiler::TargetConfig& gpu_target_config) {
   if (stream_exec) {
-    return AutotuneConfig{DeviceConfig{stream_exec, options.device_allocator},
-                          debug_options};
+    return DeviceOrDevicelessConfig{
+        DeviceConfig{stream_exec, options.device_allocator}};
   }
-  return AutotuneConfig{DevicelessConfig{gpu_target_config.device_description},
-                        debug_options};
+  return DeviceOrDevicelessConfig{
+      DevicelessConfig{gpu_target_config.device_description}};
 }
 
 se::GpuComputeCapability GetGpuVersion(const se::StreamExecutor* stream_exec) {
@@ -715,7 +712,9 @@ absl::Status RunOptimizationPasses(
         !cuda_cc->IsAtLeast(se::CudaComputeCapability::kVolta)) {
       return true;
     }
-    return !gpu::IsMatrixMultiplication(*instr);
+    return !gpu::IsCublasSupportedMatMul(
+                *instr, /*allow_matrix_vector_multiplication=*/false)
+                .value_or(false);
   };
   pipeline.AddPass<ResultCaster>(upcaster_filter);
   pipeline.AddPass<OperandUpcaster>(upcaster_filter);
@@ -1031,15 +1030,6 @@ absl::Status RunCollectiveOptimizationPasses(
         pipeline_parallelism_opt_level);
   }
 
-  bool enable_partial_send_recv_pipelining =
-      pipeline_parallelism_opt_level !=
-      DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE;
-  if (debug_options.xla_gpu_enable_pipelined_p2p() ||
-      enable_partial_send_recv_pipelining) {
-    collectives_pipeline.AddPass<GpuP2PPipeliner>(
-        enable_partial_send_recv_pipelining);
-  }
-
   // Run algebraic simplifier to reshape(broadcast) into a broadcast when
   // the reshape is just adding a unit dimension. This will help with the
   // AllGatherBroadcastReorder pass.
@@ -1169,6 +1159,7 @@ void AddDoubleBufferingPasses(const HloModule& module,
     pipeline.AddPass<DoubleBufferLoopUnrolling>(*unroll_strategy);
     pipeline.AddPass<TupleSimplifier>();
     pipeline.AddPass<HloDCE>();
+    pipeline.AddPass<ScalarConstantSinker>();
   }
 }
 
@@ -1267,12 +1258,11 @@ absl::Status RunPostFusionVerificationPasses(
   if (hlo_module->config()
           .debug_options()
           .xla_gpu_verify_triton_fusion_numerics()) {
-    TF_ASSIGN_OR_RETURN(
-        AutotuneConfig autotune_config,
-        GetAutotuneConfig(stream_exec, hlo_module->config().debug_options(),
-                          options, gpu_target_config));
-
-    pipeline.AddPass<TritonFusionNumericsVerifier>(autotune_config);
+    DeviceOrDevicelessConfig device_config =
+        GetDeviceConfig(stream_exec, options, gpu_target_config);
+    if (!device_config.IsDeviceless()) {
+      pipeline.AddPass<TritonFusionNumericsVerifier>(device_config);
+    }
   }
 
   return pipeline.Run(hlo_module).status();
@@ -1398,6 +1388,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
                                    layout_insensitive_algsimp_opts));
+
+  // Dump the HLO module after SPMD partitioning. There should be no more Python
+  // callbacks at this point.
+  DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
+
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));
@@ -1524,9 +1519,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     opts.set_enable_unconditional_reduce_of_concat_replacement(false);
     return opts;
   }();
-  TF_ASSIGN_OR_RETURN(AutotuneConfig autotune_config,
-                      GetAutotuneConfig(stream_exec, debug_options, options,
-                                        gpu_target_config));
+  DeviceOrDevicelessConfig device_config =
+      GetDeviceConfig(stream_exec, options, gpu_target_config);
+  AutotuneConfig autotune_config =
+      AutotuneConfig::FromDebugOptions(device_config, debug_options);
   // Lambdas and related constants:
   const GpuFloatSupport bf16_support(gpu_version, BF16);
   const GpuFloatSupport f8e5m2_support(gpu_version, F8E5M2, F16);
@@ -1879,9 +1875,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   DumpHloModuleMetadataIfEnabled({module.get()});
 
   AutotuneResults autotune_results;
-  TF_ASSIGN_OR_RETURN(
-      AutotuneConfig autotune_config,
-      GetAutotuneConfig(stream_exec, debug_opts, options, gpu_target_config));
+  DeviceOrDevicelessConfig device_config =
+      GetDeviceConfig(stream_exec, options, gpu_target_config);
+  AutotuneConfig autotune_config =
+      AutotuneConfig::FromDebugOptions(device_config, debug_opts);
   if (!is_deviceless) {
     TF_RETURN_IF_ERROR(
         AutotunerUtil::SerializeAutotuneResults(&autotune_results));
@@ -2744,14 +2741,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   {
     HloPassPipeline& pipeline =
         main_pipeline.AddPass<HloPassPipeline>("async-to-sync-converter");
-
-    if (module->config()
-                .debug_options()
-                .xla_gpu_experimental_pipeline_parallelism_opt_level() ==
-            DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE &&
-        (module->config().debug_options().xla_gpu_enable_pipelined_p2p())) {
-      pipeline.AddPass<PipelinedP2PRewriter>();
-    }
     pipeline.AddPass<GpuConvertAsyncCollectivesToSync>();
   }
 

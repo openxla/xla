@@ -29,13 +29,16 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/device_event.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 
@@ -109,8 +112,14 @@ CommonPjRtClient::CreateUninitializedBuffer(const Shape& shape,
   if (!primitive_util::IsArrayType(shape.element_type())) {
     device_shape = shape;
   } else {
-    TF_ASSIGN_OR_RETURN(device_shape, MakeDefaultShapeForMemorySpace(
-                                          memory_space, shape, nullptr));
+    if (shape.has_layout()) {
+      TF_ASSIGN_OR_RETURN(
+          device_shape,
+          MakeDefaultShapeForMemorySpace(memory_space, shape, &shape.layout()));
+    } else {
+      TF_ASSIGN_OR_RETURN(device_shape, MakeDefaultShapeForMemorySpace(
+                                            memory_space, shape, nullptr));
+    }
   }
   TF_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
                       GetOnDeviceBytesCount(memory_space, device_shape));
@@ -136,7 +145,8 @@ CommonPjRtClient::BufferFromHostBuffer(
   TF_ASSIGN_OR_RETURN(
       Shape device_shape,
       MakeDefaultShapeForMemorySpace(
-          memory_space, ShapeUtil::MakeShape(type, dims), device_layout));
+          memory_space, ShapeUtil::MakeValidatedShape(type, dims).value(),
+          device_layout));
   if (host_buffer_semantics ==
           PjRtClient::HostBufferSemantics::kImmutableZeroCopy ||
       host_buffer_semantics ==

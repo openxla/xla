@@ -52,7 +52,7 @@ jobs:
           },
           {
             pool: "linux-x86-n2-128",
-            container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest",
+            container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest",
             pretty_name: "XLA Linux x86 CPU 128 vcpu Presubmit",
             bazel_arch_dir: "k8-opt",
             platform: "CPU",
@@ -112,7 +112,7 @@ jobs:
       - name: Checkout OpenXLA
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
 

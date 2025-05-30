@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/array2d.h"
@@ -45,7 +46,8 @@ TEST_F(ParamsTest, ConstantR0F32Param) {
   XlaBuilder builder(TestName());
   Literal param0_literal = LiteralUtil::CreateR0<float>(3.14159f);
 
-  Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {}), "param0");
+  Parameter(&builder, 0, ShapeUtil::MakeValidatedShape(F32, {}).value(),
+            "param0");
 
   ComputeAndCompareR0<float>(&builder, 3.14159f, {&param0_literal},
                              ErrorSpec(0.0001f));
@@ -55,7 +57,8 @@ TEST_F(ParamsTest, ConstantR1S0F32Param) {
   XlaBuilder builder(TestName());
   Literal param0_literal = LiteralUtil::CreateR1<float>({});
 
-  Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {0}), "param0");
+  Parameter(&builder, 0, ShapeUtil::MakeValidatedShape(F32, {0}).value(),
+            "param0");
 
   ComputeAndCompareR1<float>(&builder, {}, {&param0_literal}, ErrorSpec(0.01f));
 }
@@ -64,7 +67,8 @@ TEST_F(ParamsTest, ConstantR1S2F32Param) {
   XlaBuilder builder(TestName());
   Literal param0_literal = LiteralUtil::CreateR1<float>({3.14f, -100.25f});
 
-  Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {2}), "param0");
+  Parameter(&builder, 0, ShapeUtil::MakeValidatedShape(F32, {2}).value(),
+            "param0");
 
   ComputeAndCompareR1<float>(&builder, {3.14f, -100.25f}, {&param0_literal},
                              ErrorSpec(0.01f));
@@ -75,9 +79,11 @@ TEST_F(ParamsTest, ConstantR1U8Param) {
   std::string str("hello world");
   Literal param0_literal = LiteralUtil::CreateR1U8(str);
 
-  Parameter(&builder, 0,
-            ShapeUtil::MakeShape(U8, {static_cast<int64_t>(str.size())}),
-            "param0");
+  Parameter(
+      &builder, 0,
+      ShapeUtil::MakeValidatedShape(U8, {static_cast<int64_t>(str.size())})
+          .value(),
+      "param0");
 
   ComputeAndCompareR1U8(&builder, str, {&param0_literal});
 }
@@ -87,7 +93,8 @@ TEST_F(ParamsTest, ConstantR2_3x0_F32Param) {
   Literal param0_literal =
       LiteralUtil::CreateR2FromArray2D<float>(Array2D<float>(3, 0));
 
-  Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {3, 0}), "param0");
+  Parameter(&builder, 0, ShapeUtil::MakeValidatedShape(F32, {3, 0}).value(),
+            "param0");
 
   ComputeAndCompareR2<float>(&builder, Array2D<float>(3, 0), {&param0_literal},
                              ErrorSpec(0.01f));
@@ -98,7 +105,8 @@ TEST_F(ParamsTest, ConstantR2F32Param) {
   Literal param0_literal = LiteralUtil::CreateR2<float>(
       {{3.14f, -100.25f}, {7e8f, 7e-9f}, {30.3f, -100.0f}});
 
-  Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {3, 2}), "param0");
+  Parameter(&builder, 0, ShapeUtil::MakeValidatedShape(F32, {3, 2}).value(),
+            "param0");
 
   Array2D<float> expected_array(
       {{3.14f, -100.25f}, {7e8f, 7e-9f}, {30.3f, -100.0f}});
@@ -138,7 +146,8 @@ TEST_F(ParamsTest, MissingParameter) {
   Literal literal = LiteralUtil::CreateR0<float>(3.14159f);
 
   XlaBuilder builder(TestName());
-  Parameter(&builder, 2, ShapeUtil::MakeShape(F32, {}), "param2");
+  Parameter(&builder, 2, ShapeUtil::MakeValidatedShape(F32, {}).value(),
+            "param2");
   auto computation_status = builder.Build();
 
   ASSERT_NE(computation_status.status(), absl::OkStatus());
@@ -222,7 +231,10 @@ TEST_F(ParamsTest, HundredLargeR1Parameters) {
 
 // TODO(b/65526061) Failed on CPU on 2017-09-10 due to timeout in LLVM
 // compilation.
-TEST_F(ParamsTest, DISABLED_ON_CPU(ThreeThousandParameters)) {
+TEST_F(ParamsTest, ThreeThousandParameters) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
 
   std::vector<Literal> param_data_owner;
@@ -248,7 +260,10 @@ TEST_F(ParamsTest, DISABLED_ON_CPU(ThreeThousandParameters)) {
 
 // TODO(b/65526061) Failed on CPU on 2017-09-10 due to timeout in LLVM
 // compilation.
-TEST_F(ParamsTest, DISABLED_ON_CPU(ThreeThousandParametersAndOutputElements)) {
+TEST_F(ParamsTest, ThreeThousandParametersAndOutputElements) {
+  if (test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
   XlaBuilder builder(TestName());
 
   std::vector<Literal> param_data_owner;
@@ -396,8 +411,9 @@ TEST_F(ParamsTest, ManyParametersIntoWhileLoop) {
 TEST_F(ParamsTest, TupleOfR1ParametersAddedTogether) {
   XlaBuilder builder(TestName());
 
-  Shape r1f32_3 = ShapeUtil::MakeShape(F32, {3});
-  Shape tuple_shape = ShapeUtil::MakeTupleShape({r1f32_3, r1f32_3});
+  Shape r1f32_3 = ShapeUtil::MakeValidatedShape(F32, {3}).value();
+  Shape tuple_shape =
+      ShapeUtil::MakeValidatedTupleShape({r1f32_3, r1f32_3}).value();
   auto input = Parameter(&builder, 0, tuple_shape, "input");
   auto lhs = GetTupleElement(input, 0);
   auto rhs = GetTupleElement(input, 1);
@@ -438,8 +454,10 @@ TEST_F(ParamsTest, R2_2x2_Layout_10) {
 // computation layout is used instead. The way this test is set up, the ECL will
 // reflect the layout of the original literal, so it does not pass. This seems
 // to be a niche behavior that is not worth fixing.
-TEST_F(ParamsTest, DISABLED_ON_CPU(DISABLED_ON_GPU(DISABLED_ON_INTERPRETER(
-                       R2_2x2_TryToPassReverseLayoutToParameter)))) {
+TEST_F(ParamsTest, R2_2x2_TryToPassReverseLayoutToParameter) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+    GTEST_SKIP();
+  }
   Literal literal = LiteralUtil::CreateR2<float>({
       {1, 3},
       {2, 4},

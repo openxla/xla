@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <numeric>
 #include <optional>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -74,7 +73,7 @@ std::optional<DimLevelType> ConvertDimLevelType(
 Shape TypeToShape(mlir::Type type) {
   PrimitiveType ptype = ConvertMlirTypeToPrimitiveType(type);
   if (ptype != PrimitiveType::PRIMITIVE_TYPE_INVALID)
-    return ShapeUtil::MakeShape(ptype, {});
+    return ShapeUtil::MakeValidatedShape(ptype, {}).value();
 
   if (type.isIntOrFloat()) {
     auto* context = type.getContext();
@@ -87,7 +86,7 @@ Shape TypeToShape(mlir::Type type) {
     mlir::Type element_type = v.getElementType();
     PrimitiveType primitive_type = ConvertMlirTypeToPrimitiveType(element_type);
     if (primitive_type != PrimitiveType::PRIMITIVE_TYPE_INVALID)
-      return ShapeUtil::MakeShape(primitive_type, span);
+      return ShapeUtil::MakeValidatedShape(primitive_type, span).value();
   } else if (auto m = mlir::dyn_cast<mlir::MemRefType>(type)) {
     llvm::SmallVector<int64_t, 6> span(m.getShape().begin(),
                                        m.getShape().end());
@@ -104,7 +103,7 @@ Shape TypeToShape(mlir::Type type) {
     // vector type case (i.e., it is, modulo the layout, the same dimensions
     // and primitive type).
     if (m.getLayout().isIdentity())
-      return ShapeUtil::MakeShape(primitive_type, span);
+      return ShapeUtil::MakeValidatedShape(primitive_type, span).value();
 
     llvm::SmallVector<int64_t, 4> strides;
     int64_t offset;
@@ -177,13 +176,6 @@ Shape TypeToShape(mlir::Type type) {
       // added to xla
       if (sparse.getPosWidth() != 32 || sparse.getCrdWidth() != 32) return {};
 
-      llvm::SmallVector<DimLevelType, 3> lvl_types;
-      for (auto lt : sparse.getLvlTypes()) {
-        auto new_lt = ConvertDimLevelType(lt);
-        if (!new_lt) return {};
-        lvl_types.push_back(*new_lt);
-      }
-
       std::vector<int64_t> ordering(rank);
       std::iota(ordering.rbegin(), ordering.rend(), 0);
       // Uses an identity map for dim ordering as the default value.
@@ -193,19 +185,20 @@ Shape TypeToShape(mlir::Type type) {
                                 rank, sparse.getContext());
       auto final_ordering = mlir::applyPermutationMap(
           dimToLvl, llvm::ArrayRef<int64_t>(ordering));
-      auto sparse_shape = ::xla::ShapeUtil::MakeShapeWithSparseLayout(
-          primitive_type, shape, final_ordering, lvl_types);
-      return sparse_shape;
+      return ::xla::ShapeUtil::MakeValidatedShapeWithSparseLayout(
+                 primitive_type, shape, final_ordering)
+          .value();
     }
 
-    return ShapeUtil::MakeShape(primitive_type, shape, is_dynamic);
+    return ShapeUtil::MakeValidatedShape(primitive_type, shape, is_dynamic)
+        .value();
   } else if (auto tuple_type = mlir::dyn_cast<mlir::TupleType>(type)) {
     llvm::SmallVector<Shape, 4> shapes;
     shapes.reserve(tuple_type.size());
     for (mlir::Type sub_type : tuple_type.getTypes()) {
       shapes.push_back(TypeToShape(sub_type));
     }
-    return ShapeUtil::MakeTupleShape(shapes);
+    return ShapeUtil::MakeValidatedTupleShape(shapes).value();
 
   } else if (mlir::isa<mlir::mhlo::TokenType>(type) ||
              mlir::isa<mlir::stablehlo::TokenType>(type)) {

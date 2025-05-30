@@ -122,8 +122,9 @@ absl::StatusOr<HloInstruction*> MakeSparseMetaOperand(
                                   shape.dimensions().end() - 1);
   dimensions.push_back(config.split_k);
   dimensions.push_back(shape.dimensions().back() / config.split_k);
-  Shape new_shape = ShapeUtil::MakeShapeWithDescendingLayout(
-      shape.element_type(), dimensions);
+  Shape new_shape = ShapeUtil::MakeValidatedShapeWithDescendingLayout(
+                        shape.element_type(), dimensions)
+                        .value();
   return MakeBitcastHlo(meta, new_shape);
 }
 
@@ -202,7 +203,7 @@ absl::StatusOr<HloInstruction*> MakeSplitKOperand(
 
   // Add bitcast.
   const Shape& shape = operand->shape();
-  Shape new_shape(shape.element_type(), {}, {});
+  Shape new_shape(shape.element_type(), /*dimensions=*/{});
 
   for (int i = 0; i < shape.dimensions().size(); ++i) {
     const int64_t dimension_size = shape.dimensions(i);

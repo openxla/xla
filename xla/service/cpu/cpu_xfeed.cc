@@ -80,7 +80,7 @@ class CpuOutfeedBuffer : public cpu::runtime::XfeedBuffer {
   void* destination_;
   int32_t length_;
   absl::StatusOr<Shape> status_;
-  tsl::Notification done_;
+  absl::Notification done_;
 };
 
 // Transfers infeed data to device. InfeedBuffer->Done() must be called to
@@ -156,7 +156,7 @@ absl::StatusOr<Shape> TransferBuffersFromOutfeedInternal(
     outfed_shapes.push_back(std::move(outfed_shape));
   }
   if (is_tuple) {
-    return ShapeUtil::MakeTupleShape(outfed_shapes);
+    return ShapeUtil::MakeValidatedTupleShape(outfed_shapes).value();
   }
   TF_RET_CHECK(outfed_shapes.size() == 1);
   return std::move(outfed_shapes[0]);

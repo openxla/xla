@@ -41,26 +41,27 @@ using ::tsl::testing::StatusIs;
 
 class LayoutUtilTest : public ::testing::Test {
  protected:
-  Shape MakeShapeWithLayout(
-      PrimitiveType element_type, absl::Span<const int64_t> dimensions,
-      absl::Span<const int64_t> minor_to_major,
-      absl::Span<const DimLevelType> dim_level_types = {}) {
-    Shape shape = ShapeUtil::MakeShape(element_type, dimensions);
-    *shape.mutable_layout() =
-        LayoutUtil::MakeLayout(minor_to_major, dim_level_types);
+  Shape MakeShapeWithLayout(PrimitiveType element_type,
+                            absl::Span<const int64_t> dimensions,
+                            absl::Span<const int64_t> minor_to_major) {
+    Shape shape =
+        ShapeUtil::MakeValidatedShape(element_type, dimensions).value();
+    *shape.mutable_layout() = LayoutUtil::MakeLayout(minor_to_major);
     return shape;
   }
 };
 
 TEST_F(LayoutUtilTest, TupleLayoutComparison) {
-  Shape shape =
-      ShapeUtil::MakeTupleShape({MakeShapeWithLayout(F32, {2, 3}, {0, 1})});
-  Shape other_shape =
-      ShapeUtil::MakeTupleShape({MakeShapeWithLayout(F32, {2, 2}, {0, 1})});
+  Shape shape = ShapeUtil::MakeValidatedTupleShape(
+                    {MakeShapeWithLayout(F32, {2, 3}, {0, 1})})
+                    .value();
+  Shape other_shape = ShapeUtil::MakeValidatedTupleShape(
+                          {MakeShapeWithLayout(F32, {2, 2}, {0, 1})})
+                          .value();
 
-  Shape tuple0 = ShapeUtil::MakeTupleShape({});
-  Shape tuple1 = ShapeUtil::MakeTupleShape({shape});
-  Shape tuple2 = ShapeUtil::MakeTupleShape({shape, shape});
+  Shape tuple0 = ShapeUtil::MakeValidatedTupleShape({}).value();
+  Shape tuple1 = ShapeUtil::MakeValidatedTupleShape({shape}).value();
+  Shape tuple2 = ShapeUtil::MakeValidatedTupleShape({shape, shape}).value();
 
   EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(tuple0, tuple0));
   EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(tuple0, tuple1));
@@ -72,7 +73,8 @@ TEST_F(LayoutUtilTest, TupleLayoutComparison) {
   EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(tuple1, tuple2));
   EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(tuple2, tuple1));
 
-  Shape other_tuple2 = ShapeUtil::MakeTupleShape({shape, other_shape});
+  Shape other_tuple2 =
+      ShapeUtil::MakeValidatedTupleShape({shape, other_shape}).value();
   EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(tuple2, tuple2));
   EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(tuple2, other_tuple2));
   EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(other_tuple2, tuple2));
@@ -101,70 +103,21 @@ TEST_F(LayoutUtilTest, CopyLayoutDenseArray) {
   EXPECT_FALSE(dst.has_layout());
 }
 
-TEST_F(LayoutUtilTest, CopyLayoutCSRArray) {
-  Shape src =
-      MakeShapeWithLayout(F32, {2, 3}, {1, 0}, {DIM_DENSE, DIM_COMPRESSED});
-  Shape dst = MakeShapeWithLayout(F32, {2, 3}, {0, 1});
-
-  EXPECT_TRUE(LayoutUtil::IsSparseArray(src));
-  EXPECT_FALSE(LayoutUtil::IsSparseArray(dst));
-
-  EXPECT_TRUE(LayoutUtil::IsCSRArray(src));
-  EXPECT_FALSE(LayoutUtil::IsCSRArray(dst));
-
-  EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
-  EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_TRUE(LayoutUtil::IsCSRArray(dst));
-
-  // Should work if destination has no layout.
-  dst.clear_layout();
-  EXPECT_FALSE(LayoutUtil::IsCSRArray(dst));
-  EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
-  EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_TRUE(LayoutUtil::IsCSRArray(dst));
-
-  // Convert dst to a CSC array with dim 0 minor layout.
-  *dst.mutable_layout()->mutable_minor_to_major() = {0, 1};
-  EXPECT_TRUE(LayoutUtil::IsCSCArray(dst));
-  EXPECT_FALSE(LayoutUtil::IsCSRArray(dst));
-
-  EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
-  *src.mutable_layout()->mutable_physical_shape() = ShapeUtil::MakeTupleShape({
-      ShapeUtil::MakeShapeWithDenseLayout(U32, {2}, {0}, {Tile({100})}),
-      ShapeUtil::MakeShapeWithDenseLayout(U32, {4}, {0}, {Tile({100})}),
-      ShapeUtil::MakeShapeWithDenseLayout(F32, {4}, {0}, {Tile({100})}),
-  });
-  EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  dst.clear_layout();
-  EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
-  EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-
-  // If source is cleared, then destination should be cleared.
-  src.clear_layout();
-  EXPECT_FALSE(LayoutUtil::IsCSRArray(src));
-  EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_TRUE(dst.has_layout());
-  EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
-  EXPECT_TRUE(LayoutUtil::LayoutsInShapesEqual(src, dst));
-  EXPECT_FALSE(dst.has_layout());
-  EXPECT_FALSE(LayoutUtil::IsCSRArray(dst));
-}
-
 TEST_F(LayoutUtilTest, CopyLayoutTuple) {
-  Shape src = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
-       ShapeUtil::MakeTupleShape(
-           {MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {0, 2, 1})})});
-  Shape dst = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
-       ShapeUtil::MakeTupleShape(
-           {MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})});
+  Shape src = ShapeUtil::MakeValidatedTupleShape(
+                  {MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
+                   MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+                   ShapeUtil::MakeTupleShape(
+                       {MakeShapeWithLayout(F32, {}, {}),
+                        MakeShapeWithLayout(F32, {1, 2, 3}, {0, 2, 1})})})
+                  .value();
+  Shape dst = ShapeUtil::MakeValidatedTupleShape(
+                  {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
+                   MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+                   ShapeUtil::MakeTupleShape(
+                       {MakeShapeWithLayout(F32, {}, {}),
+                        MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})})
+                  .value();
 
   EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
   EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
@@ -187,17 +140,19 @@ TEST_F(LayoutUtilTest, CopyLayoutNotCompatibleDifferentRank) {
 }
 
 TEST_F(LayoutUtilTest, CopyLayoutNotCompatibleTuple) {
-  Shape src =
-      ShapeUtil::MakeTupleShape({MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
-                                 MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
-                                 ShapeUtil::MakeTupleShape({MakeShapeWithLayout(
-                                     F32, {1, 2, 3}, {0, 2, 1})})});
-  Shape dst = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
-       ShapeUtil::MakeTupleShape(
-           {MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})});
+  Shape src = ShapeUtil::MakeValidatedTupleShape(
+                  {MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
+                   MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+                   ShapeUtil::MakeTupleShape(
+                       {MakeShapeWithLayout(F32, {1, 2, 3}, {0, 2, 1})})})
+                  .value();
+  Shape dst = ShapeUtil::MakeValidatedTupleShape(
+                  {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
+                   MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+                   ShapeUtil::MakeTupleShape(
+                       {MakeShapeWithLayout(F32, {}, {}),
+                        MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})})
+                  .value();
 
   auto status = LayoutUtil::CopyLayoutBetweenShapes(src, &dst);
   EXPECT_FALSE(status.ok());
@@ -205,8 +160,8 @@ TEST_F(LayoutUtilTest, CopyLayoutNotCompatibleTuple) {
 }
 
 TEST_F(LayoutUtilTest, CopyLayoutBogusLayout) {
-  Shape src = ShapeUtil::MakeShape(F32, {2, 3});
-  Shape dst = ShapeUtil::MakeShape(F32, {2, 3});
+  Shape src = ShapeUtil::MakeValidatedShape(F32, {2, 3}).value();
+  Shape dst = ShapeUtil::MakeValidatedShape(F32, {2, 3}).value();
   // Set layout to invalid value.
   *src.mutable_layout() = LayoutUtil::MakeLayout({1, 2, 3, 4});
 
@@ -240,18 +195,24 @@ TEST_F(LayoutUtilTest, CopyOpaqueLayout) {
 }
 
 TEST_F(LayoutUtilTest, CopyTupleLayoutWithTokenAndOpaque) {
-  Shape src = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}), ShapeUtil::MakeTokenShape(),
-       ShapeUtil::MakeTupleShape(
-           {ShapeUtil::MakeOpaqueShape(), MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {0, 2, 1})})});
-  Shape dst = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}), ShapeUtil::MakeTokenShape(),
-       ShapeUtil::MakeTupleShape(
-           {ShapeUtil::MakeOpaqueShape(), MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})});
+  Shape src =
+      ShapeUtil::MakeValidatedTupleShape(
+          {MakeShapeWithLayout(F32, {2, 3}, {0, 1}),
+           MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+           ShapeUtil::MakeTokenShape(),
+           ShapeUtil::MakeTupleShape(
+               {ShapeUtil::MakeOpaqueShape(), MakeShapeWithLayout(F32, {}, {}),
+                MakeShapeWithLayout(F32, {1, 2, 3}, {0, 2, 1})})})
+          .value();
+  Shape dst =
+      ShapeUtil::MakeValidatedTupleShape(
+          {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
+           MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+           ShapeUtil::MakeTokenShape(),
+           ShapeUtil::MakeTupleShape(
+               {ShapeUtil::MakeOpaqueShape(), MakeShapeWithLayout(F32, {}, {}),
+                MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})})
+          .value();
 
   EXPECT_FALSE(LayoutUtil::LayoutsInShapesEqual(src, dst));
   EXPECT_IS_OK(LayoutUtil::CopyLayoutBetweenShapes(src, &dst));
@@ -259,12 +220,13 @@ TEST_F(LayoutUtilTest, CopyTupleLayoutWithTokenAndOpaque) {
 }
 
 TEST_F(LayoutUtilTest, ClearLayoutTuple) {
-  Shape shape = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
-       MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
-       ShapeUtil::MakeTupleShape(
-           {MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})});
+  Shape shape = ShapeUtil::MakeValidatedTupleShape(
+                    {MakeShapeWithLayout(F32, {2, 3}, {1, 0}),
+                     MakeShapeWithLayout(F32, {42, 123}, {1, 0}),
+                     ShapeUtil::MakeTupleShape(
+                         {MakeShapeWithLayout(F32, {}, {}),
+                          MakeShapeWithLayout(F32, {1, 2, 3}, {1, 2, 0})})})
+                    .value();
   EXPECT_TRUE(LayoutUtil::HasLayout(shape));
   EXPECT_TRUE(shape.tuple_shapes(0).has_layout());
   EXPECT_TRUE(shape.tuple_shapes(2).tuple_shapes(1).has_layout());
@@ -287,12 +249,14 @@ TEST_F(LayoutUtilTest, ClearLayoutOpaqueAndToken) {
 }
 
 TEST_F(LayoutUtilTest, SetToDefaultLayoutTuple) {
-  Shape shape = ShapeUtil::MakeTupleShape(
-      {MakeShapeWithLayout(F32, {2, 3, 4}, {1, 0, 2}),
-       MakeShapeWithLayout(F32, {42, 123, 7}, {1, 2, 0}),
-       ShapeUtil::MakeTupleShape(
-           {MakeShapeWithLayout(F32, {}, {}),
-            MakeShapeWithLayout(F32, {1, 2, 3, 4}, {3, 1, 2, 0})})});
+  Shape shape =
+      ShapeUtil::MakeValidatedTupleShape(
+          {MakeShapeWithLayout(F32, {2, 3, 4}, {1, 0, 2}),
+           MakeShapeWithLayout(F32, {42, 123, 7}, {1, 2, 0}),
+           ShapeUtil::MakeTupleShape(
+               {MakeShapeWithLayout(F32, {}, {}),
+                MakeShapeWithLayout(F32, {1, 2, 3, 4}, {3, 1, 2, 0})})})
+          .value();
   EXPECT_FALSE(LayoutUtil::Equal(shape.tuple_shapes(0).layout(),
                                  shape.tuple_shapes(1).layout()));
   LayoutUtil::SetToDefaultLayout(&shape);
@@ -310,10 +274,10 @@ TEST_F(LayoutUtilTest, DefaultLayoutGettersMajorToMinor) {
                                 LayoutUtil::GetDefaultLayoutForR3()));
   EXPECT_TRUE(LayoutUtil::Equal(LayoutUtil::MakeLayout({3, 2, 1, 0}),
                                 LayoutUtil::GetDefaultLayoutForR4()));
-  EXPECT_TRUE(
-      LayoutUtil::Equal(LayoutUtil::MakeLayout({4, 3, 2, 1, 0}),
-                        LayoutUtil::GetDefaultLayoutForShape(
-                            ShapeUtil::MakeShape(F32, {10, 20, 30, 15, 25}))));
+  EXPECT_TRUE(LayoutUtil::Equal(
+      LayoutUtil::MakeLayout({4, 3, 2, 1, 0}),
+      LayoutUtil::GetDefaultLayoutForShape(
+          ShapeUtil::MakeValidatedShape(F32, {10, 20, 30, 15, 25}).value())));
 }
 
 TEST_F(LayoutUtilTest, MakeDescending) {
@@ -421,7 +385,7 @@ TEST_F(LayoutUtilTest, ValidateLayout_ValidArrayLayout) {
 }
 
 TEST_F(LayoutUtilTest, ValidateLayout_InvalidArrayLayout) {
-  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {2, 3}).value();
   *shape.mutable_layout() = LayoutUtil::MakeLayout({0, 1, 2});
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
@@ -437,28 +401,8 @@ TEST_F(LayoutUtilTest, ValidateLayout_InvalidArrayLayout) {
                         "contains 3 elements, but shape has 2 dimensions"));
 }
 
-TEST_F(LayoutUtilTest, ValidateLayout_InvalidDimLevelTypes) {
-  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
-  *shape.mutable_layout() = LayoutUtil::MakeLayout({0, 1});
-  shape.mutable_layout()->add_dim_level_type(DIM_DENSE);
-  shape.mutable_layout()->add_dim_level_type(DIM_DENSE);
-  shape.mutable_layout()->add_dim_level_type(DIM_DENSE);
-  auto status =
-      LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.message(),
-              HasSubstr("layout dim_level_types field "
-                        "contains 3 elements, but shape has 2 dimensions"));
-  status =
-      LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.message(),
-              HasSubstr("layout dim_level_types field "
-                        "contains 3 elements, but shape has 2 dimensions"));
-}
-
 TEST_F(LayoutUtilTest, ValidateLayout_MissingArrayLayout) {
-  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {2, 3}).value();
   LayoutUtil::ClearLayout(&shape);
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
@@ -470,47 +414,16 @@ TEST_F(LayoutUtilTest, ValidateLayout_MissingArrayLayout) {
   EXPECT_TRUE(status.ok());
 }
 
-TEST_F(LayoutUtilTest, ValidateLayout_Sparse) {
-  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
-  *shape.mutable_layout() = LayoutUtil::MakeLayout(
-      {1, 0}, {DIM_DENSE, DIM_COMPRESSED}, {Tile({10, 10})});
-  EXPECT_THAT(
-      LayoutUtil::ValidateLayoutInShape(shape),
-      StatusIs(tsl::error::INVALID_ARGUMENT,
-               HasSubstr("layout has tiles, but the shape is a sparse array")));
-  shape.mutable_layout()->clear_tiles();
-  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(shape), IsOk());
-  *shape.mutable_layout()->mutable_physical_shape() =
-      ShapeUtil::MakeShape(F32, {6});
-  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(shape), IsOk());
-  *shape.mutable_layout()
-       ->mutable_physical_shape()
-       ->mutable_layout()
-       ->mutable_physical_shape() = ShapeUtil::MakeShape(S32, {10});
-  EXPECT_THAT(
-      LayoutUtil::ValidateLayoutInShape(shape),
-      StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("layout has a physical_shape, but is not a sparse array")));
-  shape.mutable_layout()->mutable_physical_shape()->clear_layout();
-  shape.mutable_layout()->clear_dim_level_types();
-  EXPECT_THAT(
-      LayoutUtil::ValidateLayoutInShape(shape),
-      StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("layout has a physical_shape, but is not a sparse array")));
-}
-
 TEST_F(LayoutUtilTest, ValidateLayout_TupleSubshapesWithMissingLayouts) {
-  Shape sub_1_1_1 = ShapeUtil::MakeShape(F32, {1, 2});
-  Shape sub_1_1 = ShapeUtil::MakeTupleShape({sub_1_1_1});
-  Shape sub_1_2 = ShapeUtil::MakeShape(F32, {1, 2});
+  Shape sub_1_1_1 = ShapeUtil::MakeValidatedShape(F32, {1, 2}).value();
+  Shape sub_1_1 = ShapeUtil::MakeValidatedTupleShape({sub_1_1_1}).value();
+  Shape sub_1_2 = ShapeUtil::MakeValidatedShape(F32, {1, 2}).value();
   LayoutUtil::ClearLayout(&sub_1_2);
-  Shape sub_1 = ShapeUtil::MakeTupleShape({sub_1_1, sub_1_2});
-  Shape sub_2_1 = ShapeUtil::MakeShape(F32, {9});
+  Shape sub_1 = ShapeUtil::MakeValidatedTupleShape({sub_1_1, sub_1_2}).value();
+  Shape sub_2_1 = ShapeUtil::MakeValidatedShape(F32, {9}).value();
   LayoutUtil::ClearLayout(&sub_2_1);
-  Shape sub_2 = ShapeUtil::MakeTupleShape({sub_2_1});
-  Shape shape = ShapeUtil::MakeTupleShape({sub_1, sub_2});
+  Shape sub_2 = ShapeUtil::MakeValidatedTupleShape({sub_2_1}).value();
+  Shape shape = ShapeUtil::MakeValidatedTupleShape({sub_1, sub_2}).value();
 
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
@@ -561,27 +474,29 @@ TEST_F(LayoutUtilTest, StridesNotMajorToMinor) {
 }
 
 TEST_F(LayoutUtilTest, HasCustomElementSizeInBits) {
-  Shape shape = ShapeUtil::MakeShape(F32, {1, 2});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {1, 2}).value();
   EXPECT_FALSE(LayoutUtil::HasCustomElementSizeInBits(shape));
 
-  shape = ShapeUtil::MakeShape(F32, {1, 2});
+  shape = ShapeUtil::MakeValidatedShape(F32, {1, 2}).value();
   shape.mutable_layout()->set_element_size_in_bits(0);
   EXPECT_FALSE(LayoutUtil::HasCustomElementSizeInBits(shape));
 
-  shape = ShapeUtil::MakeShape(F32, {1, 2});
+  shape = ShapeUtil::MakeValidatedShape(F32, {1, 2}).value();
   shape.mutable_layout()->set_element_size_in_bits(32);
   EXPECT_TRUE(LayoutUtil::HasCustomElementSizeInBits(shape));
 
-  shape = ShapeUtil::MakeTupleShape(
-      {ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {1, 2}),
-                                  ShapeUtil::MakeShape(F32, {1, 2})}),
-       ShapeUtil::MakeShape(F32, {1, 2})});
+  shape = ShapeUtil::MakeValidatedTupleShape(
+              {ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {1, 2}),
+                                          ShapeUtil::MakeShape(F32, {1, 2})}),
+               ShapeUtil::MakeShape(F32, {1, 2})})
+              .value();
   EXPECT_FALSE(LayoutUtil::HasCustomElementSizeInBits(shape));
 
-  shape = ShapeUtil::MakeTupleShape(
-      {ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {1, 2}),
-                                  ShapeUtil::MakeShape(F32, {1, 2})}),
-       ShapeUtil::MakeShape(F32, {1, 2})});
+  shape = ShapeUtil::MakeValidatedTupleShape(
+              {ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {1, 2}),
+                                          ShapeUtil::MakeShape(F32, {1, 2})}),
+               ShapeUtil::MakeShape(F32, {1, 2})})
+              .value();
   ShapeUtil::GetMutableSubshape(&shape, {0, 1})
       ->mutable_layout()
       ->set_element_size_in_bits(32);
@@ -589,7 +504,7 @@ TEST_F(LayoutUtilTest, HasCustomElementSizeInBits) {
 }
 
 TEST_F(LayoutUtilTest, MaxSplitSize) {
-  Shape shape = ShapeUtil::MakeShape(F32, {150, 200, 100});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {150, 200, 100}).value();
   *shape.mutable_layout() = LayoutUtil::MakeLayout({0, 1, 2})
                                 .add_split_configs(SplitConfig(0, {30}))
                                 .add_split_configs(SplitConfig(1, {40, 130}));
@@ -600,7 +515,7 @@ TEST_F(LayoutUtilTest, MaxSplitSize) {
 }
 
 TEST_F(LayoutUtilTest, MaxElementsInPerSplit) {
-  Shape shape = ShapeUtil::MakeShape(F32, {150, 200, 100});
+  Shape shape = ShapeUtil::MakeValidatedShape(F32, {150, 200, 100}).value();
   *shape.mutable_layout() = LayoutUtil::MakeLayout({0, 1, 2});
   EXPECT_EQ(LayoutUtil::MaxElementsInPerSplit(shape), 150 * 200 * 100);
 

@@ -67,7 +67,8 @@ class CoordinationService {
       std::function<void(const absl::StatusOr<absl::string_view>&)>;
   using BarrierCallback = std::function<void(const absl::Status&, int64_t)>;
   using GetAliveTasksCallback = std::function<void(
-      const absl::Status&, const std::vector<tensorflow::CoordinatedTask>&)>;
+      const absl::Status&, const std::vector<tensorflow::CoordinatedTask>&,
+      const std::vector<uint64_t> incarnations)>;
 
   // Convenience structs to allow using CoordinatedTask as container keys.
   struct CoordinatedTaskHash {
@@ -364,6 +365,9 @@ class CoordinationService {
     absl::flat_hash_map<tensorflow::CoordinatedTask, bool, CoordinatedTaskHash,
                         CoordinatedTaskEqual>
         tasks_at_barrier;
+    absl::flat_hash_set<tensorflow::CoordinatedTask, CoordinatedTaskHash,
+                        CoordinatedTaskEqual>
+        recoverable_tasks_restarted_during_barrier;
     absl::flat_hash_map<tensorflow::CoordinatedTask, BarrierCallback,
                         CoordinatedTaskHash, CoordinatedTaskEqual>
         done_callbacks;
@@ -448,6 +452,12 @@ class CoordinationService {
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
   bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+
+  // Checks if the barrier can be passed, if recoverable tasks reconnected or
+  // disconnected to the service while barrier is ongoing.
+  // This is only applicable if leave_barriers_on_recoverable_agent_restart flag
+  // is set to true.
+  void CheckBarrierStatusWithRecoverableTasks();
 
   class ErrorPollingState {
    public:
@@ -575,6 +585,10 @@ class CoordinationService {
 
   // Returns the set of alive tasks drawn from the provided set of tasks.
   CoordinatedTaskSet AliveTasks(const CoordinatedTaskSet& tasks) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+
+  // Returns the incarnation ids of the provided tasks in sorted order.
+  std::vector<uint64_t> CoordinationIds(const CoordinatedTaskSet& tasks) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   // Refreshes the AlivenessStates of all pending GetAliveTasks call,

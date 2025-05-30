@@ -87,11 +87,14 @@ TEST_P(XnnConvolutionThunkTest, SimpleConvolution) {
 
   // Input format is NHWC.
   auto input_shape =
-      ShapeUtil::MakeShape(F32, {batch, height, width, input_channels});
+      ShapeUtil::MakeValidatedShape(F32, {batch, height, width, input_channels})
+          .value();
 
   // Kernel format is HWIO.
-  auto kernel_shape = ShapeUtil::MakeShape(
-      F32, {kernel_h, kernel_w, input_channels, output_channels});
+  auto kernel_shape =
+      ShapeUtil::MakeValidatedShape(
+          F32, {kernel_h, kernel_w, input_channels, output_channels})
+          .value();
 
   auto input =
       *LiteralUtil::CreateRandomLiteral<F32>(input_shape, &engine, 1.0f, 0.1f);
@@ -173,6 +176,13 @@ TEST_P(XnnConvolutionThunkTest, SimpleConvolution) {
   ASSERT_FALSE(execute_event.IsError()) << execute_event.GetError();
 
   ErrorSpec error_spec{1e-5};
+  EXPECT_TRUE(LiteralTestUtil::Near(expected_result, out, error_spec));
+
+  // Execute thunk one more time to test that we reuse XNN runtime.
+  execute_event = thunk->Execute(params);
+  tsl::BlockUntilReady(execute_event);
+  ASSERT_FALSE(execute_event.IsError()) << execute_event.GetError();
+
   EXPECT_TRUE(LiteralTestUtil::Near(expected_result, out, error_spec));
 }
 

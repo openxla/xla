@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/SpecialFunctions"
 #include "xla/client/local_client.h"
@@ -94,8 +95,10 @@ class ScalarBF16Test
     : public PrngTest,
       public ::testing::WithParamInterface<ScalarBF16TestCase> {};
 
-XLA_TEST_P(ScalarBF16Test,
-           DISABLED_ON_INTERPRETER(DISABLED_ON_GPU(DISABLED_ON_CPU(DoIt)))) {
+XLA_TEST_P(ScalarBF16Test, DoIt) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+    GTEST_SKIP();
+  }
   auto test_params = GetParam();
   UniformTest<bfloat16>(static_cast<bfloat16>(std::get<1>(test_params).first),
                         static_cast<bfloat16>(std::get<1>(test_params).second),
@@ -120,8 +123,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 // TODO(b/71543667): Fix Rng ops on LLVM backends.
 // TODO(b/122047800): Interpreter does not support BF16 for RNG ops.
-XLA_TEST_F(PrngTest, DISABLED_ON_INTERPRETER(DISABLED_ON_GPU(
-                         DISABLED_ON_CPU(ScalarBF16CountTests)))) {
+XLA_TEST_F(PrngTest, ScalarBF16CountTests) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+    GTEST_SKIP();
+  }
   // There are 3 BF16 values in the range of [32.25, 33): 32.25, 32.5, 32.75,
   // they should get similar counts.
   bfloat16 low = static_cast<bfloat16>(32.25);
@@ -178,7 +183,7 @@ void PrngTest::UniformChiSquared(int32_t range_size, int32_t expected_count,
   XlaBuilder builder(TestName());
   RngUniform(ConstantR0<int32_t>(&builder, 0),
              ConstantR0<int32_t>(&builder, range_size),
-             ShapeUtil::MakeShape(S32, {sample_size}));
+             ShapeUtil::MakeValidatedShape(S32, {sample_size}).value());
 
   SetSeed(seed);
   auto actual = ExecuteAndTransfer(&builder, /*arguments=*/{}).value();
@@ -230,14 +235,18 @@ XLA_TEST_F(PrngTest, Uniformity256) { UniformChiSquared(256, 256); }
 
 // TODO(b/134770669): May remove this test if we decide not to support map
 //                    computations with kRng instructions.
-XLA_TEST_F(PrngTest, DISABLED_ON_GPU(DISABLED_ON_CPU(MapUsingRng))) {
+XLA_TEST_F(PrngTest, MapUsingRng) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu})) {
+    GTEST_SKIP();
+  }
   // Build a x -> (x + U[0,1)) computation.
   auto build_sum_rng = [](XlaBuilder& builder) {
     auto b = builder.CreateSubBuilder("sum_with_rng");
-    auto x = Parameter(b.get(), 0, ShapeUtil::MakeShape(F32, {}), "input");
+    auto x = Parameter(b.get(), 0,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "input");
     Add(x,
         RngUniform(ConstantR0<float>(b.get(), 0), ConstantR0<float>(b.get(), 1),
-                   ShapeUtil::MakeShape(F32, {})));
+                   ShapeUtil::MakeValidatedShape(F32, {}).value()));
     return b->BuildAndNoteError();
   };
 
@@ -278,7 +287,7 @@ XLA_TEST_F(PrngTest, PassInGlobalRngSeed) {
   auto build_computation = [this]() {
     XlaBuilder builder(TestName());
     RngUniform(ConstantR0<float>(&builder, 0), ConstantR0<float>(&builder, 1),
-               ShapeUtil::MakeShape(F32, {10}));
+               ShapeUtil::MakeValidatedShape(F32, {10}).value());
     return builder.Build();
   };
 
@@ -338,10 +347,10 @@ XLA_TEST_F(PrngTest, DifferentValuesForIdenticalRngNodesInSameComputation) {
     XlaBuilder builder(TestName());
     auto a = RngUniform(ConstantR0<int32_t>(&builder, 0),
                         ConstantR0<int32_t>(&builder, 100),
-                        ShapeUtil::MakeShape(S32, {10}));
+                        ShapeUtil::MakeValidatedShape(S32, {10}).value());
     auto b = RngUniform(ConstantR0<int32_t>(&builder, 0),
                         ConstantR0<int32_t>(&builder, 100),
-                        ShapeUtil::MakeShape(S32, {10}));
+                        ShapeUtil::MakeValidatedShape(S32, {10}).value());
     Tuple(&builder, {a, b});
     return builder.Build();
   };
@@ -366,7 +375,7 @@ XLA_TEST_F(PrngTest, DifferentValuesForIdenticalRngNodesInSameComputation) {
 XLA_TEST_F(PrngTest, TenValuesN01) {
   XlaBuilder builder(TestName());
   RngNormal(ConstantR0<float>(&builder, 0), ConstantR0<float>(&builder, 1),
-            ShapeUtil::MakeShape(F32, {10}));
+            ShapeUtil::MakeValidatedShape(F32, {10}).value());
 
   SetSeed(42);
   ExecuteAndTransfer(&builder, /*arguments=*/{}).value();
@@ -379,7 +388,7 @@ XLA_TEST_F(PrngTest, RngUniformCrash) {
   // This used to crash XLA during LLVM IR generation for CPUs.
   RngUniform(ConstantR0<int32_t>(&builder, 0),
              ConstantR0<int32_t>(&builder, 1000 * 1000),
-             ShapeUtil::MakeShape(S32, {}));
+             ShapeUtil::MakeValidatedShape(S32, {}).value());
   SetSeed(0);
   ExecuteAndTransfer(&builder, /*arguments=*/{}).value();
 }

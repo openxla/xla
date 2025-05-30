@@ -49,7 +49,8 @@ using ::tsl::thread::ThreadPool;
 TEST(TfrtGpuBufferTest, CreateBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
 
-  Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  Shape on_device_shape =
+      ShapeUtil::MakeValidatedShapeWithType<int32_t>({4, 4}).value();
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
@@ -63,6 +64,7 @@ TEST(TfrtGpuBufferTest, CreateBuffer) {
           std::move(device_buffer));
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref),
+      tsl::MakeAvailableAsyncValueRef<GpuEvent>(),
       tsl::MakeAvailableAsyncValueRef<GpuEvent>());
   auto memory_space = device->default_memory_space().value();
   auto buffer = std::make_unique<TfrtGpuBuffer>(
@@ -80,7 +82,8 @@ TEST(TfrtGpuBufferTest, CreateBuffer) {
 TEST(TfrtGpuBufferTest, AcquireExternalReference) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
 
-  Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  Shape on_device_shape =
+      ShapeUtil::MakeValidatedShapeWithType<int32_t>({4, 4}).value();
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
@@ -94,7 +97,7 @@ TEST(TfrtGpuBufferTest, AcquireExternalReference) {
           std::move(device_buffer));
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
-      std::move(buffer_async_value_ref), definition_event);
+      std::move(buffer_async_value_ref), definition_event, definition_event);
   auto memory_space = device->default_memory_space().value();
   auto buffer = std::make_unique<TfrtGpuBuffer>(
       on_device_shape, std::move(tracked_device_buffer),
@@ -126,7 +129,8 @@ TEST(TfrtGpuBufferTest, AcquireExternalReference) {
 TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
 
-  Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  Shape on_device_shape =
+      ShapeUtil::MakeValidatedShapeWithType<int32_t>({4, 4}).value();
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
@@ -142,7 +146,7 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
-      std::move(buffer_async_value_ref), definition_event);
+      std::move(buffer_async_value_ref), definition_event, definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   std::array usage_events{usage_event.CopyRef()};
@@ -174,7 +178,8 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
 TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
 
-  Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  Shape on_device_shape =
+      ShapeUtil::MakeValidatedShapeWithType<int32_t>({4, 4}).value();
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
@@ -190,7 +195,7 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
-      std::move(buffer_async_value_ref), definition_event);
+      std::move(buffer_async_value_ref), definition_event, definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   std::array usage_events{usage_event.CopyRef()};
@@ -243,7 +248,8 @@ TEST(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
 TEST(TfrtGpuBufferTest, Delete) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
 
-  Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  Shape on_device_shape =
+      ShapeUtil::MakeValidatedShapeWithType<int32_t>({4, 4}).value();
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
@@ -258,7 +264,7 @@ TEST(TfrtGpuBufferTest, Delete) {
 
   auto definition_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
-      std::move(buffer_async_value_ref), definition_event);
+      std::move(buffer_async_value_ref), definition_event, definition_event);
 
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   std::array usage_events{usage_event.CopyRef()};
@@ -293,7 +299,7 @@ TEST(TfrtGpuBufferTest, IsDeviceShapeWhenStaticShape) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtGpuClient(GpuClientOptions()));
   std::vector<int32_t> data{1, 2, 3, 4, 5, 6};
   for (PrimitiveType t : {F32, F16, S8, BF16}) {
-    Shape shape = ShapeUtil::MakeShape(t, {3, 2});
+    Shape shape = ShapeUtil::MakeValidatedShape(t, {3, 2}).value();
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PjRtBuffer> buffer,
         client->BufferFromHostBuffer(

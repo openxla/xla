@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -433,6 +434,9 @@ class HloEdge {
   HloGraphNode& Target() { return *target_; }
   HloGraphNode* TargetPtr() { return target_; }
   std::string ToString() const;
+  std::optional<std::vector<int64_t>>& GetMutableSharableResources() {
+    return sharable_resources_;
+  }
 
  private:
   // Latency between the two nodes connected by this edge. The other end of the
@@ -444,6 +448,8 @@ class HloEdge {
   LatencyEstimator::TimeCost original_latency_;
   // Target node of this edge.
   HloGraphNode* target_;
+  // List of shareable resources on this edge.
+  std::optional<std::vector<int64_t>> sharable_resources_;
 };
 
 // Node in the schedule graph, plus information used for scheduling.
@@ -496,14 +502,29 @@ class HloGraphNode {
                             const LatencyEstimator* latency_estimator) {
     AddDependency(from, to, latency_estimator->GetLatencyBetween(*from, *to));
   }
-
+  size_t GetReadyNodesIfScheduled() const { return ready_nodes_if_scheduled_; }
+  void UpdateReadyNodesIfScheduled() {
+    ready_nodes_if_scheduled_ = 0;
+    for (auto& pred : GetPredecessors()) {
+      if (pred.Target().GetOutdegree() == 1) {
+        ++ready_nodes_if_scheduled_;
+      }
+    }
+  }
   const HloInstruction& GetInstr() const { return *instr_; }
   bool IsScheduled() const { return scheduled_; }
   int32_t GetIndegree() const { return indegree_; }
   int32_t GetOutdegree() const { return outdegree_; }
   TimeCost GetReadyTime() const { return ready_time_; }
-  void SetIndegree(int64_t indeg) { indegree_ = indeg; }
-  void SetOutdegree(int64_t outdeg) { outdegree_ = outdeg; }
+  void SetIndegree(int32_t indeg) { indegree_ = indeg; }
+  void SetOutdegree(int32_t outdeg) {
+    outdegree_ = outdeg;
+    if (outdeg == 1) {
+      for (HloEdge& succ : GetSuccessors()) {
+        succ.Target().UpdateReadyNodesIfScheduled();
+      }
+    }
+  }
   void SetScheduled() { scheduled_ = true; }
   void SetReadyTime(TimeCost ready_time) { ready_time_ = ready_time; }
   TimeCost GetCost() const { return cost_; }
@@ -512,6 +533,8 @@ class HloGraphNode {
   TimeCost GetDepth() const { return depth_; }
   TimeCost GetGraphDepth() const { return graph_depth_; }
   void SetAsyncDepth(TimeCost async_depth) { async_depth_ = async_depth; }
+  bool IsSupportedAsyncDone() const { return is_supported_async_done_; }
+  bool IsSupportedAsyncStart() const { return is_supported_async_start_; }
   void SetDepth(TimeCost depth) { depth_ = depth; }
   void SetGraphDepth(TimeCost graph_depth) { graph_depth_ = graph_depth; }
   bool GetForceDelay() const { return force_delay_; }
@@ -545,16 +568,8 @@ class HloGraphNode {
         num_hops_to_closest_selective_resource_occupier;
   }
   ResourcesVector GetResources() const { return resources_; }
-  bool DoesOccupyAnyResource() const {
-    return absl::c_any_of(resources_, [](const ResourcePair& resource) {
-      return resource.second == ResourceUsageType::kResourceOccupy;
-    });
-  }
-  bool DoesReleaseAnyResource() const {
-    return absl::c_any_of(resources_, [](const ResourcePair& resource) {
-      return resource.second == ResourceUsageType::kResourceRelease;
-    });
-  }
+  bool DoesOccupyAnyResource() { return does_occupy_any_resource_; }
+  bool DoesReleaseAnyResource() { return does_release_any_resource_; }
   bool DoesOccupyShareableResource(int64_t resource) const {
     return absl::c_linear_search(occupied_shareable_resources_, resource);
   }
@@ -613,17 +628,26 @@ class HloGraphNode {
     }
     return std::nullopt;
   }
-  std::vector<int64_t> GetShareableResourcesOnEdge(const HloEdge& edge) const {
-    HloGraphNode to = edge.Target();
-    std::vector<int64_t> resources;
+  const std::vector<int64_t>& GetShareableResourcesOnEdge(HloEdge& edge) const {
+    HloGraphNode& to = edge.Target();
+    std::optional<std::vector<int64_t>>& resources =
+        edge.GetMutableSharableResources();
+    if (resources.has_value()) {
+      return *resources;
+    }
+    resources = std::vector<int64_t>();
     absl::c_for_each(released_shareable_resources_,
                      [this, &to, &resources](const int64_t resource) {
                        if (to.DoesOccupyShareableResource(resource) &&
                            this->DoesReleaseResource(resource)) {
-                         resources.push_back(resource);
+                         resources->push_back(resource);
                        }
                      });
-    return resources;
+    return *resources;
+  }
+  const absl::InlinedVector<int64_t, 1>& GetReleasedNonExtendableResources()
+      const {
+    return released_non_extendable_resources_;
   }
   absl::Span<HloEdge> GetPredecessors() {
     return absl::MakeSpan(predecessors_);
@@ -676,6 +700,12 @@ class HloGraphNode {
     }
     return result;
   }
+  const absl::flat_hash_map<int64_t, int64_t>& GetRecursiveResources() const {
+    return recursive_resources_;
+  }
+  bool HasOperandThatIsSupportedAsyncDone() const {
+    return has_operand_that_is_supported_async_done_;
+  }
 
  private:
   friend class HloScheduleGraph;
@@ -708,12 +738,26 @@ class HloGraphNode {
   int64_t graph_depth_ = 0;
   // AsyncResources used by the node.
   ResourcesVector resources_;
+  // Does the node occupy any resource.
+  bool does_occupy_any_resource_ = false;
+  // Does the node release any resource.
+  bool does_release_any_resource_ = false;
+  // Recursive resources used by the node.
+  absl::flat_hash_map<int64_t, int64_t> recursive_resources_;
+  // Is the node a supported async done.
+  bool is_supported_async_done_ = false;
+  // Is the node a supported async start.
+  bool is_supported_async_start_ = false;
+  // Whether the instruction has an operand which is a supported async done.
+  bool has_operand_that_is_supported_async_done_ = false;
   // Force the scheduling of the nodes with attribute set as late as possible.
   bool force_delay_ = false;
   // Force the scheduling of the nodes with attribute set as early as possible.
   bool force_early_ = false;
   // Whether this node has been scheduled or not yet.
   bool scheduled_ = false;
+  // Non-extendable resources released by this node.
+  absl::InlinedVector<int64_t, 1> released_non_extendable_resources_;
   // Shareable resources released by this node.
   absl::InlinedVector<int64_t, 1> released_shareable_resources_;
   // Shareable resources occupied by this node.
@@ -729,6 +773,8 @@ class HloGraphNode {
   int64_t num_hops_to_closest_selective_resource_occupier_ =
       std::numeric_limits<int64_t>::max();
   int64_t annotation_ = kInvalidAnnotation;
+  // Number of ready nodes if this node is scheduled.
+  size_t ready_nodes_if_scheduled_ = 0;
 };
 
 // Schedule graph that can be used to drive scheduling
@@ -844,7 +890,7 @@ class MemoryPressureTracker {
         pressure_state_cache_(pressure_state_cache),
         live_memory_usage_(0),
         initial_memory_pressure_(0) {}
-  // Intiialize object to be ready to start tracking of computation.
+  // Initialize object to be ready to start tracking of computation.
   void Initialize(const HloComputation* computation,
                   const LiveBufferSet& initial_live_buffers);
   // After an instruction is scheduled, update the memory pressure effect on
@@ -1056,31 +1102,24 @@ class DefaultSchedulerCore : public SchedulerCore {
   };
 
   struct CandidateResult {
-    ScheduleCandidate result;
+    const ScheduleCandidate& result;
     const char* reason;
   };
 
   using TargetSchedulingRule = std::function<std::optional<CandidateResult>(
       ScheduleCandidate&, ScheduleCandidate&)>;
 
-  // Returns nullopt if both parameters are equal, otherwise true if the first
-  // parameter is true and false if the second is true
-  static std::optional<bool> TrueForOneOnly(bool first, bool second) {
-    if (first == second) {
-      return std::nullopt;
-    }
-    return first;
-  }
-
-  static std::optional<CandidateResult> ChooseBestCandidate(
+  // Returns nullopt if both conditions are equal, otherwise returns the
+  // candidate corresponding to the true condition.
+  static inline std::optional<CandidateResult> ChooseBestCandidate(
       bool first_cond, const ScheduleCandidate& first_candidate,
       bool second_cond, const ScheduleCandidate& second_candidate,
       const char* reason) {
-    if (auto cond = TrueForOneOnly(first_cond, second_cond)) {
-      return CandidateResult{*cond ? first_candidate : second_candidate,
-                             reason};
+    if (first_cond == second_cond) {
+      return std::nullopt;
     }
-    return std::nullopt;
+    return CandidateResult{first_cond ? first_candidate : second_candidate,
+                           reason};
   }
 
   // The scheduling state contains everything that is required for the
@@ -1312,11 +1351,17 @@ class LatencyHidingScheduler : public HloModulePass {
   // Returns some printable statistics about the latency hiding for
   // operations that can run in parallel to help evaluating the performance of
   // the scheduler and improve it.
+  // Optionally the caller can pass in the alias analysis and module pressure
+  // state to save the time to construct them within the function. This is
+  // useful when we repeatedly call this function across computations within the
+  // same module.
   static SchedulerStatistics LatencyHidingStatistics(
       const HloComputation* computation,
       const LatencyEstimator* latency_estimator,
       const AsyncTracker* async_tracker,
-      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes);
+      const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes,
+      const HloAliasAnalysis* alias_analysis = nullptr,
+      ModulePressureState* pressure_state = nullptr);
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(

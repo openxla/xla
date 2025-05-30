@@ -1357,8 +1357,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   TF_RET_CHECK(proto.id() >= 0)
       << "Instruction with negative id: " << proto.id();
-  TF_RET_CHECK(proto.id() <= INT_MAX)
-      << "Instruction with id > INT_MAX: " << proto.id();
+  // TODO(b/399394039): Reinforce the condition on INT64_MAX when upgrading
+  // unique_id_ to int64_t.
+  LOG_IF(INFO, proto.id() > INT_MAX)
+      << "Instruction with id > INT_MAX: " << proto.id()
+      << " this is not intended behavior and might indicate a bug in the HLO "
+         "proto serialization.";
   instruction->unique_id_ = proto.id();
 
   if (proto.has_sharding()) {
@@ -1379,16 +1383,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
   }
 
   if (proto.has_original_value()) {
-    const xla::OriginalValueProto& original_value_proto =
-        proto.original_value();
-    auto original_value = std::make_shared<OriginalValue>(shape);
-
-    for (const auto& leaf : original_value_proto.leaves()) {
-      *original_value->mutable_element(ShapeIndex(leaf.leaf_shape_index())) = {
-          leaf.instruction_name(), ShapeIndex(leaf.shape_index())};
-    }
-
-    instruction->set_original_value(original_value);
+    instruction->set_original_value(
+        OriginalValue::FromProto(proto.original_value()));
   }
 
   return instruction;
@@ -1905,7 +1901,8 @@ HloInstruction::CreateCollectivePermuteStart(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReplicaId(
     const Shape& shape) {
-  CHECK(Shape::Equal().IgnoreLayout()(shape, ShapeUtil::MakeShape(U32, {})))
+  CHECK(Shape::Equal().IgnoreLayout()(
+      shape, ShapeUtil::MakeValidatedShape(U32, {}).value()))
       << "HloInstruction replica-id must have a shape of u32[], but "
       << shape.ToString() << " is specified";
   return absl::WrapUnique(new HloInstruction(HloOpcode::kReplicaId, shape));
@@ -1913,7 +1910,8 @@ HloInstruction::CreateCollectivePermuteStart(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreatePartitionId(
     const Shape& shape) {
-  CHECK(Shape::Equal().IgnoreLayout()(shape, ShapeUtil::MakeShape(U32, {})))
+  CHECK(Shape::Equal().IgnoreLayout()(
+      shape, ShapeUtil::MakeValidatedShape(U32, {}).value()))
       << "HloInstruction partition-id must have a shape of u32[], but "
       << shape.ToString() << " is specified";
   return absl::WrapUnique(new HloInstruction(HloOpcode::kPartitionId, shape));
@@ -2263,8 +2261,9 @@ HloInstruction::CreateBroadcastSequence(
   }
   // Eliminate the size one dimensions.
   HloInstruction* reshaped_operand = adder(HloInstruction::CreateReshape(
-      ShapeUtil::MakeShape(operand->shape().element_type(),
-                           reshaped_dimensions),
+      ShapeUtil::MakeValidatedShape(operand->shape().element_type(),
+                                    reshaped_dimensions)
+          .value(),
       operand));
   reshaped_operand->set_metadata(operand->metadata());
   if (operand->has_sharding()) {
@@ -2514,7 +2513,8 @@ HloInstruction::CreateCompositeCall(const Shape& shape,
   for (auto element : elements) {
     element_shapes.push_back(&element->shape());
   }
-  Shape tuple_shape = ShapeUtil::MakeTupleShapeWithPtrs(element_shapes);
+  Shape tuple_shape =
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(element_shapes).value();
   return CreateVariadic(tuple_shape, HloOpcode::kTuple, elements);
 }
 
@@ -3686,7 +3686,7 @@ absl::string_view PrintName(absl::string_view name, bool print_ids) {
 
 namespace {
 
-using DFSStack = absl::InlinedVector<std::pair<int, HloInstruction*>, 16>;
+using DFSStack = absl::InlinedVector<std::pair<int64_t, HloInstruction*>, 16>;
 
 void PrintNameInternal(Printer* printer, absl::string_view name,
                        const HloPrintOptions& options) {
@@ -3934,7 +3934,7 @@ void HloInstruction::PrintWithCanonicalNameMap(
 
   if (options.print_original_value() && original_value_) {
     printer->Append(", origin={");
-    printer->Append(OriginalValueToString(*original_value()));
+    printer->Append(original_value()->ToString());
     printer->Append("}");
   }
 
@@ -4097,7 +4097,7 @@ void HloInstruction::PrintExtraAttributes(
                opcode() == HloOpcode::kReduceScatter ||
                opcode() == HloOpcode::kAllReduceStart ||
                opcode() == HloOpcode::kScatter ||
-               opcode() == HloOpcode::kTopK || opcode() == HloOpcode::kSort) {
+               opcode() == HloOpcode::kSort) {
       if (!called_computations().empty()) {
         printer.Next([this, &options](Printer* printer) {
           printer->Append("to_apply=");
@@ -4197,7 +4197,6 @@ void HloInstruction::PrintExtraAttributes(
       case HloOpcode::kAllReduceStart:
       case HloOpcode::kScatter:
       case HloOpcode::kSort:
-      case HloOpcode::kTopK:
         if (!called_computations().empty()) {
           printer.Next([this, &new_options](Printer* printer) {
             printer->Append("to_apply=\n");
@@ -4338,10 +4337,10 @@ HloInstructionProto HloInstruction::ToProto() const {
   *proto.mutable_opcode() = std::string(HloOpcodeString(opcode_));
   *proto.mutable_shape() = shape_.ToProto();
   for (const HloInstruction* operand : operands_) {
-    proto.add_operand_ids(operand->unique_id());
+    proto.add_operand_ids(operand->unique_id_64_bits());
   }
   for (const HloInstruction* control : control_predecessors()) {
-    proto.add_control_predecessor_ids(control->unique_id());
+    proto.add_control_predecessor_ids(control->unique_id_64_bits());
   }
 
   *proto.mutable_metadata() = *metadata_;
@@ -4362,7 +4361,7 @@ HloInstructionProto HloInstruction::ToProto() const {
   *proto.mutable_statistics_viz() = statistics_viz();
 
   if (original_value_) {
-    *proto.mutable_original_value() = OriginalValueToProto(*original_value_);
+    *proto.mutable_original_value() = original_value_->ToProto();
   }
 
   if (has_result_accuracy()) {
@@ -4721,7 +4720,7 @@ template <typename Visitor>
 inline bool PushDFSChild(Visitor* visitor, DFSStack* dfs_stack,
                          HloInstruction* child) {
   CHECK(child != nullptr);
-  const int id = child->unique_id();
+  const int64_t id = child->unique_id_64_bits();
   CHECK_GE(id, 0) << "instruction may not have a parent computation";
   switch (visitor->GetVisitState(id)) {
     case Visitor::kVisiting:
@@ -4754,7 +4753,7 @@ static absl::Status PostOrderDFS(
   // can't always use the (potentially dead) instruction object to grab
   // its id.
   DFSStack dfs_stack;
-  dfs_stack.emplace_back(root->unique_id(), root);
+  dfs_stack.emplace_back(root->unique_id_64_bits(), root);
 
   do {
     DCHECK(!dfs_stack.empty());
@@ -5429,7 +5428,7 @@ bool HloPtrComparator::operator()(const HloInstruction* const& lhs,
       lhs_module->unique_id() != rhs_module->unique_id()) {
     return lhs_module->unique_id() < rhs_module->unique_id();
   }
-  return lhs->unique_id() < rhs->unique_id();
+  return lhs->unique_id_64_bits() < rhs->unique_id_64_bits();
 }
 
 const PrecisionConfig& HloInstruction::precision_config() const {

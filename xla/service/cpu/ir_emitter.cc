@@ -682,7 +682,9 @@ absl::Status IrEmitter::HandleSort(HloInstruction* hlo) {
 
   // Normalize the shape and the dimension to sort.
   Shape normalized_keys_shape =
-      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(keys_shape);
+      ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
+          keys_shape)
+          .value();
   auto logical_to_physical =
       LayoutUtil::MakeLogicalToPhysical(keys_shape.layout());
   TF_RET_CHECK(sort->sort_dimension() < logical_to_physical.size());
@@ -892,9 +894,6 @@ absl::Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
       PrimitiveType primitive_type = lhs->shape().element_type();
       bool multi_threaded =
           hlo_module_config_.debug_options().xla_cpu_multi_thread_eigen();
-      bool use_mkl_dnn =
-          hlo_module_config_.debug_options().xla_cpu_use_mkl_dnn() &&
-          convolution->feature_group_count() == 1;
       bool use_acl = hlo_module_config_.debug_options().xla_cpu_use_acl();
 
       auto valid_num_dims = [](absl::Span<const int64_t> xs) {
@@ -918,10 +917,8 @@ absl::Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
                        ? runtime::kEigenConv2DF16SymbolName
                        : runtime::kEigenSingleThreadedConv2DF16SymbolName)
                 : (multi_threaded
-                       ? (use_mkl_dnn
-                              ? runtime::kMKLConv2DF32SymbolName
-                              : (use_acl ? runtime::kACLConv2DF32SymbolName
-                                         : runtime::kEigenConv2DF32SymbolName))
+                       ? (use_acl ? runtime::kACLConv2DF32SymbolName
+                                  : runtime::kEigenConv2DF32SymbolName)
                        : runtime::kEigenSingleThreadedConv2DF32SymbolName);
       } else if (input_dims.size() == 3) {
         fn_name =
@@ -934,10 +931,6 @@ absl::Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
                        : runtime::kEigenSingleThreadedConv3DF32SymbolName);
       } else {
         LOG(FATAL) << "Invalid number of dimensions " << input_dims.size();
-      }
-      if (!multi_threaded && use_mkl_dnn) {
-        LOG(WARNING) << "Using Eigen instead of MKL-DNN for single-threaded "
-                        "convolution.";
       }
       std::vector<llvm::Value*> args = {
           GetExecutableRunOptionsArgument(),
@@ -2382,7 +2375,8 @@ absl::Status IrEmitter::HandlePadToStatic(HloInstruction* hlo) {
   for (int i = 1; i < hlo->shape().tuple_shapes().size(); ++i) {
     // Read from the metadata section of the dynamic input (operand 0).
     const Shape& dim_shape = ShapeUtil::GetSubshape(hlo->shape(), {i});
-    TF_RET_CHECK(Shape::Equal()(dim_shape, ShapeUtil::MakeScalarShape(S32)));
+    TF_RET_CHECK(Shape::Equal()(
+        dim_shape, ShapeUtil::MakeValidatedScalarShape(S32).value()));
     TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dim_size_slice,
                         assignment_.GetUniqueSlice(hlo, {i}));
     llvm::Value* dest_dim_size_address =

@@ -55,12 +55,12 @@ absl::StatusOr<std::vector<PrimitiveType>> GetOperandTypes(
     if (!ShapeUtil::CompatibleIgnoringElementType(operands_shapes[0],
                                                   op_shape)) {
       return InvalidArgument("operands shape mismatch: %s vs %s",
-                             operands_shapes[0].DebugString(),
-                             op_shape.DebugString());
+                             operands_shapes[0].ToString(),
+                             op_shape.ToString());
     }
     if (op_shape.element_type() != init_shape.element_type()) {
       return InvalidArgument("operands type mismatch: %s vs %s",
-                             op_shape.DebugString(), init_shape.DebugString());
+                             op_shape.ToString(), init_shape.ToString());
     }
     op_types.push_back(op_shape.element_type());
   }
@@ -70,9 +70,9 @@ absl::StatusOr<std::vector<PrimitiveType>> GetOperandTypes(
 
 // Converts a comparator to a combiner computation that can be fed to reduce or
 // partial reduce ops.
-XlaComputation BuildReductionComputation(
+absl::StatusOr<XlaComputationId> BuildReductionComputation(
     XlaBuilder* builder, absl::Span<const PrimitiveType> op_types,
-    const XlaComputation& comparator) {
+    const XlaComputationId comparator) {
   auto num_operands = op_types.size();
   std::vector<XlaOp> lhs_params;
   std::vector<XlaOp> rhs_params;
@@ -81,15 +81,17 @@ XlaComputation BuildReductionComputation(
   rhs_params.reserve(num_operands);
   auto reduction_builder = builder->CreateSubBuilder("ReductionFn");
   for (const auto& op_type : op_types) {
-    lhs_params.push_back(Parameter(reduction_builder.get(), param_number,
-                                   ShapeUtil::MakeScalarShape(op_type),
-                                   absl::StrFormat("lhs.%d", param_number)));
+    lhs_params.push_back(
+        Parameter(reduction_builder.get(), param_number,
+                  ShapeUtil::MakeValidatedScalarShape(op_type).value(),
+                  absl::StrFormat("lhs.%d", param_number)));
     param_number++;
   }
   for (const auto& op_type : op_types) {
-    rhs_params.push_back(Parameter(reduction_builder.get(), param_number,
-                                   ShapeUtil::MakeScalarShape(op_type),
-                                   absl::StrFormat("rhs.%d", param_number)));
+    rhs_params.push_back(
+        Parameter(reduction_builder.get(), param_number,
+                  ShapeUtil::MakeValidatedScalarShape(op_type).value(),
+                  absl::StrFormat("rhs.%d", param_number)));
     param_number++;
   }
 
@@ -106,14 +108,14 @@ XlaComputation BuildReductionComputation(
     results.push_back(Select(pred, lhs_params[i], rhs_params[i]));
   }
   Tuple(reduction_builder.get(), results);
-  return reduction_builder->BuildAndNoteError();
+  return reduction_builder->BuildSubComputation();
 }
 
 XlaOp AggregateToTopKBuilder(XlaBuilder* builder,
                              absl::Span<const XlaOp> operands,
                              absl::Span<const XlaOp> init_values, int64_t top_k,
                              int64_t reduction_dim,
-                             const XlaComputation& comparator) {
+                             XlaComputationId comparator) {
   auto operands_shapes = builder->GetOperandShapes(operands).value();
   int64_t rank = operands_shapes[0].dimensions().size();
   int64_t num_operands = operands.size();
@@ -127,8 +129,11 @@ XlaOp AggregateToTopKBuilder(XlaBuilder* builder,
 
     auto reduction_computation =
         BuildReductionComputation(builder, op_types, comparator);
+    if (!reduction_computation.ok()) {
+      return builder->ReportError(reduction_computation.status());
+    }
     auto val_args = Reduce(builder, operands, init_values,
-                           reduction_computation, {reduction_dim});
+                           reduction_computation.value(), {reduction_dim});
     Shape op_shape = operands_shapes[0];
     op_shape.set_dimensions(reduction_dim, 1);
     auto top1_vals =
@@ -157,9 +162,29 @@ XlaOp AggregateToTopKBuilder(XlaBuilder* builder,
   return Tuple(builder, sliced_results);
 }
 
+XlaOp AggregateToTopKBuilder(XlaBuilder* builder,
+                             absl::Span<const XlaOp> operands,
+                             absl::Span<const XlaOp> init_values, int64_t top_k,
+                             int64_t reduction_dim,
+                             const XlaComputation& comparator) {
+  return AggregateToTopKBuilder(builder, operands, init_values, top_k,
+                                reduction_dim,
+                                builder->AddSubComputation(comparator));
+}
+
 XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
                  absl::Span<const XlaOp> init_values, int64_t top_k,
                  int64_t reduction_dim, const XlaComputation& comparator,
+                 float recall_target, bool aggregate_to_topk,
+                 int64_t reduction_input_size_override) {
+  return ApproxTopK(builder, operands, init_values, top_k, reduction_dim,
+                    builder->AddSubComputation(comparator), recall_target,
+                    aggregate_to_topk, reduction_input_size_override);
+}
+
+XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
+                 absl::Span<const XlaOp> init_values, int64_t top_k,
+                 int64_t reduction_dim, XlaComputationId comparator,
                  float recall_target, bool aggregate_to_topk,
                  int64_t reduction_input_size_override) {
   // Validates shapes and ranks
@@ -181,9 +206,6 @@ XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
     return builder->ReportError(
         InvalidArgument("reduction_dim should range in [0,%d)", rank));
   }
-
-  auto reduction_computation =
-      BuildReductionComputation(builder, op_types, comparator);
 
   uint64_t tpu_tiling = rank == 1 ? kTpuChunkTiling : kTpuLaneTiling;
   uint64_t n = operands_shapes[0].dimensions(reduction_dim);
@@ -230,7 +252,7 @@ XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
     approx_output_shapes.push_back(&op_shape);
   }
   auto approx_output_shape =
-      ShapeUtil::MakeTupleShapeWithPtrs(approx_output_shapes);
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(approx_output_shapes).value();
   // PartialReduce options in the JSON form.
   auto partial_reduce_option = absl::StrFormat(
       "{\"log2_reduction\": %d, "
@@ -258,9 +280,8 @@ XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
 
 XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
                          absl::Span<const XlaOp> init_values, int64_t top_k,
-                         int64_t reduction_dim,
-                         const XlaComputation& comparator, float recall_target,
-                         bool aggregate_to_topk,
+                         int64_t reduction_dim, XlaComputationId comparator,
+                         float recall_target, bool aggregate_to_topk,
                          int64_t reduction_input_size_override) {
   auto operands_shapes = builder->GetOperandShapes(operands).value();
   int64_t rank = operands_shapes[0].dimensions().size();
@@ -275,6 +296,18 @@ XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
   auto output_size = status_or_approx_output_size.value().first;
   return AggregateToTopKBuilder(builder, operands, init_values, output_size,
                                 reduction_dim, comparator);
+}
+
+XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
+                         absl::Span<const XlaOp> init_values, int64_t top_k,
+                         int64_t reduction_dim,
+                         const XlaComputation& comparator, float recall_target,
+                         bool aggregate_to_topk,
+                         int64_t reduction_input_size_override) {
+  return ApproxTopKFallback(
+      builder, operands, init_values, top_k, reduction_dim,
+      builder->AddSubComputation(comparator), recall_target, aggregate_to_topk,
+      reduction_input_size_override);
 }
 
 }  // namespace xla

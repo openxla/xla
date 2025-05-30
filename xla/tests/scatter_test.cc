@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
@@ -361,11 +362,11 @@ ENTRY main {
 )";
   Array2D<Eigen::half> operand_array(
       {{1.1f, 2.2f, 3.3f}, {4.4f, 5.5f, 6.6f}, {7.7f, 8.8f, 9.9f}});
-  Literal operand(ShapeUtil::MakeShape(F16, {3, 3}));
+  Literal operand(ShapeUtil::MakeValidatedShape(F16, {3, 3}).value());
   operand.PopulateR2FromArray2D(operand_array);
   Literal scatter_indices = LiteralUtil::CreateR1<int32_t>({2, 1});
   Array2D<Eigen::half> updates_array({{0.4f, 1.1f, 0.7f}, {2.3f, 3.1f, 1.6f}});
-  Literal updates(ShapeUtil::MakeShape(F16, {2, 3}));
+  Literal updates(ShapeUtil::MakeValidatedShape(F16, {2, 3}).value());
   updates.PopulateR2FromArray2D(updates_array);
   RunTest(hlo_text, &operand, &scatter_indices, &updates);
 }
@@ -714,10 +715,10 @@ ENTRY main {
       index_vector_dim=1
 }
 )";
-  Literal operand =
-      LiteralUtil::CreateRandomLiteral<S32>(ShapeUtil::MakeShape(S32, {129, 3}),
-                                            /*mean=*/500, /*stddev=*/100)
-          .value();
+  Literal operand = LiteralUtil::CreateRandomLiteral<S32>(
+                        ShapeUtil::MakeValidatedShape(S32, {129, 3}).value(),
+                        /*mean=*/500, /*stddev=*/100)
+                        .value();
   Literal scatter_indices = LiteralUtil::CreateR2<uint8_t>(
       {{2, 7}, {2, 1}, {1, 1}, {5, 1}, {0x80, 1}, {1, 2}});
   Literal updates = LiteralUtil::CreateR3<int32_t>(
@@ -901,7 +902,10 @@ ENTRY main {
 }
 
 // TODO(b/230137437): Enable this on GPU once mhlo allows variadic scatter.
-XLA_TEST_F(ScatterTest, DISABLED_ON_GPU(Multioutput)) {
+XLA_TEST_F(ScatterTest, Multioutput) {
+  if (test::DeviceIs(test::kGpu)) {
+    GTEST_SKIP();
+  }
   constexpr char hlo_text[] = R"(
 HloModule MultioutputScatter
 
@@ -1041,8 +1045,8 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  Literal scatter_indices(ShapeUtil::MakeShape(S32, {2 * n}));
-  Literal updates(ShapeUtil::MakeShape(F32, {2 * n, n}));
+  Literal scatter_indices(ShapeUtil::MakeValidatedShape(S32, {2 * n}).value());
+  Literal updates(ShapeUtil::MakeValidatedShape(F32, {2 * n, n}).value());
   for (int i = 0; i < n; i++) {
     scatter_indices.Set({i}, i);
     scatter_indices.Set({i + n}, i);

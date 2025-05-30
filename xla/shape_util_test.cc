@@ -243,8 +243,9 @@ TEST(ShapeUtilTest, CompatibleTuples) {
 }
 
 TEST(ShapeUtilTest, MakeMaybeTupleShape) {
-  Shape s1 =
-      ShapeUtil::MakeMaybeTupleShape({ShapeUtil::MakeShape(F32, {3, 2})});
+  Shape s1 = ShapeUtil::MakeValidatedMaybeTupleShape(
+                 {ShapeUtil::MakeValidatedShape(F32, {3, 2}).value()})
+                 .value();
   EXPECT_TRUE(ShapeUtil::Compatible(s1, ShapeUtil::MakeShape(F32, {3, 2})));
 }
 
@@ -1214,7 +1215,6 @@ TEST(ShapeUtilTest, B_250640044) {
              dimensions: 137438953472
              layout {
                minor_to_major: 0
-               dim_level_types: DIM_COMPRESSED
                physical_shape {
                  element_type: TUPLE
                  tuple_shapes {}

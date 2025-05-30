@@ -958,7 +958,7 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
   std::vector<HloInstruction*> frontier_std;
   std::vector<HloInstruction*> frontier_reshapes;
   std::vector<HloInstruction*> sorted;
-  absl::flat_hash_map<int, uint32_t> visitations;
+  absl::flat_hash_map<int, uint64_t> visitations;
   sorted.reserve(instruction_count());
   visitations.reserve(instruction_count());
 
@@ -1004,8 +1004,8 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
     sorted.push_back(inst);
     for (HloInstruction* const child : inst->operands()) {
       // Will increment, or set to 1 if not present
-      visitations[child->unique_id()]++;
-      if (child->user_count() == visitations[child->unique_id()]) {
+      visitations[child->unique_id_64_bits()]++;
+      if (child->user_count() == visitations[child->unique_id_64_bits()]) {
         add_to_frontier(child);
       }
     }
@@ -1208,7 +1208,7 @@ HloComputationProto HloComputation::ToProto() const {
     HloInstructionProto instruction_proto = instruction->ToProto();
     proto.add_instructions()->Swap(&instruction_proto);
   }
-  proto.set_root_id(root_instruction()->unique_id());
+  proto.set_root_id(root_instruction()->unique_id_64_bits());
   *proto.mutable_program_shape() = ComputeProgramShape().ToProto();
   proto.set_is_fusion_computation(IsFusionComputation());
   proto.set_execution_thread(IsMainThread() ? ""
@@ -1360,7 +1360,7 @@ absl::StatusOr<HloInstruction*> HloComputation::CreateAsyncInstructions(
                                 context_shapes.begin(), context_shapes.end());
 
     async_start = AddInstruction(HloInstruction::CreateCopyStart(
-        ShapeUtil::MakeTupleShape(context_shapes_tuple),
+        ShapeUtil::MakeValidatedTupleShape(context_shapes_tuple).value(),
         instruction->mutable_operand(0)));
     async_done = AddInstruction(HloInstruction::CreateUnary(
         instruction_shape_destination, HloOpcode::kCopyDone, async_start));
@@ -1383,13 +1383,14 @@ absl::StatusOr<HloInstruction*> HloComputation::CreateAsyncInstructions(
     HloComputation* async_computation =
         parent_->AddEmbeddedComputation(builder.Build(root));
     std::vector<Shape> start_shapes = {
-        ShapeUtil::MakeTupleShape(parameter_shapes), root->shape()};
+        ShapeUtil::MakeValidatedTupleShape(parameter_shapes).value(),
+        root->shape()};
     for (const Shape& context_shape : context_shapes) {
       start_shapes.push_back(context_shape);
     }
     async_start = AddInstruction(HloInstruction::CreateAsyncStart(
-        ShapeUtil::MakeTupleShape(start_shapes), instruction->operands(),
-        async_computation, async_execution_thread));
+        ShapeUtil::MakeValidatedTupleShape(start_shapes).value(),
+        instruction->operands(), async_computation, async_execution_thread));
     async_done = AddInstruction(
         HloInstruction::CreateAsyncDone(root->shape(), async_start));
     if (override_names) {
@@ -1446,9 +1447,11 @@ absl::StatusOr<HloInstruction*> HloComputation::DeepCopyHelper(
     return instruction;
   }
 
-  // Array shape.
-  TF_RET_CHECK(instruction->shape().IsArray());
-  return copy_leaf(instruction, *index, this);
+  HloInstruction* copy = copy_leaf(instruction, *index, this);
+  // We shouldn't copy buffers.
+  TF_RET_CHECK(instruction->shape().IsArray() ||
+               (instruction->shape().IsBuffer() && copy == instruction));
+  return copy;
 }
 
 absl::StatusOr<HloInstruction*> HloComputation::DeepCopyInstruction(

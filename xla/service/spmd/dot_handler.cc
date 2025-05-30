@@ -606,7 +606,7 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
           collective->opcode() == HloOpcode::kAllReduce) {
         communication_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
             ShapeUtil::ByteSizeOf(collective->shape()),
-            collective->replica_groups());
+            collective->device_list());
       }
     } else {
       auto new_lhs =
@@ -647,18 +647,17 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
         collective = collective->mutable_operand(0);
       }
       communication_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
-          ShapeUtil::ByteSizeOf(dot->shape()), collective->replica_groups());
+          ShapeUtil::ByteSizeOf(dot->shape()), collective->device_list());
     }
 
     double extra_collective_permute_time = 0.0;
     if (communication_time_in_ms != 0.0) {
       extra_collective_permute_time =
           communication_time_in_ms *
-          visitor->GetCommunicationMultiplier(collective->replica_groups()) *
-          2 / num_partitions;
+          visitor->GetCommunicationMultiplier(collective->device_list()) * 2 /
+          num_partitions;
       VLOG(2) << "GetCommunicationMultiplier: "
-              << visitor->GetCommunicationMultiplier(
-                     collective->replica_groups());
+              << visitor->GetCommunicationMultiplier(collective->device_list());
     }
     VLOG(2) << "collective: " << collective->ToString() << "\n"
             << "dot: " << dot->ToString() << "\n"
@@ -673,7 +672,7 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
         (std::max(
              computation_time_in_ms,
              communication_time_in_ms * visitor->GetCommunicationMultiplier(
-                                            collective->replica_groups())) +
+                                            collective->device_list())) +
          extra_collective_permute_time) >=
             (computation_time_in_ms + communication_time_in_ms)) {
       VLOG(2) << "Overhead outweighs benefit. Skipping windowed einsum";
@@ -947,7 +946,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                                          lhs_hlo->shape().dimensions().end());
       reshaped_dims.insert(reshaped_dims.begin() + lhs_concat_dim, 1);
       lhs_hlo = b->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(lhs_hlo->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(lhs_hlo->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           lhs_hlo));
     }
     if (rhs_concat_dim != -1 && !windowed_op_is_lhs &&
@@ -956,7 +957,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                                          rhs_hlo->shape().dimensions().end());
       reshaped_dims.insert(reshaped_dims.begin() + rhs_concat_dim, 1);
       rhs_hlo = b->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(rhs_hlo->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(rhs_hlo->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           rhs_hlo));
     }
   }
@@ -1048,8 +1051,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           original_dot_lhs->shape().dimensions().end());
       reshaped_dims.erase(reshaped_dims.begin() + lhs_concat_dim);
       original_dot_lhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(original_dot_lhs->shape().element_type(),
-                               reshaped_dims),
+          ShapeUtil::MakeValidatedShape(
+              original_dot_lhs->shape().element_type(), reshaped_dims)
+              .value(),
           original_dot_lhs));
     }
     if (rhs_concat_dim != -1 && !windowed_op_is_lhs) {
@@ -1058,8 +1062,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           original_dot_rhs->shape().dimensions().end());
       reshaped_dims.erase(reshaped_dims.begin() + rhs_concat_dim);
       original_dot_rhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(original_dot_rhs->shape().element_type(),
-                               reshaped_dims),
+          ShapeUtil::MakeValidatedShape(
+              original_dot_rhs->shape().element_type(), reshaped_dims)
+              .value(),
           original_dot_rhs));
     }
 
@@ -1093,8 +1098,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         }
         auto reshaped_slice_operand =
             body_b.AddInstruction(HloInstruction::CreateReshape(
-                ShapeUtil::MakeShape(slice_operand->shape().element_type(),
-                                     new_dims),
+                ShapeUtil::MakeValidatedShape(
+                    slice_operand->shape().element_type(), new_dims)
+                    .value(),
                 slice_operand));
         auto pad_value = body_b.AddInstruction(HloInstruction::CreateConstant(
             ShapeUtil::ElementIsFloating(reshaped_slice_operand->shape())
@@ -1170,8 +1176,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         }
       }
       auto reshaped_slice = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(slice->shape().element_type(),
-                               reshaped_slice_dims),
+          ShapeUtil::MakeValidatedShape(slice->shape().element_type(),
+                                        reshaped_slice_dims)
+              .value(),
           slice));
 
       if (!windowed_op_is_lhs) {
@@ -1206,7 +1213,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       reshaped_dims.erase(reshaped_dims.begin() + lhs_concat_dim);
       reshaped_dims[lhs_concat_dim] *= 2;
       original_dot_lhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(dot_lhs->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(dot_lhs->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           dot_lhs));
 
       if (original_hlo->opcode() == HloOpcode::kDot) {
@@ -1226,7 +1235,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       reshaped_dims.erase(reshaped_dims.begin() + rhs_concat_dim);
       reshaped_dims[rhs_concat_dim] *= 2;
       original_dot_rhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(dot_rhs->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(dot_rhs->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           dot_rhs));
 
       if (original_hlo->opcode() == HloOpcode::kDot) {
@@ -1254,8 +1265,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
     } else if (original_hlo->opcode() != HloOpcode::kDot) {
       new_dims.push_back(1);
     }
-    new_dot_shape =
-        ShapeUtil::MakeShape(original_hlo->shape().element_type(), new_dims);
+    new_dot_shape = ShapeUtil::MakeValidatedShape(
+                        original_hlo->shape().element_type(), new_dims)
+                        .value();
 
     HloInstruction* dot;
     if (original_hlo->opcode() == HloOpcode::kDot) {
@@ -1269,7 +1281,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                                         dot_rhs->shape().dimensions().end());
           new_dims.push_back(1);
           dot_rhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-              ShapeUtil::MakeShape(dot_rhs->shape().element_type(), new_dims),
+              ShapeUtil::MakeValidatedShape(dot_rhs->shape().element_type(),
+                                            new_dims)
+                  .value(),
               dot_rhs));
         }
         if (rhs_concat_dim != -1) {
@@ -1277,7 +1291,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                                         dot_lhs->shape().dimensions().end());
           new_dims.push_back(1);
           dot_lhs = body_b.AddInstruction(HloInstruction::CreateReshape(
-              ShapeUtil::MakeShape(dot_lhs->shape().element_type(), new_dims),
+              ShapeUtil::MakeValidatedShape(dot_lhs->shape().element_type(),
+                                            new_dims)
+                  .value(),
               dot_lhs));
         }
       }
@@ -1333,10 +1349,14 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           original_sharded_dot_shape.dimensions().end());
       reshaped_dims[slice_dim] /= 2;
       ccw_dot = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(ccw_dot->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(ccw_dot->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           ccw_dot));
       cw_dot = body_b.AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(cw_dot->shape().element_type(), reshaped_dims),
+          ShapeUtil::MakeValidatedShape(cw_dot->shape().element_type(),
+                                        reshaped_dims)
+              .value(),
           cw_dot));
 
       if (operands_sharded_at_contracting_dims) {
@@ -1428,9 +1448,10 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
 
   auto param = body_b.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0,
-      ShapeUtil::MakeTupleShapeWithPtrs(
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(
           {&lhs_hlo->shape(), &rhs_hlo->shape(), &result_buffer->shape(),
-           &extra_buffer->shape(), &iteration->shape()}),
+           &extra_buffer->shape(), &iteration->shape()})
+          .value(),
       "param"));
   auto l = body_b.AddInstruction(
       HloInstruction::CreateGetTupleElement(lhs_hlo->shape(), param, 0));
@@ -1640,7 +1661,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         body_b.AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::CreateR0<uint32_t>(1)))));
     auto has_more = body_b.AddInstruction(HloInstruction::CreateCompare(
-        ShapeUtil::MakeShape(PRED, {}), i,
+        ShapeUtil::MakeValidatedShape(PRED, {}).value(), i,
         body_b.AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::CreateR0<uint32_t>(num_partitions))),
         ComparisonDirection::kLt));
@@ -1705,9 +1726,10 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
   SpmdBuilder cond_b(cond_name, original_hlo);
   auto cond_param = cond_b.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0,
-      ShapeUtil::MakeTupleShapeWithPtrs(
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(
           {&lhs_hlo->shape(), &rhs_hlo->shape(), &result_buffer->shape(),
-           &extra_buffer->shape(), &iteration->shape()}),
+           &extra_buffer->shape(), &iteration->shape()})
+          .value(),
       "param"));
   auto cond_i = cond_b.AddInstruction(
       HloInstruction::CreateGetTupleElement(iteration->shape(), cond_param, 4));
@@ -1716,7 +1738,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           ? num_partitions / 2
           : num_partitions;
   cond_b.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}), cond_i,
+      ShapeUtil::MakeValidatedShape(PRED, {}).value(), cond_i,
       cond_b.AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::CreateR0<uint32_t>(adapted_num_partitions))),
       ComparisonDirection::kLt));
@@ -2358,7 +2380,7 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnBatchImpl(
       PartitionDot(per_group_lhs, per_group_rhs,
                    GetPerGroupBaseShape(output_grouped, output_base_shape),
                    output_grouped.sharding, dims_mapping,
-                   num_partitions / output_grouped.device_groups.size(),
+                   num_partitions / output_grouped.device_groups.num_groups(),
                    create_sharded_dot, conv_window, module, original_hlo,
                    options, b, windowed_dot_general_loops, visitor));
   dot->set_sharding(UngroupSharding(output_grouped));
@@ -2628,13 +2650,13 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnNonContractingImpl(
 
   auto other_p = PartitionedHlo(partially_replicated_other, other.base_shape(),
                                 per_group_partitioner_state);
-  return PartitionDot(lhs_matching ? matching_p : other_p,
-                      lhs_matching ? other_p : matching_p,
-                      GetPerGroupBaseShape(output_grouped, output_base_shape),
-                      output_grouped.sharding, dims_mapping,
-                      num_partitions / matching_grouped.device_groups.size(),
-                      create_sharded_dot, conv_window, module, original_hlo,
-                      options, b, windowed_dot_general_loops, visitor);
+  return PartitionDot(
+      lhs_matching ? matching_p : other_p, lhs_matching ? other_p : matching_p,
+      GetPerGroupBaseShape(output_grouped, output_base_shape),
+      output_grouped.sharding, dims_mapping,
+      num_partitions / matching_grouped.device_groups.num_groups(),
+      create_sharded_dot, conv_window, module, original_hlo, options, b,
+      windowed_dot_general_loops, visitor);
 }
 
 std::pair<HloSharding, HloSharding>
@@ -3407,11 +3429,13 @@ bool PrioritizeContractingDimensionsPartitioning(
   auto reduce_scatter_subgroups = GetPartitionGroupsForReplication(
       outer_output_tmp_sharding, output_slice_dims);
   const double all_gather_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
-      all_gather_bytes, visitor->CreateReplicaGroups(all_gather_subgroups));
+      all_gather_bytes,
+      CollectiveDeviceList(visitor->CreateReplicaGroups(all_gather_subgroups)));
   const double reduce_scatter_time_in_ms =
       visitor->GetCommunicationTimeInMilliSec(
           reduce_scatter_bytes,
-          visitor->CreateReplicaGroups(reduce_scatter_subgroups));
+          CollectiveDeviceList(
+              visitor->CreateReplicaGroups(reduce_scatter_subgroups)));
 
   Shape other_original_shape = other_hlo->shape();
   *other_hlo->mutable_shape() =
@@ -3527,11 +3551,13 @@ bool LhsIsBestMatchForNonContractingPartitioning(
       const double lhs_all_gather_time_in_ms =
           visitor->GetCommunicationTimeInMilliSec(
               lhs_all_gather_bytes,
-              visitor->CreateReplicaGroups(lhs_all_gather_subgroups));
+              CollectiveDeviceList(
+                  visitor->CreateReplicaGroups(lhs_all_gather_subgroups)));
       const double rhs_all_gather_time_in_ms =
           visitor->GetCommunicationTimeInMilliSec(
               rhs_all_gather_bytes,
-              visitor->CreateReplicaGroups(rhs_all_gather_subgroups));
+              CollectiveDeviceList(
+                  visitor->CreateReplicaGroups(rhs_all_gather_subgroups)));
 
       HloInstruction* compute_lhs = lhs.hlo();
       Shape lhs_original_shape = compute_lhs->shape();

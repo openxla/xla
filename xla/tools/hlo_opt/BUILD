@@ -109,7 +109,6 @@ cc_library(
         "//xla/service/gpu/transforms:gemm_broadcast_folding_rewriter",
         "//xla/service/gpu/transforms:gemm_fusion",
         "//xla/service/gpu/transforms:gemv_rewriter",
-        "//xla/service/gpu/transforms:pipelined_p2p_rewriter",
         "//xla/service/gpu/transforms:reduce_scatter_creator",
         "//xla/service/gpu/transforms:reduction_degenerate_dim_remover",
         "//xla/service/gpu/transforms:reduction_dimension_grouper",
@@ -235,7 +234,7 @@ lit_test_suite(
     cfg = "//xla:lit.cfg.py",
     data = [":test_utilities"],
     default_tags = tf_cuda_tests_tags(),
-    hermetic_cuda_data_dir = "%S/../../../../cuda_nvcc",
+    hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
     tags_override = {
         "gpu_hlo_ptx.hlo": ["cuda-only"],
     },

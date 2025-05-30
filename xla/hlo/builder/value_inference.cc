@@ -1342,7 +1342,8 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeIsDynamic(
            this](absl::Span<Literal> operands) -> absl::StatusOr<Literal> {
             TF_ASSIGN_OR_RETURN(Shape root_shape,
                                 Shape::FromProto(root->shape()));
-            Shape scalar_shape = ShapeUtil::MakeScalarShape(xla::PRED);
+            Shape scalar_shape =
+                ShapeUtil::MakeValidatedScalarShape(xla::PRED).value();
             std::unique_ptr<HloComputation> reduce_or;
             if (root_shape.IsTuple()) {
               // Variadic reduce.
@@ -1439,7 +1440,8 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeIsDynamic(
                   bool lhs_value = lhs.Get<bool>(indices);
                   bool rhs_value = rhs.Get<bool>(indices);
                   if (optional_selector.has_value()) {
-                    // Manually evaluate the selection without using Evaluator.
+                    // Manually evaluate the selection without using
+                    // Evaluator.
                     if (*optional_selector) {
                       return lhs_value;
                     } else {
@@ -1664,7 +1666,9 @@ absl::StatusOr<Literal> ValueInference::AnalyzeIsDynamic(XlaOp op) {
       [&](int64_t handle) {
         return builder_->LookUpInstructionByHandle(handle);
       },
-      [&](int64_t handle) { return &(builder_->embedded_[handle]); });
+      [&](int64_t handle) {
+        return &(builder_->embedded_[handle].computation);
+      });
 
   auto result = visitor.PostOrderDFSVisit(
       op.handle(), PostorderDFSNodeType::kValueIsDynamic);
@@ -1829,7 +1833,9 @@ absl::StatusOr<OptionalLiteral> ValueInference::AnalyzeConstant(
       [&](int64_t handle) {
         return builder_->LookUpInstructionByHandle(handle);
       },
-      [&](int64_t handle) { return &(builder_->embedded_[handle]); });
+      [&](int64_t handle) {
+        return &(builder_->embedded_[handle].computation);
+      });
   TF_ASSIGN_OR_RETURN(Shape op_shape, builder_->GetShape(op));
   int64_t handle = op.handle();
   if (ShapeUtil::IsScalar(builder_->GetShape(op).value())) {

@@ -42,7 +42,8 @@ class TiledHloInstructionTest : public HloHardwareIndependentTestBase {
 TEST_F(TiledHloInstructionTest, TileSizesAndStridesShouldMatchHloShapeRank) {
   std::unique_ptr<HloInstruction> hlo = HloInstruction::CreateParameter(
       /*parameter_number=*/0,
-      ShapeUtil::MakeShape(PrimitiveType::F32, {32, 64}), "p0");
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {32, 64}).value(),
+      "p0");
 
   IndexingMap tile_offsets_indexing = IndexingMap::FromTensorSizes(
       ParseAffineMap("(d0) -> (d0 floordiv 16, (d0 mod 16) * 16)",
@@ -69,11 +70,12 @@ TEST_F(TiledHloInstructionTest,
        ShouldReturnErrorIfBlockIdToTileOffsetsIndexingIsInvalid) {
   std::unique_ptr<HloInstruction> hlo = HloInstruction::CreateParameter(
       /*parameter_number=*/0,
-      ShapeUtil::MakeShape(PrimitiveType::F32, {32, 64}), "p0");
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {32, 64}).value(),
+      "p0");
 
   IndexingMap tile_offsets_indexing = IndexingMap::FromTensorSizes(
-      ParseAffineMap("(d0, d1) -> (2 * d0)", &mlir_context_),
-      /*dim_upper_bounds=*/{2, 4},
+      ParseAffineMap("(d0) -> (2 * d0)", &mlir_context_),
+      /*dim_upper_bounds=*/{2},
       /*symbol_upper_bounds=*/{});
 
   EXPECT_THAT(
@@ -84,6 +86,18 @@ TEST_F(TiledHloInstructionTest,
           .message(),
       HasSubstr(
           "must have the same number of results as the rank of the hlo shape"));
+
+  IndexingMap tile_offsets_indexing2 = IndexingMap::FromTensorSizes(
+      ParseAffineMap("(d0, d1) -> (d0, d1)", &mlir_context_),
+      /*dim_upper_bounds=*/{8, 4},
+      /*symbol_upper_bounds=*/{});
+
+  EXPECT_THAT(TiledHloInstruction::Create(
+                  hlo.get(), /*operands=*/{}, /*tile_sizes=*/{16, 16},
+                  /*tile_strides=*/{1, 1}, tile_offsets_indexing2)
+                  .status()
+                  .message(),
+              ::testing::HasSubstr("must have 1 dim"));
 }
 
 using TiledHloFusionInstructionTest = TiledHloInstructionTest;
@@ -92,7 +106,8 @@ TEST_F(TiledHloFusionInstructionTest,
        TileSizesAndStridesShouldMatchHloShapeRank) {
   std::unique_ptr<HloInstruction> hlo = HloInstruction::CreateParameter(
       /*parameter_number=*/0,
-      ShapeUtil::MakeShape(PrimitiveType::F32, {32, 64}), "p0");
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {32, 64}).value(),
+      "p0");
 
   IndexingMap tile_offsets_indexing = IndexingMap::FromTensorSizes(
       ParseAffineMap("(d0) -> (d0 floordiv 16, (d0 mod 16) * 16)",

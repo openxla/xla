@@ -55,6 +55,7 @@ namespace xla {
 namespace {
 
 using ::testing::ContainerEq;
+using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::StrEq;
 
@@ -62,9 +63,10 @@ class MinimumMemoryForSequenceTest : public HloHardwareIndependentTestBase {};
 
 TEST_F(MinimumMemoryForSequenceTest, MultiComputation) {
   auto module = CreateNewVerifiedModule();
-  const Shape scalar_shape = ShapeUtil::MakeShape(xla::F32, {});
+  const Shape scalar_shape =
+      ShapeUtil::MakeValidatedShape(xla::F32, {}).value();
   const Shape tuple_shape =
-      ShapeUtil::MakeTupleShape({scalar_shape, scalar_shape});
+      ShapeUtil::MakeValidatedTupleShape({scalar_shape, scalar_shape}).value();
 
   auto cond_builder = HloComputation::Builder("WhileCond");
   // Tuple param: 24 bytes (each elem has 8 byte pointer, 4 byte element)
@@ -75,9 +77,10 @@ TEST_F(MinimumMemoryForSequenceTest, MultiComputation) {
   HloInstruction* cond_data = cond_builder.AddInstruction(
       HloInstruction::CreateGetTupleElement(scalar_shape, cond_param, 1));
   // Free cond_param[] (16 bytes), Alloc PRED[] (1 byte)
-  HloInstruction* cond_lt = cond_builder.AddInstruction(
-      HloInstruction::CreateCompare(ShapeUtil::MakeShape(PRED, {}), cond_iter,
-                                    cond_data, ComparisonDirection::kLt));
+  HloInstruction* cond_lt =
+      cond_builder.AddInstruction(HloInstruction::CreateCompare(
+          ShapeUtil::MakeValidatedShape(PRED, {}).value(), cond_iter, cond_data,
+          ComparisonDirection::kLt));
   HloComputation* cond_computation =
       module->AddEmbeddedComputation(cond_builder.Build());
 
@@ -149,9 +152,9 @@ TEST_F(MinimumMemoryForSequenceTest, SubcomputationAccounting) {
   // }
 
   auto module = CreateNewVerifiedModule();
-  const Shape r0f32 = ShapeUtil::MakeShape(F32, {});
-  const Shape r1f32 = ShapeUtil::MakeShape(F32, {4});
-  const Shape r2f32 = ShapeUtil::MakeShape(F32, {2, 4});
+  const Shape r0f32 = ShapeUtil::MakeValidatedShape(F32, {}).value();
+  const Shape r1f32 = ShapeUtil::MakeValidatedShape(F32, {4}).value();
+  const Shape r2f32 = ShapeUtil::MakeValidatedShape(F32, {2, 4}).value();
 
   // reshape(slice(param)) != 0
   // Needs 5 bytes
@@ -160,14 +163,16 @@ TEST_F(MinimumMemoryForSequenceTest, SubcomputationAccounting) {
       HloInstruction::CreateParameter(0, r1f32, "cond_param"));
   HloInstruction* slice =
       cond_builder.AddInstruction(HloInstruction::CreateSlice(
-          ShapeUtil::MakeShape(F32, {1}), cond_param, {0}, {1}, {1}));
+          ShapeUtil::MakeValidatedShape(F32, {1}).value(), cond_param, {0}, {1},
+          {1}));
   HloInstruction* reshape =
       cond_builder.AddInstruction(HloInstruction::CreateReshape(r0f32, slice));
   HloInstruction* zero = cond_builder.AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0)));
-  HloInstruction* cond_comparison = cond_builder.AddInstruction(
-      HloInstruction::CreateCompare(ShapeUtil::MakeShape(PRED, {}), reshape,
-                                    zero, ComparisonDirection::kNe));
+  HloInstruction* cond_comparison =
+      cond_builder.AddInstruction(HloInstruction::CreateCompare(
+          ShapeUtil::MakeValidatedShape(PRED, {}).value(), reshape, zero,
+          ComparisonDirection::kNe));
   auto cond_computation = module->AddEmbeddedComputation(cond_builder.Build());
 
   // param - 1
@@ -427,8 +432,8 @@ class HeapSimulatorTest : public HloHardwareIndependentTestBase {
   ~HeapSimulatorTest() override {}
 
   // Shapes for use in the examples.
-  Shape f32scalar_ = ShapeUtil::MakeShape(xla::F32, {});
-  Shape f32vec4_ = ShapeUtil::MakeShape(F32, {4});
+  Shape f32scalar_ = ShapeUtil::MakeValidatedShape(xla::F32, {}).value();
+  Shape f32vec4_ = ShapeUtil::MakeValidatedShape(F32, {4}).value();
 };
 
 TEST_F(HeapSimulatorTest, ScalarConstant) {
@@ -545,7 +550,7 @@ TEST_F(HeapSimulatorTest, FusionOutputsOnlyShareOnce) {
       module->AddEmbeddedComputation(fusion_builder.Build());
 
   auto fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      ShapeUtil::MakeTupleShape({f32vec4_, f32vec4_}),
+      ShapeUtil::MakeValidatedTupleShape({f32vec4_, f32vec4_}).value(),
       HloInstruction::FusionKind::kLoop, {negate}, fusion_computation));
 
   auto element0 = builder.AddInstruction(
@@ -619,7 +624,7 @@ TEST_F(HeapSimulatorTest, FusionOutputsOnlyShareOnceOutputShortLived) {
       module->AddEmbeddedComputation(fusion_builder.Build());
 
   auto fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      ShapeUtil::MakeTupleShape({f32vec4_, f32vec4_}),
+      ShapeUtil::MakeValidatedTupleShape({f32vec4_, f32vec4_}).value(),
       HloInstruction::FusionKind::kLoop, {negate}, fusion_computation));
 
   auto element1 = builder.AddInstruction(
@@ -672,7 +677,7 @@ TEST_F(HeapSimulatorTest, BufferReusedOnce) {
   auto neg = builder.AddInstruction(
       HloInstruction::CreateUnary(f32vec4_, HloOpcode::kNegate, a_param));
   auto fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      ShapeUtil::MakeTupleShape({f32vec4_, f32vec4_}),
+      ShapeUtil::MakeValidatedTupleShape({f32vec4_, f32vec4_}).value(),
       HloInstruction::FusionKind::kLoop, {neg}, fusion_computation));
   tracker.module()->AddEntryComputation(builder.Build());
 
@@ -903,9 +908,10 @@ TEST_F(HeapSimulatorTest, IndependentTupleElements) {
 TEST_F(HeapSimulatorTest, WholeModule) {
   HeapSimulatorTracker tracker(TestName());
 
-  const Shape scalar_shape = ShapeUtil::MakeShape(xla::F32, {});
+  const Shape scalar_shape =
+      ShapeUtil::MakeValidatedShape(xla::F32, {}).value();
   const Shape tuple_shape =
-      ShapeUtil::MakeTupleShape({scalar_shape, scalar_shape});
+      ShapeUtil::MakeValidatedTupleShape({scalar_shape, scalar_shape}).value();
 
   auto cond_builder = HloComputation::Builder("WhileCond");
   HloInstruction* cond_param = cond_builder.AddInstruction(
@@ -914,9 +920,10 @@ TEST_F(HeapSimulatorTest, WholeModule) {
       HloInstruction::CreateGetTupleElement(scalar_shape, cond_param, 0));
   HloInstruction* cond_data = cond_builder.AddInstruction(
       HloInstruction::CreateGetTupleElement(scalar_shape, cond_param, 1));
-  HloInstruction* cond_lt = cond_builder.AddInstruction(
-      HloInstruction::CreateCompare(ShapeUtil::MakeShape(PRED, {}), cond_iter,
-                                    cond_data, ComparisonDirection::kLt));
+  HloInstruction* cond_lt =
+      cond_builder.AddInstruction(HloInstruction::CreateCompare(
+          ShapeUtil::MakeValidatedShape(PRED, {}).value(), cond_iter, cond_data,
+          ComparisonDirection::kLt));
   HloComputation* cond_computation =
       tracker.module()->AddEmbeddedComputation(cond_builder.Build());
 
@@ -2121,7 +2128,7 @@ class SlicedBufferIntervalTest : public ::testing::Test {
     HloModuleConfig config;
     module_ = std::make_unique<HloModule>("TestModule", config);
 
-    Shape f32vec4 = ShapeUtil::MakeShape(F32, {4});
+    Shape f32vec4 = ShapeUtil::MakeValidatedShape(F32, {4}).value();
 
     auto builder = HloComputation::Builder("TestComputation");
     auto p0 = builder.AddInstruction(
@@ -3775,6 +3782,32 @@ TEST_F(SliceTimePermutationIteratorTest, Repacks) {
   for (const RepackTestCase& test_case : test_cases) {
     test_case.Test();
   }
+}
+
+class BreadthFirstMidpointIteratorTest : public ::testing::Test {
+ protected:
+  static void RunTest(int start, int end, std::vector<int> expected_order) {
+    std::vector<int> actual;
+    for (BreadthFirstMidpointIterator iterator(start, end); !iterator.End();
+         iterator.Next()) {
+      actual.push_back(iterator.value());
+    }
+    EXPECT_THAT(actual, ElementsAreArray(expected_order));
+  }
+};
+
+TEST_F(BreadthFirstMidpointIteratorTest, NoValues) { RunTest(1, 0, {}); }
+
+TEST_F(BreadthFirstMidpointIteratorTest, OneValue) { RunTest(1, 1, {1}); }
+
+TEST_F(BreadthFirstMidpointIteratorTest, TwoValues) { RunTest(1, 2, {2, 1}); }
+
+TEST_F(BreadthFirstMidpointIteratorTest, General1) {
+  RunTest(1, 5, {3, 2, 5, 1, 4});
+}
+
+TEST_F(BreadthFirstMidpointIteratorTest, General2) {
+  RunTest(0, 10, {5, 2, 8, 1, 4, 7, 10, 0, 3, 6, 9});
 }
 
 }  // namespace

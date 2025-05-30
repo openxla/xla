@@ -12,8 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -34,12 +36,14 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -150,14 +154,14 @@ class I4ToI8Converter : public TypeConverter {
 Value div(ConversionPatternRewriter &r, Value value, int64_t constant) {
   auto const_attr = r.getIntegerAttr(value.getType(), constant);
   auto const_op = r.template create<ma::ConstantOp>(value.getLoc(), const_attr);
-  return r.template create<arith::DivSIOp>(value.getLoc(), value, const_op);
+  return r.template create<ma::DivSIOp>(value.getLoc(), value, const_op);
 }
 
 // Divides a value by an integer constant.
 Value ceilDiv(ConversionPatternRewriter &r, Value value, int64_t constant) {
   auto const_attr = r.getIntegerAttr(value.getType(), constant);
   auto const_op = r.template create<ma::ConstantOp>(value.getLoc(), const_attr);
-  return r.template create<arith::CeilDivSIOp>(value.getLoc(), value, const_op);
+  return r.template create<ma::CeilDivSIOp>(value.getLoc(), value, const_op);
 }
 
 // Returns the integer value of a constant op.
@@ -339,7 +343,12 @@ class ExtSIInt4ToInt8Pattern : public OpConversionPattern<ma::ExtSIOp> {
     Value hi = r.create<ma::ShRSIOp>(loc, packed_type, adaptor.getIn(), shift4);
     Value hi_lo = r.create<mt::JoinOp>(loc, lo, hi);
     if (converter_.packed_dimension() + 1 != input_type.getRank()) {
-      auto trans_attr = r.getDenseI32ArrayAttr({0, 2, 1});
+      // Move the minor (joined) dimension to just after the packed dimension.
+      SmallVector<int32_t> trans_order(input_type.getRank() + 1);
+      absl::c_iota(trans_order, 0);
+      std::rotate(trans_order.begin() + converter_.packed_dimension() + 1,
+                  std::prev(trans_order.end()), trans_order.end());
+      auto trans_attr = r.getDenseI32ArrayAttr(trans_order);
       hi_lo = r.create<mt::TransOp>(loc, hi_lo, trans_attr);
     }
     auto unpacked_type = input_type.clone(r.getI8Type());
@@ -391,7 +400,7 @@ std::vector<Operation *> FindInt4ExtSIOp(const ModuleOp &module) {
   I4ToI8Converter converter(/*packed_dimension=*/0);
   std::vector<Operation *> result;
   module->walk([&](Operation *op) {
-    if (auto extSI = dyn_cast<arith::ExtSIOp>(op)) {
+    if (auto extSI = dyn_cast<ma::ExtSIOp>(op)) {
       VLOG(2) << "found ExtSI: " << DumpToString(op);
       auto input_type = extSI.getIn().getType();
       if (input_type != converter.convertType(input_type)) {
@@ -428,6 +437,30 @@ int GetPackedDimension(MLIRContext *ctx, const std::vector<Operation *> &ops) {
   LOG(FATAL) << "No MakeTensorPtrOp found";
 }
 
+LogicalResult SitofpInt4ToInt8Rewrite(ma::SIToFPOp op, PatternRewriter &r) {
+  if (!getElementTypeOrSelf(op.getIn().getType()).isInteger(4)) {
+    return r.notifyMatchFailure(op, "not an i4 argument");
+  }
+  Type type = r.getI8Type();
+  if (auto tensor_type = dyn_cast<RankedTensorType>(op.getType())) {
+    type = tensor_type.clone(type);
+  }
+  auto ext_si_op = r.create<ma::ExtSIOp>(op.getLoc(), type, op.getIn());
+  r.replaceOpWithNewOp<ma::SIToFPOp>(op, op.getType(), ext_si_op);
+  return success();
+}
+
+LogicalResult TruncfSitofpToSitofpRewrite(ma::TruncFOp trunc_op,
+                                          PatternRewriter &rewriter) {
+  auto sitofp_op = trunc_op.getIn().getDefiningOp<ma::SIToFPOp>();
+  if (!sitofp_op) {
+    return rewriter.notifyMatchFailure(trunc_op, "not preceded by sitofp");
+  }
+  rewriter.replaceOpWithNewOp<ma::SIToFPOp>(trunc_op, trunc_op.getType(),
+                                            sitofp_op.getIn());
+  return success();
+}
+
 struct PlainInt4ToPackedInt4RewritePass
     : public impl::LoadInt4RewritePassBase<PlainInt4ToPackedInt4RewritePass> {
   // The pass converts the types like tensor<AxBxi4> to tensor<A/2xBxi8> in the
@@ -440,6 +473,14 @@ struct PlainInt4ToPackedInt4RewritePass
   void runOnOperation() override {
     auto *ctx = &getContext();
     auto module = getOperation();
+
+    RewritePatternSet normalize_patterns(ctx);
+    normalize_patterns.add(SitofpInt4ToInt8Rewrite);
+    normalize_patterns.add(TruncfSitofpToSitofpRewrite);
+    if (failed(applyPatternsGreedily(module, std::move(normalize_patterns)))) {
+      VLOG(2) << "failed to apply patterns";
+      signalPassFailure();
+    }
 
     auto ext_ops = FindInt4ExtSIOp(module);
     int packed_dimension = 0;

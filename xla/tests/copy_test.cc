@@ -105,11 +105,13 @@ XLA_TEST_F(CopyOpTest, CopyDynamicR1S1310720U32Dynamic0) {
     GTEST_SKIP();
   }
   Shape bounded_shape =
-      ShapeUtil::MakeShape(PrimitiveType::F32, {1310720}, {true});
-  TestDynamicCopyOp(LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
-                        ShapeUtil::MakeShape(PrimitiveType::F32, {0}), 0, 1)
-                        .value(),
-                    bounded_shape);
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {1310720}, {true})
+          .value();
+  TestDynamicCopyOp(
+      LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
+          ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {0}).value(), 0, 1)
+          .value(),
+      bounded_shape);
 }
 
 XLA_TEST_F(CopyOpTest, CopyDynamicR1S1310720U32Dynamic106632) {
@@ -118,10 +120,12 @@ XLA_TEST_F(CopyOpTest, CopyDynamicR1S1310720U32Dynamic106632) {
     GTEST_SKIP();
   }
   Shape bounded_shape =
-      ShapeUtil::MakeShape(PrimitiveType::F32, {1310720}, {true});
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {1310720}, {true})
+          .value();
   TestDynamicCopyOp(
       LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
-          ShapeUtil::MakeShape(PrimitiveType::F32, {106632}), 0, 1)
+          ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {106632}).value(),
+          0, 1)
           .value(),
       bounded_shape);
 }
@@ -132,10 +136,12 @@ XLA_TEST_F(CopyOpTest, CopyDynamicR1S1310720U32Dynamic1310720) {
     GTEST_SKIP();
   }
   Shape bounded_shape =
-      ShapeUtil::MakeShape(PrimitiveType::F32, {1310720}, {true});
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {1310720}, {true})
+          .value();
   TestDynamicCopyOp(
       LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
-          ShapeUtil::MakeShape(PrimitiveType::F32, {1310720}), 0, 1)
+          ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {1310720}).value(),
+          0, 1)
           .value(),
       bounded_shape);
 }
@@ -145,11 +151,13 @@ XLA_TEST_F(CopyOpTest, CopyDynamicR1S512U32Dynamic64) {
   if (test_runner().HasProperty(HloRunnerPropertyTag::kCpu)) {
     GTEST_SKIP();
   }
-  Shape bounded_shape = ShapeUtil::MakeShape(PrimitiveType::F32, {512}, {true});
-  TestDynamicCopyOp(LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
-                        ShapeUtil::MakeShape(PrimitiveType::F32, {64}), 0, 1)
-                        .value(),
-                    bounded_shape);
+  Shape bounded_shape =
+      ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {512}, {true}).value();
+  TestDynamicCopyOp(
+      LiteralUtil::CreateRandomLiteral<PrimitiveType::F32>(
+          ShapeUtil::MakeValidatedShape(PrimitiveType::F32, {64}).value(), 0, 1)
+          .value(),
+      bounded_shape);
 }
 
 XLA_TEST_F(CopyOpTest, CopyR3F32_2x2x3) {
@@ -215,7 +223,7 @@ XLA_TEST_F(CopyOpTest, CopyConstantR2DifferentLayouts) {
   Literal literal = LiteralUtil::CreateR2<float>({{1.0, 2.0}, {3.0, 4.0}});
   // Reverse the minor-to-major order of the literal.
   Layout* literal_layout = literal.mutable_shape_do_not_use()->mutable_layout();
-  ASSERT_EQ(2, literal_layout->minor_to_major_size());
+  ASSERT_EQ(2, literal_layout->minor_to_major().size());
   // Swap the first and second elements.
   *literal_layout->mutable_minor_to_major() = {
       literal_layout->minor_to_major(1), literal_layout->minor_to_major(0)};

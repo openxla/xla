@@ -18,6 +18,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -56,7 +57,7 @@ class WhileTest : public ClientLibraryTestBase {};
 //   result = result + 1;
 // }
 XLA_TEST_F(WhileTest, WhileWithScalarS32Result) {
-  auto result_shape = ShapeUtil::MakeShape(S32, {});
+  auto result_shape = ShapeUtil::MakeValidatedShape(S32, {}).value();
 
   // Create a computation for the condition: repeat for 5 iterations.
   XlaComputation condition;
@@ -92,7 +93,7 @@ XLA_TEST_F(WhileTest, WhileWithScalarS32Result) {
 //   result = result + 1;
 // }
 XLA_TEST_F(WhileTest, WhileWithScalarS64Result) {
-  auto result_shape = ShapeUtil::MakeShape(S64, {});
+  auto result_shape = ShapeUtil::MakeValidatedShape(S64, {}).value();
 
   // Create a computation for the condition: repeat for 5 iterations.
   XlaComputation condition;
@@ -122,8 +123,8 @@ XLA_TEST_F(WhileTest, WhileWithScalarS64Result) {
 }
 
 XLA_TEST_F(WhileTest, WhileWithScalarResultNonConstInit) {
-  auto result_shape = ShapeUtil::MakeShape(S32, {});
-  auto orig_shape = ShapeUtil::MakeShape(S32, {2});
+  auto result_shape = ShapeUtil::MakeValidatedShape(S32, {}).value();
+  auto orig_shape = ShapeUtil::MakeValidatedShape(S32, {2}).value();
 
   // Create a computation for the condition: repeat for 5 iterations.
   XlaComputation condition;
@@ -155,7 +156,7 @@ XLA_TEST_F(WhileTest, WhileWithScalarResultNonConstInit) {
 }
 
 XLA_TEST_F(WhileTest, WhileWithPredicateResult) {
-  auto result_shape = ShapeUtil::MakeShape(PRED, {});
+  auto result_shape = ShapeUtil::MakeValidatedShape(PRED, {}).value();
 
   // Create a computation for the condition: run until condition is true.
   XlaComputation condition;
@@ -191,15 +192,20 @@ XLA_TEST_F(WhileTest, WhileWithPredicateResult) {
 // while (result.sum() < 15.5f) {
 //   result = result + vector<float>(0);
 // }
-XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileWithEmptyVectorResult)) {
-  Shape result_shape = ShapeUtil::MakeShape(F32, {0});
+XLA_TEST_F(WhileTest, WhileWithEmptyVectorResult) {
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
+  Shape result_shape = ShapeUtil::MakeValidatedShape(F32, {0}).value();
 
   // Create a computation for the reduction.
   XlaComputation add;
   {
     XlaBuilder builder("add");
-    auto x = Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {}), "x");
-    auto y = Parameter(&builder, 1, ShapeUtil::MakeShape(F32, {}), "y");
+    auto x = Parameter(&builder, 0,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "x");
+    auto y = Parameter(&builder, 1,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "y");
     Add(x, y);
     add = builder.Build().value();
   }
@@ -245,14 +251,16 @@ XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileWithEmptyVectorResult)) {
 //   result = result + vector<float>(8, 0.125f);
 // }
 XLA_TEST_F(WhileTest, WhileWithVectorResult) {
-  Shape result_shape = ShapeUtil::MakeShape(F32, {8});
+  Shape result_shape = ShapeUtil::MakeValidatedShape(F32, {8}).value();
 
   // Create a computation for the reduction.
   XlaComputation add;
   {
     XlaBuilder builder("add");
-    auto x = Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {}), "x");
-    auto y = Parameter(&builder, 1, ShapeUtil::MakeShape(F32, {}), "y");
+    auto x = Parameter(&builder, 0,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "x");
+    auto y = Parameter(&builder, 1,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "y");
     Add(x, y);
     add = builder.Build().value();
   }
@@ -304,14 +312,16 @@ XLA_TEST_F(WhileTest, WhileWithVectorResult) {
 // }
 // tuple = tuple { while }
 XLA_TEST_F(WhileTest, WhileWithVectorResultIntoTuple) {
-  Shape result_shape = ShapeUtil::MakeShape(F32, {8});
+  Shape result_shape = ShapeUtil::MakeValidatedShape(F32, {8}).value();
 
   // Create a computation for the reduction.
   XlaComputation add;
   {
     XlaBuilder builder("add");
-    auto x = Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {}), "x");
-    auto y = Parameter(&builder, 1, ShapeUtil::MakeShape(F32, {}), "y");
+    auto x = Parameter(&builder, 0,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "x");
+    auto y = Parameter(&builder, 1,
+                       ShapeUtil::MakeValidatedShape(F32, {}).value(), "y");
     Add(x, y);
     add = builder.Build().value();
   }
@@ -359,9 +369,12 @@ XLA_TEST_F(WhileTest, WhileWithVectorResultIntoTuple) {
 
 XLA_TEST_F(WhileTest, WhileWithPermutationAndTupleResult) {
   std::vector<Shape> shape_elements = {
-      ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(F32, {3}),
-      ShapeUtil::MakeShape(F32, {3}), ShapeUtil::MakeShape(F32, {3})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for N iterations.
@@ -412,9 +425,12 @@ XLA_TEST_F(WhileTest, WhileWithPermutationAndTupleResult) {
 
 XLA_TEST_F(WhileTest, WhileWithPermutationAndVectorResult) {
   std::vector<Shape> shape_elements = {
-      ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(F32, {3}),
-      ShapeUtil::MakeShape(F32, {3}), ShapeUtil::MakeShape(F32, {3})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {3}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for N iterations.
@@ -468,9 +484,11 @@ XLA_TEST_F(WhileTest, WhileWithPermutationAndVectorResult) {
 //   get<1>(result) = get<1>(result) + vector<float>(10, 1.0f);
 // }
 XLA_TEST_F(WhileTest, WhileWithTupleResult) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(F32, {10})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {10}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -516,9 +534,11 @@ XLA_TEST_F(WhileTest, WhileWithTupleResult) {
 }
 
 XLA_TEST_F(WhileTest, WhileWithPredicateTupleResult) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(PRED, {})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(PRED, {}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -562,9 +582,11 @@ XLA_TEST_F(WhileTest, WhileWithPredicateTupleResult) {
 }
 
 XLA_TEST_F(WhileTest, WhileWithTupleConstantScalarResult) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(S32, {})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(S32, {}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -620,9 +642,11 @@ XLA_TEST_F(WhileTest, WhileWithTupleConstantScalarResult) {
 //      }
 // result = get<1>(w0) + get<1>(w1)
 XLA_TEST_F(WhileTest, TwoWhileWithTupleResult) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(F32, {10})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {10}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -697,9 +721,11 @@ XLA_TEST_F(WhileTest, TwoWhileWithTupleResult) {
 
 // Test while nodes that share the while body computation.
 XLA_TEST_F(WhileTest, TwoWhileLoopsAndSharedBody) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(F32, {10})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {10}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -760,9 +786,11 @@ XLA_TEST_F(WhileTest, TwoWhileLoopsAndSharedBody) {
 }
 
 XLA_TEST_F(WhileTest, WhileLoopsWithSharedBodyAndInit) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(F32, {10})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {10}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -825,9 +853,11 @@ XLA_TEST_F(WhileTest, WhileLoopsWithSharedBodyAndInit) {
 // Loop state tuple element 1 has as its single user operand(0) of
 // DynamicUpdateSlice, which will trigger in-place dynamic slice update on GPU.
 XLA_TEST_F(WhileTest, WhileWithDynamicUpdateSlice) {
-  std::vector<Shape> shape_elements = {ShapeUtil::MakeShape(S32, {}),
-                                       ShapeUtil::MakeShape(F32, {10})};
-  Shape result_shape = ShapeUtil::MakeTupleShape(shape_elements);
+  std::vector<Shape> shape_elements = {
+      ShapeUtil::MakeValidatedShape(S32, {}).value(),
+      ShapeUtil::MakeValidatedShape(F32, {10}).value()};
+  Shape result_shape =
+      ShapeUtil::MakeValidatedTupleShape(shape_elements).value();
 
   // Create a computation for the condition.
   // Repeat for 5 iterations.
@@ -895,7 +925,7 @@ XLA_TEST_F(WhileTest, WhileWithDynamicUpdateSlice) {
 // use different random number generators.
 // TODO(b/32240857): Extend test to verify outputs.
 XLA_TEST_F(WhileTest, WhileWithPrngScalarResult) {
-  auto v6s32 = ShapeUtil::MakeShape(S32, {6});
+  auto v6s32 = ShapeUtil::MakeValidatedShape(S32, {6}).value();
 
   // Create a computation for the condition: repeat for count iterations.
   auto build_condition = [this, v6s32](int count) {
@@ -911,12 +941,13 @@ XLA_TEST_F(WhileTest, WhileWithPrngScalarResult) {
   {
     XlaBuilder builder("body");
     auto prev = Parameter(&builder, 0, v6s32, "prev");
-    auto inc = ConcatInDim(&builder,
-                           {ConstantR1<int32_t>(&builder, {1}),
-                            RngUniform(ConstantR0<int32_t>(&builder, 0),
-                                       ConstantR0<int32_t>(&builder, 100),
-                                       ShapeUtil::MakeShape(S32, {5}))},
-                           0);
+    auto inc = ConcatInDim(
+        &builder,
+        {ConstantR1<int32_t>(&builder, {1}),
+         RngUniform(ConstantR0<int32_t>(&builder, 0),
+                    ConstantR0<int32_t>(&builder, 100),
+                    ShapeUtil::MakeValidatedShape(S32, {5}).value())},
+        0);
     Add(inc, prev);
     body = builder.Build().value();
   }
@@ -941,7 +972,7 @@ XLA_TEST_F(WhileTest, WhileWithPrngScalarResult) {
 }
 
 XLA_TEST_F(WhileTest, WhileThatSwapsParameterWithTupleElement) {
-  auto element_shape = ShapeUtil::MakeShape(F32, {2});
+  auto element_shape = ShapeUtil::MakeValidatedShape(F32, {2}).value();
 
   XlaBuilder outer("outer");
   auto p = Parameter(&outer, 0, element_shape, "param");
@@ -973,7 +1004,7 @@ XLA_TEST_F(WhileTest, WhileThatSwapsParameterWithTupleElement) {
 }
 
 XLA_TEST_F(WhileTest, WhileThatSwapsParameterWithBroadcast) {
-  auto element_shape = ShapeUtil::MakeShape(F32, {2});
+  auto element_shape = ShapeUtil::MakeValidatedShape(F32, {2}).value();
 
   XlaBuilder outer("outer");
   auto p = Parameter(&outer, 0, element_shape, "param");
@@ -998,7 +1029,7 @@ XLA_TEST_F(WhileTest, WhileThatSwapsParameterWithBroadcast) {
 }
 
 XLA_TEST_F(WhileTest, WhileThatTurnsScalarParameterToTupleElement) {
-  auto element_shape = ShapeUtil::MakeShape(F32, {});
+  auto element_shape = ShapeUtil::MakeValidatedShape(F32, {}).value();
 
   XlaBuilder outer("outer");
   auto p = Parameter(&outer, 0, element_shape, "param");
@@ -1032,13 +1063,16 @@ XLA_TEST_F(WhileTest, WhileThatTurnsScalarParameterToTupleElement) {
 //   result[1] = result[1] + 1;
 // }
 XLA_TEST_F(WhileTest, WhileWithMixedTupleElements) {
-  auto result_shape = ShapeUtil::MakeTupleShape(
-      {ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(S32, {})});
+  auto result_shape =
+      ShapeUtil::MakeValidatedTupleShape(
+          {ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(S32, {})})
+          .value();
 
   XlaBuilder outer("outer");
-  auto p =
-      Tuple(&outer, {ConstantR0<int32_t>(&outer, 0),
-                     Parameter(&outer, 0, ShapeUtil::MakeShape(S32, {}), "t")});
+  auto p = Tuple(
+      &outer, {ConstantR0<int32_t>(&outer, 0),
+               Parameter(&outer, 0,
+                         ShapeUtil::MakeValidatedShape(S32, {}).value(), "t")});
 
   XlaBuilder cond("cond");
   auto params = Parameter(&cond, 0, result_shape, "prev");
@@ -1078,9 +1112,11 @@ XLA_TEST_F(WhileTest, WhileWithMixedTupleElements) {
 //   }
 // }
 XLA_TEST_F(WhileTest, NestedWhileWithScalarResult) {
-  auto outer_result_shape = ShapeUtil::MakeShape(S32, {});
-  auto inner_result_shape = ShapeUtil::MakeTupleShape(
-      {ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(S32, {})});
+  auto outer_result_shape = ShapeUtil::MakeValidatedShape(S32, {}).value();
+  auto inner_result_shape =
+      ShapeUtil::MakeValidatedTupleShape(
+          {ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(S32, {})})
+          .value();
 
   XlaComputation inner_condition;
   {
@@ -1141,7 +1177,7 @@ XLA_TEST_F(WhileTest, NestedWhileWithScalarResult) {
 //   result = result + 1;
 // }
 XLA_TEST_F(WhileTest, WhileWithCallInsideCondition) {
-  auto result_shape = ShapeUtil::MakeShape(S32, {});
+  auto result_shape = ShapeUtil::MakeValidatedShape(S32, {}).value();
 
   // Create a computation for the condition: repeat for 5 iterations.
   XlaComputation condition_callee;
@@ -1181,10 +1217,11 @@ XLA_TEST_F(WhileTest, WhileWithCallInsideCondition) {
 }
 
 XLA_TEST_F(WhileTest, WhileWithLoopInvariantOperation) {
-  auto matrix_shape = ShapeUtil::MakeShape(F32, {2, 2});
-  auto scalar_s32 = ShapeUtil::MakeShape(S32, {});
-  auto while_shape = ShapeUtil::MakeTupleShape(
-      {scalar_s32, matrix_shape, matrix_shape, matrix_shape});
+  auto matrix_shape = ShapeUtil::MakeValidatedShape(F32, {2, 2}).value();
+  auto scalar_s32 = ShapeUtil::MakeValidatedShape(S32, {}).value();
+  auto while_shape = ShapeUtil::MakeValidatedTupleShape(
+                         {scalar_s32, matrix_shape, matrix_shape, matrix_shape})
+                         .value();
 
   // Create a computation for the condition: repeat for 5 iterations.
   XlaComputation condition;
@@ -1224,14 +1261,17 @@ XLA_TEST_F(WhileTest, WhileWithLoopInvariantOperation) {
       {param_value.get()}, ErrorSpec(4e-5));
 }
 
-XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileInfeedCondition)) {
-  auto while_shape = ShapeUtil::MakeShape(S32, {});
+XLA_TEST_F(WhileTest, WhileInfeedCondition) {
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
+  auto while_shape = ShapeUtil::MakeValidatedShape(S32, {}).value();
 
   XlaComputation condition;
   {
     XlaBuilder builder("condition");
     Parameter(&builder, 0, while_shape, "state");
-    Infeed(&builder, ShapeUtil::MakeShape(PRED, {}));
+    Infeed(&builder, ShapeUtil::MakeValidatedShape(PRED, {}).value());
     TF_ASSERT_OK_AND_ASSIGN(condition, builder.Build());
   }
 
@@ -1309,9 +1349,11 @@ void BM_WhileLoop(::testing::benchmark::State& state) {
   LocalClient* client = ClientLibrary::GetOrCreateLocalClient(platform).value();
 
   const int64_t seq_len = 100;
-  Shape loop_state_shape = ShapeUtil::MakeTupleShape(
-      {ShapeUtil::MakeShape(S32, {}),
-       ShapeUtil::MakeShape(F32, {seq_len, 1024, 1024})});
+  Shape loop_state_shape =
+      ShapeUtil::MakeValidatedTupleShape(
+          {ShapeUtil::MakeShape(S32, {}),
+           ShapeUtil::MakeShape(F32, {seq_len, 1024, 1024})})
+          .value();
 
   // Create while condition computation with 'loop_limit'.
   const int32_t loop_limit = 100;

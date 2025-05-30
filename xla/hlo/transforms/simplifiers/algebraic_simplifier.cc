@@ -572,6 +572,7 @@ bool AlgebraicSimplifierVisitor::IsNonNegative(
 
 void AlgebraicSimplifierVisitor::ResetState(HloComputation* computation) {
   ResetVisitStates();
+  MarkAsUnchanged();
   computation_ = computation;
 }
 
@@ -842,7 +843,8 @@ bool AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible(
   }
   CHECK(!new_instructions.empty());
   if (!old_instruction->shape().IsTuple() ||
-      old_instruction->shape().tuple_shapes_size() != new_instructions.size()) {
+      old_instruction->shape().tuple_shapes().size() !=
+          new_instructions.size()) {
     return false;
   }
   for (int i = 0, n = new_instructions.size(); i < n; ++i) {
@@ -5108,7 +5110,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleOptimizationBarrier(
   // optimization barrier. Additionally if the operand is a tuple producing
   // instruction it should also be safe to create a sub tuple of only the used
   // components to enable module level dce.
-  std::vector<bool> used_elements(barrier->shape().tuple_shapes_size());
+  std::vector<bool> used_elements(barrier->shape().tuple_shapes().size());
   bool has_non_gte_use = false;
   for (auto use : barrier->users()) {
     if (use->opcode() != HloOpcode::kGetTupleElement) {
@@ -9910,8 +9912,23 @@ absl::StatusOr<bool> AlgebraicSimplifier::Run(
   bool changed = false;
   AlgebraicSimplifierVisitor visitor(options_, this);
   for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
-    if (visitor.Run(comp, options_, this)) {
-      changed = true;
+    bool computation_changed_per_run = false;
+    int64_t run_count = 0;
+    // Repeatedly run simplification on each computation until it is stable.
+    do {
+      computation_changed_per_run = false;
+      if (visitor.Run(comp, options_, this)) {
+        changed = true;
+        if (options_.run_to_fixed_point()) {
+          ++run_count;
+          computation_changed_per_run = true;
+        }
+      }
+    } while (computation_changed_per_run && run_count < kAlgSimpRerunLimit);
+    if (run_count >= kAlgSimpRerunLimit) {
+      LOG(ERROR) << "Algebraic simplifier is likely stuck in a circular "
+                    "simplification loop and ran for "
+                 << run_count << " runs on computation " << comp->name();
     }
   }
   return changed;
