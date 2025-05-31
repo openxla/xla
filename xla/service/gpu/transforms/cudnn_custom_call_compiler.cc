@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
-#include "xla/service/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -424,51 +423,6 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
   return graph;
 }
 
-absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBlockScaledDot(
-    se::dnn::DnnSupport &dnn_support, HloCustomCallInstruction *custom_call) {
-  TF_RET_CHECK(custom_call->operand_count() == 4);
-  TF_RET_CHECK(custom_call->shape().tuple_shapes().size() == 2);
-
-  TF_ASSIGN_OR_RETURN(TensorDescriptor lhs_data,
-                      TensorDescriptorFor(custom_call->operand(0)->shape()));
-  TF_ASSIGN_OR_RETURN(TensorDescriptor rhs_data,
-                      TensorDescriptorFor(custom_call->operand(1)->shape()));
-  TF_ASSIGN_OR_RETURN(TensorDescriptor lhs_scale,
-                      TensorDescriptorFor(custom_call->operand(2)->shape()));
-  TF_ASSIGN_OR_RETURN(TensorDescriptor rhs_scale,
-                      TensorDescriptorFor(custom_call->operand(3)->shape()));
-
-  DataType result_type;
-  switch (custom_call->shape().tuple_shapes(0).element_type()) {
-    case PrimitiveType::F32:
-      result_type = DataType::kFloat;
-      break;
-    case PrimitiveType::F16:
-      result_type = DataType::kHalf;
-      break;
-    case PrimitiveType::BF16:
-      result_type = DataType::kBF16;
-      break;
-    default:
-      return absl::InternalError("Unsupported data type for block scaled dot");
-  }
-
-  // cuDNN currently supports MXFP8 (block size 32, E8M0FNU scales) and NVFP4
-  // (block size 16, E4M3FN scales).
-  TF_RET_CHECK(lhs_scale.type() == rhs_scale.type());
-  TF_RET_CHECK(lhs_scale.type() == DataType::kF8E8M0FNU ||
-               lhs_scale.type() == DataType::kF8E4M3FN);
-  const int block_size = lhs_scale.type() == DataType::kF8E8M0FNU
-                             ? BlockScalingRewriter::kBlockSizeMXFP8
-                             : BlockScalingRewriter::kBlockSizeNVFP4;
-
-  TF_ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph,
-                      se::gpu::GetCudnnBlockScaledDotOperationGraph(
-                          dnn_support, lhs_data, lhs_scale, rhs_data, rhs_scale,
-                          result_type, block_size));
-  return graph;
-}
-
 absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     se::dnn::DnnSupport &dnn_support, HloCustomCallInstruction *custom_call) {
   if (IsFwdCustomCallTofMHA(*custom_call)) {
@@ -477,11 +431,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     return BuildGraphForCustomCallToForwardFMHAF8(dnn_support, custom_call);
   } else if (IsBwdCustomCallTofMHA(*custom_call)) {
     return BuildGraphForCustomCallToBackwardFMHA(dnn_support, custom_call);
-  } else if (IsBwdCustomCallTofMHAF8(*custom_call)) {
-    return BuildGraphForCustomCallToBackwardFMHAF8(dnn_support, custom_call);
   } else {
-    TF_RET_CHECK(IsCustomCallToBlockScaledDot(*custom_call));
-    return BuildGraphForCustomCallToBlockScaledDot(dnn_support, custom_call);
+    TF_RET_CHECK(IsBwdCustomCallTofMHAF8(*custom_call));
+    return BuildGraphForCustomCallToBackwardFMHAF8(dnn_support, custom_call);
   }
 }
 

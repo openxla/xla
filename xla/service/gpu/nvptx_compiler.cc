@@ -281,9 +281,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     pre_pipeline.AddPass<CudnnNormRewriter>(cuda_compute_capability);
   }
 
-  pre_pipeline.AddPass<BlockScalingRewriter>(
-      /*allow_cudnn=*/cuda_compute_capability.IsAtLeastBlackwell() &&
-      gpu_target_config.dnn_version_info >= se::dnn::VersionInfo(9, 7));
   pre_pipeline.AddPass<DotDimensionMerger>();
   pre_pipeline.AddPass<DotSparsityRewriter>();
 
@@ -366,6 +363,9 @@ absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     const se::SemanticVersion& toolkit_version) {
   pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
                                          thread_pool, key_value_store);
+  // If a block scaled dot uses cuDNN fusion (after the autotuning), the scaling
+  // factors have to be swizzled.
+  pipeline->AddPass<CudnnBlockScalingRewriter>();
   return absl::OkStatus();
 }
 

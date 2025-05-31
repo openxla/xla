@@ -408,6 +408,93 @@ CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}64{{[[:spa
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+// TODO: Remove once subchannel dequantization fusion is enabled by default.
+class SubchannelDequantizationFileCheckTest : public CuDnnFusionFileCheckTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        CuDnnFusionFileCheckTest::GetDebugOptionsForTest();
+    debug_options
+        .set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(true);
+    return debug_options;
+  }
+};
+
+TEST_F(SubchannelDequantizationFileCheckTest, BlockScaledDotLowering) {
+  const std::string kHloText = R"(
+block_scaled_dot {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  %a_conv = f16[256,128] convert(%lhs)
+  %b_conv = f16[384,128] convert(%rhs)
+  %a_scale_conv = f16[256,4] convert(%lhs_scale)
+  %b_scale_conv = f16[384,4] convert(%rhs_scale)
+  %a_scale_bc = f16[256,4,32] broadcast(%a_scale_conv), dimensions={0,1}
+  %b_scale_bc = f16[384,4,32] broadcast(%b_scale_conv), dimensions={0,1}
+  %a_scale = f16[256,128] reshape(%a_scale_bc)
+  %b_scale = f16[384,128] reshape(%b_scale_bc)
+  %lhs_dq = f16[256,128] multiply(%a_conv, %a_scale)
+  %rhs_dq = f16[384,128] multiply(%b_conv, %b_scale)
+  ROOT %result = f32[256,384] dot(%lhs_dq, %rhs_dq),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  %lhs = f8e4m3fn[256,128] parameter(0)
+  %rhs = f8e4m3fn[384,128] parameter(1)
+  %lhs_scale = f8e8m0fnu[256,4] parameter(2)
+  %rhs_scale = f8e8m0fnu[384,4] parameter(3)
+  ROOT %result = f32[256,384] fusion(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      kind=kCustom, calls=block_scaled_dot,
+      backend_config={"fusion_backend_config":{kind:"__cudnn$fusion"}}
+})";
+
+  EXPECT_TRUE(*RunCuDnnFileCheck(kHloText, R"(
+CHECK: "nodes"
+CHECK: {
+CHECK: "block_size": 32
+CHECK: "X": "lhs"
+CHECK: "scale": "a_scale"
+CHECK: "Y": "lhs_dq"
+CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
+CHECK: {
+CHECK: "block_size": 32
+CHECK: "X": "rhs"
+CHECK: "scale": "b_scale"
+CHECK: "Y": "rhs_dq"
+CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
+CHECK: {
+CHECK: "A": "lhs_dq"
+CHECK: "B": "rhs_dq"
+CHECK: "C": "result"
+CHECK: "tag": "MATMUL"
+CHECK: "tensors"
+CHECK: "a_scale":
+CHECK: "dim": [1,256,4]
+CHECK: "reordering_type": "F8_128x4"
+CHECK: "stride": [1,4,1]
+CHECK: "b_scale":
+CHECK: "dim": [1,4,384]
+CHECK: "reordering_type": "F8_128x4"
+CHECK: "stride": [1,1,4]
+CHECK: "lhs":
+CHECK: "dim": [1,256,128]
+CHECK: "stride": [1,128,1]
+CHECK: "lhs_dq":
+CHECK: "is_virtual": true
+CHECK: "result":
+CHECK: "dim": [1,256,384]
+CHECK: "stride": [1,384,1]
+CHECK: "rhs":
+CHECK: "dim": [1,128,384]
+CHECK: "stride": [1,1,128]
+CHECK: "rhs_dq":
+CHECK: "is_virtual": true
+)"));
+}
+
 TEST_F(CuDnnFusionExecutionTest, DotBF16WithCopyExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {

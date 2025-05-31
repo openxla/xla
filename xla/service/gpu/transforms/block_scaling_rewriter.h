@@ -16,78 +16,77 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_TRANSFORMS_BLOCK_SCALING_REWRITER_H_
 #define XLA_SERVICE_GPU_TRANSFORMS_BLOCK_SCALING_REWRITER_H_
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/transforms/expanders/op_expander_pass.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
 
 namespace xla::gpu {
 
-// This pass converts the block quantize/dequantize operations (represented as
-// custom calls) to XLA graphs or library calls, if available (e.g. cuDNN).
+// Handles composites representing a dot operation on quantized inputs
+// (block scaled dot).
+// This operation has hardware support on Blackwell, and is available starting
+// from cuDNN v9.7 and cuDNN frontend v1.10.
 //
-// Supported operations:
+// The block scaled dot composite takes four inputs (lhs, lhs_scale, rhs,
+// rhs_scale), where each side is represented by two tensors: (a) quantized
+// input, and (b) scaling factor, which gets broadcasted to the input size.
 //
-// 1. "__op$quantize": takes an input tensor of arbitrary size, splits it into
-//    blocks along the minor dimension; for each block calculates the scaling
-//    factor and adjusts the output data, so when these are multiplied together,
-//    the result is roughly equal to the input (minus the rounding error).
+// Simplified operation graph:
+//   1. lhs_dequantized = multiply(lhs, broadcast(lhs_scale))
+//   2. rhs_dequantized = multiply(rhs, broadcast(rhs_scale))
+//   3. block_scaled_dot = dot(lhs_dequantized, rhs_dequantized)
 //
-//    Example: f32[8,128] -> (f8e4m3fn[8,128], f8e4m3fn[8,4])
+// The cuDNN kernel supports the following formats:
+//   - MXFP8: input type E4M3FN or E5M2, scale type E8M0FNU, block size 32;
+//   - NVFP4: input type E2M1FN, scale type E4M3FN (positive), block size 16;
 //
-// 2. "__op$dequantize": takes two tensors as the input - quantized data and
-//    scaling factor (block size is implied). Multiplies them and returns the
-//    result as a wider data type. This is the inverse of the quantize op.
+// Additionally, the cuDNN kernel imposes some restrictions on the format of
+// the scaling factor tensor (minimum tile size 128x4, must be swizzled in a
+// specific way). The passes add the necessary transformations (padding,
+// transposition) to satisfy these constraints.
 //
-//    Example: (f8e4m3fn[8,128], f8e4m3fn[8,4]) -> f32[8,128]
-//
-// 3. "__op$block_scaled_dot": performs the dot operation on quantized inputs.
-//    The number of parameters is either 3 (if only LHS input is quantized) or 4
-//    (if both inputs are quantized).
-//    The contracting dimension must be the minor one for both LHS and RHS.
-//    The batch dimension (if present) must be the major one.
-//
-//    Example: (f8e4m3fn[8,128], f8e4m3fn[16,128],
-//              f8e8m0fnu[8,4], f8e8m0fnu[16,4]) -> f32[8,16]
-//
-//    The following HLO:
-//        %res = f32[4,8,16] custom-call(%lhs, %rhs, %lhs_scale, %rhs_scale),
-//               custom_call_target="__op$block_scaled_dot"
-//    is equivalent to:
-//        %lhs_dq = f32[4,8,128] custom-call(%lhs, %lhs_scale),
-//                  custom_call_target="__op$dequantize"
-//        %rhs_dq = f32[4,16,128] custom-call(%rhs, %rhs_scale),
-//                  custom_call_target="__op$dequantize"
-//        %res = f32[4,8,16] dot(%lhs_dq, %rhs_dq),
-//               lhs_batch_dims={0}, lhs_contracting_dims={2},
-//               rhs_batch_dims={0}, rhs_contracting_dims={2}
-//
-class BlockScalingRewriter : public OpExpanderPass {
+// Dot dimension numbers must be normalized (one contracting dimension, one
+// non-contracting dimension, at most one batch dimension) in order to be
+// matched by this pass.
+
+// The first pass rewrites composite calls or custom calls representing a block
+// scaled dot operation into a dot fusion that will be picked up by the
+// autotuner.
+class BlockScalingRewriter : public HloModulePass {
  public:
-  explicit BlockScalingRewriter(bool allow_cudnn)
-      : allow_cudnn_(allow_cudnn) {};
+  explicit BlockScalingRewriter(bool allow_cudnn) : allow_cudnn_(allow_cudnn) {}
 
   absl::string_view name() const override { return "block-scaling-rewriter"; }
 
-  bool InstructionMatchesPattern(HloInstruction* instruction) override;
+  absl::StatusOr<bool> Run(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  absl::StatusOr<HloInstruction*> ExpandInstruction(
-      HloInstruction* instruction) override;
-
-  // Custom call targets.
-  static constexpr absl::string_view kQuantizeCustomCallTarget =
-      "__op$quantize";
-  static constexpr absl::string_view kDequantizeCustomCallTarget =
-      "__op$dequantize";
+  // Custom call target.
   static constexpr absl::string_view kBlockScaledDotCustomCallTarget =
       "__op$block_scaled_dot";
 
-  // Common block size constants.
-  static constexpr int kBlockSizeMXFP8 = 32;
-  static constexpr int kBlockSizeNVFP4 = 16;
-
  private:
   bool allow_cudnn_;
+};
+
+// The second pass prepends swizzling of the scaling factors before the cuDNN
+// fusion containing block scaled dot operation (required by the kernel). The
+// added computation may be fused with other ops by the following fusion passes.
+class CudnnBlockScalingRewriter : public HloModulePass {
+ public:
+  absl::string_view name() const override {
+    return "cudnn-block-scaling-rewriter";
+  }
+
+  absl::StatusOr<bool> Run(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
+  // Verify that the block scaled dot operation is supported by cuDNN.
+  static bool IsCudnnSupported(const HloInstruction* root);
 };
 
 }  // namespace xla::gpu

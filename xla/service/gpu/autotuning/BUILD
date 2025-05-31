@@ -156,6 +156,8 @@ cc_library(
         "//xla/service/gpu/kernels:custom_kernel_fusion",
         "//xla/service/gpu/kernels:custom_kernel_fusion_pattern",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
+        "//xla/service/gpu/transforms:block_scaling_matcher",
+        "//xla/service/gpu/transforms:block_scaling_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
         "//xla/service/gpu/transforms:fusion_wrapper",
         "//xla/service/gpu/transforms:gemm_rewriter",
