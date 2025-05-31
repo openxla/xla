@@ -262,6 +262,9 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kCustomCall);
     CASE(kCustomKernel);
     CASE(kDynamicSlice);
+    CASE(kNvshmemCollectivePermute);
+    CASE(kNvshmemCollectivePermuteStart);
+    CASE(kNvshmemCollectivePermuteDone);
     CASE(kFft);
     CASE(kGemm);
     CASE(kGroupDone);
