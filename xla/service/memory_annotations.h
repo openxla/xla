@@ -35,6 +35,7 @@ inline const absl::string_view kMoveToDeviceCustomCallTarget = "MoveToDevice";
 inline const absl::string_view kPinToDeviceCustomCallTarget = "PinToDevice";
 inline const absl::string_view kPinToDeviceSramCustomCallTarget =
     "PinToDeviceSram";
+inline const absl::string_view kAnnotateMemorySpace = "AnnotateMemorySpace";
 
 }  // namespace memory_annotations
 }  // namespace xla
