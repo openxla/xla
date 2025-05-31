@@ -1193,6 +1193,31 @@ class ReadySetLt {
       }
     }
 
+    auto delay_async_start_candidate =
+        [this](DefaultSchedulerCore::ScheduleCandidate& a,
+               DefaultSchedulerCore::ScheduleCandidate& b)
+        -> std::optional<DefaultSchedulerCore::CandidateResult> {
+      // If an instruction releasing a resource is not resource constrained,
+      // delay it as much as possible.
+      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+              /*first_cond=*/!(a.node->DoesReleaseAnyResource() &&
+                               !IsResourceConstrained(a)),
+              a,
+              /*second_cond=*/
+              !(b.node->DoesReleaseAnyResource() && !IsResourceConstrained(b)),
+              b, "kDelayAsyncStart")) {
+        return value;
+      }
+      return std::nullopt;
+    };
+
+    if (sched_state_.config.aggressive_scheduling_policies &&
+        sched_state_.config.prioritize_compute_over_async_start) {
+      if (auto value = delay_async_start_candidate(a, b)) {
+        return *value;
+      }
+    }
+
     const ApproximateLatencyEstimator::TimeCost a_ready_interval =
         std::max(a.node->GetReadyTime() - sched_state_.current_time, 0.0);
     const ApproximateLatencyEstimator::TimeCost b_ready_interval =
