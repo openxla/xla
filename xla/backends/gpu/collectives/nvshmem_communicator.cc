@@ -328,7 +328,8 @@ size_t GetPrimitiveTypeSize(PrimitiveType type) {
 // Performs point-to-point communication between two ranks using NVSHMEM.
 // This is a helper function used by both Send and Recv operations to handle
 // the actual data transfer between peers.
-absl::Status NvshmemCommunicator::P2P(absl::string_view op_name, PrimitiveType type,
+absl::Status NvshmemCommunicator::P2P(absl::string_view op_name,
+                                      PrimitiveType type,
                                       se::DeviceMemoryBase recv_buffer,
                                       se::DeviceMemoryBase send_buffer,
                                       size_t count, RankId peer,
