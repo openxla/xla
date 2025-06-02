@@ -95,6 +95,7 @@ class MpiCommunicator : public Communicator {
                                  PrimitiveType dtype, size_t count, RankId peer,
                                  const Executor& executor) override {
     return Unimplemented("Recv is not implemented");
+  }
 
   absl::StatusOr<size_t> NumRanks() const override { return mpi_size_; }
 
