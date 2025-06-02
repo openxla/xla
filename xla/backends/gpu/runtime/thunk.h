@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -131,6 +132,7 @@ class Thunk {
     kCollectiveBroadcast,
     kCollectiveBroadcastDone,
     kCollectiveBroadcastStart,
+    kCollectiveKernel,
     kCollectivePermute,
     kCollectivePermuteDone,
     kCollectivePermuteStart,
@@ -192,8 +194,16 @@ class Thunk {
     BinaryMap dnn_compiled_graphs;
   };
 
+  // Metadata associated with a Thunk,
+  // including profiling and stream execution info.
   struct ThunkInfo {
     ThunkInfo() = default;  // Disable implicit constructors.
+
+    // Deserializes a ThunkInfo from a ThunkInfoProto.
+    // Returns an error if the proto is invalid.
+    static absl::StatusOr<Thunk::ThunkInfo> FromProto(
+        const ThunkInfoProto& proto);
+
     static ThunkInfo WithProfileAnnotation(const HloInstruction* instr);
 
     std::string profile_annotation;
@@ -347,8 +357,6 @@ class Thunk {
 
     // Total local device count.
     int local_device_count = 0;
-
-    bool requires_exclusive_lock_on_gpu = false;
   };
 
   //===--------------------------------------------------------------------===//
@@ -406,8 +414,6 @@ class Thunk {
 
     bool mock_collectives = false;
 
-    bool requires_exclusive_lock_on_gpu = false;
-
    private:
     friend class CommandBufferThunk;
 
@@ -421,8 +427,7 @@ class Thunk {
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
-                  bool mock_collectives = false,
-                  bool requires_exclusive_lock_on_gpu = false);
+                  bool mock_collectives = false);
   };
 
   //===--------------------------------------------------------------------===//
@@ -489,17 +494,19 @@ class Thunk {
   virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
 
   // A helper function to get the `GpuCollectives*` pointer from the
+  // CollectiveExecuteParams.
+  static absl::StatusOr<GpuCollectives* absl_nonnull> GetGpuCollectives(
+      CollectiveExecuteParams const& params);
+
+  // A helper function to get the `GpuCollectives*` pointer from the
   // thunk parameters. Returns an error if collectives API is not provided.
   template <typename Params>
-  static absl::StatusOr<GpuCollectives*> GetGpuCollectives(
+  static absl::StatusOr<GpuCollectives* absl_nonnull> GetGpuCollectives(
       const Params& params) {
     if (params.collective_params == nullptr) {
       return Internal("Collective params are not provided");
     }
-    if (params.collective_params->collectives == nullptr) {
-      return Internal("Collectives API is not provided");
-    }
-    return params.collective_params->collectives;
+    return GetGpuCollectives(*params.collective_params);
   }
 
   // Serializes the thunk into a `ThunkProto`.

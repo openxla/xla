@@ -106,8 +106,11 @@ Range RecursivelyIdentifyRange(
     return it->second;
   } else if (dataflow_analysis != nullptr) {
     auto value_set = dataflow_analysis->GetFlattenedValueSet(instr);
-    for (const auto& value : value_set.values()) {
-      for (const HloPosition& position : value->positions()) {
+    // We could be smarter here by merging the ranges, but it's likely not worth
+    // the complexity at this point.
+    const std::vector<const HloValue*>& values = value_set.values();
+    if (values.size() == 1) {
+      for (const HloPosition& position : values.at(0)->positions()) {
         auto it = known_ranges.find(position.instruction);
         if (it != known_ranges.end()) {
           VLOG(5) << "Found range in defining instruction: "
@@ -165,7 +168,7 @@ Range RecursivelyIdentifyRange(
     }
     case HloOpcode::kConstant: {
       if (instr->shape().element_type() == PRED &&
-          instr->shape().dimensions().size() == 0) {
+          instr->shape().dimensions().empty()) {
         if (instr->literal().IsAll(true)) {
           return RecordAndReturnRange(
               Range{ConstantValue::GetOne(/*bitwidth=*/1, /*is_signed=*/false),
@@ -264,6 +267,10 @@ Range RecursivelyIdentifyRange(
                                       instr, known_ranges);
         }
         ConstantValue step = operand_range.step()->mul(single_value);
+        // Zero step makes it difficult to simulate the range; update it to 1.
+        if (step.GetSignedValue() == 0) {
+          step = ConstantValue::GetOne(/*bitwidth=*/64, /*is_signed=*/true);
+        }
         return RecordAndReturnRange(
             Range{min, max, step, operand_range.IsLinear()}, instr,
             known_ranges);
@@ -274,6 +281,10 @@ Range RecursivelyIdentifyRange(
             known_ranges);
       }
       ConstantValue step = operand_range.step()->mul(single_value);
+      // Zero step makes it difficult to simulate the range; update it to 1.
+      if (step.GetSignedValue() == 0) {
+        step = ConstantValue::GetOne(/*bitwidth=*/64, /*is_signed=*/true);
+      }
       return RecordAndReturnRange(
           Range{min, std::nullopt, step, operand_range.IsLinear()}, instr,
           known_ranges);

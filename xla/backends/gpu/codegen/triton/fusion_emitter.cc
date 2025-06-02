@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -99,9 +98,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
-#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/passes.h"
-#include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -141,7 +138,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
-#include "triton/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -272,6 +268,34 @@ ScalarOrTensor Broadcast(EmitterLocOpBuilder& b, TensorValue value,
       b.create<ttir::BroadcastOp>(value.getType().clone(shape), value));
 }
 
+// Same as HLO BroadcastInDims. The sorted indices in `dims` specify the mapping
+// of the input dimensions to the output dimensions.
+ScalarOrTensor BroadcastInDims(EmitterLocOpBuilder& b, ScalarOrTensor value,
+                               ArrayRef<int64_t> output_shape,
+                               ArrayRef<int64_t> dims) {
+  CHECK(llvm::is_sorted(dims)) << "broadcast dims must be sorted";
+
+  if (value.IsScalar()) {
+    return Splat(b, value, output_shape);
+  }
+  TensorValue input_tensor = value.UnwrapTensor();
+  auto input_shape = input_tensor.getType().getShape();
+  int64_t axis = 0;
+  int64_t input_dim_id = 0;
+  for (int output_dim_id = 0; output_dim_id < output_shape.size();
+       output_dim_id++) {
+    if (input_dim_id < dims.size() && output_dim_id == dims[input_dim_id]) {
+      // The dim is not broadcasted. Validate matching dim sizes.
+      CHECK_EQ(input_shape[input_dim_id], output_shape[output_dim_id]);
+      ++input_dim_id;
+      axis = output_dim_id + 1;
+      continue;
+    }
+    input_tensor = b.create<ttir::ExpandDimsOp>(input_tensor, axis);
+  }
+  return Broadcast(b, input_tensor, output_shape);
+}
+
 ScalarOrTensor Range(EmitterLocOpBuilder& b, int32_t limit) {
   auto type = mlir::RankedTensorType::get(limit, b.getI32Type());
   return ScalarOrTensor(b.create<ttir::MakeRangeOp>(type, 0, limit));
@@ -332,36 +356,17 @@ absl::StatusOr<ScalarOrTensor> EmitReduce(
   int64_t input_reduction_dimension_size = input_shape[reduction_dimension];
   if (input_reduction_dimension_size !=
       source_tensor_reduction_dimension_size) {
-    Value range = Range(b, input_reduction_dimension_size).UnwrapUnsafe();
-    // Triton's broadcast requires that the rank of the source and broadcasted
-    // result are equal.
-    for (int i = 0; i < input_shape.size() - 1; i++) {
-      if (i < reduction_dimension) {
-        range = b.create<ttir::ExpandDimsOp>(range, /*axis*/ 0);
-      } else {
-        range = b.create<ttir::ExpandDimsOp>(range, /*axis*/ i + 1);
-      }
-    }
-    Value mask = Broadcast(b, mlir::cast<TensorValue>(range), input_shape)
-                     .UnwrapUnsafe();
+    ScalarOrTensor range = Range(b, input_reduction_dimension_size);
+    ScalarOrTensor bcast =
+        BroadcastInDims(b, range, input_shape, {reduction_dimension});
     ScalarOrTensor constant = CreateConst(
         b, b.getI32Type(), source_tensor_reduction_dimension_size, input_shape);
-    mask = b.create<arith::CmpIOp>(arith::CmpIPredicate::slt, mask,
-                                   constant.UnwrapUnsafe());
+    Value mask =
+        b.create<arith::CmpIOp>(arith::CmpIPredicate::slt, bcast.UnwrapUnsafe(),
+                                constant.UnwrapUnsafe());
 
-    ScalarOrTensor neutral = values[tiled_hlo_reduce.operand(1)];
-    // Triton's broadcast requires that the rank of the source and broadcasted
-    // result are equal.
-    if (neutral.IsScalar()) {
-      neutral = Splat(b, neutral, input_shape);
-    } else {
-      for (int i = 0; i < input_shape.size(); i++) {
-        neutral = ScalarOrTensor(
-            b.create<ttir::ExpandDimsOp>(neutral.UnwrapUnsafe(), /*axis*/ 0));
-      }
-      neutral = Broadcast(b, mlir::cast<TensorValue>(neutral.UnwrapUnsafe()),
-                          input_shape);
-    }
+    ScalarOrTensor neutral = BroadcastInDims(
+        b, values[tiled_hlo_reduce.operand(1)], input_shape, /*dims=*/{});
     input = ScalarOrTensor(b.create<arith::SelectOp>(mask, input.UnwrapUnsafe(),
                                                      neutral.UnwrapUnsafe()));
   }
@@ -444,6 +449,11 @@ absl::StatusOr<ScalarOrTensor> EmitNestedFusion(
                    to_emit, region_values);
 }
 
+template <typename T>
+ArrayRef<T> MakeArrayRef(const absl::Span<const T> span) {
+  return ArrayRef(span.data(), span.size());
+}
+
 ScalarOrTensor EmitTiledBroadcast(
     EmitterLocOpBuilder& b, const TiledHloInstruction& tiled_broadcast,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
@@ -460,44 +470,8 @@ ScalarOrTensor EmitTiledBroadcast(
       GetPaddedTileSizes(output_tile_shape);
 
   ScalarOrTensor input = values[tiled_broadcast.operand(0)];
-  // Handle the 0d special case.
-  if (input.IsScalar()) {
-    return Splat(b, input, padded_output_tile_shape);
-  }
-
-  Value expanded_input = input.UnwrapTensor();
-
-  // Returns true if `dim_id` is broadcasted.
-  auto is_broadcasted_dim = [&](int64_t dim_id) {
-    return !llvm::is_contained(tiled_broadcast.hlo()->dimensions(), dim_id);
-  };
-
-  // The loop below iterates over output dimensions and tracks matching dims in
-  // input_tile_shape and expended_input value.
-  // `input_dim_id != expanded_input_dim_id`, because size-1 dims are present in
-  // the input tile shape, but not in the MLIR value. Triton doesn't like size-1
-  // dims, so they are inserted only for dimensions that will be broadcasted.
-  int64_t input_dim_id = 0;
-  int64_t expanded_input_dim_id = 0;
-  for (size_t output_dim_id = 0; output_dim_id < output_tile_shape.size();
-       ++output_dim_id) {
-    if (is_broadcasted_dim(output_dim_id)) {
-      // Expand dim for broadcast.
-      expanded_input =
-          b.create<ttir::ExpandDimsOp>(expanded_input, expanded_input_dim_id);
-      ++expanded_input_dim_id;
-    } else {
-      // The dim is not broadcasted. Validate that it's equal in the input and
-      // output tile.
-      CHECK_EQ(input_tile_shape[input_dim_id],
-               output_tile_shape[output_dim_id]);
-      ++input_dim_id;
-      ++expanded_input_dim_id;
-    }
-  }
-
-  return Broadcast(b, mlir::cast<TensorValue>(expanded_input),
-                   padded_output_tile_shape);
+  return BroadcastInDims(b, input, padded_output_tile_shape,
+                         MakeArrayRef(tiled_broadcast.hlo()->dimensions()));
 }
 
 absl::StatusOr<ScalarOrTensor> EmitTiledIota(
@@ -514,10 +488,11 @@ absl::StatusOr<ScalarOrTensor> EmitTiledIota(
   TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
                       tiled_iota.tile_offsets_indexing());
 
-  auto iota_dim_offset = b.create<arith::IndexCastUIOp>(
-      b.getI32Type(),
-      emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
-                              /*symbols=*/{}, b)[iota_dim]);
+  auto iota_dim_offset =
+      Cast(b,
+           emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
+                                   /*symbols=*/{}, b)[iota_dim],
+           b.getI32Type());
 
   // First, stride as needed between the iota components.
   Value range = b.create<arith::MulIOp>(
@@ -541,15 +516,8 @@ absl::StatusOr<ScalarOrTensor> EmitTiledIota(
 
   // And finally, produce a broadcast along the non-iota dimensions in order to
   // produce the whole iota tile.
-  for (int i = 0; i < padded_tile_sizes.size() - 1; i++) {
-    if (i < iota_dim) {
-      range = b.create<ttir::ExpandDimsOp>(range, /*axis*/ 0);
-    } else {
-      range = b.create<ttir::ExpandDimsOp>(range, /*axis*/ i + 1);
-    }
-  }
-
-  return Broadcast(b, mlir::cast<TensorValue>(range), padded_tile_sizes);
+  return BroadcastInDims(b, ScalarOrTensor(range), padded_tile_sizes,
+                         /*dims=*/{iota_dim});
 }
 
 // Reshapes a non-0D tensor of shape [1, 1, 1, ...] to a scalar.
@@ -753,7 +721,6 @@ absl::StatusOr<Value> MaskDotOperand(EmitterLocOpBuilder& b,
   llvm::ArrayRef<int64_t> tile_shape =
       mlir::cast<ShapedType>(dot_operand_value.getType()).getShape();
 
-  int64_t rank = dot_operand.hlo()->shape().dimensions().size();
   int64_t contracting_dimension_size =
       dot_operand.hlo()->shape().dimensions(contraction_dimension_index);
   int64_t tile_size = tile_shape[contraction_dimension_index];
@@ -782,15 +749,9 @@ absl::StatusOr<Value> MaskDotOperand(EmitterLocOpBuilder& b,
     Value mask =
         b.create<arith::CmpIOp>(arith::CmpIPredicate::slt, indices, boundary);
 
-    // Triton's broadcast requires that the rank of the source and broadcasted
-    // result are equal.
-    for (int i = 0; i < rank - 1; i++) {
-      int axis = (i < contraction_dimension_index) ? 0 : i + 1;
-      mask = b.create<ttir::ExpandDimsOp>(mask, axis);
-    }
-    mask =
-        Broadcast(b, mlir::cast<TensorValue>(mask), tile_shape).UnwrapTensor();
-
+    mask = BroadcastInDims(b, ScalarOrTensor(mask), tile_shape,
+                           {contraction_dimension_index})
+               .UnwrapTensor();
     TF_ASSIGN_OR_RETURN(
         auto element_type,
         TritonType(b, dot_operand.hlo()->shape().element_type()));
@@ -949,7 +910,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
     b.setInsertionPointToStart(for_op.getBody());
     SmallVector<TensorValue> dot_args;
     Value ki = for_op.getInductionVar();
-    const Value ki_index = b.create<arith::IndexCastUIOp>(b.getIndexType(), ki);
+    const Value ki_index = Cast(b, ki, b.getIndexType());
     Value loop_iteration_count_value =
         CreateConst(b, b.getIndexType(), loop_iteration_count, {})
             .UnwrapScalar();
@@ -986,7 +947,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
     // TODO(b/393299275): masking is only necessary during the last iteration of
     // the loop. We should evaluate whether adding a conditional mask helps or
     // hinders performance for Triton.
-    Value ki_i32 = b.create<arith::TruncIOp>(b.getI32Type(), ki);
+    Value ki_i32 = Cast(b, ki, b.getI32Type());
     TF_ASSIGN_OR_RETURN(
         Value lhs, MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0],
                                   ki_i32, lhs_contracting_dim_idx));
@@ -1137,33 +1098,6 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
   return ScalarOrTensor(if_ops.front().getResult(0));
 }
 
-// Given an operand to a (potentially nested) fusion instruction, finds the
-// index of the operand to the outermost fusion it corresponds to.
-//
-// Nested fusion parameter chains should always only traverse parameter nodes.
-int64_t GetOutermostFusionOperandParameterIndex(
-    const HloFusionInstruction* fusion, const HloInstruction* operand) {
-  CHECK(fusion->IsUserOf(operand));
-
-  // Simple case: `fusion` is the outermost fusion.
-  if (!operand->parent()->IsFusionComputation()) {
-    return fusion->operand_index(operand);
-  }
-
-  // While operand is in a nested fusion, walk up to the outermost fusion.
-  while (
-      operand->parent()->FusionInstruction()->parent()->IsFusionComputation()) {
-    // Nests operands should always point to parameters.
-    CHECK(operand->opcode() == HloOpcode::kParameter);
-    int64_t param_number = operand->parameter_number();
-    operand = operand->parent()->FusionInstruction()->operand(param_number);
-  }
-
-  CHECK(operand->parent()->IsFusionComputation());
-  CHECK(operand->opcode() == HloOpcode::kParameter);
-  return operand->parameter_number();
-}
-
 absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
@@ -1173,14 +1107,17 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
-  if (hlo->IsRoot() && hlo->opcode() == HloOpcode::kParameter) {
+  if (hlo->opcode() == HloOpcode::kParameter && !fusion->IsUserOf(hlo)) {
     hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
   }
 
   if (fusion->IsUserOf(hlo)) {
-    // If the fusion instruction is a user of `hlo`, then `hlo` is an operand
-    // to the fusion instruction.
-    int64_t arg_index = GetOutermostFusionOperandParameterIndex(fusion, hlo);
+    int64_t arg_index = fusion->operand_index(hlo);
+    // Walk up the parameter chain to find the outermost operand index.
+    while (auto* instr = hlo->parent()->FusionInstruction()) {
+      arg_index = hlo->parameter_number();  // Nested operands are parameters.
+      hlo = instr->operand(arg_index);
+    }
     TF_ASSIGN_OR_RETURN(auto tile_info, TileInfo::Construct(b, pid, tiled_hlo));
     ScalarOrTensor parameter =
         EmitParameterExtract(b, tile_info, fn.getArgument(arg_index));
@@ -1438,10 +1375,9 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
   // TODO(b/389955087): we can decide whether to sign extend by understanding if
   // we need 64 bits to encode indices or if 32 bits are enough. For now, just
   // use 64 bits to avoid issues.
-  Value pid = b.create<arith::IndexCastUIOp>(
-      b.getIndexType(),
-      b.create<arith::ExtSIOp>(b.getI64Type(), b.create<ttir::GetProgramIdOp>(
-                                                   ttir::ProgramIDDim::X)));
+  Value pid_i64 = Cast(b, b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X),
+                       b.getI64Type());
+  Value pid = Cast(b, pid_i64, b.getIndexType());
   TF_ASSIGN_OR_RETURN(
       auto results, EmitTiledComputation(b, libdevice_path, device_info, fusion,
                                          tiled_hlo_computation, fn, pid));

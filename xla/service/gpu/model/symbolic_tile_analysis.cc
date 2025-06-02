@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map_serialization.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -68,6 +69,7 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -511,9 +513,118 @@ bool ShouldDerivationSimplifyPointDimensions(const HloFusionAdaptor& fusion) {
   return true;
 }
 
+// Helper to handle nested parameters for `TilingSpecification::FromFusion`.
+// It is assumed that `num_tile_sizes_by_instruction` does not contain any
+// information regarding the nested tiling parameters of the fusion.
+//
+// `num_tile_sizes_by_instruction` is however allowed to contain information
+// regarding the tiling parameters of the fusion that are visible at the output.
+absl::Status PopulateNestedParameters(
+    const HloFusionAdaptor& fusion,
+    absl::flat_hash_map<const HloInstruction*, int64_t>&
+        num_tile_sizes_by_instruction) {
+  auto set_num_tile_sizes_for_instruction =
+      [&](const HloInstruction& instruction, int64_t num_parameters) {
+        // This should never happen if our outer logic is correct, but we check
+        // it just in case.
+        if (!instruction.shape().IsArray()) {
+          return absl::FailedPreconditionError(absl::StrCat(
+              "Instruction ", instruction.ToString(),
+              " has non-array shape: ", instruction.shape().ToString()));
+        }
+        // If the instruction is already in the specification, update it. This
+        // should in principle only occur if the instruction defines both tiling
+        // parameters visible at its output as well as hidden tiling parameters.
+        // A `dot` that is the root of a fusion will model this case, for
+        // example.
+        num_tile_sizes_by_instruction[&instruction] += num_parameters;
+        return absl::OkStatus();
+      };
+
+  for (auto& instruction_adaptor : fusion.MakeInstructionPostOrder()) {
+    if (!fusion.ContainsInstruction(instruction_adaptor)) {
+      continue;
+    }
+
+    if (instruction_adaptor.opcode() == HloOpcode::kFusion) {
+      std::unique_ptr<HloFusionAdaptor> nested_fusion_adaptor =
+          HloFusionAdaptor::ForComputation(
+              instruction_adaptor.instruction()
+                  .fused_instructions_computation());
+      TF_RETURN_IF_ERROR(PopulateNestedParameters(
+          *nested_fusion_adaptor, num_tile_sizes_by_instruction));
+      continue;
+    }
+
+    if (instruction_adaptor.opcode() == HloOpcode::kDot) {
+      int64_t num_parameters = instruction_adaptor.instruction()
+                                   .dot_dimension_numbers()
+                                   .lhs_contracting_dimensions()
+                                   .size();
+      TF_RETURN_IF_ERROR(set_num_tile_sizes_for_instruction(
+          instruction_adaptor.instruction(), num_parameters));
+    }
+  }
+  return absl::OkStatus();
+}
+
 }  // anonymous namespace
 
-// Extracts HloInstructions from a span of HloInstructionAdaptors.
+/*static*/ absl::StatusOr<TilingSpecification>
+TilingSpecification::FromFusionAdaptor(const HloFusionAdaptor& fusion_adaptor) {
+  absl::flat_hash_map<const HloInstruction*, int64_t>
+      num_tile_sizes_by_instruction;
+
+  for (const HloInstructionAdaptor& root : fusion_adaptor.GetRoots()) {
+    const HloInstruction& instruction = root.instruction();
+    if (!instruction.shape().IsArray()) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Instruction ", instruction.ToString(),
+          " has non-array shape: ", instruction.shape().ToString()));
+    }
+    num_tile_sizes_by_instruction[&instruction] =
+        instruction.shape().dimensions().size();
+  }
+
+  TF_RETURN_IF_ERROR(
+      PopulateNestedParameters(fusion_adaptor, num_tile_sizes_by_instruction));
+  return TilingSpecification(std::move(num_tile_sizes_by_instruction));
+}
+
+/*static*/ absl::StatusOr<TilingSpecification> TilingSpecification::FromFusion(
+    const HloFusionInstruction& fusion) {
+  std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
+      HloFusionAdaptor::ForComputation(fusion.fused_instructions_computation());
+  return TilingSpecification::FromFusionAdaptor(*fusion_adaptor);
+}
+
+absl::StatusOr<absl::Span<const int64_t>> Tiling::TileSizesForInstruction(
+    const HloInstruction* hlo) const {
+  if (auto it = tile_sizes_.find(hlo); it != tile_sizes_.end()) {
+    return it->second;
+  }
+
+  return absl::NotFoundError(
+      absl::StrCat("No tile sizes found for instruction: ", hlo->ToString()));
+}
+
+bool Tiling::ConformsTo(const TilingSpecification& tiling_specification) const {
+  const absl::flat_hash_map<const HloInstruction*, int64_t>&
+      num_tile_sizes_by_instruction =
+          tiling_specification.num_tile_sizes_by_instruction();
+  if (tile_sizes_.size() != num_tile_sizes_by_instruction.size()) {
+    return false;
+  }
+  for (const auto& [hlo, num_parameters] : num_tile_sizes_by_instruction) {
+    auto it = tile_sizes_.find(hlo);
+    if (it == tile_sizes_.end() || it->second.size() != num_parameters) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Extracts `HloInstruction`s from a span of `HloInstructionAdaptor`s.
 absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
     absl::Span<const HloInstructionAdaptor> instruction_adaptors) {
   absl::InlinedVector<const HloInstruction*, 2> hlo_instructions;
@@ -578,15 +689,10 @@ absl::StatusOr<int64_t> GetRealRootIndex(
 /*static*/ SymbolicTileAnalysisOrError SymbolicTileAnalysis::AnalyzeFusionImpl(
     const HloFusionAdaptor& fusion, MLIRContext* ctx,
     const RootIndexing& root_indexing,
+    IndexingMap::SimplifyPointDimensions simplification_mode,
     EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder) {
   OrderedUniquePtrValueHashSet<SymbolicTiledHloInstruction>
       tiled_hlo_instructions_set;
-
-  IndexingMap::SimplifyPointDimensions simplification_mode =
-      IndexingMap::SimplifyPointDimensions::kPreserve;
-  if (ShouldDerivationSimplifyPointDimensions(fusion)) {
-    simplification_mode = IndexingMap::SimplifyPointDimensions::kReplace;
-  }
 
   // TODO(b/372454662): Once we get rid of the restriction of only one real
   // root, this needs to be adapted.
@@ -594,22 +700,31 @@ absl::StatusOr<int64_t> GetRealRootIndex(
       std::make_unique<SymbolicTiledHloInstruction>(
           root_indexing.GetRealRoot(), root_indexing.real_root_indexing));
 
+  if (root_tiled_hlo->hlo()->opcode() == HloOpcode::kFusion) {
+    // This is an acceptable restriction because we expect the user of a nested
+    // fusion to be a dot or concatenate, which prevents it from being a root.
+    return FusionDecision::Forbid("Root fusion instruction is not supported.");
+  }
+
   std::vector<SymbolicTiledHloInstruction*> worklist = {root_tiled_hlo};
 
   while (!worklist.empty()) {
     auto tiled_hlo_instruction = worklist.back();
     worklist.pop_back();
-    HloInstructionAdaptor instruction_adaptor(*tiled_hlo_instruction->hlo(),
-                                              &fusion);
 
-    if (!fusion.ContainsInstruction(instruction_adaptor)) {
+    if (!fusion.ContainsInstruction(tiled_hlo_instruction->hlo())) {
       continue;
+    }
+    if (tiled_hlo_instruction->hlo()->opcode() == HloOpcode::kFusion) {
+      continue;  // Don't analyze parameter operands of nested fusions.
     }
 
     HloInstructionIndexing operands_indexing =
         ComputeOutputToInputIndexing(tiled_hlo_instruction->hlo(),
                                      /*output_id=*/0, ctx);
 
+    HloInstructionAdaptor instruction_adaptor(*tiled_hlo_instruction->hlo(),
+                                              &fusion);
     for (auto [operand, operand_indexing_map_set] :
          llvm::zip(instruction_adaptor.GetOperands(),
                    operands_indexing.indexing_maps)) {
@@ -658,7 +773,7 @@ absl::StatusOr<int64_t> GetRealRootIndex(
 
         auto analysis_or = SymbolicTileAnalysis::AnalyzeFusionImpl(
             *nested_fusion_adaptor, ctx, nested_root_indexing,
-            emitter_specific_constraints_builder);
+            simplification_mode, emitter_specific_constraints_builder);
         if (std::holds_alternative<FusionDecision>(analysis_or)) {
           return analysis_or;
         }
@@ -717,7 +832,11 @@ absl::StatusOr<int64_t> GetRealRootIndex(
   if (!root_indexing_or.ok()) {
     return FusionDecision::Forbid(root_indexing_or.status().message());
   }
-  return AnalyzeFusionImpl(fusion, ctx, *root_indexing_or,
+  IndexingMap::SimplifyPointDimensions simplification_mode =
+      ShouldDerivationSimplifyPointDimensions(fusion)
+          ? IndexingMap::SimplifyPointDimensions::kReplace
+          : IndexingMap::SimplifyPointDimensions::kPreserve;
+  return AnalyzeFusionImpl(fusion, ctx, *root_indexing_or, simplification_mode,
                            emitter_specific_constraints_builder);
 }
 
@@ -751,6 +870,7 @@ absl::StatusOr<bool> SymbolicTileAnalysis::ParametersSatisfyConstraints(
 }
 
 namespace {
+
 // Returns whether the tiling from `output` can be used by the emitter for
 // producing a fusion output without causing issues in case a buffer is shared
 // between a fusion operand and a fusion output. Buffer sharing is (as of May

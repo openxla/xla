@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -42,8 +43,10 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -185,11 +188,6 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                            ? run_options.run_options()
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
-                           : false,
-                       run_options.run_options().gpu_executable_run_options()
-                           ? run_options.run_options()
-                                 .gpu_executable_run_options()
-                                 ->requires_exclusive_lock_on_gpu()
                            : false);
 }
 
@@ -213,8 +211,7 @@ Thunk::ExecuteParams::ExecuteParams(
     SendDeviceMemoryFunction* send_device_memory_function,
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
-    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
-    bool requires_exclusive_lock_on_gpu)
+    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -226,8 +223,7 @@ Thunk::ExecuteParams::ExecuteParams(
       recv_device_memory_function(recv_device_memory_function),
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
-      mock_collectives(mock_collectives),
-      requires_exclusive_lock_on_gpu(requires_exclusive_lock_on_gpu) {}
+      mock_collectives(mock_collectives) {}
 
 //===----------------------------------------------------------------------===//
 
@@ -250,6 +246,7 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kCollectiveBroadcast);
     CASE(kCollectiveBroadcastDone);
     CASE(kCollectiveBroadcastStart);
+    CASE(kCollectiveKernel);
     CASE(kCollectivePermute);
     CASE(kCollectivePermuteDone);
     CASE(kCollectivePermuteStart);
@@ -324,6 +321,17 @@ bool IsReductionCollective(Thunk::Kind kind) {
          kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
 }
 
+absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
+    const ThunkInfoProto& proto) {
+  TF_RET_CHECK(proto.execution_stream_id() >= 0)
+      << "The thunk execution stream ID must be non-negative, but got "
+      << proto.execution_stream_id() << ".";
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = proto.profile_annotation();
+  thunk_info.execution_stream_id = proto.execution_stream_id();
+  return thunk_info;
+}
+
 Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
     const HloInstruction* instr) {
   ThunkInfo thunk_info;
@@ -386,5 +394,12 @@ absl::StatusOr<ThunkProto> Thunk::ToProto() const {
   return proto;
 }
 
+absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
+    CollectiveExecuteParams const& params) {
+  if (params.collectives == nullptr) {
+    return Internal("Collectives API is not provided");
+  }
+  return params.collectives;
+}
 }  // namespace gpu
 }  // namespace xla

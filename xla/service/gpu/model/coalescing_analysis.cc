@@ -221,7 +221,7 @@ bool EstimateCoalescingViaMemoryTransactionsCount(
 
 // Returns a linearized shape, i.e. tensor<num_elements(input) x element_type>.
 Shape GetLinearizedShape(const Shape& shape) {
-  if (shape.dimensions().size() == 0) {
+  if (shape.dimensions().empty()) {
     return shape;
   }
   std::vector<int64_t> dims{ShapeUtil::ElementsIn(shape)};
@@ -242,7 +242,7 @@ std::optional<GroupedByOpIndexingMap> GetThreadIdToInputMemoryLayoutsMaps(
        llvm::enumerate(fusion_analysis.fusion_heroes())) {
     for (const auto& [hero_operand_index, hero_operand] :
          llvm::enumerate(hero.GetOperands())) {
-      if (hero_operand.shape().dimensions().size() == 0) {
+      if (hero_operand.shape().dimensions().empty()) {
         continue;
       }
       // Compute thread ID -> hero operand indexing map.
@@ -271,8 +271,10 @@ std::optional<GroupedByOpIndexingMap> GetThreadIdToInputMemoryLayoutsMaps(
             GetIndexingMapFromLogicalToPhysicalLayout(operand_shape,
                                                       mlir_context);
         IndexingMap operand_physical_to_linearized_shape = GetBitcastMap(
-            ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
-                operand_shape),
+            ShapeUtil::
+                MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
+                    operand_shape)
+                    .value(),
             GetLinearizedShape(operand_shape), mlir_context);
         IndexingMap operand_logical_to_linearized_physical_shape =
             operand_logical_to_physical_map *
@@ -665,7 +667,7 @@ bool CoalescingAnalysis::ComputeCoalescingForAllOperands(
     return false;
   }
   for (const HloInstruction* operand : operands) {
-    if (operand->shape().dimensions().size() == 0) {
+    if (operand->shape().dimensions().empty()) {
       coalescing_per_operand_.insert({operand, true});
       continue;
     }

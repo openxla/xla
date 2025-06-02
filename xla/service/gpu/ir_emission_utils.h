@@ -33,6 +33,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
+#include "xla/codegen/ir_emission_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -65,9 +66,9 @@ inline constexpr int64_t kMinTotalDimensionsToTransposeTiled = 16 * 16;
 // dimension.
 inline constexpr int64_t kMaxBitsInMostMinorDimension = 8 * 8;
 
-// Matrix multiplication before the rewrite.
-bool IsMatrixMultiplication(const HloInstruction& dot);
-bool IsMatrixVectorMultiplication(const HloInstruction& dot);
+// Returns true if the given dot is supported by cuBLAS.
+absl::StatusOr<bool> IsCublasSupportedMatMul(
+    const HloInstruction& dot, bool allow_matrix_vector_multiplication);
 
 inline constexpr int64_t WarpSize(
     const se::DeviceDescription& gpu_device_info) {
@@ -131,10 +132,6 @@ std::optional<std::string> GetCustomFusionConfigName(
 // Returns true if the given instruction is a custom fusion for dynamic slice
 // fusion. This is determined by checking the name of custom fusion config.
 bool IsDynamicSliceFusion(const HloInstruction* instr);
-
-// Returns the bitwidth of the given primitive type. Unfortunately,
-// primitive_util::BitWidth(PRED) return 1 instead of 8.
-int GetBitwidth(PrimitiveType type);
 
 // Returns true if the given instruction is a dynamic memcpy fusion. This
 // function only checks the fusion kind, which is populated by the
@@ -200,41 +197,6 @@ HloInstructionAdaptor FindNonTrivialHero(const HloInstructionAdaptor& instr);
 
 // Same as above, but fusion is the parent computation of the hlo instruction.
 const HloInstruction& FindNonTrivialHero(const HloInstruction& instr);
-
-/// Description of how to emit a given transposition.
-struct TransposeDescription {
-  // Transpose instruction.
-  const HloInstruction* instr;
-
-  // Normalized transpose dimensions.
-  absl::InlinedVector<int64_t, 3> dimensions;
-
-  // Permutations of normalized transpose dimensions.
-  absl::InlinedVector<int64_t, 3> permutation;
-
-  // Required amount of shared memory in bytes.
-  int64_t shmem_usage = 0;
-
-  TransposeDescription(const HloInstruction* instr,
-                       absl::InlinedVector<int64_t, 3> dimensions,
-                       absl::InlinedVector<int64_t, 3> permutation,
-                       int64_t shmem_usage)
-      : instr(instr),
-        dimensions(dimensions),
-        permutation(permutation),
-        shmem_usage(shmem_usage) {}
-
-  // Transpose instruction input shape.
-  const Shape& input_shape() const { return instr->operand(0)->shape(); }
-
-  // Returns true, if both descriptions have the same dimensions and
-  // permutation, even if they're produced by different instructions.
-  bool IsEquivalent(const TransposeDescription& other) const {
-    return dimensions == other.dimensions && permutation == other.permutation &&
-           GetBitwidth(instr->shape().element_type()) ==
-               GetBitwidth(other.instr->shape().element_type());
-  }
-};
 
 std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
     const HloInstruction& hero);

@@ -174,14 +174,21 @@ class TfrtCpuClient final : public CommonPjRtClient {
     return eigen_intraop_device_.get();
   }
 
-  tsl::AsyncValueRef<CpuEvent> GetLastCollectiveLaunchEvent() {
-    absl::MutexLock lock(&mu_);
-    return last_collective_launch_event_.CopyRef();
-  }
+  // Returns a pair of async events:
+  // - async event that signals the completion of the last collective launch
+  // - count down event that must be signalled when each rank completes
+  //   a collective launch
+  using CollectiveLaunchEvent =
+      std::pair<tsl::AsyncValueRef<CpuEvent>,
+                tsl::CountDownAsyncValueRef<CpuEvent>>;
 
-  void SetLastCollectiveLaunchEvent(tsl::AsyncValueRef<CpuEvent> event) {
+  CollectiveLaunchEvent GetLastCollectiveLaunchEvent(
+      size_t num_addressable_devices) {
+    tsl::CountDownAsyncValueRef<CpuEvent> count_down(num_addressable_devices);
     absl::MutexLock lock(&mu_);
-    last_collective_launch_event_ = std::move(event);
+    auto last_launch = std::move(last_collective_launch_event_);
+    last_collective_launch_event_ = count_down.AsRef();
+    return std::make_pair(std::move(last_launch), std::move(count_down));
   }
 
   tsl::AsyncValueRef<CpuEvent> GetLastEnqueueEvent() {
@@ -244,7 +251,7 @@ class TfrtCpuClient final : public CommonPjRtClient {
       CpuClientOptions options);
 
   TfrtCpuClient(
-      int process_index, std::vector<std::unique_ptr<TfrtCpuDevice>> devices,
+      int process_index, std::vector<std::unique_ptr<PjRtCpuDevice>> devices,
       std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
       bool asynchronous, bool legacy_memory_space_behavior,
       std::function<void(HloModuleConfig&)> customize_hlo_module_config);
@@ -258,11 +265,11 @@ class TfrtCpuClient final : public CommonPjRtClient {
 
   int process_index_;
   // Includes all devices, including non-addressable devices.
-  std::vector<std::unique_ptr<TfrtCpuDevice>> owned_devices_;
+  std::vector<std::unique_ptr<PjRtCpuDevice>> owned_devices_;
   // Pointers to `owned_devices_`.
   std::vector<PjRtDevice*> devices_;
   // Maps Device::id() to the corresponding Device. Includes all devices.
-  absl::flat_hash_map<PjRtGlobalDeviceId, TfrtCpuDevice*> id_to_device_;
+  absl::flat_hash_map<PjRtGlobalDeviceId, PjRtCpuDevice*> id_to_device_;
   // Addressable devices indexed by core_id.
   std::vector<PjRtDevice*> addressable_devices_;
   std::unique_ptr<ComputationPlacer> computation_placer_;
@@ -319,20 +326,20 @@ class TfrtCpuClient final : public CommonPjRtClient {
       tsl::MakeAvailableAsyncValueRef<CpuEvent>();
 };
 
-class TfrtCpuBuffer final : public AbstractCpuBuffer {
+class PjRtCpuBuffer final : public AbstractCpuBuffer {
  public:
-  TfrtCpuBuffer(Shape on_device_shape,
+  PjRtCpuBuffer(Shape on_device_shape,
                 std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-                TfrtCpuClient* client, TfrtCpuDevice* device,
+                TfrtCpuClient* client, PjRtCpuDevice* device,
                 PjRtMemorySpace* memory_space);
 
-  TfrtCpuBuffer(const TfrtCpuBuffer&) = delete;
-  TfrtCpuBuffer(TfrtCpuBuffer&&) = delete;
-  TfrtCpuBuffer& operator=(const TfrtCpuBuffer&) = delete;
-  TfrtCpuBuffer& operator=(TfrtCpuBuffer&&) = delete;
+  PjRtCpuBuffer(const PjRtCpuBuffer&) = delete;
+  PjRtCpuBuffer(PjRtCpuBuffer&&) = delete;
+  PjRtCpuBuffer& operator=(const PjRtCpuBuffer&) = delete;
+  PjRtCpuBuffer& operator=(PjRtCpuBuffer&&) = delete;
 
   PjRtMemorySpace* memory_space() const override { return memory_space_; }
-  TfrtCpuDevice* device() const override { return device_; }
+  PjRtCpuDevice* device() const override { return device_; }
   TfrtCpuClient* client() const override { return client_; }
 
   PjRtFuture<> CopyRawToHost(void* dst, int64_t offset,
@@ -348,10 +355,10 @@ class TfrtCpuBuffer final : public AbstractCpuBuffer {
       PjRtMemorySpace* dst_memory_space) override;
 
  private:
-  absl::string_view buffer_name() const override { return "TfrtCpuBuffer"; }
+  absl::string_view buffer_name() const override { return "PjRtCpuBuffer"; }
 
   TfrtCpuClient* client_;
-  TfrtCpuDevice* const device_;
+  PjRtCpuDevice* const device_;
   PjRtMemorySpace* const memory_space_;
 };
 
@@ -474,8 +481,8 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const RunId& run_id, const ExecuteOptions& options,
-      tsl::AsyncValueRef<CpuEvent> last_collective_launch_event,
-      bool fill_future, TfrtCpuDevice* device = nullptr);
+      TfrtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
+      bool fill_future, PjRtCpuDevice* device = nullptr);
 
   TfrtCpuClient* client_;
 

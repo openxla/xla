@@ -59,9 +59,9 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
@@ -118,8 +118,12 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 class CommandBufferCmd {
  public:
   CommandBufferCmd(CommandBufferCmdType cmd_type,
-                   ExecutionStreamId execution_stream_id)
-      : cmd_type_(cmd_type), execution_stream_id_(execution_stream_id) {}
+                   ExecutionStreamId execution_stream_id,
+                   se::StreamPriority priority = se::StreamPriority::Default)
+      : cmd_type_(cmd_type),
+        execution_stream_id_(execution_stream_id),
+        priority_(priority) {}
+
   virtual ~CommandBufferCmd() = default;
 
   using BufferUseVector = absl::InlinedVector<BufferUse, 4>;
@@ -202,6 +206,15 @@ class CommandBufferCmd {
     // An external state manager that gives efficient access to per-device state
     // to commands without a need to add expensive synchronization.
     StateManager& state;
+
+    // Buffer allocations that changed since the last call to `Record`. Buffer
+    // allocation indices are sorted. CommandBufferCmdExecutor and individual
+    // commands rely on this information to skip unnecessary updates.
+    std::optional<std::vector<BufferAllocation::Index>> updated_allocs;
+
+    // A flag indicating whether we record comands at command buffer thunk
+    // initialization time.
+    bool is_initialization = false;
   };
 
   // Create new commands in the command buffer using the given dependencies.
@@ -249,10 +262,16 @@ class CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) = 0;
 
-  // For some commands need to force update on Record even the input device
-  // pointers do not change, e.g. command that has state that can be changed by
-  // CPU code.
-  virtual bool force_update() { return false; }
+  // Returns true if command requires initialization (has to be recorded at
+  // command buffer thunk initialization).
+  //
+  // Today this is only true for collective commands that might use NCCL for
+  // communication. With NCCL, all participating ranks must record collective
+  // commands at the same time, if some ranks will skip command updates (because
+  // they got lucky and got the same buffer allocations), it will lead to
+  // deadlocks. By forcing the command update at thunk initialization time, we
+  // ensure that all ranks execute NCCL command update.
+  virtual bool requires_initialization() { return false; }
 
   // Returns all buffers used by the cmd. These will be used to track cmd
   // updates, thus they need to be consistent across calls to the function.
@@ -267,6 +286,8 @@ class CommandBufferCmd {
   }
 
   CommandBufferCmdType command_type() const { return cmd_type_; }
+  se::StreamPriority priority() const { return priority_; }
+  void set_priority(se::StreamPriority priority) { priority_ = priority; }
 
   virtual std::string ToString() const {
     return CommandBufferCmdString(cmd_type_);
@@ -278,6 +299,10 @@ class CommandBufferCmd {
   std::string profile_annotation_;
   CommandBufferCmdType cmd_type_;
   ExecutionStreamId execution_stream_id_;
+
+  // Command priority, currently only support default, lowest and highest
+  // priority.
+  se::StreamPriority priority_ = se::StreamPriority::Default;
 };
 
 // A sequence of commands (corresponds to a ThunkSequence from the Thunk API).
@@ -370,14 +395,15 @@ class CommandBufferCmdExecutor {
   const absl::flat_hash_set<BufferUse>& buffers() const;
 
   // Returns buffer allocations indices referenced by commands in this sequence.
-  const absl::flat_hash_set<BufferAllocation::Index>& allocs_indices() const;
+  absl::Span<const BufferAllocation::Index> allocs_indices() const;
 
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
 
-  bool force_update() const {
-    return absl::c_any_of(commands_,
-                          [](const auto& cmd) { return cmd->force_update(); });
+  bool requires_initialization() const {
+    return absl::c_any_of(commands_, [](const auto& cmd) {
+      return cmd->requires_initialization();
+    });
   }
 
  private:
@@ -419,8 +445,13 @@ class CommandBufferCmdExecutor {
   // Buffers referenced by commands in this sequence.
   absl::flat_hash_set<BufferUse> buffers_;
 
-  // Buffer allocations indices referenced by commands in this sequence.
-  absl::flat_hash_set<BufferAllocation::Index> allocs_indices_;
+  // Unique buffer allocations indices referenced by all commands in this
+  // sequence (sorted by the buffer allocation index).
+  std::vector<BufferAllocation::Index> allocs_indices_;
+
+  // A mapping from command id to unique buffer allocations indices referenced
+  // by the command (sorted by the buffer allocation index).
+  std::vector<std::vector<BufferAllocation::Index>> cmd_allocs_indices_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -441,7 +472,8 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
   // traces and caches a new command buffer using user provided callback.
   absl::StatusOr<se::CommandBuffer*> GetOrTraceCommandBuffer(
       const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace);
+      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+      se::StreamPriority priority = se::StreamPriority::Default);
 
  private:
   std::vector<BufferAllocation::Index> allocs_indices_;
@@ -647,7 +679,7 @@ class CaseCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool force_update() override;
+  bool requires_initialization() override;
 
   BufferUseVector buffers() const override;
 
@@ -675,7 +707,7 @@ class WhileCmd : public CommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool force_update() override;
+  bool requires_initialization() override;
 
   BufferUseVector buffers() const override;
 
@@ -873,7 +905,7 @@ class CollectiveCmd : public CommandBufferCmd {
       const Thunk::PrepareParams& params,
       Thunk::ResourceRequestsInterface& resource_requests) final;
 
-  bool force_update() override { return true; }
+  bool requires_initialization() override { return true; }
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -1064,7 +1096,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
 
   BufferUseVector buffers() const override;
 
-  bool force_update() override;
+  bool requires_initialization() override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
