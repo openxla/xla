@@ -38,13 +38,21 @@ StreamExecutorAllocator::StreamExecutorAllocator(
       memory_type_(memory_type),
       index_(index) {}
 
-// Maps MemoryType to human-readable strings for allocation error messages
-const auto& kMemoryTypeStrings =
-    *new absl::flat_hash_map<MemoryType, std::string>{
-        {MemoryType::kDevice, "device"},
-        {MemoryType::kUnified, "unified"},
-        {MemoryType::kHost, "pinned host"},
-        {MemoryType::kCollective, "collective"}};
+// Converts MemoryType to a human-readable string for allocation error messages
+static absl::string_view MemoryTypeToString(MemoryType type) {
+  switch (type) {
+    case MemoryType::kDevice:
+      return "device";
+    case MemoryType::kUnified:
+      return "unified";
+    case MemoryType::kHost:
+      return "pinned host";
+    case MemoryType::kCollective:
+      return "collective";
+    default:
+      return "unknown";
+  }
+}
 
 void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
                                      size_t* bytes_received) {
@@ -54,12 +62,8 @@ void* StreamExecutorAllocator::Alloc(size_t alignment, size_t num_bytes,
 
   if (num_bytes > 0) {
     auto allocation = memory_allocator_->Allocate(num_bytes);
-    const auto memory_type_iter = kMemoryTypeStrings.find(memory_type_);
     if (!allocation.ok()) {
-      LOG(WARNING) << "could not allocate "
-                   << (memory_type_iter == kMemoryTypeStrings.end()
-                           ? "unknown"
-                           : memory_type_iter->second)
+      LOG(WARNING) << "could not allocate " << MemoryTypeToString(memory_type_)
                    << " of size: " << num_bytes;
       *bytes_received = 0;
       return nullptr;
