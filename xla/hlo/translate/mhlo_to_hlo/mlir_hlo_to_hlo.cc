@@ -4257,8 +4257,8 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
   }
 
   xla::XlaOp custom_call;
-  if (op.getCalledComputations().size() == 1 &&
-      op.getOperandLayouts() && op.getResultLayouts()) {
+  if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
+      op.getResultLayouts()) {
     mlir::func::FuncOp callee = ctx.converter->LookUpSymbol(
         mlir::cast<FlatSymbolRefAttr>(op.getCalledComputations()[0]));
     if (failed(ctx.converter->RunOnFunction(callee))) return failure();

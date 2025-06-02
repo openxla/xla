@@ -5545,10 +5545,10 @@ XlaOp CustomCallWithComputationAndLayouts(
         output_operand_aliasing,
     const Literal* literal, CustomCallSchedule schedule,
     CustomCallApiVersion api_version) {
-  return builder->CustomCall(
-      call_target_name, operands, computation, shape, opaque,
-      operand_shapes_with_layout, has_side_effect,
-      output_operand_aliasing, literal, schedule, api_version);
+  return builder->CustomCall(call_target_name, operands, computation, shape,
+                             opaque, operand_shapes_with_layout,
+                             has_side_effect, output_operand_aliasing, literal,
+                             schedule, api_version);
 }
 
 XlaOp CustomCallWithComputation(
