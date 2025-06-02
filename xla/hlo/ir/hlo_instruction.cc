@@ -1008,6 +1008,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         for (const ShapeProto& shape_proto : operand_shapes_with_layout) {
           operand_shapes.emplace_back(shape_proto);
         }
+        TF_RET_CHECK(proto.called_computation_ids_size() <= 1);
         if (proto.called_computation_ids_size() == 1) {
           instruction =
               CreateCustomCall(shape, all_operands(), computations(0),

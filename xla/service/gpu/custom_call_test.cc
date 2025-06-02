@@ -612,7 +612,7 @@ TEST_F(CustomCallTest, WithCalledComputation) {
 }
 
 TEST_F(CustomCallTest, WithCalledComputationAndLayouts) {
-  auto shape = ShapeUtil::MakeShapeWithDenseLayout(F32, {128}, {0});
+  auto shape = ShapeUtil::MakeShapeWithDenseLayout(F32, {128, 128}, {0, 1});
   // Build a called computation which is just a copy instruction.
   XlaBuilder copy("copy");
   auto p0 = Parameter(&copy, 0, shape, "l_val");
@@ -622,7 +622,7 @@ TEST_F(CustomCallTest, WithCalledComputationAndLayouts) {
   XlaBuilder b(TestName());
   CustomCallWithComputationAndLayouts(
       &b, "xla.gpu.ext.memcpy_with_called_computation",
-      /*operands=*/{Broadcast(ConstantR0WithType(&b, F32, 42.0), {128})},
+      /*operands=*/{Broadcast(ConstantR0WithType(&b, F32, 42.0), {128, 128})},
       copy_computation, shape, {shape}, /*opaque=*/"",
       /*has_side_effect=*/false, /*output_operand_aliasing=*/{},
       /*literal=*/nullptr, /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
