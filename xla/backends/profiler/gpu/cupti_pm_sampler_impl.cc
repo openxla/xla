@@ -160,8 +160,8 @@ absl::Status CuptiPmSamplerDevice::CreateProfilerHostObj() {
 }
 
 void CuptiPmSamplerDevice::WarnPmSamplingMetrics() {
-  static bool warned_already = false;
-  if (!warned_already) {
+  static absl::once_flag once;
+  absl::call_once(once, [&]() {
     LOG(WARNING) << "(Profiling::PM Sampling)  Valid metrics can by queried "
                  << "using Nsight Compute:";
     LOG(WARNING) << "(Profiling::PM Sampling)   ncu --query-metrics-collection "
@@ -172,8 +172,7 @@ void CuptiPmSamplerDevice::WarnPmSamplingMetrics() {
                  << "combinations of metrics may not be valid if they require "
                  << "more than a single pass to collect.  Nsight Compute can "
                  << "be run remotely and list metrics for any device.";
-    warned_already = true;
-  }
+  });
 }
 
 // Add a metrics list to the host object (destructive, requires new host obj)
