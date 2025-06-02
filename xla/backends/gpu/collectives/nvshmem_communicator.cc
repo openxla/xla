@@ -328,12 +328,12 @@ size_t GetPrimitiveTypeSize(PrimitiveType type) {
 // Performs point-to-point communication between two ranks using NVSHMEM.
 // This is a helper function used by both Send and Recv operations to handle
 // the actual data transfer between peers.
-absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
+absl::Status NvshmemCommunicator::P2P(absl::string_view op_name, PrimitiveType type,
                                       se::DeviceMemoryBase recv_buffer,
                                       se::DeviceMemoryBase send_buffer,
                                       size_t count, RankId peer,
                                       const Executor& executor) {
-  if (strcmp(op_name, "put") != 0 && strcmp(op_name, "get") != 0) {
+  if (!op_name.empty() && op_name != "put" && op_name != "get") {
     return absl::InternalError(
         absl::StrFormat("Unsupported NVSHMEM operation: %s", op_name));
   }
@@ -351,7 +351,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
 
   switch (type) {
     case PrimitiveType::F64:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, double, double, peer, source_ptr, dest_ptr, count,
                          stream);
       } else {
@@ -360,7 +360,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::F32:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, float, float, peer, source_ptr, dest_ptr, count,
                          stream);
       } else {
@@ -369,7 +369,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::F16:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, half, __half, peer, source_ptr, dest_ptr, count,
                          stream);
       } else {
@@ -378,7 +378,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::BF16:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, bfloat16, __nv_bfloat16, peer, source_ptr,
                          dest_ptr, count, stream);
       } else {
@@ -387,7 +387,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::S32:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, int32, int32_t, peer, source_ptr, dest_ptr, count,
                          stream);
       } else {
@@ -396,7 +396,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::S64:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, int64, int64_t, peer, source_ptr, dest_ptr, count,
                          stream);
       } else {
@@ -405,7 +405,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::U32:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, uint32, uint32_t, peer, source_ptr, dest_ptr,
                          count, stream);
       } else {
@@ -414,7 +414,7 @@ absl::Status NvshmemCommunicator::P2P(const char* op_name, PrimitiveType type,
       }
       break;
     case PrimitiveType::U64:
-      if (strcmp(op_name, "put") == 0) {
+      if (op_name == "put") {
         CALL_NVSHMEM_P2P(put, uint64, uint64_t, peer, source_ptr, dest_ptr,
                          count, stream);
       } else {

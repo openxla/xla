@@ -1,7 +1,7 @@
 /* Copyright 2025 The OpenXLA Authors. */
 
-#ifndef XLA_SERVICE_GPU_NVSHMEM_P2P_THUNK_COMMON_H_
-#define XLA_SERVICE_GPU_NVSHMEM_P2P_THUNK_COMMON_H_
+#ifndef XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_P2P_THUNK_COMMON_H_
+#define XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_P2P_THUNK_COMMON_H_
 
 #include "xla/backends/gpu/runtime/thunk.h"
 
@@ -80,4 +80,4 @@ NvshmemP2PConfig GetNvshmemP2PConfigForPutGet(
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_NVSHMEM_P2P_THUNK_COMMON_H_
+#endif  // XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_P2P_THUNK_COMMON_H_

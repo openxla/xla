@@ -128,7 +128,7 @@ class NvshmemCommunicator : public Communicator {
   std::string ToString() const final;
 
  private:
-  absl::Status P2P(const char* op_name, PrimitiveType type,
+  absl::Status P2P(absl::string_view op_name, PrimitiveType type,
                    se::DeviceMemoryBase send_buffer,
                    se::DeviceMemoryBase recv_buffer, size_t count, RankId peer,
                    const Executor& executor);
