@@ -236,7 +236,7 @@ lit_test_suite(
     default_tags = tf_gpu_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
     tags_override = {
-        "gpu_hlo_ptx.hlo": ["cuda-only"],
+        "tests/gpu_hlo_ptx.hlo": ["cuda-only"],
     },
     tools = [
         "//xla/tools:hlo-opt",
