@@ -64,7 +64,6 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/maybe_owning.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
@@ -88,6 +87,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/stream_executor_executable.h"
 #include "xla/pjrt/transpose.h"
@@ -471,6 +471,10 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
                          literal = std::move(literal),
                          buffer = std::move(buffer),
                          on_done = std::move(on_done)]() mutable {
+      VLOG(3) << "Start transfer h2d for literal with shape "
+              << literal.shape().ToString() << " on device "
+              << device_->DebugString();
+
       tsl::profiler::TraceMe traceme(
           "TfrtGpuAsyncHostToDeviceTransferManager::TransferLiteralToBuffer::"
           "transfer_h2d");
@@ -480,26 +484,17 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
           buffer->AsShapedBuffer(device_shapes_[buffer_index], device_);
 
       auto stream = device_->stream();
-
-      GenericTransferManager::LiteralFromDeviceMetadata transfer_metadata;
-      // We never call device functions from the `done` callback.
-      transfer_metadata.callback_is_host_callback_safe = true;
-      TransferManager::TransferMetadata* transfer_metadata_ptr =
-          (dynamic_cast<GenericTransferManager*>(transfer_manager) != nullptr)
-              ? &transfer_metadata
-              : nullptr;
-
       TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(
-          stream, literal, shaped_buffer, transfer_metadata_ptr));
+          stream, literal, shaped_buffer));
 
-      auto status = stream->DoHostCallback(
-          [buffer_index, on_done = std::move(on_done), this]() mutable {
-            CleanUp(buffer_index, true, std::move(on_done));
-          });
+      absl::Status status = stream->BlockHostUntilDone();
+      VLOG(3) << "Finish transfer h2d for literal with shape "
+              << literal.shape().ToString() << " on device "
+              << device_->DebugString() << " with status " << status;
 
-      if (!status.ok()) {
-        LOG(ERROR) << "Failed to do host callback for transfer_h2d";
-      }
+      CHECK_OK(status) << "Failed to block host until done";
+
+      CleanUp(buffer_index, true, std::move(on_done));
     };
     // Enqueue the transfer to the h2d thread.
     h2d_thread_->Schedule(std::move(transfer_h2d));
@@ -573,35 +568,39 @@ class TfrtGpuAsyncHostToDeviceTransferManager final
                         sub_buffer = std::move(sub_buffer), buffer_index,
                         is_last_transfer, on_done = std::move(on_done),
                         this]() mutable {
-      tsl::profiler::TraceMe traceme(
-          "TfrtGpuAsyncHostToDeviceTransferManager::"
-          "TransferRawDataToSubBuffer::"
-          "copy_to_gpu");
-
+      tsl::profiler::TraceMe traceme([&] {
+        return tsl::profiler::TraceMeEncode(
+            "TfrtGpuAsyncHostToDeviceTransferManager::"
+            "TransferRawDataToSubBuffer::"
+            "copy_to_gpu",
+            {
+                {"device", device_->id()},
+                {"buffer_index", buffer_index},
+                {"size", transfer_size},
+                {"is_last_transfer", is_last_transfer},
+            });
+      });
       if (transfer_size != 0) {
         if (staging_buffer != nullptr) {
           std::memcpy(staging_buffer.get(), data, transfer_size);
+          VLOG(3) << "H2D staging copy done: " << data << " -> "
+                  << staging_buffer.get() << " (" << transfer_size << " bytes)";
         }
 
         auto stream = device_->stream();
 
-        TF_CHECK_OK(stream->Memcpy(&sub_buffer,
-                                   staging_buffer ? staging_buffer.get() : data,
-                                   transfer_size))
+        const void* host_data_ptr =
+            staging_buffer ? staging_buffer.get() : data;
+        VLOG(3) << "H2D copy: " << host_data_ptr << " -> "
+                << sub_buffer.opaque() << " (" << transfer_size << " bytes)";
+        TF_CHECK_OK(stream->Memcpy(&sub_buffer, host_data_ptr, transfer_size))
             << "Failed to copy data to GPU";
 
-        auto status = stream->DoHostCallback([buffer_index, is_last_transfer,
-                                              on_done = std::move(on_done),
-                                              this]() mutable {
-          CleanUp(buffer_index, is_last_transfer, std::move(on_done));
-        });
-
-        if (!status.ok()) {
-          LOG(ERROR) << "Failed to do host callback for copy_to_gpu";
-        }
-      } else {
-        CleanUp(buffer_index, is_last_transfer, std::move(on_done));
+        absl::Status status = stream->BlockHostUntilDone();
+        VLOG(3) << "H2D copy done: " << status;
+        CHECK_OK(status) << "Failed to block host until done";
       }
+      CleanUp(buffer_index, is_last_transfer, std::move(on_done));
     };
     // Enqueue the transfer to the h2d thread.
     h2d_thread_->Schedule(std::move(copy_to_gpu));
@@ -789,6 +788,8 @@ class TfrtGpuCopyToDeviceStream : public CopyToDeviceStream {
     bool complete = IsCompleteLocked();
     lock.Release();
 
+    VLOG(3) << "H2D copy: " << chunk.data() << " -> " << dst.opaque() << " ("
+            << chunk.size() << " bytes)";
     auto copied = stream_->Memcpy(&dst, chunk.data(), chunk.size());
     if (!copied.ok()) {
       done_.SetError(copied);
@@ -796,7 +797,10 @@ class TfrtGpuCopyToDeviceStream : public CopyToDeviceStream {
     }
 
     // Delete chunk once the memcpy operation completes.
-    auto deleted = stream_->DoHostCallback([chunk = std::move(chunk)]() {});
+    auto deleted = stream_->DoHostCallback(
+        [chunk = std::move(chunk), buffer_opaque = dst.opaque()]() {
+          VLOG(3) << "H2D copy done. " << buffer_opaque;
+        });
     if (!deleted.ok()) {
       done_.SetError(deleted);
       return PjRtFuture<>(done_.GetError());
@@ -888,8 +892,11 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
       // Allocate chunk on the host for copying data from device.
       PjRtChunk chunk = PjRtChunk::AllocateDefault(src.size());
 
+      VLOG(3) << "D2H copy: " << src.opaque() << " -> " << chunk.data() << " ("
+              << src.size() << " bytes)";
       auto status = stream->Memcpy(chunk.data(), src, src.size());
       if (!status.ok()) {
+        LOG(ERROR) << "Failed to copy data from device to host: " << status;
         done_event.SetError(status);
         return;
       }
@@ -900,7 +907,9 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
       }
 
       // Wait for the data to be available on the host.
-      if (auto st = stream->BlockHostUntilDone(); !st.ok()) {
+      absl::Status st = stream->BlockHostUntilDone();
+      VLOG(3) << "D2H copy done. " << status;
+      if (!st.ok()) {
         done_event.SetError(absl::InternalError(absl::StrFormat(
             "failed to synchronize send operation with a stream: %s",
             st.message())));
@@ -2004,6 +2013,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
         allocator->Allocate(transpose ? byte_size : packed_size);
     void* buffer = staging_buffer.get();
     const void* data_ptr = data;
+    VLOG(3) << "H2D staging copy: " << data << " -> " << buffer << "("
+            << byte_size << " -> " << packed_size << " bytes)";
 
     if (transpose) {
       transpose->Execute(data_ptr, buffer);
@@ -2022,6 +2033,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
     if (on_done_with_host_buffer) {
       std::move(on_done_with_host_buffer)();
     }
+    VLOG(3) << "H2D staging copy done";
     return staging_buffer;
   };
 
@@ -2030,8 +2042,10 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
                       dst_definition_event(std::move(dst_definition_event)),
                       gpu_buffer{gpu_buffer.CopyRef()}](
                          HostMemoryAllocator::OwnedPtr staging_buffer) {
-    tsl::profiler::TraceMe traceme("H2D GPU copy");
-
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "H2D GPU copy", {{"device", device->id()}, {"size", packed_size}});
+    });
     auto stream = device->stream();
 
     se::DeviceMemoryBase dest = gpu_buffer->buffer();
@@ -2041,6 +2055,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
     } else {
       host_data_ptr = data;
     }
+    VLOG(3) << "H2D copy: " << host_data_ptr << " -> " << dest.opaque() << " ("
+            << packed_size << " bytes)";
     absl::Status status = stream->Memcpy(&dest, host_data_ptr, packed_size);
     if (!status.ok()) {
       copy_event.SetError(status);
@@ -2048,6 +2064,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
       return;
     }
     status = stream->BlockHostUntilDone();
+    VLOG(3) << "H2D copy done. " << status;
     if (status.ok()) {
       copy_event.SetStateConcrete();
       dst_definition_event.SetStateConcrete();
@@ -2836,16 +2853,25 @@ PjRtFuture<> TfrtGpuBuffer::ToLiteral(MutableLiteralBase* literal) {
     }
 
     {
-      tsl::profiler::TraceMe traceme2("D2H GPU copy");
+      tsl::profiler::TraceMe traceme2([&] {
+        return tsl::profiler::TraceMeEncode("D2H GPU copy",
+                                            {
+                                                {"device", device->id()},
+                                                {"size", byte_size},
+                                            });
+      });
       MarkGpuEventReadyOnExit ready_on_exit(std::move(usage_event));
 
       auto stream = device->stream();
 
+      VLOG(3) << "D2H copy: " << device_buffer->buffer()->buffer().opaque()
+              << " -> " << buffer_ptr << " (" << byte_size << " bytes)";
       CHECK_OK(stream->Memcpy(buffer_ptr, device_buffer->buffer()->buffer(),
                               byte_size))
           << "stream->Memcpy failed copying from GPU to host";
 
       absl::Status status = stream->BlockHostUntilDone();
+      VLOG(3) << "D2H copy done. " << status;
       if (!status.ok()) {
         VLOG(3) << "stream->BlockHostUntilDone failed: " << status;
         promise.Set(status);
@@ -2912,6 +2938,7 @@ PjRtFuture<> TfrtGpuBuffer::LazyToLiteral(
 PjRtFuture<> TfrtGpuBuffer::CopyRawToHostFuture(PjRtFuture<void*> dst,
                                                 int64_t offset,
                                                 int64_t transfer_size) {
+  VLOG(3) << "TfrtGpuBuffer::CopyRawToHostFuture";
   tsl::profiler::TraceMe traceme("TfrtGpuBuffer::CopyRawToHostFuture");
   auto promise = PjRtFuture<>::CreatePromise();
   auto usage_event = tsl::MakeConstructedAsyncValueRef<GpuEvent>();
@@ -2967,15 +2994,24 @@ PjRtFuture<> TfrtGpuBuffer::CopyRawToHostFuture(PjRtFuture<void*> dst,
           }
 
           {
-            tsl::profiler::TraceMe traceme2("D2H GPU copy");
+            tsl::profiler::TraceMe traceme2([&] {
+              return tsl::profiler::TraceMeEncode("D2H GPU copy",
+                                                  {
+                                                      {"device", device->id()},
+                                                      {"size", transfer_size},
+                                                  });
+            });
             MarkGpuEventReadyOnExit ready_on_exit(std::move(usage_event));
             auto stream = device->stream();
             void* host_ptr =
                 staging_buffer != nullptr ? staging_buffer.get() : dst.value();
 
+            VLOG(3) << "D2H copy: " << sub_buffer->opaque() << " -> "
+                    << host_ptr << " (" << transfer_size << " bytes)";
             CHECK_OK(stream->Memcpy(host_ptr, *sub_buffer, transfer_size))
                 << "stream->Memcpy failed copying from GPU to host";
             absl::Status status = stream->BlockHostUntilDone();
+            VLOG(3) << "D2H copy done. " << status;
             if (!status.ok()) {
               LOG(ERROR) << "stream->BlockHostUntilDone failed: " << status;
               promise.Set(status);
@@ -2990,7 +3026,9 @@ PjRtFuture<> TfrtGpuBuffer::CopyRawToHostFuture(PjRtFuture<void*> dst,
           if (staging_buffer != nullptr) {
             tsl::profiler::TraceMe traceme3("D2H staging copy");
             std::memcpy(dst.value(), staging_buffer.get(), transfer_size);
-            VLOG(4) << "D2H staging copy done";
+            VLOG(3) << "D2H staging copy done: " << staging_buffer.get()
+                    << " -> " << dst.value() << " (" << transfer_size
+                    << " bytes)";
           }
           promise.Set(absl::OkStatus());
         });
@@ -3069,7 +3107,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
   tsl::profiler::TraceMe traceme("TfrtGpuBuffer::CopyToMemorySpace");
   PjRtDevice* dst_device = dst_memory_space->devices()[0];
 
-  VLOG(1) << " TfrtGpuBuffer::CopyToMemorySpace:  dst_device: " << dst_device
+  VLOG(1) << "TfrtGpuBuffer::CopyToMemorySpace:  dst_device: "
+          << dst_device->DebugString()
           << " dst_memory_space: " << dst_memory_space->kind();
 
   // Copying across PjRtClients involves a copy through the host.
@@ -3127,7 +3166,14 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
                 << src_device->id() << " to "
                 << allocated_dst_buffer->buffer().opaque() << " on device "
                 << dst_device->id();
-        tsl::profiler::TraceMe traceme("D2D copy");
+        tsl::profiler::TraceMe trace([&] {
+          return tsl::profiler::TraceMeEncode(
+              "D2D copy", {
+                              {"src_device", src_device->id()},
+                              {"dst_device", dst_device->id()},
+                              {"size", src_buffer->buffer().size()},
+                          });
+        });
 
         MarkGpuEventReadyOnExit ready_on_exit_src(std::move(src_usage_event));
         MarkGpuEventReadyOnExit ready_on_exit_dst(std::move(dst_usage_event));
@@ -3149,6 +3195,9 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
         // TODO: Use the destination device stream for D2D copies.
         auto stream = src_device->stream();
         se::DeviceMemoryBase dst(allocated_dst_buffer->buffer());
+        VLOG(3) << "D2D copy: " << src_buffer->buffer().opaque() << " -> "
+                << dst.opaque() << " (" << src_buffer->buffer().size()
+                << " bytes)";
         absl::Status status = stream->Memcpy(&dst, src_buffer->buffer(),
                                              src_buffer->buffer().size());
         if (!status.ok()) {
@@ -3362,7 +3411,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
   std::unique_ptr<Semaphore::ScopedReservation> compute_reservation;
   {
     tsl::profiler::TraceMe traceme_compute_reservation(
-        "TfrtGpuExecutable::ExecuteHelper::acquire_sempahore");
+        "TfrtGpuExecutable::ExecuteHelper::acquire_semaphore");
 
     VLOG(1) << "Trying to acquire semaphore for " << name() << " on device "
             << device->DebugString();
@@ -3606,9 +3655,10 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
         tsl::profiler::TraceMeProducer producer(
             [&] {
               return tsl::profiler::TraceMeEncode(
-                  "execute_fn",
-                  {{"launch_id", std::to_string(launch_id)},
-                   {"device_ordinal", device->local_device_id().value()}});
+                  "execute_fn", {
+                                    {"launch_id", std::to_string(launch_id)},
+                                    {"device_id", device->id()},
+                                });
             },
             tsl::profiler::ContextType::kTfExecutor, launch_id);
 
@@ -3749,13 +3799,14 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
         }
 
         VLOG(1) << "execute_fn for " << executable_name
-                << ", launch_id: " << launch_id
+                << ", launch_id: " << launch_id << ", replica=" << replica
+                << ", partition=" << partition
                 << ", device: " << device->DebugString()
                 << " is done with status " << status;
       };
 
   auto prepare_inputs =
-      [blocking_thread_pool = client_->blocking_thread_pool(),
+      [replica, blocking_thread_pool = client_->blocking_thread_pool(),
        launch_id(options.launch_id), executable_name(name()), device,
        tracked_buffers(std::move(tracked_buffers)),
        buffer_is_donated(std::move(buffer_is_donated)),
@@ -3787,8 +3838,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
           }
         }
 
-        VLOG(3) << "prepare_inputs for " << executable_name << " on device "
-                << device->DebugString();
+        VLOG(3) << "prepare_inputs for " << executable_name
+                << ", launch_id: " << launch_id << ", replica: " << replica
+                << ", device: " << device->DebugString();
         DCHECK_EQ(tracked_buffers.size(), buffer_is_donated.size());
 
         absl::Status status = CheckBufferCompatibilities(

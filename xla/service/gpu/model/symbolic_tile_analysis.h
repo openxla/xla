@@ -221,6 +221,11 @@ class SymbolicTileAnalysis {
   //
   // If `emitter_specific_constraints_builder` is provided, it will be used to
   // construct emitter-specific constraints for the analysis.
+  //
+  // Nested fusions are analyzed recursively, but operands of nested fusions
+  // (which are parameter ops) are not analyzed. This is because the symbolic
+  // tiles of these operands may contain expressions with symbols which would
+  // fail to be tiled.
   static SymbolicTileAnalysisOrError AnalyzeComputation(
       const HloComputation& computation, mlir::MLIRContext* ctx,
       EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder =
@@ -330,8 +335,8 @@ class SymbolicTileAnalysis {
   static SymbolicTileAnalysisOrError AnalyzeFusionImpl(
       const HloFusionAdaptor& fusion, mlir::MLIRContext* ctx,
       const RootIndexing& root_indexing,
-      EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder =
-          nullptr);
+      IndexingMap::SimplifyPointDimensions simplification_mode,
+      EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder);
 
   // The tiled HLO instructions in def-before-use order.
   std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>

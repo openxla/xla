@@ -582,8 +582,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         options_(options) {}
 
   absl::Status HandleDot(HloInstruction *instr) override {
-    if (!IsMatrixMultiplication(*instr) &&
-        !IsMatrixVectorMultiplication(*instr)) {
+    TF_ASSIGN_OR_RETURN(
+        bool is_supported_matmul,
+        IsCublasSupportedMatMul(*instr,
+                                /*allow_matrix_vector_multiplication=*/true));
+    if (!is_supported_matmul) {
       return absl::OkStatus();
     }
     // Sparse dot is not supported.
@@ -2450,8 +2453,12 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
       workspace = GemmConfig::kHopperWorkspace;
     }
     auto *rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version_);
-    if (rocm_cc != nullptr && rocm_cc->gfx_version() == "gfx950") {
-      workspace = GemmConfig::kGFX950Workspace;
+    if (rocm_cc != nullptr) {
+      if (rocm_cc->gfx_version() == "gfx942") {
+        workspace = GemmConfig::kGFX942Workspace;
+      } else if (rocm_cc->gfx_version() == "gfx950") {
+        workspace = GemmConfig::kGFX950Workspace;
+      }
     }
 
     // We do not know the workspace size required by cuBLAS, but we can guess

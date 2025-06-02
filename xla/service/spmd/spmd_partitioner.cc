@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -844,8 +845,8 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
       padded_shape.set_dimensions(i, shard_size * shard_count);
       offsets_on_padded_shape[i] =
           state_.b->AddInstruction(HloInstruction::CreateBinary(
-              ShapeUtil::MakeShape(S32, {}), HloOpcode::kMultiply,
-              partition_ordinals[i],
+              ShapeUtil::MakeValidatedShape(S32, {}).value(),
+              HloOpcode::kMultiply, partition_ordinals[i],
               state_.b->AddInstruction(HloInstruction::CreateConstant(
                   LiteralUtil::CreateR0<int32_t>(shard_size)))));
       shard_shape.set_dimensions(i, shard_size);
@@ -1205,8 +1206,9 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
           pre_halo_exchange_slice_limits[i] - pre_halo_exchange_slice_starts[i];
     }
     visiting_hlo = state_.b->AddInstruction(HloInstruction::CreateSlice(
-        ShapeUtil::MakeShape(halo_exchange_base_shape.element_type(),
-                             slice_sizes),
+        ShapeUtil::MakeValidatedShape(halo_exchange_base_shape.element_type(),
+                                      slice_sizes)
+            .value(),
         visiting_hlo,
         /*start_indices=*/pre_halo_exchange_slice_starts,
         /*limit_indices=*/pre_halo_exchange_slice_limits,
@@ -1599,8 +1601,8 @@ PartitionedHlo PartitionedHlo::Broadcast() const {
   auto is_src_core = state_.b->AddInstruction(HloInstruction::CreateBroadcast(
       bcast_shape,
       state_.b->AddInstruction(HloInstruction::CreateCompare(
-          ShapeUtil::MakeShape(PRED, {}), state_.partition_id, src_core_id,
-          ComparisonDirection::kEq)),
+          ShapeUtil::MakeValidatedShape(PRED, {}).value(), state_.partition_id,
+          src_core_id, ComparisonDirection::kEq)),
       {}));
 
   auto zero = state_.b->AddInstruction(
@@ -1716,7 +1718,8 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
   PartitionedHlo p_hlo = *this;
   VLOG(5) << "Before reshard: " << p_hlo.hlo_->ToString();
   HloInstruction* zero = CreateZero(
-      ShapeUtil::MakeShape(hlo_->shape().element_type(), {}), state_.b);
+      ShapeUtil::MakeValidatedShape(hlo_->shape().element_type(), {}).value(),
+      state_.b);
   HloSharding sharding_copy = sharding();
   auto padded_phlo =
       ReshardDataForPad(zero, pc, p_hlo, sharding_copy, state_.b);
@@ -1733,7 +1736,8 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
   target_ata_dims.insert(target_ata_dims.begin() + target_dim, group_size);
   target_ata_dims[target_dim + 1] /= group_size;
   auto reshape = state_.b->AddInstruction(HloInstruction::CreateReshape(
-      ShapeUtil::MakeShape(base_shape_.element_type(), target_ata_dims),
+      ShapeUtil::MakeValidatedShape(base_shape_.element_type(), target_ata_dims)
+          .value(),
       padded_hlo));
   VLOG(5) << "Target ata shape: " << reshape->shape().ToString();
 
@@ -1897,7 +1901,9 @@ PartitionedHlo PartitionedHlo::TryMultipleSourceTargetDims(
   }
   HloInstruction* reshape_0 =
       state_.b->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(base_shape_.element_type(), shape_0_dims),
+          ShapeUtil::MakeValidatedShape(base_shape_.element_type(),
+                                        shape_0_dims)
+              .value(),
           hlo_));
 
   for (int64_t i = 0; i < shape_0_dims.size(); ++i) {
@@ -1923,7 +1929,9 @@ PartitionedHlo PartitionedHlo::TryMultipleSourceTargetDims(
             transpose_shape_dims.end(), std::back_inserter(shape_1_dims));
   HloInstruction* reshape_1 =
       state_.b->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(base_shape_.element_type(), shape_1_dims),
+          ShapeUtil::MakeValidatedShape(base_shape_.element_type(),
+                                        shape_1_dims)
+              .value(),
           transpose_0));
 
   // // Step 2. Apply the all-to-all
@@ -1989,7 +1997,9 @@ PartitionedHlo PartitionedHlo::TryMultipleSourceTargetDims(
   }
   HloInstruction* reshape_3 =
       state_.b->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(base_shape_.element_type(), shape_3_dims),
+          ShapeUtil::MakeValidatedShape(base_shape_.element_type(),
+                                        shape_3_dims)
+              .value(),
           transpose_1));
   reshape_3->set_sharding(temp_target);
 
@@ -2171,14 +2181,17 @@ PartitionedHlo SplitReshapeHelper(const PartitionedHlo& to_reshape,
       dim_size * target_sharding.tile_assignment().dim(dim_to_split + 1));
   base_shape_dim[dim_to_split] /=
       dim_size * target_sharding.tile_assignment().dim(dim_to_split + 1);
-  Shape shape = ShapeUtil::MakeShape(original_shape.element_type(), shape_dim);
+  Shape shape =
+      ShapeUtil::MakeValidatedShape(original_shape.element_type(), shape_dim)
+          .value();
   HloInstruction* reshaped_instr = to_reshape.state().b->AddInstruction(
       HloInstruction::CreateReshape(shape, to_reshape.hlo()));
   reshaped_instr->set_sharding(target_sharding);
   return PartitionedHlo{
       reshaped_instr,
-      ShapeUtil::MakeShape(to_reshape.base_shape().element_type(),
-                           base_shape_dim),
+      ShapeUtil::MakeValidatedShape(to_reshape.base_shape().element_type(),
+                                    base_shape_dim)
+          .value(),
       to_reshape.state()};
 }
 // Merge a PartitionedHlo over a specific dimension.
@@ -2195,14 +2208,17 @@ PartitionedHlo MergeReshapeHelper(const PartitionedHlo& to_reshape,
       to_reshape.base_shape().dimensions().end());
   base_shape_dim[dim_to_merge] *= base_shape_dim[dim_to_merge + 1];
   base_shape_dim.erase(base_shape_dim.begin() + dim_to_merge + 1);
-  Shape shape = ShapeUtil::MakeShape(original_shape.element_type(), shape_dim);
+  Shape shape =
+      ShapeUtil::MakeValidatedShape(original_shape.element_type(), shape_dim)
+          .value();
   HloInstruction* reshaped_instr = to_reshape.state().b->AddInstruction(
       HloInstruction::CreateReshape(shape, to_reshape.hlo()));
   reshaped_instr->set_sharding(target_sharding);
-  return PartitionedHlo(
-      reshaped_instr,
-      ShapeUtil::MakeShape(original_shape.element_type(), base_shape_dim),
-      to_reshape.state());
+  return PartitionedHlo(reshaped_instr,
+                        ShapeUtil::MakeValidatedShape(
+                            original_shape.element_type(), base_shape_dim)
+                            .value(),
+                        to_reshape.state());
 }
 
 }  // namespace
@@ -2651,7 +2667,7 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
       for (int i = 0; i < hlo->operand_count(); ++i) {
         operand_shapes[i] = hlo->operand(i)->shape();
       }
-      return ShapeUtil::MakeTupleShape(operand_shapes);
+      return ShapeUtil::MakeValidatedTupleShape(operand_shapes).value();
     };
     hlo->set_sharding(manual_to_onedevice(
         hlo->opcode(), get_sharding_shape(hlo), *visiting_hlo_sharding_));
@@ -3022,9 +3038,11 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
     std::vector<int64_t> replicated_dimensions(
         input->shape().dimensions().begin(), input->shape().dimensions().end());
     replicated_dimensions[sort_dim] = RoundUpTo(input_size, partition_count);
-    const Shape replicated_shape = ShapeUtil::MakeTupleShape(
-        {ShapeUtil::MakeShape(element_type, replicated_dimensions),
-         ShapeUtil::MakeShape(index_type, replicated_dimensions)});
+    const Shape replicated_shape =
+        ShapeUtil::MakeValidatedTupleShape(
+            {ShapeUtil::MakeShape(element_type, replicated_dimensions),
+             ShapeUtil::MakeShape(index_type, replicated_dimensions)})
+            .value();
 
     // Partition original topk to different shards.
     auto topk_sharding =
@@ -3046,7 +3064,9 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
     auto slice_input = SliceFirstK(value_gte, &b_, sort_dim, k.value());
     slice_input->set_sharding(input_sharding);
     PartitionedHlo partitioned_slice_input(
-        slice_input, ShapeUtil::MakeShape(element_type, replicated_dimensions),
+        slice_input,
+        ShapeUtil::MakeValidatedShape(element_type, replicated_dimensions)
+            .value(),
         MakePartitioningState());
     // Reshard value to be replicated.
     auto replicated_slice_input = partitioned_slice_input.Replicate().hlo();
@@ -3055,16 +3075,20 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
     auto slice_index = SliceFirstK(index_gte, &b_, sort_dim, k.value());
     slice_index->set_sharding(input_sharding);
     PartitionedHlo partitioned_slice_index(
-        slice_index, ShapeUtil::MakeShape(index_type, replicated_dimensions),
+        slice_index,
+        ShapeUtil::MakeValidatedShape(index_type, replicated_dimensions)
+            .value(),
         MakePartitioningState());
     // Reshard value to be replicated.
     auto replicated_slice_index = partitioned_slice_index.Replicate().hlo();
 
     // Creates replicated sort to do TopK, the input is value and index pairs
     // from all the partitions.
-    const Shape final_topk_shape = ShapeUtil::MakeTupleShape(
-        {ShapeUtil::MakeShape(element_type, replicated_dimensions),
-         ShapeUtil::MakeShape(index_type, replicated_dimensions)});
+    const Shape final_topk_shape =
+        ShapeUtil::MakeValidatedTupleShape(
+            {ShapeUtil::MakeShape(element_type, replicated_dimensions),
+             ShapeUtil::MakeShape(index_type, replicated_dimensions)})
+            .value();
     HloInstruction* final_sort = b_.AddInstruction(HloInstruction::CreateSort(
         final_topk_shape, sort_dim,
         {replicated_slice_input, replicated_slice_index}, sort->to_apply(),
@@ -3356,8 +3380,10 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
 
       auto reshard_operand = operand.ReshardAsWindowedInput(
           window, operand.sharding(),
-          CreateZero(ShapeUtil::MakeShape(base_shape.element_type(), {}),
-                     operand.state().b),
+          CreateZero(
+              ShapeUtil::MakeValidatedShape(base_shape.element_type(), {})
+                  .value(),
+              operand.state().b),
           /*mask_invalid_region=*/false);
       if (!reshard_operand.has_value()) {
         return replicate();
@@ -3410,8 +3436,10 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
 
       auto reshard_output = tmp_output.ReshardAsWindowedInput(
           window, sharding,
-          CreateZero(ShapeUtil::MakeShape(base_shape.element_type(), {}),
-                     operand.state().b),
+          CreateZero(
+              ShapeUtil::MakeValidatedShape(base_shape.element_type(), {})
+                  .value(),
+              operand.state().b),
           /*mask_invalid_region=*/false);
       if (!reshard_output.has_value()) {
         return replicate();
@@ -3522,11 +3550,13 @@ absl::Status SpmdPartitioningVisitor::HandleIota(HloInstruction* hlo) {
       auto multiplier = b_.AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::CreateR0<int32_t>(iota->shape().dimensions(dimension))));
       auto offset = b_.AddInstruction(HloInstruction::CreateBinary(
-          ShapeUtil::MakeShape(S32, {}), HloOpcode::kMultiply,
+          ShapeUtil::MakeValidatedShape(S32, {}).value(), HloOpcode::kMultiply,
           partition_ordinals[dimension], multiplier));
       if (iota->shape().element_type() != S32) {
         offset = b_.AddInstruction(HloInstruction::CreateConvert(
-            ShapeUtil::MakeShape(iota->shape().element_type(), {}), offset));
+            ShapeUtil::MakeValidatedShape(iota->shape().element_type(), {})
+                .value(),
+            offset));
       }
       auto broadcast = b_.AddInstruction(
           HloInstruction::CreateBroadcast(iota->shape(), offset, {}));
@@ -3557,13 +3587,15 @@ absl::Status SpmdPartitioningVisitor::HandleSingleDevice(
     operand_shapes.push_back(&operand->shape());
   }
   auto operand = b_.AddInstruction(HloInstruction::CreateTuple(operands));
-  auto operand_shape = ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes);
+  auto operand_shape =
+      ShapeUtil::MakeValidatedTupleShapeWithPtrs(operand_shapes).value();
 
   auto on_device = b_.AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<uint32_t>(device)));
   auto pred = b_.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}), MakePartitioningState().partition_id,
-      on_device, ComparisonDirection::kEq));
+      ShapeUtil::MakeValidatedShape(PRED, {}).value(),
+      MakePartitioningState().partition_id, on_device,
+      ComparisonDirection::kEq));
 
   SpmdBuilder true_b("true_computation", visiting_hlo_);
   HloComputation* true_computation;
@@ -4012,10 +4044,10 @@ absl::Status SpmdPartitioningVisitor::HandleInfeed(HloInstruction* hlo) {
     auto branch_index_table = b_.AddInstruction(HloInstruction::CreateConstant(
         LiteralUtil::CreateR1<int32_t>(conditional_branch_indices)));
     branch_index = b_.AddInstruction(HloInstruction::CreateDynamicSlice(
-        ShapeUtil::MakeShape(S32, {1}), branch_index_table,
+        ShapeUtil::MakeValidatedShape(S32, {1}).value(), branch_index_table,
         {state.partition_id}, {1}));
     branch_index = b_.AddInstruction(HloInstruction::CreateReshape(
-        ShapeUtil::MakeShape(S32, {}), branch_index));
+        ShapeUtil::MakeValidatedShape(S32, {}).value(), branch_index));
   }
 
   std::vector<HloComputation*> branches(per_branch_partitioned_shapes.size());
@@ -4070,8 +4102,10 @@ absl::Status SpmdPartitioningVisitor::HandleInfeed(HloInstruction* hlo) {
   }
   SetPartitionedHlo(hlo, [&]() {
     return b_.AddInstruction(HloInstruction::CreateConditional(
-        ShapeUtil::MakeTupleShape({shard_shape, token->shape()}), branch_index,
-        branches, std::vector<HloInstruction*>(branches.size(), token)));
+        ShapeUtil::MakeValidatedTupleShape({shard_shape, token->shape()})
+            .value(),
+        branch_index, branches,
+        std::vector<HloInstruction*>(branches.size(), token)));
   });
   return absl::OkStatus();
 }
@@ -4462,10 +4496,10 @@ absl::Status SpmdPartitioningVisitor::HandleOutfeed(HloInstruction* hlo) {
     auto branch_index_table = b_.AddInstruction(HloInstruction::CreateConstant(
         LiteralUtil::CreateR1<int32_t>(conditional_branch_indices)));
     branch_index = b_.AddInstruction(HloInstruction::CreateDynamicSlice(
-        ShapeUtil::MakeShape(S32, {1}), branch_index_table, {partition_id_},
-        {1}));
+        ShapeUtil::MakeValidatedShape(S32, {1}).value(), branch_index_table,
+        {partition_id_}, {1}));
     branch_index = b_.AddInstruction(HloInstruction::CreateReshape(
-        ShapeUtil::MakeShape(S32, {}), branch_index));
+        ShapeUtil::MakeValidatedShape(S32, {}).value(), branch_index));
   }
 
   // Create conditional for the outfeed.
@@ -4475,7 +4509,8 @@ absl::Status SpmdPartitioningVisitor::HandleOutfeed(HloInstruction* hlo) {
     // Create tuple param within the branch.
     auto param = branch_b.AddInstruction(HloInstruction::CreateParameter(
         /*parameter_number=*/0,
-        ShapeUtil::MakeTupleShape({operand->shape(), token->shape()}),
+        ShapeUtil::MakeValidatedTupleShape({operand->shape(), token->shape()})
+            .value(),
         "outfeed_token_param"));
     auto outfeed_data = branch_b.AddInstruction(
         HloInstruction::CreateGetTupleElement(operand->shape(), param, 0));
@@ -4888,8 +4923,8 @@ absl::Status SpmdPartitioningVisitor::HandleSelectAndScatter(
         slice_offsets[i] = left_halo_size;
       } else {
         auto is_shard0 = b_.AddInstruction(HloInstruction::CreateCompare(
-            ShapeUtil::MakeShape(PRED, {}), zero, partition_ordinals[i],
-            ComparisonDirection::kEq));
+            ShapeUtil::MakeValidatedShape(PRED, {}).value(), zero,
+            partition_ordinals[i], ComparisonDirection::kEq));
         auto pad_low_hlo = b_.AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::CreateR0<int32_t>(pad_low)));
         slice_offsets[i] = b_.AddInstruction(HloInstruction::CreateTernary(
@@ -5012,10 +5047,13 @@ absl::Status SpmdPartitioningVisitor::HandleRaggedDot(HloInstruction* hlo) {
 
 SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                                                         int64_t num_replicas) {
-  return {
-      [](SpmdBuilder* b) {
-        return b->AddInstruction(HloInstruction::CreatePartitionId());
-      },
+  auto uses_all_partitions =
+      [num_partitions](const IotaReplicaGroupList& partition_group_list) {
+        return partition_group_list.num_replica_groups() *
+                   partition_group_list.num_devices_per_group() ==
+               num_partitions;
+      };
+  auto create_all_reduce_lists_of_lists =
       [num_replicas, num_partitions](
           SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
@@ -5052,55 +5090,16 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 /*constrain_layout=*/false, channel_id,
                 /*use_global_device_ids=*/true));
         return all_reduce;
-      },
-      [num_replicas, num_partitions](
-          SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
-          const IotaReplicaGroupList& partition_group_list,
-          int64_t channel_id) {
-        HloComputation* reduction_clone =
-            reduction->parent()->AddComputationAndUnifyNamesAndIds(
-                reduction->Clone(), false);
-        HloInstruction* all_reduce =
-            b->AddInstruction(HloInstruction::CreateAllReduce(
-                operand->shape(), {operand}, reduction_clone,
-                ExpandPartitionGroupListAcrossReplicas(
-                    partition_group_list, num_replicas, num_partitions),
-                /*constrain_layout=*/false, channel_id,
-                /*use_global_device_ids=*/true));
-        return all_reduce;
-      },
-      [num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                       std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
-                       int64_t channel_id) {
-        /* optimize trivial collective permute */
-        if (src_dst_pairs.empty()) {
-          // If the src/dst pairs are empty, then the collective permute just
-          // initializes the output to zero.
-          return CreateZero(operand->shape(), b);
-        } else {
-          // A collective-permute is a copy if all pairs are "identity" and
-          // all partitions are listed.
-          bool is_copy =
-              src_dst_pairs.size() == num_partitions &&
-              absl::c_all_of(src_dst_pairs,
-                             [](const std::pair<int64_t, int64_t>& pair) {
-                               return pair.first == pair.second;
-                             });
-          if (is_copy) {
-            return operand;
-          } else {
-            return b->AddInstruction(HloInstruction::CreateCollectivePermute(
-                operand->shape(), operand, src_dst_pairs, channel_id));
-          }
-        }
-      },
+      };
+  auto create_all_to_all_list_of_lists =
       [](SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
          const std::vector<std::vector<int64_t>>& partition_subgroups,
          int64_t channel_id, std::optional<int64_t> split_dimension) {
         std::vector<Shape> shapes(operands.size(), operands[0]->shape());
-        const Shape output_shape = (shapes.size() == 1)
-                                       ? shapes[0]
-                                       : ShapeUtil::MakeTupleShape(shapes);
+        const Shape output_shape =
+            (shapes.size() == 1)
+                ? shapes[0]
+                : ShapeUtil::MakeValidatedTupleShape(shapes).value();
         std::vector<ReplicaGroup> groups(partition_subgroups.size());
         for (int64_t i = 0; i < groups.size(); ++i) {
           for (int64_t id : partition_subgroups[i]) {
@@ -5110,21 +5109,8 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
         return b->AddInstruction(HloInstruction::CreateAllToAll(
             output_shape, operands, CollectiveDeviceList(groups),
             /*constrain_layout=*/false, channel_id, split_dimension));
-      },
-      [num_replicas, num_partitions](
-          SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
-          const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
-          std::optional<int64_t> split_dimension) {
-        std::vector<Shape> shapes(operands.size(), operands[0]->shape());
-        const Shape output_shape = (shapes.size() == 1)
-                                       ? shapes[0]
-                                       : ShapeUtil::MakeTupleShape(shapes);
-        return b->AddInstruction(HloInstruction::CreateAllToAll(
-            output_shape, operands,
-            ExpandPartitionGroupListAcrossReplicas(
-                partition_group_list, num_replicas, num_partitions),
-            /*constrain_layout=*/false, channel_id, split_dimension));
-      },
+      };
+  auto create_all_gather_list_of_lists =
       [num_replicas, num_partitions](
           SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
@@ -5144,11 +5130,118 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
             CollectiveDeviceList(device_groups),
             /*constrain_layout=*/false, channel_id,
             /*use_global_device_ids=*/true));
+      };
+  return {
+      [](SpmdBuilder* b) {
+        return b->AddInstruction(HloInstruction::CreatePartitionId());
       },
-      [num_replicas, num_partitions](
-          SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
+      [create_all_reduce_lists_of_lists](
+          SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
+          const std::vector<std::vector<int64_t>>& partition_subgroups,
+          int64_t channel_id) {
+        return create_all_reduce_lists_of_lists(
+            b, operand, reduction, partition_subgroups, channel_id);
+      },
+      [create_all_reduce_lists_of_lists, uses_all_partitions, num_replicas,
+       num_partitions](SpmdBuilder* b, HloInstruction* operand,
+                       HloComputation* reduction,
+                       const IotaReplicaGroupList& partition_group_list,
+                       int64_t channel_id) {
+        // Fallback to list of lists collective creation if the partition group
+        // list does not utilize all the partitions.
+        if (!uses_all_partitions(partition_group_list)) {
+          return create_all_reduce_lists_of_lists(
+              b, operand, reduction,
+              partition_group_list.flattened_replica_groups(), channel_id);
+        }
+        HloComputation* reduction_clone =
+            reduction->parent()->AddComputationAndUnifyNamesAndIds(
+                reduction->Clone(), false);
+        HloInstruction* all_reduce =
+            b->AddInstruction(HloInstruction::CreateAllReduce(
+                operand->shape(), {operand}, reduction_clone,
+                ExpandPartitionGroupListAcrossReplicas(
+                    partition_group_list, num_replicas, num_partitions),
+                /*constrain_layout=*/false, channel_id,
+                /*use_global_device_ids=*/true));
+        return all_reduce;
+      },
+      [num_partitions](SpmdBuilder* b, HloInstruction* operand,
+                       std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
+                       int64_t channel_id) {
+        /* optimize trivial collective permute */
+        if (src_dst_pairs.empty()) {
+          // If the src/dst pairs are empty, then the collective permute
+          // just initializes the output to zero.
+          return CreateZero(operand->shape(), b);
+        } else {
+          // A collective-permute is a copy if all pairs are "identity" and
+          // all partitions are listed.
+          bool is_copy =
+              src_dst_pairs.size() == num_partitions &&
+              absl::c_all_of(src_dst_pairs,
+                             [](const std::pair<int64_t, int64_t>& pair) {
+                               return pair.first == pair.second;
+                             });
+          if (is_copy) {
+            return operand;
+          } else {
+            return b->AddInstruction(HloInstruction::CreateCollectivePermute(
+                operand->shape(), operand, src_dst_pairs, channel_id));
+          }
+        }
+      },
+      [create_all_to_all_list_of_lists](
+          SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
+          const std::vector<std::vector<int64_t>>& partition_subgroups,
+          int64_t channel_id, std::optional<int64_t> split_dimension) {
+        return create_all_to_all_list_of_lists(b, operands, partition_subgroups,
+                                               channel_id, split_dimension);
+      },
+      [create_all_to_all_list_of_lists, uses_all_partitions, num_replicas,
+       num_partitions](
+          SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
           const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
-          int64_t all_gather_dimension) {
+          std::optional<int64_t> split_dimension) {
+        // Fallback back to list of lists collective creation if the partition
+        // group list does not utilize all the partitions.
+        if (!uses_all_partitions(partition_group_list)) {
+          return create_all_to_all_list_of_lists(
+              b, operands, partition_group_list.flattened_replica_groups(),
+              channel_id, split_dimension);
+        }
+        std::vector<Shape> shapes(operands.size(), operands[0]->shape());
+        const Shape output_shape =
+            (shapes.size() == 1)
+                ? shapes[0]
+                : ShapeUtil::MakeValidatedTupleShape(shapes).value();
+        return b->AddInstruction(HloInstruction::CreateAllToAll(
+            output_shape, operands,
+            ExpandPartitionGroupListAcrossReplicas(
+                partition_group_list, num_replicas, num_partitions),
+            /*constrain_layout=*/false, channel_id, split_dimension));
+      },
+      [create_all_gather_list_of_lists](
+          SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
+          const std::vector<std::vector<int64_t>>& partition_subgroups,
+          int64_t channel_id, int64_t all_gather_dimension) {
+        return create_all_gather_list_of_lists(b, operand, ag_shape,
+                                               partition_subgroups, channel_id,
+                                               all_gather_dimension);
+      },
+      [create_all_gather_list_of_lists, uses_all_partitions, num_replicas,
+       num_partitions](SpmdBuilder* b, HloInstruction* operand,
+                       const Shape& ag_shape,
+                       const IotaReplicaGroupList& partition_group_list,
+                       int64_t channel_id, int64_t all_gather_dimension) {
+        // Fallback to list of lists collective creation if the partition group
+        // list does not utilize all the partitions.
+        if (!uses_all_partitions(partition_group_list)) {
+          return create_all_gather_list_of_lists(
+              b, operand, ag_shape,
+              partition_group_list.flattened_replica_groups(), channel_id,
+              all_gather_dimension);
+        }
         return b->AddInstruction(HloInstruction::CreateAllGather(
             ag_shape, {operand}, all_gather_dimension,
             ExpandPartitionGroupListAcrossReplicas(
@@ -5225,7 +5318,9 @@ SpmdPartitioner::AllGatherShardsInternal(
   }
   // Add one leading dimension to gather all partitions.
   auto reshape = b->AddInstruction(HloInstruction::CreateReshape(
-      ShapeUtil::MakeShape(operand->shape().element_type(), shape), operand));
+      ShapeUtil::MakeValidatedShape(operand->shape().element_type(), shape)
+          .value(),
+      operand));
   HloInstruction* ag = nullptr;
   HloInstruction* result = reshape;
 
@@ -5237,19 +5332,22 @@ SpmdPartitioner::AllGatherShardsInternal(
       collectives_creator
           .create_cross_partition_all_gather_with_iota_device_list) {
     shape[0] *= partition_group_list.value().num_devices_per_group();
-    result =
-        collectives_creator
-            .create_cross_partition_all_gather_with_iota_device_list(
-                b, result,
-                ShapeUtil::MakeShape(operand->shape().element_type(), shape),
-                partition_group_list.value(), (*next_channel_id)++,
-                /*all_gather_dimension=*/0);
+    result = collectives_creator
+                 .create_cross_partition_all_gather_with_iota_device_list(
+                     b, result,
+                     ShapeUtil::MakeValidatedShape(
+                         operand->shape().element_type(), shape)
+                         .value(),
+                     partition_group_list.value(), (*next_channel_id)++,
+                     /*all_gather_dimension=*/0);
   } else {
     auto partition_subgroups =
         GetPartitionGroupsForReplication(sharding, selected_dims);
     shape[0] *= partition_subgroups[0].size();
     result = collectives_creator.create_cross_partition_all_gather(
-        b, result, ShapeUtil::MakeShape(operand->shape().element_type(), shape),
+        b, result,
+        ShapeUtil::MakeValidatedShape(operand->shape().element_type(), shape)
+            .value(),
         partition_subgroups, (*next_channel_id)++,
         /*all_gather_dimension=*/0);
   }
@@ -5273,7 +5371,9 @@ SpmdPartitioner::AllGatherShardsInternal(
       split_dim_shape.push_back(dim);
     }
     result = b->AddInstruction(HloInstruction::CreateReshape(
-        ShapeUtil::MakeShape(operand->shape().element_type(), split_dim_shape),
+        ShapeUtil::MakeValidatedShape(operand->shape().element_type(),
+                                      split_dim_shape)
+            .value(),
         result));
   }
   // Transpose the gathered dimensions to next to their corresponding

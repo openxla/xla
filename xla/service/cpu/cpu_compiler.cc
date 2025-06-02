@@ -94,6 +94,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
+#include "xla/backends/cpu/transforms/dot_library_rewriter.h"
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 #include "xla/backends/cpu/xnn_fusion.h"
 #include "xla/cpu_function_runtime.h"
@@ -561,6 +562,19 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
         SubByteNormalization::SET_ELEMENT_SIZE);
     TF_RETURN_IF_ERROR(subbyte_packer_pipeline.Run(module).status());
   }
+
+  // Guard this experimental pipeline with flags until we make sure that
+  // calling `DotDecomposer` early is okay.
+  DotLibraryRewriterOptions options = {
+      /*use_onednn=*/module->config().debug_options().xla_cpu_use_onednn(),
+      /*use_xnnpack=*/module->config().debug_options().xla_cpu_use_xnnpack()};
+  if (options.use_onednn || options.use_xnnpack) {
+    HloPassPipeline lib_pipeline("dot-library-passes");
+    lib_pipeline.AddPass<DotDecomposer>();
+    lib_pipeline.AddPass<DotLibraryRewriter>(target_machine_features, options);
+    TF_RETURN_IF_ERROR(lib_pipeline.Run(module).status());
+  }
+
   HloPassPipeline pipeline("HLO passes through layout assignment");
   AddHloVerifier(&pipeline);
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
@@ -2190,11 +2204,14 @@ CpuCompiler::CompileAheadOfTimeThunks(
   // corresponding HLO instructions (fusions, elemental instructions, etc.).
   IrEmitter2 ir_emitter2(*module, llvm_module.get(), &nested_ir_emitter);
 
+  ThunkEmitter::Options thunk_emitter_options = {
+      /*compile_copy_as_llvm_kernel=*/aot_options
+          .compile_copy_as_llvm_kernel()};
   // Thunk emitter is responsible for building a Thunk sequence that will
   // resolved kernels in the compiled LLVM module and execute them together
   // with Thunks implemented as library calls (e.g. oneDNN or Eigen).
   ThunkEmitter thunk_emitter(ir_emitter2, *assignment, target_machine_features,
-                             module->config());
+                             module->config(), thunk_emitter_options);
   TF_ASSIGN_OR_RETURN(ThunkSequence thunks,
                       thunk_emitter.EmitEntryComputation(*module));
 

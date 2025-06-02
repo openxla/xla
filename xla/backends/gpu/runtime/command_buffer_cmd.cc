@@ -81,6 +81,7 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
@@ -433,8 +434,16 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
   // outside of a lambda to avoid repeated heap allocations on every call.
   std::vector<BufferAllocation::Index> alloc_intersection;
   auto skip_command_update = [&](CommandId id) {
+    // If we don't know what allocations changed since the last call to
+    // `Record` we must always update the command.
+    if (!record_params.updated_allocs) {
+      return false;
+    }
+
+    // We always update commands that require initialization, even if buffer
+    // allocations didn't change.
     CommandBufferCmd* command = commands_[id].get();
-    if (command->force_update() || !record_params.updated_allocs) {
+    if (command->requires_initialization() && record_params.is_initialization) {
       return false;
     }
 
@@ -586,7 +595,8 @@ TracedCommandBuffer::TracedCommandBuffer(
 
 absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-    se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace) {
+    se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+    se::StreamPriority priority) {
   // Collect memory addresses for relevant allocations.
   absl::InlinedVector<se::DeviceMemoryBase, 4> allocs;
   allocs.reserve(allocs_indices_.size());
@@ -626,6 +636,9 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
           entries_[i].command_buffer,
           se::TraceCommandBufferFactory::Create(executor, stream, trace));
       entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
+      if (priority != se::StreamPriority::Default) {
+        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
+      }
       VLOG(6) << "Command buffer trace cache create new item for command "
               << trace_cmd_->ToString();
       return shift_right(i).command_buffer.get();
@@ -669,7 +682,7 @@ TracedCommandBufferCmd::RecordTracedCommand(
       auto nested_cmd,
       traced_cmd->GetOrTraceCommandBuffer(
           execute_params.buffer_allocations, execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, trace));
+          execute_params.command_buffer_trace_stream, trace, priority()));
 
   VLOG(5) << "Record traced command into command buffer: " << command_buffer;
   return Handle(
@@ -798,9 +811,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateLaunch(dims_.thread_counts_per_block(),
-                                            dims_.block_counts(), *kernel,
-                                            *kernel_args, dependencies);
+        return command_buffer->CreateLaunch(
+            dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
+            *kernel_args, dependencies, priority());
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateLaunch(
@@ -880,9 +893,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateLaunch(custom_kernel_.thread_dims(),
-                                            custom_kernel_.block_dims(),
-                                            *kernel, kernel_args, dependencies);
+        return command_buffer->CreateLaunch(
+            custom_kernel_.thread_dims(), custom_kernel_.block_dims(), *kernel,
+            kernel_args, dependencies, priority());
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateLaunch(
@@ -1086,9 +1099,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> CaseCmd::Record(
       });
 }
 
-bool CaseCmd::force_update() {
-  return absl::c_any_of(branches_,
-                        [](const auto& seq) { return seq.force_update(); });
+bool CaseCmd::requires_initialization() {
+  return absl::c_any_of(
+      branches_, [](const auto& seq) { return seq.requires_initialization(); });
 }
 
 CommandBufferCmd::BufferUseVector CaseCmd::buffers() const {
@@ -1147,8 +1160,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
       });
 }
 
-bool WhileCmd::force_update() {
-  return (cond_commands_.force_update() || body_commands_.force_update());
+bool WhileCmd::requires_initialization() {
+  return (cond_commands_.requires_initialization() ||
+          body_commands_.requires_initialization());
 }
 
 CommandBufferCmd::BufferUseVector WhileCmd::buffers() const {
@@ -1552,7 +1566,8 @@ CollectiveCmd::CollectiveCmd(CommandBufferCmdType cmd_type,
                              ExecutionStreamId execution_stream_id,
                              ExecutionStreamId async_from_stream_id,
                              CollectiveConfig config)
-    : CommandBufferCmd(cmd_type, execution_stream_id),
+    : CommandBufferCmd(cmd_type, execution_stream_id,
+                       se::StreamPriority::Highest),
       async_from_stream_id_(async_from_stream_id),
       config_(std::move(config)) {}
 
@@ -1579,6 +1594,10 @@ CollectiveCmd::RecordTracedCommand(
                       se::TraceCommandBufferFactory::Create(
                           execute_params.stream->parent(),
                           execute_params.command_buffer_trace_stream, trace));
+
+  if (priority() != se::StreamPriority::Default) {
+    TF_RETURN_IF_ERROR(nested_cmd->SetPriority(priority()));
+  }
 
   return Handle(
       std::move(record_action),
@@ -1951,7 +1970,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
 // because the memory address might changed if the offset is loop
 // iterator or operator outputs even if the parent command's memory pointers
 // do not change.
-bool DynamicSliceFusionCmd::force_update() {
+bool DynamicSliceFusionCmd::requires_initialization() {
   return !absl::c_all_of(slices_, [](const DynamicSliceThunk::SliceDef& slice) {
     if (!slice.offsets.has_value()) {
       return true;

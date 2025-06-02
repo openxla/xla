@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -104,9 +105,6 @@ class Shape {
   // Constructs a shape from a ShapeProto. Results in an invalid shape (as
   // opposed to crashing) if the proto has logically invalid fields.
   static absl::StatusOr<Shape> FromProto(const ShapeProto& shape_proto);
-
-  // Creates a buffer shape. `element_shape` must be a valid array shape.
-  static Shape MakeBufferShape(Shape element_shape);
 
   // Returns a ShapeProto representation of the Shape.
   ShapeProto ToProto() const;
@@ -364,7 +362,6 @@ class Shape {
 
   // Returns the underlying shape of the buffer.
   const Shape& buffer_shape() const;
-  Shape* mutable_buffer_shape() { return &buffer_state().buffer_shape[0]; }
 
   // Returns true if the shape is an array and has a layout.
   bool has_layout() const {
@@ -534,6 +531,7 @@ class Shape {
   }
 
  private:
+  friend class ShapeUtil;
   friend absl::Status ValidateNonLayoutProperties(const Shape& shape);
 
   // Define one state struct for each shape category. Depending on the element
@@ -569,10 +567,16 @@ class Shape {
     std::vector<Shape> tuple_shapes;
   };
   struct BufferState {
-    // The underlying array shape for the buffer type, represented as a
-    // vector with one element. Using Shape directly or
-    // absl::InlinedVector<Shape, 1> here causes recursive definition.
-    std::vector<Shape> buffer_shape;
+    // Creates a buffer state with an empty buffer shape.
+    BufferState();
+
+    // Supports copying.
+    BufferState(const BufferState& state);
+    BufferState& operator=(const BufferState& state);
+
+    // The underlying array shape for the buffer type. Not null.
+    // Using Shape directly results in a circular dependency.
+    std::unique_ptr<Shape> buffer_shape;
   };
   using State = std::variant<InvalidState, TokenState, OpaqueState, ArrayState,
                              TupleState, BufferState>;

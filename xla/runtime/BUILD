@@ -71,6 +71,7 @@ cc_library(
         "//xla:util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -162,5 +163,16 @@ cc_library(
     hdrs = ["device_id.h"],
     deps = [
         "//xla/tsl/lib/gtl:int_type",
+    ],
+)
+
+cc_library(
+    name = "work_dimensions",
+    hdrs = ["work_dimensions.h"],
+    deps = [
+        ":work_cluster",
+        ":work_group",
+        ":work_item",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )

@@ -56,7 +56,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
-#include "xla/service/gpu/transforms/async_collective_annotator.h"
+#include "xla/service/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
@@ -508,15 +508,15 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
   }
 
   if (options.xla_gpu_enable_analytical_latency_estimator()) {
-    LOG(INFO) << "Using analytical latency estimator";
+    VLOG(1) << "Using analytical latency estimator";
     return std::make_unique<AnalyticalLatencyEstimator>(
         config, std::move(gpu_latency_estimator), gpu_device_info,
         ShapeSizeBytesFunction(pointer_size), module.entry_computation());
   }
 
   if (options.xla_gpu_enable_analytical_sol_latency_estimator()) {
-    LOG(INFO) << "Using Speed-of-Light (SoL) analytical latency estimator";
-    return std::make_unique<SolLatencyEstimator>(
+    VLOG(1) << "Using Speed-of-Light (SoL) analytical latency estimator";
+    return *SolLatencyEstimator::Create(
         config, std::move(gpu_latency_estimator), gpu_device_info,
         ShapeSizeBytesFunction(pointer_size), module.entry_computation());
   }
@@ -590,9 +590,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
       shape_size_in_bytes, async_tracker.get(), estimator.get(), config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/nullptr,
-      /*post_processing_fn=*/nullptr,
-      /*scheduling_instruction_crosses_overlap_limit=*/
-      GpuScheduleCrossesOverlapLimit);
+      /*post_processing_fn=*/nullptr);
 
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(estimator), std::move(async_tracker), std::move(scheduler_core),

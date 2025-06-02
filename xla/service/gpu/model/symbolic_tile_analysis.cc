@@ -689,15 +689,10 @@ absl::StatusOr<int64_t> GetRealRootIndex(
 /*static*/ SymbolicTileAnalysisOrError SymbolicTileAnalysis::AnalyzeFusionImpl(
     const HloFusionAdaptor& fusion, MLIRContext* ctx,
     const RootIndexing& root_indexing,
+    IndexingMap::SimplifyPointDimensions simplification_mode,
     EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder) {
   OrderedUniquePtrValueHashSet<SymbolicTiledHloInstruction>
       tiled_hlo_instructions_set;
-
-  IndexingMap::SimplifyPointDimensions simplification_mode =
-      IndexingMap::SimplifyPointDimensions::kPreserve;
-  if (ShouldDerivationSimplifyPointDimensions(fusion)) {
-    simplification_mode = IndexingMap::SimplifyPointDimensions::kReplace;
-  }
 
   // TODO(b/372454662): Once we get rid of the restriction of only one real
   // root, this needs to be adapted.
@@ -705,22 +700,31 @@ absl::StatusOr<int64_t> GetRealRootIndex(
       std::make_unique<SymbolicTiledHloInstruction>(
           root_indexing.GetRealRoot(), root_indexing.real_root_indexing));
 
+  if (root_tiled_hlo->hlo()->opcode() == HloOpcode::kFusion) {
+    // This is an acceptable restriction because we expect the user of a nested
+    // fusion to be a dot or concatenate, which prevents it from being a root.
+    return FusionDecision::Forbid("Root fusion instruction is not supported.");
+  }
+
   std::vector<SymbolicTiledHloInstruction*> worklist = {root_tiled_hlo};
 
   while (!worklist.empty()) {
     auto tiled_hlo_instruction = worklist.back();
     worklist.pop_back();
-    HloInstructionAdaptor instruction_adaptor(*tiled_hlo_instruction->hlo(),
-                                              &fusion);
 
-    if (!fusion.ContainsInstruction(instruction_adaptor)) {
+    if (!fusion.ContainsInstruction(tiled_hlo_instruction->hlo())) {
       continue;
+    }
+    if (tiled_hlo_instruction->hlo()->opcode() == HloOpcode::kFusion) {
+      continue;  // Don't analyze parameter operands of nested fusions.
     }
 
     HloInstructionIndexing operands_indexing =
         ComputeOutputToInputIndexing(tiled_hlo_instruction->hlo(),
                                      /*output_id=*/0, ctx);
 
+    HloInstructionAdaptor instruction_adaptor(*tiled_hlo_instruction->hlo(),
+                                              &fusion);
     for (auto [operand, operand_indexing_map_set] :
          llvm::zip(instruction_adaptor.GetOperands(),
                    operands_indexing.indexing_maps)) {
@@ -769,7 +773,7 @@ absl::StatusOr<int64_t> GetRealRootIndex(
 
         auto analysis_or = SymbolicTileAnalysis::AnalyzeFusionImpl(
             *nested_fusion_adaptor, ctx, nested_root_indexing,
-            emitter_specific_constraints_builder);
+            simplification_mode, emitter_specific_constraints_builder);
         if (std::holds_alternative<FusionDecision>(analysis_or)) {
           return analysis_or;
         }
@@ -828,7 +832,11 @@ absl::StatusOr<int64_t> GetRealRootIndex(
   if (!root_indexing_or.ok()) {
     return FusionDecision::Forbid(root_indexing_or.status().message());
   }
-  return AnalyzeFusionImpl(fusion, ctx, *root_indexing_or,
+  IndexingMap::SimplifyPointDimensions simplification_mode =
+      ShouldDerivationSimplifyPointDimensions(fusion)
+          ? IndexingMap::SimplifyPointDimensions::kReplace
+          : IndexingMap::SimplifyPointDimensions::kPreserve;
+  return AnalyzeFusionImpl(fusion, ctx, *root_indexing_or, simplification_mode,
                            emitter_specific_constraints_builder);
 }
 
