@@ -28,8 +28,6 @@
 namespace xla {
 namespace gpu {
 
-using tsl::AsyncValueRef;
-
 // Thunk that performs a NVSHMEM-based collective permute.
 class NvshmemCollectivePermuteStartThunk : public NvshmemCollectiveThunk {
  public:
