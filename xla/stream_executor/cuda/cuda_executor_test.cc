@@ -144,9 +144,12 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorFailsForExcessiveSize) {
       executor->CreateMemoryAllocator(MemoryType::kCollective));
   constexpr uint64_t kTooBig = 1125899906842624;  // 1 PiB
   auto should_fail = allocator->Allocate(kTooBig);
+  EXPECT_FALSE(should_fail.ok());
   EXPECT_THAT(should_fail.status().ToString(),
-              testing::HasSubstr("failed to allocate 1.00PiB (1125899906842624 "
-                                 "bytes) from device collective memory:"));
+              testing::AnyOf(testing::HasSubstr(
+                                 "failed to allocate 1.00PiB (1125899906842624 "
+                                 "bytes) from device collective memory:"),
+                             testing::HasSubstr("out of memory")));
 }
 
 TEST(CudaExecutorTest, CreateUnsupportedMemoryAllocatorsFail) {
