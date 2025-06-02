@@ -108,6 +108,10 @@ cc_library(
 cc_library(
     name = "auto_sharding_solver",
     srcs = [
+        "auto_sharding_cpsat_for_problem.cc",
+        "auto_sharding_cpsat_for_request.cc",
+        "auto_sharding_evaluator_for_problem.cc",
+        "auto_sharding_evaluator_for_request.cc",
         "auto_sharding_memory.cc",
         "auto_sharding_solver.cc",
     ],
@@ -115,8 +119,10 @@ cc_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         ":auto_sharding_device_mesh",
+        ":auto_sharding_iopddl",
         ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
+        ":iopddl_lib",
         "//xla:status_macros",
         "//xla:util",
         "@com_google_absl//absl/container:btree",
@@ -418,6 +424,8 @@ xla_cc_test(
 xla_cc_test(
     name = "auto_sharding_solver_test",
     srcs = [
+        "auto_sharding_cpsat_for_problem_test.cc",
+        "auto_sharding_cpsat_for_request_test.cc",
         "auto_sharding_memory_test.cc",
         "auto_sharding_solver_test.cc",
     ],
@@ -427,9 +435,11 @@ xla_cc_test(
         "no_oss",
     ],
     deps = [
+        ":auto_sharding_iopddl",
         ":auto_sharding_proto_cc",
         ":auto_sharding_solver",  # build_cleaner: keep
         ":auto_sharding_strategy",
+        ":iopddl_lib",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_set",

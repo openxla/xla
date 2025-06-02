@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -99,9 +98,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
-#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/passes.h"
-#include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -141,7 +138,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
-#include "triton/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -492,10 +488,11 @@ absl::StatusOr<ScalarOrTensor> EmitTiledIota(
   TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
                       tiled_iota.tile_offsets_indexing());
 
-  auto iota_dim_offset = b.create<arith::IndexCastUIOp>(
-      b.getI32Type(),
-      emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
-                              /*symbols=*/{}, b)[iota_dim]);
+  auto iota_dim_offset =
+      Cast(b,
+           emitters::ApplyIndexing(tile_offsets_indexing, /*dims=*/pid,
+                                   /*symbols=*/{}, b)[iota_dim],
+           b.getI32Type());
 
   // First, stride as needed between the iota components.
   Value range = b.create<arith::MulIOp>(
@@ -913,7 +910,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
     b.setInsertionPointToStart(for_op.getBody());
     SmallVector<TensorValue> dot_args;
     Value ki = for_op.getInductionVar();
-    const Value ki_index = b.create<arith::IndexCastUIOp>(b.getIndexType(), ki);
+    const Value ki_index = Cast(b, ki, b.getIndexType());
     Value loop_iteration_count_value =
         CreateConst(b, b.getIndexType(), loop_iteration_count, {})
             .UnwrapScalar();
@@ -950,7 +947,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(EmitterLocOpBuilder& b,
     // TODO(b/393299275): masking is only necessary during the last iteration of
     // the loop. We should evaluate whether adding a conditional mask helps or
     // hinders performance for Triton.
-    Value ki_i32 = b.create<arith::TruncIOp>(b.getI32Type(), ki);
+    Value ki_i32 = Cast(b, ki, b.getI32Type());
     TF_ASSIGN_OR_RETURN(
         Value lhs, MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0],
                                   ki_i32, lhs_contracting_dim_idx));
@@ -1101,33 +1098,6 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
   return ScalarOrTensor(if_ops.front().getResult(0));
 }
 
-// Given an operand to a (potentially nested) fusion instruction, finds the
-// index of the operand to the outermost fusion it corresponds to.
-//
-// Nested fusion parameter chains should always only traverse parameter nodes.
-int64_t GetOutermostFusionOperandParameterIndex(
-    const HloFusionInstruction* fusion, const HloInstruction* operand) {
-  CHECK(fusion->IsUserOf(operand));
-
-  // Simple case: `fusion` is the outermost fusion.
-  if (!operand->parent()->IsFusionComputation()) {
-    return fusion->operand_index(operand);
-  }
-
-  // While operand is in a nested fusion, walk up to the outermost fusion.
-  while (
-      operand->parent()->FusionInstruction()->parent()->IsFusionComputation()) {
-    // Nests operands should always point to parameters.
-    CHECK(operand->opcode() == HloOpcode::kParameter);
-    int64_t param_number = operand->parameter_number();
-    operand = operand->parent()->FusionInstruction()->operand(param_number);
-  }
-
-  CHECK(operand->parent()->IsFusionComputation());
-  CHECK(operand->opcode() == HloOpcode::kParameter);
-  return operand->parameter_number();
-}
-
 absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
@@ -1137,14 +1107,17 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
-  if (hlo->IsRoot() && hlo->opcode() == HloOpcode::kParameter) {
+  if (hlo->opcode() == HloOpcode::kParameter && !fusion->IsUserOf(hlo)) {
     hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
   }
 
   if (fusion->IsUserOf(hlo)) {
-    // If the fusion instruction is a user of `hlo`, then `hlo` is an operand
-    // to the fusion instruction.
-    int64_t arg_index = GetOutermostFusionOperandParameterIndex(fusion, hlo);
+    int64_t arg_index = fusion->operand_index(hlo);
+    // Walk up the parameter chain to find the outermost operand index.
+    while (auto* instr = hlo->parent()->FusionInstruction()) {
+      arg_index = hlo->parameter_number();  // Nested operands are parameters.
+      hlo = instr->operand(arg_index);
+    }
     TF_ASSIGN_OR_RETURN(auto tile_info, TileInfo::Construct(b, pid, tiled_hlo));
     ScalarOrTensor parameter =
         EmitParameterExtract(b, tile_info, fn.getArgument(arg_index));
@@ -1402,10 +1375,9 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
   // TODO(b/389955087): we can decide whether to sign extend by understanding if
   // we need 64 bits to encode indices or if 32 bits are enough. For now, just
   // use 64 bits to avoid issues.
-  Value pid = b.create<arith::IndexCastUIOp>(
-      b.getIndexType(),
-      b.create<arith::ExtSIOp>(b.getI64Type(), b.create<ttir::GetProgramIdOp>(
-                                                   ttir::ProgramIDDim::X)));
+  Value pid_i64 = Cast(b, b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X),
+                       b.getI64Type());
+  Value pid = Cast(b, pid_i64, b.getIndexType());
   TF_ASSIGN_OR_RETURN(
       auto results, EmitTiledComputation(b, libdevice_path, device_info, fusion,
                                          tiled_hlo_computation, fn, pid));
