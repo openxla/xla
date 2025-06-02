@@ -83,6 +83,19 @@ class MpiCommunicator : public Communicator {
     return Unimplemented("Recv is not implemented");
   }
 
+  tsl::AsyncValueRef<Event> Send(se::DeviceMemoryBase recv_buffer,
+                                 se::DeviceMemoryBase send_buffer,
+                                 PrimitiveType dtype, size_t count, RankId peer,
+                                 const Executor& executor) override {
+    return Unimplemented("Send is not implemented");
+  }
+
+  tsl::AsyncValueRef<Event> Recv(se::DeviceMemoryBase recv_buffer,
+                                 se::DeviceMemoryBase send_buffer,
+                                 PrimitiveType dtype, size_t count, RankId peer,
+                                 const Executor& executor) override {
+    return Unimplemented("Recv is not implemented");
+
   absl::StatusOr<size_t> NumRanks() const override { return mpi_size_; }
 
   std::string ToString() const override {
