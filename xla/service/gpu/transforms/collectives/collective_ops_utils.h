@@ -41,7 +41,7 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
 
 // Returns the type of communication pattern for a channel instruction.
 absl::StatusOr<GPUCommunicationType> CommunicationType(
-    const HloChannelInstruction& instr,
+    int num_devices_per_host, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version);
 
 // Returns true if instruction is a synchronous collective op.

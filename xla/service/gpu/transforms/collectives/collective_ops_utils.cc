@@ -138,47 +138,53 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
 }
 
 absl::StatusOr<GPUCommunicationType> CommunicationType(
-    const HloChannelInstruction& instr,
+    int num_devices_per_host, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version) {
-  // Handle CollectivePermute instructions
-  if (instr.opcode() == HloOpcode::kCollectivePermute ||
-      instr.opcode() == HloOpcode::kCollectivePermuteStart) {
-    if (!std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
-      return absl::FailedPreconditionError("Only CUDA is supported.");
-    }
-
-    auto cuda_compute_capability =
-        std::get<se::CudaComputeCapability>(gpu_version);
-    if (!cuda_compute_capability.IsHopper()) {
-      return absl::FailedPreconditionError(
-          "Only Hopper is supported to get communication type");
-    }
-
-    // For CollectivePermute, we can determine if it's single host by checking
-    // if all source-target pairs are within the same host
-    const auto* permute_instr =
-        static_cast<const HloCollectivePermuteInstruction*>(&instr);
-    int num_devices_per_host = 8;  // Same assumption as in collective version
-
-    bool all_single_host = true;
-    for (const auto& [source, target] : permute_instr->source_target_pairs()) {
-      int64_t source_node = source / num_devices_per_host;
-      int64_t target_node = target / num_devices_per_host;
-      if (source_node != target_node) {
-        all_single_host = false;
-        break;
-      }
-    }
-
-    if (all_single_host) {
-      return GPUCommunicationType::SINGLE_HOST;
-    }
-    // For multi-host CollectivePermute, we can't easily determine if it's
-    // rail-aligned since it's a point-to-point communication pattern
-    return GPUCommunicationType::NON_RAIL_ALIGNED;
+  if (!std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
+    return absl::FailedPreconditionError("Only CUDA is supported.");
   }
 
-  // For other channel instructions (like Send/Recv), return UNDEFINED
+  // Handle collective instructions that have device_list
+  if (auto* collective =
+          dynamic_cast<const HloCollectiveInstruction*>(&instr)) {
+    TF_ASSIGN_OR_RETURN(
+        CommunicationMetadata comm,
+        CommunicationContext(collective->device_list(), num_devices_per_host));
+    if (IsSingleHost(comm)) {
+      return GPUCommunicationType::SINGLE_HOST;
+    }
+    if (IsRailAligned(comm, num_devices_per_host)) {
+      return GPUCommunicationType::RAIL_ALIGNED;
+    }
+    if (IsNonRailAligned(comm, num_devices_per_host)) {
+      return GPUCommunicationType::NON_RAIL_ALIGNED;
+    }
+  } else if (auto* permute =
+                 dynamic_cast<const HloCollectivePermuteInstruction*>(&instr)) {
+    // For permute, we need to create a device list from the source-target pairs
+    absl::flat_hash_map<int64_t, size_t> node_to_participant_count;
+    for (const auto& [source, target] : permute->source_target_pairs()) {
+      int64_t source_node = source / num_devices_per_host;
+      int64_t target_node = target / num_devices_per_host;
+      node_to_participant_count[source_node]++;
+      node_to_participant_count[target_node]++;
+    }
+    CommunicationMetadata comm{node_to_participant_count};
+    if (IsSingleHost(comm)) {
+      return GPUCommunicationType::SINGLE_HOST;
+    }
+    if (IsRailAligned(comm, num_devices_per_host)) {
+      return GPUCommunicationType::RAIL_ALIGNED;
+    }
+    if (IsNonRailAligned(comm, num_devices_per_host)) {
+      return GPUCommunicationType::NON_RAIL_ALIGNED;
+    }
+  } else {
+    return absl::FailedPreconditionError(
+        "Cannot determine communication type for non-collective channel "
+        "instruction");
+  }
+
   return GPUCommunicationType::UNDEFINED;
 }
 

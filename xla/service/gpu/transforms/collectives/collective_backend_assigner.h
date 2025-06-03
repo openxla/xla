@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVE_BACKEND_ASSIGNER_H_
-#define XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVE_BACKEND_ASSIGNER_H_
+#ifndef XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVES_COLLECTIVE_BACKEND_ASSIGNER_H_
+#define XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVES_COLLECTIVE_BACKEND_ASSIGNER_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -22,6 +22,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/pjrt/gpu/gpu_topology.h"
+#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -38,9 +41,11 @@ constexpr int64_t kDefaultThresholdInBytes = 16 * 1024 * 1024;  // 16MB
 class CollectiveBackendAssigner : public HloModulePass {
  public:
   explicit CollectiveBackendAssigner(
-      const se::GpuComputeCapability& gpu_version,
+      const se::GpuComputeCapability& gpu_version, int num_devices_per_host,
       int64_t threshold_in_bytes = kDefaultThresholdInBytes)
-      : gpu_version_(gpu_version), threshold_in_bytes_(threshold_in_bytes) {}
+      : gpu_version_(gpu_version),
+        num_devices_per_host_(num_devices_per_host),
+        threshold_in_bytes_(threshold_in_bytes) {}
 
   absl::string_view name() const override {
     return "collective-backend-assigner";
@@ -53,13 +58,12 @@ class CollectiveBackendAssigner : public HloModulePass {
   static bool IsCollectiveOp(const HloInstruction* instr);
 
  private:
-  static int64_t GetShapeSize(const Shape& shape);
-
   se::GpuComputeCapability gpu_version_;
+  int num_devices_per_host_;
   int64_t threshold_in_bytes_;
 };
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVE_BACKEND_ASSIGNER_H_
+#endif  // XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVES_COLLECTIVE_BACKEND_ASSIGNER_H_
