@@ -2489,32 +2489,6 @@ absl::Status IrEmitterUnnested::EmitDegeneratedCollectiveThunk(
   return absl::OkStatus();
 }
 
-absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
-    Thunk::Kind kind, const HloInstruction* inst) {
-  CHECK(kind == Thunk::Kind::kNvshmemAllReduceDone);
-
-  const HloInstruction* start = inst->operand(0);
-
-  // Find canonical async event.
-  CollectivesAsyncEvents& collectives_async_events =
-      GetCollectivesAsyncEvents();
-  auto async_events_it = collectives_async_events.find(start);
-  TF_RET_CHECK(async_events_it != collectives_async_events.end())
-      << "couldn't find async events for start operation";
-
-  // Can be null if no start thunk was created (e.g. if the start op is
-  // degenerate), in which case there's nothing to do here.
-  if (!async_events_it->second) {
-    return absl::OkStatus();
-  }
-
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
-  AddThunkToThunkSequence(std::make_unique<NvshmemCollectiveDoneThunk>(
-      kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),
-      async_events_it->second, stream_kind));
-  return absl::OkStatus();
-}
-
 absl::Status IrEmitterUnnested::EmitInfeed(const HloInfeedInstruction* instr) {
   // Infeed instruction returns a tuple containing the result data
   // and a token. We only need the result data to construct the
@@ -2945,18 +2919,6 @@ std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
   return HloBfsFindIf(
       {instruction->fused_instructions_computation()->root_instruction()},
       [](const HloInstruction* instr) { return IsCollective(instr); });
-}
-
-bool IsNvshmemCollective(const HloInstruction* instr) {
-  bool is_nvshmem_collective = false;
-  if (instr->has_backend_config()) {
-    auto gpu_config = instr->backend_config<GpuBackendConfig>();
-    const CollectiveBackendConfig& backend_config =
-        gpu_config.value().collective_backend_config();
-    is_nvshmem_collective =
-        backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
-  }
-  return is_nvshmem_collective;
 }
 
 absl::Status IrEmitterUnnested::EmitHloInstruction(

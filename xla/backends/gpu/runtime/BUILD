@@ -1964,7 +1964,6 @@ cc_library(
     name = "nvshmem_collective_thunk",
     srcs = ["nvshmem_collective_thunk.cc"],
     hdrs = ["nvshmem_collective_thunk.h"],
-    tags = ["gpu"],
     deps = [
         ":collective_thunk",
         ":thunk",

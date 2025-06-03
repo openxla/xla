@@ -415,7 +415,7 @@ absl::StatusOr<ThunkInfoProto> Thunk::GetThunkInfoProto() const {
   return proto;
 }
 
-absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
+absl::StatusOr<GpuCollectives * absl_nonnull> Thunk::GetGpuCollectives(
     CollectiveExecuteParams const& params) {
   if (params.collectives == nullptr) {
     return Internal("Collectives API is not provided");

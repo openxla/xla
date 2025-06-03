@@ -600,6 +600,7 @@ cc_library(
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/runtime:annotation",
+        "//xla/backends/gpu/runtime:nvshmem_collective_thunk",
         "//xla/backends/gpu/runtime:sequential_thunk",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/hlo/ir:hlo",
