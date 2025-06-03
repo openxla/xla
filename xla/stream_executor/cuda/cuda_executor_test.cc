@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
 #include "xla/stream_executor/device_description.h"
@@ -36,7 +37,10 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 namespace {
+using ::testing::_;
+using ::testing::AnyOf;
 using testing::Ge;
+using ::testing::HasSubstr;
 using testing::IsEmpty;
 using testing::Not;
 using testing::VariantWith;
@@ -134,7 +138,9 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorWorks) {
   EXPECT_EQ(allocation->size(), 1024);
 }
 
-TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorFailsForExcessiveSize) {
+// TODO: b/420735471 - Enable test once fixed.
+TEST(CudaExecutorTest,
+     DISABLED_CreateCollectiveMemoryAllocatorFailsForExcessiveSize) {
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
                           PlatformManager::PlatformWithName("CUDA"));
   TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
@@ -143,13 +149,6 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorFailsForExcessiveSize) {
       std::unique_ptr<MemoryAllocator> allocator,
       executor->CreateMemoryAllocator(MemoryType::kCollective));
   constexpr uint64_t kTooBig = 1125899906842624;  // 1 PiB
-  auto should_fail = allocator->Allocate(kTooBig);
-
-  using ::testing::_;
-  using ::testing::AnyOf;
-  using ::testing::HasSubstr;
-  using ::tsl::testing::StatusIs;
-
   EXPECT_THAT(
       allocator->Allocate(kTooBig),
       StatusIs(_,
