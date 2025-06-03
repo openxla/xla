@@ -328,6 +328,48 @@ bool LegalizeSchedulingAnnotations::KeepSchedulingAnnotation(
   return IsSupportedAsyncOp(instr) || config_.keep_sync_annotation(instr);
 }
 
+bool LegalizeSchedulingAnnotations::RemoveTrivialGroups(
+    const absl::flat_hash_map<
+        Annotation,
+        absl::flat_hash_map<HloComputation*, std::vector<HloInstruction*>>>&
+        annotation_to_instruction) {
+  absl::flat_hash_map<
+      AnnotationGroupId,
+      absl::flat_hash_map<HloComputation*, std::vector<HloInstruction*>>>
+      group_id_to_instruction;
+  for (const auto& [annotation, comp_inst_vector] : annotation_to_instruction) {
+    for (const auto& [comp, annotated_instructions] : comp_inst_vector) {
+      for (const auto& annotated_instruction : annotated_instructions) {
+        if (annotation.group_id.has_value()) {
+          group_id_to_instruction[annotation.group_id.value()][comp].push_back(
+              annotated_instruction);
+        }
+      }
+    }
+  }
+
+  bool changed = false;
+  for (const auto& [group_id, annotated_instructions] :
+       group_id_to_instruction) {
+    for (const auto& [comp, annotated_instructions] : annotated_instructions) {
+      if (annotated_instructions.size() == 1 &&
+          !config_.keep_trivial_sync_annotation(annotated_instructions[0])) {
+        // Remove annotations from synchronous operations (control flow, TC
+        // custom calls) since they won't do anything and will just get in the
+        // way of scheduling.
+        VLOG(2) << "Removing trivial group: " << group_id
+                << " from instruction: " << annotated_instructions[0]->name()
+                << " in computation: " << comp->name();
+        changed |= RemoveSchedulingAnnotation(annotated_instructions[0]);
+      } else {
+        VLOG(3) << "Retaining nontrivial group: " << group_id;
+      }
+    }
+  }
+
+  return changed;
+}
+
 absl::Status LegalizeSchedulingAnnotations::Verify(HloModule* module) {
   VLOG(1) << "Verifying scheduling annotations for module: " << module->name();
   for (HloComputation* computation : module->MakeNonfusionComputations()) {
@@ -446,6 +488,8 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::Run(
       return status;
     }
   }
+
+  changed |= RemoveTrivialGroups(annotation_to_instruction);
 
   // Either propagate the annotation to fill the gaps between instructions with
   // the same annotation ID or check (and return error) if there are gaps.

@@ -8,15 +8,6 @@ load(
 )
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load(
-    "//xla/service/gpu:build_defs.bzl",
-    "gpu_kernel_library",
-)
-load(
-    "//xla/stream_executor:build_defs.bzl",
-    "if_cuda_or_rocm_is_configured",
-    "if_gpu_is_configured",
-)
-load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
 )
@@ -137,12 +128,40 @@ cc_library(
     ],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":launch_dimensions_proto_cc",
         "//xla:shape_util",
         "//xla:util",
+        "//xla/runtime:work_cluster",
+        "//xla/runtime:work_dimensions",
+        "//xla/runtime:work_group",
+        "//xla/runtime:work_item",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+tf_proto_library(
+    name = "launch_dimensions_proto",
+    srcs = ["launch_dimensions.proto"],
+    protodeps = ["//xla/stream_executor:launch_dim_proto"],
+)
+
+xla_cc_test(
+    name = "launch_dimensions_test",
+    srcs = ["launch_dimensions_test.cc"],
+    deps = [
+        ":launch_dimensions",
+        "//xla/stream_executor:launch_dim",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -1439,6 +1458,7 @@ cc_library(
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:all_gather_broadcast_reorder",
         "//xla/hlo/transforms/collectives:all_gather_combiner",
+        "//xla/hlo/transforms/collectives:all_gather_remove_degenerate_dims",
         "//xla/hlo/transforms/collectives:all_reduce_combiner",
         "//xla/hlo/transforms/collectives:all_reduce_contiguous",
         "//xla/hlo/transforms/collectives:async_collective_creator",
@@ -2316,24 +2336,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "stream_executor_util_kernel_stub",
-    srcs = ["stream_executor_util_kernel_stub.cc"],
-)
-
-gpu_kernel_library(
-    name = "stream_executor_util_kernel",
-    srcs = ["stream_executor_util_kernel.cu.cc"],
-    tags = ["gpu"],
-    deps = if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocm_config",
-        "@local_config_rocm//rocm:hip",
-    ]),
-)
-
-cc_library(
     name = "stream_executor_util",
     srcs = ["stream_executor_util.cc"],
     hdrs = ["stream_executor_util.h"],
@@ -2358,8 +2360,9 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:typed_kernel_factory",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/gpu:repeat_buffer_kernel",
         "//xla/tsl/protobuf:dnn_proto_cc",
-        "//xla/tsl/util:env_var",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -2375,10 +2378,7 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_or_rocm_is_configured(
-        if_false = [":stream_executor_util_kernel_stub"],
-        if_true = [":stream_executor_util_kernel"],
-    ),  # Using if_cuda_or_rocm_is_configured guard to prevent sycl target build / link errors.
+    ],
 )
 
 xla_cc_test(

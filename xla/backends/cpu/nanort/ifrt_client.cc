@@ -458,8 +458,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
       ifrt::DType dtype, ifrt::Shape shape) {
     TF_ASSIGN_OR_RETURN(xla::PrimitiveType xla_dtype,
                         ifrt::ToPrimitiveType(dtype));
-    auto xla_shape =
-        ShapeUtil::MakeValidatedShape(xla_dtype, shape.dims()).value();
+    auto xla_shape = xla::ShapeUtil::MakeShape(xla_dtype, shape.dims());
     auto strides = xla::ShapeUtil::ByteStrides(xla_shape);
     if (!strides.has_value()) {
       return InvalidArgument("Couldn't compute byte strides for shape: %s",
@@ -529,7 +528,7 @@ class ShardedNanoArray final : public NanoValue<ShardedNanoArray, ifrt::Array> {
     if (shards.empty()) {
       return InvalidArgument("Can't create a sharded array with no shards.");
     }
-    xla::ifrt::DType dtype = shards[0]->dtype();
+    ifrt::DType dtype = shards[0]->dtype();
 
     auto array = tsl::TakeRef(new ShardedNanoArray(
         client, dtype, shape, sharding, std::move(shards)));
@@ -1104,7 +1103,7 @@ class NanoCompiler final
  public:
   explicit NanoCompiler(NanoIfrtClient* client) : client_(client) {}
 
-  using xla::ifrt::Compiler::Compile;
+  using ifrt::Compiler::Compile;
 
   absl::StatusOr<ifrt::LoadedExecutableRef> CompileAndLoad(
       std::unique_ptr<ifrt::Program> program,
@@ -1227,7 +1226,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
     std::optional<absl::Span<const int64_t>> byte_strides,
     ifrt::ShardingRef sharding, HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer,
-    tsl::RCReference<xla::ifrt::UserContext> user_context) {
+    tsl::RCReference<ifrt::UserContext> user_context) {
   // Currently the `user_context` parameter is ignored.
   bool make_copy = false;
   switch (semantics) {
@@ -1256,9 +1255,8 @@ NanoIfrtClient::MakeArraysFromHostBufferShards(
 }
 
 absl::StatusOr<std::vector<ifrt::ArrayRef>> NanoIfrtClient::MakeErrorArrays(
-    const absl::Status& error,
-    absl::Span<const xla::ifrt::ArraySpec> array_specs,
-    tsl::RCReference<xla::ifrt::UserContext> user_context) {
+    const absl::Status& error, absl::Span<const ifrt::ArraySpec> array_specs,
+    tsl::RCReference<ifrt::UserContext> user_context) {
   return absl::UnimplementedError(
       "NanoIfrtClient does not support MakeErrorArrays.");
 }
@@ -1370,7 +1368,7 @@ absl::Span<ifrt::Device* const> NanoIfrtClient::addressable_devices() const {
 
 int NanoIfrtClient::process_index() const { return 0; }
 
-absl::Span<xla::ifrt::Device* const> NanoIfrtClient::GetAllDevices() const {
+absl::Span<ifrt::Device* const> NanoIfrtClient::GetAllDevices() const {
   return devices();
 }
 
@@ -1410,7 +1408,7 @@ absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupAddressableDevice(
 
 ifrt::DeviceListRef NanoIfrtClient::MakeDeviceList(
     absl::Span<ifrt::Device* const> devices) const {
-  return xla::ifrt::BasicDeviceList::Create(devices);
+  return ifrt::BasicDeviceList::Create(devices);
 }
 
 ifrt::Compiler* NanoIfrtClient::GetDefaultCompiler() { return compiler_.get(); }
@@ -1425,7 +1423,7 @@ absl::StatusOr<std::shared_ptr<const PjRtLayout>>
 NanoIfrtClient::GetDefaultLayout(ifrt::DType dtype,
                                  absl::Span<const int64_t> dims,
                                  ifrt::Device* device,
-                                 xla::ifrt::MemoryKind memory_kind) const {
+                                 ifrt::MemoryKind memory_kind) const {
   return std::make_shared<PjRtLayout>(xla::Layout(dims));
 }
 

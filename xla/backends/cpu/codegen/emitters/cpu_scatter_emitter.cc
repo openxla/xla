@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_attrs.h.inc"
 #include "xla/codegen/emitters/ir/xla_ops.h"
+#include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/mlir_kernel_definition.h"
@@ -252,7 +253,7 @@ absl::StatusOr<MlirKernelDefinition> CpuScatterFusion::EmitKernelDefinition() {
                       CreateNamedMlirModuleOp(*fusion_, builder));
 
   absl::string_view module_name(mlir_module->getName().value());
-  SetDataLayoutAttribute(mlir_module.get(), *fusion_);
+  emitters::SetIndexDataLayout(mlir_module.get(), *fusion_);
 
   mlir::StringAttr disable_loop_unrolling_attr =
       builder.getStringAttr("xla_cpu_disable_loop_unrolling");
@@ -312,7 +313,7 @@ absl::StatusOr<MlirKernelDefinition> CpuScatterFusion::EmitKernelDefinition() {
     }
   }
 
-  KernelSpec kernel_spec(absl::StrCat(module_name, "_kernel"),
+  KernelSpec kernel_spec(module_name,
                          NumWorkGroups{static_cast<uint64_t>(num_threads_)},
                          std::move(argument_buffers), std::move(result_buffers),
                          std::move(invariant_arguments));
