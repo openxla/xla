@@ -42,6 +42,53 @@ class CopyFusionTest : public HloHardwareIndependentTestBase {
 
   stream_executor::DeviceDescription device_description_;
   CopyFusion cf_;
+
+  // Helper function to create a fusion with a specified number of operands.
+  // Returns true if the fusion was successful, false otherwise.
+  bool CreateAndTestFusion(int64_t num_operands) {
+    auto module = CreateNewVerifiedModule();
+    HloComputation::Builder fusion_builder("fusion");
+    std::vector<HloInstruction*> fusion_params;
+    std::vector<Shape> param_shapes(num_operands,
+                                    ShapeUtil::MakeShape(F32, {1}));
+
+    for (int i = 0; i < num_operands; ++i) {
+      fusion_params.push_back(
+          fusion_builder.AddInstruction(HloInstruction::CreateParameter(
+              i, param_shapes.back(), absl::StrFormat("param%d", i))));
+    }
+
+    HloInstruction* sum = fusion_params[0];
+    for (int i = 1; i < num_operands; ++i) {
+      sum = fusion_builder.AddInstruction(
+          HloInstruction::CreateBinary(ShapeUtil::MakeShape(F32, {1}),
+                                       HloOpcode::kAdd, sum, fusion_params[i]));
+    }
+
+    HloComputation* fusion_computation =
+        module->AddEmbeddedComputation(fusion_builder.Build(sum));
+
+    HloComputation::Builder builder(TestName());
+    std::vector<HloInstruction*> params;
+
+    for (int i = 0; i < num_operands; ++i) {
+      params.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
+          i, param_shapes[i], absl::StrFormat("param%d", i))));
+    }
+
+    HloInstruction* fusion =
+        builder.AddInstruction(HloInstruction::CreateFusion(
+            ShapeUtil::MakeShape(F32, {1}), HloInstruction::FusionKind::kLoop,
+            params, fusion_computation));
+
+    HloInstruction* copy = builder.AddInstruction(
+        HloInstruction::CreateUnary(fusion->shape(), HloOpcode::kCopy, fusion));
+
+    HloComputation* computation =
+        module->AddEntryComputation(builder.Build(copy));
+
+    return cf_.Run(module.get()).value();
+  }
 };
 
 const char kModulePrefix[] = R"(
@@ -508,93 +555,13 @@ TEST_F(CopyFusionTest, CopyFusionWithFusionReturningTupleAndOtherUser) {
 }
 
 TEST_F(CopyFusionTest, FusionFitsInBudget) {
-  auto module = CreateNewVerifiedModule();
-  HloComputation::Builder fusion_builder("fusion");
-  std::vector<HloInstruction*> fusion_params;
   const int64_t max_operands = MaxOperandsAndOutputsPerFusion();
-  std::vector<Shape> param_shapes(max_operands - 2,
-                                  ShapeUtil::MakeShape(F32, {1}));
-
-  for (int i = 0; i < max_operands - 2; ++i) {
-    fusion_params.push_back(
-        fusion_builder.AddInstruction(HloInstruction::CreateParameter(
-            i, param_shapes.back(), absl::StrFormat("param%d", i))));
-  }
-
-  HloInstruction* sum = fusion_params[0];
-  for (int i = 1; i < max_operands - 2; ++i) {
-    sum = fusion_builder.AddInstruction(
-        HloInstruction::CreateBinary(ShapeUtil::MakeShape(F32, {1}),
-                                     HloOpcode::kAdd, sum, fusion_params[i]));
-  }
-
-  HloComputation* fusion_computation =
-      module->AddEmbeddedComputation(fusion_builder.Build(sum));
-
-  HloComputation::Builder builder(TestName());
-  std::vector<HloInstruction*> params;
-
-  for (int i = 0; i < max_operands - 2; ++i) {
-    params.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
-        i, param_shapes[i], absl::StrFormat("param%d", i))));
-  }
-
-  HloInstruction* fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      ShapeUtil::MakeShape(F32, {1}), HloInstruction::FusionKind::kLoop, params,
-      fusion_computation));
-
-  HloInstruction* copy = builder.AddInstruction(
-      HloInstruction::CreateUnary(fusion->shape(), HloOpcode::kCopy, fusion));
-
-  HloComputation* computation =
-      module->AddEntryComputation(builder.Build(copy));
-
-  EXPECT_TRUE(cf_.Run(module.get()).value());
+  EXPECT_TRUE(CreateAndTestFusion(max_operands - 2));
 }
 
 TEST_F(CopyFusionTest, FusionExceedsBudget) {
-  auto module = CreateNewVerifiedModule();
-  HloComputation::Builder fusion_builder("fusion");
-  std::vector<HloInstruction*> fusion_params;
   const int64_t max_operands = MaxOperandsAndOutputsPerFusion();
-  std::vector<Shape> param_shapes(max_operands - 1,
-                                  ShapeUtil::MakeShape(F32, {1}));
-
-  for (int i = 0; i < max_operands - 1; ++i) {
-    fusion_params.push_back(
-        fusion_builder.AddInstruction(HloInstruction::CreateParameter(
-            i, param_shapes.back(), absl::StrFormat("param%d", i))));
-  }
-
-  HloInstruction* sum = fusion_params[0];
-  for (int i = 1; i < max_operands - 1; ++i) {
-    sum = fusion_builder.AddInstruction(
-        HloInstruction::CreateBinary(ShapeUtil::MakeShape(F32, {1}),
-                                     HloOpcode::kAdd, sum, fusion_params[i]));
-  }
-
-  HloComputation* fusion_computation =
-      module->AddEmbeddedComputation(fusion_builder.Build(sum));
-
-  HloComputation::Builder builder(TestName());
-  std::vector<HloInstruction*> params;
-
-  for (int i = 0; i < max_operands - 1; ++i) {
-    params.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
-        i, param_shapes[i], absl::StrFormat("param%d", i))));
-  }
-
-  HloInstruction* fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      ShapeUtil::MakeShape(F32, {1}), HloInstruction::FusionKind::kLoop, params,
-      fusion_computation));
-
-  HloInstruction* copy = builder.AddInstruction(
-      HloInstruction::CreateUnary(fusion->shape(), HloOpcode::kCopy, fusion));
-
-  HloComputation* computation =
-      module->AddEntryComputation(builder.Build(copy));
-
-  EXPECT_FALSE(cf_.Run(module.get()).value());
+  EXPECT_FALSE(CreateAndTestFusion(max_operands - 1));
 }
 
 }  // namespace gpu
