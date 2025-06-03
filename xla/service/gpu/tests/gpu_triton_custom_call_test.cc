@@ -113,6 +113,12 @@ class GpuIrEmitterUnnestedTest : public GpuCodegenTest {
         ->GetDeviceDescription()
         .cuda_compute_capability();
   }
+  se::GpuComputeCapability GetGPUComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
 };
 
 TEST_F(GpuIrEmitterUnnestedTest,
@@ -167,6 +173,10 @@ TEST_F(GpuIrEmitterUnnestedTest,
 TEST_F(GpuIrEmitterUnnestedTest, CanNotEmitTritonCustomCallOnPreAmpereGpu) {
   if (GetCudaComputeCapability().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Running on Ampere or more recent GPU, skipping.";
+  }
+  if (std::holds_alternative<se::RocmComputeCapability>
+        (GetGPUComputeCapability())) {
+    GTEST_SKIP() << "Running on ROCM, skipping.";
   }
 
   HloComputation::Builder computation_builder(TestName());
