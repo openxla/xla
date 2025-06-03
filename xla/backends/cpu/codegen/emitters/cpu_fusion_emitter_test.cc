@@ -130,8 +130,7 @@ TEST_F(CpuFusionEmitterTest, ScatterMlir) {
   CpuScatterFusion emitter(*buffer_assignment, fusion);
   TF_ASSERT_OK_AND_ASSIGN(KernelDefinition kernel_definition,
                           emitter.EmitKernelDefinition());
-  const auto& mlir_source =
-      tsl::down_cast<const MlirKernelSource&>(kernel_definition.source());
+  const auto& mlir_source = kernel_definition.source();
   auto mlir_dump = mlir_source.ToString();
   TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
                           RunFileCheck(mlir_dump, kExpected));
@@ -141,8 +140,8 @@ TEST_F(CpuFusionEmitterTest, ScatterMlir) {
 TEST_F(CpuFusionEmitterTest, ScatterLlvm) {
   constexpr absl::string_view kExpected = R"(
     CHECK-NOT:  @wrapped_scatter_entry(
-    CHECK-NOT:  @wrapped_scatter(
-    CHECK:      @wrapped_scatter_kernel(
+    CHECK-NOT:  @wrapped_scatter_kernel(
+    CHECK:      @wrapped_scatter(
     CHECK:      uwtable "frame-pointer"="all"
     CHECK-SAME: "prefer-vector-width"="512"
   )";
@@ -159,11 +158,10 @@ TEST_F(CpuFusionEmitterTest, ScatterLlvm) {
   CpuScatterFusion emitter(*buffer_assignment, fusion);
   TF_ASSERT_OK_AND_ASSIGN(KernelDefinition kernel_definition,
                           emitter.EmitKernelDefinition());
-  auto [spec, source] = std::move(kernel_definition).release();
-  auto& mlir_source = tsl::down_cast<MlirKernelSource&>(*source);
+  auto [spec, source] = std::move(kernel_definition).ReleaseStorage();
   FusionCompiler compiler(FusionCompiler::Options{512});
   TF_ASSERT_OK_AND_ASSIGN(LlvmIrKernelSource llvm_source,
-                          compiler.Compile(std::move(mlir_source)));
+                          compiler.Compile(std::move(source)));
   auto llvm_dump = llvm_source.ToString();
   TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
                           RunFileCheck(llvm_dump, kExpected));

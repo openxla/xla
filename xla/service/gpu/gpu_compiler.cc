@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/all_gather_broadcast_reorder.h"
+#include "xla/hlo/transforms/collectives/all_gather_remove_degenerate_dims.h"
 #include "xla/hlo/transforms/collectives/all_reduce_contiguous.h"
 #include "xla/hlo/transforms/collectives/collective_permute_combiner.h"
 #include "xla/hlo/transforms/collectives/collective_quantizer.h"
@@ -712,7 +713,9 @@ absl::Status RunOptimizationPasses(
         !cuda_cc->IsAtLeast(se::CudaComputeCapability::kVolta)) {
       return true;
     }
-    return !gpu::IsMatrixMultiplication(*instr);
+    return !gpu::IsCublasSupportedMatMul(
+                *instr, /*allow_matrix_vector_multiplication=*/false)
+                .value_or(false);
   };
   pipeline.AddPass<ResultCaster>(upcaster_filter);
   pipeline.AddPass<OperandUpcaster>(upcaster_filter);
@@ -1035,6 +1038,7 @@ absl::Status RunCollectiveOptimizationPasses(
       layout_insensitive_algsimp_opts, gpu_version);
 
   collectives_pipeline.AddPass<AllGatherBroadcastReorder>();
+  collectives_pipeline.AddPass<AllGatherRemoveDegenerateDims>();
 
   if (debug_options.xla_gpu_experimental_collective_cse_distance_threshold() >
       0) {
@@ -1386,6 +1390,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
                                    layout_insensitive_algsimp_opts));
+
+  // Dump the HLO module after SPMD partitioning. There should be no more Python
+  // callbacks at this point.
+  DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
+
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));
@@ -2633,8 +2642,12 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
     pipeline.AddPass<GpuCostModelStatsCollection>(gpu_device_info,
                                                   cost_analysis_options);
     // S-curve model analysis for collectives.
-    pipeline.AddPass<SolGpuCostModelStatsCollection>(gpu_device_info,
-                                                     ShapeSizeBytesFunction());
+    if (module->config()
+            .debug_options()
+            .xla_gpu_enable_analytical_sol_latency_estimator()) {
+      pipeline.AddPass<SolGpuCostModelStatsCollection>(
+          gpu_device_info, ShapeSizeBytesFunction(), pointer_size_);
+    }
 
     // Perf tables model analysis for collectives.
     if (std::string collective_perf_table_path =

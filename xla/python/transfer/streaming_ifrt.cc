@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/python/ifrt/client.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/transfer/streaming.h"
+#include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -220,6 +221,12 @@ class DmaDestination : public ChunkDestination {
     });
   }
 
+  void Poison(absl::Status s) override {
+    semaphore_.Poison();
+    atm_->SetBufferError(buffer_index_, std::move(s));
+  }
+
+ private:
   std::shared_ptr<xla::PjRtClient::AsyncHostToDeviceTransferManager> atm_;
   int buffer_index_;
   // Some small modification of AsyncHostToDeviceTransferManager (eg: optional

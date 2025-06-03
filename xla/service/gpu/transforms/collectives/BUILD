@@ -143,6 +143,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -183,6 +184,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -222,6 +224,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -602,6 +605,43 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "async_collective_annotator",
+    srcs = ["async_collective_annotator.cc"],
+    hdrs = ["async_collective_annotator.h"],
+    deps = [
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service/gpu:backend_configs_cc",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "async_collective_annotator_test",
+    srcs = ["async_collective_annotator_test.cc"],
+    deps = [
+        ":async_collective_annotator",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/tests:test_macros_header",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
     ],
 )

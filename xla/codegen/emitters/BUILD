@@ -204,6 +204,40 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "kernel_api_builder",
+    srcs = ["kernel_api_builder.cc"],
+    hdrs = ["kernel_api_builder.h"],
+    deps = [
+        ":computation_partitioner",
+        ":elemental_hlo_to_mlir",
+        ":kernel_arguments",
+        ":type_util",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/codegen/emitters/ir:xla",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/runtime:work_dimensions",
+        "//xla/runtime:work_group",
+        "//xla/runtime:work_item",
+        "//xla/service:buffer_assignment",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DLTIDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+    ],
+)
+
 xla_cc_test(
     name = "type_util_test",
     srcs = ["type_util_test.cc"],

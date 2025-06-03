@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/transfer/streaming.h"
+#include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
 namespace aux {
@@ -183,27 +185,40 @@ class IsLastSemaphore {
       : guard_counter_(value), counter_(value) {}
 
   template <typename T>
-  auto DoWork(size_t value, T&& cb) -> decltype(cb(false)) {
-    bool is_last = guard_counter_.fetch_sub(value) - value == 0;
-    if (is_last && counter_.fetch_sub(value) - value != 0) {
-      // Wait if we happen to slip in between guard_counter and counter.
+  auto DoWork(size_t value, T&& cb) -> absl::Status {
+    bool is_last;
+    {
       absl::MutexLock l(&mu_);
-      auto cond = [this]() { return counter_.load() == 0; };
-      mu_.Await(absl::Condition(&cond));
+      if (is_poisoned_) {
+        return absl::OkStatus();
+      }
+      guard_counter_ -= value;
+      is_last = guard_counter_ == 0;
+      if (is_last) {
+        // Wait if we happen to slip in between guard_counter and counter.
+        auto cond = [this, value]() { return counter_ == value; };
+        mu_.Await(absl::Condition(&cond));
+      }
     }
     auto cleanup = absl::MakeCleanup([&]() {
-      if (!is_last && (counter_.fetch_sub(value) - value) == 0) {
-        // Wake any waiters.
-        absl::MutexLock l(&mu_);
-      }
+      absl::MutexLock l(&mu_);
+      counter_ -= value;
     });
     return cb(is_last);
   }
 
+  void Poison() {
+    absl::MutexLock l(&mu_);
+    is_poisoned_ = true;
+    auto cond = [this]() { return counter_ == guard_counter_; };
+    mu_.Await(absl::Condition(&cond));
+  }
+
  private:
   absl::Mutex mu_;
-  std::atomic<ssize_t> guard_counter_;
-  std::atomic<ssize_t> counter_;
+  bool is_poisoned_ = false;
+  ssize_t guard_counter_;
+  ssize_t counter_;
 };
 
 }  // namespace internal

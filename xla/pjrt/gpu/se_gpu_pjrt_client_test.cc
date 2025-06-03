@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -74,6 +73,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/profiling/test_util/mock_device_time_measurement.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/platform_util.h"
@@ -1228,11 +1228,18 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
                 ->local_device_state();
         if (local_device_state != nullptr) {
           se::StreamExecutor* executor = local_device_state->executor();
-          if (std::stoi(MakeComputeCapabilityString(
-                  &executor->GetDeviceDescription())) == 9) {
-            auto fabric_info = GetDeviceFabricInfo(executor->device_ordinal());
-            if (fabric_info.ok()) {
-              ADD_FAILURE();
+          if (auto* cc = std::get_if<se::CudaComputeCapability>(
+                  &executor->GetDeviceDescription().gpu_compute_capability())) {
+            if (cc->IsAtLeastHopper()) {
+              TF_ASSERT_OK_AND_ASSIGN(
+                  std::string fabric_info,
+                  GetDeviceFabricInfo(executor->device_ordinal()));
+              // Hopper devices have empty fabric info, MNNVL Blackwell devices
+              // have meaningful fabric info.
+              if (cc->IsHopper()) {
+                EXPECT_EQ(fabric_info,
+                          "00000000-0000-0000-0000-000000000000/0");
+              }
             }
           }
         }

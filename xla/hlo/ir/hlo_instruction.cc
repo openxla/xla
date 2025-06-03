@@ -1008,9 +1008,17 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         for (const ShapeProto& shape_proto : operand_shapes_with_layout) {
           operand_shapes.emplace_back(shape_proto);
         }
-        instruction =
-            CreateCustomCall(shape, all_operands(), proto.custom_call_target(),
-                             operand_shapes, proto.backend_config());
+        TF_RET_CHECK(proto.called_computation_ids_size() <= 1);
+        if (proto.called_computation_ids_size() == 1) {
+          instruction =
+              CreateCustomCall(shape, all_operands(), computations(0),
+                               proto.custom_call_target(), operand_shapes,
+                               proto.backend_config());
+        } else {
+          instruction = CreateCustomCall(
+              shape, all_operands(), proto.custom_call_target(), operand_shapes,
+              proto.backend_config());
+        }
       } else {
         if (proto.called_computation_ids_size() == 1) {
           instruction = CreateCustomCall(shape, all_operands(), computations(0),
@@ -2503,6 +2511,16 @@ HloInstruction::CreateCompositeCall(const Shape& shape,
       operand_shapes_with_layout, api_version);
 }
 
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCustomCall(
+    const Shape& shape, absl::Span<HloInstruction* const> operands,
+    HloComputation* to_apply, absl::string_view custom_call_target,
+    absl::Span<const Shape> operand_shapes_with_layout, std::string opaque,
+    CustomCallApiVersion api_version) {
+  return std::make_unique<HloCustomCallInstruction>(
+      shape, operands, to_apply, custom_call_target, std::move(opaque),
+      operand_shapes_with_layout, api_version);
+}
+
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateTuple(
     absl::Span<HloInstruction* const> elements) {
   std::vector<const Shape*> element_shapes;
@@ -3682,7 +3700,7 @@ absl::string_view PrintName(absl::string_view name, bool print_ids) {
 
 namespace {
 
-using DFSStack = absl::InlinedVector<std::pair<int, HloInstruction*>, 16>;
+using DFSStack = absl::InlinedVector<std::pair<int64_t, HloInstruction*>, 16>;
 
 void PrintNameInternal(Printer* printer, absl::string_view name,
                        const HloPrintOptions& options) {
@@ -4333,10 +4351,10 @@ HloInstructionProto HloInstruction::ToProto() const {
   *proto.mutable_opcode() = std::string(HloOpcodeString(opcode_));
   *proto.mutable_shape() = shape_.ToProto();
   for (const HloInstruction* operand : operands_) {
-    proto.add_operand_ids(operand->unique_id());
+    proto.add_operand_ids(operand->unique_id_64_bits());
   }
   for (const HloInstruction* control : control_predecessors()) {
-    proto.add_control_predecessor_ids(control->unique_id());
+    proto.add_control_predecessor_ids(control->unique_id_64_bits());
   }
 
   *proto.mutable_metadata() = *metadata_;
@@ -4716,7 +4734,7 @@ template <typename Visitor>
 inline bool PushDFSChild(Visitor* visitor, DFSStack* dfs_stack,
                          HloInstruction* child) {
   CHECK(child != nullptr);
-  const int id = child->unique_id();
+  const int64_t id = child->unique_id_64_bits();
   CHECK_GE(id, 0) << "instruction may not have a parent computation";
   switch (visitor->GetVisitState(id)) {
     case Visitor::kVisiting:
@@ -4749,7 +4767,7 @@ static absl::Status PostOrderDFS(
   // can't always use the (potentially dead) instruction object to grab
   // its id.
   DFSStack dfs_stack;
-  dfs_stack.emplace_back(root->unique_id(), root);
+  dfs_stack.emplace_back(root->unique_id_64_bits(), root);
 
   do {
     DCHECK(!dfs_stack.empty());
@@ -5424,7 +5442,7 @@ bool HloPtrComparator::operator()(const HloInstruction* const& lhs,
       lhs_module->unique_id() != rhs_module->unique_id()) {
     return lhs_module->unique_id() < rhs_module->unique_id();
   }
-  return lhs->unique_id() < rhs->unique_id();
+  return lhs->unique_id_64_bits() < rhs->unique_id_64_bits();
 }
 
 const PrecisionConfig& HloInstruction::precision_config() const {
@@ -5976,6 +5994,12 @@ std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
 void HloInstruction::set_original_value(
     std::shared_ptr<OriginalValue> original_value) {
   original_value_ = original_value;
+}
+
+void HloInstruction::CopyOriginalValue(const HloInstruction* instruction,
+                                       bool clone) {
+  ::xla::CopyOriginalValue(/*src_instruction=*/instruction,
+                           /*dest_instruction=*/this, clone);
 }
 
 }  // namespace xla

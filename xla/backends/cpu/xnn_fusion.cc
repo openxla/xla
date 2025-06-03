@@ -17,17 +17,22 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
+#include "xnnpack.h"
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_lib.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
@@ -77,26 +82,40 @@ bool XnnShouldUseThreadPool(const HloComputation* computation) {
       [](const HloInstruction* hlo) { return XnnShouldUseThreadPool(hlo); });
 }
 
+bool AreDtypesSupported(const Shape& lhs_shape, const Shape& rhs_shape,
+                        const Shape& out_shape,
+                        const TargetMachineFeatures* cpu_features) {
+  // Stores tuple of allowed (input, output) dtypes.
+  static const auto* kAllowedTypes =
+      new absl::flat_hash_set<std::pair<PrimitiveType, PrimitiveType>>(
+          {{F32, F32}, {BF16, F32}, {BF16, BF16}});
+
+  // Types must be in the allowed set.
+  PrimitiveType lhs_dtype = lhs_shape.element_type();
+  PrimitiveType rhs_dtype = rhs_shape.element_type();
+  PrimitiveType out_dtype = out_shape.element_type();
+  if (lhs_dtype != rhs_dtype ||
+      !kAllowedTypes->contains({lhs_dtype, out_dtype})) {
+    return false;
+  }
+
+  // BF16 matmuls can only run when CPU has AVX512_BF16.
+  if (lhs_dtype == BF16) {
+    return cpu_features == nullptr || cpu_features->has_avx512bf16();
+  }
+  return true;
+}
+
 absl::StatusOr<bool> IsXnnDotSupported(
     const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
     const Shape& rhs_shape, const Shape& out_shape,
     const TargetMachineFeatures* cpu_features) {
-  // TODO(ezhulenev): Support other element types.
-  auto check_dtype = [&](PrimitiveType in_dtype, PrimitiveType out_dtype) {
-    return lhs_shape.element_type() == in_dtype &&
-           rhs_shape.element_type() == in_dtype &&
-           out_shape.element_type() == out_dtype;
-  };
-
-  // We assume that the feature is available if `cpu_features` is not provided.
-  bool cpu_has_avx512bf16 =
-      cpu_features == nullptr || cpu_features->has_avx512bf16();
-  bool dtype_is_supported =
-      check_dtype(F32, F32) || (check_dtype(BF16, F32) && cpu_has_avx512bf16);
-  if (!dtype_is_supported) {
+  // Check data types.
+  if (!AreDtypesSupported(lhs_shape, rhs_shape, out_shape, cpu_features)) {
     return false;
   }
 
+  // Check shapes.
   TF_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
                                                       rhs_shape, out_shape));
 
@@ -114,6 +133,20 @@ absl::StatusOr<bool> IsXnnDotSupported(
   return dot_canonical_dims.lhs_canonical &&
          !dot_canonical_dims.lhs_column_major &&
          !dot_canonical_dims.rhs_column_major;
+}
+
+absl::StatusOr<xnn_datatype> XnnDatatype(const PrimitiveType& type) {
+  switch (type) {
+    case BF16:
+      return xnn_datatype_bf16;
+    case F16:
+      return xnn_datatype_fp16;
+    case F32:
+      return xnn_datatype_fp32;
+    default:
+      return InvalidArgument("Unsupported XNNPACK data type: %s",
+                             primitive_util::LowercasePrimitiveTypeName(type));
+  }
 }
 
 }  // namespace xla::cpu

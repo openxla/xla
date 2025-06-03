@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <utility>
 #include <vector>
@@ -195,7 +196,7 @@ static bool IsEdgeFollower(const iopddl::Problem& problem,
                            const iopddl::Edge& edge) {
   int strategies0 = problem.nodes[edge.nodes[0]].strategies.size();
   int strategies1 = problem.nodes[edge.nodes[1]].strategies.size();
-  if (strategies0 != strategies1) {
+  if (edge.nodes[0] == edge.nodes[1] || strategies0 != strategies1) {
     return false;
   }
   for (iopddl::StrategyIdx idx0 = 0; idx0 < strategies0; ++idx0) {
@@ -280,12 +281,29 @@ AutoShardingSolverRequest ConvertToSolverRequest(
 }
 
 std::vector<int64_t> GetFollowers(const iopddl::Problem& problem) {
-  std::vector<int64_t> followers(problem.nodes.size(), -1);
+  std::vector<std::vector<int64_t>> followees(problem.nodes.size());
   for (iopddl::EdgeIdx edge_idx = 0; edge_idx < problem.edges.size();
        ++edge_idx) {
     const iopddl::Edge& edge = problem.edges[edge_idx];
     if (IsEdgeFollower(problem, edge)) {
-      followers[edge.nodes[1]] = edge.nodes[0];
+      followees[edge.nodes[0]].push_back(edge.nodes[1]);
+      followees[edge.nodes[1]].push_back(edge.nodes[0]);
+    }
+  }
+  // Ensure that followees (and their followees, etc.) follow the root node.
+  std::vector<int64_t> followers(problem.nodes.size(), -1);
+  std::function<void(int64_t, int64_t)> propagate = [&](int64_t root_idx,
+                                                        int64_t node_idx) {
+    if (root_idx < node_idx && followers[node_idx] == -1) {
+      followers[node_idx] = root_idx;
+      for (int64_t followee_idx : followees[node_idx]) {
+        propagate(root_idx, followee_idx);
+      }
+    }
+  };
+  for (NodeIdx root_idx = 0; root_idx < problem.nodes.size(); ++root_idx) {
+    for (int64_t node_idx : followees[root_idx]) {
+      propagate(root_idx, node_idx);
     }
   }
   return followers;
