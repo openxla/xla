@@ -63,6 +63,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
+    tags = ["gpu"],
 )
 
 xla_test(
@@ -71,6 +72,13 @@ xla_test(
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
     },
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_oss",
+        "nomsan",
+        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
+    ],
     deps = [
         ":collective_backend_assigner",
         "//xla/pjrt/gpu:gpu_topology",
