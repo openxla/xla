@@ -51,7 +51,7 @@ absl::Status RunNvshmemAllReduce(ReductionKind reduction_kind,
           << *nvshmem_comm->CurrentRank();
   for (DeviceBufferPair& buffer : buffers) {
     auto event = nvshmem_comm->AllReduce(
-        buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
+        buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
         buffer.element_count, reduction_kind, GpuCollectives::On(stream));
     tsl::BlockUntilReady(event);
     if (event.IsError()) {

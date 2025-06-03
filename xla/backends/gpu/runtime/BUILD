@@ -1940,7 +1940,6 @@ cc_library(
     name = "nvshmem_collective_thunk",
     srcs = ["nvshmem_collective_thunk.cc"],
     hdrs = ["nvshmem_collective_thunk.h"],
-    tags = ["gpu"],
     deps = [
         ":collective_thunk",
         ":thunk",
@@ -1989,7 +1988,6 @@ cc_library(
     name = "nvshmem_all_reduce_thunk",
     srcs = ["nvshmem_all_reduce_thunk.cc"],
     hdrs = ["nvshmem_all_reduce_thunk.h"],
-    tags = ["gpu"],
     deps = [
         ":all_reduce_thunk",
         ":thunk",
@@ -2018,7 +2016,6 @@ cc_library(
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",

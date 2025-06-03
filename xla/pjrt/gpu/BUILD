@@ -568,6 +568,7 @@ cc_library(
     alwayslink = 1,
 )
 
+# TODO Tixxx move this test to xla/tests folder.
 xla_test(
     name = "nvshmem_gpu_collectives_test",
     srcs = ["nvshmem_gpu_collectives_test.cc"],
@@ -575,7 +576,6 @@ xla_test(
         "multi_gpu_h100",
         "no_oss",
         "noasan",
-        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
         "nomsan",
     ]},
     backends = ["gpu"],
