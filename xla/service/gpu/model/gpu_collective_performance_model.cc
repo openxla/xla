@@ -56,13 +56,13 @@ struct CudaBandwidthSettings {
       141.0 /* Blackwell */, 141.0 /* next-gen */,
   };
 
-  const std::vector<double>& GetIntranodeBandwidths() const {
+  const std::vector<double>& GetIntraNodeBandwidths() const {
     // Different tiers for intra-node bandwidth.
     static const std::vector<double> kIntraNodeSpeeds = {
-        40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
+        3.0, 4.0, 5.0, 6.0, 7.0, 9.0, 10.0, 12.0, 15.0, 18.0, 20.0, 30.0, 40.0};
     // SM90 has different bandwidths.
     static std::vector<double> kIntraNodeSpeedsSm90 = {
-        60.0, 40.0, 30.0, 24.0, 20.0, 15.0, 12.0, 6.0, 3.0};
+        3.0, 6.0, 12.0, 15.0, 20.0, 24.0, 30.0, 40.0, 60.0};
     return compute_capability_.major >= se::CudaComputeCapability::kHopper
                ? kIntraNodeSpeedsSm90
                : kIntraNodeSpeeds;
@@ -136,21 +136,21 @@ struct RocmBandwidthSettings {
       896.0 /* next_gen (same as MI300 for now) */,
   };
 
-  const std::vector<double>& GetIntranodeBandwidths() const {
+  const std::vector<double>& GetIntraNodeBandwidths() const {
     // Different tiers for intra-node bandwidth based on Infinity Fabric
     // capabilities Values in GB/s
 
     // MI300 series (Instinct MI300) - up to 896GB/s (8x112GB/s)
     static const std::vector<double> intraNodeSpeedsMi300 = {
-        896.0, 784.0, 672.0, 560.0, 448.0, 336.0, 224.0, 112.0, 56.0, 32.0};
+        32.0, 56.0, 112.0, 224.0, 336.0, 448.0, 560.0, 672.0, 784.0, 896.0};
 
     // MI200 series (Instinct MI200/MI250) - up to 600GB/s (8x75GB/s)
     static const std::vector<double> intraNodeSpeedsMi200 = {
-        600.0, 525.0, 450.0, 375.0, 300.0, 225.0, 150.0, 75.0, 32.0};
+        32.0, 75.0, 150.0, 225.0, 300.0, 375.0, 450.0, 525.0, 600.0};
 
     // MI100 (Instinct MI100) - up to 300GB/s (8x37.5GB/s)
     static const std::vector<double> intraNodeSpeedsMi100 = {
-        300.0, 262.5, 225.0, 187.5, 150.0, 112.5, 75.0, 37.5, 32.0};
+        32.0, 37.5, 75.0, 112.5, 150.0, 187.5, 225.0, 262.5, 300.0};
 
     if (compute_capability_.gfx9_mi300_series()) {
       return intraNodeSpeedsMi300;
@@ -216,6 +216,23 @@ struct RocmBandwidthSettings {
 
   stream_executor::RocmComputeCapability compute_capability_;
 };
+
+template <typename BandwidthSettings>
+float GetMaxPerChannelRingLL128Bandwidth(
+    const BandwidthSettings& bandwidth_settings) {
+  return bandwidth_settings.GetMaxSysBwFromGpu(
+      bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
+}
+
+template <typename BandwidthSettings>
+float GetMaxLowLatencyBandwidth(const BandwidthSettings& bandwidth_settings) {
+  auto speeds = bandwidth_settings.GetIntraNodeBandwidths();
+  auto max_sys_bw = bandwidth_settings.GetMaxSysBwFromGpu(
+      bandwidth_settings.kLowLatencyMaxBandwidths.data());
+  auto it = std::lower_bound(std::begin(speeds), std::end(speeds), max_sys_bw);
+  CHECK(it != std::cend(speeds));
+  return *it;
+}
 
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
     absl::Microseconds(5);
@@ -289,20 +306,7 @@ absl::Duration ComputeAllreduceTimeImpl(
   // only occurs once.
   absl::Duration total_time = kNcclKernelLaunchOverhead;
 
-  const auto& speeds = bandwidth_settings.GetIntranodeBandwidths();
-
-  int speed_index = 0;
-  float max_sys_bw = bandwidth_settings.GetMaxSysBwFromGpu(
-      bandwidth_settings.kLowLatencyMaxBandwidths.data());
-
-  CHECK_GT(max_sys_bw, 0);
-
-  while ((speed_index < speeds.size() - 1) &&
-         speeds[speed_index] > max_sys_bw) {
-    speed_index++;
-  }
-
-  float bw_intra_node = speeds[speed_index];
+  float bw_intra_node = GetMaxLowLatencyBandwidth(bandwidth_settings);
   int64_t num_devices = cost_analysis->NumOfDevices(instr);
 
   int64_t min_nchannels =
@@ -342,8 +346,8 @@ absl::Duration ComputeAllreduceTimeImpl(
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
-  double per_channel_ring_ll128_Bw = bandwidth_settings.GetMaxSysBwFromGpu(
-      bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
+  double per_channel_ring_ll128_Bw =
+      GetMaxPerChannelRingLL128Bandwidth(bandwidth_settings);
 
   bus_bandwidth =
       std::min(bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
