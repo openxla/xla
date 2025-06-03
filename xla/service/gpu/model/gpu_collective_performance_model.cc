@@ -56,22 +56,20 @@ struct CudaBandwidthSettings {
       141.0 /* Blackwell */, 141.0 /* next-gen */,
   };
 
-  const std::vector<double>& GetIntranodeBandwidths(
-      const stream_executor::CudaComputeCapability& compute_cap) const {
+  const std::vector<double>& GetIntranodeBandwidths() const {
     // Different tiers for intra-node bandwidth.
     static const std::vector<double> kIntraNodeSpeeds = {
         40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
     // SM90 has different bandwidths.
     static std::vector<double> kIntraNodeSpeedsSm90 = {
         60.0, 40.0, 30.0, 24.0, 20.0, 15.0, 12.0, 6.0, 3.0};
-    return compute_cap.major >= se::CudaComputeCapability::kHopper
+    return compute_capability_.major >= se::CudaComputeCapability::kHopper
                ? kIntraNodeSpeedsSm90
                : kIntraNodeSpeeds;
   }
 
-  float GetMaxSysBwFromGpu(const se::CudaComputeCapability cc,
-                           const double* bandwidths_table) const {
-    switch (cc.major) {
+  float GetMaxSysBwFromGpu(const double* bandwidths_table) const {
+    switch (compute_capability_.major) {
       case se::CudaComputeCapability::kVolta:
         return bandwidths_table[0];
       case se::CudaComputeCapability::kAmpere:
@@ -86,16 +84,16 @@ struct CudaBandwidthSettings {
   }
 
   // Returns NVLink bw in GB/s
-  float GetNvlinkBw(const se::CudaComputeCapability& compute_capability) const {
-    return compute_capability.IsAtLeast(se::CudaComputeCapability::kHopper)
-               ? CudaBandwidthSettings::kSm90NvlinkBandwidth
-           : compute_capability.IsAtLeast(se::CudaComputeCapability::kAmpere)
-               ? CudaBandwidthSettings::kSm80NvlinkBandwidth
-           : compute_capability.IsAtLeast(se::CudaComputeCapability::kVolta)
-               ? CudaBandwidthSettings::kSm70NvlinkBandwidth
-           : compute_capability.IsAtLeast(se::CudaComputeCapability::kPascal)
-               ? CudaBandwidthSettings::kSm60NvlinkBandwidth
-               : CudaBandwidthSettings::kSm80NvlinkBandwidth;
+  float GetNvlinkBw() const {
+    return compute_capability_.IsAtLeast(se::CudaComputeCapability::kHopper)
+               ? kSm90NvlinkBandwidth
+           : compute_capability_.IsAtLeast(se::CudaComputeCapability::kAmpere)
+               ? kSm80NvlinkBandwidth
+           : compute_capability_.IsAtLeast(se::CudaComputeCapability::kVolta)
+               ? kSm70NvlinkBandwidth
+           : compute_capability_.IsAtLeast(se::CudaComputeCapability::kPascal)
+               ? kSm60NvlinkBandwidth
+               : kSm80NvlinkBandwidth;
   }
 
   // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
@@ -124,6 +122,8 @@ struct CudaBandwidthSettings {
   // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
   // launches 640 threads.
   static constexpr int64_t kLL128NumThreads = 640;
+
+  stream_executor::CudaComputeCapability compute_capability_;
 };
 
 struct RocmBandwidthSettings {
@@ -136,8 +136,7 @@ struct RocmBandwidthSettings {
       896.0 /* next_gen (same as MI300 for now) */,
   };
 
-  const std::vector<double>& GetIntranodeBandwidths(
-      const stream_executor::RocmComputeCapability& compute_cap) const {
+  const std::vector<double>& GetIntranodeBandwidths() const {
     // Different tiers for intra-node bandwidth based on Infinity Fabric
     // capabilities Values in GB/s
 
@@ -153,11 +152,11 @@ struct RocmBandwidthSettings {
     static const std::vector<double> intraNodeSpeedsMi100 = {
         300.0, 262.5, 225.0, 187.5, 150.0, 112.5, 75.0, 37.5, 32.0};
 
-    if (compute_cap.gfx9_mi300_series()) {
+    if (compute_capability_.gfx9_mi300_series()) {
       return intraNodeSpeedsMi300;
-    } else if (compute_cap.gfx9_mi200()) {
+    } else if (compute_capability_.gfx9_mi200()) {
       return intraNodeSpeedsMi200;
-    } else if (compute_cap.gfx9_mi100()) {
+    } else if (compute_capability_.gfx9_mi100()) {
       return intraNodeSpeedsMi100;
     }
 
@@ -174,28 +173,27 @@ struct RocmBandwidthSettings {
       112.0 /* next_gen */,
   };
 
-  float GetMaxSysBwFromGpu(const se::RocmComputeCapability& cc,
-                           const double* bandwidths_table) const {
-    if (cc.gfx9_mi100()) {
+  float GetMaxSysBwFromGpu(const double* bandwidths_table) const {
+    if (compute_capability_.gfx9_mi100()) {
       return bandwidths_table[0];
-    } else if (cc.gfx9_mi200()) {
+    } else if (compute_capability_.gfx9_mi200()) {
       return bandwidths_table[1];
-    } else if (cc.gfx9_mi300_series()) {
+    } else if (compute_capability_.gfx9_mi300_series()) {
       return bandwidths_table[2];
     } else {
       return bandwidths_table[3];
     }
   }
 
-  float GetNvlinkBw(const se::RocmComputeCapability& compute_capability) const {
-    if (compute_capability.gfx9_mi100()) {
-      return RocmBandwidthSettings::kMi100InfinityFabricBandwidth;
-    } else if (compute_capability.gfx9_mi200()) {
-      return RocmBandwidthSettings::kMi200InfinityFabricBandwidth;
-    } else if (compute_capability.gfx9_mi300_series()) {
-      return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
+  float GetNvlinkBw() const {
+    if (compute_capability_.gfx9_mi100()) {
+      return kMi100InfinityFabricBandwidth;
+    } else if (compute_capability_.gfx9_mi200()) {
+      return kMi200InfinityFabricBandwidth;
+    } else if (compute_capability_.gfx9_mi300_series()) {
+      return kMi300InfinityFabricBandwidth;
     }
-    return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
+    return kMi300InfinityFabricBandwidth;
   }
 
   // Infinity Fabric unidirectional bandwidth per link in GB/s
@@ -215,6 +213,8 @@ struct RocmBandwidthSettings {
 
   // Default number of threads for ROCm NCCL
   static constexpr int64_t kLL128NumThreads = 512;
+
+  stream_executor::RocmComputeCapability compute_capability_;
 };
 
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
@@ -280,21 +280,20 @@ int GetNumThreads(int warp_size, int min_num_threads, int max_num_threads,
   return num_threads;
 }
 
-template <typename ComputeCapability, typename GpuBandwidthSettings>
+template <typename GpuBandwidthSettings>
 absl::Duration ComputeAllreduceTimeImpl(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
     const se::DeviceDescription& gpu_device_info,
-    const ComputeCapability& compute_cap,
     const GpuBandwidthSettings& bandwidth_settings) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
   absl::Duration total_time = kNcclKernelLaunchOverhead;
 
-  const auto& speeds = bandwidth_settings.GetIntranodeBandwidths(compute_cap);
+  const auto& speeds = bandwidth_settings.GetIntranodeBandwidths();
 
   int speed_index = 0;
   float max_sys_bw = bandwidth_settings.GetMaxSysBwFromGpu(
-      compute_cap, bandwidth_settings.kLowLatencyMaxBandwidths.data());
+      bandwidth_settings.kLowLatencyMaxBandwidths.data());
 
   CHECK_GT(max_sys_bw, 0);
 
@@ -337,14 +336,14 @@ absl::Duration ComputeAllreduceTimeImpl(
   } else {
     VLOG(8) << "Nvlink supports p2p communication, setting intra node "
                "bandwidth to nvlink bw.";
-    bw_intra_node = bandwidth_settings.GetNvlinkBw(compute_cap);
+    bw_intra_node = bandwidth_settings.GetNvlinkBw();
   }
 
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
   double per_channel_ring_ll128_Bw = bandwidth_settings.GetMaxSysBwFromGpu(
-      compute_cap, bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
+      bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
 
   bus_bandwidth =
       std::min(bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
@@ -355,6 +354,16 @@ absl::Duration ComputeAllreduceTimeImpl(
       cost_analysis->bytes_accessed(instr) / (1e6 * actual_bandwidth));
   total_time += communication_time;
   return total_time;
+}
+
+CudaBandwidthSettings CreateSettings(
+    const stream_executor::CudaComputeCapability& cc) {
+  return CudaBandwidthSettings{cc};
+}
+
+RocmBandwidthSettings CreateSettings(
+    const stream_executor::RocmComputeCapability& cc) {
+  return RocmBandwidthSettings{cc};
 }
 
 }  // namespace
@@ -448,23 +457,11 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
     const se::DeviceDescription& gpu_device_info) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
-  absl::Duration total_time = kNcclKernelLaunchOverhead;
-  absl::Duration result;
   const auto visitor = [&](const auto& cc) {
-    using compute_capability =
-        std::remove_const_t<std::remove_reference_t<decltype(cc)>>;
-    if constexpr (std::is_same_v<compute_capability,
-                                 stream_executor::CudaComputeCapability>) {
-      result = ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
-                                        cc, CudaBandwidthSettings{});
-    } else if (std::is_same_v<compute_capability,
-                              stream_executor::RocmComputeCapability>) {
-      result = ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
-                                        cc, RocmBandwidthSettings{});
-    }
+    return ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
+                                    CreateSettings(cc));
   };
-  std::visit(visitor, gpu_device_info.gpu_compute_capability());
-  return result;
+  return std::visit(visitor, gpu_device_info.gpu_compute_capability());
 }
 
 /*static*/ absl::Duration
