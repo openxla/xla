@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "xnnpack.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/logging.h"
@@ -45,20 +47,6 @@ using TensorIdMap = absl::flat_hash_map<const HloInstruction*, uint32_t>;
 //===----------------------------------------------------------------------===//
 // XLA <-> XNNPACK type conversion library.
 //===----------------------------------------------------------------------===//
-
-static absl::StatusOr<xnn_datatype> XnnDatatype(const PrimitiveType& type) {
-  switch (type) {
-    case BF16:
-      return xnn_datatype_bf16;
-    case F16:
-      return xnn_datatype_fp16;
-    case F32:
-      return xnn_datatype_fp32;
-    default:
-      return InvalidArgument("Unsupported XNNPACK data type: %s",
-                             primitive_util::LowercasePrimitiveTypeName(type));
-  }
-}
 
 static absl::StatusOr<xnn_unary_operator> XnnUnaryOperator(
     const HloOpcode& opcode) {
@@ -131,6 +119,31 @@ static absl::StatusOr<uint32_t> DefineTensorValue(xnn_subgraph_t subgraph,
 
   XNN_RETURN_IF_ERROR(xnn_define_tensor_value(
       subgraph, type, dims.size(), dims.data(), nullptr,
+      /*external_id=*/tensor_id, tensor_flags, &tensor_id));
+
+  return tensor_id;
+}
+
+static absl::StatusOr<uint32_t> DefineConstant(
+    xnn_subgraph_t subgraph, std::vector<std::unique_ptr<Literal>>& literals,
+    const HloInstruction* instr) {
+  // We do not support instructions with multiple results (tuples).
+  if (!instr->shape().IsArray()) {
+    return Internal("Unsupported XNNPACK instruction shape: %s",
+                    instr->ToString());
+  }
+
+  auto dims = XnnDimensions(instr->shape());
+  TF_ASSIGN_OR_RETURN(auto type, XnnDatatype(instr->shape().element_type()));
+
+  uint32_t tensor_id = XNN_INVALID_VALUE_ID;
+  uint32_t tensor_flags = 0;
+
+  literals.push_back(instr->literal().CloneToUnique());
+  const void* value = literals.back()->untyped_data();
+
+  XNN_RETURN_IF_ERROR(xnn_define_tensor_value(
+      subgraph, type, dims.size(), dims.data(), value,
       /*external_id=*/tensor_id, tensor_flags, &tensor_id));
 
   return tensor_id;
@@ -238,7 +251,8 @@ static absl::StatusOr<uint32_t> DefineBatchMatMul(xnn_subgraph_t subgraph,
 //===----------------------------------------------------------------------===//
 
 static absl::StatusOr<xnn_subgraph_t> EmitXnnSubgraph(
-    const HloComputation* computation) {
+    const HloComputation* computation,
+    std::vector<std::unique_ptr<Literal>>& literals) {
   VLOG(3) << "Emit XNNPACK subgraph for computation: " << computation->name();
 
   xnn_subgraph_t subgraph = nullptr;
@@ -256,6 +270,11 @@ static absl::StatusOr<xnn_subgraph_t> EmitXnnSubgraph(
       case HloOpcode::kParameter: {
         TF_ASSIGN_OR_RETURN(tensor_ids[instr],
                             DefineParameter(subgraph, instr));
+      } break;
+
+      case HloOpcode::kConstant: {
+        TF_ASSIGN_OR_RETURN(tensor_ids[instr],
+                            DefineConstant(subgraph, literals, instr));
       } break;
 
       case HloOpcode::kConvert: {
@@ -303,7 +322,10 @@ EmitXnnFusionBuilder(const HloComputation* computation) {
                            computation->root_instruction()->shape().ToString());
   }
 
-  return [computation] { return EmitXnnSubgraph(computation); };
+  return [computation,
+          literals = std::vector<std::unique_ptr<Literal>>()]() mutable {
+    return EmitXnnSubgraph(computation, literals);
+  };
 }
 
 }  // namespace xla::cpu

@@ -1133,6 +1133,15 @@ class HloInstruction {
       std::string opaque = "",
       CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
 
+  // Overload which constrains the layouts of the operand and result and apply a
+  // computation.
+  static std::unique_ptr<HloInstruction> CreateCustomCall(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* to_apply, absl::string_view custom_call_target,
+      absl::Span<const Shape> operand_shapes_with_layout,
+      std::string opaque = "",
+      CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
+
   // Creates a tuple instruction with the given elements. This is a convenience
   // wrapper around CreateVariadic.
   static std::unique_ptr<HloInstruction> CreateTuple(
@@ -2392,6 +2401,10 @@ class HloInstruction {
 
   std::shared_ptr<OriginalValue> original_value() const;
   void set_original_value(std::shared_ptr<OriginalValue> original_value);
+
+  // Copy original value from the input instruction. This performs a deep copy
+  // if clone is set to true. Otherwise, it performs a shallow copy.
+  void CopyOriginalValue(const HloInstruction* instruction, bool clone);
 
  protected:
   // Internal constructor for a given opcode/shape, other fields must be filled

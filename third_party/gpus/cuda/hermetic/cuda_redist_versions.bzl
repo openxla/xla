@@ -434,6 +434,12 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
             "11": "//third_party/gpus/cuda/hermetic:cuda_nvcc.BUILD.tpl",
         },
     },
+    "cuda_nvdisasm": {
+        "repo_name": "cuda_nvdisasm",
+        "version_to_template": {
+            "12": "//third_party/gpus/cuda/hermetic:cuda_nvdisasm.BUILD",
+        },
+    },
     "cuda_nvml_dev": {
         "repo_name": "cuda_nvml",
         "version_to_template": {
@@ -445,9 +451,9 @@ REDIST_VERSIONS_TO_BUILD_TEMPLATES = {
     "cuda_nvprune": {
         "repo_name": "cuda_nvprune",
         "version_to_template": {
-            "13": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
-            "12": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
-            "11": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD.tpl",
+            "13": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD",
+            "12": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD",
+            "11": "//third_party/gpus/cuda/hermetic:cuda_nvprune.BUILD",
         },
     },
     "cuda_nvtx": {

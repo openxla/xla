@@ -22,6 +22,7 @@ cc_library(
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
         "//xla/service:call_graph",
         "@boost//:bimap",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -114,9 +115,12 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph",
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
+        "//xla/hlo/tools/hlo_diff/matchers:bottom_up_matcher",
+        "//xla/hlo/tools/hlo_diff/matchers:exact_subgraph_matcher",
+        "//xla/hlo/tools/hlo_diff/matchers:gumgraph_matcher",
         "//xla/hlo/tools/hlo_diff/matchers:hlo_call_graph_matcher",
         "//xla/hlo/tools/hlo_diff/matchers:hlo_computation_graph_matcher",
-        "//xla/hlo/tools/hlo_diff/matchers:hlo_gumgraph_matcher",
+        "//xla/hlo/tools/hlo_diff/matchers:top_down_matcher",
         "//xla/service:call_graph",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
