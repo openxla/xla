@@ -4262,7 +4262,7 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     mlir::func::FuncOp callee = ctx.converter->LookUpSymbol(
         mlir::cast<FlatSymbolRefAttr>(op.getCalledComputations()[0]));
     if (failed(ctx.converter->RunOnFunction(callee))) return failure();
-    xla::XlaComputation& computation =
+    xla::XlaComputationId computation =
         ctx.converter->GetLoweredComputation(callee);
     auto operand_shapes_with_layout = ConvertTypesToShapesWithLayout(
         op.getOperandTypes(), op.getOperandLayouts().value());

@@ -5538,7 +5538,7 @@ XlaOp CustomCall(
 
 XlaOp CustomCallWithComputationAndLayouts(
     XlaBuilder* builder, const std::string& call_target_name,
-    absl::Span<const XlaOp> operands, const XlaComputation& computation,
+    absl::Span<const XlaOp> operands, XlaComputationId computation,
     const Shape& shape, absl::Span<const Shape> operand_shapes_with_layout,
     const std::string& opaque, bool has_side_effect,
     absl::Span<const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>

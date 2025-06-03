@@ -623,7 +623,7 @@ TEST_F(CustomCallTest, WithCalledComputationAndLayouts) {
   CustomCallWithComputationAndLayouts(
       &b, "xla.gpu.ext.memcpy_with_called_computation",
       /*operands=*/{Broadcast(ConstantR0WithType(&b, F32, 42.0), {128, 128})},
-      copy_computation, shape, {shape}, /*opaque=*/"",
+      b.AddSubComputation(copy_computation), shape, {shape}, /*opaque=*/"",
       /*has_side_effect=*/false, /*output_operand_aliasing=*/{},
       /*literal=*/nullptr, /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
       /*api_version=*/CustomCallApiVersion::API_VERSION_TYPED_FFI);
