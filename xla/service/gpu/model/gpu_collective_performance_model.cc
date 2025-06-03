@@ -42,48 +42,6 @@ namespace gpu {
 
 namespace {
 
-const std::vector<double>& GetSpeeds(
-    const stream_executor::CudaComputeCapability& compute_cap) {
-  // Different tiers for intra-node bandwidth.
-  static const std::vector<double> kIntraNodeSpeeds = {
-      40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
-  // SM90 has different bandwidths.
-  static std::vector<double> kIntraNodeSpeedsSm90 = {
-      60.0, 40.0, 30.0, 24.0, 20.0, 15.0, 12.0, 6.0, 3.0};
-  return compute_cap.major >= se::CudaComputeCapability::kHopper
-             ? kIntraNodeSpeedsSm90
-             : kIntraNodeSpeeds;
-}
-
-const std::vector<double>& GetSpeeds(
-    const stream_executor::RocmComputeCapability& compute_cap) {
-  // Different tiers for intra-node bandwidth based on Infinity Fabric
-  // capabilities Values in GB/s
-
-  // MI300 series (Instinct MI300) - up to 896GB/s (8x112GB/s)
-  static const std::vector<double> intraNodeSpeedsMi300 = {
-      896.0, 784.0, 672.0, 560.0, 448.0, 336.0, 224.0, 112.0, 56.0, 32.0};
-
-  // MI200 series (Instinct MI200/MI250) - up to 600GB/s (8x75GB/s)
-  static const std::vector<double> intraNodeSpeedsMi200 = {
-      600.0, 525.0, 450.0, 375.0, 300.0, 225.0, 150.0, 75.0, 32.0};
-
-  // MI100 (Instinct MI100) - up to 300GB/s (8x37.5GB/s)
-  static const std::vector<double> intraNodeSpeedsMi100 = {
-      300.0, 262.5, 225.0, 187.5, 150.0, 112.5, 75.0, 37.5, 32.0};
-
-  if (compute_cap.gfx9_mi300_series()) {
-    return intraNodeSpeedsMi300;
-  } else if (compute_cap.gfx9_mi200()) {
-    return intraNodeSpeedsMi200;
-  } else if (compute_cap.gfx9_mi100()) {
-    return intraNodeSpeedsMi100;
-  }
-
-  // Default to MI300 speeds for unknown architectures
-  return intraNodeSpeedsMi300;
-}
-
 // Different algorithms that can be used to perform the collective.
 enum class CollectiveAlgo {
   RING = 0,
@@ -97,6 +55,48 @@ struct CudaBandwidthSettings {
       39.0 /* Volta */,      87.7 /* Ampere */,    141.0 /* Hopper */,
       141.0 /* Blackwell */, 141.0 /* next-gen */,
   };
+
+  const std::vector<double>& GetIntranodeBandwidths(
+      const stream_executor::CudaComputeCapability& compute_cap) const {
+    // Different tiers for intra-node bandwidth.
+    static const std::vector<double> kIntraNodeSpeeds = {
+        40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
+    // SM90 has different bandwidths.
+    static std::vector<double> kIntraNodeSpeedsSm90 = {
+        60.0, 40.0, 30.0, 24.0, 20.0, 15.0, 12.0, 6.0, 3.0};
+    return compute_cap.major >= se::CudaComputeCapability::kHopper
+               ? kIntraNodeSpeedsSm90
+               : kIntraNodeSpeeds;
+  }
+
+  float GetMaxSysBwFromGpu(const se::CudaComputeCapability cc,
+                           const double* bandwidths_table) const {
+    switch (cc.major) {
+      case se::CudaComputeCapability::kVolta:
+        return bandwidths_table[0];
+      case se::CudaComputeCapability::kAmpere:
+        return bandwidths_table[1];
+      case se::CudaComputeCapability::kHopper:
+        return bandwidths_table[2];
+      case se::CudaComputeCapability::kBlackwell:
+        return bandwidths_table[3];
+      default:
+        return bandwidths_table[4];
+    }
+  }
+
+  // Returns NVLink bw in GB/s
+  float GetNvlinkBw(const se::CudaComputeCapability& compute_capability) const {
+    return compute_capability.IsAtLeast(se::CudaComputeCapability::kHopper)
+               ? CudaBandwidthSettings::kSm90NvlinkBandwidth
+           : compute_capability.IsAtLeast(se::CudaComputeCapability::kAmpere)
+               ? CudaBandwidthSettings::kSm80NvlinkBandwidth
+           : compute_capability.IsAtLeast(se::CudaComputeCapability::kVolta)
+               ? CudaBandwidthSettings::kSm70NvlinkBandwidth
+           : compute_capability.IsAtLeast(se::CudaComputeCapability::kPascal)
+               ? CudaBandwidthSettings::kSm60NvlinkBandwidth
+               : CudaBandwidthSettings::kSm80NvlinkBandwidth;
+  }
 
   // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
   // single-node
@@ -136,6 +136,35 @@ struct RocmBandwidthSettings {
       896.0 /* next_gen (same as MI300 for now) */,
   };
 
+  const std::vector<double>& GetIntranodeBandwidths(
+      const stream_executor::RocmComputeCapability& compute_cap) const {
+    // Different tiers for intra-node bandwidth based on Infinity Fabric
+    // capabilities Values in GB/s
+
+    // MI300 series (Instinct MI300) - up to 896GB/s (8x112GB/s)
+    static const std::vector<double> intraNodeSpeedsMi300 = {
+        896.0, 784.0, 672.0, 560.0, 448.0, 336.0, 224.0, 112.0, 56.0, 32.0};
+
+    // MI200 series (Instinct MI200/MI250) - up to 600GB/s (8x75GB/s)
+    static const std::vector<double> intraNodeSpeedsMi200 = {
+        600.0, 525.0, 450.0, 375.0, 300.0, 225.0, 150.0, 75.0, 32.0};
+
+    // MI100 (Instinct MI100) - up to 300GB/s (8x37.5GB/s)
+    static const std::vector<double> intraNodeSpeedsMi100 = {
+        300.0, 262.5, 225.0, 187.5, 150.0, 112.5, 75.0, 37.5, 32.0};
+
+    if (compute_cap.gfx9_mi300_series()) {
+      return intraNodeSpeedsMi300;
+    } else if (compute_cap.gfx9_mi200()) {
+      return intraNodeSpeedsMi200;
+    } else if (compute_cap.gfx9_mi100()) {
+      return intraNodeSpeedsMi100;
+    }
+
+    // Default to MI300 speeds for unknown architectures
+    return intraNodeSpeedsMi300;
+  }
+
   // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
   // single-node
   static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
@@ -144,6 +173,30 @@ struct RocmBandwidthSettings {
       112.0 /* MI300 (per IF link) */,
       112.0 /* next_gen */,
   };
+
+  float GetMaxSysBwFromGpu(const se::RocmComputeCapability& cc,
+                           const double* bandwidths_table) const {
+    if (cc.gfx9_mi100()) {
+      return bandwidths_table[0];
+    } else if (cc.gfx9_mi200()) {
+      return bandwidths_table[1];
+    } else if (cc.gfx9_mi300_series()) {
+      return bandwidths_table[2];
+    } else {
+      return bandwidths_table[3];
+    }
+  }
+
+  float GetNvlinkBw(const se::RocmComputeCapability& compute_capability) const {
+    if (compute_capability.gfx9_mi100()) {
+      return RocmBandwidthSettings::kMi100InfinityFabricBandwidth;
+    } else if (compute_capability.gfx9_mi200()) {
+      return RocmBandwidthSettings::kMi200InfinityFabricBandwidth;
+    } else if (compute_capability.gfx9_mi300_series()) {
+      return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
+    }
+    return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
+  }
 
   // Infinity Fabric unidirectional bandwidth per link in GB/s
   static constexpr double kMi100InfinityFabricBandwidth = 37.5;
@@ -227,60 +280,6 @@ int GetNumThreads(int warp_size, int min_num_threads, int max_num_threads,
   return num_threads;
 }
 
-float GetMaxSysBwFromGpu(const se::CudaComputeCapability cc,
-                         const double* bandwidths_table) {
-  switch (cc.major) {
-    case se::CudaComputeCapability::kVolta:
-      return bandwidths_table[0];
-    case se::CudaComputeCapability::kAmpere:
-      return bandwidths_table[1];
-    case se::CudaComputeCapability::kHopper:
-      return bandwidths_table[2];
-    case se::CudaComputeCapability::kBlackwell:
-      return bandwidths_table[3];
-    default:
-      return bandwidths_table[4];
-  }
-}
-
-float GetMaxSysBwFromGpu(const se::RocmComputeCapability& cc,
-                         const double* bandwidths_table) {
-  if (cc.gfx9_mi100()) {
-    return bandwidths_table[0];
-  } else if (cc.gfx9_mi200()) {
-    return bandwidths_table[1];
-  } else if (cc.gfx9_mi300_series()) {
-    return bandwidths_table[2];
-  } else {
-    return bandwidths_table[3];
-  }
-}
-
-float GetNvlinkBw(const se::RocmComputeCapability& compute_capability) {
-  if (compute_capability.gfx9_mi100()) {
-    return RocmBandwidthSettings::kMi100InfinityFabricBandwidth;
-  } else if (compute_capability.gfx9_mi200()) {
-    return RocmBandwidthSettings::kMi200InfinityFabricBandwidth;
-  } else if (compute_capability.gfx9_mi300_series()) {
-    return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
-  }
-  return RocmBandwidthSettings::kMi300InfinityFabricBandwidth;
-}
-
-// Returns NVLink bw in GB/s
-/*static*/
-float GetNvlinkBw(const se::CudaComputeCapability& compute_capability) {
-  return compute_capability.IsAtLeast(se::CudaComputeCapability::kHopper)
-             ? CudaBandwidthSettings::kSm90NvlinkBandwidth
-         : compute_capability.IsAtLeast(se::CudaComputeCapability::kAmpere)
-             ? CudaBandwidthSettings::kSm80NvlinkBandwidth
-         : compute_capability.IsAtLeast(se::CudaComputeCapability::kVolta)
-             ? CudaBandwidthSettings::kSm70NvlinkBandwidth
-         : compute_capability.IsAtLeast(se::CudaComputeCapability::kPascal)
-             ? CudaBandwidthSettings::kSm60NvlinkBandwidth
-             : CudaBandwidthSettings::kSm80NvlinkBandwidth;
-}
-
 template <typename ComputeCapability, typename GpuBandwidthSettings>
 absl::Duration ComputeAllreduceTimeImpl(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
@@ -291,10 +290,10 @@ absl::Duration ComputeAllreduceTimeImpl(
   // only occurs once.
   absl::Duration total_time = kNcclKernelLaunchOverhead;
 
-  const auto& speeds = GetSpeeds(compute_cap);
+  const auto& speeds = bandwidth_settings.GetIntranodeBandwidths(compute_cap);
 
   int speed_index = 0;
-  float max_sys_bw = GetMaxSysBwFromGpu(
+  float max_sys_bw = bandwidth_settings.GetMaxSysBwFromGpu(
       compute_cap, bandwidth_settings.kLowLatencyMaxBandwidths.data());
 
   CHECK_GT(max_sys_bw, 0);
@@ -338,13 +337,13 @@ absl::Duration ComputeAllreduceTimeImpl(
   } else {
     VLOG(8) << "Nvlink supports p2p communication, setting intra node "
                "bandwidth to nvlink bw.";
-    bw_intra_node = GetNvlinkBw(compute_cap);
+    bw_intra_node = bandwidth_settings.GetNvlinkBw(compute_cap);
   }
 
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
-  double per_channel_ring_ll128_Bw = GetMaxSysBwFromGpu(
+  double per_channel_ring_ll128_Bw = bandwidth_settings.GetMaxSysBwFromGpu(
       compute_cap, bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
 
   bus_bandwidth =
