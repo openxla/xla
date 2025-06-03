@@ -587,8 +587,6 @@ template <typename ArgType>
 inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
 PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
 #if GOOGLE_CUDA && CUDA_VERSION >= 12010
-  static constexpr int kKernelArgsLimit = 32764;
-#elif GOOGLE_CUDA
   static constexpr int kKernelArgsLimit = 4096;
 #else
   static constexpr int kKernelArgsLimit = 1024;

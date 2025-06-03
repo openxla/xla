@@ -43,24 +43,6 @@ class GpuKernelArgsTest : public ::testing::Test {
 
 TEST_F(GpuKernelArgsTest, PackLargeNumberOfArguments) {
 #if GOOGLE_CUDA && CUDA_VERSION >= 12010
-  // Test CUDA 12.1+ limit of 32764 arguments
-  std::vector<DeviceMemoryBase> args(32764);
-  for (int i = 0; i < 32764; ++i) {
-    args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
-  }
-  auto result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_TRUE(result.ok()) << result.status();
-  EXPECT_EQ(result.value()->number_of_arguments(), 32764);
-
-  // Test exceeding CUDA 12.1+ limit
-  args.push_back(DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42));
-  result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_FALSE(result.ok());
-  EXPECT_THAT(result.status().message(),
-              ::testing::HasSubstr(
-                  "Can't pack device memory arguments array of size 32765"));
-#else
-  // Test older CUDA limit of 4096 arguments
   std::vector<DeviceMemoryBase> args(4096);
   for (int i = 0; i < 4096; ++i) {
     args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
@@ -69,13 +51,27 @@ TEST_F(GpuKernelArgsTest, PackLargeNumberOfArguments) {
   EXPECT_TRUE(result.ok()) << result.status();
   EXPECT_EQ(result.value()->number_of_arguments(), 4096);
 
-  // Test exceeding older CUDA limit
   args.push_back(DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42));
   result = PackKernelArgs<DeviceMemoryBase>(args, 0);
   EXPECT_FALSE(result.ok());
   EXPECT_THAT(result.status().message(),
               ::testing::HasSubstr(
                   "Can't pack device memory arguments array of size 4097"));
+#else
+  std::vector<DeviceMemoryBase> args(1024);
+  for (int i = 0; i < 1024; ++i) {
+    args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
+  }
+  auto result = PackKernelArgs<DeviceMemoryBase>(args, 0);
+  EXPECT_TRUE(result.ok()) << result.status();
+  EXPECT_EQ(result.value()->number_of_arguments(), 1024);
+
+  args.push_back(DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42));
+  result = PackKernelArgs<DeviceMemoryBase>(args, 0);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr(
+                  "Can't pack device memory arguments array of size 1025"));
 #endif
 }
 
