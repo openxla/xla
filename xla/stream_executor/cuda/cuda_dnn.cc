@@ -4679,31 +4679,6 @@ class ScoreModFunc {
     }
   }
 
-  std::optional<cudnn_frontend::DataType_t> ToCudnnDataType(
-      const xla::PrimitiveType type) {
-    using t = cudnn_frontend::DataType_t;
-    switch (type) {
-      case xla::PrimitiveType::F32:
-        return t::FLOAT;
-      case xla::PrimitiveType::F16:
-        return t::HALF;
-      case xla::PrimitiveType::BF16:
-        return t::BFLOAT16;
-      case xla::PrimitiveType::S32:
-        return t::INT32;
-      case xla::PrimitiveType::S8:
-        return t::INT8;
-      case xla::PrimitiveType::PRED:
-        return t::INT8;
-      case xla::PrimitiveType::F8E5M2:
-        return t::FP8_E5M2;
-      case xla::PrimitiveType::F8E4M3FN:
-        return t::FP8_E4M3;
-      default:
-        return std::nullopt;
-    }
-  }
-
   cudnn_frontend::DataType_t GetComputeDataType(const xla::PrimitiveType type) {
     cudnn_frontend::DataType_t compute_dtype =
         cudnn_frontend::DataType_t::FLOAT;

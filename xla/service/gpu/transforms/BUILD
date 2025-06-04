@@ -994,6 +994,7 @@ cc_library(
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:stream_executor_util",
+        "//xla/service:pattern_matcher",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cudnn_frontend_helpers",

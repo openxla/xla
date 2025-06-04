@@ -145,7 +145,6 @@ constexpr char kReductionDim[] = "reduction_dim";
 constexpr char kReductionInputSizeOverride[] = "reduction_input_size_override";
 constexpr char kReplicaGroups[] = "replica_groups";
 constexpr char kTopK[] = "top_k";
-constexpr char kCudnnFMHA[] = "__cudnn$fmha";
 
 // MHLO attributes. Module level attributes require namespacing.
 constexpr char kMhloCrossProgramPrefetches[] = "mhlo.cross_program_prefetches";

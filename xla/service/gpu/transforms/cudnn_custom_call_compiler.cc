@@ -180,6 +180,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
 
   auto computations = custom_call->called_computations();
   const HloComputation *score_mod_fwd_comp = nullptr;
+  TF_RET_CHECK(computations.size() <= 1);
   if (computations.size() == 1) {
     score_mod_fwd_comp = computations[0];
     input_index += score_mod_fwd_comp->num_parameters() - 1;
