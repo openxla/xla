@@ -735,7 +735,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
             "%{hipblaslt_flag}": have_hipblaslt,
             "%{hip_soversion_number}": "6" if int(rocm_config.rocm_version_number) >= 60000 else "5",
-            "%{rocblas_soversion_number}": "4" if int(rocm_config.rocm_version_number) >= 60000 else "3",
+            "%{rocblas_soversion_number}": "5" if int(rocm_config.rocm_version_number) >= 70000 else "4",
         },
     )
 
@@ -754,7 +754,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
             "%{hipblaslt_flag}": have_hipblaslt,
             "%{hip_soversion_number}": "6" if int(rocm_config.rocm_version_number) >= 60000 else "5",
-            "%{rocblas_soversion_number}": "4" if int(rocm_config.rocm_version_number) >= 60000 else "3",
+            "%{rocblas_soversion_number}": "5" if int(rocm_config.rocm_version_number) >= 70000 else "4",
         },
     )
 
