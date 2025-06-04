@@ -203,7 +203,7 @@ TEST_F(CommunicationTypeTest, DetectRailAlignedHalfMesh) {
 
     ENTRY e {
       p = f32[128] parameter(0)
-      ROOT _ = f32[512] all-gather(p),
+      ROOT _ = f32[2048] all-gather(p),
         dimensions={0},
         use_global_device_ids=true,
         channel_id=1,
@@ -229,7 +229,7 @@ TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
 
     ENTRY e {
       p = f32[128] parameter(0)
-      ROOT _ = f32[512] all-gather(p),
+      ROOT _ = f32[256] all-gather(p),
         dimensions={0},
         use_global_device_ids=true,
         channel_id=1,
@@ -246,67 +246,64 @@ TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
               IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
 }
 
-TEST_F(CommunicationTypeTest, CollectivePermuteSingleHost) {
+TEST_F(CommunicationTypeTest, DetectsSingleHost16DevicesForEmptyReplicaGroups) {
   absl::string_view kHlo = R"(
-    HloModule m, num_partitions=8
+    HloModule m, replica_count=16
 
     ENTRY e {
       p = f32[128] parameter(0)
-      ROOT _ = f32[128] collective-permute(p),
-        source_target_pairs={{0,1},{1,2},{2,3},{3,4},{4,5},{5,6},{6,7},{7,0}}
+      ROOT _ = f32[512] all-gather(p),
+        dimensions={0},
+        replica_groups={}
     }
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
 
-  HloCollectivePermuteInstruction* instr =
-      Cast<HloCollectivePermuteInstruction>(
-          module->entry_computation()->root_instruction());
-
-  EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
+  HloCollectiveInstruction* instr = Cast<HloCollectiveInstruction>(
+      module->entry_computation()->root_instruction());
+  EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/16, *instr,
                                 device_info().gpu_compute_capability()),
               IsOkAndHolds(GPUCommunicationType::SINGLE_HOST));
 }
 
-TEST_F(CommunicationTypeTest, CollectivePermuteRailAligned) {
+TEST_F(CommunicationTypeTest, DetectsRailAligned8DevicesForEmptyReplicaGroups) {
   absl::string_view kHlo = R"(
-    HloModule m, num_partitions=16
+    HloModule m, replica_count=16
 
     ENTRY e {
       p = f32[128] parameter(0)
-      ROOT _ = f32[128] collective-permute(p),
-        source_target_pairs={{0,8},{1,9},{2,10},{3,11},{4,12},{5,13},{6,14},{7,15}}
+      ROOT _ = f32[2048] all-gather(p),
+        dimensions={0},
+        replica_groups={}
     }
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
 
-  HloCollectivePermuteInstruction* instr =
-      Cast<HloCollectivePermuteInstruction>(
-          module->entry_computation()->root_instruction());
-
+  HloCollectiveInstruction* instr = Cast<HloCollectiveInstruction>(
+      module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
               IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
 }
 
-TEST_F(CommunicationTypeTest, CollectivePermuteNonRailAligned) {
+TEST_F(CommunicationTypeTest, DetectsNonRailAligned16Devices) {
   absl::string_view kHlo = R"(
-    HloModule m, num_partitions=16
+    HloModule m, replica_count=16
 
     ENTRY e {
       p = f32[128] parameter(0)
-      ROOT _ = f32[128] collective-permute(p),
-        source_target_pairs={{0,9},{1,10},{2,11},{3,12}}
+      ROOT _ = f32[256] all-gather(p),
+        dimensions={0},
+        replica_groups={{0,8},{1,9},{2,10},{3,11},{4,12},{5,13},{6,14},{7,15}}
     }
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
 
-  HloCollectivePermuteInstruction* instr =
-      Cast<HloCollectivePermuteInstruction>(
-          module->entry_computation()->root_instruction());
-
+  HloCollectiveInstruction* instr = Cast<HloCollectiveInstruction>(
+      module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
               IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
