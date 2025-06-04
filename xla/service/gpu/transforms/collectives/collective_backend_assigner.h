@@ -55,8 +55,6 @@ class CollectiveBackendAssigner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  static bool IsCollectiveOp(const HloInstruction* instr);
-
  private:
   se::GpuComputeCapability gpu_version_;
   int num_devices_per_host_;

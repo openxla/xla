@@ -29,17 +29,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-bool CollectiveBackendAssigner::IsCollectiveOp(const HloInstruction* instr) {
+namespace {
+
+bool IsCollectiveOp(const HloInstruction* instr) {
   return HloPredicateIsOp<HloOpcode::kAllReduce, HloOpcode::kAllReduceStart,
                           HloOpcode::kCollectivePermute,
                           HloOpcode::kCollectivePermuteStart>(instr);
 }
 
-namespace {
-
 int64_t GetShapeSize(const Shape& shape) {
-  int64_t size_in_bytes = 0;
   if (shape.IsTuple()) {
+    int64_t size_in_bytes = 0;
     for (int64_t i = 0; i < shape.tuple_shapes_size(); ++i) {
       size_in_bytes += GetShapeSize(shape.tuple_shapes(i));
     }
@@ -55,20 +55,9 @@ absl::StatusOr<GPUCommunicationType> GetCommunicationType(
     return absl::FailedPreconditionError(
         "Could not determine number of devices per host");
   }
-  GPUCommunicationType comm_type;
-  if (instr->opcode() == HloOpcode::kAllReduce ||
-      instr->opcode() == HloOpcode::kAllReduceStart) {
-    TF_ASSIGN_OR_RETURN(
-        comm_type, CommunicationType(num_devices_per_host,
-                                     *xla::Cast<HloChannelInstruction>(instr),
-                                     gpu_version));
-  } else {
-    TF_ASSIGN_OR_RETURN(
-        comm_type, CommunicationType(num_devices_per_host,
-                                     *xla::Cast<HloChannelInstruction>(instr),
-                                     gpu_version));
-  }
-  return comm_type;
+  return CommunicationType(num_devices_per_host,
+                           *xla::Cast<HloChannelInstruction>(instr),
+                           gpu_version);
 }
 
 }  // namespace
@@ -87,11 +76,6 @@ absl::StatusOr<bool> CollectiveBackendAssigner::Run(
         continue;
       }
 
-      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                          instr->backend_config<GpuBackendConfig>());
-      CollectiveBackendConfig& backend_config =
-          *gpu_config.mutable_collective_backend_config();
-
       TF_ASSIGN_OR_RETURN(
           GPUCommunicationType comm_type,
           GetCommunicationType(instr, num_devices_per_host_, gpu_version_));
@@ -99,14 +83,19 @@ absl::StatusOr<bool> CollectiveBackendAssigner::Run(
               << static_cast<int>(comm_type)
               << " shape_size=" << GetShapeSize(instr->shape())
               << " threshold_in_bytes_=" << threshold_in_bytes_;
-      auto backend = comm_type == GPUCommunicationType::SINGLE_HOST &&
-                             GetShapeSize(instr->shape()) < threshold_in_bytes_
-                         ? CollectiveBackendConfig::NVSHMEM
-                         : CollectiveBackendConfig::DEFAULT;
+      bool use_nvshmem = comm_type == GPUCommunicationType::SINGLE_HOST &&
+                         GetShapeSize(instr->shape()) < threshold_in_bytes_;
+      if (!use_nvshmem) {
+        continue;
+      }
 
-      backend_config.set_backend(backend);
-      VLOG(1) << "CollectiveBackendAssigner: setting backend to "
-              << CollectiveBackendConfig_CollectiveBackend_Name(backend);
+      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      gpu_config.mutable_collective_backend_config()->set_backend(
+          CollectiveBackendConfig::NVSHMEM);
+
+      VLOG(1) << "CollectiveBackendAssigner: setting backend to NVSHMEM for "
+              << instr->name();
 
       TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_config));
       changed = true;
