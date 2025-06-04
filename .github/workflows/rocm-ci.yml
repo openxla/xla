@@ -34,7 +34,7 @@ jobs:
       #- name: Unzip the Bazel cache
       #  run: unzip -q /tf/disk_cache.zip -d /tf/cache
       - name: Test XLA
-        run: build_tools/rocm/run_xla_multi_gpu.sh rocm_ci_hermetic
+        run: build_tools/rocm/run_xla_ci_build.sh rocm_ci_hermetic
   build-jax-plugin:
     runs-on: mi-250
     env:
