@@ -347,10 +347,11 @@ class HloModule {
   std::vector<HloComputation*> MakeComputationSorted(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
-  // Gets the computations in this module which aren't for fusion nodes.
+  // Gets the computations in this module which are neither for fusion nodes nor
+  // for composite calls.
   //
   // Postcondition: All computations in the returned list have
-  // !IsFusionComputation().
+  // !IsFusionComputation() && !IsCompositeComputation().
   //
   // Note: Callers can and do rely on the return value here being a *snapshot*
   // of the module's non-fusion computations -- that is, it's OK to add or

@@ -215,8 +215,10 @@ class HloComputation {
     // unreachable, and its instruction is set to null. We still need to regard
     // such computations as fusion computations for HLO scheduling purposes.
     kFusion,
+    // This computation is a composite body.
+    kComposite,
     // Last Value for range checking.
-    kLast = kFusion,
+    kLast = kComposite,
   };
   static constexpr uintptr_t kInstructionTypeMask = 0b111;
   static_assert(static_cast<int>(InstructionType::kUnset) == 0,
@@ -794,6 +796,11 @@ class HloComputation {
     return instruction_type() == InstructionType::kFusion;
   }
 
+  // Returns if this computation is a composite computation.
+  bool IsCompositeComputation() const {
+    return instruction_type() == InstructionType::kComposite;
+  }
+
   // Returns if this computation is the entry computation of the module.
   bool IsEntryComputation() const;
 
@@ -805,6 +812,16 @@ class HloComputation {
   }
   void SetFusionInstruction(HloInstruction* fusion_instruction) {
     SetInstruction(fusion_instruction, InstructionType::kFusion);
+  }
+
+  // Returns the owning composite call instruction, or nullptr if this is not a
+  // composite computation.
+  HloInstruction* CompositeInstruction() const {
+    return instruction_type() == InstructionType::kComposite ? instruction()
+                                                             : nullptr;
+  }
+  void SetCompositeInstruction(HloInstruction* composite_call) {
+    SetInstruction(composite_call, InstructionType::kComposite);
   }
 
   // Returns if this computation is an async computation.
