@@ -2356,7 +2356,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
 
       auto call_op = HloInstruction::CreateCall(*shape, operands, *to_apply);
-      call_op->set_is_composite(is_composite.value());
+      if (is_composite.value()) {
+        call_op->set_is_composite(true);
+        to_apply.value()->SetCompositeInstruction(call_op.get());
+      }
       return builder->AddInstruction(std::move(call_op));
     }
     case HloOpcode::kReduceWindow: {

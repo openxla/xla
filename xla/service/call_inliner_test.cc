@@ -394,13 +394,14 @@ TEST_F(CallInlinerTest, PreserveCompositeCall) {
 
   ENTRY %main () -> f32[] {
     %lhs = f32[] constant(42)
-    ROOT %call = f32[] call(f32[] %lhs), to_apply=%add, is_composite=true, frontend_attributes={composite.attributes={n = 1 : i32, tensor = dense<1> : tensor<i32>},composite.name="foo.bar",composite.version="1"}
+    %keep = f32[] call(f32[] %lhs), to_apply=%add, is_composite=true, frontend_attributes={composite.attributes={n = 1 : i32, tensor = dense<1> : tensor<i32>},composite.name="foo.bar",composite.version="1"}
+    ROOT %call = f32[] call(f32[] %lhs), to_apply=%add, is_composite=true, frontend_attributes={composite.attributes={n = 1 : i32, tensor = dense<1> : tensor<i32>},composite.name="foo.baz",composite.version="1"}
   })";
 
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
   CallInliner call_inliner(
       /*single_call_site=*/true, /*update_domain=*/false,
-      /*composites_to_preserve=*/{"foo.bar"});
+      /*composites_to_inline=*/{"foo.baz"});
   TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
   ASSERT_FALSE(mutated);
 
@@ -593,7 +594,7 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(hlo));
   CallInliner call_inliner(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/{}, /*uniquify_channel_ids=*/true);
+      /*composites_to_inline=*/{}, /*uniquify_channel_ids=*/true);
   EXPECT_THAT(call_inliner.Run(m.get()), ::tsl::testing::IsOkAndHolds(true));
 
   auto ag = m->entry_computation()->root_instruction()->operand(0);

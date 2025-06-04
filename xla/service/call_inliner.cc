@@ -199,9 +199,9 @@ bool InlineUnderShardy(HloInstruction* instruction) {
 
 bool InlineComposites(
     HloInstruction* instruction,
-    const absl::flat_hash_set<std::string>& composites_to_preserve) {
+    const absl::flat_hash_set<std::string>& composites_to_inline) {
   return !instruction->is_composite() ||
-         !composites_to_preserve.contains(
+         composites_to_inline.contains(
              instruction->frontend_attributes().map().at("composite.name"));
 }
 
@@ -276,7 +276,7 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
     return false;
   }
   return InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_);
+         InlineComposites(instruction, composites_to_inline_);
 }
 
 absl::StatusOr<bool> CallInliner::InlineAndLegalize(
@@ -343,23 +343,24 @@ absl::StatusOr<bool> CallInliner::Run(
   // we'll always inline kCalls into their callers in the appropriate order.
   TF_ASSIGN_OR_RETURN(
       bool did_mutate,
-      call_graph->VisitNodesWithReturn([&](const CallGraphNode& node)
-                                           -> absl::StatusOr<bool> {
-        if (!HloInstruction::IsThreadIncluded(
-                node.computation()->execution_thread(), execution_threads)) {
-          return false;
-        };
-        if (module->has_schedule()) {
-          HloInstructionSequence& sequence =
-              module->schedule().GetOrCreateSequence(node.computation());
-          return InlineAndLegalize(*call_graph, node.computation(),
-                                   sequence.instructions());
-        }
+      call_graph->VisitNodesWithReturn(
+          [&](const CallGraphNode& node) -> absl::StatusOr<bool> {
+            if (!HloInstruction::IsThreadIncluded(
+                    node.computation()->execution_thread(),
+                    execution_threads)) {
+              return false;
+            };
+            if (module->has_schedule()) {
+              HloInstructionSequence& sequence =
+                  module->schedule().GetOrCreateSequence(node.computation());
+              return InlineAndLegalize(*call_graph, node.computation(),
+                                       sequence.instructions());
+            }
 
-        return InlineAndLegalize(
-            *call_graph, node.computation(),
-            node.computation()->MakeInstructionPostOrder());
-      }));
+            return InlineAndLegalize(
+                *call_graph, node.computation(),
+                node.computation()->MakeInstructionPostOrder());
+          }));
   if (did_mutate) {
     // Run DCE to remove called computations which are now becoming unused.
     // This can result then in problems if within the called computation, there

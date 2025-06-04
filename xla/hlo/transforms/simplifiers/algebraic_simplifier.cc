@@ -7031,7 +7031,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
     }
   }
 
-  if (HloInstruction* reduce_window;
+  if (HloInstruction * reduce_window;
       options_.enable_window_reduce_to_reduce_replacement() &&
       hlo_instruction_utils::IsUnstridedSlice(slice) &&
       Match(slice, m::Slice(m::ReduceWindow(&reduce_window).WithOneUse()))) {
@@ -8281,7 +8281,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // For Computation equal to Min, Max, And or Or, replace Reduce(Broadcast(x),
   // a, Computation()) with Computation(x, a) when x is a scalar and the
   // broadcast is reduced to a scalar.
-  if (HloInstruction* broadcast_arg;
+  if (HloInstruction * broadcast_arg;
       Match(arg, m::Broadcast(m::Op(&broadcast_arg))) &&
       (Match(function->root_instruction(),
              m::MaximumAnyOrder(m::Parameter(0), m::Parameter(1))) ||
@@ -9911,7 +9911,8 @@ absl::StatusOr<bool> AlgebraicSimplifier::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   AlgebraicSimplifierVisitor visitor(options_, this);
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonfusionNoncompositeComputations(execution_threads)) {
     bool computation_changed_per_run = false;
     int64_t run_count = 0;
     // Repeatedly run simplification on each computation until it is stable.
