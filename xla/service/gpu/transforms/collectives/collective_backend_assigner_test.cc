@@ -80,13 +80,114 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
 #include "xla/backends/gpu/collectives/nvshmem_collectives.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
 namespace xla {
 namespace gpu {
 namespace {
 using ::testing::ElementsAreArray;
-class NvshmemGpuCollectivesTest : public ::testing::Test {};
+using ::tsl::testing::IsOkAndHolds;
 
+class CollectiveBackendAssignerTest : public HloHardwareIndependentTestBase {
+ protected:
+  absl::StatusOr<bool> RunCollectiveBackendAssigner(HloModule* module) {
+    se::GpuComputeCapability gpu_version = se::CudaComputeCapability(8, 0);
+    return RunHloPass(
+        CollectiveBackendAssigner(gpu_version, /*num_devices_per_host=*/2),
+        module);
+  }
+
+  void VerifyNvshmemBackendConfig(const HloInstruction* instr) {
+    ASSERT_TRUE(instr->has_backend_config());
+    TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                            instr->backend_config<GpuBackendConfig>());
+    const auto& collective_backend_config =
+        gpu_config.collective_backend_config();
+    EXPECT_EQ(collective_backend_config.backend(),
+              CollectiveBackendConfig::NVSHMEM);
+  }
+};
+
+TEST_F(CollectiveBackendAssignerTest, SmallAllReduceUsesNvshmem) {
+  absl::string_view kHloText = R"(
+    HloModule m
+
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      p0 = f32[1024,1024] parameter(0)
+      ROOT result = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(RunCollectiveBackendAssigner(module.get()), IsOkAndHolds(true));
+
+  const HloInstruction* all_reduce =
+      module->entry_computation()->root_instruction();
+  VerifyNvshmemBackendConfig(all_reduce);
+}
+
+TEST_F(CollectiveBackendAssignerTest, LargeAllReduceUsesDefault) {
+  absl::string_view kHloText = R"(
+    HloModule m
+
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      p0 = f32[8192,8192] parameter(0)
+      ROOT result = f32[8192,8192] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=2
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(RunCollectiveBackendAssigner(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(CollectiveBackendAssignerTest, SmallCollectivePermuteUsesNvshmem) {
+  absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = u32[1024,1024] parameter(0)
+      ROOT result = u32[1024,1024] collective-permute(p0), channel_id=3,
+        source_target_pairs={{0,1},{1,0}}
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(RunCollectiveBackendAssigner(module.get()), IsOkAndHolds(true));
+
+  const HloInstruction* permute =
+      module->entry_computation()->root_instruction();
+  VerifyNvshmemBackendConfig(permute);
+}
+
+TEST_F(CollectiveBackendAssignerTest, LargeCollectivePermuteUsesDefault) {
+  absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = u32[8192,8192] parameter(0)
+      ROOT result = u32[8192,8192] collective-permute(p0), channel_id=4,
+        source_target_pairs={{0,1},{1,0}}
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(RunCollectiveBackendAssigner(module.get()), IsOkAndHolds(false));
+}
+
+// End-to-end test that verifies the backend assigner works in a real execution
+// environment with multiple ranks.
 static const char* test_binary_name;
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
@@ -134,29 +235,11 @@ add {
 }
 
 ENTRY main {
-  // Small AllReduce (should use NVSHMEM)
   p0 = f32[1024,1024] parameter(0)
-  all-reduce-small = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
-
-  // Large AllReduce (should use DEFAULT)
-  p1 = f32[8192,8192] parameter(1)
-  all-reduce-large = f32[8192,8192] all-reduce(p1), to_apply=add, replica_groups={{0,1}}, channel_id=2
-
-  // Small CollectivePermute (should use NVSHMEM)
-  p2 = u32[1024,1024] parameter(2)
-  permute-small = u32[1024,1024] collective-permute(p2), channel_id=3,
-    source_target_pairs={{0,1},{1,0}}
-
-  // Large CollectivePermute (should use DEFAULT)
-  p3 = u32[8192,8192] parameter(3)
-  permute-large = u32[8192,8192] collective-permute(p3), channel_id=4,
-    source_target_pairs={{0,1},{1,0}}
-
-  ROOT tuple = (f32[1024,1024], f32[8192,8192], u32[1024,1024], u32[8192,8192]) tuple(
-    all-reduce-small, all-reduce-large, permute-small, permute-large)
+  ROOT result = f32[1024,1024] all-reduce(p0), to_apply=add, replica_groups={{0,1}}, channel_id=1
 })";
 
-TEST(CollectiveBackendAssignerTest, BackendAssignerTest) {
+TEST_F(CollectiveBackendAssignerTest, EndToEndTest) {
   RunCollectiveTest(kHloModule, 2);
 }
 
@@ -196,47 +279,32 @@ absl::Status CollectiveBackendAssignerTestBody(int rank_id, int num_ranks,
   TF_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
                       executable->GetHloModules());
   const auto* entry = hlo_modules[0]->entry_computation();
-  std::map<int64_t, CollectiveBackendConfig::CollectiveBackend>
-      expected_backends = {
-          {1, CollectiveBackendConfig::NVSHMEM},  // all-reduce-small
-          {2, CollectiveBackendConfig::DEFAULT},  // all-reduce-large
-          {3, CollectiveBackendConfig::NVSHMEM},  // permute-small
-          {4, CollectiveBackendConfig::DEFAULT},  // permute-large
-      };
+  const auto* all_reduce = entry->root_instruction();
 
-  for (const auto* instr : entry->instructions()) {
-    if (instr->opcode() == HloOpcode::kAllReduceStart ||
-        instr->opcode() == HloOpcode::kCollectivePermuteStart) {
-      int64_t channel_id = instr->channel_id().value_or(-1);
-      auto it = expected_backends.find(channel_id);
-      if (it == expected_backends.end()) {
-        continue;
-      }
+  if (!all_reduce->has_backend_config()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "backend config is missing for %s", all_reduce->name()));
+  }
 
-      if (!instr->has_backend_config()) {
-        return absl::InvalidArgumentError(
-            absl::StrFormat("backend config is missing for %s", instr->name()));
-      }
+  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                      all_reduce->backend_config<GpuBackendConfig>());
+  const auto& collective_backend_config =
+      gpu_config.collective_backend_config();
 
-      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                          instr->backend_config<GpuBackendConfig>());
-      const auto& collective_backend_config =
-          gpu_config.collective_backend_config();
-
-      if (collective_backend_config.backend() != it->second) {
-        return absl::InvalidArgumentError(absl::StrFormat(
-            "backend config does not specify expected "
-            "backend for %s. Got: %s, Expected: %s",
-            instr->name(),
-            CollectiveBackendConfig_CollectiveBackend_Name(
-                collective_backend_config.backend()),
-            CollectiveBackendConfig_CollectiveBackend_Name(it->second)));
-      }
-    }
+  if (collective_backend_config.backend() != CollectiveBackendConfig::NVSHMEM) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("backend config does not specify expected backend for "
+                        "%s. Got: %s, Expected: %s",
+                        all_reduce->name(),
+                        CollectiveBackendConfig_CollectiveBackend_Name(
+                            collective_backend_config.backend()),
+                        CollectiveBackendConfig_CollectiveBackend_Name(
+                            CollectiveBackendConfig::NVSHMEM)));
   }
 
   return absl::OkStatus();
 }
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

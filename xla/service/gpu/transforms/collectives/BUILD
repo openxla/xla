@@ -95,6 +95,8 @@ xla_test(
         "//xla/ffi:ffi_api",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
