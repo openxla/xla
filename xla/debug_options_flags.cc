@@ -272,7 +272,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
 
-  opts.set_xla_gpu_use_memcpy_local_p2p(false);
+  opts.set_xla_gpu_use_memcpy_local_p2p(true);
 
   opts.set_xla_reduce_window_rewrite_base_length(16);
 
