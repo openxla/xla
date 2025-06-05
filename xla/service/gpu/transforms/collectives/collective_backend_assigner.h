@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 
 namespace xla {

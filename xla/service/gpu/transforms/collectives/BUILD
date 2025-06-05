@@ -58,7 +58,6 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/pjrt/gpu:gpu_topology",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
