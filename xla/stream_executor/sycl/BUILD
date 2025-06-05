@@ -97,6 +97,7 @@ cc_library(
         "sycl-only",
     ],
     deps = [
+        ":sycl_platform_id",
         "//xla:comparison_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -104,6 +105,7 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:gpu_solver_context",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor/platform:platform_object_registry",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/memory",

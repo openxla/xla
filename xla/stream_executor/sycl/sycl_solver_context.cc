@@ -24,6 +24,8 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu_solver_context.h"
+#include "xla/stream_executor/platform/platform_object_registry.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -45,5 +47,10 @@ SyclSolverContext::~SyclSolverContext() {
   LOG(ERROR) << "GpuSolverDestroy: "
              << absl::UnimplementedError("Unimplemented");
 }
+
+STREAM_EXECUTOR_REGISTER_OBJECT_STATICALLY(SyclSolverContextFactory,
+                                           GpuSolverContextFactory,
+                                           sycl::kSyclPlatformId,
+                                           SyclSolverContext::Create);
 
 }  // namespace stream_executor

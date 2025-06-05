@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHER_UTILS_H_
-#define XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHER_UTILS_H_
+#ifndef XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHING_H_
+#define XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHING_H_
 
-#include "absl/container/flat_hash_set.h"
+#include <vector>
+
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_mappings.h"
@@ -27,13 +28,17 @@ namespace hlo_diff {
 // Find optimal matches between the left and right instruction set.
 // The goal is to establish a mapping between corresponding instructions from
 // the 'left_instructions' and 'right_instructions' sets, all of the same type.
+// The instructions are first matched by node properties like shape, metadata,
+// etc. If 'map_by_position' is set to true, the left unmatched instructions
+// will try to be matched by position one by one if they share the same size.
 void MatchSameTypeInstructions(
     const HloGumgraph& left_graph, const HloGumgraph& right_graph,
-    const absl::flat_hash_set<const HloInstructionNode*>& left_instructions,
-    const absl::flat_hash_set<const HloInstructionNode*>& right_instructions,
-    HloGumgraphMappings& mappings, const MatcherType& matcher_type);
+    const std::vector<const HloInstructionNode*>& left_instructions,
+    const std::vector<const HloInstructionNode*>& right_instructions,
+    HloGumgraphMappings& mappings, const MatcherType& matcher_type,
+    bool map_by_position = false);
 
 }  // namespace hlo_diff
 }  // namespace xla
 
-#endif  // XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHER_UTILS_H_
+#endif  // XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_BIPARTITE_MATCHING_H_
