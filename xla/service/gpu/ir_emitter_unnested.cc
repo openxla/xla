@@ -1861,16 +1861,14 @@ absl::Status IrEmitterUnnested::EmitReplicaOrPartitionId(
   return absl::OkStatus();
 }
 
-inline bool IsNvshmemCollective(const HloInstruction* instr) {
-  bool is_nvshmem_collective = false;
+static bool IsNvshmemCollective(const HloInstruction* instr) {
   if (instr->has_backend_config()) {
     auto gpu_config = instr->backend_config<GpuBackendConfig>();
     const CollectiveBackendConfig& backend_config =
         gpu_config.value().collective_backend_config();
-    is_nvshmem_collective =
-        backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
+    return backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
   }
-  return is_nvshmem_collective;
+  return false;
 }
 
 absl::Status IrEmitterUnnested::EmitCollectivePermute(

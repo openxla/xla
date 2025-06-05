@@ -62,8 +62,6 @@ class NvshmemCollectivePermuteStartThunk : public NvshmemCollectiveThunk {
   const NvshmemP2PConfig config_;
   const std::vector<CollectiveThunk::Buffer> buffers_;
   const bool p2p_memcpy_enabled_ = false;
-  absl::Mutex barrier_mutex_;
-  std::map<int64_t, std::unique_ptr<se::Event>> receiver_barrier_events_;
 };
 
 // Thunk that performs a NVSHMEM-based collective permute done operation.

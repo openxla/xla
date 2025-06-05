@@ -168,11 +168,11 @@ absl::Status RunCollectivePermute(
   std::optional<int64_t> target_id = source_target.target;
 
   std::vector<se::DeviceMemoryBase> src_addrs, dest_addrs;
-  std::transform(
-      buffers.begin(), buffers.end(), std::back_inserter(src_addrs),
+  absl::c_transform(
+      buffers, std::back_inserter(src_addrs),
       [](const DeviceBufferPair& buffer) { return buffer.source_buffer; });
-  std::transform(
-      buffers.begin(), buffers.end(), std::back_inserter(dest_addrs),
+  absl::c_transform(
+      buffers, std::back_inserter(dest_addrs),
       [](const DeviceBufferPair& buffer) { return buffer.destination_buffer; });
 
   VLOG(3) << absl::StreamFormat("%s : id = %d, source_id = %d, target_id = %d",
