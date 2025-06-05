@@ -87,8 +87,6 @@ class CopyFusionTest : public HloHardwareIndependentTestBase {
     HloComputation::Builder fusion_builder("fusion");
     HloInstruction* param = fusion_builder.AddInstruction(
         HloInstruction::CreateParameter(0, shape, "param"));
-    HloInstruction* neg = fusion_builder.AddInstruction(
-        HloInstruction::CreateUnary(shape, HloOpcode::kNegate, param));
     HloComputation* fusion_computation =
         module->AddEmbeddedComputation(fusion_builder.Build());
 
