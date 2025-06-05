@@ -123,11 +123,21 @@ absl::StatusOr<bool> CopyFusion::DoCopyFusion(HloComputation* computation) {
          dynamic_update_slices.size() == root->shape().tuple_shapes().size())) {
       continue;
     }
+
+    int64_t num_outputs =
+        hlo->IsMultiOutputFusion() ? root->operand_count() : int64_t{1};
+    int64_t total_outputs = num_outputs + copies.size();
+
+    if (total_outputs > MaxOperandsAndOutputsPerFusion()) {
+      VLOG(1) << "Skipping fusion as it would exceed "
+                 "MaxOperandsAndOutputsPerFusion(): "
+              << total_outputs << " > " << MaxOperandsAndOutputsPerFusion();
+      continue;
+    }
+
     changed = true;
 
     HloInstruction::InstructionVector tuple_elements;
-    int64_t num_outputs =
-        hlo->IsMultiOutputFusion() ? root->operand_count() : int64_t{1};
     tuple_elements.reserve(copies.size() + num_outputs);
     if (hlo->IsMultiOutputFusion()) {
       for (HloInstruction* operand : root->operands()) {
