@@ -300,6 +300,7 @@ class ExecutableBuildOptions {
     key_value_store_ = kv_store;
   }
 
+  // Number of devices in a fast-interconnect domain, i.e. a slice.
   int64_t slice_size() const { return slice_size_; }
   void set_slice_size(int64_t slice_size) { slice_size_ = slice_size; }
 
