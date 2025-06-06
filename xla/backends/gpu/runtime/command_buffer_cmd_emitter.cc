@@ -345,6 +345,7 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       } else {
         // If there control dependencies between these thunks, we will create an
         // empty command act as dependency nodes.
+        VLOG(0) << "Add empty command for asyndone synchronization";
         return append(absl::StatusOr<Command>(std::make_unique<EmptyCmd>(
             thunk.execution_stream_id(), resources)));
       }

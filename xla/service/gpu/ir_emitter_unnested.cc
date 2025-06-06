@@ -185,58 +185,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-std::vector<const HloInstruction*> GetRealDependencyInstructions(
-    const HloInstruction* instr) {
-  std::vector<const HloInstruction*> real_deps;
-  switch (instr->opcode()) {
-    case HloOpcode::kAllGatherDone:
-    case HloOpcode::kAllGatherStart:
-    case HloOpcode::kAllReduceDone:
-    case HloOpcode::kAllReduceStart:
-    case HloOpcode::kAsyncDone:
-    case HloOpcode::kAsyncStart:
-    case HloOpcode::kCall:
-    case HloOpcode::kCollectivePermuteDone:
-    case HloOpcode::kCollectivePermuteStart:
-    case HloOpcode::kConditional:
-    case HloOpcode::kConstant:
-    case HloOpcode::kCustomCall:
-    case HloOpcode::kFusion:
-    case HloOpcode::kCopy:
-    case HloOpcode::kInfeed:
-    case HloOpcode::kOutfeed:
-    case HloOpcode::kPartitionId:
-    case HloOpcode::kFft:
-    case HloOpcode::kRecv:
-    case HloOpcode::kRecvDone:
-    case HloOpcode::kReplicaId:
-    case HloOpcode::kRngGetAndUpdateState:
-    case HloOpcode::kSend:
-    case HloOpcode::kSendDone:
-    case HloOpcode::kSort:
-    case HloOpcode::kWhile:
-    case HloOpcode::kCopyStart:
-    case HloOpcode::kCopyDone:
-      return {instr};
-    case HloOpcode::kAddDependency:
-    case HloOpcode::kAfterAll:
-    case HloOpcode::kTuple:
-      for (const HloInstruction* operand : instr->operands()) {
-        auto deps = GetRealDependencyInstructions(operand);
-        real_deps.insert(real_deps.end(), deps.begin(), deps.end());
-      }
-      return real_deps;
-    case HloOpcode::kBitcast:
-    case HloOpcode::kGetTupleElement: {
-      auto deps = GetRealDependencyInstructions(instr->operand(0));
-      real_deps.insert(real_deps.end(), deps.begin(), deps.end());
-    }
-      return real_deps;
-    default:
-      return {};
-  }
-}
-
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
@@ -2282,6 +2230,60 @@ static const HloInstruction* FindCanonicalSendRecvStartOp(
   return canonical_start_op;
 }
 
+std::vector<const HloInstruction*> GetRealDependencyInstructions(
+    const HloInstruction* instr) {
+  std::vector<const HloInstruction*> real_deps;
+  switch (instr->opcode()) {
+    case HloOpcode::kSend:
+    case HloOpcode::kSendDone:
+    case HloOpcode::kRecv:
+    case HloOpcode::kRecvDone:
+      return {FindCanonicalSendRecvStartOp(instr)};
+    case HloOpcode::kAllGatherDone:
+    case HloOpcode::kAllReduceDone:
+    case HloOpcode::kAsyncDone:
+    case HloOpcode::kCollectivePermuteDone:
+    case HloOpcode::kCopyDone:
+      return {instr->operand(0)};
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kCall:
+    case HloOpcode::kConditional:
+    case HloOpcode::kConstant:
+    case HloOpcode::kCustomCall:
+    case HloOpcode::kFusion:
+    case HloOpcode::kCopy:
+    case HloOpcode::kInfeed:
+    case HloOpcode::kOutfeed:
+    case HloOpcode::kPartitionId:
+    case HloOpcode::kFft:
+    case HloOpcode::kReplicaId:
+    case HloOpcode::kRngGetAndUpdateState:
+    case HloOpcode::kSort:
+    case HloOpcode::kWhile:
+    case HloOpcode::kCopyStart:
+      return {instr};
+    case HloOpcode::kAddDependency:
+    case HloOpcode::kAfterAll:
+    case HloOpcode::kTuple:
+      for (const HloInstruction* operand : instr->operands()) {
+        auto deps = GetRealDependencyInstructions(operand);
+        real_deps.insert(real_deps.end(), deps.begin(), deps.end());
+      }
+      return real_deps;
+    case HloOpcode::kBitcast:
+    case HloOpcode::kGetTupleElement: {
+      auto deps = GetRealDependencyInstructions(instr->operand(0));
+      real_deps.insert(real_deps.end(), deps.begin(), deps.end());
+    }
+      return real_deps;
+    default:
+      return {};
+  }
+}
+
 absl::Status IrEmitterUnnested::EmitCollectiveGroupStartThunk(
     const HloInstruction* instr) {
   emit_group_thunks_ = true;
@@ -3005,6 +3007,10 @@ absl::Status IrEmitterUnnested::EmitHloComputation(
               instr_to_thunk.contains(real_predecessor)) {
             instr_to_thunk[real_successor]->add_control_predecessor(
                 instr_to_thunk[real_predecessor]);
+            VLOG(3) << "Add thunk control dependency for predecessor:  "
+                    << instr_to_thunk[real_predecessor]->ToString(0)
+                    << " successor: "
+                    << instr_to_thunk[real_successor]->ToString(0);
           }
         }
       }
