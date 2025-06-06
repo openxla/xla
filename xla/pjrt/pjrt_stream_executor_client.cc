@@ -87,6 +87,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -1048,35 +1049,35 @@ PjRtStreamExecutorClient::BufferFromHostLiteral(const LiteralSlice& literal,
   // usage holds have gone away.
   // TODO(misard) assess if it would be preferable to introduce a heuristic to
   // put the transfer into the calling thread for small literals.
-  auto transfer_h2d = [local_client = client(), transfer_manager, local_device,
-                       device_memory = device_buffer->device_memory(), device,
-                       event, literal, py_buffer{py_buffer.get()},
-                       on_device_shape{
-                           py_buffer->on_device_shape()}]() mutable {
-    // This function uses TF_CHECK_OK and value() since we have no way
-    // to report failures from a callback. However, the operations here are
-    // unlikely to fail and not recoverable even if we were to fail: DMAs to
-    // memory that has already been allocated, and a possible Event
-    // allocation.
+  auto transfer_h2d =
+      [local_client = client(), transfer_manager, local_device,
+       device_memory = device_buffer->device_memory(), device, event, literal,
+       py_buffer{py_buffer.get()},
+       on_device_shape{py_buffer->on_device_shape()}]() mutable {
+        // This function uses TF_CHECK_OK and value() since we have no way
+        // to report failures from a callback. However, the operations here are
+        // unlikely to fail and not recoverable even if we were to fail: DMAs to
+        // memory that has already been allocated, and a possible Event
+        // allocation.
 
-    se::Stream* h2d_stream = local_device->host_to_device_stream();
+        se::Stream* h2d_stream = local_device->host_to_device_stream();
 
-    ShapedBuffer buffer =
-        device_memory->AsShapedBuffer(device, on_device_shape);
-    TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(
-        h2d_stream, literal, buffer));
+        ShapedBuffer buffer =
+            device_memory->AsShapedBuffer(device, on_device_shape);
+        TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(
+            h2d_stream, literal, buffer));
 
-    TF_CHECK_OK(
-        AddDestinationBufferSynchronization(local_device, event, h2d_stream));
+        TF_CHECK_OK(AddDestinationBufferSynchronization(local_device, event,
+                                                        h2d_stream));
 
-    local_device->ThenRelease(h2d_stream, device_memory).IgnoreError();
+        local_device->ThenRelease(h2d_stream, device_memory).IgnoreError();
 
-    // This can sometimes catch the case where the literal memory has been
-    // freed before the H2D transfer was issued.
-    h2d_stream->RefreshStatus()
-        .IgnoreError();  // Can return error::Unimplemented
-    QCHECK(h2d_stream->ok());
-  };
+        // This can sometimes catch the case where the literal memory has been
+        // freed before the H2D transfer was issued.
+        h2d_stream->RefreshStatus()
+            .IgnoreError();  // Can return error::Unimplemented
+        QCHECK(h2d_stream->ok());
+      };
   thread_pool()->Schedule(WrapClosureAsCopyable(std::move(transfer_h2d)));
   RecordUsage(std::move(device_buffer), local_device, local_device, event,
               local_device->host_to_device_stream());
@@ -1300,9 +1301,7 @@ PjRtStreamExecutorBuffer::PjRtStreamExecutorBuffer(
       device_(tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)),
       memory_space_(memory_space) {}
 
-PjRtStreamExecutorBuffer::~PjRtStreamExecutorBuffer() {
-  Delete();
-}
+PjRtStreamExecutorBuffer::~PjRtStreamExecutorBuffer() { Delete(); }
 
 absl::StatusOr<tsl::RCReference<RawSEDeviceMemory>>
 PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
@@ -1356,7 +1355,7 @@ PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
             }
           };
       for (const auto& stream_and_event : events) {
-        VLOG(2)
+        VLOG(4)
             << "Checking whether need to wait for stream_and_event: stream: "
             << stream_and_event.stream
             << "; event: " << stream_and_event.event.get()
@@ -1372,7 +1371,7 @@ PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
         }
       }
       for (const auto& definition_event : device_buffer->definition_events()) {
-        VLOG(2) << "Checking whether need to wait for definition_event: "
+        VLOG(4) << "Checking whether need to wait for definition_event: "
                 << definition_event.get() << "; is_predetermined_error: "
                 << definition_event->IsPredeterminedError();
         // Here we wait for the definition events to complete on block_stream as
@@ -1381,7 +1380,7 @@ PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
             definition_event);
       }
       if (!events_to_wait_for_in_a_different_thread.empty()) {
-        VLOG(1) << "Going to wait for "
+        VLOG(3) << "Going to wait for "
                 << events_to_wait_for_in_a_different_thread.size()
                 << " events in a different thread.";
         // We always use the cleanup_thread instead of using the
@@ -1415,7 +1414,7 @@ PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
 }
 
 void PjRtStreamExecutorBuffer::Delete() {
-  VLOG(1) << "PjRtStreamExecutorBuffer::Delete";
+  VLOG(3) << "PjRtStreamExecutorBuffer::Delete";
 
   // When wait_for_reads_to_complete is false, Release should never fail.
   //
@@ -1445,7 +1444,7 @@ PjRtFuture<> PjRtStreamExecutorBuffer::LazyToLiteral(
 }
 
 PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
-  VLOG(1) << "PjRtStreamExecutorBuffer::ToLiteral";
+  VLOG(3) << "PjRtStreamExecutorBuffer::ToLiteral";
   if (IsEmptyTuple()) {
     return PjRtFuture<>(InvalidArgument("ToLiteral called on empty tuple"));
   }
@@ -1603,7 +1602,7 @@ PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
       []() {
         tsl::profiler::TraceMeProducer traceme(
             "PjRtStreamExecutorBuffer::ToLiteral");
-        VLOG(1) << "PjRtStreamExecutorBuffer::ToLiteral";
+        VLOG(3) << "PjRtStreamExecutorBuffer::ToLiteral";
         return PjRtFutureHelpers::ProfilingKeys(
             {/*traceme_context_id =*/traceme.GetContextId()});
       },
@@ -1681,7 +1680,7 @@ PjRtStreamExecutorBuffer::CopyToDeviceHelper(
     tsl::profiler::TraceMe traceme(
         "PjRtStreamExecutorBuffer::CopyToDeviceHelper::async_copy_to_"
         "device");
-    VLOG(1)
+    VLOG(3)
         << "PjRtStreamExecutorBuffer::CopyToDeviceHelper::async_copy_to_device";
 
     absl::Status defined_status = src_definition_events[0]->GetDefinedStatus();
@@ -1820,7 +1819,7 @@ PjRtStreamExecutorBuffer::CopyToMemorySpace(PjRtMemorySpace* dst_memory_space) {
 
 void PjRtStreamExecutorBuffer::CopyToRemoteDevice(
     PjRtFuture<std::string> serialized_descriptor, RemoteSendCallback on_done) {
-  VLOG(1) << "PjRtStreamExecutorBuffer::CopyToRemoteDevice";
+  VLOG(3) << "PjRtStreamExecutorBuffer::CopyToRemoteDevice";
   auto desc = serialized_descriptor.Await();
   if (desc.ok()) {
     client_->CopyToRemoteDevice(this, *desc, std::move(on_done));
@@ -1904,7 +1903,7 @@ PjRtFuture<> PjRtStreamExecutorBuffer::GetReadyFuture() {
       []() {
         tsl::profiler::TraceMeProducer traceme(
             "PjRtStreamExecutorBuffer::Await");
-        VLOG(1) << "PjRtStreamExecutorBuffer::Await";
+        VLOG(3) << "PjRtStreamExecutorBuffer::Await";
         return PjRtFutureHelpers::ProfilingKeys(
             {/*traceme_context_id=*/traceme.GetContextId()});
       },
@@ -2727,12 +2726,53 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
         }));
   }
 
+  VLOG(1) << "Start calling RunAsync for "
+          << executables_[executable_idx]->executable()->module().name()
+          << ", device=" << device->DebugString()
+          << ", run_id=" << run_options.run_id().ToInt();
+
+  if (VLOG_IS_ON(2)) {
+    auto executable_name =
+        executables_[executable_idx]->executable()->module().name();
+    absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+        [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
+          VLOG(2) << "Start device execution for " << executable_name
+                  << ", launch_id: " << launch_id
+                  << ", device: " << device->DebugString();
+        });
+    if (!host_callback_status.ok()) {
+      LOG(WARNING)
+          << "Failed to do host callback for start device execution for "
+          << executable_name << ", status = " << host_callback_status;
+    }
+  }
+
   absl::StatusOr<PjRtStreamExecutorExecutionOutput> result_buffer_or_status =
       client_->RunAsync(*executables_[executable_idx], device,
                         std::move(execution_inputs), run_options);
 
-  VLOG(1) << "Replica " << replica << " partition " << partition
-          << " completed; ok=" << result_buffer_or_status.ok();
+  if (VLOG_IS_ON(2)) {
+    auto executable_name =
+        executables_[executable_idx]->executable()->module().name();
+    absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+        [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
+          VLOG(2) << "Finish device execution for " << executable_name
+                  << ", launch_id: " << launch_id
+                  << ", device: " << device->DebugString();
+        });
+    if (!host_callback_status.ok()) {
+      LOG(WARNING)
+          << "Failed to do host callback for start device execution for "
+          << executable_name << ", status = " << host_callback_status;
+    }
+  }
+
+  VLOG(1) << "Finish calling RunAsync for "
+          << executables_[executable_idx]->executable()->module().name()
+          << ", device=" << device->DebugString()
+          << ", run_id=" << run_options.run_id().ToInt()
+          << ", replica=" << replica << ", partition=" << partition
+          << ", completed, ok=" << result_buffer_or_status.ok();
 
   if (!result_buffer_or_status.ok()) {
     return result_buffer_or_status.status();
@@ -3373,7 +3413,7 @@ absl::Status PjRtStreamExecutorClient::UpdateCompileOptionsInternal(
     }
     if (addressable_devices.empty()) {
       if (build_options.device_ordinal() < 0) {
-        build_options.set_device_ordinal(0);
+        build_options.set_device_ordinal(client()->default_device_ordinal());
       }
     } else {
       if (build_options.device_ordinal() < 0) {

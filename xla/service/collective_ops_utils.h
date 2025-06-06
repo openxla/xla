@@ -187,23 +187,23 @@ GetParticipatingDevicesGroups(const HloInstruction* collective);
 
 // Same as above, except that it returns the flattened id in the replica groups
 // instead of device id.
-absl::StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
+absl::StatusOr<CollectiveDeviceList> GetParticipatingFlattenedIdGroups(
     const DeviceAssignment& device_assignment,
-    absl::Span<const ReplicaGroup> replica_groups,
+    const CollectiveDeviceList& collective_device_list,
     CollectiveOpGroupMode group_mode);
 
 // Same as above, but take replica/partition count instead of device assignment.
-absl::StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
-    absl::Span<const ReplicaGroup> replica_groups,
+absl::StatusOr<CollectiveDeviceList> GetParticipatingFlattenedIdGroups(
+    const CollectiveDeviceList& collective_device_list,
     CollectiveOpGroupMode group_mode, int replica_count, int partition_count);
 
 // Same as above, with collective group mode determined by the collective
 // instruction.
-absl::StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
+absl::StatusOr<CollectiveDeviceList> GetParticipatingFlattenedIdGroups(
     const HloInstruction* hlo, const DeviceAssignment& device_assignment);
 
 // Same as above, used for cases where static_device_assignment is not present.
-absl::StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
+absl::StatusOr<CollectiveDeviceList> GetParticipatingFlattenedIdGroups(
     const HloInstruction* hlo, int replica_count, int partition_count);
 
 // Figures out which devices are participating in the collective subgroup.
@@ -262,16 +262,6 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction);
 // collective fusion) with channel_id.
 HloInstruction* IsOrHasCollectiveWithChannelId(HloInstruction* instruction);
 
-// Returns the cycle type and indices of the vertices that form cycles. For
-// example, GetCycleTypeAndIndices({{0,3},{1,0},{2,1},{3,2}}) returns
-// {kBackward, {0}}, since the communication pattern contains a backward cycle
-// with the cycle-inducing vertex at index 0 in the input source-target pairs
-// array. This function uses the assumption that, in practice, in forward
-// cycles, most edges will have the target replica ID greater than the source
-// replica ID except for the back edges that form cycles (similar logic applies
-// to backward cycles).
-std::pair<collective_permute_cycle::CycleType, std::set<int>>
-GetCycleTypeAndIndices(const std::vector<std::pair<int64_t, int64_t>>& pairs);
 
 // Key that identifies a particular Rendezvous object in our global hashtable.
 // This determines which calls to ExecuteOnStream communicate with each other.

@@ -37,8 +37,11 @@ tf_proto_library(
 tf_proto_library(
     name = "executable_metadata_proto",
     srcs = ["executable_metadata.proto"],
-    protodeps = [
-        "//xla/service:hlo_proto",
-    ],
+    visibility = ["//visibility:public"],
+)
+
+tf_proto_library(
+    name = "pjrt_value_type_proto",
+    srcs = ["pjrt_value_type.proto"],
     visibility = ["//visibility:public"],
 )

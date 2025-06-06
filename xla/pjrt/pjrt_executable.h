@@ -296,7 +296,7 @@ struct CompiledMemoryStats {
   int64_t host_alias_size_in_bytes = 0;
   int64_t host_temp_size_in_bytes = 0;
 
-  std::optional<xla::BufferAssignmentProto> buffer_assignment;
+  std::string serialized_buffer_assignment;
 
   std::string DebugString() const;
 

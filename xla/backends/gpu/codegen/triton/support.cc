@@ -151,7 +151,8 @@ CodegenDecision IsTritonSupportedConversion(
     return error_message();
   }
 
-  if (input == S4 && output != S8) {
+  if (input == S4 && output != S8 && output != F16 && output != BF16 &&
+      output != F32 && output != F64) {
     return error_message();
   }
   if (output == S4) {
@@ -655,13 +656,9 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     case HloOpcode::kGather:
     case HloOpcode::kPad:
     case HloOpcode::kRaggedDot:
-    case HloOpcode::kRecv:
-    case HloOpcode::kRecvDone:
     case HloOpcode::kReduceWindow:
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
-    case HloOpcode::kSend:
-    case HloOpcode::kSendDone:
     case HloOpcode::kSetDimensionSize:
     case HloOpcode::kSort:
       return true;

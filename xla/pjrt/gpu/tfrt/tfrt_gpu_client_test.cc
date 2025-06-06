@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
@@ -484,6 +485,7 @@ TEST(TfrtGpuClientTest, AcquireDonation) {
           std::move(device_buffer));
   auto tracked_device_buffer = std::make_unique<TrackedGpuDeviceBuffer>(
       std::move(buffer_async_value_ref),
+      tsl::MakeAvailableAsyncValueRef<GpuEvent>(),
       tsl::MakeAvailableAsyncValueRef<GpuEvent>());
   auto memory_space = device->default_memory_space().value();
   auto tfrt_buffer = std::make_unique<TfrtGpuBuffer>(

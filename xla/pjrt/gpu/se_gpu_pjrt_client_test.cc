@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -74,7 +73,9 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/profiling/test_util/mock_device_time_measurement.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -1227,11 +1228,18 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
                 ->local_device_state();
         if (local_device_state != nullptr) {
           se::StreamExecutor* executor = local_device_state->executor();
-          if (std::stoi(MakeComputeCapabilityString(
-                  &executor->GetDeviceDescription())) == 9) {
-            auto fabric_info = GetDeviceFabricInfo(executor->device_ordinal());
-            if (fabric_info.ok()) {
-              ADD_FAILURE();
+          if (auto* cc = std::get_if<se::CudaComputeCapability>(
+                  &executor->GetDeviceDescription().gpu_compute_capability())) {
+            if (cc->IsAtLeastHopper()) {
+              TF_ASSERT_OK_AND_ASSIGN(
+                  std::string fabric_info,
+                  GetDeviceFabricInfo(executor->device_ordinal()));
+              // Hopper devices have empty fabric info, MNNVL Blackwell devices
+              // have meaningful fabric info.
+              if (cc->IsHopper()) {
+                EXPECT_EQ(fabric_info,
+                          "00000000-0000-0000-0000-000000000000/0");
+              }
             }
           }
         }
@@ -1295,7 +1303,7 @@ TEST(StreamExecutorGpuClientTest, GetTopologyDescriptionWithGlobalDevicesTest) {
   }
 }
 
-TEST(TfrtCpuClientTest, CopyToMemorySpace) {
+TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
   for (auto* memory_space : client->memory_spaces()) {
@@ -1793,6 +1801,40 @@ TEST(StreamExecutorGpuClientTest,
   Shape result_shape = result_buffers[0]->on_device_shape();
   auto memory_space = result_shape.layout().memory_space();
   EXPECT_EQ(memory_space, 1);
+}
+
+TEST(StreamExecutorGpuClientTest, CollectiveMemorySpaceSmoke) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  xla::CompileOptions opts;
+  opts.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_enable_nccl_user_buffers(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto exe, CompileExecutable(kCollectiveMemorySpaceOutput, *client, opts));
+
+  std::vector<int32_t> data{1, 2, 3, 4};
+  Shape shape = ShapeUtil::MakeShapeWithDenseLayout(S32, {1, 4}, {1, 0});
+  shape.mutable_layout()->set_memory_space(Layout::kDefaultMemorySpace);
+  auto* device = client->addressable_devices()[0];
+  TF_EXPECT_OK(device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto input,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, *device->default_memory_space(),
+          /*device_layout=*/nullptr));
+  EXPECT_EQ(input->memory_space()->kind(), "device");
+
+  TF_ASSERT_OK_AND_ASSIGN(auto results,
+                          exe->Execute({{input.get()}}, ExecuteOptions()));
+  auto& buf = results[0][0];
+
+  // Override default memory space to collective memory space.
+  EXPECT_EQ(buf->on_device_shape().layout().memory_space(),
+            gpu::kCollectiveMemorySpaceColor);
 }
 
 TEST(StreamExecutorGpuClientTest,

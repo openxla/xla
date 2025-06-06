@@ -66,7 +66,7 @@ namespace xla {
 
     absl::flat_hash_map<int64_t, HloInstruction*> id_to_instruction;
     for (HloInstruction* instruction : computation->instructions()) {
-      id_to_instruction[instruction->unique_id()] = instruction;
+      id_to_instruction[instruction->unique_id_64_bits()] = instruction;
     }
 
     HloInstructionSequence& sequence =
@@ -121,9 +121,8 @@ HloInstructionSequence& HloSchedule::GetOrCreateSequence(
     execution_threads_[computation->unique_id()] =
         std::string(computation->execution_thread());
     return sequences_[computation->unique_id()];
-  } else {
-    return it->second;
   }
+  return it->second;
 }
 
 const HloInstructionSequence& HloSchedule::sequence(
@@ -135,13 +134,14 @@ absl::Status HloSchedule::UpdateComputationSchedule(
     const HloComputation* computation) {
   // Map from unique ID to HloInstruction pointer for instructions in the
   // computation.
-  absl::flat_hash_map<int, HloInstruction*> id_to_instruction;
+  absl::flat_hash_map<int64_t, HloInstruction*> id_to_instruction;
   for (HloInstruction* instruction : computation->instructions()) {
-    InsertOrDie(&id_to_instruction, instruction->unique_id(), instruction);
+    InsertOrDie(&id_to_instruction, instruction->unique_id_64_bits(),
+                instruction);
   }
 
   // Set of all HloInstructions in the schedule.
-  absl::flat_hash_set<int> ids_in_schedule;
+  absl::flat_hash_set<int64_t> ids_in_schedule;
   for (int id : sequences_.at(computation->unique_id()).ids()) {
     InsertOrDie(&ids_in_schedule, id);
   }
@@ -162,7 +162,7 @@ absl::Status HloSchedule::UpdateComputationSchedule(
   std::queue<HloInstruction*> worklist;
 
   for (HloInstruction* instruction : computation->instructions()) {
-    if (!ids_in_schedule.contains(instruction->unique_id())) {
+    if (!ids_in_schedule.contains(instruction->unique_id_64_bits())) {
       // This is a newly added instruction which is not in the schedule.
       if (instruction->operands().empty()) {
         worklist.push(instruction);
@@ -204,7 +204,7 @@ absl::Status HloSchedule::UpdateComputationSchedule(
   };
 
   schedule_worklist();
-  for (int id : sequences_.at(computation->unique_id()).ids()) {
+  for (int64_t id : sequences_.at(computation->unique_id()).ids()) {
     auto it = id_to_instruction.find(id);
     if (it == id_to_instruction.end()) {
       // This instruction in the schedule is no longer in the module. Do not add

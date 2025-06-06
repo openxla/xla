@@ -1132,8 +1132,6 @@ class HloTransposeInstruction : public HloDimensionsInstruction {
  public:
   explicit HloTransposeInstruction(const Shape& shape, HloInstruction* operand,
                                    absl::Span<const int64_t> dimensions);
-  // Returns whether this instruction does a rank-2 transposition.
-  bool IsRank2Transpose() const;
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kTranspose;
@@ -2096,6 +2094,16 @@ class HloCustomCallInstruction : public HloCallableInstruction {
                            absl::Span<const Shape> operand_shapes_with_layout,
                            CustomCallApiVersion api_version);
 
+  // Constructor for a custom call with constrained layout and a to_apply
+  // computation. 'shape' and 'operands_with_layout' must all have layouts.
+  HloCustomCallInstruction(const Shape& shape,
+                           absl::Span<HloInstruction* const> operands,
+                           HloComputation* to_apply,
+                           absl::string_view custom_call_target,
+                           std::string opaque,
+                           absl::Span<const Shape> operand_shapes_with_layout,
+                           CustomCallApiVersion api_version);
+
   // Constructor for a custom call with a to_apply computation.
   HloCustomCallInstruction(const Shape& shape,
                            absl::Span<HloInstruction* const> operands,
@@ -2849,6 +2857,11 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
 
   RandomAlgorithm algorithm_;
 };
+
+inline constexpr absl::string_view kPinCustomCallTarget = "Pin";
+inline constexpr absl::string_view kUnpinCustomCallTarget = "Unpin";
+inline constexpr absl::string_view kCreateBufferCustomCallTarget =
+    "CreateBuffer";
 
 }  // namespace xla
 

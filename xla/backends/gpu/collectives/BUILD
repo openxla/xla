@@ -3,7 +3,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -239,6 +239,7 @@ cc_library(
         "//xla:util",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
     ] + if_cuda_is_configured([
@@ -391,6 +392,7 @@ cc_library(
         ":gpu_collectives",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
@@ -468,18 +470,20 @@ xla_test(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "nvshmem_collectives_test",
     srcs = ["nvshmem_collectives_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
+    backend_tags = {"gpu": [
+        "multi_gpu_h100",
         "no_oss",
+        "noasan",
         "nomsan",
-        "notap",  # TODO(b/399931591): Re-enable once flakiness is resolved.
-    ] + if_google(google_value = ["requires-gpu-nvidia:2"]),  # This tag is not documented in OSS yet.
+    ]},
+    backends = ["gpu"],
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+    },
     deps = [
-        ":nvshmem_collectives",
         "//xla:debug_options_flags",
         "//xla:status_macros",
         "//xla/pjrt/distributed",
@@ -496,7 +500,7 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
         "@local_config_cuda//cuda:cuda_headers",
-    ],
+    ] + if_cuda_is_configured([":nvshmem_collectives"]),
 )
 
 cc_library(

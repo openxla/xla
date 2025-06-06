@@ -1,25 +1,19 @@
 # Integrates Shardy into the current XLA pipeline.
 
-load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
+load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility([
-        ":friends",
-        "//xla:internal",
-    ]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
-    packages = xla_internal(["..."]) + [
-        "//learning/deepmind/jax/ocean/...",
-        "//learning/deepmind/partir/...",
-        "//third_party/openxla/shardy/...",
-        "//third_party/py/jax/...",
+    includes = [
+        "//xla:friends",
     ],
 )
 
@@ -34,6 +28,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -149,6 +144,7 @@ xla_cc_binary(
         "//xla/service/spmd/shardy/sdy_round_trip/test_utils:stablehlo_to_hlo_to_stablehlo",
         "//xla/service/spmd/shardy/sdy_round_trip/test_utils:testing_pipeline",
         "//xla/service/spmd/shardy/stablehlo_round_trip:export_callback_custom_calls",
+        "//xla/service/spmd/shardy/stablehlo_round_trip:export_manual_reduction_collectives_cc",
         "//xla/service/spmd/shardy/stablehlo_round_trip:export_ops",
         "//xla/service/spmd/shardy/stablehlo_round_trip:export_shardings",
         "//xla/service/spmd/shardy/stablehlo_round_trip:shard_map_export",

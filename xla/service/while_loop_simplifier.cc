@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
@@ -311,6 +312,30 @@ static absl::StatusOr<HloInstruction*> RemoveDeadTupleIndices(
   return new_while_op;
 }
 
+namespace {
+
+bool AllWhileParamConsumersGte(const HloInstruction* while_op) {
+  HloComputation* while_cond = while_op->while_condition();
+  HloComputation* while_body = while_op->while_body();
+
+  for (const HloInstruction* instr : {while_body->parameter_instruction(0),
+                                      while_cond->parameter_instruction(0)}) {
+    for (const HloInstruction* user : instr->users()) {
+      if (user->opcode() != HloOpcode::kGetTupleElement) {
+        VLOG(2) << "Cowardly refusing to analyze while loop with "
+                << instr->ToString(HloPrintOptions().set_print_metadata(false))
+                << " used by non-GTE instruction "
+                << user->ToString(HloPrintOptions().set_print_metadata(false))
+                << " in computation " << instr->parent()->name();
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
   CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
 
@@ -348,18 +373,8 @@ absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
 
   // Bail if param0 of while_cond or while_body has users which aren't of type
   // get-tuple-element.
-  for (const HloInstruction* instr : {while_body->parameter_instruction(0),
-                                      while_cond->parameter_instruction(0)}) {
-    for (const HloInstruction* user : instr->users()) {
-      if (user->opcode() != HloOpcode::kGetTupleElement) {
-        VLOG(2) << "Cowardly refusing to analyze while loop with "
-                << instr->ToString(print_no_metadata)
-                << " used by non-GTE instruction "
-                << user->ToString(print_no_metadata) << " in computation "
-                << instr->parent()->name();
-        return false;
-      }
-    }
+  if (!AllWhileParamConsumersGte(while_op)) {
+    return false;
   }
 
   if (tuple_size == 0) {
@@ -639,6 +654,10 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
     return false;
   }
 
+  if (!AllWhileParamConsumersGte(while_op)) {
+    return false;
+  }
+
   bool changed = false;
   while (index_to_investigate < while_init->shape().tuple_shapes().size()) {
     if (!while_init->shape().IsTuple() ||
@@ -707,7 +726,7 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
         }
         if (body_elem->operand(0)->tuple_index() != i) {
           VLOG(2) << "Mismatch between body_elem->operand(0)->tuple_index() "
-                  << body_elem->tuple_index() << " i " << i;
+                  << body_elem->operand(0)->tuple_index() << " i " << i;
           continue;
         }
         if (pivot_body_elem->operand(0) == body_elem->operand(0)) {
