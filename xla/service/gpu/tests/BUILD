@@ -168,7 +168,6 @@ xla_cc_test(
         "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:literal_util",
-        "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
@@ -772,6 +771,7 @@ xla_test(
         "gpu_a100",
         "gpu_h100",
         "gpu_b200",
+        "gpu_amd_any",
     ],
     shard_count = 2,
     deps = [
