@@ -1190,20 +1190,23 @@ std::vector<HloComputation*> HloModule::MakeComputationSorted(
   return result;
 }
 
-std::vector<HloComputation*> HloModule::MakeNonfusionComputations(
+std::vector<HloComputation*> HloModule::MakeNonfusionNoncompositeComputations(
     const absl::flat_hash_set<absl::string_view>& execution_threads) const {
   std::vector<HloComputation*> result =
       MakeComputationPostOrder(execution_threads);
-  result.erase(std::remove_if(
-                   result.begin(), result.end(),
-                   [](HloComputation* c) { return c->IsFusionComputation(); }),
+  result.erase(std::remove_if(result.begin(), result.end(),
+                              [](HloComputation* c) {
+                                return c->IsFusionComputation() ||
+                                       c->IsCompositeComputation();
+                              }),
                result.end());
   return result;
 }
 
-std::vector<HloComputation*> HloModule::MakeNonfusionComputationsSorted(
+std::vector<HloComputation*>
+HloModule::MakeNonfusionNoncompositeComputationsSorted(
     const absl::flat_hash_set<absl::string_view>& execution_threads) const {
-  auto result = MakeNonfusionComputations(execution_threads);
+  auto result = MakeNonfusionNoncompositeComputations(execution_threads);
   if (config().content_aware_computation_sorting()) {
     SortComputationsByContent(&result);
   }

@@ -97,14 +97,20 @@ absl::Status AnnotateNode(const CallGraphNode& node) {
       for (HloComputation* computation : instruction->called_computations()) {
         computation->SetFusionInstruction(instruction);
       }
+    } else if (instruction->opcode() == HloOpcode::kCall &&
+               instruction->is_composite()) {
+      instruction->to_apply()->SetCompositeInstruction(instruction);
     }
   }
 
   // Correctly handle dead code: if a fusion computation is no longer used, it
   // should not have a fusion instruction set.
-  if (node.callers().empty() &&
-      node.computation()->FusionInstruction() != nullptr) {
-    node.computation()->SetFusionInstruction(nullptr);
+  if (node.callers().empty()) {
+    if (node.computation()->FusionInstruction() != nullptr) {
+      node.computation()->SetFusionInstruction(nullptr);
+    } else if (node.computation()->CompositeInstruction() != nullptr) {
+      node.computation()->SetCompositeInstruction(nullptr);
+    }
   }
 
   return absl::OkStatus();

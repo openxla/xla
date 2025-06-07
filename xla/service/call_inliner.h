@@ -50,12 +50,12 @@ class CallInliner : public HloModulePass {
   // computation will be uniquified.
   explicit CallInliner(
       bool single_call_site = false, bool update_domain = false,
-      absl::flat_hash_set<std::string> composites_to_preserve = {},
+      absl::flat_hash_set<std::string> composites_to_inline = {},
       bool uniquify_channel_ids = false)
       : single_call_site_(single_call_site),
         update_domain_(update_domain),
         uniquify_channel_ids_(uniquify_channel_ids),
-        composites_to_preserve_(std::move(composites_to_preserve)) {}
+        composites_to_inline_(std::move(composites_to_inline)) {}
   ~CallInliner() override = default;
   absl::string_view name() const override { return "call-inliner"; }
 
@@ -76,7 +76,7 @@ class CallInliner : public HloModulePass {
   bool single_call_site_;
   bool update_domain_;
   bool uniquify_channel_ids_;
-  absl::flat_hash_set<std::string> composites_to_preserve_;
+  absl::flat_hash_set<std::string> composites_to_inline_;
 };
 
 }  // namespace xla

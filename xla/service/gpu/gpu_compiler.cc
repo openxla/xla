@@ -625,7 +625,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   pre_spmd_pipeline.AddPass<FlattenCallGraph>();
   pre_spmd_pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
+      /*composites_to_inline=*/absl::flat_hash_set<std::string>(),
       /*uniquify_channel_ids=*/debug_options.xla_ignore_channel_id());
   pre_spmd_pipeline.AddPass<ZeroSizedHloElimination>();
   pre_spmd_pipeline.AddPass<ConditionalCanonicalizer>();
@@ -776,7 +776,7 @@ absl::Status RunOptimizationPasses(
 
   pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
+      /*composites_to_inline=*/absl::flat_hash_set<std::string>(),
       /*uniquify_channel_ids=*/debug_options.xla_ignore_channel_id());
 
   pipeline.AddPass<StochasticConvertDecomposer>();
@@ -1705,7 +1705,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Inline back the calls which have better performance with cuBLAS.
   pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
+      /*composites_to_inline=*/absl::flat_hash_set<std::string>(),
       /*uniquify_channel_ids=*/debug_options.xla_ignore_channel_id());
   // TODO(tdanyluk): Apply CublasPadForGemms to the cuBLAS GEMMs generated
   // here for possibly better cuBLAS performance.

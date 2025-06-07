@@ -149,7 +149,8 @@ absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> GetCublasConfigs(
     se::StreamExecutor* stream_executor) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
 
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonfusionNoncompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (IsLegacyCublasMatmul(*instruction)) {
         TF_ASSIGN_OR_RETURN(configs, cublas_backend.GetSupportedConfigs(
@@ -167,7 +168,8 @@ absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> GetCublasLtConfigs(
     se::StreamExecutor* stream_executor) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
 
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonfusionNoncompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (IsCublasLtMatmul(*instruction) || IsCublasLtMatmulF8(*instruction)) {
         TF_ASSIGN_OR_RETURN(configs, cublaslt_backend.GetSupportedConfigs(
@@ -300,7 +302,7 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
 
   CallInliner call_inliner(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
+      /*composites_to_inline=*/absl::flat_hash_set<std::string>(),
       /*uniquify_channel_ids=*/true);
   TF_RETURN_IF_ERROR(call_inliner.Run(hlo_module).status());
 
@@ -309,7 +311,7 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                        target_config().device_description,
                                        /*rewrite_to_cublaslt=*/false));
     for (HloComputation* computation :
-         hlo_module->MakeNonfusionComputations()) {
+         hlo_module->MakeNonfusionNoncompositeComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         if (IsLegacyCublasMatmul(*instruction)) {
           TF_RETURN_IF_ERROR(cublas_backend_.ApplyConfig(*instruction, config));
@@ -325,7 +327,7 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                        target_config().device_description,
                                        /*rewrite_to_cublaslt=*/true));
     for (HloComputation* computation :
-         hlo_module->MakeNonfusionComputations()) {
+         hlo_module->MakeNonfusionNoncompositeComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         if (IsCublasLtMatmul(*instruction) ||
             IsCublasLtMatmulF8(*instruction)) {

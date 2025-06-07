@@ -347,7 +347,8 @@ class HloModule {
   std::vector<HloComputation*> MakeComputationSorted(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
-  // Gets the computations in this module which aren't for fusion nodes.
+  // Gets the computations in this module which are neither for fusion nodes nor
+  // for composite calls.
   //
   // Postcondition: All computations in the returned list have
   // !IsFusionComputation().
@@ -355,24 +356,25 @@ class HloModule {
   // Note: Callers can and do rely on the return value here being a *snapshot*
   // of the module's non-fusion computations -- that is, it's OK to add or
   // remove computations from a module while iterating over
-  // MakeNonfusionComputations().
-  std::vector<HloComputation*> MakeNonfusionComputations() const {
-    return MakeNonfusionComputations({});
+  // MakeNonfusionNoncompositeComputations().
+  std::vector<HloComputation*> MakeNonfusionNoncompositeComputations() const {
+    return MakeNonfusionNoncompositeComputations({});
   }
   // Same as above but only for specified `execution_threads`. Empty
   // `execution_threads` list means all execution threads are included.
-  std::vector<HloComputation*> MakeNonfusionComputations(
+  std::vector<HloComputation*> MakeNonfusionNoncompositeComputations(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
-  // Same as MakeNonfusionComputations() but sorting computations by content.
-  // Note that the sort is potentially expensive, so this should be used only if
-  // a consistent order is required.
-  std::vector<HloComputation*> MakeNonfusionComputationsSorted() const {
-    return MakeNonfusionComputationsSorted({});
+  // Same as MakeNonfusionNoncompositeComputations() but sorting computations by
+  // content. Note that the sort is potentially expensive, so this should be
+  // used only if a consistent order is required.
+  std::vector<HloComputation*> MakeNonfusionNoncompositeComputationsSorted()
+      const {
+    return MakeNonfusionNoncompositeComputationsSorted({});
   }
   // Same as above but only for specified `execution_threads`. Empty
   // `execution_threads` list means all execution threads are included.
-  std::vector<HloComputation*> MakeNonfusionComputationsSorted(
+  std::vector<HloComputation*> MakeNonfusionNoncompositeComputationsSorted(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
   // Returns a config for modifications in current module. If the config is
