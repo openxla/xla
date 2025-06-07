@@ -262,6 +262,9 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kCustomCall);
     CASE(kCustomKernel);
     CASE(kDynamicSlice);
+    CASE(kNvshmemCollectivePermute);
+    CASE(kNvshmemCollectivePermuteDone);
+    CASE(kNvshmemCollectivePermuteStart);
     CASE(kFft);
     CASE(kGemm);
     CASE(kGroupDone);
@@ -391,7 +394,7 @@ absl::StatusOr<ThunkProto> Thunk::ToProto() const {
   return proto;
 }
 
-absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
+absl::StatusOr<GpuCollectives * absl_nonnull> Thunk::GetGpuCollectives(
     CollectiveExecuteParams const& params) {
   if (params.collectives == nullptr) {
     return Internal("Collectives API is not provided");
