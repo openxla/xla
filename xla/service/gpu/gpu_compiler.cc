@@ -184,6 +184,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/algorithm_checker.h"
 #include "xla/service/gpu/transforms/async_wrapper.h"
+#include "xla/service/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
 #include "xla/service/gpu/transforms/collectives/all_gather_optimizer.h"
@@ -615,9 +616,26 @@ AlgebraicSimplifierOptions LayoutInsensitiveAlgebraicSimplifierOptions(
   return layout_insensitive_algsimp_opts;
 }
 
-absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
+absl::Status RunPreSPMDPartitionerPasses(
+    HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
+
+  // Convert block scaled dot composites to fusions (on Blackwell).
+  // Note: tile propagation implementation requires the debug option
+  // `xla_gpu_experimental_enable_subchannel_dequantisation_fusion` to be set.
+  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
+      &gpu_target_config.device_description.gpu_compute_capability());
+  bool enable_block_scaled_fusion =
+      cuda_cc != nullptr && cuda_cc->IsBlackwell() &&
+      debug_options
+          .xla_gpu_experimental_enable_subchannel_dequantisation_fusion();
+
+  pre_spmd_pipeline.AddPass<BlockScalingRewriter>(
+      /*allow_cudnn=*/enable_block_scaled_fusion &&
+      !debug_options.xla_gpu_experimental_disable_binary_libraries() &&
+      gpu_target_config.dnn_version_info >= se::dnn::VersionInfo(9, 7));
+
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
   pre_spmd_pipeline.AddPass<CuDnnCustomCallConverter>();
@@ -1394,7 +1412,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
           hlo_module->config(), gpu_target_config,
           GetAlgebraicSimplifierOptions(hlo_module->config()));
 
-  TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
+  TF_RETURN_IF_ERROR(
+      RunPreSPMDPartitionerPasses(hlo_module, gpu_target_config));
   TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
                                    layout_insensitive_algsimp_opts));
 
