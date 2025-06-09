@@ -388,7 +388,6 @@ def _download_and_extract_archive(repository_ctx, archive_info, distribution_pat
     repository_ctx.report_progress("Installing oneAPI Basekit to: %s" % distribution_path)
 
     archive_override = repository_ctx.getenv("oneAPI_ARCHIVE_OVERRIDE")
-
     if archive_override:
         repository_ctx.report_progress("Using overridden archive: %s" % archive_override)
         repository_ctx.extract(archive_override, distribution_path)
@@ -411,6 +410,7 @@ def _create_local_sycl_repository(repository_ctx):
     ]}
 
     bash_bin = get_bash_bin(repository_ctx)
+
     hermetic = repository_ctx.getenv("SYCL_BUILD_HERMETIC") == "1"
     if hermetic:
         oneapi_version = repository_ctx.getenv("ONEAPI_VERSION", "")
