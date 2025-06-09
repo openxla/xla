@@ -79,7 +79,7 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
     return false;
   }
 
-  return is_p2p() == other_nccl->is_p2p() &&
+  return is_p2p() == other_gpu->is_p2p() &&
          absl::c_all_of(devices(), [&](GlobalDeviceId id) {
            return absl::c_linear_search(other_gpu->devices(), id);
          });
