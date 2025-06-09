@@ -86,9 +86,6 @@ class GpuCliqueKey : public CliqueKey {
   // clique initialization.
   std::vector<GpuCliqueKey> GetSubKeys(int64_t nroots) const;
 
-  // Returns the stream kind for this clique key, stream kind will be used to
-  // specify what configuration to pass for each type of operation.
-
   // The number of participant devices that are local to the current process (in
   // multi-host environments this likely to be all devices on the same host).
   // This number should never be different in two cliques over the same sets of
