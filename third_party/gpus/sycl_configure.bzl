@@ -386,7 +386,7 @@ def _download_and_extract_archive(repository_ctx, archive_info, distribution_pat
 
     repository_ctx.report_progress("Installing oneAPI Basekit to: %s" % distribution_path)
 
-    archive_override = repository_ctx.os.environ.get("oneAPI_ARCHIVE_OVERRIDE")
+    archive_override = repository_ctx.getenv("oneAPI_ARCHIVE_OVERRIDE")
     if archive_override:
         repository_ctx.report_progress("Using overridden archive: %s" % archive_override)
         repository_ctx.extract(archive_override, distribution_path)
@@ -410,10 +410,10 @@ def _create_local_sycl_repository(repository_ctx):
 
     bash_bin = get_bash_bin(repository_ctx)
    
-    hermetic = repository_ctx.os.environ.get("SYCL_BUILD_HERMETIC") == "1"
+    hermetic = repository_ctx.getenv("SYCL_BUILD_HERMETIC") == "1"
     if hermetic:
-        oneapi_version = repository_ctx.os.environ.get("ONEAPI_VERSION", "")
-        os_id = repository_ctx.os.environ.get("OS", "")
+        oneapi_version = repository_ctx.getenv("ONEAPI_VERSION") or ""
+        os_id = repository_ctx.getenv("OS") or ""
         if not oneapi_version or not os_id:
             fail("ONEAPI_VERSION and OS must be set via --repo_env for hermetic build.")
         redist_info = sycl_redist.get(os_id, {}).get(oneapi_version, {}).get("sycl_dl_essential")
@@ -433,7 +433,7 @@ def _create_local_sycl_repository(repository_ctx):
           sycl_basekit_version_number = oneapi_version,
         )
     else:
-        install_path = repository_ctx.os.environ.get("SYCL_TOOLKIT_PATH", "") or "/opt/intel/oneapi/compiler/2025.1"
+        install_path = repository_ctx.getenv("SYCL_TOOLKIT_PATH") or "/opt/intel/oneapi/compiler/2025.1"
         repository_ctx.report_progress("Falling back to default SYCL path: %s" % install_path)
         sycl_config = _get_sycl_config(repository_ctx, bash_bin)
 
