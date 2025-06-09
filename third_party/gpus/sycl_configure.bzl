@@ -412,8 +412,8 @@ def _create_local_sycl_repository(repository_ctx):
    
     hermetic = repository_ctx.getenv("SYCL_BUILD_HERMETIC") == "1"
     if hermetic:
-        oneapi_version = repository_ctx.getenv("ONEAPI_VERSION") or ""
-        os_id = repository_ctx.getenv("OS") or ""
+        oneapi_version = repository_ctx.getenv("ONEAPI_VERSION","")
+        os_id = repository_ctx.getenv("OS","")
         if not oneapi_version or not os_id:
             fail("ONEAPI_VERSION and OS must be set via --repo_env for hermetic build.")
         redist_info = sycl_redist.get(os_id, {}).get(oneapi_version, {}).get("sycl_dl_essential")
