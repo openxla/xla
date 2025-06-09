@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -550,6 +551,43 @@ optional<int64_t> CheckedSubtract(int64_t a, int64_t b) {
   return result;
 }
 
+optional<int64_t> ParseLiteralAsScalarInt64(const Literal& literal) {
+  // First, find the scalar constant init that `i` is initialized to.
+  optional<int64_t> indvar_init_val =
+      LiteralUtil::LiteralAsScalarInt64(literal);
+  if (!indvar_init_val) {
+    VLOG(2) << "Pattern-match failed: unable to parse literal an int64_t: "
+            << literal.ToString();
+    return nullopt;
+  }
+  return indvar_init_val;
+}
+
+optional<int64_t> EvaluateInductionVariable(const HloInstruction* while_op,
+                                            const int64_t induction_var_idx) {
+  const HloInstruction* indvar_init_instr =
+      while_op->operand(0)->operand(induction_var_idx);
+  if (indvar_init_instr->IsConstant()) {
+    return ParseLiteralAsScalarInt64(
+        Cast<HloConstantInstruction>(indvar_init_instr)->literal());
+  }
+
+  // Now that we know the index of the induction variable, we can we can try to
+  // compute how many times the loop executes.  Start by computing the induction
+  // variable's initial value.
+  HloEvaluator evaluator(/*max_loop_iterations=*/0);
+  absl::StatusOr<Literal> indvar_init_result =
+      evaluator.Evaluate(TraceThroughCopyAndGteTupleChain(indvar_init_instr));
+  VLOG(2) << "indvar_init_result: " << indvar_init_result.status();
+  if (!indvar_init_result.ok()) {
+    VLOG(2) << "Couldn't evaluate induction variable init, "
+            << indvar_init_result.status() << ", "
+            << indvar_init_instr->ToString();
+    return nullopt;
+  }
+  return ParseLiteralAsScalarInt64(indvar_init_result.value());
+}
+
 optional<Range> MatchTrivialLoopRange(const HloInstruction* while_op) {
   std::optional<int64_t> indvar_tuple_idx =
       GetLoopInductionVarTupleIdx(while_op);
@@ -564,19 +602,13 @@ optional<Range> MatchLoopRangeWithKnownValues(
     const absl::flat_hash_map<const HloInstruction*, Range>& known_values) {
   const HloInstruction* indvar_init_instr =
       while_op->operand(0)->operand(induction_var_idx);
-  if (!indvar_init_instr->IsConstant()) {
-    return std::nullopt;
-  }
-
-  // First, find the scalar constant init that `i` is initialized to.
-  const Literal& indvar_init = indvar_init_instr->literal();
   optional<int64_t> indvar_init_val =
-      LiteralUtil::LiteralAsScalarInt64(indvar_init);
-  if (!indvar_init_val) {
-    VLOG(2) << "Pattern-match failed: induction variable init is not a "
-               "constant scalar representable as an int64_t: "
-            << indvar_init.ToString();
-    return nullopt;
+      EvaluateInductionVariable(while_op, induction_var_idx);
+  if (!indvar_init_val.has_value()) {
+    VLOG(2) << "Couldn't evaluate induction variable init, "
+            << indvar_init_instr->ToString()
+            << " associated with while op: " << while_op->name();
+    return std::nullopt;
   }
 
   // Check that `i` goes as `i += C` in the while body where C is a natural
@@ -723,9 +755,9 @@ optional<Range> MatchLoopRangeWithKnownValues(
   while_cond_bound_val.value() -= remainder;
 
   const int64_t init_bitwidth =
-      primitive_util::BitWidth(indvar_init.shape().element_type());
-  const bool init_is_signed =
-      primitive_util::IsSignedIntegralType(indvar_init.shape().element_type());
+      primitive_util::BitWidth(indvar_init_instr->shape().element_type());
+  const bool init_is_signed = primitive_util::IsSignedIntegralType(
+      indvar_init_instr->shape().element_type());
 
   const int64_t bound_bitwidth =
       primitive_util::BitWidth(while_cond_bound->shape().element_type());
@@ -743,17 +775,7 @@ optional<Range> MatchLoopRangeWithKnownValues(
 
 optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
                                             int64_t indvar_tuple_idx,
-                                            const Literal& indvar_init) {
-  // First, find the scalar constant init that `i` is initialized to.
-  optional<int64_t> indvar_init_val =
-      LiteralUtil::LiteralAsScalarInt64(indvar_init);
-  if (!indvar_init_val) {
-    VLOG(2) << "Pattern-match failed: induction variable init is not a "
-               "constant scalar representable as an int64_t: "
-            << indvar_init.ToString();
-    return nullopt;
-  }
-
+                                            const int64_t indvar_init_val) {
   // Check that `i` goes as `i += k` in the while body where k is a natural
   // number.
   auto* while_body = while_op->while_body();
@@ -844,7 +866,7 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
     VLOG(2) << "Pattern-match succeeded: loop condition is i < N: "
             << while_cond_root->ToString();
     optional<int64_t> trips =
-        CheckedSubtract(*while_cond_bound_val, *indvar_init_val);
+        CheckedSubtract(*while_cond_bound_val, indvar_init_val);
     if (trips) {
       const int64_t remainder = std::remainder(*trips, trip_count_step);
       const int64_t div = std::floor(*trips / trip_count_step);
@@ -873,7 +895,7 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
     VLOG(2) << "Pattern-match succeeded: loop condition is i <= N: "
             << while_cond_root->ToString();
     optional<int64_t> trips =
-        CheckedSubtract(*while_cond_bound_val, *indvar_init_val);
+        CheckedSubtract(*while_cond_bound_val, indvar_init_val);
     if (!trips) {
       VLOG(2) << "Pattern-match failed: Trip count exceeds INT64_MAX";
       return nullopt;
@@ -904,30 +926,23 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
   if (!indvar_tuple_idx) {
     return nullopt;
   }
-
-  // Now that we know the index of the induction variable, we can we can try to
-  // compute how many times the loop executes.  Start by computing the induction
-  // variable's initial value.
-  HloEvaluator evaluator(/*max_loop_iterations=*/0);
-  auto* while_init = while_op->operand(0);
-  auto* indvar_init = while_init->operand(*indvar_tuple_idx);
-  absl::StatusOr<Literal> indvar_init_result =
-      evaluator.Evaluate(TraceThroughCopyAndGteTupleChain(indvar_init));
-  VLOG(2) << "indvar_init_result: " << indvar_init_result.status();
-  if (!indvar_init_result.ok()) {
-    VLOG(2) << "Couldn't evaluate induction variable init, "
-            << indvar_init_result.status() << ", " << indvar_init->ToString();
+  optional<int64_t> indvar_init_val =
+      EvaluateInductionVariable(while_op, *indvar_tuple_idx);
+  if (!indvar_init_val.has_value()) {
+    VLOG(2) << "Couldn't evaluate induction variable init"
+            << " associated with while op: " << while_op->name();
     return nullopt;
   }
-  Literal indvar_iter_val = std::move(indvar_init_result).value();
 
   // First, try to pattern-match.
   if (auto trip_count = MatchTrivialLoopTripCount(while_op, *indvar_tuple_idx,
-                                                  indvar_iter_val)) {
+                                                  indvar_init_val.value())) {
     return trip_count;
   }
 
   // If our pattern-match failed, try brute-forcing the loop trip count.
+  auto indvar_iter_val = LiteralUtil::CreateR0(indvar_init_val.value());
+  HloEvaluator evaluator(/*max_loop_iterations=*/0);
   auto* while_body = while_op->while_body();
   auto* while_body_indvar_update =
       while_body->root_instruction()->operand(*indvar_tuple_idx);

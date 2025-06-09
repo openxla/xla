@@ -69,7 +69,7 @@ std::optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
 // `(N - K + 1) div C`, respectively.
 std::optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction *while_op,
                                                  int64_t indvar_tuple_idx,
-                                                 const Literal &indvar_init);
+                                                 const int64_t indvar_init_val);
 
 // Same as above, but returns the loop range, i.e., start (inclusive), end
 // (inclusive) and step instead of the trip count.
