@@ -39,36 +39,36 @@ class DotHandlerTest : public HloHardwareIndependentTestBase {
  public:
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_partitions,
-      int64_t max_windowed_einsum_iteration = 32,  // Default value
+      int64_t max_windowed_einsum_iteration = 32,         // Default value
       int64_t threshold_for_windowed_einsum_mib = 256) {  // Default value
     HloModuleConfig config = GetModuleConfigForTest(1, num_partitions);
     config.set_use_spmd_partitioning(true);
-    
+
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(
         threshold_for_windowed_einsum_mib);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
     config.set_debug_options(debug_options);
-    
+
     TF_ASSIGN_OR_RETURN(auto module,
                         ParseAndReturnVerifiedModule(hlo_module, config));
-    
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     pass.AddPass<ShardingPropagation>(/*is_spmd=*/true);
     pass.AddPass<StatefulRngSpmdPartitioner>(
         num_partitions,
-        /*num_replicas=*/1,
-        threshold_for_windowed_einsum_mib,
-        /*windowed_einsum_use_multiple_streams=*/debug_options.xla_gpu_multi_streamed_windowed_einsum(),
+        /*num_replicas=*/1, threshold_for_windowed_einsum_mib,
+        /*windowed_einsum_use_multiple_streams=*/
+        debug_options.xla_gpu_multi_streamed_windowed_einsum(),
         /*skip_checking_windowed_einsum_users=*/true,  // Skip user checking
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/max_windowed_einsum_iteration);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
-    
+
     TF_RETURN_IF_ERROR(pass.Run(module.get()).status());
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
@@ -88,18 +88,18 @@ class DotHandlerTest : public HloHardwareIndependentTestBase {
 TEST_F(DotHandlerTest, VerifyDefaultMaxWindowedEinsumIterationInPartitioner) {
   // Verify that StatefulRngSpmdPartitioner correctly sets the default
   // max_windowed_einsum_iteration when not explicitly provided
-  
+
   // Create partitioner without specifying max_windowed_einsum_iteration
   StatefulRngSpmdPartitioner partitioner_default(
       /*num_partitions=*/4,
       /*num_replicas=*/1,
       /*threshold_for_windowed_einsum_mib=*/0,
       /*windowed_einsum_use_multiple_streams=*/false);
-  
+
   // The default should be 32
   EXPECT_EQ(partitioner_default.options().max_windowed_einsum_iteration, 32)
       << "Default max_windowed_einsum_iteration should be 32";
-  
+
   // Create partitioner with explicit max_windowed_einsum_iteration
   const int64_t custom_max = 42;
   StatefulRngSpmdPartitioner partitioner_custom(
@@ -111,8 +111,9 @@ TEST_F(DotHandlerTest, VerifyDefaultMaxWindowedEinsumIterationInPartitioner) {
       /*disable_ag_rewrite_for_multiple_consumers=*/false,
       /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
       /*max_windowed_einsum_iteration=*/custom_max);
-  
-  EXPECT_EQ(partitioner_custom.options().max_windowed_einsum_iteration, custom_max)
+
+  EXPECT_EQ(partitioner_custom.options().max_windowed_einsum_iteration,
+            custom_max)
       << "Custom max_windowed_einsum_iteration should be respected";
 }
 
@@ -131,7 +132,7 @@ ENTRY main {
 }
 )";
 
-  // With contracting dims sharded and matching, windowed einsum for 
+  // With contracting dims sharded and matching, windowed einsum for
   // reduce-scatter pattern should respect max_windowed_einsum_iteration
   {
     TF_ASSERT_OK_AND_ASSIGN(
@@ -139,10 +140,12 @@ ENTRY main {
         PartitionComputation(hlo_string, /*num_partitions=*/4,
                              /*max_windowed_einsum_iteration=*/2,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
+
     // Should not create windowed einsum loop
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
-        << "Expected no While loops for contracting dims when max_iterations too low";
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+        << "Expected no While loops for contracting dims when max_iterations "
+           "too low";
   }
 
   {
@@ -151,10 +154,12 @@ ENTRY main {
         PartitionComputation(hlo_string, /*num_partitions=*/4,
                              /*max_windowed_einsum_iteration=*/4,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
+
     // Should create windowed einsum loop
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
-        << "Expected While loop for contracting dims when max_iterations allows";
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+        << "Expected While loop for contracting dims when max_iterations "
+           "allows";
   }
 }
 
@@ -180,10 +185,11 @@ ENTRY main {
         PartitionComputation(hlo_string, /*num_partitions=*/4,
                              /*max_windowed_einsum_iteration=*/3,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    // With batch dims matching and partitioned, and max_iterations < num_partitions,
-    // windowed einsum should be disabled
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+
+    // With batch dims matching and partitioned, and max_iterations <
+    // num_partitions, windowed einsum should be disabled
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
         << "Expected no While loops for batch dims when max_iterations too low";
   }
 }
@@ -191,7 +197,7 @@ ENTRY main {
 TEST_F(DotHandlerTest, DefaultMaxWindowedEinsumIterationWithReduceScatter) {
   // Test that the default max_windowed_einsum_iteration (32) works correctly
   // for reduce-scatter pattern
-  
+
   // Pattern with 16 partitions (should work with default)
   {
     absl::string_view hlo_string = R"(
@@ -205,17 +211,18 @@ ENTRY main {
     sharding={devices=[1,16]<=[16]}
 }
 )";
-    
+
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_partitions=*/16,
                              /*max_windowed_einsum_iteration=*/32,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
         << "Default should enable RS windowed einsum for 16 partitions";
   }
-  
+
   // Pattern with exactly 32 partitions (at the limit)
   {
     absl::string_view hlo_string = R"(
@@ -229,17 +236,19 @@ ENTRY main {
     sharding={devices=[1,32]<=[32]}
 }
 )";
-    
+
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_partitions=*/32,
                              /*max_windowed_einsum_iteration=*/32,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
-        << "Default should enable RS windowed einsum for exactly 32 partitions (at limit)";
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+        << "Default should enable RS windowed einsum for exactly 32 partitions "
+           "(at limit)";
   }
-  
+
   // Pattern with 64 partitions (should exceed default limit)
   {
     absl::string_view hlo_string = R"(
@@ -253,15 +262,17 @@ ENTRY main {
     sharding={devices=[1,64]<=[64]}
 }
 )";
-    
+
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_partitions=*/64,
                              /*max_windowed_einsum_iteration=*/32,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
-        << "Default should disable windowed einsum for 64 partitions (exceeds default limit)";
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+        << "Default should disable windowed einsum for 64 partitions (exceeds "
+           "default limit)";
   }
 }
 
@@ -286,21 +297,25 @@ ENTRY main {
         PartitionComputation(hlo_string, /*num_partitions=*/8,
                              /*max_windowed_einsum_iteration=*/0,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
         << "max_windowed_einsum_iteration=0 should disable windowed einsum";
   }
 
-  // Test with max_windowed_einsum_iteration = 1 (should disable for 8 partitions)
+  // Test with max_windowed_einsum_iteration = 1 (should disable for 8
+  // partitions)
   {
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_partitions=*/8,
                              /*max_windowed_einsum_iteration=*/1,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
-        << "max_windowed_einsum_iteration=1 should disable windowed einsum for 8 partitions";
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+        << "max_windowed_einsum_iteration=1 should disable windowed einsum for "
+           "8 partitions";
   }
 
   // Test with max_windowed_einsum_iteration = INT64_MAX (should enable)
@@ -310,12 +325,14 @@ ENTRY main {
         PartitionComputation(hlo_string, /*num_partitions=*/8,
                              /*max_windowed_einsum_iteration=*/INT64_MAX,
                              /*threshold_for_windowed_einsum_mib=*/0));
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
-        << "max_windowed_einsum_iteration=INT64_MAX should enable windowed einsum";
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+        << "max_windowed_einsum_iteration=INT64_MAX should enable windowed "
+           "einsum";
   }
 }
 
 }  // namespace
 }  // namespace spmd
-}  // namespace xla 
+}  // namespace xla

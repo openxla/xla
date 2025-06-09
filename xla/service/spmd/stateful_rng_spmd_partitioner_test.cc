@@ -245,7 +245,7 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     auto partitioner = std::make_unique<StatefulRngSpmdPartitioner>(
         /*num_partitions=*/4,
         /*num_replicas=*/1,
@@ -255,13 +255,13 @@ ENTRY main {
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/2);
-    
+
     HloModuleConfig config = GetModuleConfigForTest(1, 4);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_string, config));
-    
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -270,11 +270,16 @@ ENTRY main {
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     EXPECT_TRUE(pass.Run(module.get()).ok());
-    
-    // When windowed einsum is disabled, we should see an AllGather but no While loop
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
-        << "Expected no While loops when max_windowed_einsum_iteration is too low";
-    EXPECT_GE(CountInstructions(*module->entry_computation(), HloOpcode::kAllGather), 1)
+
+    // When windowed einsum is disabled, we should see an AllGather but no While
+    // loop
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+        << "Expected no While loops when max_windowed_einsum_iteration is too "
+           "low";
+    EXPECT_GE(
+        CountInstructions(*module->entry_computation(), HloOpcode::kAllGather),
+        1)
         << "Expected AllGather when windowed einsum is disabled";
   }
 
@@ -284,7 +289,7 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     auto partitioner = std::make_unique<StatefulRngSpmdPartitioner>(
         /*num_partitions=*/4,
         /*num_replicas=*/1,
@@ -294,13 +299,13 @@ ENTRY main {
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/4);
-    
+
     HloModuleConfig config = GetModuleConfigForTest(1, 4);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_string, config));
-    
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -309,15 +314,15 @@ ENTRY main {
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     EXPECT_TRUE(pass.Run(module.get()).ok());
-    
+
     // When windowed einsum is enabled, we should see a While loop
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
         << "Expected While loop when max_windowed_einsum_iteration allows it";
   }
 }
 
-TEST_F(StatefulRngSpmdPartitionerTest,
-       DefaultMaxWindowedEinsumIterationLimit) {
+TEST_F(StatefulRngSpmdPartitionerTest, DefaultMaxWindowedEinsumIterationLimit) {
   // Test that the default max_windowed_einsum_iteration (32) allows windowed
   // einsum for up to 32 partitions but not beyond
   absl::string_view hlo_string_16 = R"(
@@ -337,18 +342,19 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     TF_ASSERT_OK_AND_ASSIGN(
-        auto module,
-        PartitionComputation(hlo_string_16, /*num_partitions=*/16,
-                             debug_options,
-                             /*add_passes=*/nullptr,
-                             /*skip_checking_windowed_einsum_users=*/true,
-                             /*disable_ag_rewrite_for_multiple_consumers=*/false));
-    
+        auto module, PartitionComputation(
+                         hlo_string_16, /*num_partitions=*/16, debug_options,
+                         /*add_passes=*/nullptr,
+                         /*skip_checking_windowed_einsum_users=*/true,
+                         /*disable_ag_rewrite_for_multiple_consumers=*/false));
+
     // Default should allow windowed einsum for 16 partitions
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
-        << "Expected While loop with default max_windowed_einsum_iteration for 16 partitions";
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+        << "Expected While loop with default max_windowed_einsum_iteration for "
+           "16 partitions";
   }
 
   // Test with 64 partitions - should exceed default limit
@@ -368,7 +374,7 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     auto partitioner = std::make_unique<StatefulRngSpmdPartitioner>(
         /*num_partitions=*/64,
         /*num_replicas=*/1,
@@ -378,13 +384,13 @@ ENTRY main {
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/32);  // Explicitly set to default
-    
+
     HloModuleConfig config = GetModuleConfigForTest(1, 64);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string_64, config));
-    
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto module, ParseAndReturnVerifiedModule(hlo_string_64, config));
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -393,15 +399,17 @@ ENTRY main {
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     EXPECT_TRUE(pass.Run(module.get()).ok());
-    
-    // Default should NOT allow windowed einsum for 64 partitions (exceeds limit of 32)
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
-        << "Expected no While loop for 64 partitions with default max_windowed_einsum_iteration";
+
+    // Default should NOT allow windowed einsum for 64 partitions (exceeds limit
+    // of 32)
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+        << "Expected no While loop for 64 partitions with default "
+           "max_windowed_einsum_iteration";
   }
 }
 
-TEST_F(StatefulRngSpmdPartitionerTest,
-       MaxWindowedEinsumIterationEdgeCases) {
+TEST_F(StatefulRngSpmdPartitionerTest, MaxWindowedEinsumIterationEdgeCases) {
   // Test edge cases for max_windowed_einsum_iteration
   absl::string_view hlo_string = R"(
 HloModule test
@@ -420,7 +428,7 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     auto partitioner = std::make_unique<StatefulRngSpmdPartitioner>(
         /*num_partitions=*/8,
         /*num_replicas=*/1,
@@ -430,13 +438,13 @@ ENTRY main {
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/0);
-    
+
     HloModuleConfig config = GetModuleConfigForTest(1, 8);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_string, config));
-    
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -445,8 +453,9 @@ ENTRY main {
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     EXPECT_TRUE(pass.Run(module.get()).ok());
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 0)
         << "max_windowed_einsum_iteration=0 should disable windowed einsum";
   }
 
@@ -455,7 +464,7 @@ ENTRY main {
     DebugOptions debug_options = GetDefaultDebugOptions();
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    
+
     auto partitioner = std::make_unique<StatefulRngSpmdPartitioner>(
         /*num_partitions=*/8,
         /*num_replicas=*/1,
@@ -465,13 +474,13 @@ ENTRY main {
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/INT64_MAX);
-    
+
     HloModuleConfig config = GetModuleConfigForTest(1, 8);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_string, config));
-    
+
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -480,9 +489,11 @@ ENTRY main {
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     EXPECT_TRUE(pass.Run(module.get()).ok());
-    
-    EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
-        << "max_windowed_einsum_iteration=INT64_MAX should enable windowed einsum";
+
+    EXPECT_EQ(
+        CountInstructions(*module->entry_computation(), HloOpcode::kWhile), 1)
+        << "max_windowed_einsum_iteration=INT64_MAX should enable windowed "
+           "einsum";
   }
 }
 
