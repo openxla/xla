@@ -415,7 +415,6 @@ def _create_local_sycl_repository(repository_ctx):
     if hermetic:
         oneapi_version = repository_ctx.getenv("ONEAPI_VERSION", "")
         os_id = repository_ctx.getenv("OS", "")
-
         if not oneapi_version or not os_id:
             fail("ONEAPI_VERSION and OS must be set via --repo_env for hermetic build.")
         redist_info = sycl_redist.get(os_id, {}).get(oneapi_version, {}).get("sycl_dl_essential")
@@ -425,6 +424,17 @@ def _create_local_sycl_repository(repository_ctx):
         install_path = str(repository_ctx.path(redist_info["root"]))
         _download_and_extract_archive(repository_ctx, archive_info, install_path)
 
+        # Added: Download Level Zero redistributable if defined
+        level_zero_info = level_zero_redist.get(os_id, {}).get(oneapi_version, {}).get("level_zero")
+        if level_zero_info:
+            repository_ctx.report_progress("Downloading Level Zero for hermetic build.")
+        
+            for archive in level_zero_info["archives"]:
+                _download_and_extract_archive(repository_ctx, archive, install_path)
+        
+        else:
+            repository_ctx.report_progress("No Level Zero redistributable defined for %s on %s" % (oneapi_version, os_id))
+        
         sycl_config = struct(
             sycl_basekit_path = install_path + "/oneapi/",
             sycl_toolkit_path = install_path + "/oneapi/compiler/" + oneapi_version,
@@ -433,6 +443,10 @@ def _create_local_sycl_repository(repository_ctx):
             # change to auto-detect the sycl_version_number
             sycl_version_number = "80000",
             sycl_basekit_version_number = oneapi_version,
+            mkl_include_dir = install_path + "/oneapi/mkl/" + oneapi_version + "/include",
+            mkl_library_dir = install_path + "/oneapi/mkl/" + oneapi_version + "/lib",
+            l0_include_dir = install_path + "/level-zero-1.21.10/include",
+            l0_library_dir = install_path + "/lib",
         )
     else:
         install_path = repository_ctx.getenv("SYCL_TOOLKIT_PATH") or "/opt/intel/oneapi/compiler/2025.1"
