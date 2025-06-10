@@ -42,11 +42,13 @@ namespace mt = ::mlir::triton;
 namespace mt_xla = ::mlir::triton::xla;
 
 absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
-                                  const se::DeviceDescription& device_info, int num_warps,
+                                  std::string arch_name, int num_warps,
                                   int num_ctas, int num_stages,
                                   mt::nvidia_gpu::ClusterInfo& out_cluster_info,
                                   bool is_xla_fusion) {
-  auto cc = device_info.cuda_compute_capability();
+  TF_ASSIGN_OR_RETURN(
+      const stream_executor::CudaComputeCapability cc,
+      stream_executor::CudaComputeCapability::FromString(arch_name));
   const int ccAsInt = cc.major * 10 + cc.minor;
   const int threadsPerWarp = 32;
 

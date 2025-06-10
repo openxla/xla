@@ -54,12 +54,13 @@ using ::mlir::Value;
 using mlir::ValueRange;
 
 absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
-                                  const se::DeviceDescription& device_info, int num_warps,
+                                  std::string arch_name, int num_warps,
                                   int num_ctas, int num_stages,
                                   mt::nvidia_gpu::ClusterInfo& out_cluster_info,
                                   bool is_xla_fusion) {
-  const int threadsPerWarp = device_info.threads_per_warp();
-  auto cc = device_info.rocm_compute_capability();
+  const int threadsPerWarp = (arch_name[3] == '9' && arch_name.size() == 6) ?
+                              64 : 32;
+  auto cc = se::RocmComputeCapability(std::move(arch_name));
 
   if (is_xla_fusion) {
     pm->addPass(mt_xla::CreateInt4ToPackedInt4RewritePass());
@@ -87,7 +88,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
   // TODO ROCm Pass cc.gfx_version() after fixing issue with fmfa
-  pm->addPass(mlir::createTritonAMDGPUAccelerateMatmulPass());
+  pm->addPass(mlir::createTritonAMDGPUAccelerateMatmulPass(arch_name));
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   // TODO ROCm Check if we want to compare MI100 and greater
   pm->addPass(mlir::createTritonAMDGPUOptimizeEpiloguePass());
@@ -127,7 +128,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
   if (/*use_buffer_ops=*/false) {  // Not enabled by default.
     pm->addPass(mlir::createTritonAMDGPUCanonicalizePointersPass());
     pm->addPass(mlir::createCanonicalizerPass());
-    pm->addPass(mlir::createTritonAMDGPUConvertToBufferOpsPass(cc.gfx_version()));
+    pm->addPass(mlir::createTritonAMDGPUConvertToBufferOpsPass(arch_name));
   }
   pm->addPass(mlir::createTritonAMDGPUFoldTrueCmpIPass());
   pm->addPass(mlir::createCanonicalizerPass());
