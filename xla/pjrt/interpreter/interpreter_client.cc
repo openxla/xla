@@ -319,6 +319,14 @@ absl::StatusOr<Literal> InterpreterLoadedExecutable::Evaluate(
   return hlo_evaluator_->Evaluate(computation, arg_literals);
 }
 
+std::optional<PjRtPluginAttributes> InterpreterClient::plugin_attributes()
+    const {
+  PjRtPluginAttributes attributes =
+      PjRtClient::plugin_attributes().value_or(PjRtPluginAttributes());
+  attributes.attributes["serialize_with_sdy"] = true;
+  return attributes;
+}
+
 absl::StatusOr<DeviceAssignment> InterpreterClient::GetDefaultDeviceAssignment(
     int num_replicas, int num_partitions) const {
   if (num_replicas != 1 || num_partitions != 1) {
@@ -363,12 +371,11 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InterpreterClient::CompileAndLoad(mlir::ModuleOp module,
                                   CompileOptions options) {
   XlaComputation xla_computation;
-  const ExecutableBuildOptions& exec_build_options =
-      options.executable_build_options;
+  ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false, exec_build_options.use_shardy_partitioner()));
+      /*return_tuple=*/false, &exec_build_options));
 
   // If the compile options specify argument layout, then let's
   // fall back to using the options to determine layouts.

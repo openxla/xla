@@ -1385,6 +1385,13 @@ absl::Span<PjRtMemorySpace* const> TfrtGpuClient::memory_spaces() const {
   return memory_spaces_;
 }
 
+std::optional<PjRtPluginAttributes> TfrtGpuClient::plugin_attributes() const {
+  PjRtPluginAttributes attributes =
+      PjRtClient::plugin_attributes().value_or(PjRtPluginAttributes());
+  attributes.attributes["serialize_with_sdy"] = true;
+  return attributes;
+}
+
 absl::StatusOr<DeviceAssignment> TfrtGpuClient::GetDefaultDeviceAssignment(
     int num_replicas, int num_partitions) const {
   return computation_placer_->AssignDevices(num_replicas, num_partitions);
@@ -1469,12 +1476,11 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> TfrtGpuClient::Compile(
     mlir::ModuleOp module, CompileOptions options,
     bool lookup_addressable_devices) {
   XlaComputation xla_computation;
-  const ExecutableBuildOptions& exec_build_options =
-      options.executable_build_options;
+  ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false, exec_build_options.use_shardy_partitioner()));
+      /*return_tuple=*/false, &exec_build_options));
 
   // If the compile options specify argument layout, then let's
   // fall back to using the options to determine layouts.
