@@ -153,6 +153,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
     return absl::UnimplementedError("Not implemented.");
   }
 
+  absl::StatusOr<bool> NestedCommandRequiresMove() const override;
+
   absl::Status PrepareFinalization() override;
 
   absl::StatusOr<GraphConditionalHandle> CreateConditionalHandle() override;

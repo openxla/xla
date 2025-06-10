@@ -409,6 +409,10 @@ absl::StatusOr<size_t> RocmCommandBuffer::GetNodeCount() const {
   return numNodes;
 }
 
+absl::StatusOr<bool> RocmCommandBuffer::NestedCommandRequiresMove() const {
+  return absl::UnimplementedError("Not implemented.");
+}
+
 absl::Status RocmCommandBuffer::PrepareFinalization() {
   return absl::OkStatus();
 }
