@@ -251,6 +251,17 @@ absl::Status RocmCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
                   "Failed to set HIP graph child node params");
 }
 
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
+    absl::Span<const GraphNodeHandle> dependencies,
+    std::unique_ptr<CommandBuffer> nested) {
+  return absl::UnimplementedError("Not implemented.");
+}
+
+absl::Status RocmCommandBuffer::UpdateChildNode(
+    GraphNodeHandle node_handle, std::unique_ptr<CommandBuffer> nested) {
+  return absl::UnimplementedError("Not implemented.");
+}
+
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
     absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
     const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,

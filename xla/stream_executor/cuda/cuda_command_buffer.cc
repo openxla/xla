@@ -444,6 +444,24 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
   return FromCudaGraphHandle(node_handle);
 }
 
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
+    absl::Span<const GraphNodeHandle> dependencies,
+    std::unique_ptr<CommandBuffer> nested) {
+  CUgraph child_graph = static_cast<CudaCommandBuffer*>(nested.get())->graph_;
+  VLOG(2) << "Create a new node by moving the child graph " << child_graph
+          << " and add it to " << graph_ << "; deps: " << dependencies.size();
+
+  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
+
+  CUgraphNode node_handle;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphAddChildGraphNode(&node_handle, std::move(graph_), deps.data(),
+                               deps.size(), child_graph),
+      "Failed to create a child graph node and add it to a CUDA graph"));
+
+  return FromCudaGraphHandle(node_handle);
+}
+
 absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
                                                 const CommandBuffer& nested) {
   CUgraph child_graph =
@@ -454,6 +472,18 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
   return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
                             exec_, ToCudaGraphHandle(node_handle), child_graph),
                         "Failed to set CUDA graph child node params");
+}
+
+absl::Status CudaCommandBuffer::UpdateChildNode(
+    GraphNodeHandle node_handle, std::unique_ptr<CommandBuffer> nested) {
+  CUgraph child_graph = static_cast<CudaCommandBuffer*>(nested.get())->graph_;
+  VLOG(2) << "Set child node params " << node_handle << " in graph executable "
+          << exec_ << "to params contained in " << child_graph << " (moved)";
+
+  return cuda::ToStatus(
+      cuGraphExecChildGraphNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
+                                         std::move(child_graph)),
+      "Failed to set CUDA graph child node params");
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
@@ -620,6 +650,27 @@ absl::Status CudaCommandBuffer::Trace(
 
   return absl::OkStatus();
 #endif
+}
+
+absl::StatusOr<bool> CudaCommandBuffer::NestedCommandRequiresMove() const {
+  size_t num_nodes;
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuGraphGetNodes(graph_, /*nodes=*/nullptr, &num_nodes)));
+
+  std::vector<CUgraphNode> nodes(num_nodes);
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuGraphGetNodes(graph_, nodes.data(), &num_nodes)));
+
+  for (size_t i = 0; i < num_nodes; i++) {
+    CUgraphNodeType type;
+    TF_RETURN_IF_ERROR(cuda::ToStatus(cuGraphNodeGetType(nodes[i], &type),
+                                      "Failed to get kernel node type"));
+    if (type == CU_GRAPH_NODE_TYPE_MEM_ALLOC ||
+        type == CU_GRAPH_NODE_TYPE_MEM_FREE) {
+      return true;
+    }
+  }
+  return false;
 }
 
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {

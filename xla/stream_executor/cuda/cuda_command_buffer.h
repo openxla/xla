@@ -136,8 +136,15 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       absl::Span<const GraphNodeHandle> dependencies,
       const CommandBuffer& nested) override;
 
+  absl::StatusOr<GraphNodeHandle> CreateChildNode(
+      absl::Span<const GraphNodeHandle> dependencies,
+      std::unique_ptr<CommandBuffer> nested) override;
+
   absl::Status UpdateChildNode(GraphNodeHandle node_handle,
                                const CommandBuffer& nested) override;
+
+  absl::Status UpdateChildNode(GraphNodeHandle node_handle,
+                               std::unique_ptr<CommandBuffer> nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
       absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
@@ -159,6 +166,8 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   // Set the nodes inside the command buffer to the target priority, cuda
   // currently only support kernel node's priority.
   absl::Status SetPriority(StreamPriority priority) override;
+
+  absl::StatusOr<bool> NestedCommandRequiresMove() const override;
 
   absl::Status PrepareFinalization() override;
 

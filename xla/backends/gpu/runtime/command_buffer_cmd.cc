@@ -657,6 +657,26 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
   return shift_right(capacity_ - 1).command_buffer.get();
 }
 
+absl::Status TracedCommandBuffer::RemoveCommandBuffer(
+    se::CommandBuffer* cmd_buffer) {
+  // moves entries in `[i + 1, capacity_)` range one element to the left.
+  auto shift_left = [&](size_t i) {
+    while (++i < capacity_) {
+      entries_[i - 1] = std::move(entries_[i]);
+    }
+    entries_[i].command_buffer = nullptr;
+    entries_[i].recorded_allocs.clear();
+  };
+
+  for (size_t i = 0; i < capacity_; ++i) {
+    if (entries_[i].command_buffer.get() == cmd_buffer) {
+      shift_left(i);
+      return absl::OkStatus();
+    }
+  }
+  return absl::InternalError("Command buffer not found in cache");
+}
+
 //===----------------------------------------------------------------------===//
 // TracedCommandBufferCmd
 //===----------------------------------------------------------------------===//
@@ -685,14 +705,35 @@ TracedCommandBufferCmd::RecordTracedCommand(
           execute_params.command_buffer_trace_stream, trace, priority()));
 
   VLOG(5) << "Record traced command into command buffer: " << command_buffer;
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command, *nested_cmd);
-      });
+
+  TF_ASSIGN_OR_RETURN(bool requires_move_semantics,
+                      nested_cmd->NestedCommandRequiresMove());
+
+  if (requires_move_semantics) {
+    // remove the command buffer from cache as we need to move it to the command
+    // buffer.
+    TF_RETURN_IF_ERROR(traced_cmd->RemoveCommandBuffer(nested_cmd));
+    std::unique_ptr<se::CommandBuffer> nested_cmd_moved(nested_cmd);
+    return Handle(
+        std::move(record_action),
+        [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+          return command_buffer->CreateNestedCommand(
+              std::move(nested_cmd_moved), dependencies);
+        },
+        [&](const se::CommandBuffer::Command* command) {
+          return command_buffer->UpdateNestedCommand(
+              command, std::move(nested_cmd_moved));
+        });
+  } else {
+    return Handle(
+        std::move(record_action),
+        [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+          return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
+        },
+        [&](const se::CommandBuffer::Command* command) {
+          return command_buffer->UpdateNestedCommand(command, *nested_cmd);
+        });
+  }
 }
 
 //===----------------------------------------------------------------------===//

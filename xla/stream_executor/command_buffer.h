@@ -174,9 +174,20 @@ class CommandBuffer {
       const CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) = 0;
 
+  // Creates a command that launches a nested command buffer, caller will
+  // release the ownership of the nested command buffer.
+  virtual absl::StatusOr<const Command*> CreateNestedCommand(
+      std::unique_ptr<CommandBuffer> nested,
+      absl::Span<const Command* const> dependencies) = 0;
+
   // Updates a command that launches a nested command buffer.
   virtual absl::Status UpdateNestedCommand(const Command* command,
                                            const CommandBuffer& nested) = 0;
+
+  // Updates a command that launches a nested command buffer, caller will
+  // release the ownership of the nested command buffer.
+  virtual absl::Status UpdateNestedCommand(
+      const Command* command, std::unique_ptr<CommandBuffer> nested) = 0;
 
   // Creates a device-to-device memory copy.
   virtual absl::StatusOr<const Command*> CreateMemcpyD2D(
@@ -276,6 +287,12 @@ class CommandBuffer {
   //--------------------------------------------------------------------------//
   // Command buffer state management API
   //--------------------------------------------------------------------------//
+
+  // To implement nested command buffer, some platform requires that the nested
+  // command buffer should use the move semantics to avoid graph cloning due to
+  // implementation details. We use this method to determine whether we need to
+  // use move semantics when creating nested command buffer..
+  virtual absl::StatusOr<bool> NestedCommandRequiresMove() const = 0;
 
   // Finalizes command buffer and makes it executable. Once command buffer is
   // finalized no commands can be added to it.

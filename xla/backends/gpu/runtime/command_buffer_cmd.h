@@ -475,6 +475,11 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
       se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
       se::StreamPriority priority = se::StreamPriority::Default);
 
+  // To implement nested command buffer, some platform requires that the nested
+  // command buffer should use the move semantics to avoid graph cloning, so we
+  // need to move the command buffer from cache for this case.
+  absl::Status RemoveCommandBuffer(se::CommandBuffer* cmd_buffer);
+
  private:
   std::vector<BufferAllocation::Index> allocs_indices_;
 

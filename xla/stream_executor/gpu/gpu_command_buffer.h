@@ -125,8 +125,15 @@ class GpuCommandBuffer : public CommandBuffer {
       const CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
+  absl::StatusOr<const Command*> CreateNestedCommand(
+      std::unique_ptr<CommandBuffer> nested,
+      absl::Span<const Command* const> dependencies) override;
+
   absl::Status UpdateNestedCommand(const Command* command,
                                    const CommandBuffer& nested) override;
+
+  absl::Status UpdateNestedCommand(
+      const Command* command, std::unique_ptr<CommandBuffer> nested) override;
 
   absl::StatusOr<const Command*> CreateMemcpyD2D(
       DeviceMemoryBase* dst, const DeviceMemoryBase& src, uint64_t size,
@@ -329,6 +336,13 @@ class GpuCommandBuffer : public CommandBuffer {
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       const CommandBuffer& nested) = 0;
+
+  virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
+      absl::Span<const GraphNodeHandle> dependencies,
+      std::unique_ptr<CommandBuffer> nested) = 0;
+
+  virtual absl::Status UpdateChildNode(
+      GraphNodeHandle node_handle, std::unique_ptr<CommandBuffer> nested) = 0;
 
   // Associate another command buffer with this child node. Will return an
   // error if the given node has not been created as a child node.
