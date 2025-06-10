@@ -447,7 +447,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
     absl::Span<const GraphNodeHandle> dependencies,
     std::unique_ptr<CommandBuffer> nested) {
-  CUgraph child_graph = static_cast<CudaCommandBuffer*>(nested.get())->graph_;
+  CUgraph child_graph =
+      std::move(static_cast<CudaCommandBuffer*>(nested.get())->graph_);
   VLOG(2) << "Create a new node by moving the child graph " << child_graph
           << " and add it to " << graph_ << "; deps: " << dependencies.size();
 
@@ -455,8 +456,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
 
   CUgraphNode node_handle;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphAddChildGraphNode(&node_handle, std::move(graph_), deps.data(),
-                               deps.size(), child_graph),
+      cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
+                               std::move(child_graph)),
       "Failed to create a child graph node and add it to a CUDA graph"));
 
   return FromCudaGraphHandle(node_handle);
@@ -476,7 +477,8 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
 
 absl::Status CudaCommandBuffer::UpdateChildNode(
     GraphNodeHandle node_handle, std::unique_ptr<CommandBuffer> nested) {
-  CUgraph child_graph = static_cast<CudaCommandBuffer*>(nested.get())->graph_;
+  CUgraph child_graph =
+      std::move(static_cast<CudaCommandBuffer*>(nested.get())->graph_);
   VLOG(2) << "Set child node params " << node_handle << " in graph executable "
           << exec_ << "to params contained in " << child_graph << " (moved)";
 

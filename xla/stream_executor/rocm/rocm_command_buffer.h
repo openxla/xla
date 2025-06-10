@@ -125,13 +125,12 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   absl::Status UpdateChildNode(GraphNodeHandle node_handle,
                                const CommandBuffer& nested) override;
 
-  absl::StatusOr<GraphNodeHandle> CreateChildNodeWith(
+  absl::StatusOr<GraphNodeHandle> CreateChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       std::unique_ptr<CommandBuffer> nested) override;
 
-  absl::Status UpdateChildNode(
-      GraphNodeHandle node_handle,
-      std::unique_ptr<CommandBuffer> nested) override;
+  absl::Status UpdateChildNode(GraphNodeHandle node_handle,
+                               std::unique_ptr<CommandBuffer> nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
       absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,

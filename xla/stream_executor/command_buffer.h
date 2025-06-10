@@ -291,7 +291,7 @@ class CommandBuffer {
   // To implement nested command buffer, some platform requires that the nested
   // command buffer should use the move semantics to avoid graph cloning due to
   // implementation details. We use this method to determine whether we need to
-  // use move semantics when creating nested command buffer..
+  // use move semantics when creating nested command buffer.
   virtual absl::StatusOr<bool> NestedCommandRequiresMove() const = 0;
 
   // Finalizes command buffer and makes it executable. Once command buffer is
