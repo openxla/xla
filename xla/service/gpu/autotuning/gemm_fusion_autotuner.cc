@@ -76,6 +76,8 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/split_k_gemm_rewriter.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/service/gpu/transforms/block_scaling_matcher.h"
+#include "xla/service/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
@@ -466,6 +468,13 @@ absl::StatusOr<std::unique_ptr<HloModule>> CuDnnFusionExtractor(
   TF_RETURN_IF_ERROR(
       module->entry_computation()->root_instruction()->set_backend_config(
           gpu_config));
+
+  if (fusion.get_frontend_attribute("composite.name") ==
+      block_scaling::kBlockScaledDotCompositeName) {
+    CudnnBlockScalingRewriter block_scaling_rewriter;
+    TF_RETURN_IF_ERROR(block_scaling_rewriter.Run(module.get(), {}).status());
+  }
+
   return module;
 }
 
