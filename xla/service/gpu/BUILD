@@ -513,7 +513,7 @@ cc_library(
 
 cc_library(
     name = "ptx_kernel_call",
-    srcs = if_gpu_is_configured(["ptx_kernel_call.cc"]),
+    srcs = ["ptx_kernel_call.cc"],
     hdrs = ["ptx_kernel_call.h"],
     deps = [
         "//xla/stream_executor:launch_dim",

@@ -109,8 +109,7 @@ class KernelArguments {
       std::vector<KernelArgument> kernel_arguments,
       const BufferAlignment& buffer_alignment, bool dedup);
 
-  static absl::Status ExtractOutputArguments(
-      std::vector<KernelArgument>& arguments,
+  static absl::StatusOr<std::vector<KernelArgument>> ExtractOutputArguments(
       const BufferAssignment& buffer_assignment,
       const HloInstruction* hlo_instruction);
 

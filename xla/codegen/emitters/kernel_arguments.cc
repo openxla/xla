@@ -36,23 +36,25 @@ namespace xla::emitters {
 
 // Extract output arguments from an instruction's shape
 // Populates the provided arguments vector
-absl::Status KernelArguments::ExtractOutputArguments(
-    std::vector<KernelArgument>& arguments,
+absl::StatusOr<std::vector<KernelArgument>>
+KernelArguments::ExtractOutputArguments(
     const BufferAssignment& buffer_assignment,
     const HloInstruction* hlo_instruction) {
-  return ShapeUtil::ForEachSubshapeWithStatus(
+  std::vector<KernelArgument> output_arguments;
+  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       hlo_instruction->shape(),
       [&](const Shape& subshape, const ShapeIndex& index) {
-        if (!subshape.IsArray()) return absl::OkStatus();
+    if (!subshape.IsArray()) return absl::OkStatus();
 
-        TF_ASSIGN_OR_RETURN(
-            BufferAllocation::Slice slice,
-            buffer_assignment.GetUniqueSlice(hlo_instruction, index));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice slice,
+        buffer_assignment.GetUniqueSlice(hlo_instruction, index));
 
-        arguments.emplace_back(
-            KernelArgument(subshape, slice, /*written=*/true));
-        return absl::OkStatus();
+    output_arguments.emplace_back(
+        KernelArgument(subshape, slice, /*written=*/true));
+    return absl::OkStatus();
       });
+  return output_arguments;
 }
 
 absl::StatusOr<KernelArguments> KernelArguments::Create(
@@ -68,8 +70,11 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
         KernelArgument(operand->shape(), slice, /*written=*/false));
   }
 
-  TF_RETURN_IF_ERROR(ExtractOutputArguments(kernel_arguments, buffer_assignment,
-                                            hlo_instruction));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<KernelArgument> output_arguments,
+      ExtractOutputArguments(buffer_assignment, hlo_instruction));
+  kernel_arguments.insert(kernel_arguments.end(), output_arguments.begin(),
+                          output_arguments.end());
 
   return KernelArguments{std::move(kernel_arguments), buffer_alignment, dedup};
 }
@@ -100,9 +105,9 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
 
   std::vector<KernelArgument> kernel_arguments;
 
-  std::vector<KernelArgument> output_arguments;
-  TF_RETURN_IF_ERROR(ExtractOutputArguments(output_arguments, buffer_assignment,
-                                            hlo_instruction));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<KernelArgument> output_arguments,
+      ExtractOutputArguments(buffer_assignment, hlo_instruction));
 
   // Interleave the inputs and outputs according to the indices
   size_t arg_idx = 0;
