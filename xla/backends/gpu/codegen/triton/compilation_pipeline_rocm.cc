@@ -58,7 +58,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager* pm,
                                   int num_ctas, int num_stages,
                                   mt::nvidia_gpu::ClusterInfo& out_cluster_info,
                                   bool is_xla_fusion) {
-  const int threadsPerWarp = (arch_name[3] == '9' && arch_name.size() == 6) ?
+  const int threadsPerWarp = (arch_name[3] == '9') ?
                               64 : 32;
   auto cc = se::RocmComputeCapability(std::move(arch_name));
 
