@@ -2532,6 +2532,7 @@ xla_test(
         "a100",
         "h100",
         "b200",
+        "amdgpu_any",
     ],
     deps = [
         "//xla:error_spec",
