@@ -1004,6 +1004,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cudnn_frontend_helpers",
         "//xla/stream_executor/cuda:cudnn_plugin",
+        "//xla/stream_executor/cuda:cudnn_sdpa_score_mod",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]) + [

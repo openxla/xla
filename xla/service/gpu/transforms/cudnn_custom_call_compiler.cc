@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
+#include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
@@ -181,8 +182,11 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
   auto computations = custom_call->called_computations();
   const HloComputation *score_mod_fwd_comp = nullptr;
   TF_RET_CHECK(computations.size() <= 1);
+  std::shared_ptr<stream_executor::gpu::ScoreModFunc> score_mod = nullptr;
   if (computations.size() == 1) {
     score_mod_fwd_comp = computations[0];
+    score_mod = std::make_shared<stream_executor::gpu::ScoreModFunc>(
+        score_mod_fwd_comp, nullptr);
     input_index += score_mod_fwd_comp->num_parameters() - 1;
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
@@ -192,7 +196,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
           dnn_support, lhs_bmm1, rhs_bmm1, rhs_bmm2, output, bias, activation,
           page_table_k, page_table_v, static_cast<float>(config.fmha_scale()),
           dropout_rate > 0.0, dropout_rate, dnn_mask_type,
-          sliding_window_length, max_seg_per_batch, score_mod_fwd_comp));
+          sliding_window_length, max_seg_per_batch, score_mod));
   return graph;
 }
 
@@ -356,6 +360,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   auto computations = custom_call->called_computations();
   const HloComputation *score_mod_fwd_comp = nullptr;
   const HloComputation *score_mod_bwd_comp = nullptr;
+  std::shared_ptr<stream_executor::gpu::ScoreModFunc> score_mod = nullptr;
   if (computations.size() == 1) {
     score_mod_bwd_comp = computations[0];
     auto softmax_aux = custom_call->mutable_operand(3);
@@ -366,6 +371,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
     }
     score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
     input_index += score_mod_fwd_comp->num_parameters() - 1;
+    score_mod = std::make_shared<stream_executor::gpu::ScoreModFunc>(
+        score_mod_fwd_comp, score_mod_bwd_comp);
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
 
@@ -377,7 +384,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
           d_bmm1_rhs, d_bmm2_rhs, bias, dbias, dropout_rate, config.seed(),
           config.fmha_scale(), dropout_rate > 0.0, bias != std::nullopt,
           dnn_mask_type, force_deterministic, sliding_window_length,
-          max_seg_per_batch, score_mod_fwd_comp, score_mod_bwd_comp));
+          max_seg_per_batch, score_mod));
   return graph;
 }
 
