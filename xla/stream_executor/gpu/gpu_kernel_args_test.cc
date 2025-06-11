@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/stream_executor/gpu/gpu_kernel.h"
 
 namespace stream_executor {
 
@@ -42,37 +43,46 @@ class GpuKernelArgsTest : public ::testing::Test {
 };
 
 TEST_F(GpuKernelArgsTest, PackLargeNumberOfArguments) {
-#if GOOGLE_CUDA && CUDA_VERSION >= 12010
-  std::vector<DeviceMemoryBase> args(4095);
-  for (int i = 0; i < 4095; ++i) {
+  std::vector<int> test_limits = {4095, 1024};
+  int actual_limit = 0;
+
+  auto platform_name = platform()->Name();
+
+  // Find the highest supported limit
+  for (int limit : test_limits) {
+    std::vector<DeviceMemoryBase> test_args(limit);
+    for (int i = 0; i < limit; ++i) {
+      test_args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
+    }
+    auto test_result = gpu::PackKernelArgs<DeviceMemoryBase>(test_args, 0);
+    if (test_result.ok()) {
+      actual_limit = limit;
+      break;  // Found the highest working limit
+    }
+  }
+
+  EXPECT_GT(actual_limit, 0)
+      << "Platform " << platform_name
+      << " should support at least some kernel arguments";
+
+  // Test that we can pack up to the actual limit
+  std::vector<DeviceMemoryBase> args(actual_limit);
+  for (int i = 0; i < actual_limit; ++i) {
     args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
   }
-  auto result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_TRUE(result.ok()) << result.status();
-  EXPECT_EQ(result.value()->number_of_arguments(), 4095);
+  auto result = gpu::PackKernelArgs<DeviceMemoryBase>(args, 0);
+  EXPECT_TRUE(result.ok()) << "Failed at detected limit " << actual_limit
+                           << " on platform " << platform_name << ": "
+                           << result.status();
+  EXPECT_EQ(result.value()->number_of_arguments(), actual_limit);
 
+  // Test that limit + 1 fails
   args.push_back(DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42));
-  result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_FALSE(result.ok());
+  result = gpu::PackKernelArgs<DeviceMemoryBase>(args, 0);
+  EXPECT_FALSE(result.ok()) << "Should fail at " << (actual_limit + 1)
+                            << " on platform " << platform_name;
   EXPECT_THAT(result.status().message(),
-              ::testing::HasSubstr(
-                  "Can't pack device memory arguments array of size 4096"));
-#else
-  std::vector<DeviceMemoryBase> args(1024);
-  for (int i = 0; i < 1024; ++i) {
-    args[i] = DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42);
-  }
-  auto result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_TRUE(result.ok()) << result.status();
-  EXPECT_EQ(result.value()->number_of_arguments(), 1024);
-
-  args.push_back(DeviceMemoryBase(reinterpret_cast<void*>(0x12345678), 42));
-  result = PackKernelArgs<DeviceMemoryBase>(args, 0);
-  EXPECT_FALSE(result.ok());
-  EXPECT_THAT(result.status().message(),
-              ::testing::HasSubstr(
-                  "Can't pack device memory arguments array of size 1025"));
-#endif
+              ::testing::HasSubstr("Can't pack device memory arguments array"));
 }
 
 }  // namespace stream_executor

@@ -583,47 +583,6 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
 }
 }  // namespace internal
 
-template <typename ArgType>
-inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
-#if GOOGLE_CUDA && CUDA_VERSION >= 12010
-  static constexpr int kKernelArgsLimit = 4095;
-#else
-  static constexpr int kKernelArgsLimit = 1024;
-#endif
-  if (args.size() > kKernelArgsLimit)
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Can't pack device memory arguments array of size ", args.size(),
-        " which is larger than the maximum supported size of ",
-        kKernelArgsLimit));
-
-  // Specialize kernel arguments array for small sizes to allocate a smaller
-  // chunk of memory and hopefully hit a small allocations cache.
-  if (args.size() <= 4) {
-    return internal::PackKernelArgs<4>(args, shared_mem_bytes);
-  } else if (args.size() <= 8) {
-    return internal::PackKernelArgs<8>(args, shared_mem_bytes);
-  } else if (args.size() <= 16) {
-    return internal::PackKernelArgs<16>(args, shared_mem_bytes);
-  } else if (args.size() <= 32) {
-    return internal::PackKernelArgs<32>(args, shared_mem_bytes);
-  } else if (args.size() <= 64) {
-    return internal::PackKernelArgs<64>(args, shared_mem_bytes);
-  } else if (args.size() <= 256) {
-    return internal::PackKernelArgs<256>(args, shared_mem_bytes);
-  } else if (args.size() <= 512) {
-    return internal::PackKernelArgs<512>(args, shared_mem_bytes);
-  }
-
-  return internal::PackKernelArgs<kKernelArgsLimit>(args, shared_mem_bytes);
-}
-
-template <typename ArgType>
-inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata &metadata) {
-  return PackKernelArgs(args, metadata.shared_memory_bytes().value_or(0));
-}
-
 //===----------------------------------------------------------------------===//
 // Kernel arguments packing for statically know argument types
 //===----------------------------------------------------------------------===//

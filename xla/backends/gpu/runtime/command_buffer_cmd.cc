@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/gpu/gpu_kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
@@ -806,7 +807,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
 
   TF_ASSIGN_OR_RETURN(
       auto kernel_args,
-      se::PackKernelArgs<se::DeviceMemoryBase>(buffers, shmem_bytes_));
+      se::gpu::PackKernelArgs<se::DeviceMemoryBase>(buffers, shmem_bytes_));
 
   return Handle(
       std::move(record_action),

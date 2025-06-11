@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "xla/stream_executor/gpu/gpu_kernel.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -34,9 +35,47 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
+template <typename ArgType>
+inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
+  static constexpr int kKernelArgsLimit = 1024;
+  if (args.size() > kKernelArgsLimit)
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Can't pack device memory arguments array of size ", args.size(),
+        " which is larger than the maximum supported size of ",
+        kKernelArgsLimit));
+
+  // Specialize kernel arguments array for small sizes to allocate a smaller
+  // chunk of memory and hopefully hit a small allocations cache.
+  if (args.size() <= 4) {
+    return internal::PackKernelArgs<4>(args, shared_mem_bytes);
+  } else if (args.size() <= 8) {
+    return internal::PackKernelArgs<8>(args, shared_mem_bytes);
+  } else if (args.size() <= 16) {
+    return internal::PackKernelArgs<16>(args, shared_mem_bytes);
+  } else if (args.size() <= 32) {
+    return internal::PackKernelArgs<32>(args, shared_mem_bytes);
+  } else if (args.size() <= 64) {
+    return internal::PackKernelArgs<64>(args, shared_mem_bytes);
+  } else if (args.size() <= 256) {
+    return internal::PackKernelArgs<256>(args, shared_mem_bytes);
+  } else if (args.size() <= 512) {
+    return internal::PackKernelArgs<512>(args, shared_mem_bytes);
+  }
+
+  return internal::PackKernelArgs<kKernelArgsLimit>(args, shared_mem_bytes);
+}
+
+template <typename ArgType>
+inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata &metadata) {
+  uint32_t shared_mem_bytes = metadata.shared_memory_bytes().value_or(0);
+  return PackKernelArgs(args, shared_mem_bytes);
+}
+
 class RocmKernel : public Kernel {
  public:
-  explicit RocmKernel(StreamExecutor* executor) : executor_(executor) {}
+  explicit RocmKernel(StreamExecutor *executor) : executor_(executor) {}
 
   // Note that the function is unloaded when the module is unloaded, and the
   // module that the function is contained in is owned by the StreamExecutor.
@@ -64,7 +103,7 @@ class RocmKernel : public Kernel {
                       const std::optional<ClusterDim> &cluster_dims,
                       Stream *stream, const KernelArgs &args) override;
 
-  StreamExecutor* executor_ = nullptr;
+  StreamExecutor *executor_ = nullptr;
 
   hipFunction_t rocm_function_ = nullptr;  // wrapped HIP kernel handle
   unsigned arity_ = 0;  // number of formal parameters the kernel takes

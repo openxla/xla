@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/gpu/gpu_kernel.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/gpu/repeat_buffer_kernel.h"
 #include "xla/stream_executor/kernel.h"
@@ -395,7 +396,7 @@ absl::Status ExecuteKernelOnStream(
     const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<se::KernelArgsPackedArrayBase> kernel_args,
-      se::PackKernelArgs(args, kernel.metadata()));
+      se::gpu::PackKernelArgs(args, kernel.metadata()));
 
   if (cluster_dim.has_value()) {
     return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),

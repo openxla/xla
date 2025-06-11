@@ -212,6 +212,16 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "gpu_kernel",
+    hdrs = ["gpu_kernel.h"],
+    deps = [
+        "//xla/stream_executor:kernel",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 tsl_gpu_library(
     name = "gpu_init",
     hdrs = [
@@ -909,7 +919,6 @@ xla_test(
     name = "gpu_kernel_args_test",
     srcs = ["gpu_kernel_args_test.cc"],
     backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:kernel",

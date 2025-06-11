@@ -130,5 +130,22 @@ absl::Status RocmKernel::Launch(const ThreadDim& thread_dims,
   return absl::InternalError("Unsupported kernel arguments type");
 }
 
+// Explicit template instantiations for PackKernelArgs
+template absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs<DeviceMemoryBase>(absl::Span<const DeviceMemoryBase> args,
+                                 uint32_t shared_mem_bytes);
+
+template absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs<DeviceMemoryBase>(absl::Span<const DeviceMemoryBase> args,
+                                 const KernelMetadata& metadata);
+
+template absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs<KernelArgument>(absl::Span<const KernelArgument> args,
+                               uint32_t shared_mem_bytes);
+
+template absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
+PackKernelArgs<KernelArgument>(absl::Span<const KernelArgument> args,
+                               const KernelMetadata& metadata);
+
 }  // namespace gpu
 }  // namespace stream_executor
