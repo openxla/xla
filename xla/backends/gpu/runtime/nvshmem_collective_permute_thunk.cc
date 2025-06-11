@@ -75,9 +75,8 @@ NvshmemCollectivePermuteStartThunk::GetNvshmemP2PConfig(
   auto& config = collective_permute_config.config;
 
   config.operand_count = instr->operand_count();
-  for (int i = 0; i < config.operand_count; ++i) {
-    config.operand_element_type.push_back(
-        instr->operand(i)->shape().element_type());
+  for (const HloInstruction* operand : instr->operands()) {
+    config.operand_element_type.push_back(operand->shape().element_type());
   }
   config.SetCollectiveOpKindAndID(instr);
   config.group_mode = GetGroupMode(instr);

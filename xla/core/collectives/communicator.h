@@ -76,7 +76,8 @@ class Communicator {
   // Register `buffer` for efficient collective operations (i.e. on NVSHMEM
   // backend it registers the buffer for unregistered nvshmem buffers).
   virtual absl::Status RegisterBuffer(void* addr, size_t length) {
-    return Unimplemented("User-managed buffer registration is not supported");
+    return absl::UnimplementedError(
+        "User-managed buffer registration is not supported");
   }
 
   // Abort any uncompleted operations and destroys the underlying communicator
@@ -182,13 +183,13 @@ class Communicator {
   // Guarantees completion of all operations on symmetric data objects which
   // makes the updates visible to all other PEs.
   virtual absl::Status Quiet(const Executor& executor) {
-    return Unimplemented("Quiet is not implemented");
+    return absl::UnimplementedError("Quiet is not implemented");
   }
 
   // Guarantees ordering of delivery of all previous operations on symmetric
   // data objects.
   virtual absl::Status Fence() {
-    return Unimplemented("Fence is not implemented");
+    return absl::UnimplementedError("Fence is not implemented");
   }
 
  protected:

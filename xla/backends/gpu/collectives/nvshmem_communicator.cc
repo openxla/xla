@@ -484,7 +484,7 @@ absl::Status NvshmemCommunicator::Quiet(const Executor& executor) {
     return absl::FailedPreconditionError("NvshmemCommunicator aborted");
   }
   if (!collectives_->IsInitialized()) {
-    return FailedPrecondition("NvshmemCollectives not initialized.");
+    return absl::FailedPreconditionError("NvshmemCollectives not initialized.");
   }
 
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
