@@ -159,24 +159,14 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
 
   // Try to find the scan axis. We expect all window dimensions to be trivial,
   // except for one.
-  int64_t rank = operand_shape.dimensions_size();
+  int64_t rank = operand_shape.dimensions().size();
   const Window& window = reduce_window->window();
-  int64_t scan_dim_num = -1;
-  for (int i = 0; i < rank; ++i) {
-    const WindowDimension& window_dim = window.dimensions(i);
-    if (window_util::IsTrivialWindowDimension(window_dim)) {
-      continue;
-    }
-    if (scan_dim_num != -1) {
-      // At least two non-trivial dimensions exist, so, no cigar.
-      return false;
-    }
-    scan_dim_num = i;
-  }
-
-  if (scan_dim_num == -1) {
+  std::vector<int64_t> non_trivial_window_dimensions =
+      reduce_window->non_trivial_window_dimensions();
+  if (non_trivial_window_dimensions.size() != 1) {
     return false;
   }
+  const int64_t scan_dim_num = non_trivial_window_dimensions.front();
 
   const int64_t scan_length = operand_shape.dimensions(scan_dim_num);
   absl::Span<HloInstruction* const> init_values = reduce_window->init_values();
@@ -445,7 +435,6 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
         auto reduce_function_root =
             reduce_window->to_apply()->root_instruction();
         if (reduce_function_root->shape().IsTuple()) {
-          TF_RET_CHECK(reduce_function_root->opcode() == HloOpcode::kTuple);
           // This corresponds to step 7: combining the inner scan with the outer
           // scan using a map function.
           auto* map_computation_root = reduce_function_root->operand(idx);
@@ -531,7 +520,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::Run(
         continue;
       }
 
-      if (reduce_window->inputs().front()->shape().dimensions_size() != 1) {
+      if (reduce_window->inputs().front()->shape().dimensions().size() != 1) {
         continue;
       }
       TF_RETURN_IF_ERROR(ReplaceReduceWindowWithReshape(reduce_window));

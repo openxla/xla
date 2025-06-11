@@ -589,7 +589,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
     DonationTransaction(const DonationTransaction&) = delete;
     DonationTransaction& operator=(const DonationTransaction&) = delete;
     DonationTransaction(DonationTransaction&&) = default;
-    DonationTransaction& operator=(DonationTransaction&& other) {
+    DonationTransaction& operator=(DonationTransaction&& other) noexcept {
       Abort();
 
       donation_event_ = other.donation_event_;
@@ -679,7 +679,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   // might fail. Note that concurrent calls to AcquireUsage() and
   // AcquireDonation() might fail even if the pending donation is aborted later.
   tsl::AsyncValueRef<bool> donation_event_ ABSL_GUARDED_BY(mu_);
-  PjRtFuture<>::Promise definition_promise_ ABSL_GUARDED_BY(mu_);
+  PjRtFuture<>::Promise ready_promise_ ABSL_GUARDED_BY(mu_);
 
   // This event is triggered when the last external reference is released.
   // It is used to make sure that the buffer is not deleted before all external

@@ -656,9 +656,69 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementAfterPrefetch) {
   EXPECT_THAT(concat->operand(1), op::AsyncDone(op::AsyncStart(p0)));
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
 TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementAfterPrefetch) {
+       SyncDynamicSliceReplacementWithLateIndexOperand) {
+  absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    p0_data = s32[10,2,3]{2,1,0} parameter(0)         // Data for dynamic-slice
+    p1_long_pole = s32[10,2,3]{2,1,0} parameter(1) // For creating a long schedule gap
+    p2_index = s32[] parameter(2)                   // Index for dynamic-slice
+
+    // Long chain of operations from p1_long_pole
+    negate0_lp = s32[10,2,3]{2,1,0} negate(p1_long_pole)
+    negate1_lp = s32[10,2,3]{2,1,0} negate(negate0_lp)
+    negate2_lp = s32[10,2,3]{2,1,0} negate(negate1_lp)
+    negate3_lp = s32[10,2,3]{2,1,0} negate(negate2_lp)
+    negate4_lp = s32[10,2,3]{2,1,0} negate(negate3_lp)
+    negate5_lp = s32[10,2,3]{2,1,0} negate(negate4_lp)
+    negate6_lp = s32[10,2,3]{2,1,0} negate(negate5_lp)
+    negate7_lp = s32[10,2,3]{2,1,0} negate(negate6_lp) // Available late in the schedule
+
+    // Index operand, made available after the long pole computation
+    index = s32[] bitcast(negate7_lp)
+
+    zero = s32[] constant(0)
+
+    // Dynamic slice using p0_data and the late-available index
+    dynamic_slice = s32[1,2,3] dynamic-slice(p0_data, index, zero, zero), dynamic_slice_sizes={1,2,3}
+    ROOT root = s32[1,2,3] negate(dynamic_slice)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  auto module_copy = module->Clone();
+
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 512;  // Ensure p0_data can be prefetched
+  options.enable_sync_slice_replacement = true;
+  options.is_async_slice_implemented_fn =
+      [](const HloInstruction* instruction) { return true; };
+
+  // The index operand is not available until the dynamic-slice instruction
+  // itself which pushes earliest_prefetch_time to right before the
+  // dynamic-slice. We test two cases with min_prefetch_interval = 2 and 1: Case
+  // 1 - min_prefetch_interval = 2:
+  //   The dynamic slice is NOT replaced by an async. This is beacause we
+  //   require at least 2 instructions to be overlapped (including the
+  //   dynamic-slice).
+  AssignMemorySpace(module.get(), options, /*max_prefetch_interval=*/10,
+                    /*min_prefetch_interval=*/2);
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_NE(root, nullptr);
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kDynamicSlice);
+
+  // Case 2 - min_prefetch_interval = 1:
+  //   The dynamic slice is replaced by an async.
+  AssignMemorySpace(module_copy.get(), options, /*max_prefetch_interval=*/10,
+                    /*min_prefetch_interval=*/1);
+  root = module_copy->entry_computation()->root_instruction();
+  ASSERT_NE(root, nullptr);
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kAsyncDone);
+}
+
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementAfterPrefetch) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -738,9 +798,7 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementIgnoredTrivials) {
               op::Bitcast(op::AsyncDone(op::AsyncStart(p0))));
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
-TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementIgnoredTrivials) {
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementIgnoredTrivials) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -829,9 +887,7 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementAfterEviction) {
                   kDefaultMemorySpace, kAlternateMemorySpace, negate_p0))));
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
-TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementAfterEviction) {
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementAfterEviction) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -920,9 +976,7 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementTwoSlices) {
   EXPECT_THAT(add->operand(1), op::AsyncDone(op::AsyncStart(p0)));
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
-TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementTwoSlices) {
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementTwoSlices) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -1009,9 +1063,7 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementNestedSlices) {
   EXPECT_THAT(concat->operand(1), op::Slice(op::AsyncDone(op::AsyncStart(p0))));
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
-TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementNestedSlices) {
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementNestedSlices) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -1100,9 +1152,7 @@ TEST_F(MemorySpaceAssignmentTest, SyncSliceReplacementOneFails) {
   ASSERT_NE(slice0, nullptr);
 }
 
-// TODO(b/415757985): Enable after addressing the bug.
-TEST_F(MemorySpaceAssignmentTest,
-       DISABLED_SyncDynamicSliceReplacementOneFails) {
+TEST_F(MemorySpaceAssignmentTest, SyncDynamicSliceReplacementOneFails) {
   absl::string_view hlo_string = R"(
   HloModule module, is_scheduled=true
 
@@ -14288,6 +14338,141 @@ ENTRY main {
   TF_EXPECT_OK(CheckSliceChunks(*assignments,
                                 root->operand(0)->operand(0)->operand(0),
                                 /*expect_bitcasted_io=*/true));
+}
+
+TEST_F(MemorySpaceAssignmentTest, TestAsyncCopyCustomKernel) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f, is_scheduled=true, entry_computation_layout={(f32[8,128]{1,0:T(8,128)})->(f32[8,128]{1,0:T(8,128)}, f32[8,128]{1,0:T(8,128)})}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true,true}
+
+ENTRY %main.13 (Arg_0.1: f32[8,128]) -> (f32[8,128], f32[8,128]) {
+  %Arg_0.1 = f32[8,128]{1,0:T(8,128)} parameter(0), metadata={op_name="x"}
+  %copy.9 = f32[8,128]{1,0:T(8,128)} copy(%Arg_0.1)
+  %copy.6 = f32[8,128]{1,0:T(8,128)} copy(%copy.9)
+  %copy_start.2 = (f32[8,128]{1,0:T(8,128)}, f32[8,128]{1,0:T(8,128)}, s32[]{:T(128)S(2)}) custom-call(%copy.9), custom_call_target="tpu_custom_call", operand_layout_constraints={f32[8,128]{1,0}}, output_to_operand_aliasing={{0}: (0, {})}, control-predecessors={%copy.6}
+  %get-tuple-element.5 = s32[]{:T(128)S(2)} get-tuple-element(%copy_start.2), index=2
+  %get-tuple-element.4 = f32[8,128]{1,0:T(8,128)} get-tuple-element(%copy_start.2), index=1
+  %get-tuple-element.3 = f32[8,128]{1,0:T(8,128)} get-tuple-element(%copy_start.2), index=0
+  %copy_done.2 = f32[8,128]{1,0:T(8,128)} custom-call(%get-tuple-element.3, %get-tuple-element.4, %get-tuple-element.5), custom_call_target="tpu_custom_call", operand_layout_constraints={f32[8,128]{1,0}, f32[8,128]{1,0}, s32[]}, output_to_operand_aliasing={{}: (1, {})}, control-predecessors={%copy.6}
+  %copy_start.3 = (f32[8,128]{1,0:T(8,128)}, f32[8,128]{1,0:T(8,128)}, s32[]{:T(128)S(2)}) custom-call(%copy.6), custom_call_target="tpu_custom_call", operand_layout_constraints={f32[8,128]{1,0}}, output_to_operand_aliasing={{0}: (0, {})}
+  %get-tuple-element.9 = s32[]{:T(128)S(2)} get-tuple-element(%copy_start.3), index=2
+  %get-tuple-element.8 = f32[8,128]{1,0:T(8,128)} get-tuple-element(%copy_start.3), index=1
+  %get-tuple-element.7 = f32[8,128]{1,0:T(8,128)} get-tuple-element(%copy_start.3), index=0
+  %copy_done.3 = f32[8,128]{1,0:T(8,128)} custom-call(%get-tuple-element.7, %get-tuple-element.8, %get-tuple-element.9), custom_call_target="tpu_custom_call", operand_layout_constraints={f32[8,128]{1,0}, f32[8,128]{1,0}, s32[]}, output_to_operand_aliasing={{}: (1, {})}
+  ROOT %tuple.12 = (f32[8,128]{1,0:T(8,128)}, f32[8,128]{1,0:T(8,128)}) tuple(%copy_done.2, %copy_done.3)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options memory_space_options = DefaultMemorySpaceOptions();
+
+  HloInstruction* copy_start_2 = FindInstruction(module.get(), "copy_start.2");
+  HloPosition copy_start_2_position{copy_start_2, {1}};
+  HloUse copy_start_2_use{copy_start_2, 0, {}};
+  HloInstruction* copy_start_3 = FindInstruction(module.get(), "copy_start.3");
+  HloPosition copy_start_3_position{copy_start_3, {1}};
+  HloUse copy_start_3_use{copy_start_3, 0, {}};
+  HloInstruction* copy_done_2 = FindInstruction(module.get(), "copy_done.2");
+  HloUse copy_done_2_use{copy_done_2, 1, {}};
+  HloInstruction* copy_done_3 = FindInstruction(module.get(), "copy_done.3");
+  HloUse copy_done_3_use{copy_done_3, 1, {}};
+
+  memory_space_options.buffer_colorings = {
+      {copy_start_2_position, kAlternateMemorySpace},
+      {copy_start_3_position, kAlternateMemorySpace},
+      {copy_done_2_use, kAlternateMemorySpace},
+      {copy_done_3_use, kAlternateMemorySpace},
+      {copy_start_2_use, kDefaultMemorySpace},
+      {copy_start_3_use, kDefaultMemorySpace}};
+
+  memory_space_options.alternate_memory_space = 1;
+  memory_space_options.max_size_in_bytes = 50266112;
+  memory_space_options.alignment_in_bytes = 4096;
+  memory_space_options.replicated_split_dimension = -1;
+  memory_space_options.any_split_dimension = -2;
+  memory_space_options.reduce_scoped_memory_limit = false;
+  memory_space_options.allocate_reserved_scoped_memory_at_same_offset = true;
+  memory_space_options.max_outstanding_prefetches = 40;
+  memory_space_options.max_outstanding_evictions = 40;
+  memory_space_options.while_use_extra_outstanding_prefetch_limit = 4;
+  memory_space_options.max_retries = 2;
+  memory_space_options.max_repacks = 0;
+  memory_space_options.repack_after_every_allocation = false;
+  memory_space_options.verify = false;
+  memory_space_options.enable_cross_program_prefetch = true;
+  memory_space_options.default_cross_program_prefetch_heuristic = false;
+  memory_space_options.enable_cross_program_prefetch_freeing = true;
+  memory_space_options.max_cross_program_prefetches = 1;
+  memory_space_options.cross_program_prefetch_permissive_mode = false;
+  memory_space_options.enable_while_redundant_eviction_elimination = true;
+  memory_space_options.use_repeated_instance_for_preferred_prefetch_time =
+      false;
+  memory_space_options.enforce_prefetch_fifo_order = false;
+  memory_space_options.enable_sync_copy_replacement = true;
+  memory_space_options.enable_sync_slice_replacement = true;
+  memory_space_options.extend_async_copies_limit_for_sync_mem_op_conversion = 0;
+  memory_space_options.inefficient_use_to_copy_ratio = 0.5;
+  memory_space_options.always_spill_to_default_memory = false;
+  memory_space_options.enable_window_prefetch = false;
+  memory_space_options.window_prefetch_mode =
+      WindowPrefetchMode::kWindowExposure;
+  memory_space_options.expanded_scoped_alternate_memory_mode =
+      ExpandedScopedAlternateMemoryMode::DISABLED;
+  memory_space_options.post_module_scoped_alternate_memory_size_in_bytes = 0;
+  memory_space_options.position_requires_contiguous_allocation_fn =
+      [](const HloPosition& position) {
+        return position.instruction->name() == "copy_start.2" ||
+               position.instruction->name() == "copy_start.3";
+      };
+  memory_space_options.is_allowed_in_alternate_mem_fn =
+      [&](const HloValue& value) {
+        // Check if the value belongs in the entry computation.
+        HloInstruction* instruction = value.instruction();
+        HloComputation* computation = instruction->parent();
+        if ((instruction->name() == "copy_start.2" ||
+             instruction->name() == "copy_start.3") &&
+            value.index() == ShapeIndex({1})) {
+          return true;
+        }
+        bool in_entry_computation =
+            (computation == computation->parent()->entry_computation());
+        if (in_entry_computation &&
+            instruction->opcode() == HloOpcode::kParameter) {
+          return value.shape().has_layout() &&
+                 value.shape().layout().memory_space() != kDefaultMemorySpace;
+        }
+        return true;
+      };
+
+  XLA_VLOG_LINES(3, "Before MSA: \n" + module->ToString());
+  AssignMemorySpaceUsingCostAnalysis(module.get(), memory_space_options);
+  XLA_VLOG_LINES(3, "After MSA: \n" + module->ToString());
+
+  EXPECT_EQ(FindInstruction(module.get(), "copy_done.2")
+                ->operand(1)
+                ->shape()
+                .layout()
+                .memory_space(),
+            kAlternateMemorySpace);
+
+  EXPECT_EQ(FindInstruction(module.get(), "copy_done.3")
+                ->operand(1)
+                ->shape()
+                .layout()
+                .memory_space(),
+            kAlternateMemorySpace);
+
+  EXPECT_EQ(FindInstruction(module.get(), "copy_done.2")
+                ->shape()
+                .layout()
+                .memory_space(),
+            kAlternateMemorySpace);
+
+  EXPECT_EQ(FindInstruction(module.get(), "copy_done.3")
+                ->shape()
+                .layout()
+                .memory_space(),
+            kAlternateMemorySpace);
 }
 
 }  // namespace

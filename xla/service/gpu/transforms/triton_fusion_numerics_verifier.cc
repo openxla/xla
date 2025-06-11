@@ -146,7 +146,7 @@ namespace triton_fusion_numerics_pass_internal {
 
 absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
     AutotunerCompileUtil& util, const HloFusionInstruction& fusion,
-    const AutotuneConfig& config, const DebugOptions& debug_opts,
+    const DeviceOrDevicelessConfig& config, const DebugOptions& debug_opts,
     bool disable_triton) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
@@ -159,8 +159,10 @@ absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
     return Internal("Failed to compile Triton fusion.");
   }
 
-  bool should_init_buffers = config.should_init_buffers();
-  bool should_check_correctness = config.should_check_correctness();
+  // We always want to initialize buffers and check for correctness. That is the
+  // whole point of running TritonFusionNumericsVerifier.
+  bool should_init_buffers = true;
+  bool should_check_correctness = true;
   int redzone_padding_bytes = debug_opts.xla_gpu_redzone_padding_bytes();
   TF_ASSIGN_OR_RETURN(se::Stream * stream, config.GetStream());
   TF_ASSIGN_OR_RETURN(auto rz_buffers,
@@ -178,13 +180,13 @@ absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
 
 absl::Status CompareBuffers(const ScopedShapedBuffer& current,
                             const ScopedShapedBuffer& expected,
-                            const Shape& shape, const HloModuleConfig& config,
+                            const Shape& shape, const DebugOptions& debug_opts,
                             se::Stream* stream) {
   return ShapeUtil::ForEachLeafShapeWithStatus(
       shape,
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
-        BufferComparator comparator(
-            subshape, config.debug_options().xla_gpu_autotune_gemm_rtol());
+        BufferComparator comparator(subshape,
+                                    debug_opts.xla_gpu_autotune_gemm_rtol());
         TF_ASSIGN_OR_RETURN(
             bool outputs_match,
             comparator.CompareEqual(stream, current.buffer(index),
@@ -219,7 +221,7 @@ absl::Status ForAllTritonFusions(
 namespace {
 absl::Status VerifyTritonFusion(AutotunerCompileUtil& util,
                                 const HloFusionInstruction& fusion,
-                                const AutotuneConfig& config,
+                                const DeviceOrDevicelessConfig& config,
                                 const DebugOptions& debug_opts) {
   TF_ASSIGN_OR_RETURN(auto triton_result,
                       triton_fusion_numerics_pass_internal::CompileAndRunFusion(
@@ -232,8 +234,7 @@ absl::Status VerifyTritonFusion(AutotunerCompileUtil& util,
 
   TF_ASSIGN_OR_RETURN(auto stream, config.GetStream());
   auto status = triton_fusion_numerics_pass_internal::CompareBuffers(
-      triton_result, emitters_result, fusion.shape(),
-      fusion.GetModule()->config(), stream);
+      triton_result, emitters_result, fusion.shape(), debug_opts, stream);
 
   if (!status.ok()) {
     LOG(ERROR) << "Triton numerics verification failed with: "

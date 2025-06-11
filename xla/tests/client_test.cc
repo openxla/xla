@@ -17,6 +17,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "xla/tests/xla_test_backend_predicates.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/client/local_client.h"
@@ -41,7 +42,7 @@ namespace {
 
 class ClientTest : public ClientLibraryTestBase {};
 
-XLA_TEST_F(ClientTest, ExecuteWithLayout) {
+TEST_F(ClientTest, ExecuteWithLayout) {
   XlaBuilder b(TestName());
 
   std::vector<std::vector<int64_t>> layouts = {{0, 1}, {1, 0}};
@@ -74,7 +75,7 @@ XLA_TEST_F(ClientTest, ExecuteWithLayout) {
   }
 }
 
-XLA_TEST_F(ClientTest, ExecuteWithTupleLayout) {
+TEST_F(ClientTest, ExecuteWithTupleLayout) {
   XlaBuilder b(TestName());
 
   Tuple(&b, {ConstantR2<int32_t>(&b, {{1, 2}, {3, 4}}),
@@ -116,8 +117,10 @@ XLA_TEST_F(ClientTest, ExecuteWithTupleLayout) {
 
 // Disabled for interpreter since ExecuteAsyncOnStream is not implemented on
 // interpreter backend.
-XLA_TEST_F(ClientTest,
-           DISABLED_ON_INTERPRETER(DISABLED_ON_GPU(ExecuteParallel))) {
+TEST_F(ClientTest, ExecuteParallel) {
+  if (test::DeviceIsOneOf({test::kCpu, test::kGpu})) {
+    GTEST_SKIP();
+  }
   XlaComputation add_with_one_arg, mul_with_two_args, dot_with_one_arg;
   Shape shape = ShapeUtil::MakeShape(S32, {2, 2});
 

@@ -37,6 +37,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
@@ -101,6 +102,7 @@ bool TmaIsEnabledForDevice(
 bool CanUseTMA(::xla::EmitterLocOpBuilder& builder, bool tma_enabled,
                const stream_executor::DeviceDescription& device_description,
                const ArrayRef<int64_t>& tile_shape,
+               const ArrayRef<int64_t>& tile_strides,
                const TypedValue<RankedTensorType>& tensor,
                const ArrayRef<int64_t>& layout) {
   if (!tma_enabled) {
@@ -128,10 +130,15 @@ bool CanUseTMA(::xla::EmitterLocOpBuilder& builder, bool tma_enabled,
 
   // Limitations of TMA:
   // - The minor dimension of the global input must be divisible by 16.
+  // - The minor dimension must be contiguous. i.e. its tile stride must be 1.
   // - The block size must be less than 256 in every dimension.
   // See source:
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TENSOR__MEMORY.html
   if (tensor.getType().getShape()[layout[0]] % 16 != 0) {
+    return false;
+  }
+  if (mlir::ShapedType::isDynamicShape(tile_strides) ||
+      tile_strides[layout[0]] != 1) {
     return false;
   }
   return llvm::none_of(tile_shape, [](int64_t dim) { return dim > 256; });
@@ -233,6 +240,7 @@ Value ComputeLinearOffset(::xla::EmitterLocOpBuilder& builder,
 void AddTmaAttributes(::xla::EmitterLocOpBuilder& builder,
                       const TypedValue<RankedTensorType>& tensor,
                       const ArrayRef<int64_t>& tile_shape,
+                      const ArrayRef<int64_t>& tile_strides,
                       const ArrayRef<int64_t>& layout) {
   auto block_arg = mlir::dyn_cast<BlockArgument>(tensor);
   auto func_op =
@@ -245,7 +253,7 @@ void AddTmaAttributes(::xla::EmitterLocOpBuilder& builder,
   func_op.setArgAttr(
       block_arg.getArgNumber(), "tt.tma_descriptor",
       builder.getAttr<TmaDescriptorAttr>(
-          tensor.getType().getShape(), tile_shape, layout,
+          tensor.getType().getShape(), tile_shape, tile_strides, layout,
           tensor.getType().getElementType().getIntOrFloatBitWidth() / 8));
 }
 
@@ -356,7 +364,7 @@ class RewriteFuncOp : public mlir::OpRewritePattern<func::FuncOp> {
       if (auto attr = op.getArgAttr(index, "tt.tma_descriptor")) {
         auto tma_descriptor = mlir::cast<TmaDescriptorAttr>(attr);
         auto layout = tma_descriptor.getLayout();
-        auto block_shape = tma_descriptor.getBlockShape();
+        auto block_shape = tma_descriptor.getTileShape();
         SmallVector<int64_t> normalized_block_shape =
             Normalize(block_shape, layout);
 
@@ -454,8 +462,9 @@ class RewriteExtract : public mlir::OpRewritePattern<ExtractOp> {
 
     auto offsets = op.getOffsetsAsValues(builder);
     if (CanUseTMA(builder, tma_enabled_, *device_description_, tile_shape,
-                  op.getSrc(), op.getLayout())) {
-      AddTmaAttributes(builder, op.getSrc(), tile_shape, op.getLayout());
+                  op.getStaticStrides(), op.getSrc(), op.getLayout())) {
+      AddTmaAttributes(builder, op.getSrc(), tile_shape, op.getStaticStrides(),
+                       op.getLayout());
 
       SmallVector<int64_t> normalized_tile_shape =
           Normalize(tile_shape, op.getLayout());
@@ -545,8 +554,9 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
 
     auto offsets = op.getOffsetsAsValues(builder);
     if (CanUseTMA(builder, tma_enabled_, *device_description_, tile_shape,
-                  op.getDst(), op.getLayout())) {
-      AddTmaAttributes(builder, op.getDst(), tile_shape, op.getLayout());
+                  op.getStaticStrides(), op.getDst(), op.getLayout())) {
+      AddTmaAttributes(builder, op.getDst(), tile_shape, op.getStaticStrides(),
+                       op.getLayout());
 
       SmallVector<int64_t> normalized_tile_shape =
           Normalize(tile_shape, op.getLayout());

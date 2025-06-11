@@ -67,7 +67,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/resource_use.h"
-#include "xla/runtime/workgroup_dim.h"
+#include "xla/runtime/work_group.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo.pb.h"
@@ -614,7 +614,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         /*out_buffer=*/
         CreateBufferAllocationSlice(
             buffer_allocations_[buffer_allocations_.size() - 1]),
-        /*out_shape=*/literals_[buffer_allocations_.size() - 1].shape());
+        /*out_shape=*/literals_[buffer_allocations_.size() - 1].shape(), true);
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateXnnConvolutionThunk() {
@@ -679,7 +679,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         {CreateBufferAllocationSlice(
             buffer_allocations_[buffer_allocations_.size() - 1])},
         /*kernel_name=*/"test",
-        /*workgroup_dim=*/WorkgroupDim{1},
+        /*num_workgroups=*/NumWorkGroups{1},
         /*invariant_arguments=*/{0},
         /*min_alignment=*/8);
   }
@@ -1118,7 +1118,11 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     const bool are_options_equal =
         thunk_1.options().use_threadpool == thunk_2.options().use_threadpool;
 
+    const bool is_capturing_rhs_equal =
+        thunk_1.capture_rhs() == thunk_2.capture_rhs();
+
     return are_options_equal && are_dot_dimensions_equal &&
+           is_capturing_rhs_equal &&
            VerifySliceShapeEquality(thunk_1.dot_slices().lhs_buffer,
                                     thunk_1.dot_slices().lhs_shape,
                                     thunk_2.dot_slices().lhs_buffer,
@@ -1194,7 +1198,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   bool VerifyKernelThunkEquality(const KernelThunkBase& thunk_1,
                                  const KernelThunkBase& thunk_2) {
     return thunk_1.kernel_name() == thunk_2.kernel_name() &&
-           thunk_1.workgroup_dim() == thunk_2.workgroup_dim() &&
+           thunk_1.num_workgroups() == thunk_2.num_workgroups() &&
            thunk_1.min_alignment() == thunk_2.min_alignment() &&
            absl::c_equal(thunk_1.arguments_buffers(),
                          thunk_2.arguments_buffers(),

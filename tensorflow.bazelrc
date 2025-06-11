@@ -162,9 +162,10 @@ build:mkl_aarch64 -c opt
 build:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
 build:mkl_aarch64_threadpool -c opt
 
-# Default CUDA and CUDNN versions.
+# Default CUDA, CUDNN and NVSHMEM versions.
 build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.6.3"
 build:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.3.0"
+build:cuda_version --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
 
 # CUDA: This config refers to building CUDA op kernels with nvcc.
 build:cuda --repo_env TF_NEED_CUDA=1
@@ -176,6 +177,7 @@ build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This configuration is used for building the wheels.
 build:cuda_wheel --@local_config_cuda//cuda:include_cuda_libs=false
+build:cuda_wheel --@local_config_nvshmem//:include_nvshmem_libs=false
 
 # CUDA: This config refers to building CUDA op kernels with clang.
 build:cuda_clang --config=cuda
@@ -211,12 +213,14 @@ build:cuda_nvcc --@local_config_cuda//:cuda_compiler=nvcc
 # Old config for backward compatibility
 build:nvcc_clang --config=cuda_nvcc
 
-# Debug config
+# Debug config. Enables Bazel's 'dbg' compilation mode, build with debugging enabled
 build:dbg -c dbg
-# Only include debug info for files under xla/, to reduce the size of the debug
-# info in the binary. This is because if the debug sections in the ELF binary
-# are too large, errors can occur. See https://github.com/tensorflow/tensorflow/issues/48919.
-# Users can still include debug info for a specific kernel, e.g. with:
+# Compiling all dependencies with debug info can cause linker failures
+# and significantly increase binary size.
+# The following setting disables debug info (-g0) for all files,
+# except those under the xla/* path. This helps reduce the size of debug sections
+# in the ELF binary, which can otherwise become too large and lead to errors.
+# For more details, see: https://github.com/tensorflow/tensorflow/issues/48919.
 build:dbg --per_file_copt=+.*,-xla.*@-g0
 # AWS SDK must be compiled in release mode. see: https://github.com/tensorflow/tensorflow/issues/37498
 build:dbg --copt -DDEBUG_BUILD
@@ -475,6 +479,7 @@ common:rbe_linux_cpu --remote_instance_name=projects/tensorflow-testing/instance
 build:rbe_linux_cuda --config=cuda_clang_official
 build:rbe_linux_cuda --config=rbe_linux_cpu
 build:rbe_linux_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
+build:rbe_linux_cuda --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
 # For Remote build execution -- GPU configuration
 build:rbe_linux_cuda --repo_env=REMOTE_GPU_TESTING=1
 

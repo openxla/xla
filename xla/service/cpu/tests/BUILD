@@ -458,7 +458,7 @@ xla_cc_test(
     name = "onednn_softmax_test",
     srcs = ["onednn_softmax_test.cc"],
     copts = tsl_copts(),
-    shard_count = 4,
+    shard_count = if_graph_api(4, 1),
     deps = [
         "//xla:literal",
         "//xla:shape_util",
@@ -500,7 +500,10 @@ xla_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
