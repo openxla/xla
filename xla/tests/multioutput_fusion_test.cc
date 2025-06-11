@@ -381,19 +381,19 @@ XLA_TEST_F(MultiOutputFusionTest, MultiOutputReduceFusionMinorWithExtraOutput) {
 XLA_TEST_F(MultiOutputFusionTest, MultiOutputReduceFusionMajorWithExtraOutput) {
   const std::string testcase = absl::StrCat(kScalarOps, R"(
     fused_reduce {
-      p0 = f32[32,32,2]{2,1,0} parameter(0)
+      p0 = f32[64,64,2]{2,1,0} parameter(0)
       c0 = f32[] constant(0)
-      r1 = f32[32,2]{1,0} reduce(p0, c0), dimensions={0}, to_apply=Add
-      mul = f32[32,32,2]{2,1,0} multiply(p0, p0)
+      r1 = f32[64,2]{1,0} reduce(p0, c0), dimensions={0}, to_apply=Add
+      mul = f32[64,64,2]{2,1,0} multiply(p0, p0)
       c1 = f32[] constant(5)
-      r2 = f32[32,2]{1,0} reduce(mul, c1), dimensions={0}, to_apply=Max
-      ROOT tuple = (f32[32,2]{1,0}, f32[32,32,2]{2,1,0}, f32[32,2]{1,0})
+      r2 = f32[64,2]{1,0} reduce(mul, c1), dimensions={0}, to_apply=Max
+      ROOT tuple = (f32[64,2]{1,0}, f32[64,64,2]{2,1,0}, f32[64,2]{1,0})
                      tuple(r1, mul, r2)
     }
 
     ENTRY reduce {
-      p = f32[32,32,2]{2,1,0} parameter(0)
-      ROOT fusion = (f32[32,2]{1,0}, f32[32,32,2]{2,1,0}, f32[32,2]{1,0})
+      p = f32[64,64,2]{2,1,0} parameter(0)
+      ROOT fusion = (f32[64,2]{1,0}, f32[64,64,2]{2,1,0}, f32[64,2]{1,0})
         fusion(p), kind=kInput, calls=fused_reduce
     })");
   auto module = ParseAndReturnVerifiedModule(testcase).value();
