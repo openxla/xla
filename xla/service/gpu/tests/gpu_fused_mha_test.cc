@@ -1392,7 +1392,7 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
   const std::string
   GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16() {
     const std::string hlo_text = R"(
-    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->bf16[4,1024,4,64]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+    HloModule jit__unnamed_wrapped_function_
 
     %soft_cap.14 (Arg_0.15: f32[4,4,1024,1024]) -> f32[4,4,1024,1024] {
       %Arg_0.15 = f32[4,4,1024,1024]{3,2,1,0} parameter(0)
@@ -1420,15 +1420,15 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
   const std::string
   GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16() {
     const std::string hlo_text = R"(
-    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->bf16[4,1024,4,64]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+    HloModule jit__unnamed_wrapped_function_
 
-    %region_0.14 (Arg_0.15: f32[], Arg_1.16: f32[]) -> f32[] {
+    %max (Arg_0.15: f32[], Arg_1.16: f32[]) -> f32[] {
       %Arg_0.15 = f32[] parameter(0)
       %Arg_1.16 = f32[] parameter(1)
       ROOT %maximum.17 = f32[] maximum(%Arg_0.15, %Arg_1.16)
     }
 
-    %region_1.26 (Arg_0.27: f32[], Arg_1.28: f32[]) -> f32[] {
+    %add (Arg_0.27: f32[], Arg_1.28: f32[]) -> f32[] {
       %Arg_0.27 = f32[] parameter(0)
       %Arg_1.28 = f32[] parameter(1)
       ROOT %add.29 = f32[] add(%Arg_0.27, %Arg_1.28)
@@ -1453,13 +1453,13 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
       %constant.6 = f32[] constant(3)
       %broadcast.7 = f32[4,4,1024,1024]{3,2,1,0} broadcast(%constant.6), dimensions={}
       %multiply.13 = f32[4,4,1024,1024]{3,2,1,0} multiply(%tanh.12, %broadcast.7)
-      %constant.9 = f32[] constant(-inf)
-      %reduce.18 = f32[4,4,1024]{2,1,0} reduce(%multiply.13, %constant.9), dimensions={3}, to_apply=%region_0.14
+      %neg_inf = f32[] constant(-inf)
+      %reduce.18 = f32[4,4,1024]{2,1,0} reduce(%multiply.13, %neg_inf), dimensions={3}, to_apply=%max
       %broadcast.23 = f32[4,4,1024,1024]{3,2,1,0} broadcast(%reduce.18), dimensions={0,1,2}
       %subtract.24 = f32[4,4,1024,1024]{3,2,1,0} subtract(%multiply.13, %broadcast.23)
       %exponential.25 = f32[4,4,1024,1024]{3,2,1,0} exponential(%subtract.24)
-      %constant.8 = f32[] constant(0)
-      %reduce.30 = f32[4,4,1024]{2,1,0} reduce(%exponential.25, %constant.8), dimensions={3}, to_apply=%region_1.26
+      %zero = f32[] constant(0)
+      %reduce.30 = f32[4,4,1024]{2,1,0} reduce(%exponential.25, %zero), dimensions={3}, to_apply=%add
       %broadcast.34 = f32[4,4,1024,1024]{3,2,1,0} broadcast(%reduce.30), dimensions={0,1,2}
       %divide.35 = f32[4,4,1024,1024]{3,2,1,0} divide(%exponential.25, %broadcast.34)
       %convert.36 = bf16[4,4,1024,1024]{3,2,1,0} convert(%divide.35)
