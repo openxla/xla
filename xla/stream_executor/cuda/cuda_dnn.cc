@@ -31,7 +31,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/optimization.h"
@@ -50,16 +49,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
+#include "Eigen/Core"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
-#include "third_party/gpus/cudnn/cudnn_graph.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/tensor_float_32_utils.h"
-#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
@@ -81,6 +74,12 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/tensor_float_32_utils.h"
+#include "xla/service/gpu/stream_executor_util.h"
 
 // clang-format off
 #include "third_party/gpus/cuda/include/library_types.h"
@@ -4872,9 +4871,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
       .set_io_data_type(ioDataType)
       .set_compute_data_type(cudnn_frontend::DataType_t::FLOAT);
 
-  auto next_uid = [uid = 0]() mutable -> int64_t {
-    return CuDnnTensorUID(uid++);
-  };
+  auto next_uid = [uid = 0]() mutable -> int { return CuDnnTensorUID(uid++); };
 
   std::shared_ptr<Tensor_attributes> q_tensor =
       graph.tensor(Tensor_attributes()
@@ -5008,9 +5005,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
       .set_intermediate_data_type(cudnn_frontend::DataType_t::FLOAT)
       .set_io_data_type(ioDataType);
 
-  auto next_uid = [uid = 0]() mutable -> int64_t {
-    return CuDnnTensorUID(uid++);
-  };
+  auto next_uid = [uid = 0]() mutable -> int { return CuDnnTensorUID(uid++); };
 
   std::shared_ptr<Tensor_attributes> q =
       graph.tensor(Tensor_attributes()
@@ -5194,9 +5189,7 @@ absl::StatusOr<CudnnGraph> GetCudnnBlockScaledDotOperationGraph(
   graph.set_compute_data_type(compute_type);
   graph.set_intermediate_data_type(compute_type);
 
-  auto next_uid = [uid = 0]() mutable -> int64_t {
-    return CuDnnTensorUID(uid++);
-  };
+  auto next_uid = [uid = 0]() mutable -> int { return CuDnnTensorUID(uid++); };
   auto get_tensor_attr = [&](const dnn::TensorDescriptor& desc,
                              bool is_rhs) -> absl::StatusOr<Tensor_attributes> {
     TF_ASSIGN_OR_RETURN(std::vector<int64_t> dimensions,
@@ -7544,9 +7537,7 @@ CudnnGraph::VariantPack CudnnGraph::PackOperands(
   if (graph_.get_workspace_size() > 0 || operands.back().size() == 0) {
     operands_without_workspace = operands.first(operands.size() - 1);
   }
-  auto next_uid = [uid = 0]() mutable -> int64_t {
-    return CuDnnTensorUID(uid++);
-  };
+  auto next_uid = [uid = 0]() mutable -> int { return CuDnnTensorUID(uid++); };
   for (DeviceMemoryBase operand : operands_without_workspace) {
     tensor_to_ptr_map[next_uid()] = operand.opaque();
   }
