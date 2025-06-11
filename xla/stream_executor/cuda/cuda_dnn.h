@@ -33,7 +33,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
-#include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
+#include "xla/service/gpu/transforms/cudnn_sdpa_score_mod.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"

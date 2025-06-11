@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
+#include "xla/service/gpu/transforms/cudnn_sdpa_score_mod.h"
 
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"

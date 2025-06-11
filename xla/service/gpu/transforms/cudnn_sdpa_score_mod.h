@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDNN_SDPA_SCORE_MOD_H_
-#define XLA_STREAM_EXECUTOR_CUDA_CUDNN_SDPA_SCORE_MOD_H_
+#ifndef XLA_SERVICE_GPU_TRANSFORMS_CUDNN_SDPA_SCORE_MOD_H_
+#define XLA_SERVICE_GPU_TRANSFORMS_CUDNN_SDPA_SCORE_MOD_H_
 
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -75,4 +75,4 @@ class ScoreModFunc {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDNN_SDPA_SCORE_MOD_H_
+#endif  // XLA_SERVICE_GPU_TRANSFORMS_CUDNN_SDPA_SCORE_MOD_H_

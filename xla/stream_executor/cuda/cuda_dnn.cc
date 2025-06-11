@@ -58,7 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
-#include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
+#include "xla/service/gpu/transforms/cudnn_sdpa_score_mod.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
