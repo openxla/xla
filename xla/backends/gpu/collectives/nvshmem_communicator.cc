@@ -452,7 +452,7 @@ tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::Send(
     return absl::FailedPreconditionError("NvshmemCommunicator aborted");
   }
   if (!collectives_->IsInitialized()) {
-    return FailedPrecondition("NvshmemCollectives not initialized.");
+    return absl::FailedPreconditionError("NvshmemCollectives not initialized.");
   }
 
   count = ToRealCount(dtype, count);
@@ -469,7 +469,7 @@ tsl::AsyncValueRef<NvshmemCommunicator::Event> NvshmemCommunicator::Recv(
     return absl::FailedPreconditionError("NvshmemCommunicator aborted");
   }
   if (!collectives_->IsInitialized()) {
-    return FailedPrecondition("NvshmemCollectives not initialized.");
+    return absl::FailedPreconditionError("NvshmemCollectives not initialized.");
   }
 
   count = ToRealCount(dtype, count);
