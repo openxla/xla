@@ -926,9 +926,5 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
-    ] + if_cuda([
-        "//xla/stream_executor/cuda:cuda_platform",
-    ]) + if_rocm([
-        "//xla/stream_executor/rocm:rocm_platform",
-    ]),
+    ]
 )
