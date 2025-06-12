@@ -337,8 +337,10 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        ":ptx_kernel_call",
         ":execution_stream_assignment",
         ":gpu_constants",
+        ":gpu_asm_opts_util",
         ":gpu_conv_runner",
         ":gpu_norm_runner",
         ":hlo_fusion_analysis",
@@ -415,6 +417,7 @@ cc_library(
         "//xla/service:name_uniquer",
         "//xla/service:platform_util",
         "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:ptx_custom_kernel",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:ir_array",
@@ -460,7 +463,9 @@ cc_library(
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@triton//:TritonDialects",
         "@tsl//tsl/platform:human_readable_json",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_asm_compiler",
+    ]),
 )
 
 cc_library(
@@ -503,6 +508,21 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "ptx_kernel_call",
+    srcs = ["ptx_kernel_call.cc"],
+    hdrs = ["ptx_kernel_call.h"],
+    deps = [
+        "//xla/stream_executor:launch_dim",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
