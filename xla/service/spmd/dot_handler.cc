@@ -1789,10 +1789,11 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             "window"));
         std::vector<std::pair<int64_t, int64_t>> sd_pairs(num_partitions);
         for (int64_t source = 0; source < num_partitions; ++source) {
-          // There are K = loop_partitions / num_partitions groups with n =
-          // loop_partitions pairs in each group of the form {m, m + n - 1}, {m
-          // + 1, m}, ... {m + n - 1, m + n - 2} where m = k * n with k = 0 ...
-          // K - 1 is the lowest partition index of group k.
+          // There are K = loop_partitions / num_partitions groups with
+          // n = loop_partitions pairs in each group of the form
+          // {m, m + n - 1}, {m + 1, m}, ... {m + n - 1, m + n - 2}
+          // where m = k * n with k = 0 ... K - 1 is the lowest partition index
+          // of group k.
           sd_pairs[source] = {source,
                               (source + loop_partitions - 1) % loop_partitions +
                                   (source / loop_partitions) * loop_partitions};
