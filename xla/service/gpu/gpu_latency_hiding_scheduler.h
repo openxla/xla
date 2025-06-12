@@ -58,13 +58,13 @@ enum class GpuResourceType {
                                                        // collectives, which
                                                        // will be issued on a
                                                        // separate stream.
-  kGpuAsyncStreamSend0,        // A resource for P2P Send operation.
-  kGpuAsyncStreamSend1,        // Another resource for P2P Send operation.
-  kGpuAsyncStreamRecv0,        // A resource for P2P Recv operation.
-  kGpuAsyncStreamRecv1,        // Another resource for P2P Recv operation.
-  kGpuAsyncStreamCollectives,  // The resource for collective operations.
-  kGpuAsyncStreamComputes,     // The resource for async compute operations.
-  kGpuAsyncStreamMemcpy,       // The resource for host offloading operations.
+  kGpuAsyncStreamSend0,             // A resource for P2P Send operation.
+  kGpuAsyncStreamSend1,             // Another resource for P2P Send operation.
+  kGpuAsyncStreamRecv0,             // A resource for P2P Recv operation.
+  kGpuAsyncStreamRecv1,             // Another resource for P2P Recv operation.
+  kGpuAsyncStreamCollectives,       // The resource for collective operations.
+  kGpuAsyncStreamComputes,          // The resource for async compute operations.
+  kGpuAsyncStreamOffloadingMemcpy,  // The resource for host offloading operations.
   kGpuResourceTypeEnd,
 };
 

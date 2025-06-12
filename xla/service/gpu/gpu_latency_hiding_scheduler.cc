@@ -60,10 +60,6 @@ static constexpr int64_t kCostlyP2PRecvMultiplier = 6;
 // may not happen after each one of them.
 static constexpr int64_t kNumAsyncCollectivesP2P = 4;
 
-// Number of async memcpy operations that can be in flight at the same time.
-static constexpr int64_t kNumAsyncMemcpy = std::numeric_limits<int>::max();
-;
-
 // Classifies `hlo` instruction as noop or not.
 bool IsNopInstruction(const HloInstruction& hlo) {
   switch (hlo.opcode()) {
@@ -134,7 +130,7 @@ bool IsSlicingMemcpy(const HloInstruction& hlo) {
   return false;
 }
 
-bool IsMemcpyAsyncOp(const HloInstruction& hlo) {
+bool OffloadingMemcpy(const HloInstruction& hlo) {
   if (hlo.opcode() == HloOpcode::kCopyStart ||
       hlo.opcode() == HloOpcode::kCopyDone) {
     return true;
@@ -154,7 +150,7 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
   return (hlo_query::IsAsyncCollectiveStartOp(&hlo,
                                               /*include_send_recv=*/true) &&
           !IsGPUSyncCollective(hlo)) ||
-         IsAsyncComputeOp(hlo) || IsMemcpyAsyncOp(hlo);
+         IsAsyncComputeOp(hlo) || OffloadingMemcpy(hlo);
 }
 
 // Marks async done operations to be scheduled as late as possible.
@@ -162,7 +158,7 @@ bool IsGpuAsyncDone(const HloInstruction& hlo) {
   return (hlo_query::IsAsyncCollectiveDoneOp(&hlo,
                                              /*include_send_recv=*/true) &&
           !IsGPUSyncCollective(*hlo.operand(0))) ||
-         IsAsyncComputeOp(hlo) || IsMemcpyAsyncOp(hlo);
+         IsAsyncComputeOp(hlo) || OffloadingMemcpy(hlo);
 }
 
 bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
@@ -480,7 +476,7 @@ int64_t GpuAsyncTracker::GetNumAvailableResources(int64_t resource_type) const {
   }
 
   if (resource_type ==
-      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy)) {
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamOffloadingMemcpy)) {
     constexpr int64_t kNumAsyncMemcpy = std::numeric_limits<int>::max();
     return kNumAsyncMemcpy;
   }
