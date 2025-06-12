@@ -1030,6 +1030,7 @@ cc_library(
 xla_test(
     name = "cudnn_sdpa_score_mod_test",
     srcs = ["cudnn_sdpa_score_mod_test.cc"],
+    backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
         ":cudnn_sdpa_score_mod",
