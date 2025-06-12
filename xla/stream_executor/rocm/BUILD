@@ -1254,6 +1254,7 @@ rocm_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:gpu_test_kernel_traits",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
