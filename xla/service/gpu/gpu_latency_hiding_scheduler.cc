@@ -506,6 +506,8 @@ absl::string_view GpuAsyncTracker::GetResourceName(
       return "kGpuAsyncStreamCollectives";
     case GpuResourceType::kGpuAsyncStreamComputes:
       return "kGpuAsyncStreamComputes";
+    case GpuResourceType::kGpuAsyncStreamOffloadingMemcpy:
+      return "kGpuAsyncStreamOffloadingMemcpy";
     default:
       return "kUnsupportedResource";
   }
