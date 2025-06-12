@@ -4344,6 +4344,7 @@ cc_library(
         ":transfer_manager",
         "//xla:executable_run_options",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:status_macros",
