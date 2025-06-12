@@ -128,6 +128,66 @@ ENTRY %main (param_0: f32[1024], param_1: f32[1024]) -> f32[1024] {
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-3}));
 }
 
+TEST_F(GpuOffloadingTest, HostOffloadingWithDynamicSlicing) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test, num_partitions=4
+
+%wrapped_dynamic-slice_computation (param_0.45: f32[2,2,2], param_1.42: s32[], param_2.30: s32[], param_3.21: s32[]) -> f32[1,2,2] {
+  %param_0.45 = f32[2,2,2]{2,1,0:S(5)} parameter(0)
+  %param_1.42 = s32[] parameter(1)
+  %param_2.30 = s32[] parameter(2)
+  %param_3.21 = s32[] parameter(3)
+  ROOT %dynamic-slice.12.1 = f32[1,2,2]{2,1,0} dynamic-slice(%param_0.45, %param_1.42, %param_2.30, %param_3.21), dynamic_slice_sizes={1,2,2}
+}
+
+%async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
+  %param_0 = f32[2,2,2]{2,1,0:S(5)} parameter(0)
+  %param_1 = s32[] parameter(1)
+  %param_2 = s32[] parameter(2)
+  %param_3 = s32[] parameter(3)
+  ROOT %wrapped_dynamic-slice = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1, %param_2, %param_3), kind=kLoop, calls=%wrapped_dynamic-slice_computation
+}
+
+%wrapped_dynamic-update-slice_computation (param_0.39: f32[2,2,2], param_1.36: f32[1,2,2], param_2.26: s32[], param_3.17: s32[], param_4.6: s32[]) -> f32[2,2,2] {
+  %param_0.39 = f32[2,2,2]{2,1,0:S(5)} parameter(0)
+  %param_1.36 = f32[1,2,2]{2,1,0} parameter(1)
+  %param_2.26 = s32[] parameter(2)
+  %param_3.17 = s32[] parameter(3)
+  %param_4.6 = s32[] parameter(4)
+  ROOT %dynamic-update-slice.20.1 = f32[2,2,2]{2,1,0:S(5)} dynamic-update-slice(%param_0.39, %param_1.36, %param_2.26, %param_3.17, %param_4.6)
+}
+
+%async_computation.1 (param_0.4: f32[2,2,2], param_1.4: f32[1,2,2], param_2.4: s32[], param_3.4: s32[], param_4: s32[]) -> f32[2,2,2] {
+  %param_0.4 = f32[2,2,2]{2,1,0:S(5)} parameter(0)
+  %param_1.4 = f32[1,2,2]{2,1,0} parameter(1)
+  %param_2.4 = s32[] parameter(2)
+  %param_3.4 = s32[] parameter(3)
+  %param_4 = s32[] parameter(4)
+  ROOT %wrapped_dynamic-update-slice = f32[2,2,2]{2,1,0:S(5)} fusion(%param_0.4, %param_1.4, %param_2.4, %param_3.4, %param_4), kind=kLoop, calls=%wrapped_dynamic-update-slice_computation
+}
+
+ENTRY main {
+ p0 = f32[1,2,2]{2,1,0} parameter(0)
+ %c0 = s32[] constant(0)
+ %c1 = f32[] constant(1.)
+ %const = f32[4] constant({1., 2., 3., 4.})
+ %broadcast = f32[2,2,2]{2,1,0} broadcast(%c1), dimensions={}
+ %copy-start = (f32[2,2,2]{2,1,0:S(5)}, f32[2,2,2]{2,1,0}, u32[]) copy-start(%broadcast)
+ %copy-done = f32[2,2,2]{2,1,0:S(5)} copy-done(%copy-start)
+ %reshape = f32[1,2,2]{2,1,0} reshape(%const)
+ %dynamic-update-slice-start = ((f32[2,2,2]{2,1,0:S(5)}, f32[1,2,2]{2,1,0}, s32[], s32[], s32[]), f32[2,2,2]{2,1,0:S(5)}, u32[]) async-start(
+      %copy-done, %reshape, %c0, %c0, %c0), calls=%async_computation.1
+ %dynamic-update-slice-done = f32[2,2,2]{2,1,0:S(5)} async-done(%dynamic-update-slice-start)
+ %dynamic-slice-start = ((f32[2,2,2]{2,1,0:S(5)}, s32[], s32[], s32[]), f32[1,2,2]{2,1,0}, u32[]) async-start(
+      %copy-done, %c0, %c0, %c0), calls=%async_computation
+ %dynamic-slice-done = f32[1,2,2]{2,1,0} async-done(%dynamic-slice-start)
+ %add = f32[1,2,2]{2,1,0} add(%p0, %p0)
+ ROOT %add.1 = f32[1,2,2]{2,1,0} add(%p0, %dynamic-slice-done)
+})";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloModule, ErrorSpec{1e-3}));
+}
+
 TEST_F(GpuOffloadingTest, FusedComputationOffloadingTest) {
   const char* hlo_text = R"(
   HloModule test
