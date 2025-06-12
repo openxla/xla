@@ -266,7 +266,8 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
                       GetNumLocalParticipants(params, participants));
 
   return GpuCliqueKey(std::move(participants), num_local_participants,
-                      kNoStreamId, stream_kind, std::move(participant_groups));
+                      xla::gpu::IsP2PStreamKind(stream_kind),
+                      std::move(participant_groups));
 }
 
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
