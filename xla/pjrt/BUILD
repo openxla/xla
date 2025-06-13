@@ -1139,10 +1139,13 @@ cc_library(
     hdrs = ["triton.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:cuda_root_path",
+        "@tsl//tsl/platform:path",
     ] + if_cuda_is_configured(
         [
             "@com_google_absl//absl/base",
