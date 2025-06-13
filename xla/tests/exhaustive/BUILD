@@ -193,7 +193,6 @@ xla_test(
         "//xla:literal",
         "//xla:types",
         "//xla/hlo/builder:xla_builder",
-        "//xla/tests:test_macros_header",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:test",
