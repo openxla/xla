@@ -2069,6 +2069,7 @@ cc_library(
     name = "nvshmem_put_thunk",
     srcs = ["nvshmem_put_thunk.cc"],
     hdrs = ["nvshmem_put_thunk.h"],
+    tags = ["gpu"],
     deps = [
         ":nvshmem_collective_thunk",
         ":nvshmem_p2p_thunk_common",
@@ -2098,6 +2099,7 @@ cc_library(
     name = "nvshmem_get_thunk",
     srcs = ["nvshmem_get_thunk.cc"],
     hdrs = ["nvshmem_get_thunk.h"],
+    tags = ["gpu"],
     deps = [
         ":nvshmem_collective_thunk",
         ":nvshmem_p2p_thunk_common",
