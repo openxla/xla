@@ -867,7 +867,7 @@ absl::StatusOr<bool> ConvRewriter::Run(
   XLA_VLOG_LINES(2, "ConvRewriter::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(
         bool result,
         RunOnComputation(computation, compute_capability_, dnn_version_));

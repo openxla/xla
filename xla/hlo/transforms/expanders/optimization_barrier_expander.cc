@@ -30,7 +30,7 @@ absl::StatusOr<bool> OptimizationBarrierExpander::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::vector<HloInstruction*> barriers;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     bool modified = false;
     for (HloInstruction* inst : computation->instructions()) {
       if (inst->opcode() == HloOpcode::kOptimizationBarrier) {

@@ -235,7 +235,8 @@ absl::StatusOr<bool> TransposeFolding::Run(
     return absl::OkStatus();
   });
 
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_RETURN_IF_ERROR(comp->Accept(&visit_fn));
   }
 

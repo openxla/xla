@@ -514,7 +514,7 @@ static std::vector<std::string> DumpHloModuleImpl(
 
   if (opts.dump_fusion_visualization) {
     for (const HloComputation* computation :
-         module.MakeNonfusionComputations()) {
+         module.MakeNonFusionNonCompositeComputations()) {
       if (IsTrivial(*computation)) {
         VLOG(1) << "Skipping computation " << computation->name()
                 << " as trivial";

@@ -594,7 +594,7 @@ SoftmaxRewriterTriton::FindAllFusibleNormalizationDiamonds(
   std::vector<DiamondDescriptor> matched_diamonds;
 
   for (HloComputation* comp :
-       module.MakeNonfusionComputations(execution_threads)) {
+       module.MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (!comp->caller_instructions(HloOpcode::kCustomCall).empty()) {
       continue;
     }

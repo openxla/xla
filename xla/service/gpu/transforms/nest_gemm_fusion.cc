@@ -1030,7 +1030,7 @@ absl::StatusOr<bool> NestGemmFusion::Run(
   auto call_graph = CallGraph::Build(module, execution_threads);
   mlir::MLIRContext ctx;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     NestGemmFusionVisitor visitor(&ctx, call_graph.get(), compute_capability_);
     TF_RETURN_IF_ERROR(computation->Accept(&visitor));
     changed |= visitor.changed();

@@ -1190,7 +1190,7 @@ std::vector<HloComputation*> HloModule::MakeComputationSorted(
   return result;
 }
 
-std::vector<HloComputation*> HloModule::MakeNonfusionComputations(
+std::vector<HloComputation*> HloModule::MakeNonFusionNonCompositeComputations(
     const absl::flat_hash_set<absl::string_view>& execution_threads) const {
   std::vector<HloComputation*> result =
       MakeComputationPostOrder(execution_threads);
@@ -1203,9 +1203,10 @@ std::vector<HloComputation*> HloModule::MakeNonfusionComputations(
   return result;
 }
 
-std::vector<HloComputation*> HloModule::MakeNonfusionComputationsSorted(
+std::vector<HloComputation*>
+HloModule::MakeNonFusionNonCompositeComputationsSorted(
     const absl::flat_hash_set<absl::string_view>& execution_threads) const {
-  auto result = MakeNonfusionComputations(execution_threads);
+  auto result = MakeNonFusionNonCompositeComputations(execution_threads);
   if (config().content_aware_computation_sorting()) {
     SortComputationsByContent(&result);
   }

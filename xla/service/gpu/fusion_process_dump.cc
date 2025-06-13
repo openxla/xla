@@ -140,7 +140,8 @@ absl::StatusOr<FusionProcessDump> FusionProcessDump::LoadFromProto(
 
   absl::flat_hash_map<std::string, HloComputation*>
       instruction_name_to_computation_map;
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instr : computation->instructions()) {
       instruction_name_to_computation_map[instr->name()] = computation;
     }

@@ -116,7 +116,8 @@ absl::StatusOr<bool> AllGatherDecomposer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
-  for (auto comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto hlo : comp->MakeInstructionPostOrder()) {
       if (hlo->opcode() != HloOpcode::kAllGather) {
         continue;

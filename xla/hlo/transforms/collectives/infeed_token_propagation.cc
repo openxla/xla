@@ -518,7 +518,7 @@ absl::StatusOr<bool> InfeedTokenPropagation::Run(
   std::vector<HloInstruction*> dangling_infeeds;
   std::vector<HloInstruction*> dangling_outfeeds;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (!computation->IsEntryComputation()) {
       for (HloInstruction* instruction : computation->instructions()) {
         // Bail in the presence of HLO domains.

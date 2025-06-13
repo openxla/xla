@@ -424,7 +424,8 @@ absl::StatusOr<bool> ReshapeMover::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     HloInstructionSet candidates;
     for (HloInstruction* instruction : comp->instructions()) {
       if (IsReshapeMoveCandidate(instruction)) {

@@ -120,7 +120,7 @@ absl::StatusOr<bool> TreeReductionRewriter::Run(
   ReductionRewriterVisitor visitor(reduce_window_size_);
   bool changed = false;
   for (const auto &computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_RETURN_IF_ERROR(computation->Accept(&visitor));
     changed |= visitor.changed();
   }

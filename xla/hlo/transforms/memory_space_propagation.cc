@@ -46,7 +46,7 @@ absl::StatusOr<bool> MemorySpacePropagation::Run(
   dataflow_analysis_ = std::move(dataflow_analysis);
 
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kFusion) {
         // Propagate the operand subshapes.

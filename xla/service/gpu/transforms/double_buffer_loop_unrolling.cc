@@ -560,7 +560,7 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   std::vector<HloInstruction*> while_instrs;
-  for (auto comp : module->MakeNonfusionComputations()) {
+  for (auto comp : module->MakeNonFusionNonCompositeComputations()) {
     absl::c_copy_if(comp->instructions(), std::back_inserter(while_instrs),
                     HloPredicateIsOp<HloOpcode::kWhile>);
   }

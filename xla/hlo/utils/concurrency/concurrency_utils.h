@@ -202,7 +202,8 @@ absl::StatusOr<FinalReturnT> ForEachNonfusionHloComputation(
         combiner,
     TaskExecutorT& task_executor,
     std::optional<int> parallelism = std::nullopt) {
-  auto computations = module->MakeNonfusionComputations(execution_threads);
+  auto computations =
+      module->MakeNonFusionNonCompositeComputations(execution_threads);
   return ForEachHloComputation(computations, std::move(action),
                                std::move(combiner), task_executor, parallelism);
 }

@@ -417,9 +417,12 @@ ENTRY %WhileLoop () -> (s32[], f32[10]) {
   TF_ASSERT_OK(schedule.Update({HloInstruction::kMainExecutionThread}));
   TF_ASSERT_OK(schedule.Verify());
 
-  ASSERT_EQ(module->MakeNonfusionComputations({"parallel_thread"}).size(), 1);
+  ASSERT_EQ(
+      module->MakeNonFusionNonCompositeComputations({"parallel_thread"}).size(),
+      1);
   ASSERT_FALSE(schedule.is_computation_scheduled(
-      module->MakeNonfusionComputations({"parallel_thread"}).front()));
+      module->MakeNonFusionNonCompositeComputations({"parallel_thread"})
+          .front()));
 }
 
 TEST_F(HloScheduleTest, UpdateScheduleAddComputation) {

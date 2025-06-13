@@ -172,7 +172,7 @@ class GemmFusionCollector : public ConstDfsHloVisitorWithDefault {
     result_ = {};
     handled_fusions_.clear();
     for (HloComputation* computation :
-         module.MakeNonfusionComputations(execution_threads)) {
+         module.MakeNonFusionNonCompositeComputations(execution_threads)) {
       TF_RETURN_IF_ERROR(computation->Accept(this));
     }
     TF_ASSIGN_OR_RETURN(result_.fingerprint,

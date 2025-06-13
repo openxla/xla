@@ -72,7 +72,7 @@ const char kModulePrefix[] = R"(
 
 static int64_t CountMultiOutputFusions(const HloModule* module) {
   int multi_output_fusion_count = 0;
-  for (auto* computation : module->MakeNonfusionComputations()) {
+  for (auto* computation : module->MakeNonFusionNonCompositeComputations()) {
     for (auto* instr : computation->instructions()) {
       if (instr->IsMultiOutputFusion()) {
         multi_output_fusion_count++;
@@ -990,7 +990,7 @@ TEST_F(MultiOutputFusionTest, PreferFuseProducerIntoFusionConsumer) {
   ASSERT_TRUE(mof_.Run(module.get()).value());
   SCOPED_TRACE(module->ToString());
   int multi_output_fusion_count = 0;
-  for (auto* computation : module->MakeNonfusionComputations()) {
+  for (auto* computation : module->MakeNonFusionNonCompositeComputations()) {
     for (auto* instr : computation->instructions()) {
       if (instr->IsMultiOutputFusion()) {
         multi_output_fusion_count++;

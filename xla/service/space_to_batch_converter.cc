@@ -4201,7 +4201,8 @@ absl::StatusOr<bool> SpaceToBatchConverter::Run(
       2, "SpaceToBatchConverter::Run(), before:\n" + module->ToString());
   bool changed = false;
 
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     ConvolutionVisitor visitor(ctrl_, comp);
     if (visitor.Run().value()) {
       changed = true;

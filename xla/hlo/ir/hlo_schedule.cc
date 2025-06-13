@@ -245,7 +245,7 @@ absl::Status HloSchedule::Update(
   // the module for the specified threads, but can have sequences for
   // computations which no longer exist (these are removed).
   std::vector<HloComputation*> nonfusion_computations =
-      module_->MakeNonfusionComputations(execution_threads);
+      module_->MakeNonFusionNonCompositeComputations(execution_threads);
   for (const HloComputation* computation : nonfusion_computations) {
     if (!is_computation_scheduled(computation)) {
       GetOrCreateSequence(computation);
@@ -320,7 +320,7 @@ absl::Status HloSchedule::Verify() const {
   for (const auto& [thread_name, sequence_size] :
        sequence_num_by_execution_threads) {
     std::vector<HloComputation*> nonfusion_computations =
-        module_->MakeNonfusionComputations({thread_name});
+        module_->MakeNonFusionNonCompositeComputations({thread_name});
     TF_RET_CHECK(nonfusion_computations.size() == sequence_size)
         << "For thread " << thread_name << ", schedule has " << sequence_size
         << " sequences, but module has " << nonfusion_computations.size()

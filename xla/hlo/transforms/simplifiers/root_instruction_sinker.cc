@@ -60,7 +60,7 @@ absl::StatusOr<bool> RootInstructionSinker::Run(
 
   bool modified = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     HloInstructionSequence& sequence =
         module->schedule().GetOrCreateSequence(computation);
     if (computation->root_instruction() ==

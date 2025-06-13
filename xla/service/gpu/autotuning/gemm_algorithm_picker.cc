@@ -513,7 +513,7 @@ absl::StatusOr<bool> GemmAlgorithmPicker::Run(
   GemmAutotuner autotuner(config_);
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation, autotuner,
                                                       &num_algorithms_left_));
     changed |= result;

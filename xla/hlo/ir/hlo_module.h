@@ -356,24 +356,25 @@ class HloModule {
   // Note: Callers can and do rely on the return value here being a *snapshot*
   // of the module's non-fusion computations -- that is, it's OK to add or
   // remove computations from a module while iterating over
-  // MakeNonfusionComputations().
-  std::vector<HloComputation*> MakeNonfusionComputations() const {
-    return MakeNonfusionComputations({});
+  // MakeNonFusionNonCompositeComputations().
+  std::vector<HloComputation*> MakeNonFusionNonCompositeComputations() const {
+    return MakeNonFusionNonCompositeComputations({});
   }
   // Same as above but only for specified `execution_threads`. Empty
   // `execution_threads` list means all execution threads are included.
-  std::vector<HloComputation*> MakeNonfusionComputations(
+  std::vector<HloComputation*> MakeNonFusionNonCompositeComputations(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
-  // Same as MakeNonfusionComputations() but sorting computations by content.
-  // Note that the sort is potentially expensive, so this should be used only if
-  // a consistent order is required.
-  std::vector<HloComputation*> MakeNonfusionComputationsSorted() const {
-    return MakeNonfusionComputationsSorted({});
+  // Same as MakeNonFusionNonCompositeComputations() but sorting computations by
+  // content. Note that the sort is potentially expensive, so this should be
+  // used only if a consistent order is required.
+  std::vector<HloComputation*> MakeNonFusionNonCompositeComputationsSorted()
+      const {
+    return MakeNonFusionNonCompositeComputationsSorted({});
   }
   // Same as above but only for specified `execution_threads`. Empty
   // `execution_threads` list means all execution threads are included.
-  std::vector<HloComputation*> MakeNonfusionComputationsSorted(
+  std::vector<HloComputation*> MakeNonFusionNonCompositeComputationsSorted(
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
   // Returns a config for modifications in current module. If the config is

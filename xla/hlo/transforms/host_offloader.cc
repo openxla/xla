@@ -1192,7 +1192,7 @@ absl::StatusOr<bool> HostOffloader::Run(
   // instructions and look for XLA host offload annotations.
   bool changed_in_loop;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (host_offload_utils::IsHostAsyncStart(instruction)) {
         TF_ASSIGN_OR_RETURN(changed_in_loop, HandleRedundantCopiesBackToHost(

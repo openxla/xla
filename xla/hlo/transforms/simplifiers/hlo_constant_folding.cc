@@ -153,7 +153,7 @@ absl::StatusOr<bool> HloConstantFolding::Run(
   bool changed = false;
 
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       // Skip dead code.
       if (instruction->IsDead()) {

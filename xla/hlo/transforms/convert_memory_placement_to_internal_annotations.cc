@@ -114,7 +114,7 @@ absl::StatusOr<bool> ConvertMemoryPlacementToInternalAnnotations::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
-  for (HloComputation* c : module->MakeNonfusionComputations()) {
+  for (HloComputation* c : module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : c->MakeInstructionPostOrder()) {
       if (instruction->IsCustomCall(memory_annotations::kDevicePlacement)) {
         TF_ASSIGN_OR_RETURN(

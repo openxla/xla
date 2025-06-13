@@ -1151,7 +1151,7 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (computation->IsAsyncComputation()) {
       continue;
     }

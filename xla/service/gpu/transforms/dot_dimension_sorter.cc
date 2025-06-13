@@ -88,7 +88,7 @@ absl::StatusOr<bool> DotDimensionSorter::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::vector<HloInstruction*> dots_to_process;
   for (const HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instr : computation->instructions()) {
       if (HloPredicateIsNotOp<HloOpcode::kDot>(instr)) {
         continue;

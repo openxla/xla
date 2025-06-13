@@ -304,7 +304,7 @@ void ParallelTaskAssigner::ComputeTargetParallelTasks(
                                                   &target_machine_features_);
 
   // Compute parallel task counts for all instructions in 'module'.
-  for (auto* computation : module->MakeNonfusionComputations()) {
+  for (auto* computation : module->MakeNonFusionNonCompositeComputations()) {
     for (auto* instruction : computation->instructions()) {
       // Query ParallelTaskAssignment for target parallel task count.
       const int64_t target_parallel_task_count =

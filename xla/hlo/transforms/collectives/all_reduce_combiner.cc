@@ -147,7 +147,7 @@ absl::StatusOr<bool> AllReduceCombiner::RunWithKeyCombiner(
 
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
 
     auto key_fn = [&domain_map, &combine_key](const HloInstruction* instruction)
