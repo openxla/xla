@@ -391,6 +391,8 @@ cc_library(
         "//xla/backends/gpu/runtime:norm_thunk",
         "//xla/backends/gpu/runtime:nvshmem_collective_permute_thunk",
         "//xla/backends/gpu/runtime:nvshmem_collective_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_get_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_put_thunk",
         "//xla/backends/gpu/runtime:nvshmem_p2p_thunk_common",
         "//xla/backends/gpu/runtime:outfeed_thunk",
         "//xla/backends/gpu/runtime:p2p_thunk_common",

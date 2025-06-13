@@ -442,7 +442,6 @@ absl::Status NvshmemCommunicator::RegisterBuffer(void* addr, size_t length) {
     LOG(ERROR) << absl::StrFormat(
         "Failed to register NVSHMEM buffer at %p with length %zu", addr,
         length);
-    return absl::InternalError("Failed to register NVSHMEM buffer");
   }
 
   return absl::OkStatus();
