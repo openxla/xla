@@ -23,6 +23,7 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/test.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 
 namespace stream_executor {
@@ -43,8 +44,8 @@ TEST(CudnnSdpaScoreModTest, CompileFwd) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           xla::ParseAndReturnUnverifiedModule(hlo));
-  auto comp = module->GetComputationWithName("fwd");
-  EXPECT_TRUE(comp != nullptr);
+  xla::HloComputation* comp = module->GetComputationWithName("fwd");
+  ASSERT_NE(comp, nullptr);
   int64_t uid = 0;
   auto next_uid = [&]() -> int64_t { return uid++; };
   Graph graph = std::make_shared<cudnn_frontend::graph::Graph>();
@@ -58,7 +59,7 @@ TEST(CudnnSdpaScoreModTest, CompileFwd) {
                         .set_uid(next_uid())
                         .set_is_virtual(true));
   auto output = score_mod->Forward(graph, attn_score);
-  auto json_string = graph->print();
+  std::string json_string = graph->print();
   Json::Value parsed_json;
   Json::Reader json_reader;
   json_reader.parse(json_string, parsed_json,
@@ -92,10 +93,10 @@ TEST(CudnnSdpaScoreModTest, CompileBwd) {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           xla::ParseAndReturnUnverifiedModule(hlo));
-  auto fwd_comp = module->GetComputationWithName("fwd");
-  auto bwd_comp = module->GetComputationWithName("bwd");
-  EXPECT_TRUE(fwd_comp != nullptr);
-  EXPECT_TRUE(bwd_comp != nullptr);
+  xla::HloComputation* fwd_comp = module->GetComputationWithName("fwd");
+  xla::HloComputation* bwd_comp = module->GetComputationWithName("bwd");
+  ASSERT_NE(fwd_comp, nullptr);
+  ASSERT_NE(bwd_comp, nullptr);
   int64_t uid = 0;
   auto next_uid = [&]() -> int64_t { return uid++; };
   Graph graph = std::make_shared<cudnn_frontend::graph::Graph>();
@@ -117,7 +118,7 @@ TEST(CudnnSdpaScoreModTest, CompileBwd) {
                         .set_is_virtual(true));
   auto fwd_output = score_mod->Forward(graph, attn_score);
   auto bwd_output = score_mod->Backward(graph, score_grad);
-  auto json_string = graph->print();
+  std::string json_string = graph->print();
   Json::Value parsed_json;
   Json::Reader json_reader;
   json_reader.parse(json_string, parsed_json,

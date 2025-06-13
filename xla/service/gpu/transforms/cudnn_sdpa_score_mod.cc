@@ -31,7 +31,7 @@ ScoreModFunc::ScoreModFunc(const xla::HloComputation* fwd_comp,
                            const xla::HloComputation* bwd_comp)
     : fwd_comp_(fwd_comp), bwd_comp_(bwd_comp) {}
 
-std::optional<cudnn_frontend::PointwiseMode_t> ScoreModFunc::GetElementwiseMode(
+std::optional<cudnn_frontend::PointwiseMode_t> GetElementwiseMode(
     const xla::HloInstruction& instruction) {
   const xla::HloOpcode opcode = instruction.opcode();
   using m = cudnn_frontend::PointwiseMode_t;
@@ -105,8 +105,7 @@ std::optional<cudnn_frontend::PointwiseMode_t> ScoreModFunc::GetElementwiseMode(
   }
 }
 
-cudnn_frontend::DataType_t ScoreModFunc::GetComputeDataType(
-    const xla::PrimitiveType type) {
+cudnn_frontend::DataType_t GetComputeDataType(const xla::PrimitiveType type) {
   cudnn_frontend::DataType_t compute_dtype = cudnn_frontend::DataType_t::FLOAT;
   if (xla::primitive_util::IsIntegralType(type)) {
     compute_dtype = cudnn_frontend::DataType_t::INT32;
@@ -148,15 +147,15 @@ cudnn_frontend::DataType_t ToCudnnFrontendDataType(dnn::DataType data_type) {
 }
 
 template <xla::PrimitiveType XlaT, typename T>
-Tensor ScoreModFunc::LiteralToCudnnTensor(const xla::HloInstruction* hlo,
-                                          cudnn_frontend::graph::Graph& graph) {
+Tensor LiteralToCudnnTensor(const xla::HloInstruction* hlo,
+                            cudnn_frontend::graph::Graph& graph) {
   using NativeT =
       typename xla::primitive_util::PrimitiveTypeToNative<XlaT>::type;
   return graph.tensor(T(hlo->literal().GetFirstElement<NativeT>()));
 }
 
 absl::Status ScoreModFunc::UpdateCudnnMap(cudnn_frontend::graph::Graph& graph,
-                                          Uid next_uid) {
+                                          UidGenerator next_uid) {
   TF_RETURN_IF_ERROR(UpdateHloParameterToCudnnMap(graph, fwd_hlo_to_cudnn_,
                                                   fwd_comp_, next_uid));
   TF_RETURN_IF_ERROR(
@@ -171,7 +170,7 @@ absl::Status ScoreModFunc::UpdateCudnnMap(cudnn_frontend::graph::Graph& graph,
 absl::Status ScoreModFunc::UpdateHloParameterToCudnnMap(
     cudnn_frontend::graph::Graph& graph,
     absl::flat_hash_map<const xla::HloInstruction*, Tensor>& hlo_to_cudnn,
-    const xla::HloComputation* computation, Uid next_uid) {
+    const xla::HloComputation* computation, UidGenerator next_uid) {
   for (int i = 1; i < computation->num_parameters(); i++) {
     auto parameter = computation->parameter_instruction(i);
     TF_ASSIGN_OR_RETURN(const dnn::DataType type,
@@ -188,13 +187,13 @@ absl::Status ScoreModFunc::UpdateHloParameterToCudnnMap(
       dims.push_back(1);
       strides.push_back(1);
     }
-    hlo_to_cudnn[parameter] = graph.tensor(
-        cudnn_frontend::graph::Tensor_attributes()
-            .set_dim(dims)
-            .set_stride(strides)
-            .set_data_type(ToCudnnFrontendDataType(desc.type()))
-            .set_name(absl::StrCat("score_mod_input_", std::to_string(i)))
-            .set_uid(next_uid()));
+    hlo_to_cudnn[parameter] =
+        graph.tensor(cudnn_frontend::graph::Tensor_attributes()
+                         .set_dim(dims)
+                         .set_stride(strides)
+                         .set_data_type(ToCudnnFrontendDataType(desc.type()))
+                         .set_name(absl::StrCat("score_mod_input_", i))
+                         .set_uid(next_uid()));
   }
   return absl::OkStatus();
 }

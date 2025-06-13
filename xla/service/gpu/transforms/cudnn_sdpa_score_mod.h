@@ -26,34 +26,15 @@ namespace gpu {
 
 using Tensor = std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>;
 using Graph = std::shared_ptr<cudnn_frontend::graph::Graph>;
-using Uid = absl::FunctionRef<int64_t()>;
+using UidGenerator = absl::FunctionRef<int64_t()>;
 
 class ScoreModFunc {
  public:
   ScoreModFunc(const xla::HloComputation* fwd_comp,
                const xla::HloComputation* bwd_comp);
 
-  std::optional<cudnn_frontend::PointwiseMode_t> GetElementwiseMode(
-      const xla::HloInstruction& instruction);
-
-  cudnn_frontend::DataType_t GetComputeDataType(const xla::PrimitiveType type);
-
-  template <xla::PrimitiveType XlaT, typename T>
-  Tensor LiteralToCudnnTensor(const xla::HloInstruction* hlo,
-                              cudnn_frontend::graph::Graph& graph);
-
   absl::Status UpdateCudnnMap(cudnn_frontend::graph::Graph& graph,
-                              Uid next_uid);
-
-  absl::Status UpdateHloParameterToCudnnMap(
-      cudnn_frontend::graph::Graph& graph,
-      absl::flat_hash_map<const xla::HloInstruction*, Tensor>& hlo_to_cudnn,
-      const xla::HloComputation* computation, Uid next_uid);
-
-  absl::Status UpdateHloConstantToCudnnMap(
-      cudnn_frontend::graph::Graph& graph,
-      absl::flat_hash_map<const xla::HloInstruction*, Tensor>& hlo_to_cudnn,
-      const xla::HloComputation* computation);
+                              UidGenerator next_uid);
 
   Tensor Forward(Graph graph, Tensor attention_score);
 
@@ -65,6 +46,15 @@ class ScoreModFunc {
       const xla::HloComputation* computation);
 
  private:
+  absl::Status UpdateHloParameterToCudnnMap(
+      cudnn_frontend::graph::Graph& graph,
+      absl::flat_hash_map<const xla::HloInstruction*, Tensor>& hlo_to_cudnn,
+      const xla::HloComputation* computation, UidGenerator next_uid);
+
+  absl::Status UpdateHloConstantToCudnnMap(
+      cudnn_frontend::graph::Graph& graph,
+      absl::flat_hash_map<const xla::HloInstruction*, Tensor>& hlo_to_cudnn,
+      const xla::HloComputation* computation);
   std::vector<Tensor> fwd_parameters_;
   const xla::HloComputation* fwd_comp_;
   const xla::HloComputation* bwd_comp_;
