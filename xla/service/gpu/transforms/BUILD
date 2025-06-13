@@ -1039,6 +1039,7 @@ xla_test(
     tags = ["cuda-only"],
     deps = [
         ":cudnn_sdpa_score_mod",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",

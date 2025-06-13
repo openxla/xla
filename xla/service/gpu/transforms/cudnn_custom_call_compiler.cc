@@ -181,12 +181,12 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToForwardFMHA(
 
   auto computations = custom_call->called_computations();
   const HloComputation *score_mod_fwd_comp = nullptr;
+  stream_executor::gpu::ScoreModFunc *score_mod = nullptr;
   TF_RET_CHECK(computations.size() <= 1);
-  std::shared_ptr<stream_executor::gpu::ScoreModFunc> score_mod = nullptr;
   if (computations.size() == 1) {
     score_mod_fwd_comp = computations[0];
-    score_mod = std::make_shared<stream_executor::gpu::ScoreModFunc>(
-        score_mod_fwd_comp, nullptr);
+    auto smf = stream_executor::gpu::ScoreModFunc(score_mod_fwd_comp, nullptr);
+    score_mod = &smf;
     input_index += score_mod_fwd_comp->num_parameters() - 1;
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
@@ -360,7 +360,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   auto computations = custom_call->called_computations();
   const HloComputation *score_mod_fwd_comp = nullptr;
   const HloComputation *score_mod_bwd_comp = nullptr;
-  std::shared_ptr<stream_executor::gpu::ScoreModFunc> score_mod = nullptr;
+  stream_executor::gpu::ScoreModFunc *score_mod = nullptr;
+  TF_RET_CHECK(computations.size() <= 1);
   if (computations.size() == 1) {
     score_mod_bwd_comp = computations[0];
     auto softmax_aux = custom_call->mutable_operand(3);
@@ -370,9 +371,10 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
       return absl::InternalError("Can't find fmha fwd custom call.");
     }
     score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
+    auto smf = stream_executor::gpu::ScoreModFunc(score_mod_fwd_comp,
+                                                  score_mod_bwd_comp);
+    score_mod = &smf;
     input_index += score_mod_fwd_comp->num_parameters() - 1;
-    score_mod = std::make_shared<stream_executor::gpu::ScoreModFunc>(
-        score_mod_fwd_comp, score_mod_bwd_comp);
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
 

@@ -714,7 +714,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     std::optional<dnn::TensorDescriptor> page_table_v_descriptor, double scale,
     bool use_dropout, std::optional<double> dropout_rate,
     dnn::FMHAMaskKind mask_type, int sliding_window_length,
-    int max_seg_per_batch, std::shared_ptr<ScoreModFunc> score_mod);
+    int max_seg_per_batch, ScoreModFunc* score_mod);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
     dnn::DnnSupport& dnn_support,
@@ -739,7 +739,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     double scale, bool use_dropout, bool use_bias,
     const dnn::FMHAMaskKind mask_type, bool force_deterministic,
     const int sliding_window_length, const int max_seg_per_batch,
-    std::shared_ptr<ScoreModFunc> score_mod);
+    ScoreModFunc* score_mod);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
     dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,

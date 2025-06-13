@@ -4599,7 +4599,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     double scale, const bool use_dropout,
     const std::optional<double> dropout_rate, const dnn::FMHAMaskKind mask_type,
     const int sliding_window_length, const int max_seg_per_batch,
-    std::shared_ptr<ScoreModFunc> score_mod) {
+    ScoreModFunc* score_mod) {
   using cudnn_frontend::graph::Tensor_attributes;
 
 #if CUDNN_VERSION >= 90000
@@ -5264,7 +5264,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     double scale, bool use_dropout, bool use_bias, dnn::FMHAMaskKind mask_type,
     bool force_deterministic, const int sliding_window_length,
-    const int max_seg_per_batch, std::shared_ptr<ScoreModFunc> score_mod) {
+    const int max_seg_per_batch, ScoreModFunc* score_mod) {
 #if CUDNN_VERSION >= 90000
   VLOG(4) << "\n bmm1_grad_gemm1_rhs(q): " << q_desc.ToString()
           << "\n bmm1_grad_gemm2_rhs(k): " << k_desc.ToString()
