@@ -646,7 +646,8 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
 
 absl::Status RunSPMDPasses(
     HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
-    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts) {
+    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
+    int64_t max_windowed_einsum_iteration) {
   bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
 #ifndef PLATFORM_GOOGLE
   if (auto_sharding) {
@@ -657,20 +658,22 @@ absl::Status RunSPMDPasses(
   const int64_t num_partitions = hlo_module->config().num_partitions();
   if (num_partitions > 1 && hlo_module->config().use_spmd_partitioning()) {
     HloPassPipeline spmd_pipeline("spmd-partitioner");
-    AddSPMDPasses(hlo_module, layout_insensitive_algsimp_opts,
-                  gpu_target_config.device_description.gpu_compute_capability(),
-                  spmd_pipeline,
+    AddSPMDPasses(
+        hlo_module, layout_insensitive_algsimp_opts,
+        gpu_target_config.device_description.gpu_compute_capability(),
+        spmd_pipeline,
 #ifdef PLATFORM_GOOGLE
-                  [&](HloPassPipeline& pipeline) {
-                    if (auto_sharding) {
-                      spmd_pipeline.AddPass<AutoSharding>(
-                          DefaultAutoShardingOptionFromModuleConfig(
-                              hlo_module->config()));
-                    }
-                  });
+        [&](HloPassPipeline& pipeline) {
+          if (auto_sharding) {
+            spmd_pipeline.AddPass<AutoSharding>(
+                DefaultAutoShardingOptionFromModuleConfig(
+                    hlo_module->config()));
+          }
+        },
 #else
-        std::nullopt);
+        std::nullopt,
 #endif  // PLATFORM_GOOGLE
+        max_windowed_einsum_iteration);
     return spmd_pipeline.Run(hlo_module).status();
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
@@ -1395,13 +1398,15 @@ absl::Status GpuCompiler::OptimizeHloModule(
           GetAlgebraicSimplifierOptions(hlo_module->config()));
 
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
-  TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config,
-                                   layout_insensitive_algsimp_opts));
-
+  // Set max_windowed_einsum_iteration to slice_size, as there will be
+  // siginificant overhead when scaled beyond the maximum size of the
+  // fast-interconnect domain.
+  TF_RETURN_IF_ERROR(RunSPMDPasses(
+      hlo_module, gpu_target_config, layout_insensitive_algsimp_opts,
+      /*max_windowed_einsum_iteration=*/options.slice_size));
   // Dump the HLO module after SPMD partitioning. There should be no more Python
   // callbacks at this point.
   DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
-
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));
