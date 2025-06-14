@@ -260,7 +260,7 @@ absl::StatusOr<bool> AsyncCollectiveCreator::Run(
   bool changed = false;
   int64_t collectives_replaced = 0;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     std::vector<HloInstruction*> supported_collectives =
         MatchCollectives(computation);
     if (supported_collectives.empty()) {

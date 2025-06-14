@@ -41,7 +41,7 @@ absl::StatusOr<bool> ReduceScatterDecomposer::Run(
   int64_t next_channel_id = hlo_query::NextChannelId(*module);
 
   for (HloComputation *computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction *instruction :
          computation->MakeInstructionPostOrder()) {
       auto *rs = DynCast<HloReduceScatterInstruction>(instruction);

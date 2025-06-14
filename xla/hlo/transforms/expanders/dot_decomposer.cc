@@ -277,7 +277,7 @@ absl::StatusOr<bool> DotDecomposer::Run(
   // Gather all Non-canonical Dot operations.
   std::vector<HloInstruction*> non_canonical_dots;
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
       if (instruction->opcode() != HloOpcode::kDot) {
         continue;

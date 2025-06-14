@@ -205,7 +205,7 @@ absl::Status ForAllTritonFusions(
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     absl::AnyInvocable<absl::Status(const HloFusionInstruction&)> fn) {
   for (HloComputation* computation :
-       module.MakeNonfusionComputations(execution_threads)) {
+       module.MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       TF_ASSIGN_OR_RETURN(auto triton_fusion, AsTritonFusion(instruction));
       if (triton_fusion != nullptr) {

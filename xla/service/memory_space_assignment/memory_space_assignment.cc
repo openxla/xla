@@ -278,7 +278,7 @@ MemorySpaceAssignment::CalculateAsyncCopyStats(
   AsyncCopyStats stats;
   int64_t current_copies = 0;
   for (const HloComputation* computation :
-       module_->MakeNonfusionComputations()) {
+       module_->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kCopyStart ||
           (instruction->opcode() == HloOpcode::kAsyncStart &&
@@ -680,7 +680,8 @@ void MemorySpaceAssignment::RemoveAssignmentForInstruction(
 
 absl::Status MemorySpaceAssignment::SimplifyGraph() {
   VLOG(1) << "Simplifying graph...";
-  for (HloComputation* computation : module_->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module_->MakeNonFusionNonCompositeComputations()) {
     // Parallel computations aren't in the schedule and don't need to be
     // modified.
     if (!computations_in_schedule_.contains(computation)) {
@@ -1007,7 +1008,7 @@ absl::Status MemorySpaceAssignment::FixSchedule() {
   TF_RET_CHECK(module_->has_schedule());
   HloSchedule& schedule = module_->schedule();
   for (const HloComputation* computation :
-       module_->MakeNonfusionComputations()) {
+       module_->MakeNonFusionNonCompositeComputations()) {
     // Parallel computations aren't in the schedule and don't need to be
     // modified.
     if (!computations_in_schedule_.contains(computation)) {
@@ -1145,7 +1146,7 @@ absl::Status MemorySpaceAssignment::VerifyAndExportHeapSimulatorTrace(
   // Go through all instructions in the module to ensure CopyStart/CopyDone
   // instructions copy between alternate memory and default memory.
   for (const HloComputation* computation :
-       module_->MakeNonfusionComputations()) {
+       module_->MakeNonFusionNonCompositeComputations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kCopyStart) {
         int64_t from_memory_space =

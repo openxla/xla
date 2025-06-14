@@ -187,7 +187,8 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
 
     HloCostAnalysis hlo_cost_analysis(hlo_cost_options);
     HloCostAnalysisWithAcceptState hlo_cost_analysis_wrapper(hlo_cost_analysis);
-    for (HloComputation* computation : module->MakeNonfusionComputations()) {
+    for (HloComputation* computation :
+         module->MakeNonFusionNonCompositeComputations()) {
       TF_CHECK_OK(computation->Accept(&hlo_cost_analysis));
     }
     TF_CHECK_OK(HloAliasAnalysis::Run(module).status());

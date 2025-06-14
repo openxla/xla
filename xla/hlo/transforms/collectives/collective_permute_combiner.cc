@@ -107,7 +107,7 @@ absl::StatusOr<bool> CollectivePermuteCombiner::Run(
 
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     auto key_fn = [](const HloInstruction* instruction)
         -> std::optional<CollectivePermuteKey> {
       if (instruction->opcode() != HloOpcode::kCollectivePermute) {

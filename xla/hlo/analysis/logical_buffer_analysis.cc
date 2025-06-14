@@ -72,7 +72,7 @@ absl::Status LogicalBufferAnalysis::Analyze() {
   // instructions. This is because it's possible to have orphaned (unreachable)
   // fusion computations, and we don't want to try to assign buffers to those.
   std::vector<HloInstruction*> fusion_instructions;
-  for (auto* computation : module_->MakeNonfusionComputations()) {
+  for (auto* computation : module_->MakeNonFusionNonCompositeComputations()) {
     TF_RETURN_IF_ERROR(computation->Accept(this));
     for (auto* instruction : computation->instructions()) {
       if (instruction->opcode() != HloOpcode::kFusion) {

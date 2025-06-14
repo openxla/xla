@@ -235,7 +235,8 @@ TEST_F(AutotunerUtilTest, FailIfRequireCompleteAotAutotuning) {
   TF_EXPECT_OK(hlo_module.status());
   std::vector<HloComputation*> computations =
       (*hlo_module)
-          ->MakeNonfusionComputations(absl::flat_hash_set<absl::string_view>());
+          ->MakeNonFusionNonCompositeComputations(
+              absl::flat_hash_set<absl::string_view>());
   EXPECT_THAT(computations, Not(IsEmpty()));
   const HloInstruction* instruction = *computations[0]->instructions().begin();
   stream_executor::StreamExecutor* executor = NewStreamExecutor();
@@ -263,7 +264,8 @@ TEST_F(AutotunerUtilTest, OkIfJitAutotuningDisabledButAlreadyLoadedAOT) {
   auto hlo_module = GetOptimizedModule(kHloText);
   std::vector<HloComputation*> computations =
       (*hlo_module)
-          ->MakeNonfusionComputations(absl::flat_hash_set<absl::string_view>());
+          ->MakeNonFusionNonCompositeComputations(
+              absl::flat_hash_set<absl::string_view>());
   EXPECT_THAT(computations, Not(IsEmpty()));
   const HloInstruction* instruction = *computations[0]->instructions().begin();
   stream_executor::StreamExecutor* executor = NewStreamExecutor();

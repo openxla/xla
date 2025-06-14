@@ -1242,7 +1242,7 @@ absl::Status LayoutAssignment::CheckLayouts(
   TF_ASSIGN_OR_RETURN(auto points_to_analysis,
                       TuplePointsToAnalysis::Run(module));
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
       // Verify every instruction has a layout and the layout is valid for the
       // shape.
@@ -2691,7 +2691,7 @@ absl::StatusOr<bool> LayoutAssignment::Run(
                       TuplePointsToAnalysis::Run(module));
   points_to_analysis_ = std::move(points_to_analysis);
   auto computations_to_work =
-      module->MakeNonfusionComputations(execution_threads);
+      module->MakeNonFusionNonCompositeComputations(execution_threads);
   // If the reverse_comptation_order_ flag is set, reverse the ordering of
   // traversing computations, to generate an alternative layout assignment.
   if (reverse_computation_order_ && !computations_to_work.empty()) {

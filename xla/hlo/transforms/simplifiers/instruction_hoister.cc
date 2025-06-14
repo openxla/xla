@@ -41,7 +41,7 @@ bool HoistParameters(
   HloSchedule& schedule = module.schedule();
   bool modified = false;
   for (const HloComputation* computation :
-       module.MakeNonfusionComputations(execution_threads)) {
+       module.MakeNonFusionNonCompositeComputations(execution_threads)) {
     CHECK(schedule.is_computation_scheduled(computation));
     if (computation->num_parameters() == 0) {
       continue;
@@ -95,7 +95,7 @@ bool HoistConstantOperations(
   HloSchedule& schedule = module.schedule();
   bool modified = false;
   for (const HloComputation* computation :
-       module.MakeNonfusionComputations(execution_threads)) {
+       module.MakeNonFusionNonCompositeComputations(execution_threads)) {
     CHECK(schedule.is_computation_scheduled(computation));
     const HloInstructionSequence& sequence = schedule.sequence(computation);
     // Conservatively don't modify the schedule if any instruction has a control

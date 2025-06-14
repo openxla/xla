@@ -119,7 +119,6 @@ absl::StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
     return nullptr;
   }
 
-
   VLOG(2) << "Merging dots sharing an operand:\n"
           << "\t" << a->ToString() << "\n"
           << "\t" << b->ToString();
@@ -627,7 +626,7 @@ absl::StatusOr<bool> DotMerger::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool changed_computation,
                         MergeDots(comp, max_size_to_merge_, can_merge_));
     changed |= changed_computation;
