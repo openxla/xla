@@ -53,10 +53,31 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
+
+absl::StatusOr<void*> NvshmemBufferAddresses::GetNvshmemPtr(
+    int device_ordinal) {
+  absl::MutexLock lock(&mu);
+  auto it = buffer_addrs.find(device_ordinal);
+  if (it != buffer_addrs.end()) {
+    return it->second;
+  }
+  return absl::NotFoundError("Buffer address not found for device");
+}
+
+void NvshmemBufferAddresses::StoreNvshmemPtr(int device_ordinal,
+                                             void* buffer_addr) {
+  absl::MutexLock lock(&mu);
+  buffer_addrs[device_ordinal] = buffer_addr;
+}
+
+NvshmemBufferAddresses& g_nvshmem_buffer_addresses =
+    *new NvshmemBufferAddresses();
+
 namespace {
 
 static constexpr CollectiveStreamId kNoStreamId = CollectiveStreamId(0);

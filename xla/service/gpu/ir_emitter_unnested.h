@@ -157,6 +157,9 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCollectiveAsyncDone(Thunk::Kind kind,
                                        const HloInstruction* instr);
 
+  absl::Status EmitNvshmemAsyncDone(Thunk::Kind kind,
+                                    const HloInstruction* instr);
+
   template <typename ThunkType>
   absl::Status EmitReplicaOrPartitionId(const HloInstruction* instr);
 
