@@ -688,7 +688,8 @@ absl::StatusOr<bool> ConvolutionGroupConverter::Run(
   XLA_VLOG_LINES(
       2, "ConvolutionGroupConverter::Run(), before:\n" + module->ToString());
   bool changed = false;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (ConvolutionVisitor::Run(comp, should_expand_, is_cost_viable_,
                                 convert_batch_groups_only_,
                                 filter_expansion_)) {

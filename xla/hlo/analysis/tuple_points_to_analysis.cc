@@ -162,7 +162,7 @@ absl::Status TuplePointsToAnalysis::Analyze() {
       logical_buffer_analysis_->num_logical_buffers());
 
   std::vector<HloInstruction*> fusion_instructions;
-  for (auto* computation : module_->MakeNonfusionComputations()) {
+  for (auto* computation : module_->MakeNonFusionNonCompositeComputations()) {
     TF_RETURN_IF_ERROR(computation->Accept(this));
     TF_RETURN_IF_ERROR(
         PopulateDefinedBuffersAndAliases(computation->instructions()));
@@ -716,7 +716,8 @@ PointsToSet& TuplePointsToAnalysis::CreateCopiedPointsToSet(
 std::string TuplePointsToAnalysis::ToString() const {
   std::string output =
       absl::StrFormat("TuplePointsToSet for module %s:\n", module_->name());
-  for (const auto* computation : module_->MakeNonfusionComputations()) {
+  for (const auto* computation :
+       module_->MakeNonFusionNonCompositeComputations()) {
     const char* entry =
         computation == module_->entry_computation() ? "entry " : "";
     absl::StrAppend(&output, entry, "computation ", computation->name(), ":\n");

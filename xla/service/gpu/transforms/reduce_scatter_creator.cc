@@ -47,7 +47,7 @@ absl::StatusOr<bool> ReduceScatterCreator::Run(
 
   bool changed = false;
   for (HloComputation *computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction *instruction :
          computation->MakeInstructionPostOrder()) {
       if (HloPredicateIsNotOp<HloOpcode::kAllReduce>(instruction)) {

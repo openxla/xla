@@ -426,7 +426,8 @@ void ArCrsCombiner::GroupAllReducesById(HloModule* module) {
   // to skip processing of short paths when we encounter the other ARs that
   // have the same id as AR2.
   absl::flat_hash_set<int64_t> discarded_ar_ids;
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       auto maybe_pair = MatchesArCrsPattern(instruction);
       if (maybe_pair) {

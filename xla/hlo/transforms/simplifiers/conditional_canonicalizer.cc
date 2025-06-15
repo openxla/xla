@@ -125,7 +125,8 @@ absl::StatusOr<bool> ConditionalCanonicalizer::Run(
   XLA_VLOG_LINES(
       2, "ConditionalCanonicalizer::Run(), before:\n" + module->ToString());
   bool changed = false;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       if (inst->opcode() == HloOpcode::kConditional) {
         TF_ASSIGN_OR_RETURN(changed, CanonicalizeNonTupleConditional(inst));

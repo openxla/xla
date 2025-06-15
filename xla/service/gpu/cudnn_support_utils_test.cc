@@ -55,7 +55,8 @@ class CudnnSupportUtilsTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<HloCustomCallInstruction*> GetCustomCall(
       xla::VerifiedHloModule* module, absl::string_view target) {
     HloCustomCallInstruction* call = nullptr;
-    for (HloComputation* comp : module->MakeNonfusionComputations()) {
+    for (HloComputation* comp :
+         module->MakeNonFusionNonCompositeComputations()) {
       for (HloInstruction* inst : comp->instructions()) {
         if (inst->IsCustomCall(target)) {
           VLOG(1) << inst->ToString();

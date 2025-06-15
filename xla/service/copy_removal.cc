@@ -774,7 +774,8 @@ void CopyRemover::AddValueList(
 void CopyRemover::CreateCopyMap(
     const HloModule& module,
     const absl::flat_hash_map<const HloValue*, ValueNode*>& value_to_node) {
-  for (HloComputation* computation : module.MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module.MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       // Add copies with unambiguous source values to the map. Copies with
       // ambiguous sources are not removable.

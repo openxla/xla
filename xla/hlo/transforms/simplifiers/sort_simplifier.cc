@@ -156,7 +156,8 @@ absl::StatusOr<bool> SortSimplifier::Run(
 
   bool changed = false;
   std::vector<HloInstruction*> sort_instrs;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     absl::c_copy_if(comp->instructions(), std::back_inserter(sort_instrs),
                     HloPredicateIsOp<HloOpcode::kSort>);
   }

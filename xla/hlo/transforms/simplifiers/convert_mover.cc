@@ -216,7 +216,7 @@ absl::StatusOr<bool> ConvertMover::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool changed_computation,
                         MoveConvertPrecisionOps(comp));
     changed |= changed_computation;

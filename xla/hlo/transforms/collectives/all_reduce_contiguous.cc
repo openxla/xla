@@ -107,7 +107,7 @@ absl::StatusOr<bool> AllReduceContiguous::Run(
 
   std::vector<HloAllReduceInstruction*> all_reduces;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kAllReduce &&
           instruction->operand_count() > 1) {

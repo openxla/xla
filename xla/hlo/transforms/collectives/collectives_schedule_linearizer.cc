@@ -40,7 +40,7 @@ absl::StatusOr<bool> CollectivesScheduleLinearizer::Run(
   }
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     std::unique_ptr<HloReachabilityMap> reachability;
     HloInstruction* prev_done = nullptr;
     for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
