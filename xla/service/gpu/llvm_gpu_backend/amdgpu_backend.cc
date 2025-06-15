@@ -100,34 +100,17 @@ namespace {
 
 // Inline threshold value to use in LLVM AMDGPU backend.
 const int kAMDGPUInlineThreshold = 0x100000;
+const int32_t kAMDGPUAbiVersion = 500;
 
 // Gets the ROCm-Device-Libs filenames for a particular AMDGPU version.
-std::vector<std::string> GetROCDLPaths(std::string gcn_arch_name,
-                                       const std::string& rocdl_dir_path) {
-  // AMDGPU version-neutral bitcodes.
-  static std::vector<std::string>* rocdl_filenames =
-      new std::vector<std::string>(
-          {"opencl.bc", "ocml.bc", "ockl.bc", "oclc_finite_only_off.bc",
-           "oclc_daz_opt_off.bc", "oclc_correctly_rounded_sqrt_on.bc",
-           "oclc_unsafe_math_off.bc", "oclc_wavefrontsize64_on.bc",
-           "oclc_abi_version_500.bc"});
-
+std::vector<std::string> GetROCDLPaths(const std::string& rocdl_dir_path) {
   // Construct full path to ROCDL bitcode libraries.
   std::vector<std::string> result;
-  result.reserve(rocdl_filenames->size() + 1);
-  for (auto& filename : *rocdl_filenames) {
-    result.push_back(tsl::io::JoinPath(rocdl_dir_path, filename));
+  result.reserve(2);
+  for (absl::string_view filename : {"ocml.bc", "ockl.bc"}) {
+    result.emplace_back(tsl::io::JoinPath(rocdl_dir_path, filename));
   }
 
-  // Add AMDGPU version-specific bitcodes.
-  std::vector<std::string> tokens = absl::StrSplit(gcn_arch_name, ':');
-  std::string amdgpu_version = gcn_arch_name;
-  if (!tokens.empty() && tokens[0].size() >= 3) {
-    amdgpu_version = tokens[0].substr(3);
-  }
-  result.push_back(tsl::io::JoinPath(
-      rocdl_dir_path,
-      absl::StrCat("oclc_isa_version_", amdgpu_version, ".bc")));
   return result;
 }
 
@@ -332,14 +315,94 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
 
 // Links ROCm-Device-Libs into the given module if the module needs it.
 absl::Status LinkROCDLIfNecessary(llvm::Module* module,
-                                  std::string gcn_arch_name,
+                                  const std::string& gfx_version,
+                                  const DebugOptions& debug_options,
                                   const std::string& rocdl_dir_path) {
   if (!CouldNeedDeviceBitcode(*module)) {
     return absl::OkStatus();
   }
 
-  return LinkWithBitcodeVector(module,
-                               GetROCDLPaths(gcn_arch_name, rocdl_dir_path));
+  auto addControlVariable = [&](llvm::StringRef name, uint32_t value,
+                                uint32_t bitwidth = 8) {
+    if (module->getNamedGlobal(name)) return;
+    llvm::IntegerType* type =
+        llvm::IntegerType::getIntNTy(module->getContext(), bitwidth);
+    llvm::GlobalVariable* control_variable = new llvm::GlobalVariable(
+        *module, type, /*isConstant=*/true,
+        llvm::GlobalValue::LinkageTypes::LinkOnceODRLinkage,
+        llvm::ConstantInt::get(type, value), name, /*before=*/nullptr,
+        /*threadLocalMode=*/llvm::GlobalValue::ThreadLocalMode::NotThreadLocal,
+        /*addressSpace=*/4);
+    control_variable->setVisibility(
+        llvm::GlobalValue::VisibilityTypes::ProtectedVisibility);
+    control_variable->setAlignment(llvm::MaybeAlign(bitwidth / 8));
+    control_variable->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Local);
+  };
+
+  addControlVariable("__oclc_finite_only_opt", false);
+  // TODO(rocm): Maybe check ftz for this one
+  addControlVariable("__oclc_daz_opt", false);
+  addControlVariable("__oclc_correctly_rounded_sqrt32", true);
+  addControlVariable("__oclc_unsafe_math_opt", false);
+
+  // TODO(rocm): Move this into device_description.h or use llvm infra
+  CHECK((gfx_version[3] == '9' && gfx_version.size() == 6) ||
+        (gfx_version[3] == '1' && gfx_version.size() == 7));
+
+  uint32_t major, stepping, minor;
+
+  if (gfx_version[3] == '9') {
+    major = 9;
+    CHECK(absl::SimpleAtoi({&gfx_version[4], 1}, &stepping));
+    CHECK(absl::SimpleHexAtoi({&gfx_version[5], 1}, &minor));
+  } else {
+    CHECK(absl::SimpleAtoi({&gfx_version[3], 2}, &major));
+    CHECK(absl::SimpleAtoi({&gfx_version[5], 1}, &stepping));
+    CHECK(absl::SimpleAtoi({&gfx_version[6], 1}, &minor));
+  }
+
+  // TODO(rocm): Not great, not terrible
+  addControlVariable("__oclc_wavefrontsize64", major == 9);
+  addControlVariable("__oclc_ISA_version",
+                     1000 * major + 100 * stepping + minor, 32);
+  addControlVariable("__oclc_ABI_version", kAMDGPUAbiVersion, 32);
+
+  if (debug_options.xla_gpu_use_embeded_device_lib()) {
+    static const char device_lib_data[] = {
+#include "amdgpu_device_lib_data.inc"
+    };
+
+    llvm::Linker linker(*module);
+    auto device_lib = llvm::getLazyBitcodeModule(
+        {llvm::StringRef{device_lib_data, sizeof(device_lib_data)},
+         "device_lib"},
+        module->getContext());
+    if (!device_lib) {
+      return xla::Internal("Error loading embeded device lib.");
+    }
+    if (linker.linkInModule(
+            std::move(*device_lib), llvm::Linker::Flags::LinkOnlyNeeded,
+            [](llvm::Module& M, const llvm::StringSet<>& GVS) {
+              internalizeModule(M, [&GVS](const llvm::GlobalValue& GV) {
+                return !GV.hasName() || (GVS.count(GV.getName()) == 0);
+              });
+            })) {
+      return xla::Internal("Error linking embeded device lib.");
+    }
+    return absl::OkStatus();
+  }
+
+  TF_RETURN_IF_ERROR(
+      LinkWithBitcodeVector(module, GetROCDLPaths(rocdl_dir_path)));
+
+  // Sanitize stray metadata from the bitcode files
+  if (auto* opencl_version = module->getNamedMetadata("opencl.ocl.version"))
+    module->eraseNamedMetadata(opencl_version);
+
+  if (auto* ident = module->getNamedMetadata("llvm.ident"))
+    module->eraseNamedMetadata(ident);
+
+  return absl::OkStatus();
 }
 
 absl::Status AMDGPUTargetModuleLinker(
@@ -354,9 +417,9 @@ absl::Status AMDGPUTargetModuleLinker(
     return xla::Internal("Incompatible compute capability was specified.");
   }
 
-  std::string gcn_arch_name = compute_capability->gcn_arch_name();
   TF_RETURN_IF_ERROR(
-      LinkROCDLIfNecessary(module, gcn_arch_name, device_bitcode_dir_path));
+      LinkROCDLIfNecessary(module, compute_capability->gfx_version(),
+                           debug_options, device_bitcode_dir_path));
 
   // If ftz is enabled, set it as an attribute on every function in the module.
   if (debug_options.xla_gpu_ftz()) {
@@ -364,9 +427,8 @@ absl::Status AMDGPUTargetModuleLinker(
       fn.addFnAttr("denormal-fp-math-f32", "preserve-sign");
     }
   }
-  const int32_t kAbiVersion = 500;
   module->addModuleFlag(llvm::Module::Error, "amdhsa_code_object_version",
-                        kAbiVersion);
+                        kAMDGPUAbiVersion);
 
   return absl::OkStatus();
 }
@@ -489,17 +551,6 @@ std::vector<std::string> GetAMDGPUBackendOptions(
                            backend_extra_llvm_opts.cend());
 
   return backend_llvm_opts;
-}
-
-std::string LibDevicePath(std::string gcn_arch_name,
-                          const std::string& rocdl_dir_path) {
-  auto libdevice_dir_paths = GetROCDLPaths(gcn_arch_name, rocdl_dir_path);
-  for (auto libdevice_dir_path : libdevice_dir_paths) {
-    if (libdevice_dir_path.find("ocml.bc")) {
-      return libdevice_dir_path;
-    }
-  }
-  return "";
 }
 
 absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
