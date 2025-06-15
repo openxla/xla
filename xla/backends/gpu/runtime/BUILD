@@ -1438,6 +1438,7 @@ xla_cc_test(
         ":while_thunk",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
     ],
 )
