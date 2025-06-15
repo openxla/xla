@@ -186,7 +186,12 @@ absl::StatusOr<void*> GetRocsolverDsoHandle() {
 
 #if TF_ROCM_VERSION >= 40500
 absl::StatusOr<void*> GetHipsolverDsoHandle() {
+  #if TF_ROCM_VERSION < 70000
+  return GetDsoHandle("hipsolver", "0");
+  #else // TF_ROCM_VERSION > 70000
   return GetDsoHandle("hipsolver", "1");
+  #endif   
+
 }
 #endif
 
@@ -199,7 +204,11 @@ absl::StatusOr<void*> GetHipsparseDsoHandle() {
 }
 
 absl::StatusOr<void*> GetHipblasltDsoHandle() {
+  #if TF_ROCM_VERSION < 70000
   return GetDsoHandle("hipblaslt", "0");
+  #else // TF_ROCM_VERSION > 70000
+  return GetDsoHandle("hipblaslt", "1");
+  #endif
 }
 
 absl::StatusOr<void*> GetHipDsoHandle() {
