@@ -155,6 +155,7 @@ cc_library(
     name = "pjrt_c_api_raw_buffer_external",
     srcs = ["pjrt_c_api_raw_buffer_external.cc"],
     hdrs = ["pjrt_c_api_raw_buffer_external.h"],
+    visibility = internal_visibility(["//xla/pjrt:friends"]),
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
@@ -214,7 +215,6 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
@@ -224,6 +224,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/framework:allocator",
@@ -459,10 +460,10 @@ cc_library(
         "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/log",
@@ -576,10 +577,10 @@ cc_library(
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
@@ -595,4 +596,10 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
     ],
+)
+
+cc_library(
+    name = "pjrt_c_api_tpu_internal",
+    hdrs = ["pjrt_c_api_tpu_internal.h"],
+    deps = [":pjrt_c_api_hdrs"],
 )

@@ -24,7 +24,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
@@ -36,6 +35,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
+#include "xla/tsl/distributed_runtime/coordination/key_value_store.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
@@ -66,7 +66,8 @@ class CoordinationService {
       std::function<void(const absl::StatusOr<absl::string_view>&)>;
   using BarrierCallback = std::function<void(const absl::Status&, int64_t)>;
   using GetAliveTasksCallback = std::function<void(
-      const absl::Status&, const std::vector<tensorflow::CoordinatedTask>&)>;
+      const absl::Status&, const std::vector<tensorflow::CoordinatedTask>&,
+      const std::vector<uint64_t> incarnations)>;
 
   // Convenience structs to allow using CoordinatedTask as container keys.
   struct CoordinatedTaskHash {
@@ -363,6 +364,9 @@ class CoordinationService {
     absl::flat_hash_map<tensorflow::CoordinatedTask, bool, CoordinatedTaskHash,
                         CoordinatedTaskEqual>
         tasks_at_barrier;
+    absl::flat_hash_set<tensorflow::CoordinatedTask, CoordinatedTaskHash,
+                        CoordinatedTaskEqual>
+        recoverable_tasks_restarted_during_barrier;
     absl::flat_hash_map<tensorflow::CoordinatedTask, BarrierCallback,
                         CoordinatedTaskHash, CoordinatedTaskEqual>
         done_callbacks;
@@ -447,6 +451,16 @@ class CoordinationService {
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
   bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+
+  // Checks if the barrier can be passed, if recoverable tasks reconnected or
+  // disconnected to the service while barrier is ongoing.
+  // This is only applicable if leave_barriers_on_recoverable_agent_restart flag
+  // is set to true.
+  void CheckBarrierStatusWithRecoverableTasks();
+
+  // Returns a map of ongoing barriers to count of unsynced tasks waiting on
+  // other barriers.
+  absl::flat_hash_map<std::string, int> GetCountOfOutOfSyncTasksPerBarrier();
 
   class ErrorPollingState {
    public:
@@ -576,6 +590,11 @@ class CoordinationService {
   CoordinatedTaskSet AliveTasks(const CoordinatedTaskSet& tasks) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
+  // Returns the incarnation ids of the provided tasks, in the same order.
+  std::vector<uint64_t> IncarnationIds(
+      absl::Span<const tensorflow::CoordinatedTask> tasks) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+
   // Refreshes the AlivenessStates of all pending GetAliveTasks call,
   // potentially finishing some of the pending calls. The AlivenessStates should
   // be refreshed, for example, after a task has failed.
@@ -611,11 +630,7 @@ class CoordinationService {
       ABSL_GUARDED_BY(state_mu_);
   tensorflow::DeviceInfo cluster_devices_ ABSL_GUARDED_BY(state_mu_);
 
-  absl::Mutex kv_mu_;
-  // Ordered map to store config key-values
-  absl::btree_map<std::string, std::string> kv_store_ ABSL_GUARDED_BY(kv_mu_);
-  absl::flat_hash_map<std::string, std::vector<StatusOrValueCallback>> get_cb_
-      ABSL_GUARDED_BY(kv_mu_);
+  KeyValueStore store_;
 
   absl::flat_hash_map<std::string, BarrierState> barriers_
       ABSL_GUARDED_BY(state_mu_);
@@ -628,6 +643,16 @@ class CoordinationService {
 
   absl::flat_hash_set<std::string> recoverable_jobs_;
 
+  // When the tasks connect to coordination service after cluster initialization
+  // is done, they will be added to this set.
+  // Tasks connecting after cluster initialization indicate that they
+  // reconnected to the service due to preemption or restart.
+  // Unsynced recoverable tasks will be excluded from the barrier check after
+  // the first cluster initialization.
+  // The service will remove them from the set when the tasks pass a
+  // barrier with other tasks.
+  absl::flat_hash_set<std::string> unsynced_recoverable_jobs_
+      ABSL_GUARDED_BY(state_mu_);
   // Whether the agents are polling for error from the service. It will be set
   // to true when the service sees the first error polling request. Once set to
   // true, the value will never change back to false.

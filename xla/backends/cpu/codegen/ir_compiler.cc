@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -57,9 +58,12 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/polynomial_approximations.h"
+#include "xla/codegen/math/math_compiler_lib.h"
+#include "xla/codegen/math_lib.h"
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -68,6 +72,25 @@ limitations under the License.
 #include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
+
+void SetXlaCpuBackendOptions(llvm::Module& llvm_module,
+                             const LlvmKernelOptions& options) {
+  std::vector<std::string> llvm_kernel_options;
+  if (options.optimize_for_size()) {
+    llvm_kernel_options.emplace_back(options::kXlaOptimizeForSizeCpuOption);
+  }
+  if (options.disable_loop_unrolling()) {
+    llvm_kernel_options.emplace_back(options::kDisableLoopUnrolling);
+  }
+  if (options.slp_vectorizer_disabled()) {
+    llvm_kernel_options.emplace_back(options::kDisableSlpVectorizer);
+  }
+
+  llvm::MDString* options_mdstring = llvm::MDString::get(
+      llvm_module.getContext(), absl::StrJoin(llvm_kernel_options, ","));
+  llvm_module.addModuleFlag(llvm::Module::Error, "xla_backend_extra_options",
+                            options_mdstring);
+}
 
 static llvm::OptimizationLevel GetOptimizationLevel(
     IrCompiler::Options options) {
@@ -117,8 +140,9 @@ static absl_nullable std::unique_ptr<HloModuleConfig> GetXlaBackendExtraOptions(
 }
 
 static llvm::PipelineTuningOptions GetPipelineTuningOptions(
-    const llvm::Module& module, IrCompiler::Options options) {
-  auto pto_from_options = [](const IrCompiler::Options opts) {
+    const llvm::Module& module, IrCompiler::Options options,
+    const llvm::TargetMachine* target_machine) {
+  auto pto_from_options = [&](const IrCompiler::Options opts) {
     llvm::PipelineTuningOptions pto;
     pto.LoopVectorization = !opts.optimize_for_size;
     pto.SLPVectorization =
@@ -281,7 +305,8 @@ llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> IrCompiler::operator()(
 
 llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
                                     llvm::TargetMachine* target_machine) const {
-  llvm::PipelineTuningOptions pto = GetPipelineTuningOptions(module, options_);
+  llvm::PipelineTuningOptions pto =
+      GetPipelineTuningOptions(module, options_, target_machine);
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -299,6 +324,8 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
       std::make_unique<llvm::TargetLibraryInfoImpl>(target_triple);
   target_library_info_impl->addVectorizableFunctions(
       PolynomialApproximationsVectorization());
+  codegen::MathFunctionLib math_lib;
+  target_library_info_impl->addVectorizableFunctions(math_lib.Vectorizations());
 
   fam.registerPass(
       [&] { return llvm::TargetLibraryAnalysis(*target_library_info_impl); });
@@ -341,12 +368,17 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     if (llvm::verifyModule(module, &error_stream)) {
       return llvm::make_error<llvm::StringError>(
           llvm::errc::invalid_argument,
-          absl::StrFormat("Invalid LLVM IR after optimizations:\n%s",
+          absl::StrFormat("Invalid LLVM IR after optimizations:\n%s\n",
                           error_stream.str()));
     }
   }
 
+  auto replaced_functions = math_lib.RewriteMathFunctions(module);
   RewriteToPolynomialApproximations(&module, options_.fast_math_flags);
+  if (!replaced_functions.empty()) {
+    codegen::math::RemoveFromCompilerUsed(module, replaced_functions);
+    codegen::math::RunInlineAndOptPasses(module);
+  }
 
   return llvm::Error::success();
 }
@@ -364,7 +396,7 @@ std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
   codegen_passes.run(module);
 
   return std::make_unique<llvm::SmallVectorMemoryBuffer>(
-      std::move(mc_stream_buffer));
+      std::move(mc_stream_buffer), module.getName());
 }
 
 llvm::CodeGenOptLevel IrCompiler::GetCodeGenOptLevel(

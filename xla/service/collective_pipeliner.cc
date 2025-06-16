@@ -339,7 +339,7 @@ CheckStoreIntoSliceIsCompatible(HloInstruction* instr,
     if (i->HasControlDependencies() || !acceptable_formatting(i)) {
       return false;
     }
-    if (i->opcode() == HloOpcode::kReduce &&
+    if (i->opcode() == HloOpcode::kReduce && i->shape().IsArray() &&
         (ShapeUtil::ElementsIn(i->shape()) ==
              ShapeUtil::ElementsIn(instr->operand(0)->shape()) ||
          ShapeUtil::ElementsIn(instr->operand(0)->shape()) < 1024)) {
@@ -2638,8 +2638,8 @@ absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
             transpose_instruction->dimensions().begin(),
             transpose_instruction->dimensions().end());
         new_dims.insert(new_dims.begin(), 0);
-        for (int64_t& dim : new_dims) {
-          ++dim;
+        for (int64_t i = 1; i < new_dims.size(); ++i) {
+          ++new_dims[i];
         }
         HloInstruction* expanded_transpose =
             loop_computation->AddInstruction(HloInstruction::CreateTranspose(
@@ -2855,6 +2855,7 @@ static absl::Status TransformLoopBackward(
   }
   // Record the loop variant parameters used in the backward chain.
   LoopVariantParameterInfo loop_variant_parameter_info;
+  annotation_map.clear();
   // Clone loop in the body of the new loop. We change some things like
   // input/output shapes and how we connect loop iterator to the original
   // chains that we are pipelining.

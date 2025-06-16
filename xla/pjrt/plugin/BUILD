@@ -40,3 +40,15 @@ cc_library(
         #"//xla/pjrt/plugin/example:example_lib",
     ],
 )
+
+cc_library(
+    name = "plugin_names",
+    hdrs = ["plugin_names.h"],
+    deps = ["@com_google_absl//absl/strings:string_view"],
+)
+
+cc_library(
+    name = "static_registration",
+    hdrs = ["static_registration.h"],
+    deps = ["//xla/pjrt:pjrt_api"],
+)

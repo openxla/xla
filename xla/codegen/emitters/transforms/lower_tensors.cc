@@ -383,8 +383,12 @@ struct RewriteTensorExtract : OpRewritePattern<mlir::tensor::ExtractOp> {
           b.create<mlir::arith::SelectOp>(is_low_nibble, load, high_value));
     }
 
-    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, op.getType(),
-                                                            load);
+    if (op.getType().isIntOrFloat()) {
+      rewriter.replaceOpWithNewOp<arith::BitcastOp>(op, op.getType(), load);
+    } else {
+      rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, op.getType(),
+                                                              load);
+    }
     return success();
   }
 };
@@ -511,8 +515,10 @@ struct RewriteTensorInsert : OpRewritePattern<mlir::tensor::InsertOp> {
       mlir::LLVMTypeConverter converter(getContext());
       auto llvm_type = converter.convertType(scalar_value.getType());
       scalar_value =
-          b.create<UnrealizedConversionCastOp>(llvm_type, scalar_value)
-              .getResult(0);
+          scalar_value.getType().isIntOrFloat()
+              ? b.create<arith::BitcastOp>(llvm_type, scalar_value)
+              : b.create<UnrealizedConversionCastOp>(llvm_type, scalar_value)
+                    .getResult(0);
       b.create<ml::StoreOp>(scalar_value, gep);
       op.replaceAllUsesWith(op.getDest());
     }
@@ -620,19 +626,21 @@ ml::GlobalOp CreateGlobalOp(mlir::Attribute value,
   // Needed to support complex element type.
   mlir::LLVMTypeConverter converter(b.getContext());
   auto llvm_element_type = converter.convertType(element_type);
-  if (value && element_type.isIntOrFloat() &&
+  if (element_type.isIntOrFloat() &&
       element_type.getIntOrFloatBitWidth() == 4) {
     num_elements = CeilOfRatio<int64_t>(num_elements, 2);
     llvm_element_type = b.getI8Type();
-    auto unpacked_data =
-        mlir::cast<mlir::DenseElementsAttr>(value).getRawData();
-    std::vector<char> packed_data(num_elements);
-    absl::Span<char> packed_data_span =
-        absl::MakeSpan(packed_data.data(), packed_data.size());
-    PackIntN(4, unpacked_data, packed_data_span);
-    value = mlir::DenseElementsAttr::getFromRawBuffer(
-        mlir::RankedTensorType::get({num_elements}, llvm_element_type),
-        packed_data);
+    if (value) {
+      auto unpacked_data =
+          mlir::cast<mlir::DenseElementsAttr>(value).getRawData();
+      std::vector<char> packed_data(num_elements);
+      absl::Span<char> packed_data_span =
+          absl::MakeSpan(packed_data.data(), packed_data.size());
+      PackIntN(4, unpacked_data, packed_data_span);
+      value = mlir::DenseElementsAttr::getFromRawBuffer(
+          mlir::RankedTensorType::get({num_elements}, llvm_element_type),
+          packed_data);
+    }
   }
   auto array_ty = ml::LLVMArrayType::get(llvm_element_type, num_elements);
   std::string name;
@@ -948,11 +956,11 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
                                   vector_type.getElementType());
     auto outputType =
         ml::LLVMStructType::getLiteral(b.getContext(), outputTypes);
-    b.create<ml::InlineAsmOp>(loc, outputType, asm_operands, asm_string,
-                              constraints,
-                              /*has_side_effects=*/true,
-                              /*is_align_stack=*/true, asmDialectAttr,
-                              /*operand_attrs=*/mlir::ArrayAttr());
+    b.create<ml::InlineAsmOp>(
+        loc, outputType, asm_operands, asm_string, constraints,
+        /*has_side_effects=*/true,
+        /*is_align_stack=*/true, ml::TailCallKind::None, asmDialectAttr,
+        /*operand_attrs=*/mlir::ArrayAttr());
     return success();
   }
 

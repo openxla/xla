@@ -64,14 +64,14 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "abstract_tfrt_cpu_buffer",
+    name = "abstract_cpu_buffer",
     srcs = [
-        "abstract_tfrt_cpu_buffer.cc",
-        "tfrt_raw_buffer.cc",
+        "abstract_cpu_buffer.cc",
+        "raw_buffer.cc",
     ],
     hdrs = [
-        "abstract_tfrt_cpu_buffer.h",
-        "tfrt_raw_buffer.h",
+        "abstract_cpu_buffer.h",
+        "raw_buffer.h",
     ],
     visibility = internal_visibility(["//xla/pjrt/cpu:legacy_cpu_buffer_internal_users"]),
     deps = [
@@ -158,7 +158,7 @@ cc_library(
     hdrs = ["cpu_client.h"],
     visibility = internal_visibility(["//xla/pjrt/cpu:legacy_cpu_client_users"]),
     deps = [
-        ":abstract_tfrt_cpu_buffer",
+        ":abstract_cpu_buffer",
         ":cpu_async_execution_tracker",
         ":cpu_device",
         ":cpu_event",
@@ -186,7 +186,6 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/pjrt:async_work_runner",
         "//xla/pjrt:common_pjrt_client",
-        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:device_event",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:host_memory_spaces",
@@ -206,6 +205,7 @@ cc_library(
         "//xla/pjrt/plugin/xla_cpu:cpu_execute_options",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology_description",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",

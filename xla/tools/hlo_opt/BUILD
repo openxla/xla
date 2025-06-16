@@ -10,7 +10,7 @@ load(
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
-    "tf_cuda_tests_tags",
+    "tf_gpu_tests_tags",
 )
 
 # hlo-opt tool.
@@ -59,7 +59,6 @@ cc_library(
         "//xla/service:while_loop_constant_sinking",
         "//xla/service:while_loop_invariant_code_motion",
         "//xla/service:while_loop_simplifier",
-        "//xla/service/gpu/transforms:collective_permute_valid_iteration_annotator",
         "//xla/service/gpu/transforms:scatter_expander",
         "//xla/service/gpu/transforms:scatter_slice_simplifier",
         "//xla/service/gpu/transforms/collectives:all_gather_dynamic_slice_simplifier",
@@ -110,7 +109,6 @@ cc_library(
         "//xla/service/gpu/transforms:gemm_broadcast_folding_rewriter",
         "//xla/service/gpu/transforms:gemm_fusion",
         "//xla/service/gpu/transforms:gemv_rewriter",
-        "//xla/service/gpu/transforms:pipelined_p2p_rewriter",
         "//xla/service/gpu/transforms:reduce_scatter_creator",
         "//xla/service/gpu/transforms:reduction_degenerate_dim_remover",
         "//xla/service/gpu/transforms:reduction_dimension_grouper",
@@ -235,10 +233,10 @@ lit_test_suite(
     ]),
     cfg = "//xla:lit.cfg.py",
     data = [":test_utilities"],
-    default_tags = tf_cuda_tests_tags(),
-    hermetic_cuda_data_dir = "%S/../../../../cuda_nvcc",
+    default_tags = tf_gpu_tests_tags(),
+    hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
     tags_override = {
-        "gpu_hlo_ptx.hlo": ["cuda-only"],
+        "tests/gpu_hlo_ptx.hlo": ["cuda-only"],
     },
     tools = [
         "//xla/tools:hlo-opt",

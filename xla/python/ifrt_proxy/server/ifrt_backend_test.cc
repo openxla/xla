@@ -28,6 +28,7 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -92,6 +93,7 @@ namespace {
 using ::testing::_;
 using ::testing::ByMove;
 using ::testing::DoAll;
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::Invoke;
@@ -252,6 +254,9 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   void SetUp() override {
     auto mock_client = std::make_unique<xla::ifrt::MockClient>();
 
+    ON_CALL(*mock_client, Attributes())
+        .WillByDefault(ReturnRef(client_attributes_));
+
     std::vector<xla::ifrt::Device*> raw_device_ptrs;
     for (int i = 0; i < 2; ++i) {
       auto mock_device = std::make_unique<xla::ifrt::MockDevice>();
@@ -317,7 +322,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   // Utility method to set up a given MockArray (in the backend) that can then
   // be the target of the other Array-specific methods. Returns the array
   // handle.
-  absl::StatusOr<uint64_t> MakeTestArray(tsl::RCReference<Array> mock_array) {
+  absl::StatusOr<uint64_t> MakeTestArray(ArrayRef mock_array) {
     EXPECT_CALL(*mock_client_, MakeArrayFromHostBuffer(_, _, _, _, _, _, _, _))
         .WillOnce(Return(std::move(mock_array)));
 
@@ -349,7 +354,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   }
 
   absl::StatusOr<CompileResponse> CompileTestLoadedExecutable(
-      absl::StatusOr<std::unique_ptr<LoadedExecutable>> loaded_executable) {
+      absl::StatusOr<LoadedExecutableRef> loaded_executable) {
     auto request = NewIfrtRequest(NewOpId());
     CompileRequest* compile_request = request->mutable_compile_request();
     TestProgram program;
@@ -359,7 +364,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
     TF_ASSIGN_OR_RETURN(*compile_request->mutable_compile_options(),
                         Serialize(compile_options, /*options=*/nullptr));
 
-    EXPECT_CALL(mock_compiler_, Compile(_, _))
+    EXPECT_CALL(mock_compiler_, CompileAndLoad(_, _))
         .WillOnce(Return(ByMove(std::move(loaded_executable))));
 
     TF_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
@@ -400,12 +405,11 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   absl::Mutex mu_;
   uint64_t current_op_id_ ABSL_GUARDED_BY(mu_) = 1;
   uint64_t current_host_buffer_handle_ = 1;
-
+  xla::ifrt::AttributeMap client_attributes_{xla::ifrt::AttributeMap::Map(
+      {{"test_key", xla::ifrt::AttributeMap::StringValue("test_value")}})};
   std::unique_ptr<IfrtBackend> backend_;
 };
 
-// TODO(b/315809436): Test needs rewrite because protobuf matchers are not OSS
-#if defined(PLATFORM_GOOGLE)
 TEST_P(IfrtBackendHandlerTest, Init) {
   EXPECT_CALL(*mock_client_, platform_name())
       .WillRepeatedly(Return("ifrt_backend"));
@@ -459,147 +463,58 @@ TEST_P(IfrtBackendHandlerTest, Init) {
   auto request = NewIfrtRequest(NewOpId());
   request->mutable_init_request();
 
-  if (Version().protocol_version() <= 3) {
-    EXPECT_THAT(CallBackend(std::move(request)),
-                IsOkAndHolds(Pointee(
-                    Partially(IgnoringRepeatedFieldOrdering(EquivToProto(R"pb(
-                      init_response {
-                        session_id: 12345
-                        platform_name: "ifrt_backend"
-                        platform_version: "n/a"
-                        platform_id: 42
-                        process_index: 1
-                        runtime_type: "ifrt-service"
-                        all_devices {
-                          id: 0
-                          device_kind: "mock"
-                          default_memory_id: 0
-                          memory_ids: [ 0 ]
-                          deprecated_attributes {
-                            key: "name"
-                            value { string_value: "device0" }
-                          }
-                        }
-                        all_devices {
-                          id: 1
-                          device_kind: "mock"
-                          default_memory_id: 1
-                          memory_ids: [ 1 ]
-                          deprecated_attributes {
-                            key: "name"
-                            value { string_value: "device1" }
-                          }
-                        }
-                        memories {
-                          id: 0
-                          memory_space_kind: "mock"
-                          device_ids: [ 0 ]
-                        }
-                        memories {
-                          id: 1
-                          memory_space_kind: "mock"
-                          device_ids: [ 1 ]
-                        }
-                      }
-                    )pb"))))));
-  } else if (Version().protocol_version() < 7) {
-    EXPECT_THAT(CallBackend(std::move(request)),
-                IsOkAndHolds(Pointee(
-                    Partially(IgnoringRepeatedFieldOrdering(EquivToProto(R"pb(
-                      init_response {
-                        session_id: 12345
-                        platform_name: "ifrt_backend"
-                        platform_version: "n/a"
-                        platform_id: 42
-                        process_index: 1
-                        runtime_type: "ifrt-service"
-                        all_devices {
-                          id: 0
-                          device_kind: "mock"
-                          default_memory_id: 0
-                          memory_ids: [ 0 ]
-                          attributes {
-                            attributes {
-                              key: "name"
-                              value { string_value: "device0" }
-                            }
-                          }
-                        }
-                        all_devices {
-                          id: 1
-                          device_kind: "mock"
-                          default_memory_id: 1
-                          memory_ids: [ 1 ]
-                          attributes {
-                            attributes {
-                              key: "name"
-                              value { string_value: "device1" }
-                            }
-                          }
-                        }
-                        memories {
-                          id: 0
-                          memory_space_kind: "mock"
-                          device_ids: [ 0 ]
-                        }
-                        memories {
-                          id: 1
-                          memory_space_kind: "mock"
-                          device_ids: [ 1 ]
-                        }
-                      }
-                    )pb"))))));
-  } else {
-    EXPECT_THAT(CallBackend(std::move(request)),
-                IsOkAndHolds(Pointee(
-                    Partially(IgnoringRepeatedFieldOrdering(EquivToProto(R"pb(
-                      init_response {
-                        session_id: 12345
-                        platform_name: "ifrt_backend"
-                        platform_version: "n/a"
-                        platform_id: 42
-                        process_index: 1
-                        runtime_type: "ifrt-service"
-                        all_devices {
-                          id: 0
-                          device_kind: "mock"
-                          default_memory_id: 0
-                          memory_ids: [ 0 ]
-                          attributes {
-                            attributes {
-                              key: "name"
-                              value { string_value: "device0" }
-                            }
-                          }
-                        }
-                        all_devices {
-                          id: 1
-                          device_kind: "mock"
-                          default_memory_id: 1
-                          memory_ids: [ 1 ]
-                          attributes {
-                            attributes {
-                              key: "name"
-                              value { string_value: "device1" }
-                            }
-                          }
-                        }
-                        primary_device_ids: [ 0, 1 ]
-                        memories {
-                          id: 0
-                          memory_space_kind: "mock"
-                          device_ids: [ 0 ]
-                        }
-                        memories {
-                          id: 1
-                          memory_space_kind: "mock"
-                          device_ids: [ 1 ]
-                        }
-                      }
-                    )pb"))))));
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtResponse> response,
+                          CallBackend(std::move(request)));
+  ASSERT_TRUE(response->has_init_response()) << response->DebugString();
+
+  InitResponse init_response = std::move(response->init_response());
+  LOG(INFO) << "init_response: " << init_response.DebugString();
+
+  EXPECT_EQ(init_response.session_id(), 12345);
+  EXPECT_EQ(init_response.platform_name(), "ifrt_backend");
+  EXPECT_EQ(init_response.platform_version(), "n/a");
+  EXPECT_EQ(init_response.platform_id(), 42);
+  EXPECT_EQ(init_response.process_index(), 1);
+  EXPECT_EQ(init_response.runtime_type(), "ifrt-service");
+
+  EXPECT_EQ(init_response.all_devices().size(), 2);
+  for (auto device : init_response.all_devices()) {
+    int device_canonical_num = device.id();
+    EXPECT_EQ(device.device_kind(), "mock");
+    EXPECT_EQ(device.default_memory_id(), device_canonical_num);
+    EXPECT_EQ(device.memory_ids().size(), 1);
+    EXPECT_EQ(device.memory_ids(0), device_canonical_num);
+    std::string expected_name = absl::StrCat("device", device_canonical_num);
+    if (Version().protocol_version() <= 3) {
+      EXPECT_EQ(device.deprecated_attributes().size(), 1);
+      EXPECT_EQ(device.deprecated_attributes().at("name").string_value(),
+                expected_name);
+    } else {
+      EXPECT_EQ(device.attributes().attributes().size(), 1);
+      EXPECT_EQ(device.attributes().attributes().at("name").string_value(),
+                expected_name);
+    }
   }
+
+  EXPECT_EQ(init_response.memories().size(), 2);
+  for (auto memory : init_response.memories()) {
+    int memory_canonical_num = memory.id();
+    EXPECT_EQ(memory.memory_space_kind(), "mock");
+    EXPECT_EQ(memory.device_ids().size(), 1);
+    EXPECT_EQ(memory.device_ids(0), memory_canonical_num);
+  }
+
+  if (Version().protocol_version() > 7) {
+    EXPECT_THAT(init_response.primary_device_ids(), ElementsAre(0, 1));
+  }
+
+  EXPECT_EQ(init_response.client_attributes().attributes().size(), 1);
+  EXPECT_EQ(init_response.client_attributes()
+                .attributes()
+                .at("test_key")
+                .string_value(),
+            "test_value");
 }
-#endif
 
 // TODO(b/282757875): Use the MockRuntime fixture to cover the error cases for
 // MakeArrayFromHostBuffer and CopyToHostBuffer methods as well.
@@ -609,7 +524,7 @@ TEST_P(IfrtBackendHandlerTest, Init) {
 TEST_P(IfrtBackendHandlerTest, DisassembleIntoSingleDeviceArraysSucceeds) {
   // Set up a mock source array that returns two single device arrays on
   // disassembly.
-  std::vector<tsl::RCReference<xla::ifrt::Array>> single_device_arrays;
+  std::vector<xla::ifrt::ArrayRef> single_device_arrays;
   single_device_arrays.push_back(tsl::MakeRef<xla::ifrt::MockArray>());
   single_device_arrays.push_back(tsl::MakeRef<xla::ifrt::MockArray>());
   tsl::RCReference<xla::ifrt::MockArray> source_mock_array =
@@ -966,10 +881,10 @@ TEST_P(IfrtBackendHandlerTest,
 MATCHER_P(EqualsDeviceList, device_list, "") { return *arg == *device_list; }
 
 TEST_P(IfrtBackendHandlerTest, CopyArrays) {
-  std::vector<tsl::RCReference<xla::ifrt::Array>> src_arrays;
+  std::vector<xla::ifrt::ArrayRef> src_arrays;
   src_arrays.push_back(tsl::MakeRef<xla::ifrt::MockArray>());
 
-  std::vector<tsl::RCReference<xla::ifrt::Array>> copied_arrays;
+  std::vector<xla::ifrt::ArrayRef> copied_arrays;
   copied_arrays.push_back(tsl::MakeRef<xla::ifrt::MockArray>());
 
   BasicDeviceList::Devices ds;
@@ -982,8 +897,7 @@ TEST_P(IfrtBackendHandlerTest, CopyArrays) {
                                         Optional(EqualsDeviceList(devices)),
                                         Optional(memory_kind),
                                         ArrayCopySemantics::kAlwaysCopy))
-      .WillOnce(Return(
-          std::vector<tsl::RCReference<xla::ifrt::Array>>(copied_arrays)));
+      .WillOnce(Return(std::vector<xla::ifrt::ArrayRef>(copied_arrays)));
 
   auto ifrt_request = NewIfrtRequest(NewOpId());
   CopyArraysRequest* copy_arrays_request =
@@ -1391,7 +1305,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableExecute) {
     return array;
   };
 
-  std::vector<tsl::RCReference<Array>> outputs;
+  std::vector<ArrayRef> outputs;
   outputs.reserve(kNumOutputs);
   for (int i = 0; i < kNumOutputs; ++i) {
     outputs.push_back(make_array());
@@ -1399,7 +1313,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableExecute) {
 
   EXPECT_CALL(*executable, Execute(SizeIs(kNumArgs), _, _))
       .WillOnce(
-          Invoke([&](absl::Span<tsl::RCReference<Array>> args,
+          Invoke([&](absl::Span<ArrayRef> args,
                      const xla::ifrt::LoadedExecutable::ExecuteOptions& options,
                      std::optional<DeviceListRef> devices)
                      -> absl::StatusOr<LoadedExecutable::ExecuteResult> {
@@ -1490,7 +1404,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableExecuteErrorWithClientHandles) {
 
   EXPECT_CALL(*executable, Execute(SizeIs(kNumArgs), _, _))
       .WillOnce(
-          Invoke([&](absl::Span<tsl::RCReference<Array>> args,
+          Invoke([&](absl::Span<ArrayRef> args,
                      const xla::ifrt::LoadedExecutable::ExecuteOptions& options,
                      std::optional<DeviceListRef> devices)
                      -> absl::StatusOr<LoadedExecutable::ExecuteResult> {
@@ -1527,54 +1441,6 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableExecuteErrorWithClientHandles) {
     EXPECT_THAT(CheckValueReady(kFirstResultHandle + i), status_is_err);
   }
 }
-
-// TODO(b/315809436): Test needs rewrite because protobuf matchers are not OSS
-#if defined(PLATFORM_GOOGLE)
-TEST_P(IfrtBackendHandlerTest, LoadedExecutableDelete) {
-  MockLoadedExecutable* executable;
-  uint64_t handle;
-  {
-    auto e = std::make_unique<MockLoadedExecutable>();
-    executable = e.get();
-    TF_ASSERT_OK_AND_ASSIGN(CompileResponse response,
-                            CompileTestLoadedExecutable(std::move(e)));
-    handle = response.loaded_executable_handle();
-  }
-
-  {
-    EXPECT_CALL(*executable, Delete())
-        .WillOnce(Return(Future<>(absl::OkStatus())));
-
-    auto request = NewIfrtRequest(NewOpId());
-    LoadedExecutableDeleteRequest* delete_request =
-        request->mutable_loaded_executable_delete_request();
-    delete_request->set_loaded_executable_handle(handle);
-
-    TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtResponse> response,
-                            CallBackend(std::move(request)));
-    ASSERT_TRUE(response->has_loaded_executable_delete_response());
-
-    EXPECT_THAT(
-        CheckFuture(
-            response->loaded_executable_delete_response().future_handle()),
-        IsOk());
-  }
-
-  {
-    EXPECT_CALL(*executable, IsDeleted()).WillOnce(Return(true));
-
-    auto request = NewIfrtRequest(NewOpId());
-    LoadedExecutableIsDeletedRequest* is_deleted_request =
-        request->mutable_loaded_executable_is_deleted_request();
-    is_deleted_request->set_loaded_executable_handle(handle);
-
-    EXPECT_THAT(CallBackend(std::move(request)),
-                IsOkAndHolds(Pointee(Partially(EquivToProto(R"pb(
-                  loaded_executable_is_deleted_response { is_deleted: true }
-                )pb")))));
-  }
-}
-#endif
 
 TEST_P(IfrtBackendHandlerTest, LoadedExecutableDestruct) {
   MockLoadedExecutable* executable;
@@ -1654,7 +1520,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedHostCallbackExecute) {
     auto e = std::make_unique<MockLoadedExecutable>();
     executable = e.get();
 
-    EXPECT_CALL(mock_compiler_, Compile(_, _))
+    EXPECT_CALL(mock_compiler_, CompileAndLoad(_, _))
         .WillOnce(DoAll(
             Invoke(
                 [&](const std::unique_ptr<xla::ifrt::Program>& program,

@@ -58,14 +58,10 @@ TEST(TritonStub, CallStubApi) {
                    .ok());
   EXPECT_EQ(GetLibdevicePath({}, {}), "");
 
-  EmitterLocOpBuilder builder(mlir::UnknownLoc::get(&context), &context);
-
-  EXPECT_TRUE(
-      ir_emitter_triton_internal::ComputeDelinearizedTileIndex(builder, {})
-          .empty());
-
   HloConstantInstruction constant(LiteralUtil::CreateR1<int>({1, 1}));
-  auto tiled_hlo = TiledHloInstruction::Create(&constant, {}, {1}, {1}, {});
+  auto tiled_hlo = TiledHloInstruction::Create(
+      &constant, /*operands=*/{}, /*runtime_variables=*/{}, /*tile_sizes=*/{1},
+      /*tile_strides=*/{1}, /*tile_offsets_indexing=*/{});
   EXPECT_TRUE(tiled_hlo.ok());
 }
 

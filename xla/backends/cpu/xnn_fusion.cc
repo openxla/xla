@@ -17,17 +17,22 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
+#include "xnnpack.h"
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_lib.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
@@ -77,26 +82,40 @@ bool XnnShouldUseThreadPool(const HloComputation* computation) {
       [](const HloInstruction* hlo) { return XnnShouldUseThreadPool(hlo); });
 }
 
-absl::StatusOr<bool> IsXnnDotSupported(
-    const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
-    const Shape& rhs_shape, const Shape& out_shape,
-    TargetMachineFeatures* cpu_features) {
-  // TODO(ezhulenev): Support other element types.
-  auto check_dtype = [&](PrimitiveType in_dtype, PrimitiveType out_dtype) {
-    return lhs_shape.element_type() == in_dtype &&
-           rhs_shape.element_type() == in_dtype &&
-           out_shape.element_type() == out_dtype;
-  };
+bool AreDtypesSupported(const Shape& lhs_shape, const Shape& rhs_shape,
+                        const Shape& out_shape,
+                        const TargetMachineFeatures* cpu_features) {
+  // Stores tuple of allowed (input, output) dtypes.
+  static const auto* kAllowedTypes =
+      new absl::flat_hash_set<std::pair<PrimitiveType, PrimitiveType>>(
+          {{F32, F32}, {BF16, F32}, {BF16, BF16}});
 
-  // We assume that the feature is available if `cpu_features` is not provided.
-  bool cpu_has_avx512bf16 =
-      cpu_features == nullptr || cpu_features->has_avx512bf16();
-  bool dtype_is_supported =
-      check_dtype(F32, F32) || (check_dtype(BF16, F32) && cpu_has_avx512bf16);
-  if (!dtype_is_supported) {
+  // Types must be in the allowed set.
+  PrimitiveType lhs_dtype = lhs_shape.element_type();
+  PrimitiveType rhs_dtype = rhs_shape.element_type();
+  PrimitiveType out_dtype = out_shape.element_type();
+  if (lhs_dtype != rhs_dtype ||
+      !kAllowedTypes->contains({lhs_dtype, out_dtype})) {
     return false;
   }
 
+  // BF16 matmuls can only run when CPU has AVX512_BF16.
+  if (lhs_dtype == BF16) {
+    return cpu_features == nullptr || cpu_features->has_avx512bf16();
+  }
+  return true;
+}
+
+absl::StatusOr<bool> IsXnnDotSupported(
+    const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
+    const Shape& rhs_shape, const Shape& out_shape,
+    const TargetMachineFeatures* cpu_features) {
+  // Check data types.
+  if (!AreDtypesSupported(lhs_shape, rhs_shape, out_shape, cpu_features)) {
+    return false;
+  }
+
+  // Check shapes.
   TF_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
                                                       rhs_shape, out_shape));
 
@@ -114,6 +133,109 @@ absl::StatusOr<bool> IsXnnDotSupported(
   return dot_canonical_dims.lhs_canonical &&
          !dot_canonical_dims.lhs_column_major &&
          !dot_canonical_dims.rhs_column_major;
+}
+
+absl::StatusOr<xnn_datatype> XnnDatatype(const PrimitiveType& type) {
+  switch (type) {
+    case BF16:
+      return xnn_datatype_bf16;
+    case F16:
+      return xnn_datatype_fp16;
+    case F32:
+      return xnn_datatype_fp32;
+    default:
+      return InvalidArgument("Unsupported XNNPACK data type: %s",
+                             primitive_util::LowercasePrimitiveTypeName(type));
+  }
+}
+
+absl::StatusOr<xnn_unary_operator> XnnUnaryOperator(const HloOpcode& opcode) {
+  switch (opcode) {
+    // TODO(ashaposhnikov): Need to debug the crash with kAbs.
+    // case HloOpcode::kAbs:
+    //  return xnn_unary_abs;
+    case HloOpcode::kCeil:
+      return xnn_unary_ceiling;
+    case HloOpcode::kClz:
+      return xnn_unary_count_leading_zeros;
+    case HloOpcode::kConvert:
+      return xnn_unary_convert;
+    case HloOpcode::kCos:
+      return xnn_unary_cosine;
+    // TODO(ashaposhnikov): Need to debug the crash with kExp.
+    // case HloOpcode::kExp:
+    //  return xnn_unary_exp;
+    case HloOpcode::kCbrt:
+      return xnn_unary_cube_root;
+    // case HloOpcode::kErf:
+    // case HloOpcode::kExpm1:
+    case HloOpcode::kFloor:
+      return xnn_unary_floor;
+    case HloOpcode::kLog:
+      return xnn_unary_log;
+    // case HloOpcode::kLog1p:
+    case HloOpcode::kLogistic:
+      return xnn_unary_sigmoid;
+    // TODO(ashaposhnikov): Need to debug the crash with kNegate.
+    // case HloOpcode::kNegate:
+    //  return xnn_unary_negate;
+    // case HloOpcode::kNot:
+    // case HloOpcode::kRoundNearestAfz:
+    case HloOpcode::kRoundNearestEven:
+      return xnn_unary_bankers_rounding;
+    case HloOpcode::kRsqrt:
+      return xnn_unary_reciprocal_square_root;
+    case HloOpcode::kSign:
+      return xnn_unary_sign;
+    case HloOpcode::kSin:
+      return xnn_unary_sine;
+    // TODO(ashaposhnikov): Need to debug the crash with kSqrt.
+    // case HloOpcode::kSqrt:
+    //  return xnn_unary_square_root;
+    // case HloOpcode::kTan:
+    case HloOpcode::kTanh:
+      return xnn_unary_tanh;
+    default:
+      return InvalidArgument("Unsupported XNNPACK unary operator: %s",
+                             HloOpcodeString(opcode));
+  }
+}
+
+absl::StatusOr<xnn_binary_operator> XnnBinaryOperator(const HloOpcode& opcode) {
+  switch (opcode) {
+    case HloOpcode::kAdd:
+      return xnn_binary_add;
+    case HloOpcode::kAnd:
+      return xnn_binary_bitwise_and;
+    // TODO(ashaposhnikov): debug crashes with these instructions.
+    // case HloOpcode::kDivide:
+    //  return xnn_binary_divide;
+    // case HloOpcode::kMaximum:
+    //  return xnn_binary_maximum;
+    case HloOpcode::kMinimum:
+      return xnn_binary_minimum;
+    case HloOpcode::kMultiply:
+      return xnn_binary_multiply;
+    case HloOpcode::kOr:
+      return xnn_binary_bitwise_or;
+    case HloOpcode::kPower:
+      return xnn_binary_pow;
+    case HloOpcode::kRemainder:
+      return xnn_binary_modulus;
+    case HloOpcode::kShiftLeft:
+      return xnn_binary_shift_left;
+    case HloOpcode::kShiftRightArithmetic:
+      return xnn_binary_shift_right_arithmetic;
+    case HloOpcode::kShiftRightLogical:
+      return xnn_binary_shift_right_logical;
+    case HloOpcode::kSubtract:
+      return xnn_binary_subtract;
+    case HloOpcode::kXor:
+      return xnn_binary_bitwise_xor;
+    default:
+      return InvalidArgument("Unsupported XNNPACK binary operator: %s",
+                             HloOpcodeString(opcode));
+  }
 }
 
 }  // namespace xla::cpu
