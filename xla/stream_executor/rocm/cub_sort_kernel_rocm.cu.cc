@@ -50,7 +50,7 @@ struct float_bit_mask<tsl::bfloat16> {
   using bit_type = uint16_t;
 };
 }  // namespace detail
-#else   // TF_ROCM_VERSION > 70000
+#else   // TF_ROCM_VERSION >= 70000
 namespace traits {
 
 template <>
