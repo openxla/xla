@@ -78,6 +78,7 @@ consider using --hlo_argument_mode=uninitialized.
 struct HloRunnerConfig {
   std::string input_format_str = "text";
   xla::InputFormat input_format;
+  std::string output_mode_str = "return_outputs";
   bool should_run = true;
   bool enable_mock_nccl = false;
   std::string dump_output_literal_to = "";
@@ -163,6 +164,12 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   TF_ASSIGN_OR_RETURN(out.module_argument_mode,
                       ArgumentModeFromString(opts.hlo_argument_mode));
+  // add parser for output mode (from functional_hlo_runner.h::AbslParseFlag)
+  if (std::string error; !FunctionalHloRunner::AbslParseFlag(
+          opts.output_mode_str, &out.module_output_mode, &error)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Invalid --output_mode: ", opts.output_mode_str, ". ", error));
+  }
 
   out.module_output_mode =
       FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
@@ -419,7 +426,11 @@ int main(int argc, char** argv) {
                 "A file containing debug options to be passed to the HLO "
                 "module. The file should contain a serialized DebugOptions "
                 "proto message. The order of precedence: command line flags > "
-                "XLA_FLAGS > debug_options_file > default flags.")};
+                "XLA_FLAGS > debug_options_file > default flags."),
+      tsl::Flag("output_mode", &opts.output_mode_str,
+                "Specify output mode: return_outputs, not_return_outputs, "
+                "return_device0_outputs."),
+  };
 
   xla::AppendDebugOptionsFlags(&flag_list);
 
