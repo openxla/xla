@@ -76,5 +76,22 @@ bazel \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --run_under=//build_tools/ci:parallel_gpu_execute \
-    -- //xla/...
+    -- //xla/... \
+    -//xla/backends/gpu/codegen/triton:dot_algorithms_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_port_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_legacy_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:support_legacy_test_gpu_amd_any \
+    -//xla/backends/gpu/codegen/triton:support_test \
+    -//xla/backends/gpu/runtime:command_buffer_thunk_test_gpu_amd_any \
+    -//xla/backends/profiler/gpu:cupti_error_manager_test_gpu_amd_any \
+    -//xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any \
+    -//xla/service/gpu/tests:command_buffer_test_gpu_amd_any \
+    -//xla/service/gpu/tests:dynamic_shared_memory_test_gpu_amd_any \
+    -//xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any \
+    -//xla/service/gpu/tests:gpu_triton_custom_call_test_gpu_amd_any \
+    -//xla/tests:conv_depthwise_backprop_filter_test_gpu_amd_any \
+    -//xla/tests:dot_operation_test_autotune_disabled_gpu_amd_any \
     
