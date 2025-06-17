@@ -20,25 +20,25 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 std::string ToString(SYCLError_t error) {
-    switch (error) {
-      case SYCL_SUCCESS:
-        return "SYCL succeeded.";
-      case SYCL_ERROR_NO_DEVICE:
-        return "SYCL did not find the device.";
-      case SYCL_ERROR_INVALID_DEVICE:
-        return "SYCL got invalid device id.";
-      case SYCL_ERROR_INVALID_POINTER:
-        return "SYCL got invalid pointer.";
-      case SYCL_ERROR_INVALID_STREAM:
-        return "SYCL got invalid stream.";
-      case SYCL_ERROR_DESTROY_DEFAULT_STREAM:
-        return "SYCL cannot destroy default stream.";
-      case SYCL_ERROR_NOT_READY:
-        return "SYCL is not ready.";
-      case SYCL_ERROR_ZE_ERROR:
-        return "SYCL got ZE error.";
-      default:
-        return "SYCL got invalid error code.";
-    }
+  switch (error) {
+    case SYCL_SUCCESS:
+      return "SYCL succeeded.";
+    case SYCL_ERROR_NO_DEVICE:
+      return "SYCL did not find the device.";
+    case SYCL_ERROR_INVALID_DEVICE:
+      return "SYCL got invalid device id.";
+    case SYCL_ERROR_INVALID_POINTER:
+      return "SYCL got invalid pointer.";
+    case SYCL_ERROR_INVALID_STREAM:
+      return "SYCL got invalid stream.";
+    case SYCL_ERROR_DESTROY_DEFAULT_STREAM:
+      return "SYCL cannot destroy default stream.";
+    case SYCL_ERROR_NOT_READY:
+      return "SYCL is not ready.";
+    case SYCL_ERROR_ZE_ERROR:
+      return "SYCL got ZE error.";
+    default:
+      return "SYCL got invalid error code.";
+  }
 }
 }  // namespace stream_executor::gpu

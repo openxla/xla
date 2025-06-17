@@ -20,7 +20,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
 
-
 namespace stream_executor::gpu {
 
 enum SYCLError_t {
@@ -38,7 +37,8 @@ enum SYCLError_t {
 std::string ToString(SYCLError_t result);
 
 // Returns an absl::Status corresponding to the SYCLError_t.
-inline absl::Status ToStatus(SYCLError_t result, absl::string_view detail = "") {
+inline absl::Status ToStatus(SYCLError_t result,
+                             absl::string_view detail = "") {
     if (ABSL_PREDICT_TRUE(result == SYCL_SUCCESS)) {
         return absl::OkStatus();
     }
