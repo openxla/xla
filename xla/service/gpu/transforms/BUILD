@@ -3331,3 +3331,65 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "post_layout_custom_call_rewriter",
+    srcs = ["post_layout_custom_call_rewriter.cc"],
+    hdrs = ["post_layout_custom_call_rewriter.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/ffi:attribute_map",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
+        "//xla/service:memory_annotations_hdr",
+        "//xla/service/gpu:gpu_memory_space_assignment",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "memory_space_propagation",
+    srcs = ["memory_space_propagation.cc"],
+    hdrs = ["memory_space_propagation.h"],
+    deps = [
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_module_group",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "memory_space_propagation_test",
+    srcs = ["memory_space_propagation_test.cc"],
+    deps = [
+        ":memory_space_propagation",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_verifier",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
