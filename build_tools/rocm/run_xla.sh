@@ -95,7 +95,6 @@ bazel \
     -//xla/tests:conv_depthwise_backprop_filter_test_gpu_amd_any \
     -//xla/tests:dot_operation_test_autotune_disabled_gpu_amd_any \
     -//xla/service/gpu/tests:gpu_index_test_gpu_amd_any \
-    -//xla/service/gpu/transforms:cublas_gemm_rewriter_test_gpu_amd_any \
     -//xla/tests:convolution_test_gpu_alternative_layout_gpu_amd_any \
     -//xla/tests:convolution_test_gpu_amd_any \
     
