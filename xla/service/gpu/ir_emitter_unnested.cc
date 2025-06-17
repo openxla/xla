@@ -2560,11 +2560,11 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
           FindCanonicalSendRecvStartOp(instr);
       if (collectives_async_events.contains(canonical_send_instr)) {
         if (IsNvshmemCollective(instr)) {
-          static_cast<NvshmemPutThunk*>(thunk.get())
+          tsl::down_cast<NvshmemPutThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_send_instr]);
         } else {
-          static_cast<SendThunk*>(thunk.get())
+          tsl::down_cast<SendThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_send_instr]);
         }
@@ -2572,10 +2572,10 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
         if (IsNvshmemCollective(instr)) {
           collectives_async_events.try_emplace(
               instr,
-              static_cast<NvshmemPutThunk*>(thunk.get())->async_events());
+              tsl::down_cast<NvshmemPutThunk*>(thunk.get())->async_events());
         } else {
           collectives_async_events.try_emplace(
-              instr, static_cast<SendThunk*>(thunk.get())->async_events());
+              instr, tsl::down_cast<SendThunk*>(thunk.get())->async_events());
         }
       }
     }
@@ -2658,11 +2658,11 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
           FindCanonicalSendRecvStartOp(instr);
       if (collectives_async_events.contains(canonical_recv_instr)) {
         if (IsNvshmemCollective(instr)) {
-          static_cast<NvshmemGetThunk*>(thunk.get())
+          tsl::down_cast<NvshmemGetThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_recv_instr]);
         } else {
-          static_cast<RecvThunk*>(thunk.get())
+          tsl::down_cast<RecvThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_recv_instr]);
         }
@@ -2670,10 +2670,10 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
         if (IsNvshmemCollective(instr)) {
           collectives_async_events.try_emplace(
               instr,
-              static_cast<NvshmemGetThunk*>(thunk.get())->async_events());
+              tsl::down_cast<NvshmemGetThunk*>(thunk.get())->async_events());
         } else {
           collectives_async_events.try_emplace(
-              instr, static_cast<RecvThunk*>(thunk.get())->async_events());
+              instr, tsl::down_cast<RecvThunk*>(thunk.get())->async_events());
         }
       }
     }

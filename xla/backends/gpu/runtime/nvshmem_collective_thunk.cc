@@ -59,27 +59,7 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-absl::StatusOr<void*> NvshmemBufferAddresses::GetNvshmemPtr(
-    int device_ordinal) {
-  absl::MutexLock lock(&mu);
-  auto it = buffer_addrs.find(device_ordinal);
-  if (it != buffer_addrs.end()) {
-    return it->second;
-  }
-  return absl::NotFoundError("Buffer address not found for device");
-}
-
-void NvshmemBufferAddresses::StoreNvshmemPtr(int device_ordinal,
-                                             void* buffer_addr) {
-  absl::MutexLock lock(&mu);
-  buffer_addrs[device_ordinal] = buffer_addr;
-}
-
-NvshmemBufferAddresses& g_nvshmem_buffer_addresses =
-    *new NvshmemBufferAddresses();
-
 namespace {
-
 static constexpr CollectiveStreamId kNoStreamId = CollectiveStreamId(0);
 
 bool IsTypeSupportedByNvshmem(PrimitiveType element_type,
@@ -212,6 +192,22 @@ absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op) {
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }
   return absl::OkStatus();
+}
+
+absl::StatusOr<void*> NvshmemBufferAddresses::GetNvshmemPtr(
+    int device_ordinal) {
+  absl::MutexLock lock(&mu_);
+  auto it = buffer_addrs_.find(device_ordinal);
+  if (it != buffer_addrs_.end()) {
+    return it->second;
+  }
+  return absl::NotFoundError("Buffer address not found for device");
+}
+
+void NvshmemBufferAddresses::StoreNvshmemPtr(int device_ordinal,
+                                             void* buffer_addr) {
+  absl::MutexLock lock(&mu_);
+  buffer_addrs_[device_ordinal] = buffer_addr;
 }
 
 }  // namespace gpu

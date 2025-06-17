@@ -53,7 +53,7 @@ NvshmemPutThunk::NvshmemPutThunk(ThunkInfo thunk_info,
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   NvshmemP2PConfig::ValidationKind::kConditional
-                              ? new NvshmemP2PExecutionCounters()
+                              ? std::make_shared<NvshmemP2PExecutionCounters>()
                               : nullptr),
       hlo_name_(instr->name()) {}
 
@@ -111,7 +111,8 @@ absl::Status NvshmemPutThunk::RunNvshmemCollective(const ExecuteParams& params,
 
   if (target_id) {
     auto recv_buffer_status =
-        g_nvshmem_buffer_addresses.GetNvshmemPtr(device_ordinal);
+        NvshmemBufferAddresses::GlobalNvshmemBufferAddresses().GetNvshmemPtr(
+            device_ordinal);
 
     if (recv_buffer_status.ok()) {
       void* recv_buffer_ptr = recv_buffer_status.value();
@@ -127,9 +128,7 @@ absl::Status NvshmemPutThunk::RunNvshmemCollective(const ExecuteParams& params,
 
   if (target_id) {
     bool should_run =
-        config_.validation_kind == NvshmemP2PConfig::ValidationKind::kInvalid
-            ? false
-            : true;
+        config_.validation_kind != NvshmemP2PConfig::ValidationKind::kInvalid;
     if (config_.validation_kind ==
         NvshmemP2PConfig::ValidationKind::kConditional) {
       se::StreamExecutor* executor = params.stream->parent();

@@ -52,7 +52,7 @@ NvshmemGetThunk::NvshmemGetThunk(ThunkInfo thunk_info,
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   NvshmemP2PConfig::ValidationKind::kConditional
-                              ? new NvshmemP2PExecutionCounters()
+                              ? std::make_shared<NvshmemP2PExecutionCounters>()
                               : nullptr),
       hlo_name_(instr->name()) {}
 
@@ -110,7 +110,7 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
   if (source_id.value_or(-1) == -1) {
     VLOG(3) << "Storing destination device " << device_ordinal << " and buffer "
             << buffer.destination_buffer.opaque();
-    g_nvshmem_buffer_addresses.StoreNvshmemPtr(
+    NvshmemBufferAddresses::GlobalNvshmemBufferAddresses().StoreNvshmemPtr(
         device_ordinal, buffer.destination_buffer.opaque());
   } else {
     VLOG(3) << "No source ID found, not storing buffer information";
@@ -119,9 +119,8 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
   // Get source buffer from source peer if needed.
   if (source_id) {
     bool should_run =
-        config_.validation_kind == NvshmemP2PConfig::ValidationKind::kInvalid
-            ? false
-            : true;
+        config_.validation_kind != NvshmemP2PConfig::ValidationKind::kInvalid;
+
     if (config_.validation_kind ==
         NvshmemP2PConfig::ValidationKind::kConditional) {
       se::StreamExecutor* executor = params.stream->parent();

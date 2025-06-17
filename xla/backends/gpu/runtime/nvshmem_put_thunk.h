@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_NVSHMEM_PUT_THUNK_H_
-#define XLA_SERVICE_GPU_NVSHMEM_PUT_THUNK_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
+#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
 
 #include <vector>
 
@@ -52,4 +52,4 @@ class NvshmemPutThunk : public NvshmemCollectiveThunk {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_NVSHMEM_PUT_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
