@@ -1616,7 +1616,7 @@ TEST_F(FlashAttentionPagedAttention, Flash_Attention_Paged_Attention_BF16) {
 }
 
 // Flex Attention
-XLA_TEST_F(FlashAttentionFlexAttention, Flash_Attention_Flex_Attention_BF16) {
+TEST_F(FlashAttentionFlexAttention, Flash_Attention_Flex_Attention_BF16) {
   TestImpl_Flash_Attention_Flex_Attention<bfloat16>();
 }
 
