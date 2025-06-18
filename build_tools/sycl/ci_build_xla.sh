@@ -18,9 +18,9 @@
 # If you want to use GCC as the host compiler, make sure to set the following:
 # Pass --host_compiler=GCC to configure.py
 
-./configure.py --backend=SYCL --host_compiler=CLANG
+./configure.py --backend=SYCL --host_compiler=CLANG --sycl_compiler=ICPX
 bazel build \
-      --config=sycl_hermetic \
+      --config=sycl_hermetic --verbose_failures --copt=-fclang-abi-compat=17 -c opt\
       --build_tag_filters=gpu,sycl,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
       --test_tag_filters=gpu,sycl,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
       //xla/stream_executor/sycl:stream_executor_sycl
