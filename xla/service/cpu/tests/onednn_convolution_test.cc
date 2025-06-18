@@ -227,6 +227,7 @@ TEST_P(ConvolutionTest, Conv3DWithBiasTest) {
 TEST_P(ConvolutionTest, Conv2DWithSmallBiasTest) {
   const absl::string_view outline = R"(
   HloModule convolution.test.with.constant.bias
+
   ENTRY convolution.test.with.bias {
     arg.0 = $dtype[1,10,10,32] parameter(0)
     arg.1 = $dtype[10,10,32,64] parameter(1)
@@ -342,6 +343,7 @@ TEST_P(ConvolutionTest, Conv2DWithBinaryAddTest) {
     ROOT add.10 = $dtype[1,11,11,1] add(convolution.0, broadcast.9)
   })";
 
+  SetWeightsPrepacked(true);
   RunCompareAndMatchOptimizedHlo(outline, {"BINARY_ADD"});
 }
 
@@ -363,11 +365,23 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndBinaryAddTest) {
 
   // Optimized HLO must match "SUM" only for precisions that support Elementwise
   // Add operations
-  if (dtype_ == BF16) {
-    RunCompareAndMatchOptimizedHlo(outline, {"BIAS", "BINARY_ADD"});
-  } else {
-    RunCompareAndMatchOptimizedHlo(outline, {"BIAS", "SUM"});
-  }
+  RunCompareAndMatchOptimizedHlo(
+      outline, {"BIAS", (dtype_ == BF16) ? "BINARY_ADD" : "SUM"});
+}
+
+TEST_P(ConvolutionTest, Conv3DConstantWeights) {
+  const absl::string_view outline = R"(
+  HloModule convolution.test.constant.weights
+
+  ENTRY convolution.test.constant.weights {
+    p0 = $dtype[8,4,5,5,1] parameter(0)
+    c0 = $dtype[3,3,3,1,32] constant({...})
+    ROOT conv = $dtype[8,4,5,5,32] convolution(p0, c0),
+          window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
+  })";
+
+  SetWeightsPrepacked(true);
+  RunCompareAndMatchOptimizedHlo(outline, {});
 }
 
 TEST_P(ConvolutionTest, ToeplitzConstrcutionTest) {
@@ -407,6 +421,7 @@ TEST_P(ConvolutionTest, ToeplitzConstrcutionTest) {
 TEST_P(ConvolutionTest, Conv2DWithSumTest) {
   const absl::string_view outline = R"(
   HloModule convolution.test.with.sum
+
   ENTRY convolution.test.with.sum {
     arg0.1 = $dtype[1,22,22,1] parameter(0)
     arg0.2 = $dtype[1,11,11,1] parameter(1)
@@ -419,6 +434,7 @@ TEST_P(ConvolutionTest, Conv2DWithSumTest) {
 
   // Optimized HLO must match "SUM" only for precisions that support Elementwise
   // Add operations
+  SetWeightsPrepacked(true);
   RunCompareAndMatchOptimizedHlo(outline,
                                  {(dtype_ == BF16) ? "BINARY_ADD" : "SUM"});
 }
@@ -463,6 +479,7 @@ TEST_P(ConvolutionTest, Conv2DWithLinearAndBinaryAddTest) {
     ROOT add.10 = $dtype[1,11,11,1] add(multiply.0, broadcast.9)
   })";
 
+  SetWeightsPrepacked(true);
   RunCompareAndMatchOptimizedHlo(outline, {"LINEAR", "BINARY_ADD"});
 }
 
