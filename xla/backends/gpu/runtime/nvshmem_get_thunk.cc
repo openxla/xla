@@ -52,7 +52,7 @@ NvshmemGetThunk::NvshmemGetThunk(ThunkInfo thunk_info,
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   NvshmemP2PConfig::ValidationKind::kConditional
-                              ? std::make_shared<NvshmemP2PExecutionCounters>()
+                              ? std::make_unique<NvshmemP2PExecutionCounters>()
                               : nullptr),
       hlo_name_(instr->name()) {}
 
@@ -110,7 +110,7 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
   if (source_id.value_or(-1) == -1) {
     VLOG(3) << "Storing destination device " << device_ordinal << " and buffer "
             << buffer.destination_buffer.opaque();
-    NvshmemBufferAddresses::GlobalNvshmemBufferAddresses().StoreNvshmemPtr(
+    NvshmemBufferAddresses::GlobalInstance().StoreNvshmemPtr(
         device_ordinal, buffer.destination_buffer.opaque());
   } else {
     VLOG(3) << "No source ID found, not storing buffer information";

@@ -53,7 +53,7 @@ NvshmemPutThunk::NvshmemPutThunk(ThunkInfo thunk_info,
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   NvshmemP2PConfig::ValidationKind::kConditional
-                              ? std::make_shared<NvshmemP2PExecutionCounters>()
+                              ? std::make_unique<NvshmemP2PExecutionCounters>()
                               : nullptr),
       hlo_name_(instr->name()) {}
 
@@ -111,8 +111,7 @@ absl::Status NvshmemPutThunk::RunNvshmemCollective(const ExecuteParams& params,
 
   if (target_id) {
     auto recv_buffer_status =
-        NvshmemBufferAddresses::GlobalNvshmemBufferAddresses().GetNvshmemPtr(
-            device_ordinal);
+        NvshmemBufferAddresses::GlobalInstance().GetNvshmemPtr(device_ordinal);
 
     if (recv_buffer_status.ok()) {
       void* recv_buffer_ptr = recv_buffer_status.value();

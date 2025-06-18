@@ -138,7 +138,7 @@ class NvshmemBufferAddresses {
   void StoreNvshmemPtr(int device_ordinal, void* buffer_addr);
 
   // Get the global instance
-  static NvshmemBufferAddresses& GlobalNvshmemBufferAddresses() {
+  static NvshmemBufferAddresses& GlobalInstance() {
     static NvshmemBufferAddresses instance;
     return instance;
   }

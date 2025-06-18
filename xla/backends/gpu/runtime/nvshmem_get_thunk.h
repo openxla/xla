@@ -47,7 +47,7 @@ class NvshmemGetThunk : public NvshmemCollectiveThunk {
  private:
   const NvshmemP2PConfig config_;
   const CollectiveThunk::Buffer buffer_;
-  std::shared_ptr<NvshmemP2PExecutionCounters> execution_counters_;
+  std::unique_ptr<NvshmemP2PExecutionCounters> execution_counters_;
   std::string hlo_name_;
 };
 
