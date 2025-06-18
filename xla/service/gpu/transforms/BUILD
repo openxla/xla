@@ -1019,7 +1019,7 @@ cc_library(
     srcs = ["cudnn_sdpa_score_mod.cc"],
     hdrs = ["cudnn_sdpa_score_mod.h"],
     visibility = ["//visibility:public"],
-    tags = ["cuda-only"],
+    tags = ["cuda-only", "gpu"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:stream_executor_util",

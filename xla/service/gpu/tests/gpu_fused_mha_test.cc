@@ -1388,9 +1388,9 @@ class FlashAttentionPagedAttention : public MultiHeadedAttentionTest {
 
 class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
  protected:
-  const std::string
+  absl::string_view
   GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16() {
-    const std::string hlo_text = R"(
+    static constexpr absl::string_view kHloText = R"(
     HloModule jit__unnamed_wrapped_function_
 
     %soft_cap.14 (Arg_0.15: f32[4,4,1024,1024]) -> f32[4,4,1024,1024] {
@@ -1413,12 +1413,12 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
       ROOT %transpose.24 = bf16[4,1024,4,64]{3,2,1,0} transpose(%get-tuple-element.22), dimensions={0,2,1,3}
     }
   )";
-    return hlo_text;
+    return kHloText;
   }
 
-  const std::string
+  absl::string_view
   GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16() {
-    const std::string hlo_text = R"(
+    static constexpr absl::string_view kHloText = R"(
     HloModule jit__unnamed_wrapped_function_
 
     %max (Arg_0.15: f32[], Arg_1.16: f32[]) -> f32[] {
@@ -1469,7 +1469,7 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
       ROOT %transpose.10 = bf16[4,1024,4,64]{3,2,1,0} transpose(%convert.0), dimensions={0,3,1,2}
     }
   )";
-    return hlo_text;
+    return kHloText;
   }
 
   template <typename T>
@@ -1480,10 +1480,10 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.7.0.";
     }
     // Extend cudnn sdpa soft capping using flex attention
-    std::string hlo_string =
+    absl::string_view hlo_string =
         GetModuleFlash_Attention_Flex_Attention_Soft_Capping_BF16();
     // Reference implementation is pure xla sdpa soft capping.
-    std::string hlo_string_ref =
+    absl::string_view hlo_string_ref =
         GetModuleFlash_Attention_Flex_Attention_Soft_Capping_Reference_BF16();
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
                                         ErrorSpec{1e-3, 1e-3}));
