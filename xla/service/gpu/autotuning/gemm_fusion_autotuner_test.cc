@@ -554,7 +554,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: reduce
 ; CHECK: ENTRY
-; CHECK: ROOT {{.*}} fusion({{.*}}), kind=kLoop
+; CHECK: ROOT {{.*}} fusion({{.*}}), kind={{kLoop|kInput}}
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));

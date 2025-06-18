@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/dot_search_space.h"
 
 #include <memory>
+#include <ostream>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -35,6 +36,12 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
+
+// Prints a TritonGemmConfig for test messages.
+void PrintTo(const TritonGemmConfig& config, std::ostream* os) {
+  *os << config.ToString();
+}
+
 namespace {
 
 using ::testing::AllOf;
@@ -188,7 +195,7 @@ TEST_F(DotSearchSpaceTest, SerializesSearchSpace) {
 
   EXPECT_EQ(search_space.ToString(),
             "problem_size_BxMxNxKxE: 1x1024x1024x1024x(16->16) "
-            "tile_range_SxMxNxK: [1-64]x[16-256]x[16-512]x[16-?] "
+            "tile_range_SxMxNxK: [1-64]x[16-256]x[8-512]x[16-?] "
             "desired_total_warps: 2640 occupancy_optimization: 1 "
             "warps_per_cta: [2-?]");
 }
@@ -307,7 +314,7 @@ TEST_F(DotSearchSpaceTest,
                           /*contracting_dim=*/64));
   TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
   EXPECT_THAT(search_space.GenerateConfigs(),
-              AllOf(SizeIs(1), Each(AllOf(BlockMIs(Eq(16)), BlockNIs(Eq(16)),
+              AllOf(SizeIs(1), Each(AllOf(BlockMIs(Eq(16)), BlockNIs(Eq(8)),
                                           SplitKIs(Eq(4))))));
 }
 
@@ -341,7 +348,7 @@ TEST_F(DotSearchSpaceTest, HonorsMinimumOutputTileSizeForTinyProblem) {
 
   EXPECT_THAT(
       search_space.GenerateConfigs(),
-      AllOf(Not(IsEmpty()), Each(BlockMIs(Ge(16))), Each(BlockNIs(Ge(16)))));
+      AllOf(Not(IsEmpty()), Each(BlockMIs(Ge(16))), Each(BlockNIs(Ge(8)))));
 }
 
 TEST_F(DotSearchSpaceTest, AssignsEnoughWarpsPerScheduler) {
@@ -580,6 +587,50 @@ TEST_F(DotSearchSpaceTest, ReturnsNonEmptySetForUnusualHints) {
   EXPECT_THAT(
       search_space.OptimizeConfigSet(search_space.GenerateConfigs(), {hint}),
       Not(IsEmpty()));
+}
+
+TEST_F(DotSearchSpaceTest, RestrictsSplitKPerNMTile) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          GetDefaultDotModule());
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  auto make_config = [](int block_m, int block_n, int block_k, int split_k) {
+    return TritonGemmConfig{
+        /*block_m=*/block_m, /*block_n=*/block_n,
+        /*block_k=*/block_k, /*split_k=*/split_k,
+        /*num_stages=*/1,    /*num_warps=*/4,
+        /*num_ctas=*/1};
+  };
+
+  std::vector<TritonGemmConfig> configs = {
+      make_config(32, 32, 32, 4),
+      make_config(32, 32, 32, 8),
+      make_config(16, 16, 16, 2),
+      make_config(16, 16, 16, 4),
+  };
+
+  std::vector<TritonGemmConfig> hints = {
+      // Less than min split k for this tile size.
+      make_config(32, 32, 32, 1),
+      // Greater than max split K for this tile size.
+      make_config(32, 32, 32, 32),
+      // Less than min split k for this tile size.
+      make_config(16, 16, 16, 1),
+      // Greater than max split K for this tile size.
+      make_config(16, 16, 16, 8),
+      // Does not have a per-tile split K limit.
+      make_config(16, 32, 16, 32),
+  };
+
+  std::vector<TritonGemmConfig> expected = {
+      make_config(32, 32, 32, 4),
+      make_config(32, 32, 32, 8),
+      make_config(16, 16, 16, 2),
+      make_config(16, 16, 16, 4),
+  };
+
+  EXPECT_THAT(search_space.OptimizeConfigSet(configs, hints),
+              ElementsAreArray(expected));
 }
 
 }  // namespace
