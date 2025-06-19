@@ -436,12 +436,13 @@ int main(int argc, char** argv) {
                 "module. The file should contain a serialized DebugOptions "
                 "proto message. The order of precedence: command line flags > "
                 "XLA_FLAGS > debug_options_file > default flags."),
-      tsl::Flag("output_mode", &opts.output_mode_str,
-          "Specify how output values are returned after execution. Accepted values:\n"
-          "  return_outputs: Return outputs from all devices (default).\n"
-          "  not_return_outputs: Do not return any outputs.\n"
-          "  return_device0_outputs: Return outputs only from logical device 0.\n"
-          "Use this to control literal dumping or reduce memory usage when executing on multiple devices."),
+      tsl::Flag(
+          "output_mode", &opts.output_mode_str,
+          "Specify whether outputs are returned after execution. "
+          "Possible values: return_outputs (default), not_return_outputs, "
+          "return_device0_outputs (return outputs only from logical device 0). "
+          "If outputs are not returned, outputs are still computed but the "
+          "potentially slow device-to-host copy is skipped. "),
   };
 
   xla::AppendDebugOptionsFlags(&flag_list);
