@@ -165,14 +165,23 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   TF_ASSIGN_OR_RETURN(out.module_argument_mode,
                       ArgumentModeFromString(opts.hlo_argument_mode));
   // add parser for output mode (from functional_hlo_runner.h::AbslParseFlag)
-  if (std::string error; !FunctionalHloRunner::AbslParseFlag(
-          opts.output_mode_str, &out.module_output_mode, &error)) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Invalid --output_mode: ", opts.output_mode_str, ". ", error));
+  if (opts.output_mode_str == "return_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
+  } else if (opts.output_mode_str == "not_return_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
+  } else if (opts.output_mode_str == "return_device0_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kReturnDevice0Outputs;
+  } else {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid --output_mode specified. Expected one of: "
+                     "\"return_outputs\", \"not_return_outputs\", "
+                     "\"return_device0_outputs\". Got: ",
+                     opts.output_mode_str));
   }
 
-  out.module_output_mode =
-      FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
   out.num_repeats = static_cast<size_t>(opts.num_repeats);
   out.log_input_output_mode =
       opts.log_output ? FunctionalHloRunner::LogOutputMode::kLogOutput
@@ -428,8 +437,11 @@ int main(int argc, char** argv) {
                 "proto message. The order of precedence: command line flags > "
                 "XLA_FLAGS > debug_options_file > default flags."),
       tsl::Flag("output_mode", &opts.output_mode_str,
-                "Specify output mode: return_outputs, not_return_outputs, "
-                "return_device0_outputs."),
+          "Specify how output values are returned after execution. Accepted values:\n"
+          "  return_outputs: Return outputs from all devices (default).\n"
+          "  not_return_outputs: Do not return any outputs.\n"
+          "  return_device0_outputs: Return outputs only from logical device 0.\n"
+          "Use this to control literal dumping or reduce memory usage when executing on multiple devices."),
   };
 
   xla::AppendDebugOptionsFlags(&flag_list);
