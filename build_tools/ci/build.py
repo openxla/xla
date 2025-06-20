@@ -52,6 +52,10 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@tsl//tsl/...",
 )
+_XLA_ONEAPI_TARGET_PATTERNS = (
+  "//xla/stream_executor/sycl:stream_executor_sycl",
+  "//xla/stream_executor/sycl:sycl_status_test",
+)
 _XLA_CPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS = (
     "//xla/tools/multihost_hlo_runner:hlo_runner_main",
     "//xla/tools:compute_xspace_stats_main",
@@ -105,6 +109,7 @@ class BuildType(enum.Enum):
   XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_T4_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
 
   # Presubmit builds for regression testing.
   XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
@@ -308,7 +313,30 @@ nvidia_gpu_build_with_compute_capability(
     configs=("warnings", "rbe_linux_cuda_nvcc"),
     compute_capability=75,
 )
+oneapi_tag_filter = (
+    "gpu",
+    "oneapi",
+    "requires-gpu-intel",
+    "-requires-gpu-amd",
+    "-requires-gpu-nvidia",
+    "-no_oss",
+    "-cuda-only",
+    "-rocm-only",
+    "-no-oneapi",
+)
 
+Build(
+    type_=BuildType.XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("warnings", "sycl", "sycl_hermetic"),
+    # This build of oneAPI backend runs on X86 host without an Intel GPU, so 
+    # build command is passed here instead of test.
+    subcommand="build",
+    target_patterns=_XLA_ONEAPI_TARGET_PATTERNS,
+    build_tag_filters=oneapi_tag_filter,
+    test_tag_filters=oneapi_tag_filter,
+    options=_DEFAULT_BAZEL_OPTIONS,
+)
 
 Build(
     type_=BuildType.XLA_LINUX_X86_CPU_128_VCPU_PRESUBMIT_GITHUB_ACTIONS,
