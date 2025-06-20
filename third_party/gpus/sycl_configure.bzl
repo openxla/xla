@@ -65,11 +65,11 @@ def _sycl_include_path(repository_ctx, sycl_config, bash_bin):
 
 def enable_sycl(repository_ctx):
     """Returns whether to build with SYCL support."""
-    return int(get_host_environ(repository_ctx, "TF_NEED_SYCL", False))
+    return bool(repository_ctx.getenv("TF_NEED_SYCL", "").strip())
 
 def _use_icpx_and_clang(repository_ctx):
-    # Returns the flag if we need to use clang for C++ and ICPX for SYCL.
-    return get_host_environ(repository_ctx,"TF_ICPX_CLANG", "")
+    """Returns whether to use ICPX for SYCL and Clang for C++."""
+    return repository_ctx.getenv("TF_ICPX_CLANG", "").strip()
 
 def auto_configure_fail(msg):
     """Output failure message when auto configuration fails."""
