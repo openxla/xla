@@ -512,17 +512,13 @@ cc_library(
     ]),
 )
 
-cc_library(
-    name = "overload",
-    hdrs = ["overload.h"],
-)
-
 xla_cc_test(
     name = "dump_test",
     srcs = ["dump_test.cc"],
     # Required to create BuildData as stamp data is disabled by default in tests.
     stamp = 1,
     deps = [
+        ":buffer_assignment",
         ":dump",
         ":hlo_module_config",
         "//xla:debug_options_flags",
@@ -531,7 +527,6 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/runtime/large_hlo_snapshot_serialization:serialization",
-        "//xla/service:buffer_assignment",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
@@ -3047,7 +3042,6 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
@@ -3587,7 +3581,6 @@ cc_library(
         ":hlo_buffer",
         ":hlo_graph_dumper",
         ":hlo_value",
-        ":hlo_verifier",
         "//xla:frontend_attributes",
         "//xla:shape_tree",
         "//xla:shape_util",
@@ -5289,7 +5282,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -5337,7 +5329,6 @@ xla_cc_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -5912,7 +5903,6 @@ cc_library(
     srcs = ["while_loop_pipeline_unroller.cc"],
     hdrs = ["while_loop_pipeline_unroller.h"],
     deps = [
-        ":call_inliner",
         ":while_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
