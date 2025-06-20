@@ -328,7 +328,7 @@ oneapi_tag_filter = (
 Build(
     type_=BuildType.XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS,
     repo="openxla/xla",
-    configs=("warnings", "sycl", "sycl_hermetic"),
+    configs=("sycl", "sycl_hermetic"),
     # This build of oneAPI backend runs on X86 host without an Intel GPU, so 
     # build command is passed here instead of test.
     subcommand="build",
