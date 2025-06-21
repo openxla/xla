@@ -82,7 +82,8 @@ class GpuAlgebraicSimplifier : public AlgebraicSimplifier {
         2, "GpuAlgebraicSimplifier::Run(), before:\n" + module->ToString());
     bool changed = false;
     GpuAlgebraicSimplifierVisitor visitor(options_, compute_capability_, this);
-    for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+    for (auto* comp :
+         module->MakeNonFusionNonCompositeComputations(execution_threads)) {
       if (visitor.Run(comp, options_, this)) {
         changed = true;
       }

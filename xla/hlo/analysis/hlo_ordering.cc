@@ -512,7 +512,7 @@ std::string PredecessorHloOrdering::ToStringHelper(
     const std::string& name) const {
   std::vector<std::string> pieces;
   pieces.push_back(name);
-  for (auto* computation : module_->MakeNonfusionComputations()) {
+  for (auto* computation : module_->MakeNonFusionNonCompositeComputations()) {
     pieces.push_back(absl::StrFormat("computation %s:", computation->name()));
     const auto all = computation->MakeInstructionPostOrder();
     for (auto instruction : all) {
@@ -534,7 +534,7 @@ DependencyHloOrdering::DependencyHloOrdering(const HloModule* module)
   // Compute predecessor relationships between all instructions to determine
   // ordering based on dependencies. ExecutesBefore will return true iff there
   // exists a path in the HLO computation graph from 'a' to 'b'.
-  for (auto* computation : module->MakeNonfusionComputations()) {
+  for (auto* computation : module->MakeNonFusionNonCompositeComputations()) {
     predecessors_.emplace(computation, HloReachabilityMap::Build(computation));
   }
 }

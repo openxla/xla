@@ -317,7 +317,7 @@ class DfsHloRewriteVisitor : public DfsHloVisitorWithDefault {
       const absl::flat_hash_set<absl::string_view>& execution_threads = {}) {
     absl::Status status;
     for (HloComputation* computation :
-         module->MakeNonfusionComputations(execution_threads)) {
+         module->MakeNonFusionNonCompositeComputations(execution_threads)) {
       status = computation->Accept(this);
       if (ABSL_PREDICT_FALSE(!status.ok())) {
         return status;

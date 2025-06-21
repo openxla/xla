@@ -54,7 +54,7 @@ class AlgorithmCheckerVisitor : public ConstDfsHloVisitorWithDefault {
       const HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads = {}) {
     for (HloComputation* computation :
-         module->MakeNonfusionComputations(execution_threads)) {
+         module->MakeNonFusionNonCompositeComputations(execution_threads)) {
       TF_RETURN_IF_ERROR(computation->Accept(this));
     }
     return absl::OkStatus();

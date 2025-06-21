@@ -92,7 +92,7 @@ absl::StatusOr<bool> ConstantDeferring::Run(
   bool changed = false;
   HloSchedule& schedule = module->schedule();
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     HloInstructionSequence& sequence =
         schedule.GetOrCreateSequence(computation);
     HloInstructionSequence new_sequence = DeferConstants(sequence);

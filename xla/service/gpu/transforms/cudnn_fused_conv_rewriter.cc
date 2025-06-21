@@ -1614,7 +1614,7 @@ void VlogStats(HloModule* module) {
 
   VLOG(1) << "Results of CudnnFusedConvRewriter for " << module->name();
   absl::flat_hash_map<std::string, int> stats;
-  for (HloComputation* comp : module->MakeNonfusionComputations()) {
+  for (HloComputation* comp : module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instr : comp->instructions()) {
       if (!Match(instr, m::Op().WithPredicate(IsConvCustomCall))) {
         continue;
@@ -1692,7 +1692,7 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::Run(
   bool any_changed = false;
 
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     bool changed = false;
     // Rewrite FP8 convolutions and supported adjacent pointwise ops into a
     // ForwardGraph Custom Call.

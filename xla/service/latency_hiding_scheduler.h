@@ -425,7 +425,8 @@ class SchedulingContext {
 class AnnotationTracker {
  public:
   explicit AnnotationTracker(const HloModule* module) : module_(module) {
-    for (const HloComputation* comp : module_->MakeNonfusionComputations()) {
+    for (const HloComputation* comp :
+         module_->MakeNonFusionNonCompositeComputations()) {
       absl::flat_hash_set<int64_t> annotations;
       for (const HloInstruction* instr : comp->instructions()) {
         if (auto annotation = GetAnnotation(instr)) {

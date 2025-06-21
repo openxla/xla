@@ -81,7 +81,7 @@ absl::StatusOr<bool> ExplicitStreamAnnotationAsyncWrapper::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (const HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
       TF_ASSIGN_OR_RETURN(bool result, AsynchronizeInstruction(instr));
       changed |= result;

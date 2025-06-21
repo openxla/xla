@@ -149,7 +149,8 @@ absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> GetCublasConfigs(
     se::StreamExecutor* stream_executor) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
 
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (IsLegacyCublasMatmul(*instruction)) {
         TF_ASSIGN_OR_RETURN(configs,
@@ -167,7 +168,8 @@ absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> GetCublasLtConfigs(
     se::StreamExecutor* stream_executor) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
 
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (IsCublasLtMatmul(*instruction) || IsCublasLtMatmulF8(*instruction)) {
         TF_ASSIGN_OR_RETURN(configs,
@@ -307,7 +309,7 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                        target_config().device_description,
                                        /*rewrite_to_cublaslt=*/false));
     for (HloComputation* computation :
-         hlo_module->MakeNonfusionComputations()) {
+         hlo_module->MakeNonFusionNonCompositeComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         if (IsLegacyCublasMatmul(*instruction)) {
           TF_RETURN_IF_ERROR(cublas_backend_.ApplyConfig(*instruction, config));
@@ -323,7 +325,7 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                        target_config().device_description,
                                        /*rewrite_to_cublaslt=*/true));
     for (HloComputation* computation :
-         hlo_module->MakeNonfusionComputations()) {
+         hlo_module->MakeNonFusionNonCompositeComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         if (IsCublasLtMatmul(*instruction) ||
             IsCublasLtMatmulF8(*instruction)) {

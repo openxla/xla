@@ -112,7 +112,7 @@ absl::StatusOr<bool> WhileLoopPipelineUnroller::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::vector<std::pair<HloInstruction*, int64_t>> while_instructions;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kWhile) {
         int64_t pipeline_depth = ComputeWhileLoopPipelineDepth(*instruction);
