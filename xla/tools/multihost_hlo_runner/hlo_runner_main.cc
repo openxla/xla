@@ -78,6 +78,7 @@ consider using --hlo_argument_mode=uninitialized.
 struct HloRunnerConfig {
   std::string input_format_str = "text";
   xla::InputFormat input_format;
+  std::string output_mode_str = "return_outputs";
   bool should_run = true;
   bool enable_mock_nccl = false;
   std::string dump_output_literal_to = "";
@@ -163,9 +164,24 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   TF_ASSIGN_OR_RETURN(out.module_argument_mode,
                       ArgumentModeFromString(opts.hlo_argument_mode));
+  // add parser for output mode (from functional_hlo_runner.h::AbslParseFlag)
+  if (opts.output_mode_str == "return_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
+  } else if (opts.output_mode_str == "not_return_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
+  } else if (opts.output_mode_str == "return_device0_outputs") {
+    out.module_output_mode =
+        FunctionalHloRunner::ModuleOutputMode::kReturnDevice0Outputs;
+  } else {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid --output_mode specified. Expected one of: "
+                     "\"return_outputs\", \"not_return_outputs\", "
+                     "\"return_device0_outputs\". Got: ",
+                     opts.output_mode_str));
+  }
 
-  out.module_output_mode =
-      FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
   out.num_repeats = static_cast<size_t>(opts.num_repeats);
   out.log_input_output_mode =
       opts.log_output ? FunctionalHloRunner::LogOutputMode::kLogOutput
@@ -419,7 +435,15 @@ int main(int argc, char** argv) {
                 "A file containing debug options to be passed to the HLO "
                 "module. The file should contain a serialized DebugOptions "
                 "proto message. The order of precedence: command line flags > "
-                "XLA_FLAGS > debug_options_file > default flags.")};
+                "XLA_FLAGS > debug_options_file > default flags."),
+      tsl::Flag(
+          "output_mode", &opts.output_mode_str,
+          "Specify whether outputs are returned after execution. "
+          "Possible values: return_outputs (default), not_return_outputs, "
+          "return_device0_outputs (return outputs only from logical device 0). "
+          "If outputs are not returned, outputs are still computed but the "
+          "potentially slow device-to-host copy is skipped. "),
+  };
 
   xla::AppendDebugOptionsFlags(&flag_list);
 
