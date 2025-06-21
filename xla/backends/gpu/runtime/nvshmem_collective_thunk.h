@@ -137,12 +137,6 @@ class NvshmemBufferAddresses {
   // Store buffer address for a device
   void StoreNvshmemPtr(int device_ordinal, void* buffer_addr);
 
-  // Get the global instance
-  static NvshmemBufferAddresses& GlobalInstance() {
-    static NvshmemBufferAddresses instance;
-    return instance;
-  }
-
  private:
   absl::Mutex mu_;
   // Map from device ordinal to buffer address

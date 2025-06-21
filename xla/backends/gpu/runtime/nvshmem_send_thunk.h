@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
-#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_SEND_THUNK_H_
+#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_SEND_THUNK_H_
 
 #include <vector>
 
@@ -24,17 +24,18 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/backends/gpu/runtime/nvshmem_p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 
 namespace xla {
 namespace gpu {
 
-// Thunk to perform NVSHMEM put operations
-class NvshmemPutThunk : public NvshmemCollectiveThunk {
+// Thunk to perform NVSHMEM send operations
+class NvshmemSendThunk : public NvshmemCollectiveThunk {
  public:
-  NvshmemPutThunk(ThunkInfo thunk_info, const HloSendInstruction* inst,
-                  int64_t replica_count, int64_t partition_count,
-                  const CollectiveThunk::Buffer& buffer);
+  NvshmemSendThunk(ThunkInfo thunk_info, const HloSendInstruction* inst,
+                   int64_t replica_count, int64_t partition_count,
+                   const CollectiveThunk::Buffer& buffer,
+                   std::shared_ptr<NvshmemBufferAddresses> buffer_addresses);
   absl::Status Initialize(const InitializeParams& params) override;
 
  protected:
@@ -43,13 +44,14 @@ class NvshmemPutThunk : public NvshmemCollectiveThunk {
                                     se::Stream& stream) override;
 
  private:
-  const NvshmemP2PConfig config_;
+  const P2PConfig config_;
   const CollectiveThunk::Buffer buffer_;
-  std::unique_ptr<NvshmemP2PExecutionCounters> execution_counters_;
+  std::unique_ptr<ExecutionCounters> execution_counters_;
   std::string hlo_name_;
+  std::shared_ptr<NvshmemBufferAddresses> buffer_addresses_;
 };
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_PUT_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_SEND_THUNK_H_

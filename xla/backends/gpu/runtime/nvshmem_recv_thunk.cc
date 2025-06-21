@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/nvshmem_get_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
 
 #include <cstdint>
 #include <optional>
@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -40,23 +41,24 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-NvshmemGetThunk::NvshmemGetThunk(ThunkInfo thunk_info,
-                                 const HloRecvInstruction* instr,
-                                 int64_t replica_count, int64_t partition_count,
-                                 const CollectiveThunk::Buffer& buffer)
-    : NvshmemCollectiveThunk(Thunk::kNvshmemGet, thunk_info,
+NvshmemRecvThunk::NvshmemRecvThunk(
+    ThunkInfo thunk_info, const HloRecvInstruction* instr,
+    int64_t replica_count, int64_t partition_count,
+    const CollectiveThunk::Buffer& buffer,
+    std::shared_ptr<NvshmemBufferAddresses> buffer_addresses)
+    : NvshmemCollectiveThunk(Thunk::kNvshmemRecv, thunk_info,
                              IsGPUSyncCollective(*instr)),
-      config_(GetNvshmemP2PConfigForPutGet(instr,
-                                           instr->shape().tuple_shapes(0),
-                                           replica_count, partition_count)),
+      config_(GetP2PConfigForSendRecv(instr, instr->shape().tuple_shapes(0),
+                                      replica_count, partition_count)),
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
-                                  NvshmemP2PConfig::ValidationKind::kConditional
-                              ? std::make_unique<NvshmemP2PExecutionCounters>()
+                                  P2PConfig::ValidationKind::kConditional
+                              ? std::make_unique<ExecutionCounters>()
                               : nullptr),
-      hlo_name_(instr->name()) {}
+      hlo_name_(instr->name()),
+      buffer_addresses_(std::move(buffer_addresses)) {}
 
-absl::Status NvshmemGetThunk::Initialize(const InitializeParams& params) {
+absl::Status NvshmemRecvThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NvshmemCollectiveThunk::Initialize(params));
   if (execution_counters_) {
     TF_RETURN_IF_ERROR(execution_counters_->Initialize(
@@ -65,11 +67,8 @@ absl::Status NvshmemGetThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
-                                                   se::Stream& stream) {
-  TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
-                      collectives->CreateCommunicator());
+absl::Status NvshmemRecvThunk::RunNvshmemCollective(const ExecuteParams& params,
+                                                    se::Stream& stream) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, {buffer_},
@@ -89,12 +88,11 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
       CollectiveThunk::GetDeviceString(*params.collective_params);
 
   int device_ordinal = stream.parent()->device_ordinal();
-  const NvshmemP2PConfig::SourceTargetMapEntry source_target =
-      NvshmemP2PConfig::GetSourceTarget(config_.id_to_source_target,
-                                        device_ordinal);
+  const P2PConfig::SourceTargetMapEntry source_target =
+      P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
   DeviceBufferPair& buffer = device_buffers[0];
 
-  VLOG(3) << "Performing Get from device ordinal: " << device_ordinal
+  VLOG(3) << "Performing Recv from device ordinal: " << device_ordinal
           << ", global_id: " << global_device_id
           << ", current_id: " << current_id << ", group mode: "
           << CollectiveOpGroupModeToString(config_.config.group_mode) << " ("
@@ -110,19 +108,15 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
   if (source_id.value_or(-1) == -1) {
     VLOG(3) << "Storing destination device " << device_ordinal << " and buffer "
             << buffer.destination_buffer.opaque();
-    NvshmemBufferAddresses::GlobalInstance().StoreNvshmemPtr(
-        device_ordinal, buffer.destination_buffer.opaque());
-  } else {
-    VLOG(3) << "No source ID found, not storing buffer information";
+    buffer_addresses_->StoreNvshmemPtr(device_ordinal,
+                                       buffer.destination_buffer.opaque());
   }
 
-  // Get source buffer from source peer if needed.
   if (source_id) {
     bool should_run =
-        config_.validation_kind != NvshmemP2PConfig::ValidationKind::kInvalid;
+        config_.validation_kind != P2PConfig::ValidationKind::kInvalid;
 
-    if (config_.validation_kind ==
-        NvshmemP2PConfig::ValidationKind::kConditional) {
+    if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
       se::StreamExecutor* executor = params.stream->parent();
       TF_ASSIGN_OR_RETURN(int64_t * counter,
                           execution_counters_->GetCounter(
@@ -130,7 +124,7 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
       auto it = config_.source_target_to_bounds.find(
           std::make_pair(*source_target.source, current_id));
       if (it == config_.source_target_to_bounds.end()) {
-        return absl::InternalError("Missing bounds for conditional Get");
+        return absl::InternalError("Missing bounds for conditional Recv");
       }
       if (*counter < it->second.first || *counter > it->second.second) {
         should_run = false;
@@ -140,26 +134,30 @@ absl::Status NvshmemGetThunk::RunNvshmemCollective(const ExecuteParams& params,
       ++(*counter);
     }
 
-    if (should_run) {
-      VLOG(1) << "Running Get operation"
-              << " element_type=" << buffer.element_type
-              << " destination_buffer=" << buffer.destination_buffer.opaque()
-              << " source_buffer=" << buffer.source_buffer.opaque()
-              << " element_count=" << buffer.element_count
-              << " source_id=" << *source_id;
-      auto recv_event = nvshmem_comm->Recv(
-          buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
-          buffer.element_count, RankId(*source_id), GpuCollectives::On(stream));
-      tsl::BlockUntilReady(recv_event);
-      if (recv_event.IsError()) {
-        return recv_event.GetError();
-      }
-      TF_RETURN_IF_ERROR(nvshmem_comm->Quiet(GpuCollectives::On(stream)));
-    } else {
-      VLOG(3) << "Skipping Get operation";
+    if (!should_run) {
+      VLOG(3) << "Skipping Recv operation";
+      return absl::OkStatus();
     }
+
+    TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
+                        collectives->CreateCommunicator());
+    VLOG(1) << "Running Recv operation"
+            << " element_type=" << buffer.element_type
+            << " destination_buffer=" << buffer.destination_buffer.opaque()
+            << " source_buffer=" << buffer.source_buffer.opaque()
+            << " element_count=" << buffer.element_count
+            << " source_id=" << *source_id;
+    auto recv_event = nvshmem_comm->Recv(
+        buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
+        buffer.element_count, RankId(*source_id), GpuCollectives::On(stream));
+    tsl::BlockUntilReady(recv_event);
+    if (recv_event.IsError()) {
+      return recv_event.GetError();
+    }
+    TF_RETURN_IF_ERROR(nvshmem_comm->Quiet(GpuCollectives::On(stream)));
   } else {
-    VLOG(3) << "No source ID found, skipping Get operation";
+    VLOG(3) << "No source ID found, skipping Recv operation";
   }
 
   return absl::OkStatus();

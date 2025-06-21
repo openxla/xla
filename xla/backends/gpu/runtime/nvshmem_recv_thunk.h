@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_GET_THUNK_H_
-#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_GET_THUNK_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_RECV_THUNK_H_
+#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_RECV_THUNK_H_
 
 #include <vector>
 
@@ -23,17 +23,18 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/backends/gpu/runtime/nvshmem_p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 
 namespace xla {
 namespace gpu {
 
-// Thunk to perform NVSHMEM get operations
-class NvshmemGetThunk : public NvshmemCollectiveThunk {
+// Thunk to perform NVSHMEM recv operations
+class NvshmemRecvThunk : public NvshmemCollectiveThunk {
  public:
-  NvshmemGetThunk(ThunkInfo thunk_info, const HloRecvInstruction* inst,
-                  int64_t replica_count, int64_t partition_count,
-                  const CollectiveThunk::Buffer& buffer);
+  NvshmemRecvThunk(ThunkInfo thunk_info, const HloRecvInstruction* inst,
+                   int64_t replica_count, int64_t partition_count,
+                   const CollectiveThunk::Buffer& buffer,
+                   std::shared_ptr<NvshmemBufferAddresses> buffer_addresses);
   absl::Status Initialize(const InitializeParams& params) override;
 
   // Returns the group mode (cross-replica or cross-partition) for the operation
@@ -45,13 +46,14 @@ class NvshmemGetThunk : public NvshmemCollectiveThunk {
                                     se::Stream& stream) override;
 
  private:
-  const NvshmemP2PConfig config_;
+  const P2PConfig config_;
   const CollectiveThunk::Buffer buffer_;
-  std::unique_ptr<NvshmemP2PExecutionCounters> execution_counters_;
+  std::unique_ptr<ExecutionCounters> execution_counters_;
   std::string hlo_name_;
+  std::shared_ptr<NvshmemBufferAddresses> buffer_addresses_;
 };
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_GET_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_RECV_THUNK_H_

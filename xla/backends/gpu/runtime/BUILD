@@ -1996,33 +1996,6 @@ cc_library(
 )
 
 cc_library(
-    name = "nvshmem_p2p_thunk_common",
-    srcs = ["nvshmem_p2p_thunk_common.cc"],
-    hdrs = ["nvshmem_p2p_thunk_common.h"],
-    tags = ["gpu"],
-    deps = [
-        ":collective_thunk",
-        "//xla:executable_run_options",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/service:collective_ops_utils",
-        "//xla/service/gpu:backend_configs_cc",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@llvm-project//mlir:IR",
-    ],
-)
-
-cc_library(
     name = "nvshmem_collective_permute_thunk",
     srcs = ["nvshmem_collective_permute_thunk.cc"],
     hdrs = ["nvshmem_collective_permute_thunk.h"],
@@ -2031,7 +2004,7 @@ cc_library(
         ":collective_permute_thunk",
         ":collective_thunk",
         ":nvshmem_collective_thunk",
-        ":nvshmem_p2p_thunk_common",
+        ":p2p_thunk_common",
         ":thunk",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -2066,13 +2039,13 @@ cc_library(
 )
 
 cc_library(
-    name = "nvshmem_put_thunk",
-    srcs = ["nvshmem_put_thunk.cc"],
-    hdrs = ["nvshmem_put_thunk.h"],
+    name = "nvshmem_send_thunk",
+    srcs = ["nvshmem_send_thunk.cc"],
+    hdrs = ["nvshmem_send_thunk.h"],
     tags = ["gpu"],
     deps = [
         ":nvshmem_collective_thunk",
-        ":nvshmem_p2p_thunk_common",
+        ":p2p_thunk_common",
         ":thunk",
         "//xla:status_macros",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -2096,13 +2069,13 @@ cc_library(
 )
 
 cc_library(
-    name = "nvshmem_get_thunk",
-    srcs = ["nvshmem_get_thunk.cc"],
-    hdrs = ["nvshmem_get_thunk.h"],
+    name = "nvshmem_recv_thunk",
+    srcs = ["nvshmem_recv_thunk.cc"],
+    hdrs = ["nvshmem_recv_thunk.h"],
     tags = ["gpu"],
     deps = [
         ":nvshmem_collective_thunk",
-        ":nvshmem_p2p_thunk_common",
+        ":p2p_thunk_common",
         ":thunk",
         "//xla:status_macros",
         "//xla/backends/gpu/collectives:gpu_clique_key",

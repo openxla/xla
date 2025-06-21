@@ -101,8 +101,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/norm_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_permute_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_get_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_put_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_send_thunk.h"
 #include "xla/backends/gpu/runtime/outfeed_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
@@ -184,6 +184,8 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_send_thunk.h"
 
 namespace xla {
 namespace gpu {
@@ -192,6 +194,7 @@ IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       copy_events_(std::make_shared<CopyThunk::AsyncEvents>()),
+      nvshmem_buffer_addresses_(std::make_shared<NvshmemBufferAddresses>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())) {}
 
 std::unique_ptr<IrEmitterUnnested> IrEmitterUnnested::Create(
@@ -2542,9 +2545,9 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
     if (IsNvshmemCollective(instr)) {
-      thunk = std::make_unique<NvshmemPutThunk>(
+      thunk = std::make_unique<NvshmemSendThunk>(
           Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
-          partition_count, buffer);
+          partition_count, buffer, nvshmem_buffer_addresses_);
     } else {
       thunk = std::make_unique<SendThunk>(
           Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
@@ -2560,7 +2563,7 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
           FindCanonicalSendRecvStartOp(instr);
       if (collectives_async_events.contains(canonical_send_instr)) {
         if (IsNvshmemCollective(instr)) {
-          tsl::down_cast<NvshmemPutThunk*>(thunk.get())
+          tsl::down_cast<NvshmemSendThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_send_instr]);
         } else {
@@ -2572,7 +2575,7 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
         if (IsNvshmemCollective(instr)) {
           collectives_async_events.try_emplace(
               instr,
-              tsl::down_cast<NvshmemPutThunk*>(thunk.get())->async_events());
+              tsl::down_cast<NvshmemSendThunk*>(thunk.get())->async_events());
         } else {
           collectives_async_events.try_emplace(
               instr, tsl::down_cast<SendThunk*>(thunk.get())->async_events());
@@ -2641,9 +2644,9 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
     if (IsNvshmemCollective(instr)) {
-      thunk = std::make_unique<NvshmemGetThunk>(
+      thunk = std::make_unique<NvshmemRecvThunk>(
           Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
-          partition_count, buffer);
+          partition_count, buffer, nvshmem_buffer_addresses_);
     } else {
       thunk = std::make_unique<RecvThunk>(
           Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
@@ -2658,7 +2661,7 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
           FindCanonicalSendRecvStartOp(instr);
       if (collectives_async_events.contains(canonical_recv_instr)) {
         if (IsNvshmemCollective(instr)) {
-          tsl::down_cast<NvshmemGetThunk*>(thunk.get())
+          tsl::down_cast<NvshmemRecvThunk*>(thunk.get())
               ->set_async_events(
                   collectives_async_events[canonical_recv_instr]);
         } else {
@@ -2670,7 +2673,7 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
         if (IsNvshmemCollective(instr)) {
           collectives_async_events.try_emplace(
               instr,
-              tsl::down_cast<NvshmemGetThunk*>(thunk.get())->async_events());
+              tsl::down_cast<NvshmemRecvThunk*>(thunk.get())->async_events());
         } else {
           collectives_async_events.try_emplace(
               instr, tsl::down_cast<RecvThunk*>(thunk.get())->async_events());

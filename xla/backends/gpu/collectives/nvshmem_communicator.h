@@ -16,6 +16,8 @@ limitations under the License.
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <mutex>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
@@ -138,6 +140,10 @@ class NvshmemCommunicator : public Communicator {
 
   NvshmemCollectives* collectives_;  // Parent NvshmemCollectives instance
   bool aborted_ = false;             // Has Abort() been called?
+
+  // Global tracking of registered buffers to avoid re-registration
+  static std::mutex registered_buffers_mutex_;
+  static std::unordered_set<void*> registered_buffers_;
 };
 
 }  // namespace xla::gpu

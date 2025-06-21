@@ -51,6 +51,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+class NvshmemBufferAddresses;
+
 // Emits LLVM IR for an "unnested computation".
 //
 // An unnested computation is an HloComputation which you run by executing one
@@ -335,6 +337,9 @@ class IrEmitterUnnested : public IrEmitter {
 
   // Container for async copy-start/copy-done events.
   std::shared_ptr<CopyThunk::AsyncEvents> copy_events_;
+
+  // Shared buffer addresses registry for NVSHMEM put/get operations.
+  std::shared_ptr<NvshmemBufferAddresses> nvshmem_buffer_addresses_;
 
   // Cache to store the call_graph.
   std::unique_ptr<CallGraph> call_graph_;

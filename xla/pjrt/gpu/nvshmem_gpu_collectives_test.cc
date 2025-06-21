@@ -87,8 +87,8 @@ absl::StatusOr<std::string> GetDataTypeString(xla::PrimitiveType data_type) {
   }
 }
 
-void RunNvshmemTest(int num_ranks, PrimitiveType data_type,
-                    absl::string_view test_case) {
+void RunNvshmemTest(PrimitiveType data_type, absl::string_view test_case) {
+  const int num_ranks = 2;
   tsl::SubProcess child[num_ranks];
   for (int rank_id = 0; rank_id < num_ranks; ++rank_id) {
     std::vector<std::string> argv;
@@ -115,11 +115,11 @@ void RunNvshmemTest(int num_ranks, PrimitiveType data_type,
 }
 
 TEST(NvshmemGpuCollectivesTest, NvshmemCollectivePermuteFloat) {
-  RunNvshmemTest(/*num_ranks=*/2, PrimitiveType::F32, "collective_permute");
+  RunNvshmemTest(PrimitiveType::F32, "collective_permute");
 }
 
 TEST(NvshmemGpuCollectivesTest, NvshmemSendRecvFloat) {
-  RunNvshmemTest(/*num_ranks=*/2, PrimitiveType::F32, "send_recv");
+  RunNvshmemTest(PrimitiveType::F32, "send_recv");
 }
 
 absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
@@ -165,7 +165,6 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
           data = %s[] constant(42)
           start = (%s[], %s[]) collective-permute-start(data),
                 source_target_pairs={{0,1},{1,0}},
-                channel_id=1,
                 backend_config={"collective_backend_config":{"backend":"NVSHMEM"}}
           ROOT done = %s[] collective-permute-done(start)
         })",
