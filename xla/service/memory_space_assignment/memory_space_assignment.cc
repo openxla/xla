@@ -322,6 +322,7 @@ MemorySpaceAssignment::Run(HloModule* module,
                            const Options& options) {
   CHECK(module->has_schedule());
   if (VLOG_IS_ON(3)) {
+    LOG(INFO) << "Options: " << options.ToString();
     LOG(INFO) << "Module before memory space assignment: ";
     XLA_LOG_LINES(INFO, module->ToString());
     LOG(INFO) << "Schedule: " << module->schedule().ToString();
