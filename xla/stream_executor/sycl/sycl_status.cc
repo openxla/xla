@@ -19,23 +19,23 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 
 namespace stream_executor::gpu {
-std::string ToString(SYCLError_t error) {
+std::string ToString(SyclError error) {
   switch (error) {
-    case SYCL_SUCCESS:
+    case SyclError::kSyclSuccess:
       return "SYCL succeeded.";
-    case SYCL_ERROR_NO_DEVICE:
+    case SyclError::kSyclErrorNoDevice:
       return "SYCL did not find the device.";
-    case SYCL_ERROR_INVALID_DEVICE:
+    case SyclError::kSyclErrorInvalidDevice:
       return "SYCL got invalid device id.";
-    case SYCL_ERROR_INVALID_POINTER:
+    case SyclError::kSyclErrorInvalidPointer:
       return "SYCL got invalid pointer.";
-    case SYCL_ERROR_INVALID_STREAM:
+    case SyclError::kSyclErrorInvalidStream:
       return "SYCL got invalid stream.";
-    case SYCL_ERROR_DESTROY_DEFAULT_STREAM:
+    case SyclError::kSyclErrorDestroyDefaultStream:
       return "SYCL cannot destroy default stream.";
-    case SYCL_ERROR_NOT_READY:
+    case SyclError::kSyclErrorNotReady:
       return "SYCL is not ready.";
-    case SYCL_ERROR_ZE_ERROR:
+    case SyclError::kSyclErrorZeError:
       return "SYCL got ZE error.";
     default:
       return "SYCL got invalid error code.";

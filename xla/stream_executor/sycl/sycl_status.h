@@ -14,32 +14,32 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_SYCL_SYCL_STATUS_H_
 
 #include <string>
-#include <sycl/sycl.hpp>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 
 namespace stream_executor::gpu {
 
-enum SYCLError_t {
-    SYCL_SUCCESS,
-    SYCL_ERROR_NO_DEVICE,
-    SYCL_ERROR_NOT_READY,
-    SYCL_ERROR_INVALID_DEVICE,
-    SYCL_ERROR_INVALID_POINTER,
-    SYCL_ERROR_INVALID_STREAM,
-    SYCL_ERROR_DESTROY_DEFAULT_STREAM,
-    SYCL_ERROR_ZE_ERROR,
+enum class SyclError {
+    kSyclSuccess,
+    kSyclErrorNoDevice,
+    kSyclErrorNotReady,
+    kSyclErrorInvalidDevice,
+    kSyclErrorInvalidPointer,
+    kSyclErrorInvalidStream,
+    kSyclErrorDestroyDefaultStream,
+    kSyclErrorZeError,
 };
 
-// Returns a textual description of the given SYCLError_t.
-std::string ToString(SYCLError_t result);
+// Returns a textual description of the given SyclError.
+std::string ToString(SyclError result);
 
-// Returns an absl::Status corresponding to the SYCLError_t.
-inline absl::Status ToStatus(SYCLError_t result,
+// Returns an absl::Status corresponding to the SyclError.
+inline absl::Status ToStatus(SyclError result,
                              absl::string_view detail = "") {
-    if (ABSL_PREDICT_TRUE(result == SYCL_SUCCESS)) {
+    if (ABSL_PREDICT_TRUE(result == SyclError::kSyclSuccess)) {
         return absl::OkStatus();
     }
     std::string error_message = absl::StrCat(detail, ": ", ToString(result));

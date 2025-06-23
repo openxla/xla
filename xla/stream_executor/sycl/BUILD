@@ -37,10 +37,6 @@ cc_library(
     srcs = ["sycl_platform.cc"],
     hdrs = ["sycl_platform.h"],
     visibility = ["//visibility:public"],
-    tags = [
-        "gpu",
-        "oneapi-only",
-    ],
     deps = [
         ":sycl_platform_id",
         "//xla/stream_executor:device_description",

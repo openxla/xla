@@ -27,15 +27,16 @@ using ::tsl::testing::IsOk;
 using ::tsl::testing::StatusIs;
 
 TEST(SyclStatusTest, ToStatusReturnsExpectedStatusCodes) {
-  // We only promise SYCL_SUCCESS to map to Ok, everything else to Internal.
-  EXPECT_THAT(ToStatus(SYCL_SUCCESS), IsOk());
-  EXPECT_THAT(ToStatus(SYCL_ERROR_INVALID_DEVICE),
+  // We only promise SyclError::kSyclSuccess to map to Ok, everything 
+  // else to Internal.
+  EXPECT_THAT(ToStatus(SyclError::kSyclSuccess), IsOk());
+  EXPECT_THAT(ToStatus(SyclError::kSyclErrorInvalidDevice),
               StatusIs(absl::StatusCode::kInternal));
 }
 
 TEST(SyclStatusTest, ToStatusIncludesDetailMessage) {
   constexpr absl::string_view kMyMessage = "Some arbitrary message";
-  EXPECT_THAT(ToStatus(SYCL_ERROR_INVALID_DEVICE, kMyMessage),
+  EXPECT_THAT(ToStatus(SyclError::kSyclErrorInvalidDevice, kMyMessage),
               StatusIs(absl::StatusCode::kInternal, HasSubstr(kMyMessage)));
 }
 
