@@ -186,7 +186,7 @@ absl::StatusOr<void*> GetRocsolverDsoHandle() {
 
 #if TF_ROCM_VERSION >= 40500
 absl::StatusOr<void*> GetHipsolverDsoHandle() {
-  return GetDsoHandle("hipsolver", "0");
+  return GetDsoHandle("hipsolver", "1");
 }
 #endif
 
