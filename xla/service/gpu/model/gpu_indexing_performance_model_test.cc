@@ -28,6 +28,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -43,10 +44,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -56,7 +55,7 @@ using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::tsl::testing::StatusIs;
 
-class GpuIndexingPerformanceModelTest : public HloTestBase {
+class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
  public:
   mlir::MLIRContext mlir_context_;
   // The reference times in the test cases below are measured
@@ -68,8 +67,6 @@ class GpuIndexingPerformanceModelTest : public HloTestBase {
       &mlir_context_};
 
   size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
-
-  GpuIndexingPerformanceModelTest() : HloTestBase() {}
 };
 
 TEST_F(GpuIndexingPerformanceModelTest, BroadcastElementwise) {
@@ -791,6 +788,8 @@ ENTRY main {
 )"));
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
+  const HloInstruction* fusion_root =
+      &fusion_adaptor->GetRoots().front().instruction();
 
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
@@ -798,10 +797,10 @@ ENTRY main {
           /*emitter_specific_constraints_builder=*/nullptr);
   ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      TiledHloComputation tiled_hlo_computation,
-      std::get<SymbolicTileAnalysis>(analysis_or_error)
-          .ComputeTiledHloInstructions(/*tile_parameters=*/{9, 9, 9}));
+  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
+                          std::get<SymbolicTileAnalysis>(analysis_or_error)
+                              .ComputeTiledHloInstructions(Tiling(
+                                  {{fusion_root, FlatTiling({9, 9, 9})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
       GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);
@@ -839,6 +838,8 @@ ENTRY main {
 )"));
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
+  const HloInstruction* fusion_root =
+      &fusion_adaptor->GetRoots().front().instruction();
 
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
@@ -846,10 +847,10 @@ ENTRY main {
           /*emitter_specific_constraints_builder=*/nullptr);
   ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      TiledHloComputation tiled_hlo_computation,
-      std::get<SymbolicTileAnalysis>(analysis_or_error)
-          .ComputeTiledHloInstructions(/*tile_parameters=*/{1}));
+  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
+                          std::get<SymbolicTileAnalysis>(analysis_or_error)
+                              .ComputeTiledHloInstructions(
+                                  Tiling({{fusion_root, FlatTiling({1})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
       GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);

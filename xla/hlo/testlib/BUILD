@@ -86,6 +86,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -106,6 +107,7 @@ cc_library(
         "//xla/tsl/platform:resource_loader",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform",
@@ -118,7 +120,6 @@ cc_library(
     testonly = 1,
     hdrs = ["pattern_matcher_gmock.h"],
     deps = [
-        "test",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
@@ -133,7 +134,7 @@ cc_library(
     visibility = internal_visibility(["//xla/tests:friends"]),
     deps = [
         "//xla/tsl/platform:test",
-        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_for_library",
         "@tsl//tsl/platform",
     ],
 )

@@ -2,19 +2,25 @@
 
 The XLA `ShapeProto` proto
 ([xla_data.proto](https://github.com/openxla/xla/tree/main/xla/xla_data.proto))
-describes the rank, size, and data type of an N-dimensional array (*array* in
-short).
+describes the number of dimensions, size, and data type of an N-dimensional
+array (*array* in short).
 
 ## Terminology, notation, and conventions
 
-*   The rank of an array is equal to the number of dimensions. The *true rank*
-    of an array is the number of dimensions which have a size greater than 1.
+NOTE: in the past, XLA has used the term "rank" to mean the number of dimensions
+of an array. We have stopped this usage as it's inconsistent with the matrix
+rank concept in linear algebra. However, you may still see the name `rank` used
+in legacy documentation and some of the code.
+
+*   The *true number of dimensions* of an array is the number of dimensions
+    which have a size greater than 1.
 
 *   Dimensions are numbered from `0` up to `N-1` for an `N` dimensional array.
-    The dimension numbers are arbitrary labels for convenience. The order of
-    these dimension numbers does not imply a particular minor/major ordering in
-    the layout of the shape. The layout is determined by the `LayoutProto`
-    proto.
+    The size of a dimension is a non-negative integer. In particular, size 0 is
+    valid. The dimension numbers are arbitrary labels for convenience. The
+    order of these dimension numbers does not imply a particular minor/major
+    ordering in the layout of the shape. The layout is determined by the
+    `LayoutProto` proto.
 
 *   By convention, dimensions are listed in increasing order of dimension
     number. For example, for a 3-dimensional array of size `[A x B x C]`,
@@ -94,8 +100,8 @@ a d b e c f
 ```
 
 This minor-to-major dimension order of `0` up to `N-1` is akin to *column-major*
-(at rank 2). Assuming a monotonic ordering of dimensions, another way we may
-refer to this layout in the code is simply "dim 0 is minor".
+(for 2-dimensionals). Assuming a monotonic ordering of dimensions, another way
+we may refer to this layout in the code is simply "dim 0 is minor".
 
 On the other hand, if the `minor_to_major` field in the layout is `[1, 0]` then
 the layout in linear memory is:
@@ -105,9 +111,9 @@ a b c d e f
 ```
 
 A minor-to-major dimension order of `N-1` down to `0` for an `N` dimensional
-array is akin to *row-major* (at rank 2). Assuming a monotonic ordering of
-dimensions, another way we may refer to this layout in the code is simply "dim 0
-is major".
+array is akin to *row-major* (for 2-dimensionals). Assuming a monotonic
+ordering of dimensions, another way we may refer to this layout in the code is
+simply "dim 0 is major".
 
 #### Default minor-to-major ordering
 

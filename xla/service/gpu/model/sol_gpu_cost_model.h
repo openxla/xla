@@ -21,14 +21,18 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
-inline constexpr absl::string_view kSplitMaskWorldLevel = "0x0";
 
+// Speed-of-Light (SoL) analytical cost model for NCCL collectives.
 class SolGPUCostModel {
-  // Speed-of-Light (SoL) analytical cost model for NCCL collectives.
  public:
+  static constexpr absl::string_view kSplitMaskWorldLevel = "0x0";
+
+  static constexpr absl::string_view kSplitMaskNonRailAligned = "0x7";
+
   // Tunable system configuration, see
   // xla_gpu_analytical_latency_estimator_options
   struct Config {
@@ -54,7 +58,8 @@ class SolGPUCostModel {
   explicit SolGPUCostModel(const Config& sys_config);
 
   // Extract the SoL-related configuration from XLA flags.
-  static SolGPUCostModel::Config GetConfig(const HloModule* module);
+  static SolGPUCostModel::Config GetConfig(
+      const HloModule* module, const se::DeviceDescription& device_info);
 
   // Returns the latency of a NCCL ring collective.
   //

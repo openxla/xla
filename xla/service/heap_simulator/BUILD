@@ -2,7 +2,7 @@
 #   XLA Heap simulator.
 
 load(
-    "//xla:xla.bzl",
+    "//xla:xla.default.bzl",
     "xla_cc_test",
 )
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -80,10 +80,10 @@ xla_cc_test(
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:buffer_value",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_value",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:logging",

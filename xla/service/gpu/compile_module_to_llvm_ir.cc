@@ -39,6 +39,7 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
+#include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -62,6 +64,7 @@ limitations under the License.
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -75,6 +78,7 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -125,14 +129,14 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module,
   results.module_name = module_name;
   results.llvm_module =
       std::make_unique<llvm::Module>(module_name, *llvm_context);
-  results.llvm_module->setTargetTriple(target_triple);
+  results.llvm_module->setTargetTriple(llvm::Triple(target_triple));
   results.llvm_module->setDataLayout(data_layout);
 
   if (split_constants_module) {
     // Constants are emitted into a separate module to avoid caching them.
     results.llvm_module_constants = std::make_unique<llvm::Module>(
         absl::StrCat(module_name, "_consts"), *llvm_context);
-    results.llvm_module_constants->setTargetTriple(target_triple);
+    results.llvm_module_constants->setTargetTriple(llvm::Triple(target_triple));
     results.llvm_module_constants->setDataLayout(data_layout);
   }
 
@@ -214,6 +218,7 @@ absl::StatusOr<std::unique_ptr<SequentialThunk>> LowerHlo(
 
 absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
                        absl::string_view cache_file_path) {
+  tsl::profiler::TraceMe traceme("LoadCache");
   CHECK(!cache_file_path.empty());
   std::string resolved_path;
   if (!tsl::io::ResolveTestPrefixes(cache_file_path, resolved_path)) {
@@ -243,15 +248,17 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
 }
 
 absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
-    const HloModule* module,
-    const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
+    const HloModule* module, const GpuAliasInfo* alias_info,
     const BufferValue::SizeFunction& buffer_size_bytes_function) {
   ScopedAnnotation annotation(Phase("XlaBufferAssignment", module));
 
   const DebugOptions& options = module->config().debug_options();
-  BufferAssigner::Colorer colorer = options.xla_gpu_enable_nccl_user_buffers()
-                                        ? CollectiveColorer()
-                                        : BufferAssigner::DefaultColorer();
+  BufferAssigner::Colorer colorer =
+      (options.xla_gpu_enable_nccl_user_buffers() ||
+       options.xla_gpu_experimental_enable_nvshmem())
+          ? CollectiveColorer(options.xla_gpu_enable_nccl_user_buffers(),
+                              options.xla_gpu_experimental_enable_nvshmem())
+          : BufferAssigner::DefaultColorer();
 
   std::optional<BufferValue::Color> color =
       options.xla_gpu_temp_buffer_use_separate_color()
@@ -268,7 +275,13 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
           /*allocate_buffers_for_constants=*/true,
           /*colorer=*/colorer,
           /*must_not_live_out=*/{},
-          /*can_share_buffer*/ can_share_buffer_function,
+          // TODO(b/424109294): Avoid converting back to CanShareBuffer hook.
+          /*can_share_buffer*/
+          [alias_info](const HloInstruction* user,
+                       const HloInstruction* operand,
+                       const ShapeIndex& user_index) {
+            return alias_info->MayAlias(operand, {}, user, user_index);
+          },
           /*preset_assignments*/ {},
           /*private_stack*/ {}, /*heap_buffer_interval_compare*/ nullptr,
           /*isolation_options*/ std::nullopt, color));
@@ -283,9 +296,10 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
     const se::Platform* platform, const se::DeviceDescription& device_desc,
-    const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
+    const GpuAliasInfo* alias_info,
     const BufferValue::SizeFunction& buffer_size_bytes_function,
     bool split_constants_module) {
+  tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const bool use_cache =
       UseCache(hlo_module->config().debug_options(), split_constants_module);
 
@@ -293,9 +307,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       InitializeResults(hlo_module, llvm_context, target_triple, data_layout,
                         split_constants_module);
 
-  TF_ASSIGN_OR_RETURN(results.buffer_assignment,
-                      RunBufferAssignment(hlo_module, can_share_buffer_function,
-                                          buffer_size_bytes_function));
+  TF_ASSIGN_OR_RETURN(
+      results.buffer_assignment,
+      RunBufferAssignment(hlo_module, alias_info, buffer_size_bytes_function));
   TF_ASSIGN_OR_RETURN(results.output_info,
                       GetOutputInfo(*hlo_module, *results.buffer_assignment));
 

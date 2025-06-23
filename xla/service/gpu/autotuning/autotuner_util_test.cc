@@ -66,6 +66,7 @@ using ::testing::Ne;
 using ::testing::Not;
 using ::testing::TempDir;
 using ::testing::UnorderedElementsAre;
+using ::tsl::testing::IsOkAndHolds;
 using ::tsl::testing::StatusIs;
 
 class AutotunerUtilTest : public HloTestBase {
@@ -178,6 +179,21 @@ TEST_F(AutotunerUtilTest, LoadAutotuneResultsFromFile_TextProto1) {
 
   TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(kFilePath));
   EXPECT_FALSE(AutotunerUtil::ResultCacheIsEmpty());
+
+  AutotuneResults results;
+  EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+      std::string(kResultText), &results));
+  ASSERT_GT(results.results().size(), 0);
+  AddVersionToAutotuneResults(results);
+  AutotuneCacheKey key(results.results(0).device(), results.results(0).hlo(),
+                       results.results(0).version());
+  auto options = DebugOptions();
+  options.set_xla_gpu_require_complete_aot_autotune_results(true);
+  stream_executor::StreamExecutor* executor = NewStreamExecutor();
+  AutotuneConfig config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{DeviceConfig{executor}}, options);
+
+  EXPECT_THAT(AutotunerUtil::IsInCache(key, config), IsOkAndHolds(true));
 }
 
 TEST_F(AutotunerUtilTest, LoadAutotuneResultsFromFile_TextProto2) {
@@ -225,7 +241,8 @@ TEST_F(AutotunerUtilTest, FailIfRequireCompleteAotAutotuning) {
   stream_executor::StreamExecutor* executor = NewStreamExecutor();
   auto options = DebugOptions();
   options.set_xla_gpu_require_complete_aot_autotune_results(true);
-  AutotuneConfig config(DeviceConfig{executor}, options);
+  AutotuneConfig config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{DeviceConfig{executor}}, options);
   absl::Status s = AutotunerUtil::Autotune(instruction, config, [&] {
                      return AutotuneResult();
                    }).status();
@@ -253,7 +270,8 @@ TEST_F(AutotunerUtilTest, OkIfJitAutotuningDisabledButAlreadyLoadedAOT) {
 
   {
     // By default, JIT autotuning is OK.
-    AutotuneConfig config(DeviceConfig{executor}, DebugOptions());
+    AutotuneConfig config = AutotuneConfig::FromDebugOptions(
+        DeviceOrDevicelessConfig{DeviceConfig{executor}}, DebugOptions());
     TF_EXPECT_OK(AutotunerUtil::Autotune(instruction, config, [&] {
                    return AutotuneResult();
                  }).status());
@@ -265,7 +283,8 @@ TEST_F(AutotunerUtilTest, OkIfJitAutotuningDisabledButAlreadyLoadedAOT) {
   auto options = DebugOptions();
   options.set_xla_gpu_require_complete_aot_autotune_results(true);
 
-  AutotuneConfig config(DeviceConfig{executor}, options);
+  AutotuneConfig config = AutotuneConfig::FromDebugOptions(
+      DeviceOrDevicelessConfig{DeviceConfig{executor}}, options);
   // Even though JIT autotuning is disabled, there is no cache miss when running
   // autotuning for the same entry, so no error should be raised either.
   TF_EXPECT_OK(AutotunerUtil::Autotune(instruction, config, [&] {
@@ -330,10 +349,16 @@ class FileBasedCacheTest : public AutotunerUtilTest {
   }
 
   AutotuneConfig GetConfig() const {
-    DebugOptions options;
-    options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir_);
-    options.set_xla_gpu_experimental_autotune_cache_mode(GetCacheMode());
-    return AutotuneConfig(DeviceConfig{executor_}, options);
+    return AutotuneConfig(
+        DeviceOrDevicelessConfig{DeviceConfig{executor_}},
+        /*should_init_buffers=*/true,
+        /*should_reinit_output_buffer=*/true, /*should_check_correctness=*/true,
+        /*should_skip_wrong_results=*/true,
+        /*should_crash_on_check_failure=*/true,
+        /*exhaustive_tiling_search=*/true,
+        /*should_require_complete_aot_autotune_results=*/false,
+        /*autotune_cache_dir=*/cache_dir_,
+        /*autotune_cache_mode=*/GetCacheMode());
   }
 
   AutotuneCacheKey GetCacheKey() const {

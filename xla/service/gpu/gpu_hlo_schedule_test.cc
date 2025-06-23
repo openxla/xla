@@ -21,12 +21,17 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/log_severity.h"
 #include "absl/log/log.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -34,36 +39,34 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/literal_util.h"
 #include "xla/service/backend.h"
 #include "xla/service/gpu/gpu_compiler.h"
-#include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
-#include "xla/service/gpu/transforms/schedule_postprocessing.h"
-#include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/latency_hiding_scheduler.h"
-#include "xla/service/legalize_scheduling_annotations.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
 
+using ::testing::_;
 using ::testing::ElementsAre;
-using ::testing::HasSubstr;
+using ::testing::EndsWith;
 using ::tsl::testing::StatusIs;
 
 class GpuHloScheduleTest : public HloTestBase {
@@ -113,56 +116,8 @@ class GpuHloScheduleTest : public HloTestBase {
     // Verify that the fingerprint of HLO prior to LHS is present.
     const FrontendAttributes& attrs = module->frontend_attributes();
     auto it = attrs.map().find(kFingerprintBeforeLHS);
-
     // The fingerprint is 128 bits stored as a hex string (128/4 hex digits).
     return it != attrs.map().end() && it->second.size() == 128 / 4;
-  }
-
-  // Run the gpu hlo scheduler and latency hiding scheduler
-  absl::StatusOr<bool> RunGpuLatencyHidingScheduler(HloModule* module,
-                                                    uint64_t memory_limit) {
-    HloModuleConfig default_config = GetModuleConfig({});
-    auto* gpu_compiler = dynamic_cast<GpuCompiler*>(backend().compiler());
-    EXPECT_NE(gpu_compiler, nullptr);
-    const int64_t pointer_size = gpu_compiler->GetPointerSize();
-
-    auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
-
-    int64_t initial_peak_memory = -1;
-    TF_ASSIGN_OR_RETURN(HloSchedule initial_schedule,
-                        ScheduleGpuModuleWithMemoryScheduler(
-                            module, pointer_size, &initial_peak_memory));
-
-    TF_CHECK_OK(module->set_schedule(std::move(initial_schedule)));
-
-    SchedulerConfig config;
-    config.memory_limit = memory_limit;
-
-    auto estimator = std::make_unique<ApproximateLatencyEstimator>();
-    auto async_tracker = std::make_unique<GpuAsyncTracker>(config);
-    auto tracker_ptr = async_tracker.get();
-    auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
-        shape_size_in_bytes, tracker_ptr, estimator.get(), config,
-        /*target_scheduling_rule=*/nullptr,
-        /*early_target_scheduling_rule=*/nullptr,
-        /*post_processing_fn=*/nullptr,
-        /*scheduling_instruction_crosses_overlap_limit=*/
-        GpuScheduleCrossesOverlapLimit);
-
-    HloPassPipeline pipeline("latency-hiding-scheduler");
-    // Only run latency hiding scheduling if the memory limit is positive
-    // to avoid out of memory
-    if (memory_limit > 0) {
-      pipeline.AddPass<LatencyHidingScheduler>(
-          std::move(estimator), std::move(async_tracker),
-          std::move(scheduler_core), shape_size_in_bytes);
-      return pipeline.Run(module);
-    } else {
-      return Internal(
-          "The byte size of input/output arguments exceeds the "
-          "base limit. This indicates an error in the calculation!");
-    }
-    return true;
   }
 };
 
@@ -1796,77 +1751,185 @@ TEST_F(GpuHloScheduleTest, DiscountCPUMemoryFromGPUPeakMemoryUsage) {
 )"));
 }
 
-constexpr absl::string_view kCopyStartOverlap = R"(
-  HloModule conv_offloading
-  ENTRY %main (param_0: f32[1024], param_1: f32[1024]) -> f32[1024] {
-    %param_1 = f32[1024]{0} parameter(1)
-    %param_0 = f32[1024]{0} parameter(0)
-    %res_3 = f32[1024]{0} add(f32[1024]{0} %param_0, f32[1024]{0} %param_1)
-    %copy-start = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_3)
-    %copy-done = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start)
-    %res_4 = f32[1024]{0} tanh(f32[1024]{0} %res_3)
-    %copy-start.2 = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_4)
-    %copy-done.2 = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start.2)
-    %res_5 = f32[1024]{0} tanh(f32[1024]{0} %res_4)
-    %res_6 = f32[1024]{0} tanh(f32[1024]{0} %res_5)
-    %res_7 = f32[1024]{0} add(f32[1024]{0} %res_6, f32[1024]{0} %res_6)
-    %copy-start.1 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done)
-    %copy-done.1 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.1)
-    %res_8 = f32[1024]{0} add(f32[1024]{0} %res_7, f32[1024]{0} %res_5)
-    %copy-start.3 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done.2)
-    %copy-done.3 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.3)
-    %res_9 = f32[1024]{0} add(f32[1024]{0} %res_8, f32[1024]{0} %copy-done.3)
-    %res_10 = f32[1024]{0} add(f32[1024]{0} %res_9, f32[1024]{0} %copy-done.1)
-    ROOT %res_11 = f32[1024]{0} tanh(f32[1024]{0} %res_10)
-})";
+TEST_F(GpuHloScheduleTest, ReturnsValidScheduleMetadata) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
 
-// This test ensures that the GPU scheduler applies latency hiding scheduling
-// while adhering to a specified memory limit.
-TEST_F(GpuHloScheduleTest, RunLHSToBeWithinMemoryLimit) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(kCopyStartOverlap, GetModuleConfig({})));
+    ENTRY ar {
+      p0 = f32[32,32] parameter(0)
+      p1 = f32[32,32] parameter(1)
 
-  // Define a large memory limit for the scheduler.
+      ROOT _ = f32[32,32]{1,0} custom-call(p0, p1),
+        custom_call_target="__cublas$gemm"
+    })";
+  HloModuleConfig module_config;
   constexpr uint64_t kMemoryLimitLarge = 22000;
-
-  // Run the latency hiding scheduler with the specified memory limit.
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunGpuLatencyHidingScheduler(
-                                            module.get(), kMemoryLimitLarge));
-
-  EXPECT_TRUE(changed);
-
-  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
-// CHECK: ENTRY
-// CHECK: %copy-start.2 = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start
-// CHECK: %copy-start = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start
-// CHECK: %copy-done.2 = f32[1024]{0:S(5)} copy-done
-// CHECK: %copy-start.3 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start
-// CHECK: %copy-done = f32[1024]{0:S(5)} copy-done
-// CHECK: %copy-start.1 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start
-// CHECK: %copy-done.3 = f32[1024]{0} copy-done
-// CHECK: %copy-done.1 = f32[1024]{0} copy-done
-)"));
-}
-
-// This test verifies that the GPU scheduler doesn't run latency hiding
-// scheduling if the given memory limit is negative.
-TEST_F(GpuHloScheduleTest, NegativeTestMemoryLimit) {
+  module_config.set_device_memory_size(kMemoryLimitLarge);
   TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(kCopyStartOverlap, GetModuleConfig({})));
+      auto module, ParseAndReturnVerifiedModule(kHloText, module_config));
 
-  constexpr uint64_t kMemoryLimitNeg = 0;
-
-  // Run latency hiding scheduler with a negative memory limit
-  auto status =
-      RunGpuLatencyHidingScheduler(module.get(), kMemoryLimitNeg).status();
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(
-      status.message(),
-      HasSubstr("The byte size of input/output arguments exceeds the "
-                "base limit. This indicates an error in the calculation!"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto metadata,
+      ScheduleGpuModule(
+          module.get(), /*pointer_size=*/8,
+          backend().default_stream_executor()->GetDeviceDescription()));
+  EXPECT_GT(metadata.scheduler_mem_limit, 0);
 }
 
+// This test verifies that the scheduling logs an error if the size of
+// input/output arguments exceeds the base limit.
+TEST_F(GpuHloScheduleTest, LogAnErrorWhenArgumentSizeExceedsMemoryLimit) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY ar {
+      p0 = f32[32,32] parameter(0)
+      p1 = f32[32,32] parameter(1)
+
+      ROOT _ = f32[32,32]{1,0} custom-call(p0, p1),
+        custom_call_target="__cublas$gemm"
+    })";
+  HloModuleConfig module_config;
+  constexpr uint64_t kMemoryLimitSmall = 1;
+  module_config.set_device_memory_size(kMemoryLimitSmall);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kHloText, module_config));
+
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  // absl::ScopedMockLog only works if we're actually using ABSL logging, and
+  // TSL supports a homegrown logging implementation, so we should only check
+  // the log is emitted when ABSL logging is used.
+  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
+    EXPECT_CALL(mock_log,
+                Log(absl::LogSeverity::kError, _,
+                    EndsWith("This indicates an error in the calculation!")))
+        .Times(1);
+  }
+  mock_log.StartCapturingLogs();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto metadata,
+      ScheduleGpuModule(
+          module.get(), /*pointer_size=*/8,
+          backend().default_stream_executor()->GetDeviceDescription()));
+  EXPECT_EQ(metadata.scheduler_mem_limit, 0);
+}
+
+namespace detail {
+
+class IsUnifiedAnalyticalModelEnabledTest : public HloTestBase {
+ protected:
+  IsUnifiedAnalyticalModelEnabledTest()
+      : gpu_device_info_(TestGpuDeviceInfo::RTXA6000DeviceInfo()) {}
+
+  std::unique_ptr<HloModule> CreateTestModule(
+      const HloModuleConfig& config,
+      const std::string& module_name = "test_module") {
+    auto module = std::make_unique<HloModule>(module_name, config);
+    HloComputation::Builder builder("entry");
+    auto param = builder.AddInstruction(HloInstruction::CreateParameter(
+        0, ShapeUtil::MakeShape(F32, {}), "param"));
+    module->AddEntryComputation(builder.Build(param));
+    return module;
+  }
+
+  // Helper to add an AllReduce instruction to a module's entry computation.
+  void AddAllReduce(HloModule* module) {
+    HloComputation* entry = module->entry_computation();
+    Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+    auto dummy_operand = entry->AddInstruction(HloInstruction::CreateConstant(
+        LiteralUtil::CreateR2<float>({{1, 2}, {3, 4}})));
+    Shape s(shape.element_type(), /*dimensions=*/{});
+    HloComputation::Builder wrapped_computation("wrapped_computation");
+    HloInstruction* a = wrapped_computation.AddInstruction(
+        HloInstruction::CreateParameter(0, s, "p0.1"));
+    HloInstruction* b = wrapped_computation.AddInstruction(
+        HloInstruction::CreateParameter(1, s, "p0.2"));
+    wrapped_computation.AddInstruction(
+        HloInstruction::CreateBinary(s, HloOpcode::kAdd, a, b));
+
+    HloComputation* subcomp =
+        module->AddEmbeddedComputation(wrapped_computation.Build());
+    entry->AddInstruction(HloInstruction::CreateAllReduce(
+        shape, {dummy_operand}, subcomp,
+        /*replica_groups=*/{}, /*constrain_layout=*/false,
+        /*channel_id=*/std::nullopt, /*use_global_device_ids=*/false));
+  }
+
+  // Helper to add a CollectivePermute instruction.
+  void AddCollectivePermute(HloModule* module) {
+    HloComputation* entry = module->entry_computation();
+    Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+    auto dummy_operand = entry->AddInstruction(HloInstruction::CreateConstant(
+        LiteralUtil::CreateR2<float>({{1, 2}, {3, 4}})));
+    entry->AddInstruction(HloInstruction::CreateCollectivePermute(
+        shape, dummy_operand, /*source_target_pairs=*/{}, std::nullopt));
+  }
+
+  se::DeviceDescription gpu_device_info_;
+};
+
+TEST_F(IsUnifiedAnalyticalModelEnabledTest, EnabledBySolEstimatorFlagOnHopper) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  EXPECT_TRUE(IsUnifiedAnalyticalModelEnabled(*module, gpu_device_info_));
+}
+
+TEST_F(IsUnifiedAnalyticalModelEnabledTest, DisabledIfFlagIsOffOnHopper) {
+  HloModuleConfig config;
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+
+  EXPECT_FALSE(IsUnifiedAnalyticalModelEnabled(*module, gpu_device_info_));
+}
+
+TEST_F(IsUnifiedAnalyticalModelEnabledTest,
+       DisabledForHopperWithUnsupportedCollective) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  AddCollectivePermute(module.get());  // Unsupported collective
+
+  EXPECT_FALSE(IsUnifiedAnalyticalModelEnabled(*module, gpu_device_info_));
+}
+
+TEST_F(IsUnifiedAnalyticalModelEnabledTest,
+       DisabledForHopperWithMixedCollectives) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());          // Supported
+  AddCollectivePermute(module.get());  // Unsupported
+
+  EXPECT_FALSE(IsUnifiedAnalyticalModelEnabled(*module, gpu_device_info_));
+}
+
+TEST_F(IsUnifiedAnalyticalModelEnabledTest, DisabledIfNotHopper) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(8, 0);  // Not Hopper
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());  // Supported collective
+
+  EXPECT_FALSE(IsUnifiedAnalyticalModelEnabled(*module, gpu_device_info_));
+}
+
+}  // namespace detail
 }  // namespace gpu
 }  // namespace xla

@@ -21,6 +21,7 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
 load("//third_party/gpus:sycl_configure.bzl", "sycl_configure")
+load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
@@ -49,6 +50,7 @@ def _initialize_third_party():
     eigen3()
     farmhash()
     gemmlowp()
+    highwayhash()
     hwloc()
     implib_so()
     ml_dtypes()
@@ -115,9 +117,9 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "9e290e7b094134bdda0cad4ef4b89625fbde3c4b8e8f5dc84044c0f2e55b875a",
-        strip_prefix = "XNNPACK-5b4978cae19292232a27bdf0f495819bf5297167",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/5b4978cae19292232a27bdf0f495819bf5297167.zip"),
+        sha256 = "8665f9876227fc1f5aaea9ca46bd24dac65d85053a510a6e71857ee32055e126",
+        strip_prefix = "XNNPACK-0a3103ab29306b25a6d1293a746945754a556b9c",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/0a3103ab29306b25a6d1293a746945754a556b9c.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
@@ -130,16 +132,16 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "pthreadpool",
-        sha256 = "215724985c4845cdcadcb5f26a2a8777943927bb5a172a00e7716fe16a6f3c1b",
-        strip_prefix = "pthreadpool-b1aee199d54003fb557076a201bcac3398af580b",
-        urls = tf_mirror_urls("https://github.com/google/pthreadpool/archive/b1aee199d54003fb557076a201bcac3398af580b.zip"),
+        sha256 = "b193fcb18abf0d5bdb989968ccd8e274ae0ce8d89b0f1a61763582fb716b259c",
+        strip_prefix = "pthreadpool-dcc9f28589066af0dbd4555579281230abbf74dd",
+        urls = tf_mirror_urls("https://github.com/google/pthreadpool/archive/dcc9f28589066af0dbd4555579281230abbf74dd.zip"),
     )
 
     tf_http_archive(
         name = "cpuinfo",
-        sha256 = "52e0ffd7998d8cb3a927d8a6e1145763744d866d2be09c4eccea27fc157b6bb0",
-        strip_prefix = "cpuinfo-cebb0933058d7f181c979afd50601dc311e1bf8c",
-        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/cebb0933058d7f181c979afd50601dc311e1bf8c.zip"),
+        sha256 = "ae356c4c0c841e20711b5e111a1ccdec9c2f3c1dd7bde7cfba1bed18d6d02459",
+        strip_prefix = "cpuinfo-de0ce7c7251372892e53ce9bc891750d2c9a4fd8",
+        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/de0ce7c7251372892e53ce9bc891750d2c9a4fd8.zip"),
     )
 
     tf_http_archive(
@@ -154,9 +156,9 @@ def _tf_repositories():
         name = "onednn",
         build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
         patch_file = ["//third_party/mkl_dnn:setting_init.patch"],
-        sha256 = "8356aa9befde4d4ff93f1b016ac4310730b2de0cc0b8c6c7ce306690bc0d7b43",
-        strip_prefix = "oneDNN-3.5",
-        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.5.tar.gz"),
+        sha256 = "071f289dc961b43a3b7c8cbe8a305290a7c5d308ec4b2f586397749abdc88296",
+        strip_prefix = "oneDNN-3.7.3",
+        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.7.3.tar.gz"),
     )
 
     tf_http_archive(
@@ -269,16 +271,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "absl_py",
-        sha256 = "a7c51b2a0aa6357a9cbb2d9437e8cd787200531867dc02565218930b6a32166e",
-        strip_prefix = "abseil-py-1.0.0",
-        system_build_file = "//third_party/systemlibs:absl_py.BUILD",
-        system_link_files = {
-            "//third_party/systemlibs:absl_py.absl.BUILD": "absl/BUILD",
-            "//third_party/systemlibs:absl_py.absl.flags.BUILD": "absl/flags/BUILD",
-            "//third_party/systemlibs:absl_py.absl.testing.BUILD": "absl/testing/BUILD",
-            "//third_party/systemlibs:absl_py.absl.logging.BUILD": "absl/logging/BUILD",
-        },
-        urls = tf_mirror_urls("https://github.com/abseil/abseil-py/archive/refs/tags/v1.0.0.tar.gz"),
+        sha256 = "8a3d0830e4eb4f66c4fa907c06edf6ce1c719ced811a12e26d9d3162f8471758",
+        strip_prefix = "abseil-py-2.1.0",
+        urls = tf_mirror_urls("https://github.com/abseil/abseil-py/archive/refs/tags/v2.1.0.tar.gz"),
     )
 
     filegroup_external(
@@ -292,21 +287,35 @@ def _tf_repositories():
     tf_http_archive(
         name = "com_google_protobuf",
         patch_file = ["//third_party/protobuf:protobuf.patch"],
-        sha256 = "f66073dee0bc159157b0bd7f502d7d1ee0bc76b3c1eac9836927511bdc4b3fc1",
-        strip_prefix = "protobuf-3.21.9",
-        system_build_file = "//third_party/systemlibs:protobuf.BUILD",
-        system_link_files = {
-            "//third_party/systemlibs:protobuf.bzl": "protobuf.bzl",
-            "//third_party/systemlibs:protobuf_deps.bzl": "protobuf_deps.bzl",
-        },
-        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/v3.21.9.zip"),
+        sha256 = "f645e6e42745ce922ca5388b1883ca583bafe4366cc74cf35c3c9299005136e2",
+        strip_prefix = "protobuf-5.28.3",
+        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/refs/tags/v5.28.3.zip"),
     )
 
     tf_http_archive(
         name = "com_google_googletest",
-        sha256 = "81964fe578e9bd7c94dfdb09c8e4d6e6759e19967e397dbea48d1c10e45d0df2",
-        strip_prefix = "googletest-release-1.12.1",
-        urls = tf_mirror_urls("https://github.com/google/googletest/archive/refs/tags/release-1.12.1.tar.gz"),
+        # Use the commit on 2025/6/09:
+        # https://github.com/google/googletest/commit/28e9d1f26771c6517c3b4be10254887673c94018
+        sha256 = "f253ca1a07262f8efde8328e4b2c68979e40ddfcfc001f70d1d5f612c7de2974",
+        strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
+        # Patch googletest to:
+        #   - avoid dependencies on @fuchsia_sdk,
+        #   - refer to re2 as @com_googlesource_code_re2,
+        #   - refer to abseil as @com_google_absl.
+        #
+        # To update the patch, run:
+        # $ cd ~
+        # $ mkdir -p github
+        # $ cd github
+        # $ git clone https://github.com/google/googletest.git
+        # $ cd googletest
+        # $ git checkout 28e9d1f26771c6517c3b4be10254887673c94018
+        # ... make local changes to googletest ...
+        # $ git diff > <client-root>/third_party/tensorflow/third_party/googletest/googletest.patch
+        #
+        # The patch path is relative to third_party/xla.
+        patch_file = ["//third_party/googletest:googletest.patch"],
+        urls = tf_mirror_urls("https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c940189.zip"),
     )
 
     tf_http_archive(
@@ -335,23 +344,13 @@ def _tf_repositories():
     # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
     tf_http_archive(
         name = "com_github_grpc_grpc",
-        sha256 = "b956598d8cbe168b5ee717b5dafa56563eb5201a947856a6688bbeac9cac4e1f",
-        strip_prefix = "grpc-b54a5b338637f92bfcf4b0bc05e0f57a5fd8fadd",
+        sha256 = "afbc5d78d6ba6d509cc6e264de0d49dcd7304db435cbf2d630385bacf49e066c",
+        strip_prefix = "grpc-1.68.2",
         system_build_file = "//third_party/systemlibs:grpc.BUILD",
         patch_file = [
-            "//third_party/grpc:generate_cc_env_fix.patch",
-            "//third_party/grpc:register_go_toolchain.patch",
+            "//third_party/grpc:grpc.patch",
         ],
-        system_link_files = {
-            "//third_party/systemlibs:BUILD.bazel": "bazel/BUILD.bazel",
-            "//third_party/systemlibs:grpc.BUILD": "src/compiler/BUILD",
-            "//third_party/systemlibs:grpc.bazel.grpc_deps.bzl": "bazel/grpc_deps.bzl",
-            "//third_party/systemlibs:grpc.bazel.grpc_extra_deps.bzl": "bazel/grpc_extra_deps.bzl",
-            "//third_party/systemlibs:grpc.bazel.cc_grpc_library.bzl": "bazel/cc_grpc_library.bzl",
-            "//third_party/systemlibs:grpc.bazel.generate_cc.bzl": "bazel/generate_cc.bzl",
-            "//third_party/systemlibs:grpc.bazel.protobuf.bzl": "bazel/protobuf.bzl",
-        },
-        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/b54a5b338637f92bfcf4b0bc05e0f57a5fd8fadd.tar.gz"),
+        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.68.2.tar.gz"),
     )
 
     llvm_setup(name = "llvm-project")
@@ -390,6 +389,14 @@ def _tf_repositories():
         strip_prefix = "snappy-984b191f0fefdeb17050b42a90b7625999c13b8d",
         system_build_file = "//third_party/systemlibs:snappy.BUILD",
         urls = tf_mirror_urls("https://github.com/google/snappy/archive/984b191f0fefdeb17050b42a90b7625999c13b8d.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "net_zstd",
+        build_file = "//third_party:net_zstd.BUILD",
+        sha256 = "7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4",
+        strip_prefix = "zstd-1.5.7/lib",
+        urls = tf_mirror_urls("https://github.com/facebook/zstd/archive/v1.5.7.zip"),  # 2025-05-20
     )
 
     tf_http_archive(
@@ -562,7 +569,12 @@ def _tf_repositories():
         name = "upb",
         sha256 = "61d0417abd60e65ed589c9deee7c124fe76a4106831f6ad39464e1525cef1454",
         strip_prefix = "upb-9effcbcb27f0a665f9f345030188c0b291e32482",
-        patch_file = ["//third_party/grpc:upb_platform_fix.patch"],
+        patch_file = [
+            "//third_party/grpc:upb_platform_fix.patch",
+            # Disables warning-as-error when building upb, as it generates
+            # warnings when compiled with clang.
+            "//third_party/grpc:upb_build.patch",
+        ],
         urls = tf_mirror_urls("https://github.com/protocolbuffers/upb/archive/9effcbcb27f0a665f9f345030188c0b291e32482.tar.gz"),
     )
 
@@ -587,6 +599,13 @@ def _tf_repositories():
         build_file = "//third_party/spirv_llvm_translator:spirv_llvm_translator.BUILD",
         patch_file = ["//third_party/spirv_llvm_translator:spirv_llvm_translator.patch"],
         urls = tf_mirror_urls("https://github.com/KhronosGroup/SPIRV-LLVM-Translator/archive/dad1f0eaab8047a4f73c50ed5f3d1694b78aae97.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "com_github_nelhage_rules_boost",
+        urls = tf_mirror_urls("https://github.com/nelhage/rules_boost/archive/5160325dbdc8c9e499f9d9917d913f35f1785d52.zip"),
+        strip_prefix = "rules_boost-5160325dbdc8c9e499f9d9917d913f35f1785d52",
+        sha256 = "feb4b1294684c79df7c1e08f1aec5da0da52021e33db59c88edbe86b4d1a017a",
     )
 
 # buildifier: disable=unnamed-macro

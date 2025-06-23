@@ -41,15 +41,16 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
-#include "xla/hlo/transforms/sharding_format_picker.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout_util.h"
+#include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/spmd/sharding_format_picker.h"
 #include "xla/service/spmd/spmd_prepare.h"
 #include "xla/shape.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -62,10 +63,22 @@ namespace {
 
 using ::testing::_;
 using ::testing::AllOf;
+using ::xla::test_only::ShardingFormatPicker;
 namespace op = xla::testing::opcode_matchers;
 
+std::vector<std::vector<int64_t>> ReplicaGroupsToVecOfVec(
+    const std::vector<ReplicaGroup>& replica_groups) {
+  std::vector<std::vector<int64_t>> result;
+  for (const auto& replica_group : replica_groups) {
+    auto& group = result.emplace_back();
+    group = std::vector<int64_t>(replica_group.replica_ids().begin(),
+                                 replica_group.replica_ids().end());
+  }
+  return result;
+}
+
 class SpmdPartitioningTest
-    : public HloTestBase,
+    : public HloHardwareIndependentTestBase,
       public ::testing::WithParamInterface<ShardingFormatPicker::ShardingType> {
  public:
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
@@ -75,8 +88,12 @@ class SpmdPartitioningTest
       bool unroll_windowed_einsum = false,
       bool bidirectional_windowed_einsum = false,
       int64_t threshold_for_windowed_einsum_mib = -1,
-      PartitioningMethod gather_method = PartitioningMethod::kExplicitBatch,
-      PartitioningMethod scatter_method = PartitioningMethod::kExplicitBatch,
+      std::vector<GatherScatterPartitioningMethod> gather_methods =
+          {GatherScatterPartitioningMethod::kExplicitBatch,
+           GatherScatterPartitioningMethod::kIndexParallel},
+      std::vector<GatherScatterPartitioningMethod> scatter_methods =
+          {GatherScatterPartitioningMethod::kExplicitBatch,
+           GatherScatterPartitioningMethod::kIndexParallel},
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
           std::nullopt) {
     // Some tests (BackpropFilter convs) set this flag false to test two
@@ -88,14 +105,15 @@ class SpmdPartitioningTest
         choose_faster_windowed_einsum;
     options.unroll_windowed_einsum = unroll_windowed_einsum;
     options.bidirectional_windowed_einsum = bidirectional_windowed_einsum;
+    options.partial_windowed_einsum = true;
     options.total_bytes_windowed_einsum_threshold =
         total_bytes_windowed_einsum_threshold;
     if (threshold_for_windowed_einsum_mib >= 0) {
       options.threshold_for_windowed_einsum_mib =
           threshold_for_windowed_einsum_mib;
     }
-    options.gather_partition_method = gather_method;
-    options.scatter_partition_method = scatter_method;
+    options.preferred_gather_partition_methods = gather_methods;
+    options.preferred_scatter_partition_methods = scatter_methods;
     auto collective_ops_creator =
         GetDefaultCollectiveOpsCreator(num_devices, /*num_replicas=*/1);
     // Do not use all-gather for pattern-matching purpose, as the partitioner
@@ -416,6 +434,15 @@ ENTRY entry {
   EXPECT_THAT(all_to_all, op::Shape("s32[8,32,16,32,16]"));
   EXPECT_EQ(all_to_all->replica_groups().size(), 1);
   EXPECT_EQ(all_to_all->replica_groups()[0].replica_ids_size(), 8);
+  if (GetParam() == ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    EXPECT_EQ(all_to_all->device_list().iota_replica_group_list(),
+              IotaReplicaGroupList(1, 8, {4, 2}, {1, 0}));
+  } else {
+    std::vector<std::vector<int64_t>> expected_replica_groups = {
+        {0, 2, 4, 6, 1, 3, 5, 7}};
+    EXPECT_EQ(ReplicaGroupsToVecOfVec(all_to_all->replica_groups()),
+              expected_replica_groups);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, MultipleSourceTargetDimsInOneAllToAll2) {
@@ -5157,8 +5184,8 @@ ENTRY entry {
                            /*unroll_windowed_einsum=*/false,
                            /*bidirectional_windowed_einsum=*/false,
                            /*threshold_for_windowed_einsum_mib=*/5,
-                           PartitioningMethod::kExplicitBatch,
-                           PartitioningMethod::kExplicitBatch,
+                           {GatherScatterPartitioningMethod::kExplicitBatch},
+                           {GatherScatterPartitioningMethod::kExplicitBatch},
                            /*total_bytes_windowed_einsum_threshold=*/1 << 30));
   VLOG(1) << module->ToString();
   // Total bytes threshold overrides threshold_for_windowed_einsum_mib,
@@ -9564,35 +9591,6 @@ ENTRY entry {
   EXPECT_THAT(root, dot);
 }
 
-TEST_P(SpmdPartitioningTest, DotPartialNonContractingPartialMatch) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %lhs = f32[24,8,100] parameter(0), sharding={devices=[2,2,1]<=[4]}
-  %rhs = f32[32,100] parameter(1),
-    sharding={devices=[2,1,2]0,2,1,3 last_tile_dim_replicate}
-  ROOT %dot = f32[24,8,32] dot(%lhs, %rhs),
-    lhs_batch_dims={}, rhs_batch_dims={},
-    lhs_contracting_dims={2}, rhs_contracting_dims={1},
-    sharding={devices=[2,1,2]<=[4]}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          PartitionComputation(hlo_string, /*num_devices=*/4));
-  VLOG(1) << module->ToString();
-
-  const auto lhs = AllOf(op::Shape("f32[12,4,100]"), op::Parameter(0));
-  const auto rhs = AllOf(op::Shape("f32[16,100]"), op::Parameter(1));
-  auto partially_replicated_lhs = AllOf(
-      op::Shape("f32[12,8,100]"),
-      op::AllReduce(op::DynamicUpdateSlice(op::Broadcast(_), lhs, _, _, _)));
-  auto dot =
-      AllOf(op::Shape("f32[12,8,16]"), op::Dot(partially_replicated_lhs, rhs));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, dot);
-}
-
 TEST_P(SpmdPartitioningTest, DotPartialContractingPartialMatch) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11799,6 +11797,18 @@ ENTRY %module {
   auto gather = AllOf(op::Shape("s32[2,4,1,2]"), op::Gather(operand, indices));
   EXPECT_THAT(root, op::AllReduce(op::AllReduce(
                         op::DynamicUpdateSlice(_, gather, _, _, _, _))));
+  auto* all_to_all = FindInstruction(module.get(), "all-to-all");
+  EXPECT_TRUE(all_to_all != nullptr);
+  if (GetParam() ==
+      test_only::ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    EXPECT_EQ(all_to_all->device_list().iota_replica_group_list().value(),
+              IotaReplicaGroupList(4, 2, {2, 2, 2}, {0, 2, 1}));
+  } else {
+    std::vector<std::vector<int64_t>> expected_replica_groups = {
+        {0, 2}, {1, 3}, {4, 6}, {5, 7}};
+    EXPECT_EQ(ReplicaGroupsToVecOfVec(all_to_all->replica_groups()),
+              expected_replica_groups);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, GatherMergedIndexParallelAndTrivialSlicedOperand) {
@@ -11833,6 +11843,31 @@ ENTRY %module {
                   _, op::AllReduce(op::Select(_, _, gather)), _, _, _, _)));
 }
 
+TEST_P(SpmdPartitioningTest,
+       GatherMergedIndexParallelAndTrivialSlicedOperand_Large) {
+  absl::string_view hlo_string = R"(
+HloModule jit_set_zero, entry_computation_layout={(s32[4,32]{1,0:T(1,128)}, s32[4]{0:T(128)})->s32[4]{0:T(128)}}, allow_spmd_sharding_propagation_to_parameters={false,true}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=16
+
+ENTRY %main.14 (Arg_0.1: s32[4,32], Arg_1.2: s32[4]) -> s32[4] {
+  %Arg_0.1 = s32[4,32]{1,0} parameter(0), sharding={devices=[2,2,4]<=[16] last_tile_dim_replicate}
+  %constant.3 = s32[4,1]{1,0} constant({ {0}, {1}, {2}, {3} }), sharding={devices=[2,1,8]<=[16] last_tile_dim_replicate}
+  %Arg_1.2 = s32[4]{0} parameter(1), sharding={devices=[2,8]<=[16] last_tile_dim_replicate}
+  %reshape.11 = s32[4,1]{1,0} reshape(%Arg_1.2), sharding={devices=[2,1,8]<=[16] last_tile_dim_replicate}, metadata={op_name="jit(set_zero)/jit(main)/broadcast_in_dim" source_line=16}
+  %concatenate.12 = s32[4,2]{1,0} concatenate(%constant.3, %reshape.11), dimensions={1}, sharding={devices=[2,1,8]<=[16] last_tile_dim_replicate}
+  ROOT %gather.13 = s32[4]{0} gather(%Arg_0.1, %concatenate.12), offset_dims={},
+    collapsed_slice_dims={0,1}, start_index_map={0,1}, index_vector_dim=1,
+    slice_sizes={1,1}, sharding={devices=[2,8]<=[16] last_tile_dim_replicate}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/16));
+  const auto root = module->entry_computation()->root_instruction();
+  auto operand = AllOf(op::Shape("s32[2,16]"), op::Parameter());
+  auto indices = AllOf(op::Shape("s32[2,2]"), op::Subtract());
+  auto gather = AllOf(op::Shape("s32[2]"), op::Gather(operand, indices));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(root, op::AllReduce(op::Select(_, _, gather)));
+}
+
 TEST_P(SpmdPartitioningTest, GatherMergedIndexParallelAndIndexPassthrough) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11853,9 +11888,9 @@ ENTRY %module {
     collapsed_slice_dims={0,1}, start_index_map={1,0}, index_vector_dim=0,
     slice_sizes={1,1,2,2}, sharding={devices=[4,2,1,1]<=[8]}
 })";
-  for (const PartitioningMethod& method :
-       {PartitioningMethod::kIndexParallel,
-        PartitioningMethod::kIndexPassthrough}) {
+  for (const GatherScatterPartitioningMethod& method :
+       {GatherScatterPartitioningMethod::kIndexParallel,
+        GatherScatterPartitioningMethod::kIndexPassthrough}) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_devices=*/8,
@@ -11863,8 +11898,8 @@ ENTRY %module {
                              /*choose_faster_windowed_einsum=*/false,
                              /*unroll_windowed_einsum=*/false,
                              /*bidirectional_windowed_einsum=*/false,
-                             /*threshold_for_windowed_einsum_mib=*/-1, method,
-                             method));
+                             /*threshold_for_windowed_einsum_mib=*/-1, {method},
+                             {method}));
     VLOG(1) << module->ToString();
     auto operand = AllOf(op::Shape("s32[2,4,2,2]"), op::Parameter());
     auto indices = AllOf(op::Shape("s32[2,2,2]"), op::Subtract());
@@ -12143,9 +12178,10 @@ ENTRY entry {
     slice_sizes={1,16}, sharding={devices=[4,1,1,8]<=[32] last_tile_dim_replicate}
 })";
   TF_ASSERT_OK_AND_ASSIGN(
-      auto module, PartitionComputation(
-                       hlo_string, /*num_devices=*/32, true, false, false,
-                       false, -1, PartitioningMethod::kTrivialSlicedOperand));
+      auto module,
+      PartitionComputation(
+          hlo_string, /*num_devices=*/32, true, false, false, false, -1,
+          {GatherScatterPartitioningMethod::kTrivialSlicedOperand}));
   VLOG(1) << module->ToString();
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::AllReduce(op::Select(_, _, op::Gather(_, _))));
@@ -12175,7 +12211,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_devices=*/32, true, false, false,
-                           false, -1, PartitioningMethod::kIndexParallel));
+                           false, -1,
+                           {GatherScatterPartitioningMethod::kIndexParallel}));
   VLOG(1) << module->ToString();
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
@@ -12843,9 +12880,9 @@ ENTRY %module {
     index_vector_dim=0, sharding={replicated}
 })";
 
-  for (const PartitioningMethod& method :
-       {PartitioningMethod::kIndexParallel,
-        PartitioningMethod::kIndexPassthrough}) {
+  for (const GatherScatterPartitioningMethod& method :
+       {GatherScatterPartitioningMethod::kIndexParallel,
+        GatherScatterPartitioningMethod::kIndexPassthrough}) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_devices=*/8,
@@ -12853,8 +12890,8 @@ ENTRY %module {
                              /*choose_faster_windowed_einsum=*/false,
                              /*unroll_windowed_einsum=*/false,
                              /*bidirectional_windowed_einsum=*/false,
-                             /*threshold_for_windowed_einsum_mib=*/-1, method,
-                             method));
+                             /*threshold_for_windowed_einsum_mib=*/-1, {method},
+                             {method}));
     VLOG(1) << module->ToString();
     auto operand = AllOf(op::Shape("s32[2,4,2,2]"), op::Select());
     auto indices = AllOf(op::Shape("s32[2,2,2]"), op::Subtract());
@@ -13130,9 +13167,10 @@ ENTRY entry {
       index_vector_dim=2, sharding={devices=[8,1,4]<=[4,8]T(1,0) last_tile_dim_replicate}
 })";
   TF_ASSERT_OK_AND_ASSIGN(
-      auto module, PartitionComputation(
-                       hlo_string, /*num_devices=*/32, true, false, false,
-                       false, -1, PartitioningMethod::kTrivialSlicedOperand));
+      auto module,
+      PartitionComputation(
+          hlo_string, /*num_devices=*/32, true, false, false, false, -1,
+          {GatherScatterPartitioningMethod::kTrivialSlicedOperand}));
   VLOG(1) << module->ToString();
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::AllReduce(op::Scatter(op::Select(_, _, _),
@@ -13169,7 +13207,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_devices=*/32, true, false, false,
-                           false, -1, PartitioningMethod::kIndexParallel));
+                           false, -1,
+                           {GatherScatterPartitioningMethod::kIndexParallel}));
   VLOG(1) << module->ToString();
   auto all_to_all = FindInstruction(module.get(), HloOpcode::kAllToAll);
   EXPECT_NE(all_to_all, nullptr);
@@ -14797,10 +14836,10 @@ TEST_P(SpmdPartitioningTest, CustomCallShardingRegistration) {
     }
     absl::Status Partition(spmd::SpmdPartitioningVisitor* partitioner,
                            HloInstruction* hlo) const override {
-      if (hlo->shape().rank() <= 2) {
+      if (hlo->shape().dimensions().size() <= 2) {
         return partitioner->DefaultAction(hlo);
       }
-      const int first_non_batch_dim = hlo->shape().rank() - 2;
+      const int first_non_batch_dim = hlo->shape().dimensions().size() - 2;
       HloInstruction* operand = hlo->mutable_operand(0);
       HloSharding target_sharding =
           hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
@@ -14824,7 +14863,7 @@ TEST_P(SpmdPartitioningTest, CustomCallShardingRegistration) {
                                operand_partitioned.base_shape(),
                                operand_partitioned.state())
               .Reshard(hlo->sharding());
-      partitioner->SetPartitionedHlo(hlo, result_partitioned);
+      partitioner->SetPartitionedHlo(hlo, std::move(result_partitioned));
       return absl::OkStatus();
     }
   };
@@ -15035,7 +15074,7 @@ HloModule pjit
 
 ENTRY %main.21 {
   p0 = s32[8,64] parameter(0), sharding={devices=[4,1]<=[4]}
-  ROOT scatter = s32[8,64] scatter(p0, p0, p0), update_window_dims={}, 
+  ROOT scatter = s32[8,64] scatter(p0, p0, p0), update_window_dims={},
     input_batching_dims={0}, scatter_indices_batching_dims={0},
     inserted_window_dims={1}, scatter_dims_to_operand_dims={1},
     index_vector_dim=2, to_apply=s32_add, sharding={devices=[4,1]<=[4]}
@@ -15477,6 +15516,233 @@ ENTRY %entry {
                           op::Shape("bf16[8,2048,16384]")));
 }
 
+TEST_P(SpmdPartitioningTest, PartialWindowedEinsum) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,4,1]<=[8]}
+  %p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,4,2]<=[2,4]T(1,0) last_tile_dim_replicate}
+  ROOT %dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} %p0, f32[3264,2176]{1,0} %p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[2,1,4]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+
+  // While op.
+  const auto arg0 = AllOf(op::Parameter(0), op::Shape("f32[4,512,3264]"));
+  const auto arg1 = AllOf(op::Parameter(1), op::Shape("f32[3264,544]"));
+
+  const auto while_output = AllOf(
+      op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
+                          op::Constant())),
+      op::Shape("(f32[4,512,3264]{2,1,0}, f32[3264,544]{1,0}, "
+                "f32[4,2048,544]{2,1,0}, f32[4,2048,544]{2,1,0}, u32[])"));
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::GetTupleElement(while_output),
+                          op::Shape("f32[4,2048,544]")));
+
+  // While body.
+  const auto zero = op::Constant(LiteralUtil::CreateR0<int>(0));
+  const HloInstruction* while_loop = root->operand(0);
+  const auto next_loop_index =
+      op::Add(op::GetTupleElement(op::Parameter(0)),
+              op::Constant(LiteralUtil::CreateR0<uint32_t>(1)));
+  auto remainder =
+      op::Remainder(op::Add(op::GetTupleElement(), op::PartitionId()),
+                    op::Constant(LiteralUtil::CreateR0<uint32_t>(8)));
+  auto ds = op::DynamicSlice(op::Constant(LiteralUtil::CreateR1<int>(
+                                 {0, 512, 1024, 1536, 0, 512, 1024, 1536})),
+                             remainder);
+  auto dus = op::DynamicUpdateSlice(op::GetTupleElement(op::Parameter(0)),
+                                    op::Dot(), zero, op::Reshape(ds), zero);
+  auto compare =
+      op::Lt(next_loop_index, op::Constant(LiteralUtil::CreateR0<uint32_t>(4)));
+  auto conditional =
+      op::Conditional(compare, op::GetTupleElement(op::Parameter(0)),
+                      op::GetTupleElement(op::Parameter(0)));
+
+  EXPECT_THAT(while_loop->while_body()->root_instruction(),
+              op::Tuple(conditional, op::GetTupleElement(), dus,
+                        op::GetTupleElement(), next_loop_index));
+
+  // Collective permute.
+  EXPECT_THAT(while_loop->while_body()
+                  ->root_instruction()
+                  ->operand(0)
+                  ->true_computation()
+                  ->root_instruction(),
+              op::CollectivePermute());
+  std::vector<std::pair<int64_t, int64_t>> source_target_pairs{
+      {0, 3}, {1, 0}, {2, 1}, {3, 2}, {4, 7}, {5, 4}, {6, 5}, {7, 6}};
+  EXPECT_THAT(while_loop->while_body()
+                  ->root_instruction()
+                  ->operand(0)
+                  ->true_computation()
+                  ->root_instruction()
+                  ->source_target_pairs(),
+              source_target_pairs);
+
+  VLOG(1) << module->ToString();
+}
+
+TEST_P(SpmdPartitioningTest, PartialWindowedEinsumUnrollUnsupported) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,4,1]<=[8]}
+  %p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,4,2]<=[2,4]T(1,0) last_tile_dim_replicate}
+  ROOT %dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} %p0, f32[3264,2176]{1,0} %p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[2,1,4]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/true,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+
+  // While op.
+  const auto arg0 = AllOf(op::Parameter(0), op::Shape("f32[4,512,3264]"));
+  const auto arg1 = AllOf(op::Parameter(1), op::Shape("f32[3264,544]"));
+
+  const auto while_output = AllOf(
+      op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
+                          op::Constant())),
+      op::Shape("(f32[4,512,3264]{2,1,0}, f32[3264,544]{1,0}, "
+                "f32[4,2048,544]{2,1,0}, f32[4,2048,544]{2,1,0}, u32[])"));
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::GetTupleElement(while_output),
+                          op::Shape("f32[4,2048,544]")));
+
+  // While body.
+  const auto zero = op::Constant(LiteralUtil::CreateR0<int>(0));
+  const HloInstruction* while_loop = root->operand(0);
+  const auto next_loop_index =
+      op::Add(op::GetTupleElement(op::Parameter(0)),
+              op::Constant(LiteralUtil::CreateR0<uint32_t>(1)));
+  auto remainder =
+      op::Remainder(op::Add(op::GetTupleElement(), op::PartitionId()),
+                    op::Constant(LiteralUtil::CreateR0<uint32_t>(8)));
+  auto ds = op::DynamicSlice(op::Constant(LiteralUtil::CreateR1<int>(
+                                 {0, 512, 1024, 1536, 0, 512, 1024, 1536})),
+                             remainder);
+  auto dus = op::DynamicUpdateSlice(op::GetTupleElement(op::Parameter(0)),
+                                    op::Dot(), zero, op::Reshape(ds), zero);
+  auto compare =
+      op::Lt(next_loop_index, op::Constant(LiteralUtil::CreateR0<uint32_t>(4)));
+  auto conditional =
+      op::Conditional(compare, op::GetTupleElement(op::Parameter(0)),
+                      op::GetTupleElement(op::Parameter(0)));
+
+  EXPECT_THAT(while_loop->while_body()->root_instruction(),
+              op::Tuple(conditional, op::GetTupleElement(), dus,
+                        op::GetTupleElement(), next_loop_index));
+
+  // Collective permute.
+  EXPECT_THAT(while_loop->while_body()
+                  ->root_instruction()
+                  ->operand(0)
+                  ->true_computation()
+                  ->root_instruction(),
+              op::CollectivePermute());
+  std::vector<std::pair<int64_t, int64_t>> source_target_pairs{
+      {0, 3}, {1, 0}, {2, 1}, {3, 2}, {4, 7}, {5, 4}, {6, 5}, {7, 6}};
+  EXPECT_THAT(while_loop->while_body()
+                  ->root_instruction()
+                  ->operand(0)
+                  ->true_computation()
+                  ->root_instruction()
+                  ->source_target_pairs(),
+              source_target_pairs);
+
+  VLOG(1) << module->ToString();
+}
+
+TEST_P(SpmdPartitioningTest, PartialWindowedEinsumNonMonotonicTileAssignment) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,4,1]0,2,4,6,1,3,5,7}
+  %p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,4,2]<=[2,4]T(1,0) last_tile_dim_replicate}
+  ROOT %dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} %p0, f32[3264,2176]{1,0} %p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[2,1,4]0,2,4,6,1,3,5,7}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Dot(), op::Shape("f32[4,2048,544]")));
+
+  VLOG(1) << module->ToString();
+}
+
+TEST_P(SpmdPartitioningTest, PartialWindowedEinsumIncompatiblePartitioning) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,2,2]<=[8]}
+  %p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,4,2]<=[2,4]T(1,0) last_tile_dim_replicate}
+  ROOT %dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} %p0, f32[3264,2176]{1,0} %p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[2,1,4]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Dot(), op::Shape("f32[4,2048,544]")));
+
+  VLOG(1) << module->ToString();
+}
+
+TEST_P(SpmdPartitioningTest, PartialWindowedEinsumMultipleWindowingDims) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,4,1]<=[8]}
+  %p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,8]<=[2,4]T(1,0)}
+  ROOT %dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} %p0, f32[3264,2176]{1,0} %p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[1,1,8]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Dot(), op::Shape("f32[8,2048,272]")));
+
+  VLOG(1) << module->ToString();
+}
+
 TEST_P(SpmdPartitioningTest, ComplexReshapeReshard) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -15746,6 +16012,184 @@ ENTRY main.12 {
   auto cp = FindInstruction(module.get(), HloOpcode::kCollectivePermute);
   EXPECT_NE(cp, nullptr);
   EXPECT_THAT(cp, op::Shape("s32[1]{0}"));
+}
+
+TEST_P(SpmdPartitioningTest, RaggedDotNonContractingMode) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[16,32,64] parameter(0), sharding={devices=[2,1,2,2]<=[8] last_tile_dim_replicate}
+  b = f32[4,16,64,8] parameter(1), sharding={devices=[1,2,2,2]<=[8]}
+  c = u32[16,4] parameter(2), sharding={devices=[2,1,4]<=[8] last_tile_dim_replicate}
+  ROOT dot = f32[16,32,8] ragged-dot(a, b, c),
+    lhs_batch_dims={0}, rhs_batch_dims={1},
+    lhs_contracting_dims={2}, rhs_contracting_dims={2},
+    lhs_ragged_dims={1}, rhs_group_dims={0},
+    sharding={devices=[2,1,2,2]<=[2,2,2]T(0,2,1) last_tile_dim_replicate}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,32,32]"));
+  auto param1 = AllOf(op::Parameter(1), op::Shape("f32[4,8,32,4]"));
+  auto param2 = AllOf(op::Parameter(2), op::Shape("u32[8,4]"));
+  auto ragged_dot =
+      AllOf(op::RaggedDot(param0, param1, param2), op::Shape("f32[8,32,4]"));
+  auto all_reduce = AllOf(op::AllReduce(ragged_dot), op::Shape("f32[8,32,4]"));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, all_reduce);
+
+  auto replica_groups = Cast<HloAllReduceInstruction>(root)->replica_groups();
+  EXPECT_EQ(replica_groups.size(), 4);
+  EXPECT_THAT(replica_groups[0].replica_ids(), ::testing::ElementsAre(0, 2));
+}
+
+TEST_P(SpmdPartitioningTest, RaggedDotContractingMode) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[15,33,64] parameter(0), sharding={devices=[2,2,1,2]<=[8] last_tile_dim_replicate}
+  b = f32[15,64,9] parameter(1), sharding={devices=[2,1,2,2]<=[2,2,2]T(0,2,1) last_tile_dim_replicate}
+  c = u32[15,4] parameter(2), sharding={devices=[2,1,4]<=[8] last_tile_dim_replicate}
+  ROOT dot = f32[4,15,33,9] ragged-dot(a, b, c),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    lhs_ragged_dims={2}, sharding={devices=[1,2,2,2]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,17,64]"));
+  auto param1 = AllOf(op::Parameter(1), op::Shape("f32[8,64,5]"));
+  auto param2 = AllOf(op::Parameter(2), op::Shape("u32[8,4]"));
+  auto ragged_dot =
+      AllOf(op::RaggedDot(param0, param1, param2), op::Shape("f32[4,8,17,5]"));
+  EXPECT_THAT(module->entry_computation()->root_instruction(), ragged_dot);
+}
+
+TEST_P(SpmdPartitioningTest, RaggedDotBatchModeWithPadding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[16,32,63] parameter(0), sharding={devices=[2,2,2,2]<=[2,2,2,2]T(0,1,3,2) last_tile_dim_replicate}
+  b = f32[16,63,8] parameter(1), sharding={devices=[2,2,2,2]<=[2,2,2,2]T(0,3,2,1) last_tile_dim_replicate}
+  c = u32[4] parameter(2), sharding={devices=[4,4]<=[16] last_tile_dim_replicate}
+  ROOT dot = f32[16,32,8] ragged-dot(a, b, c),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    lhs_ragged_dims={0},
+    sharding={devices=[2,2,2,2]<=[16] last_tile_dim_replicate}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/16));
+
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,16,32]"));
+  auto param0_pad = AllOf(op::Select(_, param0, op::Broadcast(op::Constant())),
+                          op::Shape("f32[8,16,32]"));
+
+  auto param1 = AllOf(op::Parameter(1), op::Shape("f32[8,32,4]"));
+  auto param1_pad = AllOf(op::Select(_, param1, op::Broadcast(op::Constant())),
+                          op::Shape("f32[8,32,4]"));
+
+  auto dot = AllOf(op::Dot(param0_pad, param1_pad), op::Shape("f32[8,16,4]"));
+  auto all_reduce = AllOf(op::AllReduce(dot), op::Shape("f32[8,16,4]"));
+
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, all_reduce);
+
+  auto replica_groups = Cast<HloAllReduceInstruction>(root)->replica_groups();
+  EXPECT_EQ(replica_groups.size(), 8);
+  EXPECT_THAT(replica_groups[0].replica_ids(), ::testing::ElementsAre(0, 1));
+}
+
+TEST_P(SpmdPartitioningTest, RaggedDotBatchModeWithoutPadding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[15,31,64] parameter(0), sharding={devices=[2,2,2,2]<=[2,2,2,2]T(0,1,3,2) last_tile_dim_replicate}
+  b = f32[15,64,7] parameter(1), sharding={devices=[2,2,2,2]<=[2,2,2,2]T(0,3,2,1) last_tile_dim_replicate}
+  c = u32[4] parameter(2), sharding={devices=[4,4]<=[16] last_tile_dim_replicate}
+  ROOT dot = f32[15,31,7] ragged-dot(a, b, c),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    lhs_ragged_dims={0},
+    sharding={devices=[2,2,2,2]<=[16] last_tile_dim_replicate}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/16));
+
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,16,32]"));
+  auto param1 = AllOf(op::Parameter(1), op::Shape("f32[8,32,4]"));
+  auto dot = AllOf(op::Dot(param0, param1), op::Shape("f32[8,16,4]"));
+  auto all_reduce = AllOf(op::AllReduce(dot), op::Shape("f32[8,16,4]"));
+
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, all_reduce);
+
+  auto replica_groups = Cast<HloAllReduceInstruction>(root)->replica_groups();
+  EXPECT_EQ(replica_groups.size(), 8);
+  EXPECT_THAT(replica_groups[0].replica_ids(), ::testing::ElementsAre(0, 1));
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedDot) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[8,1024]{1,0} parameter(0), sharding={devices=[1,2]0,1}
+  b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,1]0,1}
+  dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  ROOT copy = f32[8,256]{1,0} copy(dot), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Copy(op::Dot()));
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedPopulation) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  constant = s32[2,4]{1,0} constant({{1,1,1,1},{1,1,1,1}}), sharding={maximal device=0}
+  a = s32[2,4]{1,0} parameter(0), sharding={devices=[1,2]0,1}
+  add = s32[2,4]{1,0} add(constant, a), frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  ROOT %copy = s32[2,4]{1,0} copy(%add), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  // Check that we use all-reduce to reshard the operands of the add in spite
+  // that the `add` has unreduced axes.
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Copy(op::Add(op::AllReduce(), op::AllReduce())));
+}
+
+TEST_P(SpmdPartitioningTest, DotCrashGroupContractingOutput) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %parameter.0 = f32[128,2048,64]{2,1,0} parameter(0), sharding={devices=[64,1,1,16]<=[1024] last_tile_dim_replicate}
+  %parameter.1 = f32[128,2048,3584]{2,1,0} parameter(1), sharding={devices=[64,16,1]<=[1024]}
+  %dot.2840 = f32[64,3584]{0,1} dot(%parameter.0, %parameter.1), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}, sharding={devices=[1,64,16]<=[2,4,8,16]T(1,3,0,2) last_tile_dim_replicate}
+  ROOT %copy = f32[64,3584]{0,1} copy(%dot.2840), sharding={devices=[1,64,16]<=[2,4,8,16]T(1,3,0,2) last_tile_dim_replicate}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, PartitionComputation(hlo_string, /*num_devices=*/1024));
+  VLOG(1) << module->ToString();
 }
 
 }  // namespace

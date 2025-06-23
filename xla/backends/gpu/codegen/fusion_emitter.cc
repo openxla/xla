@@ -14,10 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 
-#include <array>
 #include <cstddef>
-#include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -34,23 +31,23 @@ limitations under the License.
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
 #include "llvm/TargetParser/Triple.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
-#include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "xla/codegen/emitters/kernel_api_builder.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/analysis/indexing_map.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/layout_util.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/kernel_arguments.h"
-#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -60,8 +57,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -84,92 +79,37 @@ absl::Status AnnotateKernelLaunchDimensions(
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
-  // Our launch bounds are exact, so we can specify them as
-  // reqntid[xyz] rather than maxntid[xyz].
-  const std::string attr =
-      absl::StrCat(launch_dims.thread_counts_per_block().x, ",",
-                   launch_dims.thread_counts_per_block().y, ",",
-                   launch_dims.thread_counts_per_block().z);
-  kernel->addFnAttr("nvvm.reqntid", attr);
-  // Maybe we want to set "reqnctapercluster" here, but not sure if needed or if
-  // LLVM supports that yet. Let's do that later when needed.
+  llvm::Triple target_triple = llvm::Triple(llvm_module->getTargetTriple());
+
+  if (target_triple.isNVPTX()) {
+    // Our launch bounds are exact, so we can specify them as
+    // reqntid[xyz] rather than maxntid[xyz].
+    const std::string attr =
+        absl::StrCat(launch_dims.thread_counts_per_block().x, ",",
+                     launch_dims.thread_counts_per_block().y, ",",
+                     launch_dims.thread_counts_per_block().z);
+    kernel->addFnAttr("nvvm.reqntid", attr);
+    // Maybe we want to set "reqnctapercluster" here, but not sure if needed or
+    // if LLVM supports that yet. Let's do that later when needed.
+  } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
+    kernel->addFnAttr("amdgpu-flat-work-group-size",
+                      absl::StrJoin({launch_dims.num_threads_per_block(),
+                                     launch_dims.num_threads_per_block()},
+                                    ","));
+    kernel->addFnAttr("amdgpu-max-num-workgroups",
+                      absl::StrJoin({launch_dims.block_counts().x,
+                                     launch_dims.block_counts().y,
+                                     launch_dims.block_counts().z},
+                                    ","));
+  }
   return absl::OkStatus();
 }
 
 IndexingMap KernelFusionInterface::GetDefaultThreadIdIndexingMap(
     const LaunchDimensions& launch_dims, int unroll_factor, const Shape& shape,
     mlir::MLIRContext* ctx) {
-  std::vector<mlir::AffineExpr> output_dims(shape.rank());
-
-  std::array<uint64_t, 3> thread_counts{
-      launch_dims.thread_counts_per_block().x,
-      launch_dims.thread_counts_per_block().y,
-      launch_dims.thread_counts_per_block().z,
-  };
-
-  std::array<uint64_t, 3> total_sizes{
-      launch_dims.thread_counts_per_block().x * launch_dims.block_counts().x,
-      launch_dims.thread_counts_per_block().y * launch_dims.block_counts().y,
-      launch_dims.thread_counts_per_block().z * launch_dims.block_counts().z,
-  };
-
-  // ParallelLoopEmitter makes some assumptions about launch dimensions and
-  // computes the linear index using only the x and y components.
-  //
-  // We implement the general formula instead and rely on the simplifier to
-  // fix it.
-  //
-  // This means that this code supports some launch grids that the parallel
-  // loop emitter doesn't support. This is safe, since the latter CHECK fails
-  // if its assumptions are not fulfilled.
-  mlir::AffineExpr c0 = mlir::getAffineConstantExpr(0, ctx);
-  mlir::AffineExpr linear_index = c0;
-  uint64_t stride = 1;
-  for (int i = 0; i < 3; ++i) {
-    auto coord = mlir::getAffineDimExpr(kIndexingMapThreadIdxDims[i], ctx) +
-                 mlir::getAffineDimExpr(kIndexingMapBlockIdxDims[i], ctx) *
-                     thread_counts[i];
-    auto linear_component = coord * stride;
-    linear_index = linear_index + linear_component;
-    stride *= total_sizes[i];
-  }
-  mlir::AffineExpr chunk_id = mlir::getAffineSymbolExpr(0, ctx);
-  mlir::AffineExpr unroll_elem_id = mlir::getAffineSymbolExpr(1, ctx);
-
-  linear_index = linear_index * unroll_factor +
-                 chunk_id * unroll_factor * launch_dims.launch_bound() +
-                 unroll_elem_id;
-
-  // See IndexUtil::LinearIndexToMultidimensionalIndex.
-  uint64_t divisor = 1;
-  for (auto dimension : LayoutUtil::MinorToMajor(shape)) {
-    output_dims[dimension] = (linear_index.floorDiv(divisor)) %
-                             static_cast<uint64_t>(shape.dimensions(dimension));
-    divisor *= shape.dimensions(dimension);
-  }
-
-  std::vector<IndexingMap::Variable> dim_vars = DimVarsFromGPUGrid(
-      {static_cast<int64_t>(launch_dims.thread_counts_per_block().x),
-       static_cast<int64_t>(launch_dims.thread_counts_per_block().y),
-       static_cast<int64_t>(launch_dims.thread_counts_per_block().z),
-       static_cast<int64_t>(launch_dims.block_counts().x),
-       static_cast<int64_t>(launch_dims.block_counts().y),
-       static_cast<int64_t>(launch_dims.block_counts().z)});
-  std::vector<IndexingMap::Variable> range_vars;
-  int64_t num_elements = ShapeUtil::ElementsIn(shape);
-  range_vars.push_back(IndexingMap::Variable{
-      {0, CeilOfRatio(num_elements,
-                      static_cast<int64_t>(launch_dims.launch_bound()) *
-                          unroll_factor) -
-              1}});
-  range_vars.push_back({0, unroll_factor - 1});
-  IndexingMap indexing_map(
-      mlir::AffineMap::get(/*dimCount=*/6,
-                           /*symbolCount=*/2, output_dims, ctx),
-      dim_vars, range_vars, /*rt_vars=*/{});
-  indexing_map.AddConstraint(linear_index, Interval{0, num_elements - 1});
-  indexing_map.Simplify();
-  return indexing_map;
+  return emitters::GetDefaultWorkItemIndexingMap(launch_dims.AsWorkDimensions(),
+                                                 unroll_factor, shape, ctx);
 }
 
 std::string GetSanitizedUniqueName(IrEmitterContext& ir_emitter_context,
@@ -181,25 +121,25 @@ std::string GetSanitizedUniqueName(IrEmitterContext& ir_emitter_context,
 absl::StatusOr<std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray>,
                           std::vector<llvm_ir::IrArray>>>
 BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
+                     const std::string& impl_fn_name,
                      const std::string& suggested_name,
-                     absl::Span<const KernelArgument> arguments,
+                     absl::Span<const emitters::KernelArgument> arguments,
                      size_t num_inputs,
                      const LaunchDimensions& launch_dimensions,
                      llvm::IRBuilderBase* builder) {
   return BuildKernelPrototypeFromUniqueName(
-      ir_emitter_context,
+      ir_emitter_context, impl_fn_name,
       GetSanitizedUniqueName(ir_emitter_context, suggested_name), arguments,
       num_inputs, launch_dimensions, builder);
 }
 
 absl::StatusOr<std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray>,
                           std::vector<llvm_ir::IrArray>>>
-BuildKernelPrototypeFromUniqueName(IrEmitterContext& ir_emitter_context,
-                                   const std::string& unique_kernel_name,
-                                   absl::Span<const KernelArgument> arguments,
-                                   size_t num_inputs,
-                                   const LaunchDimensions& launch_dimensions,
-                                   llvm::IRBuilderBase* builder) {
+BuildKernelPrototypeFromUniqueName(
+    IrEmitterContext& ir_emitter_context, const std::string& impl_fn_name,
+    const std::string& unique_kernel_name,
+    absl::Span<const emitters::KernelArgument> arguments, size_t num_inputs,
+    const LaunchDimensions& launch_dimensions, llvm::IRBuilderBase* builder) {
   // If some arguments have the same buffer, we will pass them only once.
   llvm::SmallVector<int> to_llvm_arg_no(arguments.size());
   llvm::SmallVector<int> to_arg_no;
@@ -234,9 +174,6 @@ BuildKernelPrototypeFromUniqueName(IrEmitterContext& ir_emitter_context,
       AnnotateKernelLaunchDimensions(ir_emitter_context.gpu_device_info(),
                                      launch_dimensions, kernel, llvm_module));
 
-  // TODO(b/65380986): Investigate if adding fast math flags for generated
-  // kernels makes sense.
-
   // Update the insert point to the entry basic block.
   llvm::BasicBlock* entry_bb =
       llvm::BasicBlock::Create(context, /*Name=*/"entry", /*Parent=*/kernel);
@@ -244,32 +181,47 @@ BuildKernelPrototypeFromUniqueName(IrEmitterContext& ir_emitter_context,
   // Emit a "return void" at entry_bb's end, and set the insert point before
   // that return instruction.
   builder->SetInsertPoint(llvm::ReturnInst::Create(context, entry_bb));
+  // Get the original function to extract attributes.
+  auto impl_func = llvm_module->getFunction(impl_fn_name);
 
   for (size_t llvm_arg_no = 0; llvm_arg_no < kernel->arg_size();
        ++llvm_arg_no) {
-    const KernelArgument& kernel_argument = arguments[to_arg_no[llvm_arg_no]];
-    llvm::Argument& llvm_arg = *kernel->getArg(llvm_arg_no);
+    const emitters::KernelArgument& kernel_argument =
+        arguments[to_arg_no[llvm_arg_no]];
+    // Get the original argument to extract attributes from if they exist.
+    llvm::Argument* impl_arg =
+        impl_func ? impl_func->getArg(llvm_arg_no) : nullptr;
+    llvm::Argument& new_arg = *kernel->getArg(llvm_arg_no);
+    new_arg.setName(absl::StrCat("arg", llvm_arg_no));
 
-    llvm_arg.setName(absl::StrCat("arg", llvm_arg_no));
-
-    kernel->addDereferenceableParamAttr(llvm_arg_no,
-                                        kernel_argument.slice().size());
-
-    kernel->addParamAttr(
-        llvm_arg_no,
-        llvm::Attribute::get(llvm_arg.getContext(), llvm::Attribute::Alignment,
-                             kernel_argument.alignment()));
-
-    if (!kernel_argument.aliased()) {
+    if (impl_arg && impl_arg->hasByValAttr()) {
       kernel->addParamAttr(llvm_arg_no,
-                           llvm::Attribute::get(llvm_arg.getContext(),
-                                                llvm::Attribute::NoAlias));
+                           impl_arg->getAttribute(llvm::Attribute::ByVal));
+    } else {
+      kernel->addDereferenceableParamAttr(llvm_arg_no,
+                                          kernel_argument.slice().size());
+    }
+    // If the alignment has been specified in the original function, use it.
+    // Otherwise, use the alignment from the kernel argument.
+    if (impl_arg && impl_arg->hasAttribute(llvm::Attribute::Alignment)) {
+      kernel->addParamAttr(llvm_arg_no,
+                           impl_arg->getAttribute(llvm::Attribute::Alignment));
+    } else {
+      kernel->addParamAttr(
+          llvm_arg_no,
+          llvm::Attribute::get(new_arg.getContext(), llvm::Attribute::Alignment,
+                               kernel_argument.alignment()));
+    }
+    if (!kernel_argument.aliased()) {
+      kernel->addParamAttr(
+          llvm_arg_no,
+          llvm::Attribute::get(new_arg.getContext(), llvm::Attribute::NoAlias));
     }
   }
 
   std::vector<llvm_ir::IrArray> inputs, outputs;
   for (size_t arg_no = 0; arg_no < arguments.size(); ++arg_no) {
-    const KernelArgument& kernel_argument = arguments[arg_no];
+    const emitters::KernelArgument& kernel_argument = arguments[arg_no];
     llvm::Argument& llvm_arg = *kernel->getArg(to_llvm_arg_no[arg_no]);
 
     llvm::Type* ir_type =

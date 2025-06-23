@@ -45,7 +45,7 @@ static size_t GetConvolutionRank(const Shape& input_shape) {
   // Convolution rank is the number of spatial dimensions. Besides spatial
   // dimensions, input shape contains two other dimensions (batch size and the
   // number of channels).
-  return input_shape.rank() - 2;
+  return input_shape.dimensions().size() - 2;
 }
 
 static absl::Status ValidateConvolutionShapes(
@@ -59,12 +59,13 @@ static absl::Status ValidateConvolutionShapes(
   }
 
   // Rank of input, kernel and output buffers.
-  if (input_shape.rank() != kernel_shape.rank() ||
-      input_shape.rank() != output_shape.rank()) {
+  if (input_shape.dimensions().size() != kernel_shape.dimensions().size() ||
+      input_shape.dimensions().size() != output_shape.dimensions().size()) {
     return InvalidArgument(
         "ConvolutionThunk: Buffer ranks mismatch. Input rank (%d) vs kernel "
         "rank (%d) vs output rank (%d)",
-        input_shape.rank(), kernel_shape.rank(), output_shape.rank());
+        input_shape.dimensions().size(), kernel_shape.dimensions().size(),
+        output_shape.dimensions().size());
   }
 
   // Batch size.

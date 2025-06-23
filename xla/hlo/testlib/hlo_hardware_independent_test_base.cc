@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -145,6 +146,7 @@ HloHardwareIndependentTestBase::ParseAndReturnVerifiedModule(
     std::function<int64_t(const xla::Shape&)> shape_size_fn) const {
   HloModuleConfig config_with_device_assignment = config;
   if (!config.has_static_device_assignment()) {
+    absl::MutexLock ml(&device_assignment_mu_);
     default_device_assignment_ =
         std::make_unique<DeviceAssignment>(GetDefaultDeviceAssignment(
             config.replica_count(), config.num_partitions()));
@@ -243,7 +245,7 @@ void HloHardwareIndependentTestBase::RunAndFilecheckHloRewrite(
     TF_ASSERT_OK_AND_ASSIGN(
         bool filecheck_matches,
         RunFileCheck(
-            module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
+            module->ToString(HloPrintOptions().set_print_large_constants(true)),
             *expected));
     EXPECT_TRUE(filecheck_matches);
     if (after_pass_checks) {
@@ -287,7 +289,7 @@ void HloHardwareIndependentTestBase::RunAndFilecheckHloModuleGroupRewrite(
     TF_ASSERT_OK_AND_ASSIGN(
         bool filecheck_matches,
         RunFileCheck(module_group.module(index).ToString(
-                         HloPrintOptions{}.set_print_operand_shape(false)),
+                         HloPrintOptions().set_print_large_constants(true)),
                      expected_str));
     EXPECT_TRUE(filecheck_matches);
     index++;

@@ -214,12 +214,12 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::FlopsPerElement(
     // The Cost Model assumes that the reduction computation is applied N-1
     // times to reduce N elements. This is not true, because emitters will
     // generate a loop with N iterations. We don't fix it here to keep this
-    // estimate consistent with GpuHloCostAnalysis. This is like doesn't matter
+    // estimate consistent with `GpuHloCostAnalysis`. This likely doesn't matter
     // much for the application of the Cost Model.
     return (reduction_factor - 1) * flops_per_reduce_computation;
   }
 
-  // Encountered unexpected instruction, call to GpuHloCostAnalysis.
+  // Encountered unexpected instruction, call into `GpuHloCostAnalysis`.
   TF_CHECK_OK(
       cost_analysis_.RevisitInstruction(const_cast<HloInstruction*>(instr)));
 
@@ -303,7 +303,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
     for (const auto& indexing_map : indexing_maps) {
       VLOG(10) << indexing_map;
 
-      int64_t num_iters = GetIterationSpaceSize(indexing_map, instr);
+      int64_t num_iters = GetIterationSpaceSize(indexing_map.map(), instr);
 
       if (is_operand) {
         int64_t type_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
@@ -335,8 +335,8 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
                   launch_dimensions.num_threads_per_block());
   absl::Duration write_time = WriteTime(*device_info_, bytes_written);
   absl::Duration memory_access_time = read_time + write_time;
-  absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
-      compute_time, memory_access_time, GpuPerformanceModelOptions::Default());
+  absl::Duration exec_time =
+      CombineComputeAndMemoryAccessTime(compute_time, memory_access_time);
 
   EstimateRunTimeData runtime_data = {flops,     bytes_read, bytes_written,
                                       read_time, write_time, compute_time,
@@ -512,12 +512,12 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
   }
 
   absl::Duration compute_time =
-      ComputeTime(*device_info_, flops, launch_dimensions.num_blocks(),
+      ComputeTime(*device_info_, flops, num_blocks,
                   launch_dimensions.num_threads_per_block());
 
   absl::Duration memory_access_time = read_time + write_time;
-  absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
-      compute_time, memory_access_time, GpuPerformanceModelOptions::Default());
+  absl::Duration exec_time =
+      CombineComputeAndMemoryAccessTime(compute_time, memory_access_time);
 
   return EstimateRunTimeData{/*flops=*/flops,
                              /*bytes_read=*/bytes_read,
@@ -543,15 +543,18 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
     return absl::FailedPreconditionError(absl::StrCat(
         "SymbolicTileAnalysis failed. ", fusion_decision->Explain()));
   }
-  // TODO(b/390559452): Add support for more than one fusion root.
-  if (tile_sizes.size() != 1) {
-    return absl::UnimplementedError("Only 1 root is supported right now");
-  }
   SymbolicTileAnalysis analysis =
       std::get<SymbolicTileAnalysis>(std::move(analysis_or_error));
 
+  int64_t real_root_index = analysis.real_root_index();
+  absl::Span<int64_t const> real_root_tile_sizes = tile_sizes[real_root_index];
+  const HloInstruction* real_root =
+      &fusion_adaptor.GetRoots()[real_root_index].instruction();
+  Tiling tiling = Tiling({{real_root, FlatTiling(real_root_tile_sizes.begin(),
+                                                 real_root_tile_sizes.end())}});
+
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
-                      analysis.ComputeTiledHloInstructions(tile_sizes[0]));
+                      analysis.ComputeTiledHloInstructions(tiling));
 
   return EstimateRunTimeForTiledHloComputation(
       fusion_adaptor, tiled_hlo_computation, launch_dimensions);
@@ -611,7 +614,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
   SymbolicTileAnalysis analysis =
       std::get<SymbolicTileAnalysis>(std::move(analysis_or_error));
 
-  TF_ASSIGN_OR_RETURN(auto tilings, analysis.GetGoodTilings());
+  TF_ASSIGN_OR_RETURN(auto tilings, analysis.GetValidTilings());
 
   std::optional<TiledRunTimeData> best_tiled_run_time_data;
 

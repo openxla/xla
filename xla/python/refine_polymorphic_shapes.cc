@@ -155,8 +155,6 @@ struct CheckShapeAssertionsPass
       return op.emitError() << "expects an empty backend_config";
     if (op.getCallTargetName() != shapeAssertionName)
       return op.emitError() << "expects @shape_assertion";
-    if (!op.getHasSideEffect())
-      return op.emitError() << "expects has_side_effect=true";
 
     // input[0] (assert_what) : tensor<i1>
     auto assertWhatType =
@@ -274,7 +272,8 @@ absl::Status RefinePolymorphicShapes(mlir::ModuleOp module,
   // TODO(necula): we should not need the inliner.
   pm.addPass(mlir::createInlinerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addPass(mlir::stablehlo_ext::createChloRecomposeOpsPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::stablehlo_ext::createChloRecomposeOpsPass());
   pm.addPass(mlir::stablehlo_ext::createStablehloRefineShapesPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::stablehlo_ext::createStablehloCanonicalizeDynamismPass());
@@ -313,6 +312,7 @@ absl::Status RefinePolymorphicShapes(llvm::StringRef module_str,
   if (enable_shardy) {
     mlir::PassManager pm(module.get()->getName(),
                          mlir::OpPassManager::Nesting::Implicit);
+    // TODO(b/422690222): Remove `addSdyRoundTripImportPipeline` after 6 months.
     // NOTE: JAX shape refinement has `@shape_assertion` custom calls that
     // require constant folding. As such, we cannot import constants here just
     // yet. We have to delay it until after shape refinement.

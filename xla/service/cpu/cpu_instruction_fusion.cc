@@ -19,12 +19,16 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
+#include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
+#include "xla/service/cpu/cpu_options.h"
 #include "xla/service/fusion_node_indexing_evaluation.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
 
@@ -54,7 +58,8 @@ bool CanBeLoopFused(const HloInstruction& hlo) {
 bool IsNonComplexNonBatchedMatrixVectorDot(const HloInstruction* hlo) {
   const Shape& hlo_shape = hlo->shape();
   return !ShapeUtil::ElementIsComplex(hlo_shape) &&
-         hlo->opcode() == HloOpcode::kDot && hlo_shape.rank() <= 1 &&
+         hlo->opcode() == HloOpcode::kDot &&
+         hlo_shape.dimensions().size() <= 1 &&
          hlo->dot_dimension_numbers().lhs_batch_dimensions_size() == 0;
 }
 
@@ -76,6 +81,32 @@ bool CanBeOutputFusedIntoSomeOperand(const HloInstruction* consumer) {
           CanBeOutputFused(consumer->operand(1), consumer));
 }
 
+// Should we block the fusion of the subcomputation of the passed instruction?
+bool BlockSubcomputationFusion(const HloInstruction* instruction,
+                               const HloModuleConfig& config) {
+  HloOpcode opcode = instruction->opcode();
+  const bool is_fusion_emitters =
+      config.debug_options().xla_cpu_use_thunk_runtime() &&
+      config.debug_options().xla_cpu_use_fusion_emitters();
+
+  if (is_fusion_emitters && opcode == HloOpcode::kScatter) {
+    return true;
+  }
+
+  const bool use_experemental_fusion_emitters =
+      options::UseExperimentalLoopFusion(config);
+
+  // If the instruction itself can be fused then the subcomputation should be
+  // blocked as the fusion emitter can't emit fusion ops inside another
+  // fusion.
+  if (is_fusion_emitters && use_experemental_fusion_emitters &&
+      emitters::IsSupportedElementalOp(opcode)) {
+    return true;
+  }
+
+  return false;
+}
+
 }  // namespace
 
 void CpuInstructionFusion::ComputeInstructionsToSkip(
@@ -84,13 +115,12 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
   const auto computations_list =
       module->MakeComputationPostOrder(execution_threads);
   instructions_to_skip_.clear();
-  const bool is_fusion_emitters =
-      module->config().debug_options().xla_cpu_use_thunk_runtime() &&
-      module->config().debug_options().xla_cpu_use_fusion_emitters();
+
   for (auto* computation : computations_list) {
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
-      if (instruction->IsCustomFusion() ||
-          instruction->opcode() == HloOpcode::kCustomCall) {
+      if (instruction->IsCustomFusion()) {
+        instructions_to_skip_.insert(instruction);
+      } else if (instruction->opcode() == HloOpcode::kCustomCall) {
         HloCallableInstruction* callable =
             Cast<HloCallableInstruction>(instruction);
         if (callable->called_computations().empty()) {
@@ -99,12 +129,8 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
         for (HloInstruction* instr :
              callable->called_computation()->instructions())
           instructions_to_skip_.insert(instr);
-      } else if (is_fusion_emitters &&
-                 instruction->opcode() == HloOpcode::kScatter) {
-        // Disallow fusions in the called computation (e.g. reduction)
-        // of a scatter "fusion"; the fusion emitter can't handle them.
-        auto* scatter = Cast<HloScatterInstruction>(instruction);
-        for (const auto* computation : scatter->called_computations()) {
+      } else if (BlockSubcomputationFusion(instruction, module->config())) {
+        for (const auto* computation : instruction->called_computations()) {
           for (const auto* instr : computation->instructions()) {
             instructions_to_skip_.insert(instr);
           }
@@ -161,7 +187,7 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   // better job with pure data movement loops.
   auto is_minor_dim_concatenate = [](const HloInstruction* hlo) {
     // For vectors it's always beneficial to fuse concatenations.
-    if (hlo->shape().rank() <= 1) return false;
+    if (hlo->shape().dimensions().size() <= 1) return false;
 
     // For small concatenated dimensions we don't loose any performance by
     // fusing the concatenation as we don't have opportunities for vectorization
@@ -188,6 +214,26 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   }
 
   RETURN_IF_NOT_FUSIBLE(InstructionFusion::ShouldFuse(consumer, operand_index));
+
+  // Fusing too many reductions together can lead to a giant LLVM modules after
+  // loop unrolling. We prefer to split such fusions into multiple kernels to
+  // avoid excessive compilation times. X86TargetLowering::PerformDAGCombine
+  // spends tens of minutes trying to combine load operations.
+  //
+  // TODO(b/419635451): Remove this once we have a better way to control the
+  // size of the generated LLVM IR.
+  static constexpr int64_t kMaxReductionsInFusion = 5;
+  if (consumer->opcode() == HloOpcode::kFusion &&
+      producer->opcode() == HloOpcode::kReduce) {
+    int64_t num_fused_reductions = absl::c_count_if(
+        consumer->fused_instructions(), [](const HloInstruction* instr) {
+          return instr->opcode() == HloOpcode::kReduce;
+        });
+    if (num_fused_reductions > kMaxReductionsInFusion) {
+      return FusionDecision::Forbid(
+          "Too many reductions inside single fusion.");
+    }
+  }
 
   // Fuse constants in general but avoid creating 2-instruction fusions with
   // just a constant and another node.
@@ -231,18 +277,19 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
     // fusion can easily be overshadowed by the overhead of a naive GEMM
     // algorithm in the IR.
     const Shape& output_shape = consumer->shape();
-    if (output_shape.rank() <= 1) {
+    if (output_shape.dimensions().size() <= 1) {
       // We fuse in cases where we have a matrix*vector or vector*matrix dot and
       // fusion can get rid of the larger tensor.  We assume that a naive
       // traversal of a small enough (to fit in L1) column or row tensor is
       // "good enough" from the perspective of cache management; and calling out
       // to an optimized GEMM kernel is not a huge win.
-      if (consumer->operand(0)->shape().rank() == 1 && operand_index == 1 &&
+      if (consumer->operand(0)->shape().dimensions().size() == 1 &&
+          operand_index == 1 &&
           ShapeUtil::ByteSizeOfElements(consumer->operand(0)->shape()) <
               kFusionThresholdBytes) {
         VLOG(2) << "Fusing small matrix-vector product.";
         return FusionDecision::Allow();
-      } else if (consumer->operand(1)->shape().rank() == 1 &&
+      } else if (consumer->operand(1)->shape().dimensions().size() == 1 &&
                  operand_index == 0 &&
                  ShapeUtil::ByteSizeOfElements(consumer->operand(1)->shape()) <
                      kFusionThresholdBytes) {
@@ -250,23 +297,6 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
         return FusionDecision::Allow();
       }
     }
-  }
-
-  // Don't fuse reductions over the major dimensions. These have an efficient
-  // lowering that's only implemented for the unfused case.
-  if (consumer->opcode() == HloOpcode::kReduce &&
-      !absl::c_linear_search(
-          consumer->dimensions(),
-          LayoutUtil::Minor(consumer->operand(0)->shape().layout(), 0))) {
-    return FusionDecision::Forbid(
-        "Not fusing reductions over major dimensions");
-  }
-  if (producer->opcode() == HloOpcode::kReduce &&
-      !absl::c_linear_search(
-          producer->dimensions(),
-          LayoutUtil::Minor(producer->operand(0)->shape().layout(), 0))) {
-    return FusionDecision::Forbid(
-        "Not fusing reductions over major dimensions");
   }
 
   if (consumer->IsLoopFusion()) {

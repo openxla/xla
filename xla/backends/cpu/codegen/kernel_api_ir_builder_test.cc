@@ -22,6 +22,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Constants.h"
@@ -29,26 +30,30 @@ limitations under the License.
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/Casting.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_value.h"
+#include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
 template <bool ValidateBuffers>
-class KernelApiIrBuilderTestBase : public HloTestBase {
+class KernelApiIrBuilderTestBase : public HloHardwareIndependentTestBase {
  public:
   KernelApiIrBuilderTestBase()
       : module_("KernelApiIrBuilderTest", context_),
@@ -59,25 +64,29 @@ class KernelApiIrBuilderTestBase : public HloTestBase {
 
   llvm::IRBuilder<> getBuilder() { return llvm::IRBuilder<>(context_); }
 
-  auto EmitKernelPrototype(const HloInstruction* instr,
-                           const BufferAssignment* buffer_assignment) {
-    return kernel_api_ir_builder_.EmitKernelPrototype(module_, instr,
-                                                      buffer_assignment);
+  auto EmitKernelPrototype(
+      const HloInstruction* instr, const BufferAssignment* buffer_assignment,
+      const std::string& module_memory_region_name = "dummy_emitter") {
+    return kernel_api_ir_builder_.EmitKernelPrototype(
+        module_, instr, buffer_assignment, module_memory_region_name);
   }
 
   auto EmitKernelPrototype(
       absl::string_view name,
       absl::Span<const KernelApiIrBuilder::KernelParameter> arguments,
-      absl::Span<const KernelApiIrBuilder::KernelParameter> results) {
-    return kernel_api_ir_builder_.EmitKernelPrototype(module_, name, arguments,
-                                                      results);
+      absl::Span<const KernelApiIrBuilder::KernelParameter> results,
+      const std::string& module_memory_region_name = "dummy_emitter") {
+    return kernel_api_ir_builder_.EmitKernelPrototype(
+        module_, name, arguments, results, module_memory_region_name);
   }
 
   absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
       const HloModule& hlo) {
     return BufferAssigner::Run(
         &hlo, std::make_unique<DependencyHloOrdering>(&hlo),
-        backend().compiler()->BufferSizeBytesFunction(),
+        [](const BufferValue& buffer) {
+          return CpuExecutable::ShapeSizeBytes(buffer.shape());
+        },
         [](LogicalBuffer::Color) { return /*alignment=*/1; });
   }
 
@@ -87,6 +96,8 @@ class KernelApiIrBuilderTestBase : public HloTestBase {
 
   llvm::LLVMContext& context() { return context_; }
   std::string DumpToString() { return llvm_ir::DumpToString(&module_); }
+
+  llvm::Module& module() { return module_; }
 
  private:
   llvm::LLVMContext context_;
@@ -140,17 +151,17 @@ TEST_F(KernelApiIrBuilderTest, BuildKernelPrototype) {
     CHECK: define ptr @test(ptr %0) #0 {
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
@@ -351,17 +362,17 @@ TEST_F(KernelApiIrBuilderTestNoBufferValidation, PartialOverlap) {
     CHECK: define ptr @test(ptr %0) #0 {
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_NumWorkGroups, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
     CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 2
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_WorkGroupId, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
@@ -479,6 +490,27 @@ TEST_F(KernelApiIrBuilderTest, SetKernelFunctionAttributes) {
   EXPECT_FALSE(function->hasFnAttribute("prefer-vector-width"));
   SetKernelFunctionAttributes(function);
   EXPECT_TRUE(function->hasFnAttribute("prefer-vector-width"));
+}
+
+TEST_F(KernelApiIrBuilderTest, SetModuleMemoryRegionName) {
+  const std::string memory_region_name = "kernel_api_ir_builder_test";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto prototype, EmitKernelPrototype("test", {}, {}, memory_region_name));
+
+  SetModuleMemoryRegionName(module(), memory_region_name);
+
+  llvm::NamedMDNode* memory_region_name_md =
+      module().getNamedMetadata(std::string(kMemoryRegionNameMetadataName));
+  EXPECT_NE(memory_region_name_md, nullptr);
+  EXPECT_GT(memory_region_name_md->getNumOperands(), 0);
+  llvm::MDNode* node = memory_region_name_md->getOperand(0);
+  EXPECT_NE(node, nullptr);
+  EXPECT_GT(node->getNumOperands(), 0);
+  llvm::MDString* md_str = llvm::dyn_cast<llvm::MDString>(node->getOperand(0));
+  EXPECT_NE(md_str, nullptr);
+  llvm::StringRef mem_region_name_str = md_str->getString();
+
+  EXPECT_EQ(mem_region_name_str.str(), memory_region_name);
 }
 
 }  // namespace

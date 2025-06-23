@@ -112,8 +112,9 @@ class CollectivePermuteStartThunk : public CollectiveThunk {
 
  protected:
   const CollectiveConfig& config() const override { return config_.config; }
-  absl::Status RunCollective(const ExecuteParams& params, se::Stream& stream,
-                             CommunicatorHandle comm_handle) override;
+  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     se::Stream& stream,
+                                     CommunicatorHandle comm_handle) override;
 
  private:
   const P2PConfig config_;
@@ -122,12 +123,15 @@ class CollectivePermuteStartThunk : public CollectiveThunk {
   absl::Mutex barrier_mutex_;
   absl::flat_hash_map<int64_t, std::unique_ptr<se::Event>>
       receiver_barrier_events_;
+  absl::flat_hash_map<int64_t, std::unique_ptr<se::Event>>
+      sender_barrier_events_;
+
   bool p2p_memcpy_enabled_ = false;
   int64_t device_count_;
 };
 
 absl::Status RunCollectivePermute(
-    GpuCollectives* collectives, P2PConfig::SourceTargetMapEntry source_target,
+    P2PConfig::SourceTargetMapEntry source_target,
     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
     Communicator* comm, absl::string_view device_string, int64_t current_id,
     bool use_memcpy, CollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map);

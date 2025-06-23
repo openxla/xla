@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status_matchers.h"
@@ -102,6 +103,76 @@ absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b,
 // Returns the name of the test currently being run.
 std::string TestName() {
   return ::testing::UnitTest::GetInstance()->current_test_info()->name();
+}
+
+TEST(XlaBuilderTest, IsConstant) {
+  {
+    // cst -> tuple -> get_tuple_element
+    XlaBuilder b(TestName());
+    auto cst = ConstantR0<float>(&b, 1.0);
+    auto tuple = Tuple(&b, {cst, cst});
+    auto get_tuple_element = GetTupleElement(tuple, 0);
+    TF_ASSERT_OK_AND_ASSIGN(bool is_constant, b.IsConstant(get_tuple_element));
+    EXPECT_TRUE(is_constant);
+  }
+  {
+    // param -> tuple -> get_tuple_element
+    XlaBuilder b(TestName());
+    auto param = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {}), "p0");
+    auto tuple = Tuple(&b, {param, param});
+    auto get_tuple_element = GetTupleElement(tuple, 0);
+    TF_ASSERT_OK_AND_ASSIGN(bool is_constant, b.IsConstant(get_tuple_element));
+    EXPECT_FALSE(is_constant);
+  }
+  {
+    // cst -> add -> tuple -> get_tuple_element
+    XlaBuilder b(TestName());
+    auto cst = ConstantR0<float>(&b, 1.0);
+    auto add = Add(cst, cst);
+    auto tuple = Tuple(&b, {add, add});
+    auto get_tuple_element = GetTupleElement(tuple, 0);
+    TF_ASSERT_OK_AND_ASSIGN(bool is_constant, b.IsConstant(get_tuple_element));
+    EXPECT_TRUE(is_constant);
+  }
+  {
+    // cst,param -> add -> tuple -> get_tuple_element
+    XlaBuilder b(TestName());
+    auto cst = ConstantR0<float>(&b, 1.0);
+    auto param = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {}), "p0");
+    auto add = Add(cst, param);
+    auto tuple = Tuple(&b, {add, add});
+    auto get_tuple_element = GetTupleElement(tuple, 0);
+    TF_ASSERT_OK_AND_ASSIGN(bool is_constant, b.IsConstant(get_tuple_element));
+    EXPECT_FALSE(is_constant);
+  }
+}
+
+TEST(XlaBuilderTest, ConstantSubgraph) {
+  // cst -> tuple -> get_tuple_element
+  XlaBuilder b(TestName());
+  auto cst = ConstantR1<float>(&b, {1.0});
+  auto tuple = Tuple(&b, {cst, cst});
+  auto get_tuple_element = GetTupleElement(tuple, 0);
+  // Returns ok if subgraph's root is a constant.
+  EXPECT_TRUE(b.BuildConstantSubGraph(get_tuple_element).ok());
+}
+
+TEST(XlaBuilderTest, ConstantSubgraphGetDimSize) {
+  // Needs a little hackery to update the param from dynamic to static since
+  // xla::GetDimensionSize will fold to a constant if the dimension is static.
+
+  // param->get_dim_size
+  XlaBuilder b(TestName());
+  internal::XlaBuilderFriend builder_friend;
+
+  auto param = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {10}, {true}), "p0");
+  auto get_dim_size = GetDimensionSize(param, 0);
+
+  // Make input param static
+  HloInstructionProto* param_proto = builder_friend.GetInstruction(param);
+  param_proto->mutable_shape()->set_is_dynamic_dimension(0, false);
+
+  EXPECT_TRUE(b.BuildConstantSubGraph(get_dim_size).ok());
 }
 
 TEST(XlaBuilderTest, OnePlusTwo) {
@@ -326,6 +397,60 @@ TEST(XlaBuilderTest, Call) {
   auto two = ConstantR0<float>(&b, 2);
   Add(Call(&b, call, {x, y}), Call(&b, call, {one, two}));
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Add(m::Call(m::Parameter(), m::Parameter()),
+                                m::Call(m::Constant(), m::Constant()))));
+}
+
+TEST(XlaBuilderTest, CallSharedSubcomputation) {
+  XlaBuilder b(TestName());
+
+  auto b_call = b.CreateSubBuilder("the_only_to_apply");
+  auto p0 = Parameter(b_call.get(), 0, ShapeUtil::MakeShape(F32, {}), "p0");
+  auto p1 = Parameter(b_call.get(), 1, ShapeUtil::MakeShape(F32, {}), "p1");
+  Add(p0, p1);
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputationId call, b_call->BuildSubComputation());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {}), "x");
+  auto y = Parameter(&b, 1, ShapeUtil::MakeShape(F32, {}), "y");
+  auto one = ConstantR0<float>(&b, 1);
+  auto two = ConstantR0<float>(&b, 2);
+  Add(Call(&b, call, {x, y}), Call(&b, call, {one, two}));
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  // The callee should not be duplicated.
+  EXPECT_EQ(module->computation_count(), 2);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Add(m::Call(m::Parameter(), m::Parameter()),
+                                m::Call(m::Constant(), m::Constant()))));
+}
+
+TEST(XlaBuilderTest, BuildFromSubcomputation) {
+  XlaBuilder b_root(TestName());
+
+  auto b_call = b_root.CreateSubBuilder("the_only_to_apply");
+  auto p0 = Parameter(b_call.get(), 0, ShapeUtil::MakeShape(F32, {}), "p0");
+  auto p1 = Parameter(b_call.get(), 1, ShapeUtil::MakeShape(F32, {}), "p1");
+  Add(p0, p1);
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputationId call, b_call->BuildSubComputation());
+
+  auto b = b_root.CreateSubBuilder("main");
+
+  auto x = Parameter(b.get(), 0, ShapeUtil::MakeShape(F32, {}), "x");
+  auto y = Parameter(b.get(), 1, ShapeUtil::MakeShape(F32, {}), "y");
+  auto one = ConstantR0<float>(b.get(), 1);
+  auto two = ConstantR0<float>(b.get(), 2);
+  Add(Call(b.get(), call, {x, y}), Call(b.get(), call, {one, two}));
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputationId main, b->BuildSubComputation());
+
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation, b_root.Build(main));
+  const HloModuleProto& proto = computation.proto();
+  TF_ASSERT_OK_AND_ASSIGN(const auto& config,
+                          HloModule::CreateModuleConfigFromProto(
+                              proto, GetDebugOptionsFromFlags()));
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          HloModule::CreateFromProto(proto, config));
+
+  // The callee should not be duplicated.
+  EXPECT_EQ(module->computation_count(), 2);
   EXPECT_THAT(GetRoot(*module),
               GmockMatch(m::Add(m::Call(m::Parameter(), m::Parameter()),
                                 m::Call(m::Constant(), m::Constant()))));
@@ -583,7 +708,7 @@ TEST(XlaBuilderTest, BroadcastInDimWithNegativeSize) {
                  /*broadcast_dimensions=*/{0, 1, 2});
   auto statusor = BuildHloModule(b);
   ASSERT_FALSE(statusor.ok());
-  EXPECT_THAT(statusor.status().message(), HasSubstr("invalid shape"));
+  EXPECT_THAT(statusor.status().message(), HasSubstr("Invalid dimension size"));
 }
 
 TEST(XlaBuilderTest, OperandFromWrongBuilder) {
@@ -788,6 +913,21 @@ TEST(XlaBuilderTest, AllToAllTuple) {
                              .WithPredicate(is_replica_group_pred)));
 }
 
+TEST(XlaBuilderTest, AllToAllTupleWithLayout) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[3, 15]{1,0}"));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[1, 45]{1,0}"));
+  AllToAllTuple(/*operand=*/Parameter(&b, 0, operand, "operand"),
+                /*split_dimension=*/0,
+                /*concat_dimension=*/1,
+                /*split_count=*/3,
+                /*replica_groups=*/{});
+
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
 TEST(XlaBuilderTest, AllReduceTuple) {
   XlaBuilder b(TestName());
   auto shape0 = ShapeUtil::MakeShape(F32, {});
@@ -858,6 +998,23 @@ TEST(XlaBuilderTest, GetDimensionSizeConstant) {
   GetDimensionSize(x, 0);
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kConstant);
+}
+
+TEST(XlaBuilderTest, OpToString) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  auto y = Add(x, x);
+  EXPECT_EQ(b.OpToString(y),
+            "add, shape=[5, 7], metadata={:0}\n"
+            "  parameter, shape=[5, 7], metadata={:0}\n"
+            "  parameter, shape=[5, 7], metadata={:0}");
+}
+
+TEST(XlaBuilderTest, ReplicaId) {
+  XlaBuilder b(TestName());
+  ReplicaId(&b);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kReplicaId);
 }
 
 TEST(XlaBuilderTest, ReportError) {
@@ -1004,6 +1161,18 @@ TEST(XlaBuilderTest, RemoveDynamicDimensionMultiDims) {
   // Dynamic dimensions are removed.
   EXPECT_FALSE(root_shape.is_dynamic_dimension(0));
   EXPECT_FALSE(root_shape.is_dynamic_dimension(1));
+}
+
+TEST(XlaBuilderTest, RemoveDynamicDimensionInBuild) {
+  XlaBuilder b(TestName());
+  auto dyn_shape = ShapeUtil::MakeShape(F32, {10, 10}, {true, true});
+  auto static_shape = ShapeUtil::MakeShape(F32, {10, 10});
+  auto param = Parameter(&b, 0, dyn_shape, "p0");
+  EXPECT_EQ(b.GetProgramShape().value().result(), dyn_shape);
+  EXPECT_EQ(b.GetProgramShape(param).value().result(), dyn_shape);
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                          b.Build(/*remove_dynamic_dimensions=*/true));
+  EXPECT_EQ(computation.GetProgramShape().value().result(), static_shape);
 }
 
 TEST(XlaBuilderTest, DynamicUnary) {
@@ -1182,6 +1351,80 @@ TEST(XlaBuilderTest, DynamicConvolution) {
   EXPECT_TRUE(ContainersEqual(result_shape.dynamic_dimensions(),
                               {true, false, false, false}))
       << result_shape;
+}
+
+TEST(XlaBuilderTest, DynamicConvolutions) {
+  const Shape tuple_param_shape = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeShape(F32, {1, 2, 2, 128}, {true, false, false, false}),
+       ShapeUtil::MakeShape(F32, {2, 2, 128, 8}, {false, false, true, false}),
+       ShapeUtil::MakeShape(U32, {}), ShapeUtil::MakeShape(U32, {})});
+  ConvolutionDimensionNumbers dnums;
+  dnums.set_input_batch_dimension(0);
+  dnums.set_output_batch_dimension(0);
+  dnums.add_input_spatial_dimensions(1);
+  dnums.add_output_spatial_dimensions(1);
+  dnums.add_input_spatial_dimensions(2);
+  dnums.add_output_spatial_dimensions(2);
+  dnums.set_input_feature_dimension(3);
+  dnums.set_output_feature_dimension(3);
+  dnums.add_kernel_spatial_dimensions(0);
+  dnums.add_kernel_spatial_dimensions(1);
+  dnums.set_kernel_input_feature_dimension(2);
+  dnums.set_kernel_output_feature_dimension(3);
+  ASSERT_TRUE(XlaBuilder::Validate(dnums).ok());
+
+  {
+    // DynamicConvInputGrad
+    XlaBuilder b(TestName());
+    auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
+    auto p1 = Parameter(&b, 1, ShapeUtil::MakeShape(U32, {4}), "p0");
+    auto input = GetTupleElement(p0, 0);
+    auto filter = GetTupleElement(p0, 1);
+    DynamicConvInputGrad(
+        p1, input, filter, {1, 1}, {{1, 1}, {1, 1}}, {1, 1}, {1, 1}, dnums,
+        /*feature_group_count=*/1, /*batch_group_count=*/1,
+        /*precision_config=*/nullptr, PaddingType::PADDING_VALID);
+    TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+    EXPECT_TRUE(GetRoot(*module)->IsCustomCall("DynamicConvolutionInputGrad"));
+  }
+  {
+    // DynamicConvKernelGrad
+    XlaBuilder b(TestName());
+    auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
+    auto input = GetTupleElement(p0, 0);
+    auto filter = GetTupleElement(p0, 1);
+    DynamicConvKernelGrad(
+        input, filter, {1, 1}, {{1, 1}, {1, 1}}, {1, 1}, {1, 1}, dnums,
+        /*feature_group_count=*/1, /*batch_group_count=*/1,
+        /*precision_config=*/nullptr, PaddingType::PADDING_VALID);
+    TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+    EXPECT_TRUE(GetRoot(*module)->IsCustomCall("DynamicConvolutionKernelGrad"));
+  }
+  {
+    // DynamicConvForward
+    XlaBuilder b(TestName());
+    auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
+    auto input = GetTupleElement(p0, 0);
+    auto filter = GetTupleElement(p0, 1);
+    DynamicConvForward(
+        input, filter, {1, 1}, {{1, 1}, {1, 1}}, {1, 1}, {1, 1}, dnums,
+        /*feature_group_count=*/1, /*batch_group_count=*/1,
+        /*precision_config=*/nullptr, PaddingType::PADDING_VALID);
+    TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+    EXPECT_TRUE(GetRoot(*module)->IsCustomCall("DynamicConvolutionForward"));
+  }
+  {
+    // ConvWithGeneralPadding
+    XlaBuilder b(TestName());
+    auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
+    auto input = GetTupleElement(p0, 0);
+    auto filter = GetTupleElement(p0, 1);
+    ConvWithGeneralPadding(input, filter, {1, 1}, {{1, 1}, {1, 1}},
+                           /*feature_group_count=*/1, /*batch_group_count=*/1,
+                           /*precision_config=*/nullptr, std::nullopt);
+    TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+    EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kConvolution);
+  }
 }
 
 TEST(XlaBuilderTest, DynamicDot) {
@@ -1996,9 +2239,9 @@ TEST(XlaBuilderTest, TopKDimensions) {
   const HloInstruction* root = GetRoot(*module);
   EXPECT_TRUE(root->opcode() == HloOpcode::kTopK);
   EXPECT_TRUE(root->shape().IsTuple());
-  EXPECT_EQ(root->shape().tuple_shapes_size(), 2);
-  EXPECT_EQ(root->shape().tuple_shapes(0).rank(), 2);
-  EXPECT_EQ(root->shape().tuple_shapes(1).rank(), 2);
+  EXPECT_EQ(root->shape().tuple_shapes().size(), 2);
+  EXPECT_EQ(root->shape().tuple_shapes(0).dimensions().size(), 2);
+  EXPECT_EQ(root->shape().tuple_shapes(1).dimensions().size(), 2);
   EXPECT_EQ(root->shape().tuple_shapes(0).dimensions(0), 6);
   EXPECT_EQ(root->shape().tuple_shapes(0).dimensions(1), k);
   EXPECT_EQ(root->shape().tuple_shapes(1).dimensions(0), 6);
@@ -2211,6 +2454,41 @@ TEST(XlaBuilderTest, MhloDynamicReshapeRankMismatch) {
       BuildHloModule(b),
       StatusIs(_, HasSubstr("output_shape dimension size=3 (s32[3]) and rank "
                             "of shape=2 (f32[?,15]) must match")));
+}
+
+TEST(XlaBuilderTest, ConvertSpmdShardToFullShape) {
+  XlaBuilder b(TestName());
+  auto shape = ShapeUtil::MakeShape(F32, {8, 8});
+  auto param = Parameter(&b, 0, shape, "operand");
+  OpSharding sharding;
+  sharding.ParseFromString("{devices=[4,8]<=[8,4]T(1,0)}");
+
+  ASSERT_TRUE(
+      ConvertSpmdShardToFullShape(&b, param, shape, 0, sharding, {}).ok());
+  TF_ASSERT_OK_AND_ASSIGN(const std::unique_ptr<xla::HloModule> module,
+                          BuildHloModule(b));
+  EXPECT_THAT(module->ToString(), HasSubstr("custom_call_target=\"Sharding\", "
+                                            "sharding={manual}"));
+  EXPECT_THAT(module->ToString(),
+              HasSubstr("custom_call_target=\"SPMDShardToFullShape\", "
+                        "sharding={replicated}"));
+}
+
+TEST(XlaBuilderTest, ConvertSpmdFullToShardShape) {
+  XlaBuilder b(TestName());
+  auto shape = ShapeUtil::MakeShape(F32, {8, 8});
+  auto param = Parameter(&b, 0, shape, "operand");
+  OpSharding sharding;
+  sharding.ParseFromString("{devices=[4,8]<=[8,4]T(1,0)}");
+
+  ASSERT_TRUE(ConvertSpmdFullToShardShape(&b, param, 0, sharding, {}).ok());
+  TF_ASSERT_OK_AND_ASSIGN(const std::unique_ptr<xla::HloModule> module,
+                          BuildHloModule(b));
+  EXPECT_THAT(module->ToString(), HasSubstr("custom_call_target=\"Sharding\", "
+                                            "sharding={replicated}"));
+  EXPECT_THAT(module->ToString(),
+              HasSubstr("custom_call_target=\"SPMDFullToShardShape\", "
+                        "sharding={manual}"));
 }
 
 //============================================================================//

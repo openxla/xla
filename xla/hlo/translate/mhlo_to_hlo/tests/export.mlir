@@ -458,17 +458,11 @@ func.func @callee(%arg0: tensor<4xi32>, %arg1: tensor<4xi32>) -> tensor<4xi32> {
 // CHECK:  ROOT
 // CHECK-SAME:  s32[4] add(%[[ARG_1]], %[[ARG_2]])
 
-// CHECK:  [[CALLEE_2:%.*]] ([[ARG_3:.*]]: s32[4], [[ARG_4:.*]]: s32[4]) -> s32[4] {
-// CHECK:  %[[ARG_3]] = s32[4] parameter(0)
-// CHECK:  %[[ARG_4]] = s32[4] parameter(1)
-// CHECK:  ROOT
-// CHECK-SAME:  s32[4] add(%[[ARG_3]], %[[ARG_4]])
-
 // CHECK:  ENTRY [[MAIN:%.*]] ([[ARG:.*]]: s32[4]) -> s32[4] {
 // CHECK:  %[[ARG]] = s32[4] parameter(0)
 // CHECK:  [[CALL_OUT:%.*]] = s32[4] call(%[[ARG]], %[[ARG]]), to_apply=[[CALLEE_1]]
 // CHECK:  ROOT
-// CHECK-SAME:  s32[4] call([[CALL_OUT]], [[CALL_OUT]]), to_apply=[[CALLEE_2]]
+// CHECK-SAME:  s32[4] call([[CALL_OUT]], [[CALL_OUT]]), to_apply=[[CALLEE_1]]
 
 // -----
 
@@ -495,6 +489,36 @@ func.func @callee(%arg0: tensor<4xi32>, %arg1: tensor<4xi32>) -> (tensor<4xi32>,
 // CHECK:  [[OUT_1:%.*]] = s32[4] get-tuple-element([[CALL_OUT]]), index=1
 // CHECK:  ROOT
 // CHECK-SAME:  (s32[4], s32[4]) tuple([[OUT_0]], [[OUT_1]])
+
+// -----
+
+// CHECK:  HloModule
+// CHECK: ENTRY
+func.func @main(%arg0: tensor<1x16x16x3xf32>) -> tensor<1x16x16x3xf32> {
+  // CHECK: f32[1,16,16,3] cosine
+  %0 = mhlo.cosine %arg0 : tensor<1x16x16x3xf32>
+  return %0 : tensor<1x16x16x3xf32>
+}
+
+// -----
+
+// CHECK:  HloModule
+// CHECK: ENTRY
+func.func @main(%arg0: tensor<1x16x16x3xf32>) -> tensor<1x16x16x3xf32> {
+  // CHECK: f32[1,16,16,3] sine
+  %0 = mhlo.sine %arg0 : tensor<1x16x16x3xf32>
+  return %0 : tensor<1x16x16x3xf32>
+}
+
+// -----
+
+// CHECK:  HloModule
+// CHECK: ENTRY
+func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
+  // CHECK: f32[] exponential({{.*}}), result_accuracy={tolerance={atol=0,rtol=0,ulps=10}}
+  %0 = mhlo.exponential %arg0 {result_accuracy = #mhlo.result_accuracy<ulps = 10, mode = #mhlo.result_accuracy_mode<TOLERANCE>>} : tensor<f32>
+  return %0 : tensor<f32>
+}
 
 // -----
 

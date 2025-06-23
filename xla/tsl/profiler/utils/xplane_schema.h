@@ -50,6 +50,8 @@ TF_CONST_INIT extern const absl::string_view kTpuNonCorePlaneNamePrefix;
 TF_CONST_INIT extern const absl::string_view kTpuRuntimePlaneName;
 // Name of XPlane that contains CUPTI driver API generated events.
 TF_CONST_INIT extern const absl::string_view kCuptiDriverApiPlaneName;
+// Name of XPlane that contains CUPTI activity NVTX events.
+TF_CONST_INIT extern const absl::string_view kCuptiActivityNvtxPlaneName;
 // Name of XPlane that contains Roctracer API generated events.
 TF_CONST_INIT extern const absl::string_view kRoctracerApiPlaneName;
 // Name of XPlane that contains profile metadata such as XLA debug info.
@@ -315,7 +317,7 @@ enum StatType {
   kMinDurationPs,
   kTotalProfileDurationPs,
   kMaxIterationNum,
-  kDeviceType,
+  kDeviceType,  // Do not use. Use kDeviceTypeString instead.
   kUsesMegaCore,
   kSymbolId,
   kTfOpName,
@@ -352,7 +354,15 @@ enum StatType {
   kCoreDetails,
   kAllReduceId,
   kAllReduceUniqueId,
-  kLastStatType = kAllReduceUniqueId,
+  kMlIRProgram,
+  kCudaGraphNodeId,
+  kCudaOrigGraphId,
+  kCudaGraphOrigNodeId,
+  kCudaGraphMapId,
+  kCudaGraphMapValueId,
+  kCudaGraphNodeMapId,
+  kGraphMetadataLineId,
+  kLastStatType = kGraphMetadataLineId,
 };
 
 enum MegaScaleStatType : uint8_t {

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -51,14 +51,16 @@ using ::testing::FieldsAre;
 
 namespace m = ::xla::match;
 
-class GemmFusionTest : public HloTestBase {
+class GemmFusionTest : public HloHardwareIndependentTestBase {
  public:
   GemmFusionTest()
-      : HloTestBase(/*verifier_layout_sensitive=*/true,
-                    /*allow_mixed_precision_in_hlo_verifier=*/false) {}
+      : HloHardwareIndependentTestBase(
+            /*verifier_layout_sensitive=*/true,
+            /*allow_mixed_precision_in_hlo_verifier=*/false) {}
 
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options =
+        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_gemm_any(false);
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
     return debug_options;
@@ -1329,63 +1331,6 @@ ENTRY e {
 ; CHECK:        kind=kCustom
 ; CHECK:        __triton_gemm
 })");
-}
-
-class SparseDotTest : public GemmFusionTest {};
-
-TEST_F(SparseDotTest, DotWithSparseLhsOperandIsRewritten) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-HloModule test
-ENTRY main {
-  lhs = f16[2,16] parameter(0)
-  rhs = f16[32,2] parameter(1)
-  meta = u16[2,2] parameter(2)
-  ROOT dot = f32[2,2] dot(lhs, rhs, meta),
-      lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-
-  MatchHloModule(*module, R"(
-; CHECK-LABEL: ENTRY %main ({{.*}}: f16[2,16], {{.*}}: f16[32,2], {{.*}}: u16[2,2]) -> f32[2,2] {
-; CHECK-NEXT: [[P0:%[^ ]+]] = f16[2,16]{1,0} parameter(0)
-; CHECK-NEXT: [[P1:%[^ ]+]] = f16[32,2]{1,0} parameter(1)
-; CHECK-NEXT: [[META:%[^ ]+]] = u16[2,2]{1,0} parameter(2)
-; CHECK:      ROOT {{.*}} = f32[2,2]{1,0}
-; CHECK-SAME:   fusion([[P0]], [[P1]], [[META]]),
-; CHECK-SAME:   kind=kCustom
-; CHECK-SAME:   __triton_gemm
-})");
-}
-
-TEST_F(SparseDotTest, DotWithSparseRhsOperandIsNotSupported) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-HloModule test
-ENTRY main {
-  lhs = f16[2,32] parameter(0)
-  rhs = f16[16,2] parameter(1)
-  meta = u16[2,2] parameter(2)
-  ROOT dot = f32[2,2] dot(lhs, rhs, meta),
-      lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=R.0@2:4
-})")
-                    .value();
-  auto result = GemmFusion(gpu_version_).Run(module.get());
-  EXPECT_FALSE(result.ok());
-}
-
-TEST_F(SparseDotTest, UnsupportedSparsityType) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-HloModule test
-ENTRY main {
-  lhs = f16[2,8] parameter(0)
-  rhs = f16[32,2] parameter(1)
-  meta = u16[2,1] parameter(2)
-  ROOT dot = f32[2,2] dot(lhs, rhs, meta),
-      lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@1:4
-})")
-                    .value();
-  auto result = GemmFusion(gpu_version_).Run(module.get());
-  EXPECT_FALSE(result.ok());
 }
 
 TEST_F(SmallDotGemmFusionTest, Int4DotIsRewritten) {

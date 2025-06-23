@@ -48,7 +48,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -58,6 +57,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -823,7 +823,7 @@ PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
                         std::visit(
                             [args, &options](auto& program) {
-                              return args->client->client->Compile(
+                              return args->client->client->CompileAndLoad(
                                   UnpackPjrtProgram(program), options);
                             },
                             module_or_hlo));
@@ -866,6 +866,34 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
 
   PopulateDeviceAssignment(args->default_assignment, replicas, partitions,
                            std::move(device_assignment));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Client_CreateUninitializedBuffer(
+    PJRT_Client_CreateUninitializedBuffer_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_CreateUninitializedBuffer_Args",
+      PJRT_Client_CreateUninitializedBuffer_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape shape,
+      pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
+                               args->shape_num_dims, args->shape_layout));
+
+  xla::PjRtMemorySpace* memory_space;
+  if (args->device) {
+    PJRT_ASSIGN_OR_RETURN(memory_space,
+                          args->device->device->default_memory_space());
+  } else {
+    memory_space = args->memory->memory_space;
+  }
+
+  std::unique_ptr<xla::PjRtBuffer> buffer;
+  PJRT_ASSIGN_OR_RETURN(buffer, args->client->client->CreateUninitializedBuffer(
+                                    shape, memory_space));
+
+  args->buffer = new PJRT_Buffer{std::move(buffer), args->client};
   return nullptr;
 }
 
@@ -1360,7 +1388,7 @@ PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
   }
   const xla::Shape& shape = output_shapes[0];
   if (shape.IsTuple()) {
-    args->num_outputs = shape.tuple_shapes_size();
+    args->num_outputs = shape.tuple_shapes().size();
   } else {
     // The output size is 1, as it is not a tuple.
     args->num_outputs = 1;
@@ -1765,8 +1793,9 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::PjRtFuture<>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
-    PJRT_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
-                          args->executable->get()->GetCompileOptions());
+    PJRT_ASSIGN_OR_RETURN(
+        xla::CompileOptions compile_options,
+        args->executable->get()->GetExecutable()->GetCompileOptions());
     if (compile_options.compile_portable_executable) {
       PJRT_ASSIGN_OR_RETURN(
           cpp_buffer_list,
@@ -1847,9 +1876,21 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-                        args->client->client->DeserializeExecutable(
-                            serialized, /*options=*/std::nullopt));
+  std::optional<xla::CompileOptions> overridden_options;
+
+  if (args->overridden_serialized_compile_options &&
+      args->overridden_serialized_compile_options_size > 0) {
+    PJRT_ASSIGN_OR_RETURN(
+        overridden_options,
+        ParseCompileOptions(absl::string_view(
+            args->overridden_serialized_compile_options,
+            args->overridden_serialized_compile_options_size)));
+  }
+
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      args->client->client->LoadSerializedExecutable(
+          serialized, overridden_options, xla::LoadOptions()));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);
@@ -1861,7 +1902,8 @@ PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_GetExecutable_Args",
       PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE, args->struct_size));
-  args->executable = new PJRT_Executable{args->loaded_executable->executable};
+  args->executable =
+      new PJRT_Executable{args->loaded_executable->executable->GetExecutable()};
   return nullptr;
 }
 
@@ -2618,9 +2660,15 @@ PJRT_Client::PJRT_Client(std::unique_ptr<xla::PjRtClient> cpp_client)
       topology(pjrt::GetStatusOrTopologyDescription(*client)) {}
 
 PJRT_Executable::PJRT_Executable(
-    std::shared_ptr<xla::PjRtExecutable> executable)
-    : executable(std::move(executable)),
-      fingerprint(this->executable->FingerprintExecutable()) {}
+    std::shared_ptr<xla::PjRtExecutable> shared_executable)
+    : shared_executable(std::move(shared_executable)),
+      fingerprint(this->shared_executable->FingerprintExecutable()) {
+  executable = this->shared_executable.get();
+}
+
+PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
+    : executable(unowned_executable),
+      fingerprint(executable->FingerprintExecutable()) {}
 
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(
     std::shared_ptr<xla::PjRtLoadedExecutable> executable, PJRT_Client* client)
@@ -2825,14 +2873,19 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_AsyncHostToDeviceTransferManager_AddMetadata,
       /*PJRT_Client_DmaMap=*/pjrt::PJRT_Client_DmaMap,
       /*PJRT_Client_DmaUnmap=*/pjrt::PJRT_Client_DmaUnmap,
+
+      /*PJRT_Client_CreateUninitializedBuffer=*/
+      pjrt::PJRT_Client_CreateUninitializedBuffer,
   };
 }
 
 PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
   return PJRT_Layouts_Extension{
-      /*struct_size=*/PJRT_Layouts_Extension_STRUCT_SIZE,
-      /*type=*/PJRT_Extension_Type_Layouts,
-      /*next=*/next,
+      PJRT_Extension_Base{
+          /*struct_size=*/PJRT_Layouts_Extension_STRUCT_SIZE,
+          /*type=*/PJRT_Extension_Type_Layouts,
+          /*next=*/next,
+      },
       /*PJRT_Layouts_MemoryLayout_Destroy=*/
       pjrt::PJRT_Layouts_MemoryLayout_Destroy,
       /*PJRT_Layouts_MemoryLayout_Serialize=*/
@@ -2847,14 +2900,15 @@ PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
 PJRT_MemoryDescriptions_Extension CreateMemoryDescriptionsExtension(
     PJRT_Extension_Base* next) {
   return PJRT_MemoryDescriptions_Extension{
-      /*struct_size=*/PJRT_MemoryDescriptions_Extension_STRUCT_SIZE,
-      /*type=*/PJRT_Extension_Type_MemoryDescriptions,
-      /*next=*/next,
+      PJRT_Extension_Base{
+          /*struct_size=*/PJRT_MemoryDescriptions_Extension_STRUCT_SIZE,
+          /*type=*/PJRT_Extension_Type_MemoryDescriptions,
+          /*next=*/next,
+      },
       /*PJRT_DeviceDescription_MemorySpaces=*/
       pjrt::PJRT_DeviceDescription_MemoryDescriptions,
       /*PJRT_MemoryDescription_Kind=*/
-      pjrt::PJRT_MemoryDescription_Kind,
-  };
+      pjrt::PJRT_MemoryDescription_Kind};
 }
 
 }  // namespace pjrt

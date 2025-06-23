@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/host_offloader.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iomanip>
 #include <memory>
@@ -42,8 +43,8 @@ limitations under the License.
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_value.h"
-#include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/host_offload_utils.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
@@ -89,6 +90,23 @@ bool SetBuffersToMemorySpaceColor(
   return changed;
 }
 
+void PrintTrace(InstructionAndShapeIndex instruction_and_shape_index,
+                const absl::flat_hash_map<InstructionAndShapeIndex,
+                                          InstructionAndShapeIndex>& previous) {
+  std::vector<InstructionAndShapeIndex> trace;
+  trace.push_back(instruction_and_shape_index);
+  auto it = previous.find(instruction_and_shape_index);
+  while (it != previous.end()) {
+    trace.push_back(it->second);
+    instruction_and_shape_index = it->second;
+    it = previous.find(instruction_and_shape_index);
+  }
+  std::reverse(trace.begin(), trace.end());
+  for (const auto& instruction_and_shape_index : trace) {
+    VLOG(1) << "  " << instruction_and_shape_index.ToString();
+  }
+}
+
 }  // namespace
 
 bool HostOffloader::InstructionIsAllowedBetweenMoveToHostAndDus(
@@ -105,8 +123,8 @@ bool HostOffloader::InstructionIsAllowedBetweenDsAndMoveToDevice(
     const HloInstruction* instruction) const {
   if (instruction->opcode() == HloOpcode::kReduce) {
     // TODO(b/333902007): Remove this once trivial reduces no longer appear.
-    return ShapeUtil::TrueRank(instruction->operand(0)->shape()) ==
-           ShapeUtil::TrueRank(instruction->shape());
+    return ShapeUtil::TrueNumDimensions(instruction->operand(0)->shape()) ==
+           ShapeUtil::TrueNumDimensions(instruction->shape());
   }
   if (instruction->opcode() == HloOpcode::kReshape) {
     return ShapeUtil::ReshapeIsBitcast(instruction->operand(0)->shape(),
@@ -135,6 +153,8 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
   HloInstruction* starting_instruction =
       starting_instruction_and_index.instruction;
   std::queue<InstructionAndShapeIndex> queue;
+  absl::flat_hash_map<InstructionAndShapeIndex, InstructionAndShapeIndex>
+      previous;
   queue.push(starting_instruction_and_index);
   while (!queue.empty()) {
     InstructionAndShapeIndex instruction_and_shape_index = queue.front();
@@ -146,14 +166,13 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
     bool need_to_wrap_instruction_as_host_compute = false;
     if (instruction->opcode() == HloOpcode::kCustomCall &&
         instruction->custom_call_target() ==
-            host_memory_offload_annotations::kMoveToHostCustomCallTarget) {
+            memory_annotations::kMoveToHostCustomCallTarget) {
       // This MoveToHost custom call is a no-op; save it to remove later.
       already_visited_move_to_host_custom_calls_.insert(instruction);
       mth_custom_calls_to_remove.insert(instruction);
     } else if (instruction->opcode() == HloOpcode::kCustomCall &&
                instruction->custom_call_target() ==
-                   host_memory_offload_annotations::
-                       kMoveToDeviceCustomCallTarget) {
+                   memory_annotations::kMoveToDeviceCustomCallTarget) {
       // This MoveToDevice marks the end of this path.
       custom_calls_to_insert_copies_before.insert(instruction);
       continue;
@@ -244,7 +263,9 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
       LOG(WARNING) << absl::StreamFormat(
           "Found an instruction (\"%s\") which does device compute in host "
           "memory space. Converting into host compute. This is likely to have "
-          "a very high overhead.",
+          "a very slow execution time. If you're using JAX, use device_put() "
+          "to move the inputs to the device so that computation happens on the "
+          "device.",
           instruction->name());
       host_offload_utils::SetHostComputeFrontendAttribute(*instruction);
     }
@@ -278,6 +299,10 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
             starting_instruction_and_index.ToString());
         continue;
       } else {
+        if (VLOG_IS_ON(1)) {
+          LOG(INFO) << "Instruction trace leading to error:";
+          PrintTrace(instruction_and_shape_index, previous);
+        }
         return absl::InvalidArgumentError(
             absl::StrFormat("Tensor which is moved to host (starting from %s) "
                             "is returned from the entry computation but the "
@@ -290,6 +315,9 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
         const std::vector<InstructionAndShapeIndex> successors,
         host_offload_utils::GetSuccessors(instruction_and_shape_index));
     for (const InstructionAndShapeIndex& successor : successors) {
+      if (VLOG_IS_ON(1)) {
+        previous.emplace(successor, instruction_and_shape_index);
+      }
       queue.push(successor);
     }
   }
@@ -599,7 +627,7 @@ absl::StatusOr<bool> HostOffloader::SliceLeadsToMoveToDeviceCustomCall(
     HloInstruction* current_instruction = instruction_and_shape.instruction;
     if (current_instruction->opcode() == HloOpcode::kCustomCall &&
         current_instruction->custom_call_target() ==
-            host_memory_offload_annotations::kMoveToDeviceCustomCallTarget) {
+            memory_annotations::kMoveToDeviceCustomCallTarget) {
       // This path ended with the MoveToDevice custom call. This path is good.
       continue;
     }
@@ -726,23 +754,44 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
         // Found a broadcast.
         found_broadcast = true;
         HloInstruction* broadcast_user = instruction_and_shape.instruction;
-        const auto operand_indices =
-            broadcast_user->OperandIndices(predecessor_instruction);
-        CHECK(!operand_indices.empty())
-            << "We could only have the broadcast as a predecessor if it is an "
-               "operand of this instruction; something is wrong.";
         HloInstruction* allocate_buffer =
             predecessor_instruction->parent()->AddInstruction(
                 HloInstruction::CreateCustomCall(
                     predecessor_instruction->shape(), {}, "AllocateBuffer"));
-        VLOG(1) << absl::StreamFormat(
-            "Created new AllocateBuffer instruction \"%s\"",
-            allocate_buffer->ToString());
         SetMemorySpace(allocate_buffer->mutable_shape(),
                        Layout::kHostMemorySpace);
-        for (int64_t index : operand_indices) {
-          TF_RETURN_IF_ERROR(
-              broadcast_user->ReplaceOperandWith(index, allocate_buffer));
+        VLOG(1) << absl::StreamFormat(
+            "Created new AllocateBuffer instruction \"%s\" to replace "
+            "broadcast \"%s\"'s use at index %s in user \"%s\"",
+            allocate_buffer->ToString(), predecessor_instruction->name(),
+            instruction_and_shape.shape_index.ToString(),
+            broadcast_user->name());
+        if (instruction_and_shape.shape_index.size() == 1) {
+          // Have a shape index, this broadcast must be going into a tuple
+          // (because the shape index is meant to be a tuple index, not a use
+          // index). Use only the index from which we arrived here, as any other
+          // index might not be expecting host memory.
+          CHECK_EQ(instruction->opcode(), HloOpcode::kTuple)
+              << "Expecting a tuple when shape index has ndim>0";
+          TF_RETURN_IF_ERROR(broadcast_user->ReplaceOperandWith(
+              instruction_and_shape.shape_index[0], allocate_buffer));
+        } else {
+          // Any shape index larger than 1 would mean that the broadcast
+          // produces a tuple, which is not possible.
+          CHECK_EQ(instruction_and_shape.shape_index.size(), 0)
+              << "Only other supported shape index ndim is 0";
+          // Ideally, we'd like to know via which index we arrived here, but we
+          // do not. We'll look up at which indices this broadcast is used.
+          const auto operand_indices =
+              broadcast_user->OperandIndices(predecessor_instruction);
+          // 0 uses would be a hard error, as that would mean there is a bug in
+          // the GetPredecessors function. If there are more than 1 uses, we do
+          // not know via which use we arrived here and setting all uses as host
+          // memory space could be incorrect.
+          CHECK_EQ(operand_indices.size(), 1)
+              << "Only a single use it currently supported";
+          TF_RETURN_IF_ERROR(broadcast_user->ReplaceOperandWith(
+              operand_indices[0], allocate_buffer));
         }
         if (predecessor_instruction->user_count() == 0) {
           // No remaining users. Remove the broadcast.
@@ -873,33 +922,33 @@ absl::StatusOr<bool> UpdateMemorySpaceForHostOffloadedOutputs(
   HloInstruction* root = called_computation->root_instruction();
   Shape* root_shape = root->mutable_shape();
 
-  host_instrs_tree.ForEachMutableElement([&](ShapeIndex output_index,
-                                             std::vector<
-                                                 InstructionAndShapeIndex>*
-                                                 instruction_and_shape_indexes)
-                                             -> void {
-    for (InstructionAndShapeIndex& instr_and_shape :
-         *instruction_and_shape_indexes) {
-      // If instruction is MoveToHost, we will replace usage.
-      if (instr_and_shape.instruction->IsCustomCall(
-              host_memory_offload_annotations::kMoveToHostCustomCallTarget)) {
-        to_replace.push_back(instr_and_shape);
-        continue;
-      }
+  host_instrs_tree.ForEachMutableElement(
+      [&](ShapeIndex output_index,
+          std::vector<InstructionAndShapeIndex>* instruction_and_shape_indexes)
+          -> void {
+        for (InstructionAndShapeIndex& instr_and_shape :
+             *instruction_and_shape_indexes) {
+          // If instruction is MoveToHost, we will replace usage.
+          if (instr_and_shape.instruction->IsCustomCall(
+                  memory_annotations::kMoveToHostCustomCallTarget)) {
+            to_replace.push_back(instr_and_shape);
+            continue;
+          }
 
-      SetMemorySpace(ShapeUtil::GetMutableSubshape(
-                         instr_and_shape.instruction->mutable_shape(),
-                         instr_and_shape.shape_index),
-                     Layout::kHostMemorySpace);
-    }
+          SetMemorySpace(ShapeUtil::GetMutableSubshape(
+                             instr_and_shape.instruction->mutable_shape(),
+                             instr_and_shape.shape_index),
+                         Layout::kHostMemorySpace);
+        }
 
-    if (!instruction_and_shape_indexes->empty()) {
-      // Update the memory space for the output of the computation call
-      // itself.
-      SetMemorySpace(ShapeUtil::GetMutableSubshape(root_shape, output_index),
-                     Layout::kHostMemorySpace);
-    }
-  });
+        if (!instruction_and_shape_indexes->empty()) {
+          // Update the memory space for the output of the computation call
+          // itself.
+          SetMemorySpace(
+              ShapeUtil::GetMutableSubshape(root_shape, output_index),
+              Layout::kHostMemorySpace);
+        }
+      });
   bool modified = false;
   // Remove MoveToHost usage.
   for (InstructionAndShapeIndex& instr_and_shape : to_replace) {
@@ -934,7 +983,7 @@ bool ExtraCheckForValidUsageOnHostForHostOffloadedOutputs(
   // generic redundant copies removal.
   if (instruction->opcode() == HloOpcode::kCustomCall &&
       instruction->custom_call_target() !=
-          host_memory_offload_annotations::kMoveToHostCustomCallTarget) {
+          memory_annotations::kMoveToHostCustomCallTarget) {
     return false;
   }
 
@@ -1062,7 +1111,7 @@ absl::StatusOr<bool> HostOffloader::ProcessNextMoveToHostInstr(
     HloComputation* computation) {
   for (HloInstruction* instruction : computation->MakeInstructionPostOrder()) {
     if (instruction->IsCustomCall(
-            host_memory_offload_annotations::kMoveToHostCustomCallTarget)) {
+            memory_annotations::kMoveToHostCustomCallTarget)) {
       TF_ASSIGN_OR_RETURN(bool removed_move_to_host,
                           HandleMoveToHostCustomCall(instruction));
       if (removed_move_to_host) {
@@ -1184,7 +1233,7 @@ absl::StatusOr<bool> HostOffloader::Run(
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (instruction->IsCustomCall(
-              host_memory_offload_annotations::kMoveToDeviceCustomCallTarget)) {
+              memory_annotations::kMoveToDeviceCustomCallTarget)) {
         TF_ASSIGN_OR_RETURN(bool result,
                             HandleMoveToDeviceCustomCall(instruction));
         changed = changed || result;

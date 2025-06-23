@@ -71,7 +71,9 @@ ifrt_proxy_cc_test(
     timeout = "moderate",
     srcs = ["executable_impl_test_tfrt_cpu.cc"],
     shuffle_tests = False,
-    tags = if_oss(["not_run:arm"]),  # TODO(b/394180263): reenable this.
+    tags = [
+        "no_oss",  # TODO(madthanu): flaky in OSS
+    ] + if_oss(["not_run:arm"]),  # TODO(b/394180263): reenable this.
     deps = [
         ":register_pjrt_cpu_for_ifrt_api_tests",  # buildcleaner: keep
         "//xla/python/ifrt:test_util",
@@ -107,6 +109,7 @@ ifrt_proxy_cc_test(
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt:mock",
+        "//xla/python/ifrt:user_context",
         "//xla/python/ifrt_proxy/client",
         "//xla/python/ifrt_proxy/client:grpc_client",
         "//xla/python/ifrt_proxy/client:registry",

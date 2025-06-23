@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "tsl/platform/mem.h"
 
 namespace pjrt {
@@ -94,7 +95,7 @@ class PjrtCApiGpuTest : public PjrtCApiTestBase {
 
 TEST_F(PjrtCApiGpuTest, CreateViewOfDeviceBuffer) {
   // Prepares a device memory ptr on GPU.
-  auto [buffer, buffer_future] = create_buffer();
+  auto [buffer, buffer_future] = create_iota_buffer();
   TF_CHECK_OK(buffer_future.Await());
   PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args device_buffer_ptr_args;
   device_buffer_ptr_args.struct_size =
@@ -189,18 +190,9 @@ class PjrtCApiGpuTransferManagerTest : public PjrtCApiGpuTest {
 
 class PjrtCApiGpuBufferTest : public PjrtCApiGpuTest {
  public:
-  PjrtCApiGpuBufferTest() : PjrtCApiGpuTest() {
-    auto buffer_and_event = create_buffer();
-    buffer_ = std::move(buffer_and_event.first);
-    event_ = buffer_and_event.second;
-  }
+  PjrtCApiGpuBufferTest() : PjrtCApiGpuTest() { buffer_ = create_buffer(); }
 
   ~PjrtCApiGpuBufferTest() override {
-    // event_ needs to complete before the client is destroyed; otherwise there
-    // is a data race between destroying the client and trying to access the
-    // host context in the client for the callback after host to device transfer
-    // is completed.
-    TF_EXPECT_OK(event_.Await());
     // buffer_ must be destroyed before the client is destroyed or else the
     // unique_ptr for buffer_ will go out of scope causing heap-use-after-free
     // error.
@@ -208,15 +200,17 @@ class PjrtCApiGpuBufferTest : public PjrtCApiGpuTest {
   }
 
   std::unique_ptr<PJRT_Buffer, PJRT_BufferDeleter> buffer_;
-  xla::PjRtFuture<> event_;
 };
 
 TEST_F(PjrtCApiGpuBufferTest, CopyRawToHost) {
+  auto [buffer, buffer_future] = create_iota_buffer();
+  TF_CHECK_OK(buffer_future.Await());
+
   size_t size = buffer_->buffer->GetOnDeviceSizeInBytes().value();
   PJRT_Buffer_CopyRawToHost_Args args;
   args.struct_size = PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
-  args.buffer = buffer_.get();
+  args.buffer = buffer.get();
   args.dst =
       tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
   args.offset = 0;
@@ -273,7 +267,7 @@ TEST_F(PjrtCApiGpuExecutableTest, GetCompiledMemoryStats) {
   TF_ASSERT_OK_AND_ASSIGN(auto stats,
                           pjrt::GetCompiledMemoryStats(api_, executable.get()));
   TF_ASSERT_OK_AND_ASSIGN(auto ref_stats,
-                          executable->executable->GetCompiledMemoryStats());
+                          executable.get()->get()->GetCompiledMemoryStats());
   EXPECT_EQ(ref_stats.generated_code_size_in_bytes,
             stats.generated_code_size_in_bytes);
   EXPECT_EQ(ref_stats.argument_size_in_bytes, stats.argument_size_in_bytes);
@@ -330,15 +324,15 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
 }
 
 TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
-  void* host_dma_ptr = nullptr;
   size_t dma_size = 1024 * 1024;
-  ASSERT_EQ(posix_memalign(&host_dma_ptr, dma_size, dma_size), 0);
+  size_t alignment = 1024 * 1024;
+  auto host_dma_ptr = xla::AlignedAlloc(alignment, dma_size);
 
   PJRT_Client_DmaMap_Args dma_args;
   dma_args.struct_size = PJRT_Client_DmaMap_Args_STRUCT_SIZE;
   dma_args.extension_start = nullptr;
   dma_args.client = client_;
-  dma_args.data = host_dma_ptr;
+  dma_args.data = host_dma_ptr.get();
   dma_args.size = dma_size;
   PJRT_Error* dma_error = api_->PJRT_Client_DmaMap(&dma_args);
   ASSERT_EQ(dma_error, nullptr);
@@ -348,12 +342,10 @@ TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
   unmap_args.struct_size = PJRT_Client_DmaUnmap_Args_STRUCT_SIZE;
   unmap_args.extension_start = nullptr;
   unmap_args.client = client_;
-  unmap_args.data = host_dma_ptr;
+  unmap_args.data = host_dma_ptr.get();
   PJRT_Error* unmap_error = api_->PJRT_Client_DmaUnmap(&unmap_args);
   ASSERT_EQ(unmap_error, nullptr);
   MakeErrorDeleter(api_)(unmap_error);
-
-  free(host_dma_ptr);
 }
 
 TEST_F(PjrtCApiGpuTransferManagerTest, SetBufferError) {
@@ -949,8 +941,7 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallUntyped) {
   args.handler_initialize = nullptr;
   args.handler_execute = reinterpret_cast<void*>(&TestCustomCallV2);
   auto api = GetPjrtApi();
-  const PJRT_Extension_Base* next =
-      reinterpret_cast<const PJRT_Extension_Base*>(api->extension_start);
+  const PJRT_Extension_Base* next = api->extension_start;
   while (next != nullptr &&
          next->type !=
              PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call) {
@@ -982,8 +973,7 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallTyped) {
   args.handler_initialize = nullptr;
   args.handler_execute = reinterpret_cast<void*>(kNoop);
   auto api = GetPjrtApi();
-  const PJRT_Extension_Base* next =
-      reinterpret_cast<const PJRT_Extension_Base*>(api->extension_start);
+  const PJRT_Extension_Base* next = api->extension_start;
   while (next != nullptr &&
          next->type !=
              PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call) {

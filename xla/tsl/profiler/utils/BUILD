@@ -198,6 +198,7 @@ cc_library(
     visibility = internal_visibility([
         "//xla/backends/profiler/gpu:__pkg__",
         "//xla/tsl/profiler:internal",
+        "//third_party/CoMMA:__pkg__",
     ]),
     deps = [
         "//xla/tsl/platform:types",
@@ -221,7 +222,6 @@ cc_library(
         ":xplane_visitor",
         "//xla/tsl/platform:types",
         "//xla/tsl/util:stats_calculator_portable",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -408,7 +408,8 @@ cc_library(
     ]),
     deps = [
         "//xla/tsl/platform:logging",
-        "@tsl//tsl/platform:mutex",
+        "//xla/tsl/util:safe_reinterpret_cast",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
     ],
@@ -473,6 +474,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
@@ -602,5 +604,25 @@ tsl_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "profiler_options_util",
+    srcs = ["profiler_options_util.cc"],
+    hdrs = ["profiler_options_util.h"],
+    deps = [
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+    ],
+)
+
+tsl_cc_test(
+    name = "profiler_options_util_test",
+    srcs = ["profiler_options_util_test.cc"],
+    deps = [
+        ":profiler_options_util",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
 )

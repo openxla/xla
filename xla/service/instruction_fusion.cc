@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/errors.h"
 // The source_location.h is not available in open source.
 #if defined(PLATFORM_GOOGLE)
 #include "absl/types/source_location.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -249,7 +251,8 @@ bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
       hlo->shape(),
       [&output_rank](const Shape& subshape, const ShapeIndex& shape_index) {
         if (subshape.IsArray()) {
-          output_rank = std::max(output_rank, ShapeUtil::TrueRank(subshape));
+          output_rank =
+              std::max(output_rank, ShapeUtil::TrueNumDimensions(subshape));
         }
       });
   return absl::c_count_if(
@@ -262,7 +265,11 @@ bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
                    ShapeUtil::IsEffectiveScalar(operand->shape())) {
                  return false;
                }
-               return ShapeUtil::TrueRank(operand->shape()) >= output_rank;
+               const int true_dims =
+                   operand->shape().IsArray()
+                       ? ShapeUtil::TrueNumDimensions(operand->shape())
+                       : 0;
+               return true_dims >= output_rank;
              }) <= 1;
 }
 
@@ -722,6 +729,7 @@ absl::StatusOr<bool> InstructionFusion::Run(
           // Operand is now dead. Remove from queue.
           fusion_queue->RemoveInstruction(operand);
           // Remove from computation.
+          TF_RETURN_IF_ERROR(operand->SafelyDropAllControlDependencies());
           TF_RETURN_IF_ERROR(computation->RemoveInstruction(operand));
         }
 
@@ -779,6 +787,10 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
             consumer->shape(), kind, consumer,
             absl::StrCat(HloOpcodeString(producer->opcode()), "_",
                          HloOpcodeString(consumer->opcode()), "_")));
+    // A fussion instruction does not require an original value, which should
+    // have the same value as the root of the fused computation. However, we
+    // copy the value nontheless to simplify some use cases that involve
+    // fusions.
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
   }
   fusion_instruction->set_called_computations_execution_thread(
@@ -1029,7 +1041,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Slice op has a different shape than the update shape of the "
               "dus op, bailing.");
         }
-        for (int i = 0; i < dus->shape().rank(); ++i) {
+        for (int i = 0; i < dus->shape().dimensions().size(); ++i) {
           const HloInstruction* dus_operand =
               get_real_operand(consumer, dus->operand(2 + i));
           auto constant_operand = get_constant_operand(dus_operand);
@@ -1054,7 +1066,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Dynamic slice op has a different shape than the update shape "
               "of the dus op, bailing.");
         }
-        for (int i = 0; i < dus->shape().rank(); ++i) {
+        for (int i = 0; i < dus->shape().dimensions().size(); ++i) {
           const HloInstruction* ds_operand = get_real_operand(
               producer, producer_nonelementwise->operand(1 + i));
           const HloInstruction* dus_operand =

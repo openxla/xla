@@ -27,6 +27,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_stream_executor_device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -64,9 +66,16 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
       const override {
     std::vector<std::unique_ptr<const PjRtDeviceDescription>> devices;
     devices.reserve(gpu_topology_->number_of_devices());
+    int32_t num_devices_per_host = gpu_topology_->num_devices_per_host();
     for (const int device_id : gpu_topology_->device_ids()) {
+      // The process index of a device can be inferred from its global device id
+      // because global device ids are always assigned to each node in the
+      // topology in the order they appear in the input when constructing the
+      // global view.
+      const int process_index =
+          num_devices_per_host == -1 ? 0 : (device_id / num_devices_per_host);
       devices.push_back(std::make_unique<PjRtStreamExecutorDeviceDescription>(
-          device_id, std::string(platform_version())));
+          device_id, process_index, std::string(platform_version())));
     }
     return devices;
   }

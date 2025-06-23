@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -23,7 +23,6 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",

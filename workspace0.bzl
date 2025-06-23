@@ -129,6 +129,17 @@ def workspace():
     # We only need `benchmark_deps` to be able to have bazel query to work and not complain about missing `@libpfm`.
     benchmark_deps()
 
+    # Toolchains for ML projects hermetic builds.
+    # Details: https://github.com/google-ml-infra/rules_ml_toolchain
+    http_archive(
+        name = "rules_ml_toolchain",
+        sha256 = "80da25483522e7907c5e8c819678e6c78a8d8247310bfcedbb040c5b0cb0867f",
+        strip_prefix = "rules_ml_toolchain-24a361472d0b7a886686e9260149205d2e0912fc",
+        urls = [
+            "https://github.com/google-ml-infra/rules_ml_toolchain/archive/24a361472d0b7a886686e9260149205d2e0912fc.tar.gz",
+        ],
+    )
+
     # If a target is bound twice, the later one wins, so we have to do tf bindings
     # at the end of the WORKSPACE file.
     _tf_bind()

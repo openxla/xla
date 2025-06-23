@@ -20,16 +20,17 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/transforms/passes.h"
 #include "shardy/round_trip_import/pipelines.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
+#include "xla/service/spmd/shardy/extensions/mhlo_extensions.h"
 #include "xla/service/spmd/shardy/round_trip_common/export_named_computations.h"
-#include "xla/service/spmd/shardy/round_trip_common/import_backend_func_calls.h"
 #include "xla/service/spmd/shardy/round_trip_common/import_constants.h"
 #include "xla/service/spmd/shardy/round_trip_common/import_sdy_custom_calls.h"
+#include "xla/service/spmd/shardy/round_trip_common/import_uninlineable_func_calls.h"
 #include "xla/service/spmd/shardy/round_trip_common/open_while_free_vars_sharding.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/dedup_meshes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardy_attrs.h"
-#include "xla/service/spmd/shardy/sdy_round_trip/import_callback_custom_calls.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/import_shardy_attrs.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/remove_size_one_axes.h"
@@ -38,6 +39,7 @@ limitations under the License.
 #include "xla/service/spmd/shardy/sdy_round_trip/test_utils/stablehlo_to_hlo_to_stablehlo.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/test_utils/testing_pipeline.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_callback_custom_calls.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/export_manual_reduction_collectives.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_shardings.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/shard_map_export.h"
@@ -51,6 +53,8 @@ int main(int argc, char** argv) {
   mlir::DialectRegistry dialects;
   mlir::sdy::registerAllDialects(dialects);
   mlir::func::registerAllExtensions(dialects);
+  dialects.insert<mlir::mhlo::MhloDialect>();
+  xla::sdy::registerMhloExtensions(dialects);
 
   // Register all SDY passes and pipelines.
   mlir::sdy::registerAllSdyPassesAndPipelines();
@@ -60,11 +64,12 @@ int main(int argc, char** argv) {
   xla::sdy::registerStablehloRoundTripShardMapImportPass();
   xla::sdy::registerImportSdyCustomCallsPass();
   xla::sdy::registerOpenWhileFreeVarsShardingPass();
-  xla::sdy::registerImportBackendFuncCallsPass();
+  xla::sdy::registerImportUninlineableFuncCallsPass();
   xla::sdy::registerImportConstantsPass();
 
   xla::sdy::registerStablehloExportPipeline();
   xla::sdy::registerStablehloExportShardingsPass();
+  xla::sdy::registerStablehloExportManualReductionCollectivesPass();
   xla::sdy::registerStablehloRoundTripExportCallbackCustomCallsPass();
   xla::sdy::registerStablehloRoundTripShardMapExportPass();
   xla::sdy::registerExportNamedComputationsPass();
@@ -72,7 +77,6 @@ int main(int argc, char** argv) {
 
   xla::sdy::registerSdyRoundTripStablehloToHloToStablehloPass();
   xla::sdy::registerSdyRoundTripExportShardyAttrsPass();
-  xla::sdy::registerSdyRoundTripImportCallbackCustomCallsPass();
   xla::sdy::registerSdyRoundTripImportShardyAttrsPass();
   xla::sdy::registerSdyRoundTripRemoveSizeOneAxesPass();
   xla::sdy::registerSdyRoundTripExportOpsPass();

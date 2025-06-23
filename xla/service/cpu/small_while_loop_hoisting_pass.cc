@@ -42,11 +42,10 @@ static bool InstructionIsUnavailable(const HloInstruction* instr) {
   // The following instructions are not currently supported by the call thunk
   // emitter due to how the legacy & thunk emitters interact; specifically,
   // how the run options are passed.
-  // Convolution may or may not call into Eigen depending on the shape, Eigen
-  // requires a thread pool to be passed so we conservitvely exclude it.
+  // Convolution & Dot may or may not call into Eigen depending on the shape,
+  // Eigen requires a thread pool to be passed so we conservatively exclude it.
   // (This could be relaxed with a little work to make it optional if required).
   switch (instr->opcode()) {
-    case HloOpcode::kConvolution:
     case HloOpcode::kCustomCall:
     case HloOpcode::kInfeed:
     case HloOpcode::kOutfeed:
@@ -128,6 +127,7 @@ absl::StatusOr<bool> SmallWhileLoopHoistingPass::Run(
     call_instruction->add_frontend_attribute("xla_cpu_small_call", "true");
 
     TF_RETURN_IF_ERROR(while_instr->ReplaceAllUsesWith(call_instruction));
+    TF_RETURN_IF_ERROR(while_instr->SafelyDropAllControlDependencies());
     TF_RETURN_IF_ERROR(while_instr->parent()->RemoveInstruction(while_instr));
 
     changed = true;

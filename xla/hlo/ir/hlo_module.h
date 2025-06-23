@@ -120,8 +120,8 @@ class HloModule {
   // Marks duplicate fusions with the same name to be able to group them for
   // analysis purposes (e.g. through Xprof).
   void MarkFusionDuplications(
-      const absl::flat_hash_map<HloComputation*, HloComputation*>&
-          replacements);
+      const absl::flat_hash_map<HloComputation*, HloComputation*>& replacements)
+      const;
 
   // Replaces all uses of computations that are keys of 'replacements' with
   // the corresponding values in 'replacements'. Replaces the entry computation,
@@ -232,8 +232,9 @@ class HloModule {
   // with respect to HloInstruction::Identical() method.
   template <typename H>
   friend H AbslHashValue(H h, const HloModule& module) {
-    if (module.config().has_entry_computation_layout())
+    if (module.config().has_entry_computation_layout()) {
       h = H::combine(std::move(h), module.entry_computation_layout());
+    }
     // Use MakeComputationSorted() instead of MakeComputationPostOrder()
     // because naming may affect the order of MakeComputationPostOrder() but not
     // MakeComputationSorted().
@@ -287,7 +288,7 @@ class HloModule {
 
   // Returns the computation in this module that has the name `name`.  Returns
   // null if there is no such computation.
-  HloComputation* GetComputationWithName(absl::string_view name);
+  HloComputation* GetComputationWithName(absl::string_view name) const;
 
   // Gets the number of computations in this module.
   int64_t computation_count() const { return computations_.size(); }
@@ -425,6 +426,9 @@ class HloModule {
   absl::Cord ToCord() const { return ToCord(HloPrintOptions::Default()); }
   absl::Cord ToCord(const HloPrintOptions& options) const;
 
+  // Returns a stable fingerprint of the module using the given print options.
+  uint64_t ToFingerprint(const HloPrintOptions& options) const;
+
   // Convert an HloModule to or from a proto.
   HloModuleProto ToProto() const;
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProto(
@@ -471,8 +475,8 @@ class HloModule {
   NameUniquer& computation_name_uniquer() { return computation_name_uniquer_; }
 
   // Assign a new unique dense id for an instruction
-  int NewUniqueInstructionId() {
-    int result = next_unique_id_;
+  int64_t NewUniqueInstructionId() {
+    int64_t result = next_unique_id_;
     next_unique_id_++;
     return result;
   }
@@ -730,7 +734,7 @@ class HloModule {
   // unique per module.
   NameUniquer computation_name_uniquer_{/*separator=*/"."};
   NameUniquer instruction_name_uniquer_{/*separator=*/"."};
-  int next_unique_id_ = 0;
+  int64_t next_unique_id_ = 0;
 
   // Used to keep track of the next unique module id that should be assigned.
   static std::atomic<int> next_unique_module_id_;

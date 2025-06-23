@@ -59,7 +59,7 @@ namespace emitters {
 namespace {
 
 int Arity(const Shape& shape) {
-  return shape.IsTuple() ? shape.tuple_shapes_size() : 1;
+  return shape.IsTuple() ? shape.tuple_shapes().size() : 1;
 }
 
 const Shape& TupleShape(const Shape& shape, int index) {
@@ -84,7 +84,10 @@ std::vector<IndexingMapSet> ComputeOperandIndexingMaps(
     auto operands_indexing =
         ComputeOutputToInputIndexing(instr, /*output_id=*/0, mlir_context);
     operands_indexing.Simplify();
-    indexing_maps_per_operand = std::move(operands_indexing.indexing_maps);
+    indexing_maps_per_operand.reserve(operands_indexing.indexing_maps.size());
+    for (auto& indexing_maps : operands_indexing.indexing_maps) {
+      indexing_maps_per_operand.push_back(ToIndexingMapSet(indexing_maps));
+    }
   }
   return indexing_maps_per_operand;
 }
@@ -95,8 +98,10 @@ EpilogueSpecification EpilogueSpecification::FromIdentityIndexing(
     const HloInstruction* hero, const HloInstruction* root,
     mlir::MLIRContext* mlir_context) {
   EpilogueSpecification result;
-  absl::c_copy(root->shape().dimensions(),
-               std::back_inserter(result.index_ranges));
+  if (root->shape().IsArray()) {
+    absl::c_copy(root->shape().dimensions(),
+                 std::back_inserter(result.index_ranges));
+  }
   result.roots.push_back(root);
   result.root_indexing.push_back(
       CreateIdentityMap(root->shape(), mlir_context));
@@ -107,10 +112,13 @@ EpilogueSpecification EpilogueSpecification::FromIdentityIndexing(
 std::string PartitionedComputation::Subgraph::ToString(int indentation) const {
   std::string indent(indentation, ' ');
   std::ostringstream ss;
-  ss << indent << "SUBGRAPH " << name << " {\n";
+  ss << indent << "SUBGRAPH " << name << (has_no_compute ? " no_compute" : "")
+     << " {\n";
   for (auto* instr :
        (*instructions.begin())->parent()->MakeInstructionPostOrder()) {
-    if (!instructions.contains(instr)) continue;
+    if (!instructions.contains(instr)) {
+      continue;
+    }
     ss << indent << "  ";
     if (absl::c_linear_search(roots, instr)) {
       ss << "ROOT ";
@@ -155,7 +163,8 @@ bool IsEvaluatedMoreThanOnce(const HloInstruction* instr) {
   return absl::c_any_of(instr->users(), [&](const HloInstruction* user) {
     if (user->opcode() == HloOpcode::kGather &&
         absl::c_linear_search(user->OperandIndices(instr), 1) &&
-        instr->shape().rank() >= 2 && instr->shape().dimensions(1) > 1) {
+        instr->shape().dimensions().size() >= 2 &&
+        instr->shape().dimensions(1) > 1) {
       return true;
     }
     if (user->opcode() == HloOpcode::kConcatenate &&
@@ -168,6 +177,8 @@ bool IsEvaluatedMoreThanOnce(const HloInstruction* instr) {
 
 using SubgraphId = int;
 
+constexpr int kMaxHloOpsPerSubgraph = 2000;
+
 // HloSubgraphData is associated with a single HLO instruction and contains
 // the necessary information to partition the computation into subgraphs.
 struct HloSubgraphData {
@@ -179,6 +190,8 @@ struct HloSubgraphData {
   SubgraphId subgraph_id = -1;
   // Whether the instruction is a root of the subgraph.
   bool is_root = false;
+  // Number of users.
+  int num_users = 0;
 };
 
 PartitionedComputation::PartitionedComputation(
@@ -196,6 +209,7 @@ PartitionedComputation::PartitionedComputation(
 
   SubgraphId subgraph_count = 0;
   std::vector<HloSubgraphData> id_to_subgraph_data(pre_order.size());
+  std::vector<int> num_ops_per_subgraph;
   // Iterate over the use-def chains and check if the instruction should be
   // placed in a separate function.
   for (auto [instr_index, instr] : llvm::enumerate(pre_order)) {
@@ -207,12 +221,26 @@ PartitionedComputation::PartitionedComputation(
         is_subgraph_root(instr) ||
         instr_subgraph_data.user_subgraph_ids.size() != 1 ||
         instr_subgraph_data.indexings.size() > 1;
-    if (instr_subgraph_data.is_root) {
+    bool is_large_subgraph =
+        instr_subgraph_data.subgraph_id > -1 &&
+        num_ops_per_subgraph[instr_subgraph_data.subgraph_id] >=
+            kMaxHloOpsPerSubgraph;
+    if (instr_subgraph_data.is_root || is_large_subgraph) {
       instr_subgraph_data.subgraph_id = subgraph_count++;
       instr_subgraph_data.indexings.clear();
+      num_ops_per_subgraph.push_back(1);
     } else {
       instr_subgraph_data.subgraph_id =
           *instr_subgraph_data.user_subgraph_ids.begin();
+      ++num_ops_per_subgraph.at(instr_subgraph_data.subgraph_id);
+    }
+    if (num_ops_per_subgraph.at(instr_subgraph_data.subgraph_id) >
+            kMaxHloOpsPerSubgraph &&
+        instr_subgraph_data.num_users == 1) {
+      instr_subgraph_data.subgraph_id = subgraph_count++;
+      instr_subgraph_data.is_root = true;
+      instr_subgraph_data.indexings.clear();
+      num_ops_per_subgraph.push_back(1);
     }
     auto operands_indexing = ComputeOperandIndexingMaps(instr, mlir_context);
     // Iterate over the operands and add the func_ids of the current instruction
@@ -221,6 +249,7 @@ PartitionedComputation::PartitionedComputation(
          llvm::zip(instr->operands(), operands_indexing)) {
       auto& operand_subgraph_data =
           id_to_subgraph_data[instr_to_id[operand_instr]];
+      ++operand_subgraph_data.num_users;
       IndexingMap instr_indexing = instr_subgraph_data.indexings.empty()
                                        ? IndexingMap::GetUndefined()
                                        : *instr_subgraph_data.indexings.begin();
@@ -251,7 +280,13 @@ PartitionedComputation::PartitionedComputation(
     std::vector<const HloInstruction*> roots;
     std::vector<IndexingMap> root_indexing;
     const xla::Shape* first_root_shape = nullptr;
+    bool has_no_compute = true;
     for (auto* instruction : instructions) {
+      has_no_compute &=
+          HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kConstant,
+                           HloOpcode::kIota, HloOpcode::kParameter,
+                           HloOpcode::kReshape, HloOpcode::kReverse,
+                           HloOpcode::kTranspose>(instruction);
       if (id_to_subgraph_data[instr_to_id[instruction]].is_root) {
         roots.push_back(instruction);
         if (first_root_shape) {
@@ -291,7 +326,8 @@ PartitionedComputation::PartitionedComputation(
         /* .instructions = */ {instructions.begin(), instructions.end()},
         /* .roots = */ std::move(roots),
         /* .index_ranges = */ std::move(ranges),
-        /* .root_indexing = */ std::move(root_indexing)});
+        /* .root_indexing = */ std::move(root_indexing),
+        /* .has_no_compute = */ has_no_compute});
   }
 
   for (const auto& subgraph : subgraphs_) {
@@ -412,7 +448,7 @@ const PartitionedComputation::Subgraph& PartitionedComputations::FindSubgraph(
 CallTargetProvider PartitionedComputations::CreateCallTargetProvider(
     const absl::flat_hash_map<const PartitionedComputation::Subgraph*,
                               mlir::func::FuncOp>& subgraph_to_func) const {
-  return [&, this](const HloInstruction* instr) {
+  return [subgraph_to_func, this](const HloInstruction* instr) {
     const auto& subgraph = FindSubgraph(instr);
     CHECK(subgraph_to_func.contains(&subgraph))
         << "No function found for subgraph with instruction "
@@ -475,6 +511,9 @@ mlir::func::FuncOp CreateSubgraphMlirFunction(
   auto func_op = b.create<mlir::func::FuncOp>(
       subgraph.name, ty,
       /*attrs=*/llvm::ArrayRef<mlir::NamedAttribute>{}, arg_attrs);
+  if (subgraph.has_no_compute) {
+    func_op->setAttr(kHasNoCompute, b.getBoolAttr(true));
+  }
   // Needed so that the function can potentially be inlined in-place.
   func_op.setPrivate();
   return func_op;

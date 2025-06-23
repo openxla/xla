@@ -17,6 +17,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/base/nullability.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/llvm_compiler.h"
@@ -38,7 +40,7 @@ namespace {
 
 using CpuCompilerInternalsTest = HloTestBase;
 
-std::optional<int64_t> GetMetadataInt(absl::Nullable<llvm::Metadata*> value) {
+std::optional<int64_t> GetMetadataInt(llvm::Metadata* absl_nullable value) {
   if (value == nullptr) {
     return std::nullopt;
   }
@@ -53,9 +55,27 @@ std::optional<int64_t> GetMetadataInt(absl::Nullable<llvm::Metadata*> value) {
   return c->getSExtValue();
 }
 
+std::optional<std::string> GetMetadataString(
+    llvm::Metadata* absl_nullable value) {
+  if (value == nullptr) {
+    return std::nullopt;
+  }
+  auto* md_string = llvm::dyn_cast<llvm::MDString>(value);
+  if (md_string == nullptr) {
+    return std::nullopt;
+  }
+  return md_string->getString().str();
+}
+
 std::optional<int64_t> GetXlaDylibIndex(const llvm::Module& llvm_module) {
   llvm::Metadata* md = llvm_module.getModuleFlag("xla_dylib_index");
   return GetMetadataInt(md);
+}
+
+std::optional<std::string> GetXlaBackendExtraOptions(
+    const llvm::Module& llvm_module) {
+  llvm::Metadata* md = llvm_module.getModuleFlag("xla_backend_extra_options");
+  return GetMetadataString(md);
 }
 
 static constexpr absl::string_view kAddScatterHlo = R"(

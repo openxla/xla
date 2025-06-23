@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -39,11 +39,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
@@ -104,13 +103,28 @@ CollectiveConfig GetCollectiveConfigForMlir(
   return config;
 }
 
-// Handle to a communicator object with its `is_local` property.
+// Handle to a communicator object with corresponding clique key.
 struct CommunicatorHandle {
-  CommunicatorHandle(Communicator* comm, bool is_local)
-      : comm(comm), is_local(is_local) {}
+  CommunicatorHandle(Communicator* comm, GpuCliqueKey clique_key)
+      : comm(comm), clique_key(std::move(clique_key)) {}
 
-  Communicator* comm;  // communicator object
-  bool is_local;       // whether this comm is a node-local comm
+  Communicator* comm;       // communicator object
+  GpuCliqueKey clique_key;  // clique key
+};
+
+// Wrap GpuCliqueKey into a unique struct to guarantee we do not accidentally
+// try to run multiple unrelated rendezvous for a same key.
+struct FirstCallRendezvousKey {
+  GpuCliqueKey clique_key;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const FirstCallRendezvousKey& key) {
+    return H::combine(std::move(h), key.clique_key);
+  }
+  friend bool operator==(const FirstCallRendezvousKey& a,
+                         const FirstCallRendezvousKey& b) {
+    return a.clique_key == b.clique_key;
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -143,7 +157,9 @@ class CollectiveThunk : public Thunk {
    private:
     friend class CollectiveThunk;
     friend class CollectiveDoneThunk;
-    friend class NcclGroupThunk;
+    friend class CollectiveGroupThunk;
+    friend class NvshmemCollectiveThunk;
+    friend class NvshmemCollectiveDoneThunk;
 
     absl::Status Initialize(se::StreamExecutor* executor);
     absl::StatusOr<se::Event*> GetEvent(se::StreamExecutor* executor);
@@ -165,6 +181,9 @@ class CollectiveThunk : public Thunk {
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
+  absl::StatusOr<std::vector<Communicator*>> GetCommunicators(
+      const ExecuteParams& params) const override;
+
   std::shared_ptr<AsyncEvents> async_events() const { return async_events_; }
   void set_async_events(std::shared_ptr<AsyncEvents> async_events) {
     async_events_ = async_events;
@@ -180,12 +199,8 @@ class CollectiveThunk : public Thunk {
   }
 
  protected:
-  virtual absl::Status RunCollective(const ExecuteParams& params,
-                                     se::Stream& stream,
-                                     CommunicatorHandle comm) = 0;
-  virtual const CollectiveConfig& config() const = 0;
-  virtual AsyncStreamKind GetAsyncStreamKind() const { return stream_kind_; }
-
+  // Run collective operation on a given stream and return if the first call
+  // rendezvous with other participants is needed.
   // A collective thunk is normally an independent operation in a sense that
   // different instances of the same collective thunk communicate each other.
   // The only exception are SendThunk and RecvThunk. Assume two devices are
@@ -194,12 +209,16 @@ class CollectiveThunk : public Thunk {
   // rendezvous on the SendThunk would cause a runtime deadlock.
   //  Send(src_target={0,1})
   //  Recv(src_target={0,1})
-  virtual bool NeedFirstCallRendzevous() const { return true; }
+  virtual absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                             se::Stream& stream,
+                                             CommunicatorHandle comm) = 0;
+  virtual const CollectiveConfig& config() const = 0;
+  virtual AsyncStreamKind GetAsyncStreamKind() const { return stream_kind_; }
+  bool IsAsync() const { return async_events_ != nullptr; }
 
  private:
   const AsyncStreamKind stream_kind_;
 
-  bool IsAsync() const { return async_events_ != nullptr; }
   std::shared_ptr<AsyncEvents> async_events_;
 
   // After a first call to this particular instance of a collective thunk we do
@@ -280,21 +299,20 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
-    AsyncStreamKind stream_kind);
+    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
+    bool use_nccl = true);
 
-absl::StatusOr<size_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode);
+// Helper over GetGpuCliqueKey that builds key for AsyncStreamKind::kCollective.
+absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
+    const CollectiveThunk::CollectiveExecuteParams& params,
+    const CollectiveConfig& collective_config, bool use_nccl = true);
 
-// Returns a communicator and a flag indicating if it's a local communicator.
+// Returns a communicator and additional information about the clique.
 absl::StatusOr<CommunicatorHandle> GetComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
-    AsyncStreamKind stream_kind);
+    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind);
 
 struct DeviceBufferPair {
   PrimitiveType element_type;
@@ -319,11 +337,13 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 // enable zero-copy collectives.
 //
 // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
-absl::Status MaybeRegisterBuffers(GpuCollectives* collectives,
-                                  se::StreamExecutor* executor,
+absl::Status MaybeRegisterBuffers(se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
                                   Communicator* comm);
 
+absl::StatusOr<int64_t> GetNumLocalParticipants(
+    const Thunk::CollectiveExecuteParams& params,
+    const std::vector<GlobalDeviceId>& participants);
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_

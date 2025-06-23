@@ -5,7 +5,7 @@ These rules have to be outside of mkl/build_defs.bzl, otherwise we would have cy
 (xla.bzl depends on tsl which depends on mkl/build_defs.bzl).
 """
 
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api")
 
@@ -30,5 +30,7 @@ def onednn_graph_cc_test(
         deps = if_graph_api(if_true = deps, if_false = ["@com_google_googletest//:gtest_main"]),
         # If not building with Graph API, we don't have any tests linked.
         fail_if_no_test_linked = False,
+        # If not building with Graph API, we don't have any tests defined either.
+        fail_if_no_test_selected = False,
         **kwargs
     )

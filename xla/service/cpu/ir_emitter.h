@@ -114,7 +114,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
             const TargetMachineFeatures* target_machine,
             bool emit_code_for_msan,
             absl::flat_hash_map<BufferAllocation::Slice, int64_t>
-                slice_to_buffer_table_index = {});
+                slice_to_buffer_table_index = {},
+            bool allow_runtime_calls = true);
   ~IrEmitter() override;
 
   // Emit and return the given HLO computation as an LLVM IR
@@ -339,6 +340,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   std::vector<StackAlloca> EmitOneDnnOperandsAlloca(HloInstruction* custom_call,
                                                     llvm::Value*& args_val,
                                                     int& arg_indx);
+  std::pair<llvm::Value*, StackAlloca> GetPtrAndAllocaFromBufferSlice(
+      const BufferAllocation::Slice& slice, const Shape& shape);
   absl::Status HandleOneDnnMatMulCalls(HloInstruction* hlo,
                                        std::string runtime_symbol_name);
   absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);
@@ -847,6 +850,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   absl::flat_hash_map<BufferAllocation::Slice, int64_t>
       slice_to_buffer_table_index_;
+
+  bool allow_runtime_calls_;
 
   IrEmitter(const IrEmitter&) = delete;
   IrEmitter& operator=(const IrEmitter&) = delete;

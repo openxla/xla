@@ -19,18 +19,15 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -53,11 +50,11 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/CodeGen.h"
-#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
+#include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -66,14 +63,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/layout_util.h"
-#include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/elemental_ir_emitter.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_loop_emitter.h"
-#include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
@@ -82,13 +76,12 @@ limitations under the License.
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape.h"
 #include "xla/shape_partition.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -202,35 +195,6 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
       KernelInfo(std::move(kernel_prototype), se::BlockDim(), se::ThreadDim()));
 }
 
-absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionWithFusionEmitters(
-    const HloFusionInstruction* fusion) {
-  mlir::DialectRegistry registry;
-  mlir::MLIRContext mlir_context(registry);
-  FusionEmitterKind fusion_emitter_kind = AnalyzeHloFusion(fusion);
-  std::unique_ptr<CpuFusionEmitterBase> emitter;
-  switch (fusion_emitter_kind) {
-    case FusionEmitterKind::kScatter:
-      emitter = std::make_unique<CpuScatterFusion>(
-          &mlir_context, &module_->getContext(),
-          nested_ir_emitter_->assignment(), fusion);
-      break;
-    default:
-      return Internal("Unimplemented fusion kind %d for instruction: %s",
-                      fusion_emitter_kind, fusion->ToString());
-  }
-
-  TF_ASSIGN_OR_RETURN(auto fusion_result, emitter->Emit());
-  if (llvm::Linker::linkModules(*module_,
-                                std::move(fusion_result.llvm_module))) {
-    return Internal("Cannot link additional LLVM module for fusion %s",
-                    fusion->name());
-  }
-  return kernels_.emplace_back(KernelInfo(
-      std::string(fusion->name()), se::BlockDim(),
-      se::ThreadDim(emitter->num_threads()), fusion_result.invariant_arguments,
-      emitter->BackendExtraOptions()));
-}
-
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
     const HloFusionInstruction* fusion) {
   VLOG(2) << "Emit fusion host kernel: " << fusion->name();
@@ -243,10 +207,6 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
   if (fusion->fusion_kind() != HloInstruction::FusionKind::kLoop) {
     return Internal("Unsupported fusion kind for instruction: %s",
                     fusion->ToString());
-  }
-
-  if (IsSupportedByFusionEmitter(fusion)) {
-    return EmitFusionWithFusionEmitters(fusion);
   }
 
   TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
@@ -336,8 +296,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
 
   // Check that we can emit LLVM IR for this dot operation.
   DotImplementationStrategy strategy = GetDotImplementationStrategy(
-      hlo_module_.config(), *dot,
-      nested_ir_emitter_->target_machine_features());
+      hlo_module_.config(), *dot, nested_ir_emitter_->target_machine_features(),
+      /*allow_runtime_calls=*/false);
 
   if (!IsDotCodegenStrategy(strategy)) {
     return Internal("Unsupported dot implementation strategy");
@@ -452,7 +412,7 @@ absl::StatusOr<IrEmitter2::ComparatorInfo> IrEmitter2::EmitSortComparator(
 absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
     const HloInstruction* instr) {
   return kernel_api_ir_builder_.EmitKernelPrototype(
-      *module_, instr, &nested_ir_emitter_->assignment());
+      *module_, instr, &nested_ir_emitter_->assignment(), "ir_emitter2");
 }
 
 std::optional<IrEmitter2::ParallelConfig> IrEmitter2::GetParallelConfig(
@@ -525,7 +485,7 @@ IrEmitter2::ParallelPartitionBounds IrEmitter2::EmitParallelPartitionBounds(
   // Construct IR to load bounds for all parallel dimensions.
   ParallelPartitionBounds bounds;
   for (size_t i = 0; i < num_parallel_dimensions; ++i) {
-    llvm::Value* partition = kernel_prototype.thread_id.x;
+    llvm::Value* partition = kernel_prototype.workgroup_id.x;
     llvm::Value* parallel_dim = b.getInt32(i);
 
     llvm::Value* lower_gep = b.CreateInBoundsGEP(

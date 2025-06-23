@@ -635,6 +635,8 @@ class Decision {
   // Returns true if it's profitable to fuse.
   bool WantToFuse() const { return fusing_decision_.CanFuse(); }
 
+  std::string Explain() const { return fusing_decision_.Explain(); }
+
   static Decision Allow() { return {FusionDecision::Allow(), true}; };
 
   static Decision Deny(absl::string_view value) {
@@ -673,18 +675,9 @@ absl::StatusOr<Decision> CreateDotFusion(
     return Decision::Deny(is_supported.Explain());
   }
 
-  // Verify sparse dot constraints.
+  // Verify not sparse.
   if (dot.sparse_operands()) {
-    const SparsityDescriptor& descriptor = dot.sparsity().front();
-    if (dot.sparse_operands() != 1 || descriptor.index() != 0) {
-      return InvalidArgument("Sparsity is only supported on left operand");
-    }
-    if (descriptor.type() != SparsityType::SPARSITY_STRUCTURED_N_M ||
-        descriptor.n() != 2 || descriptor.m() != 4) {
-      return InvalidArgument("Only 2:4 structured sparsity is supported");
-    }
-    // DotDimensionSorter pass makes sure the sparse dimension is minor.
-    CHECK_EQ(descriptor.dimension(), dot.operand(0)->shape().rank() - 1);
+    return InvalidArgument("Sparsity is not supported");
   }
 
   TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
@@ -801,6 +794,7 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
         CreateDotFusion(*Cast<HloDotInstruction>(dot), gpu_version_, builder,
                         fusion_inputs, &fusion_output));
     if (!decision.CanFuse()) {
+      VLOG(3) << "Not fusing: " << decision.Explain();
       return absl::OkStatus();
     }
     // If a GEMM requiring padding for cuBLAS is encountered here this

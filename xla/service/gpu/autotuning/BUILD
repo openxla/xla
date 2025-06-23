@@ -5,7 +5,7 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
@@ -43,6 +43,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -58,8 +59,8 @@ cc_library(
         "//xla/service/gpu/transforms:cudnn_fusion_compiler",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:env",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
@@ -83,6 +84,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -118,6 +120,8 @@ cc_library(
         ":autotuner_compile_util",
         ":autotuner_status_key",
         ":autotuner_util",
+        ":dot_search_space",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
@@ -125,6 +129,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_comparator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
@@ -141,7 +146,6 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:shaped_buffer",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:buffer_comparator",
         "//xla/service/gpu:gpu_float_support",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_indexing_utils",
@@ -155,6 +159,7 @@ cc_library(
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
         "//xla/service/gpu/transforms:fusion_wrapper",
         "//xla/service/gpu/transforms:gemm_rewriter",
+        "//xla/service/gpu/transforms:nest_gemm_fusion",
         "//xla/service/gpu/transforms:priority_fusion",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
@@ -187,6 +192,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -195,9 +201,9 @@ xla_test(
     timeout = "long",
     srcs = ["gemm_fusion_autotuner_test.cc"],
     backends = [
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_b200",
+        "a100",
+        "h100",
+        "b200",
     ],
     tags = [
         "cuda-only",
@@ -257,38 +263,82 @@ xla_test(
 )
 
 cc_library(
+    name = "dot_search_space",
+    srcs = ["dot_search_space.cc"],
+    hdrs = ["dot_search_space.h"],
+    tags = ["gpu"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/lib/core:bits",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+xla_cc_test(
+    name = "dot_search_space_test",
+    srcs = ["dot_search_space_test.cc"],
+    tags = ["gpu"],
+    deps = [
+        ":dot_search_space",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "gemm_algorithm_picker",
     srcs = ["gemm_algorithm_picker.cc"],
     hdrs = ["gemm_algorithm_picker.h"],
     tags = ["gpu"],
     deps = [
-        ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_comparator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:buffer_comparator",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:stream_executor_util",
-        "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -316,17 +366,13 @@ cc_library(
         ":autotuner_status_key",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
-        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:dump",
-        "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tsl/platform:env",
@@ -385,22 +431,50 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
+    name = "redzone_buffers",
+    srcs = ["redzone_buffers.cc"],
+    hdrs = ["redzone_buffers.h"],
+    deps = [
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/stream_executor/gpu:redzone_allocator",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
 xla_test(
-    name = "autotuner_compile_util_test",
-    srcs = ["autotuner_compile_util_test.cc"],
+    name = "redzone_buffers_test",
+    srcs = ["redzone_buffers_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":autotuner_compile_util",
-        ":autotuner_util",
+        ":redzone_buffers",
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
@@ -410,8 +484,8 @@ xla_test(
     name = "gemm_algorithm_picker_test",
     srcs = ["gemm_algorithm_picker_test.cc"],
     backends = [
-        "gpu_v100",
-        "gpu_amd_any",
+        "v100",
+        "amdgpu_any",
     ],
     deps = [
         ":autotuner_util",
@@ -422,7 +496,6 @@ xla_test(
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:variant_visitor",
         "//xla/service/gpu/transforms:gemm_rewriter",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
@@ -433,9 +506,9 @@ xla_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "//xla/tsl/protobuf:dnn_proto_cc",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -449,6 +522,7 @@ cc_library(
         ":autotuner_compile_util",
         ":autotuner_util",
         ":gpu_autotuning_proto_cc",
+        ":redzone_buffers",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:debug_options_flags",
@@ -497,7 +571,7 @@ cc_library(
         "@tsl//tsl/platform:numbers",
     ] + if_cuda_is_configured([
         # keep sorted
-        "//xla/service/gpu:buffer_comparator",
+        "//xla/backends/gpu/runtime:buffer_comparator",
         "//xla/stream_executor/gpu:redzone_allocator",
         "@local_config_cuda//cuda:cudnn_header",
     ]),
@@ -507,8 +581,8 @@ xla_test(
     name = "conv_algorithm_picker_test",
     srcs = ["conv_algorithm_picker_test.cc"],
     backends = [
-        "gpu_v100",
-        "gpu_amd_any",
+        "v100",
+        "amdgpu_any",
     ],
     tags = [
         "cuda-only",
@@ -540,7 +614,6 @@ xla_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -552,6 +625,7 @@ cc_library(
     deps = [
         ":autotuner_compile_util",
         ":autotuner_util",
+        ":redzone_buffers",
         "//xla:autotuning_proto_cc",
         "//xla:status_macros",
         "//xla:util",

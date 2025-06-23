@@ -87,6 +87,7 @@ cc_library(
         "%{rocm_root}/include/**",
         "%{rocm_root}/lib/llvm/lib/**/*.h",
     ]),
+    defines = ["MIOPEN_BETA_API=1"],
     include_prefix = "rocm",
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
@@ -174,6 +175,24 @@ cc_library(
         ":hsa_rocr",
         ":rocm_config",
         ":rocm_smi",
+        ":rocprofiler_register",
+        ":system_libs",
+    ],
+)
+
+# Used by jax_rocm_plugin to minimally link to hip runtime.
+cc_library(
+    name = "hip_runtime",
+    visibility = ["//visibility:public"],
+    hdrs = glob(["%{rocm_root}/include/hip/**"]),
+    srcs = glob(["%{rocm_root}/lib/libamdhip*.so"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    deps = [
+        ":rocm_config",
         ":rocprofiler_register",
         ":system_libs",
     ],

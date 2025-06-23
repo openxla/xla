@@ -5,7 +5,7 @@ load(
 )
 
 exports_files([
-    "version.txt",
+    "include/cuda.h",
 ])
 
 filegroup(

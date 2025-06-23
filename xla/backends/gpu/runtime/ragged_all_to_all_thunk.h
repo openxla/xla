@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -69,15 +70,13 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
  protected:
-  absl::Status RunCollective(const ExecuteParams& params, se::Stream& stream,
-                             CommunicatorHandle comm_handle) override;
+  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     se::Stream& stream,
+                                     CommunicatorHandle comm) override;
 
  private:
   bool is_local() const;
   bool should_use_memcpy() const { return p2p_memcpy_enabled_ && is_local(); }
-  bool should_use_one_shot_kernel() const {
-    return one_shot_kernel_enabled_ && is_local();
-  }
 
   const RaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;

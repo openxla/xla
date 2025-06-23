@@ -2,13 +2,20 @@ licenses(["restricted"])  # NVIDIA proprietary license
 
 exports_files([
     "bin/nvcc",
-    "version.txt",
 ])
 
 filegroup(
     name = "nvvm",
     srcs = [
         "nvvm/libdevice/libdevice.10.bc",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "nvdisasm",
+    srcs = [
+        "bin/nvdisasm",
     ],
     visibility = ["//visibility:public"],
 )

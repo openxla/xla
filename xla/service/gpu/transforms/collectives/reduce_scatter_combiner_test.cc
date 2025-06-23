@@ -21,10 +21,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/collective_utils.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -37,7 +37,7 @@ using ::tsl::testing::IsOkAndHolds;
 
 namespace op = xla::testing::opcode_matchers;
 
-using GpuReduceScatterCombinerTest = HloTestBase;
+using GpuReduceScatterCombinerTest = HloHardwareIndependentTestBase;
 
 TEST_F(GpuReduceScatterCombinerTest,
        CombinesPipelinedCollectivesUpToSuggestedThreshold) {
@@ -114,17 +114,16 @@ ENTRY entry {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloString, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, GpuReduceScatterCombiner(
-                        device_info, /*default_combine_threshold_in_bytes=*/
-                        threshold_bytes,
-                        /*combine_threshold_in_bytes=*/threshold_bytes,
-                        /*combine_threshold_count=*/256,
-                        /*combine_by_dim=*/false, pointer_size)
-                        .Run(module.get()));
+  EXPECT_THAT(GpuReduceScatterCombiner(
+                  device_info, /*default_combine_threshold_in_bytes=*/
+                  threshold_bytes,
+                  /*combine_threshold_in_bytes=*/threshold_bytes,
+                  /*combine_threshold_count=*/256,
+                  /*combine_by_dim=*/false, pointer_size)
+                  .Run(module.get()),
+              IsOkAndHolds(true));
 
   VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
   // Pipelined all gathers were combined up to the predefined max available
   // device mem limit.
   const absl::string_view kExpected = R"(
@@ -211,18 +210,17 @@ ENTRY entry {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloString, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed,
+  EXPECT_THAT(
       GpuReduceScatterCombiner(
           device_info, /*default_combine_threshold_in_bytes=*/
           kDefaultReduceScatterCombineThreshold,
           /*combine_threshold_in_bytes=*/kDefaultReduceScatterCombineThreshold,
           /*combine_threshold_count=*/256,
           /*combine_by_dim=*/false, pointer_size)
-          .Run(module.get()));
+          .Run(module.get()),
+      IsOkAndHolds(true));
 
   VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
   const absl::string_view kExpected = R"(
     // CHECK-DAG: %[[NONPIPELINED_PARAM_0:.*]] = {{.*}} index=1
     // CHECK-DAG: %[[NONPIPELINED_PARAM_1:.*]] = {{.*}} index=2
@@ -316,17 +314,16 @@ ENTRY entry {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloString, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, GpuReduceScatterCombiner(
-                        device_info, /*default_combine_threshold_in_bytes=*/
-                        kDefaultReduceScatterCombineThreshold,
-                        /*combine_threshold_in_bytes=*/threshold_bytes,
-                        /*combine_threshold_count=*/256,
-                        /*combine_by_dim=*/false, pointer_size)
-                        .Run(module.get()));
+  EXPECT_THAT(GpuReduceScatterCombiner(
+                  device_info, /*default_combine_threshold_in_bytes=*/
+                  kDefaultReduceScatterCombineThreshold,
+                  /*combine_threshold_in_bytes=*/threshold_bytes,
+                  /*combine_threshold_count=*/256,
+                  /*combine_by_dim=*/false, pointer_size)
+                  .Run(module.get()),
+              IsOkAndHolds(true));
 
   VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
   // Pipelined all gathers were combined up to the predefined max available
   // device mem limit.
   const absl::string_view kExpected = R"(
@@ -337,8 +334,9 @@ ENTRY entry {
     // CHECK-DAG: %[[NONPIPELINED_PARAM_1:.*]] = {{.*}} index=5
     // CHECK-DAG: %[[NONPIPELINED_PARAM_2:.*]] = {{.*}} index=6
     // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_0]], %[[PIPELINED_PARAM_1]])
-    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_2]], %[[NONPIPELINED_PARAM_0]])
-    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_1]], %[[NONPIPELINED_PARAM_2]])
+    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_2]])
+    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_0]], %[[NONPIPELINED_PARAM_1]])
+    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_2]])
   )";
 
   EXPECT_TRUE(
@@ -363,8 +361,53 @@ TEST_F(GpuReduceScatterCombinerTest, CombinesSynchronousCollectivesMaximally) {
       p1 = f16[20000000]{0} parameter(1)
 
       // 20MB combinable reduce-scatter collectives. Default combiner threshold is 30MB.
-      rs0 = f16[10000000]{0} reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=add
-      rs1 = f16[10000000]{0} reduce-scatter(p1), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      rs0 = f16[10000000]{0} reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=add,
+        frontend_attributes={sync_collective="true"}
+      rs1 = f16[10000000]{0} reduce-scatter(p1), replica_groups={{0,1}}, dimensions={0}, to_apply=add,
+        frontend_attributes={sync_collective="true"}
+      ROOT result = tuple(rs0, rs1)
+    }
+  )";
+  DeviceDescription device_info;
+  device_info.set_device_memory_size(10000000000);  // 10GB
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  GpuReduceScatterCombiner combiner(
+      device_info, /*default_combine_threshold_in_bytes=*/
+      kDefaultReduceScatterCombineThreshold,
+      /*combine_threshold_in_bytes=*/kDefaultReduceScatterCombineThreshold,
+      /*combine_threshold_count=*/256,
+      /*combine_by_dim=*/false, /*pointer_size=*/4);
+
+  EXPECT_THAT(combiner.Run(module.get()), IsOkAndHolds(true));
+  Matcher<const HloInstruction*> combined_reduce_scatter =
+      op::ReduceScatter(op::Parameter(0), op::Parameter(1));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::GetTupleElement(combined_reduce_scatter, 0),
+                        op::GetTupleElement(combined_reduce_scatter, 1)));
+}
+
+TEST_F(GpuReduceScatterCombinerTest,
+       DontCombinePipelinedAndSynchronousCollectives) {
+  absl::string_view kHloText = R"(
+    HloModule m
+
+    add {
+      p0 = f16[] parameter(0)
+      p1 = f16[] parameter(1)
+      ROOT add = f16[] add(p0, p1)
+    }
+
+    ENTRY main {
+      p0 = f16[20000000]{0} parameter(0)
+      p1 = f16[20000000]{0} parameter(1)
+
+      rs0 = f16[10000000]{0} reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=add,
+        frontend_attributes={sync_collective="true"},
+        backend_config={"collective_backend_config": {"is_pipelined": true}}
+      rs1 = f16[10000000]{0} reduce-scatter(p1), replica_groups={{0,1}}, dimensions={0}, to_apply=add,
+        frontend_attributes={sync_collective="true"}
+
       ROOT result = tuple(rs0, rs1)
     }
   )";
@@ -380,17 +423,6 @@ TEST_F(GpuReduceScatterCombinerTest, CombinesSynchronousCollectivesMaximally) {
       /*combine_by_dim=*/false, /*pointer_size=*/4);
 
   EXPECT_THAT(combiner.Run(module.get()), IsOkAndHolds(false));
-
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_enable_sync_collective_combining(true);
-  EXPECT_THAT(combiner.Run(module.get()), IsOkAndHolds(true));
-
-  Matcher<const HloInstruction*> combined_reduce_scatter =
-      op::ReduceScatter(op::Parameter(0), op::Parameter(1));
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              op::Tuple(op::GetTupleElement(combined_reduce_scatter, 0),
-                        op::GetTupleElement(combined_reduce_scatter, 1)));
 }
 
 }  // namespace

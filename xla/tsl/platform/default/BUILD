@@ -3,14 +3,18 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load(
     "//xla/tsl:tsl.bzl",
-    "if_cuda_tools",
     "if_not_fuchsia",
     "if_not_windows",
     "if_oss",
     "internal_visibility",
     "tsl_copts",
 )
-load("//xla/tsl:tsl.default.bzl", "filegroup", "tsl_grpc_cc_dependencies")
+load(
+    "//xla/tsl:tsl.default.bzl",
+    "filegroup",
+    "if_cuda_tools",
+    "tsl_grpc_cc_dependencies",
+)
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -50,7 +54,7 @@ cc_library(
 
 cc_library(
     name = "criticality",
-    hdrs = ["@tsl//tsl/platform:criticality.h"],
+    hdrs = ["//xla/tsl/platform:criticality.h"],
     tags = [
         "manual",
         "nobuilder",
@@ -153,9 +157,10 @@ cc_library(
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
@@ -163,8 +168,6 @@ cc_library(
         "@tsl//tsl/platform:context",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:load_library",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
@@ -175,6 +178,7 @@ cc_library(
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:stringprintf",
+        "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:tracing",
     ],
 )
@@ -193,9 +197,11 @@ cc_library(
         ":env",
         "//xla/tsl/platform:logging",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:load_library",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -273,6 +279,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_rpath",
     ]),
@@ -297,14 +304,15 @@ cc_library(
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:mutex",
     ],
 )
 
 filegroup(
     name = "xla_cpu_runtime_srcs",
     srcs = [
+        "context.h",
         "integral_types.h",
     ] + if_not_windows(["env_time.cc"]),
 )
@@ -443,8 +451,9 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:thread_annotations",
     ],
     alwayslink = True,
 )
@@ -662,4 +671,18 @@ exports_files(
         "//tensorflow/core/lib/jpeg:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
+)
+
+cc_library(
+    name = "recordphase",
+    srcs = ["recordphase.cc"],
+    hdrs = ["//xla/tsl/platform:recordphase.h"],
+    tags = [
+        "manual",
+        "no_oss",
+        "nobuilder",
+    ],
+    deps = [
+        "@com_google_absl//absl/strings:string_view",
+    ],
 )

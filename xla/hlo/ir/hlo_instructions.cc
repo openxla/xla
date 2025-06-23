@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/layout.h"
@@ -400,33 +401,10 @@ HloAsyncStartInstruction::HloAsyncStartInstruction(
     HloComputation* async_computation, absl::string_view async_execution_thread)
     : HloAsyncInstruction(opcode, shape, operands,
                           async_computation->root_instruction()->opcode()) {
-  CHECK(!async_computation->IsCustomCallComputation());
+  CHECK(async_computation->caller_instructions(HloOpcode::kCustomCall).empty());
   CHECK(!async_computation->IsFusionComputation());
-  CHECK(!async_computation->IsAsyncComputation());
   AppendComputation(async_computation);
-  async_computation->AddAsyncStart(this);
   HloAsyncStartInstruction::set_async_execution_thread(async_execution_thread);
-}
-
-HloAsyncStartInstruction::~HloAsyncStartInstruction() {
-  ClearAsyncComputationInstruction();
-}
-
-void HloAsyncStartInstruction::ClearCalledComputations() {
-  ClearAsyncComputationInstruction();
-  HloInstruction::ClearCalledComputations();
-}
-
-void HloAsyncStartInstruction::ClearAsyncComputationInstruction() {
-  // Each async instruction calls a single computation, but we use
-  // called_computations() instead of async_wrapped_instruction(), because the
-  // order in which things get destructed can vary; the async computation's
-  // back-pointer may already be null, which violates a check in
-  // async_wrapped_instruction.
-  if (!called_computations().empty() &&
-      async_wrapped_computation()->AsyncStart() == this) {
-    async_wrapped_computation()->RemoveAsyncStart();
-  }
 }
 
 void HloAsyncStartInstruction::set_async_execution_thread(
@@ -472,6 +450,13 @@ HloAsyncStartInstruction::CloneWithNewOperandsImpl(
   if (new_wrapped_computation == nullptr) {
     new_wrapped_computation = module->AddEmbeddedComputation(
         async_wrapped_computation()->Clone("clone", context));
+    // Give the trampoline a trivial schedule if it already had one.
+    if (module->has_schedule() && module->schedule().is_computation_scheduled(
+                                      async_wrapped_computation())) {
+      module->schedule().set_sequence(
+          new_wrapped_computation,
+          new_wrapped_computation->MakeInstructionPostOrder());
+    }
   }
 
   return std::make_unique<HloAsyncStartInstruction>(
@@ -547,8 +532,11 @@ void HloCompareInstruction::PrintExtraAttributesImpl(
   printer.Next([this](Printer* printer) {
     AppendCat(printer, "direction=", ComparisonDirectionToString(direction()));
   });
-  if (compare_.GetType() !=
-      Comparison::DefaultComparisonType(operand(0)->shape().element_type())) {
+  // We might want to print a HloInstruction which has been cleand up and has no
+  // operands anymore. This should not result in a crash.
+  if (operand_count() == 0 || operand(0) == nullptr ||
+      compare_.GetType() != Comparison::DefaultComparisonType(
+                                operand(0)->shape().element_type())) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "type=", ComparisonTypeToString(compare_.GetType()));
     });
@@ -713,7 +701,9 @@ HloInstructionProto HloChannelInstruction::ToProto() const {
 
 void HloChannelInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& /*options*/) const {
-  if (!channel_id_) return;
+  if (!channel_id_) {
+    return;
+  }
   printer.Next([this](Printer* printer) {
     AppendCat(printer, "channel_id=", *channel_id_);
   });
@@ -934,8 +924,8 @@ void HloCollectiveInstruction::PrintExtraAttributesImpl(
     VLOG(4) << name() << " replica_groups="
             << device_list_.ToString(options.print_full_replica_group_list());
 
-    AppendCat(printer, "replica_groups=",
-              device_list_.ToString(options.print_full_replica_group_list()));
+    printer->Append("replica_groups=");
+    device_list_.Print(printer, options.print_full_replica_group_list());
   });
   if (constrain_layout_) {
     printer.Next(
@@ -1028,7 +1018,6 @@ HloAllReduceInstructionBase::HloAllReduceInstructionBase(
                                constrain_layout, channel_id),
       use_global_device_ids_(use_global_device_ids) {
   AppendComputation(reduce_computation);
-  reduce_computation->SetCollectiveCallInstruction(this);
 }
 
 HloInstructionProto HloAllReduceInstructionBase::ToProto() const {
@@ -1357,12 +1346,11 @@ HloCollectivePermuteInstruction::CloneWithNewOperandsImpl(
         opcode(), shape,
         absl::Span<HloInstruction* const>(new_operands.subspan(0, 1)),
         source_target_pairs(), channel_id());
-  } else {
-    return std::make_unique<HloCollectivePermuteInstruction>(
-        opcode(), shape, new_operands[0], new_operands[1], new_operands[2],
-        new_operands[3], source_target_pairs(), dynamic_slice_sizes_list(),
-        channel_id());
   }
+  return std::make_unique<HloCollectivePermuteInstruction>(
+      opcode(), shape, new_operands[0], new_operands[1], new_operands[2],
+      new_operands[3], source_target_pairs(), dynamic_slice_sizes_list(),
+      channel_id());
 }
 
 HloReverseInstruction::HloReverseInstruction(
@@ -1515,12 +1503,6 @@ HloTransposeInstruction::HloTransposeInstruction(
   AppendOperand(operand);
 }
 
-bool HloTransposeInstruction::IsRank2Transpose() const {
-  return dimensions() == std::vector<int64_t>({1, 0}) && shape().rank() == 2 &&
-         std::equal(shape().dimensions().begin(), shape().dimensions().end(),
-                    operand(0)->shape().dimensions().rbegin());
-}
-
 std::unique_ptr<HloInstruction>
 HloTransposeInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
@@ -1618,7 +1600,7 @@ HloMapInstruction::HloMapInstruction(const Shape& shape,
   AppendComputation(map_computation);
   // TODO(b/65689298) Remove code below once Map is generalized to accept
   // arbitrary map dimensions.
-  dimensions_.resize(shape.rank());
+  dimensions_.resize(shape.dimensions().size());
   std::iota(dimensions_.begin(), dimensions_.end(), 0);
 }
 
@@ -1634,7 +1616,7 @@ bool HloMapInstruction::IsElementwiseImpl(
     const std::optional<int64_t>& operand_idx) const {
   if (!dimensions().empty()) {
     // Check that the map is executed in elementwise compatible dimensions.
-    if (dimensions().size() != shape().rank()) {
+    if (dimensions().size() != shape().dimensions().size()) {
       return false;
     }
     for (int i = 0; i < dimensions().size(); ++i) {
@@ -1826,14 +1808,16 @@ void HloConstantInstruction::PrintOperandsWithCanonicalNameMap(
       printer->Append("1");
       return;
     }
-    if (shape().IsInteger()) {
+    if (shape().AreAllLeavesIntegers()) {
       // The following prevents high compilation latencies caused by serializing
       // large constant tensors; for example: b/265669625. The limit of 500k was
       // chosen empirically to make sure that serialization of the `literal_` is
       // less than a second.
-      if (auto num_constants =
-              absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>());
-          num_constants <= 500'000) {
+      const auto num_constants =
+          shape().IsArray()
+              ? absl::c_accumulate(shape().dimensions(), 1, std::multiplies<>())
+              : 1;
+      if (num_constants <= 500'000) {
         literal_->PrintWithoutShapeOneline(printer);
         return;
       }
@@ -2066,9 +2050,8 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
 
   if (clone != instruction_to_append) {
     // Copy over the original value to the clone of a fused instruction.
-    if (auto original_value = instruction_to_append->original_value()) {
-      clone->set_original_value(original_value);
-    }
+    clone->CopyOriginalValue(instruction_to_append,
+                             /*clone=*/false);
     VLOG(2) << "New clone:\n" << clone->ToString();
   }
 
@@ -2199,10 +2182,6 @@ HloFusionInstruction::HloFusionInstruction(const Shape& shape,
 
   set_metadata(fused_root->metadata());
   set_frontend_attributes(fused_root->frontend_attributes());
-  // This simplifies some use cases for the original value that involve fusions.
-  if (auto original_value = fused_root->original_value()) {
-    set_original_value(original_value);
-  }
   CHECK(fused_root->IsFusible()) << fused_root->ToString();
   CloneAndAppendInstructionIntoCalledComputation(fused_root);
 }
@@ -2450,9 +2429,7 @@ void HloFusionInstruction::MergeFusionInstructionIntoMultiOutput(
     // This is necessary as the clone will be cloned again when the clone is
     // fused in FuseInstructionIntoMultiOutput(). This can be skipped if we
     // improve the code to only clone once as stated in the preceding comment.
-    if (auto original_value = fused_instruction->original_value()) {
-      cloned_instruction->set_original_value(original_value);
-    }
+    cloned_instruction->CopyOriginalValue(fused_instruction, /*clone=*/true);
     unfused_instructions.push_back(cloned_instruction);
     InsertOrDie(&old_to_new, fused_instruction, cloned_instruction);
   }
@@ -2882,8 +2859,8 @@ bool HloInfeedInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
-  // Not yet supported.
-  return false;
+  return ShapeUtil::Equal(shape(), other.shape()) &&
+         infeed_config() == other.infeed_config();
 }
 
 std::unique_ptr<HloInstruction> HloInfeedInstruction::CloneWithNewOperandsImpl(
@@ -2929,8 +2906,8 @@ bool HloOutfeedInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
-  // Not yet supported.
-  return false;
+  return ShapeUtil::Equal(outfeed_shape(), other.outfeed_shape()) &&
+         outfeed_config() == other.outfeed_config();
 }
 
 std::unique_ptr<HloInstruction> HloOutfeedInstruction::CloneWithNewOperandsImpl(
@@ -2986,7 +2963,7 @@ HloInstructionProto HloConvolutionInstruction::ToProto() const {
 
 void HloConvolutionInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3022,12 +2999,13 @@ bool HloConvolutionInstruction::IdenticalSlowPath(
   if (batch_group_count_ != other.batch_group_count()) {
     return false;
   }
-  return protobuf_util::ProtobufEquals(window(), casted_other.window()) &&
-         protobuf_util::ProtobufEquals(
+  return protobuf_util::HaveSameSerialization(window(),
+                                              casted_other.window()) &&
+         protobuf_util::HaveSameSerialization(
              convolution_dimension_numbers(),
              casted_other.convolution_dimension_numbers()) &&
-         protobuf_util::ProtobufEquals(precision_config(),
-                                       casted_other.precision_config());
+         protobuf_util::HaveSameSerialization(precision_config(),
+                                              casted_other.precision_config());
 }
 
 std::unique_ptr<HloInstruction>
@@ -3070,7 +3048,7 @@ HloInstructionProto HloReduceWindowInstruction::ToProto() const {
 
 void HloReduceWindowInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3084,7 +3062,7 @@ bool HloReduceWindowInstruction::IdenticalSlowPath(
   const auto& casted_other =
       static_cast<const HloReduceWindowInstruction&>(other);
   return eq_computations(to_apply(), casted_other.to_apply()) &&
-         protobuf_util::ProtobufEquals(window(), casted_other.window());
+         protobuf_util::HaveSameSerialization(window(), casted_other.window());
 }
 
 std::unique_ptr<HloInstruction>
@@ -3121,7 +3099,7 @@ HloInstructionProto HloSelectAndScatterInstruction::ToProto() const {
 
 void HloSelectAndScatterInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
-  if (window_.dimensions_size() != 0) {
+  if (!window_.dimensions().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "window={", window_util::ToString(window()), "}");
     });
@@ -3136,7 +3114,7 @@ bool HloSelectAndScatterInstruction::IdenticalSlowPath(
       static_cast<const HloSelectAndScatterInstruction&>(other);
   return eq_computations(select(), casted_other.select()) &&
          eq_computations(scatter(), casted_other.scatter()) &&
-         protobuf_util::ProtobufEquals(window(), casted_other.window());
+         protobuf_util::HaveSameSerialization(window(), casted_other.window());
 }
 
 std::unique_ptr<HloInstruction>
@@ -3179,7 +3157,6 @@ HloCustomCallInstruction::HloCustomCallInstruction(
       custom_call_schedule_(CustomCallSchedule::SCHEDULE_NONE),
       api_version_(api_version) {
   set_raw_backend_config_string(std::move(opaque));
-  to_apply->SetCustomCallInstruction(this);
 }
 
 HloCustomCallInstruction::HloCustomCallInstruction(
@@ -3198,9 +3175,6 @@ HloCustomCallInstruction::HloCustomCallInstruction(
       custom_call_schedule_(CustomCallSchedule::SCHEDULE_NONE),
       api_version_(api_version) {
   set_raw_backend_config_string(std::move(opaque));
-  for (auto comp : called_computations) {
-    comp->SetCustomCallInstruction(this);
-  }
 }
 
 HloCustomCallInstruction::HloCustomCallInstruction(
@@ -3209,6 +3183,25 @@ HloCustomCallInstruction::HloCustomCallInstruction(
     absl::Span<const Shape> operand_shapes_with_layout,
     CustomCallApiVersion api_version)
     : HloCallableInstruction(HloOpcode::kCustomCall, shape, operands),
+      custom_call_target_(custom_call_target),
+      feature_group_count_(1),
+      batch_group_count_(1),
+      layout_constrained_(true),
+      padding_type_(PaddingType::PADDING_INVALID),
+      operand_shapes_with_layout_(operand_shapes_with_layout.begin(),
+                                  operand_shapes_with_layout.end()),
+      custom_call_has_side_effect_(false),
+      custom_call_schedule_(CustomCallSchedule::SCHEDULE_NONE),
+      api_version_(api_version) {
+  set_raw_backend_config_string(std::move(opaque));
+}
+
+HloCustomCallInstruction::HloCustomCallInstruction(
+    const Shape& shape, absl::Span<HloInstruction* const> operands,
+    HloComputation* to_apply, absl::string_view custom_call_target,
+    std::string opaque, absl::Span<const Shape> operand_shapes_with_layout,
+    CustomCallApiVersion api_version)
+    : HloCallableInstruction(HloOpcode::kCustomCall, shape, operands, to_apply),
       custom_call_target_(custom_call_target),
       feature_group_count_(1),
       batch_group_count_(1),
@@ -3358,14 +3351,14 @@ bool HloCustomCallInstruction::IdenticalSlowPath(
   const auto& casted_other =
       static_cast<const HloCustomCallInstruction&>(other);
   if ((window_ == nullptr) != (casted_other.window_ == nullptr) ||
-      (window_ != nullptr &&
-       !protobuf_util::ProtobufEquals(*window_, *casted_other.window_))) {
+      (window_ != nullptr && !protobuf_util::HaveSameSerialization(
+                                 *window_, *casted_other.window_))) {
     return false;
   }
   if ((convolution_dimension_numbers_ == nullptr) !=
           (casted_other.convolution_dimension_numbers_ == nullptr) ||
       (convolution_dimension_numbers_ != nullptr &&
-       !protobuf_util::ProtobufEquals(
+       !protobuf_util::HaveSameSerialization(
            convolution_dimension_numbers(),
            casted_other.convolution_dimension_numbers()))) {
     return false;
@@ -3400,8 +3393,8 @@ bool HloCustomCallInstruction::IdenticalSlowPath(
       casted_other.output_to_operand_aliasing()) {
     return false;
   }
-  if (!protobuf_util::ProtobufEquals(precision_config(),
-                                     casted_other.precision_config())) {
+  if (!protobuf_util::HaveSameSerialization(precision_config(),
+                                            casted_other.precision_config())) {
     return false;
   }
 
@@ -3461,7 +3454,7 @@ HloCustomCallInstruction::CloneWithNewOperandsImpl(
   cloned->set_padding_type(padding_type_);
   *cloned->mutable_precision_config() = precision_config();
   cloned->set_custom_call_schedule(custom_call_schedule_);
-  return std::move(cloned);
+  return cloned;
 }
 
 HloPadInstruction::HloPadInstruction(const Shape& shape,
@@ -3491,8 +3484,8 @@ bool HloPadInstruction::IdenticalSlowPath(
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
   const auto& casted_other = static_cast<const HloPadInstruction&>(other);
-  return protobuf_util::ProtobufEquals(padding_config(),
-                                       casted_other.padding_config());
+  return protobuf_util::HaveSameSerialization(padding_config(),
+                                              casted_other.padding_config());
 }
 
 std::unique_ptr<HloInstruction> HloPadInstruction::CloneWithNewOperandsImpl(
@@ -3573,14 +3566,14 @@ std::unique_ptr<HloInstruction>
 HloDynamicSliceInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
-  if (new_operands.size() == 2 && new_operands[1]->shape().rank() == 1) {
+  if (new_operands.size() == 2 &&
+      new_operands[1]->shape().dimensions().size() == 1) {
     // TODO(b/118437727): Old form, remove this path.
     return std::make_unique<HloDynamicSliceInstruction>(
         shape, new_operands[0], new_operands[1], dynamic_slice_sizes_);
-  } else {
-    return std::make_unique<HloDynamicSliceInstruction>(
-        shape, new_operands[0], new_operands.subspan(1), dynamic_slice_sizes_);
   }
+  return std::make_unique<HloDynamicSliceInstruction>(
+      shape, new_operands[0], new_operands.subspan(1), dynamic_slice_sizes_);
 }
 
 HloGatherInstruction::HloGatherInstruction(
@@ -3681,7 +3674,7 @@ bool HloGatherInstruction::IdenticalSlowPath(
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
   const auto& casted_other = static_cast<const HloGatherInstruction&>(other);
-  return protobuf_util::ProtobufEquals(
+  return protobuf_util::HaveSameSerialization(
              gather_dimension_numbers(),
              casted_other.gather_dimension_numbers()) &&
          gather_slice_sizes() == casted_other.gather_slice_sizes() &&
@@ -3798,7 +3791,7 @@ bool HloScatterInstruction::IdenticalSlowPath(
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
   const auto& casted_other = static_cast<const HloScatterInstruction&>(other);
-  return protobuf_util::ProtobufEquals(
+  return protobuf_util::HaveSameSerialization(
              scatter_dimension_numbers(),
              casted_other.scatter_dimension_numbers()) &&
          eq_computations(to_apply(), casted_other.to_apply()) &&
@@ -3896,12 +3889,12 @@ bool HloDotInstruction::IdenticalSlowPath(
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
   const auto& casted_other = static_cast<const HloDotInstruction&>(other);
-  return protobuf_util::ProtobufEquals(dot_dimension_numbers(),
-                                       casted_other.dot_dimension_numbers()) &&
-         protobuf_util::ProtobufEquals(precision_config(),
-                                       casted_other.precision_config()) &&
+  return protobuf_util::HaveSameSerialization(
+             dot_dimension_numbers(), casted_other.dot_dimension_numbers()) &&
+         protobuf_util::HaveSameSerialization(
+             precision_config(), casted_other.precision_config()) &&
          absl::c_equal(sparsity_, casted_other.sparsity_,
-                       protobuf_util::ProtobufEquals);
+                       protobuf_util::HaveSameSerialization);
 }
 
 std::unique_ptr<HloInstruction> HloDotInstruction::CloneWithNewOperandsImpl(
@@ -3947,11 +3940,11 @@ bool HloRaggedDotInstruction::IdenticalSlowPath(
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
         eq_computations) const {
   const auto& casted_other = static_cast<const HloRaggedDotInstruction&>(other);
-  return protobuf_util::ProtobufEquals(
+  return protobuf_util::HaveSameSerialization(
              ragged_dot_dimension_numbers(),
              casted_other.ragged_dot_dimension_numbers()) &&
-         protobuf_util::ProtobufEquals(precision_config(),
-                                       casted_other.precision_config());
+         protobuf_util::HaveSameSerialization(precision_config(),
+                                              casted_other.precision_config());
 }
 
 std::unique_ptr<HloInstruction>
