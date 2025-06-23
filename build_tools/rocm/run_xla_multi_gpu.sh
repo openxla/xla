@@ -92,6 +92,7 @@ bazel \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     -- //xla/tests:collective_ops_e2e_test \
        //xla/tests:collective_ops_test \
+       //xla/tests:collective_pipeline_parallelism_test \
        //xla/tests:replicated_io_feed_test \
        //xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
        //xla/pjrt/distributed:topology_util_test \
