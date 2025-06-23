@@ -313,10 +313,23 @@ nvidia_gpu_build_with_compute_capability(
     configs=("warnings", "rbe_linux_cuda_nvcc"),
     compute_capability=75,
 )
-oneapi_tag_filter = (
-    "gpu",
-    "oneapi",
+
+oneapi_build_tag_filter = (
+    "oneapi-only",
     "requires-gpu-intel",
+    "-requires-gpu-amd",
+    "-requires-gpu-nvidia",
+    "-no_oss",
+    "-cuda-only",
+    "-rocm-only",
+    "-no-oneapi",
+)
+
+oneapi_test_tag_filter = (
+    "oneapi-only",
+    # This build of oneAPI backend runs on X86 host without an Intel GPU,so
+    # we are excluding the tests requiring Intel GPU
+    "-requires-gpu-intel",
     "-requires-gpu-amd",
     "-requires-gpu-nvidia",
     "-no_oss",
@@ -329,12 +342,9 @@ Build(
     type_=BuildType.XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("sycl", "sycl_hermetic"),
-    # This build of oneAPI backend runs on X86 host without an Intel GPU, so 
-    # build command is passed here instead of test.
-    subcommand="build",
     target_patterns=_XLA_ONEAPI_TARGET_PATTERNS,
-    build_tag_filters=oneapi_tag_filter,
-    test_tag_filters=oneapi_tag_filter,
+    build_tag_filters=oneapi_build_tag_filter,
+    test_tag_filters=oneapi_test_tag_filter,
     options=_DEFAULT_BAZEL_OPTIONS,
 )
 
