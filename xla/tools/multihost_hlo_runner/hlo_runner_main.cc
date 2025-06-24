@@ -164,22 +164,15 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   TF_ASSIGN_OR_RETURN(out.module_argument_mode,
                       ArgumentModeFromString(opts.hlo_argument_mode));
-  // add parser for output mode (from functional_hlo_runner.h::AbslParseFlag)
-  if (opts.output_mode_str == "return_outputs") {
-    out.module_output_mode =
-        FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
-  } else if (opts.output_mode_str == "not_return_outputs") {
-    out.module_output_mode =
-        FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
-  } else if (opts.output_mode_str == "return_device0_outputs") {
-    out.module_output_mode =
-        FunctionalHloRunner::ModuleOutputMode::kReturnDevice0Outputs;
-  } else {
+  // add parser for output mode (matching from
+  // functional_hlo_runner.h::AbslParseFlag, error generate from
+  // functional_hlo_runner.cc)
+  std::string error;
+  if (!FunctionalHloRunner::AbslParseFlag(opts.output_mode_str,
+                                          &out.module_output_mode, &error)) {
     return absl::InvalidArgumentError(
-        absl::StrCat("Invalid --output_mode specified. Expected one of: "
-                     "\"return_outputs\", \"not_return_outputs\", "
-                     "\"return_device0_outputs\". Got: ",
-                     opts.output_mode_str));
+        absl::StrCat("Invalid --output_mode specified. ", error,
+                     " Got: ", opts.output_mode_str));
   }
 
   out.num_repeats = static_cast<size_t>(opts.num_repeats);
@@ -440,9 +433,10 @@ int main(int argc, char** argv) {
           "output_mode", &opts.output_mode_str,
           "Specify whether outputs are returned after execution. "
           "Possible values: return_outputs (default), not_return_outputs, "
-          "return_device0_outputs (return outputs only from logical device 0). "
+          "return_device_0_outputs (return outputs only from logical device "
+          "0). "
           "If outputs are not returned, outputs are still computed but the "
-          "potentially slow device-to-host copy is skipped. "),
+          "potentially slow device-to-host copy is skipped."),
   };
 
   xla::AppendDebugOptionsFlags(&flag_list);
