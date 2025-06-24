@@ -2168,6 +2168,13 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, MatrixBiasSwishActivation) {
+  auto runtime_version = GetRuntimeVersion();
+  bool rocm_gelu_available =
+      IsRocm() &&
+      (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
+  if (!rocm_gelu_available) {
+    GTEST_SKIP() << "TODO: Unsupported blas-lt epilogue on ROCM";
+  }
   const char* hlo_text = R"(
 HloModule test
 
