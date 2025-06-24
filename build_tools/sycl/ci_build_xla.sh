@@ -19,7 +19,7 @@
 ./configure.py --backend=SYCL --host_compiler=GCC
 bazel build \
       --config=sycl_hermetic \
-      --build_tag_filters=gpu,oneapi,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
-      --test_tag_filters=gpu,oneapi,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      --build_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      --test_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
       //xla/stream_executor/sycl:stream_executor_sycl \
       //xla/stream_executor/sycl:sycl_status_test

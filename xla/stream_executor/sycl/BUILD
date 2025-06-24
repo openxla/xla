@@ -104,26 +104,17 @@ cc_library(
     name = "sycl_status",
     srcs = ["sycl_status.cc",],
     hdrs = ["sycl_status.h",],
-    tags = [
-        "gpu",
-        "oneapi-only",
-    ],
     deps = [
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@local_config_sycl//sycl:sycl_headers",
     ],
 )
 
 xla_cc_test(
     name = "sycl_status_test",
     srcs = ["sycl_status_test.cc",],
-    tags = [
-        "gpu",
-        "oneapi-only",
-    ],
     deps = [
         ":sycl_status",
         "//xla/tsl/platform:status_matchers",
@@ -131,7 +122,6 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@local_config_sycl//sycl:sycl_headers",
     ],
 )
 

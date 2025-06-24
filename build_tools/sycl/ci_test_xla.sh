@@ -19,6 +19,6 @@
 # Hermetic build is not currently fully supported for executing tests.
 ./configure.py --backend=SYCL --host_compiler=GCC
 bazel test \
-      --build_tag_filters=gpu,oneapi,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
-      --test_tag_filters=gpu,oneapi,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      --build_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      --test_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
       //xla/stream_executor/sycl:sycl_status_test
