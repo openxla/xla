@@ -200,7 +200,7 @@ absl::StatusOr<void*> GetRoctracerDsoHandle() {
 }
 
 absl::StatusOr<void*> GetHipsparseDsoHandle() {
-  return GetDsoHandle("hipsparse", "1");
+  return GetDsoHandle("hipsparse", "4");
 }
 
 absl::StatusOr<void*> GetHipblasltDsoHandle() {
