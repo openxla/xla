@@ -795,6 +795,30 @@ cc_library(
 )
 
 cc_library(
+    name = "dynamic_slicing_utils",
+    srcs = ["dynamic_slicing_utils.cc"],
+    hdrs = ["dynamic_slicing_utils.h"],
+    tags = ["gpu"],
+    deps = [
+        ":gpu_constants",
+        ":ir_emission_utils",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:while_loop_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:call_graph",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "triton_tiling_propagation",
     srcs = ["triton_tiling_propagation.cc"],
     hdrs = ["triton_tiling_propagation.h"],
@@ -1182,8 +1206,8 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/service:overload",
         "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/functional:overload",
     ],
 )
 
@@ -1287,7 +1311,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/runtime:sequential_thunk",
-        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
@@ -1470,6 +1493,7 @@ cc_library(
         "//xla/hlo/transforms/expanders:logistic_expander",
         "//xla/hlo/transforms/expanders:optimization_barrier_expander",
         "//xla/hlo/transforms/expanders:qr_expander",
+        "//xla/hlo/transforms/expanders:ragged_dot_rewriter",
         "//xla/hlo/transforms/expanders:real_imag_expander",
         "//xla/hlo/transforms/expanders:reduce_decomposer",
         "//xla/hlo/transforms/expanders:reshape_decomposer",
@@ -2225,7 +2249,9 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":gpu_compiler",
+        ":gpu_device_info_for_tests",
         ":gpu_hlo_schedule",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:hlo",
@@ -2562,10 +2588,11 @@ xla_test(
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
-        "//xla/service:overload",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],

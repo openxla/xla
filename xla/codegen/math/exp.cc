@@ -197,8 +197,12 @@ llvm::Function* CreateExpF64(llvm::Module* module, llvm::Type* input_type) {
 
   // Convert n (stored as float vector) to an integer vector for ldexp.
   llvm::Function* ldexp_fn = CreateLdexpF64(module, input_type);
-  llvm::Value* n_int =
-      builder.CreateFPToSI(n, ldexp_fn->getArg(1)->getType(), "n_float_to_int");
+  // FPtoSI(nan) yields a poison value. We freeze the output to halt propagation
+  // of UB and let the compiler know we will accept any arbitrary value of that
+  // type here.
+  // This works because ldexp(nan, n_int) = nan for any n_int.
+  llvm::Value* n_int = builder.CreateFreeze(builder.CreateFPToSI(
+      n, ldexp_fn->getArg(1)->getType(), "n_float_to_int"));
 
   // Reconstruct exp(x) = exp(g) * 2^n using ldexp(exp_g_approx, n_int_vec).
   llvm::Value* calculated_exp_val = builder.CreateCall(

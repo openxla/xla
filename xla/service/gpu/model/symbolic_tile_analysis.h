@@ -183,8 +183,7 @@ using FlatTiling = absl::InlinedVector<int64_t, 4>;
 // them.
 class Tiling {
  public:
-  using TileMapping = absl::flat_hash_map<const HloInstruction*,
-                                          absl::InlinedVector<int64_t, 4>>;
+  using TileMapping = absl::flat_hash_map<const HloInstruction*, FlatTiling>;
   explicit Tiling(TileMapping tile_sizes)
       : tile_sizes_(std::move(tile_sizes)) {}
 
@@ -318,24 +317,6 @@ class SymbolicTileAnalysis {
       bool constraints_are_known_satisfied = false,
       bool compute_all_tile_offset_indexing_maps = false) const;
 
-  // Returns a graph of HLO instructions tiled with the given tiling parameters.
-  // The provided tiling parameters must satisfy the analysis's constraints.
-  // By default, `ComputeTiledHloInstructions` performs a check that the
-  // constraints are satisfied by the chosen tiling parameters. Setting
-  // `constraints_are_known_satisfied` to true bypasses this check.
-  //
-  // If `compute_all_tile_offset_indexing_maps == true`, all
-  // `TiledHloInstruction`s will have tile offset indexing maps set. Otherwise,
-  // the indexing maps will be set only for instructions that have equal hash to
-  // deduplicate them.
-  //
-  // This variant can only be used for fusions with no hidden nested parameters.
-  [[deprecated]] absl::StatusOr<TiledHloComputation>
-  ComputeTiledHloInstructions(
-      absl::Span<const int64_t> output_tile_sizes,
-      bool constraints_are_known_satisfied = false,
-      bool compute_all_tile_offset_indexing_maps = false) const;
-
   // Returns the roots of the computation in increasing order of their output
   // index.
   absl::Span<const HloInstruction* const> GetRoots() const {
@@ -369,26 +350,6 @@ class SymbolicTileAnalysis {
   const TilingSpecification& GetTilingSpecification() const {
     return tiling_specification_;
   }
-
-  // Returns true if a list of tile parameters satisfies the symbolic tile
-  // analysis's constraints. If provided, also checks the emitter-specific
-  // constraints.
-  //
-  // Returns false if the constraints are not satisfied but can be evaluated
-  // correctly. Returns an error if the constraints cannot be evaluated
-  // correctly. This is typically the case if too few tile parameters are
-  // provided to fully reduce the constraint expressions to constants.
-  //
-  // This is a convenience overload for the case when only output tile sizes
-  // need to be set.
-  //
-  // DEPRECATED: Use `ParametersSatisfyConstraints(const Tiling& tiling)`
-  // instead. This is not safe for fusions involving hidden parameters.
-  //
-  // TODO(b/421837868): deprecate `SymbolicTileAnalysis::Tiling` everywhere to
-  // use logic that supports nests everywhere.
-  [[deprecated]] absl::StatusOr<bool> ParametersSatisfyConstraints(
-      absl::Span<const int64_t> tile_parameters) const;
 
   // Returns `true` if a `Tiling` conforms to the symbolic tile analysis's
   // `TilingSpecification`. If provided, also checks the emitter-specific
