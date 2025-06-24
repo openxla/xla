@@ -47,7 +47,8 @@ typedef enum {
   PJRT_Extension_Type_FFI,
   PJRT_Extension_Type_MemoryDescriptions,
   PJRT_Extension_Type_Triton,
-  PJRT_Extension_Type_RawBuffer,  // Experimental.
+  PJRT_Extension_Type_RawBuffer,     // Experimental.
+  PJRT_Extension_Type_PhaseCompile,  // Experimental.
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -82,7 +83,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 70
+#define PJRT_API_MINOR 71
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -318,6 +319,7 @@ typedef struct PJRT_LoadedExecutable PJRT_LoadedExecutable;
 typedef struct PJRT_Buffer PJRT_Buffer;
 typedef struct PJRT_AsyncHostToDeviceTransferManager
     PJRT_AsyncHostToDeviceTransferManager;
+typedef struct PJRT_PhaseCompiler PJRT_PhaseCompiler;
 
 // The caller of PJRT_Client_Create can optionally provide a key-value store
 // accessible across nodes and/or processes. KV store access may be necessary to

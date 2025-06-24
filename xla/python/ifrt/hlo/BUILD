@@ -17,8 +17,35 @@ cc_library(
     hdrs = ["hlo_program.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla:status_macros",
+        "//xla/pjrt:mlir_to_hlo",
         "//xla/python/ifrt",
+        "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@highwayhash",
+        "@highwayhash//:arch_specific",
+        "@highwayhash//:hh_types",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeWriter",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_program_test",
+    srcs = ["hlo_program_test.cc"],
+    deps = [
+        ":hlo_program",
+        "//xla/pjrt:mlir_to_hlo",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
 )

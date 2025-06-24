@@ -22,8 +22,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
-#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -62,9 +62,9 @@ class CopyInsertion : public HloModulePass {
   // TODO(b/80315712): Find a better way to tell whether a fusion can share
   // buffer.
   explicit CopyInsertion(
-      const HloDataflowAnalysis::CanShareBuffer& can_share_buffer = nullptr,
+      const AliasInfo* alias_info,
       int64_t use_region_based_live_range_analysis = kUseRegionAnalysisLimit)
-      : can_share_buffer_(can_share_buffer),
+      : alias_info_(alias_info),
         use_region_based_live_range_analysis_(
             use_region_based_live_range_analysis) {}
 
@@ -118,9 +118,9 @@ class CopyInsertion : public HloModulePass {
   absl::Status AddCopiesForExplicitNonCopyableTransitions(
       const HloAliasAnalysis& alias_analysis, HloInstruction* chain_start);
 
-  // Backend specific function that decides whether an instruction can share
-  // buffer with its operand.
-  HloDataflowAnalysis::CanShareBuffer can_share_buffer_;
+  // Backend specific information about whether an instruction can share buffer
+  // with its operand.
+  const AliasInfo* alias_info_;
 
  private:
   absl::Status AddCopiesToResolveInterference(

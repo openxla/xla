@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
@@ -155,7 +154,8 @@ ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
       options_(options),
       communicator_resource_(
           Resource::Create(Resource::kCollectiveCommunicator)),
-      fusion_compiler_(FusionCompilerFactory(hlo_module)) {}
+      fusion_compiler_(FusionCompilerFactory(hlo_module)),
+      mlir_context_(FusionCompiler::CreateContext()) {}
 
 static Thunk::Info ThunkInfo(const HloInstruction* instruction) {
   const HloModule* module = instruction->GetModule();
@@ -783,14 +783,15 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
         /*min_alignment=*/cpu_function_runtime::MinAlign());
   }
 
+  // We currently only support loop fusion & the dot implementation is currently
+  // not efficient compared to the legacy emitter.
   if (hlo_module_config_.debug_options().xla_cpu_use_fusion_emitters() &&
       options::UseExperimentalLoopFusion(hlo_module_config_) &&
-      fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop) {
-    std::unique_ptr<mlir::MLIRContext> context =
-        FusionCompiler::CreateContext();
+      fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop &&
+      fusion->fused_expression_root()->opcode() != HloOpcode::kDot) {
     TF_ASSIGN_OR_RETURN(
         MlirKernelDefinition kernel_definition,
-        EmitFusionKernel(*context, *fusion, &buffer_assignment_));
+        EmitFusionKernel(*mlir_context_, *fusion, &buffer_assignment_));
 
     auto [kernel_spec, kernel_source] =
         std::move(kernel_definition).ReleaseStorage();
@@ -997,9 +998,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       // Decide whether to use XNNPACK or Eigen.
       bool use_xnn = hlo_module_config_.debug_options().xla_cpu_use_xnnpack();
       if (use_xnn) {
-        TF_ASSIGN_OR_RETURN(use_xnn,
-                            IsXnnDotSupported(dnums, lhs->shape(), rhs->shape(),
-                                              instruction->shape()));
+        TF_ASSIGN_OR_RETURN(
+            use_xnn, IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
+                                         instruction->shape()));
       }
 
       if (use_xnn) {
