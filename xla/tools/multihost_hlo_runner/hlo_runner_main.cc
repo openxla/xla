@@ -164,9 +164,6 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   TF_ASSIGN_OR_RETURN(out.module_argument_mode,
                       ArgumentModeFromString(opts.hlo_argument_mode));
-  // add parser for output mode (matching from
-  // functional_hlo_runner.h::AbslParseFlag, error generate from
-  // functional_hlo_runner.cc)
   std::string error;
   if (!FunctionalHloRunner::AbslParseFlag(opts.output_mode_str,
                                           &out.module_output_mode, &error)) {
