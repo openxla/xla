@@ -841,8 +841,12 @@ std::string GetValueAsString(const tsl::protobuf::Reflection* reflection,
 }
 
 std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options) {
-  // Create a default DebugOptions to compare against
-  DebugOptions default_options = DefaultDebugOptionsIgnoringFlags();
+  // Compare against a default DebugOptions
+  return GetNonDefaultDebugOptions(debug_options,
+                                   DefaultDebugOptionsIgnoringFlags());
+}
+std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options,
+                                      const DebugOptions& default_options) {
   std::string non_default_options;
 
   // Use protobuf reflection to compare fields
