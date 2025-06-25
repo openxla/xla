@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -204,11 +205,10 @@ absl::StatusOr<xnn_binary_operator> XnnBinaryOperator(const HloOpcode& opcode) {
       return xnn_binary_add;
     case HloOpcode::kAnd:
       return xnn_binary_bitwise_and;
-    // TODO(ashaposhnikov): debug crashes with these instructions.
-    // case HloOpcode::kDivide:
-    //  return xnn_binary_divide;
-    // case HloOpcode::kMaximum:
-    //  return xnn_binary_maximum;
+    case HloOpcode::kDivide:
+      return xnn_binary_divide;
+    case HloOpcode::kMaximum:
+      return xnn_binary_maximum;
     case HloOpcode::kMinimum:
       return xnn_binary_minimum;
     case HloOpcode::kMultiply:
@@ -233,6 +233,10 @@ absl::StatusOr<xnn_binary_operator> XnnBinaryOperator(const HloOpcode& opcode) {
       return InvalidArgument("Unsupported XNNPACK binary operator: %s",
                              HloOpcodeString(opcode));
   }
+}
+
+bool IsLayoutSupportedByXnn(const Shape& shape) {
+  return !shape.has_layout() || LayoutUtil::HasDescendingLayout(shape.layout());
 }
 
 bool IsConstantSupportedByXnn(const HloInstruction* hlo) {
@@ -262,6 +266,15 @@ bool IsElementwiseOpSupportedByXnn(const HloInstruction* hlo) {
     default:
       return false;
   }
+}
+
+bool IsBitcastOpSupportedByXnn(const HloInstruction* hlo) {
+  CHECK(hlo->opcode() == HloOpcode::kBitcast);
+  if (!XnnDatatype(hlo->shape().element_type()).ok()) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  return hlo->shape().element_type() == input->shape().element_type();
 }
 
 }  // namespace xla::cpu

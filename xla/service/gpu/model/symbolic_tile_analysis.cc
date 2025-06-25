@@ -1416,22 +1416,6 @@ std::vector<OperandIndexingSet> GetOperandIndexingMaps(
 }
 
 absl::StatusOr<bool> SymbolicTileAnalysis::ParametersSatisfyConstraints(
-    absl::Span<const int64_t> tile_parameters) const {
-  if (!tiling_specification_.constraints().is_satisfiable()) {
-    return absl::FailedPreconditionError(
-        "SymbolicTileAnalysis's constraints are not satisfiable. "
-        "This should never happen.");
-  }
-
-  const HloInstruction* real_root = root_indexing_.GetRealRoot();
-  Tiling::TileMapping tile_mapping(
-      {{real_root, absl::InlinedVector<int64_t, 4>(tile_parameters.begin(),
-                                                   tile_parameters.end())}});
-  Tiling tiling(std::move(tile_mapping));
-  return ParametersSatisfyConstraints(tiling);
-}
-
-absl::StatusOr<bool> SymbolicTileAnalysis::ParametersSatisfyConstraints(
     const Tiling& tiling) const {
   const ConstraintExpression& constraints = tiling_specification_.constraints();
   CHECK(constraints.is_satisfiable());  // Crash OK
@@ -1824,20 +1808,6 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
       compute_all_tile_offset_indexing_maps,
       /*parent_output_tile_dim_bounds=*/std::nullopt, context_,
       /*symbolic_to_tiled_hlo_map=*/{});
-}
-
-absl::StatusOr<TiledHloComputation>
-SymbolicTileAnalysis::ComputeTiledHloInstructions(
-    absl::Span<const int64_t> output_tile_sizes,
-    bool constraints_are_known_satisfied,
-    bool compute_all_tile_offset_indexing_maps) const {
-  Tiling::TileMapping tile_mapping(
-      {{tiling_specification_.parameter_mapping().begin()->instruction,
-        absl::InlinedVector<int64_t, 4>(output_tile_sizes.begin(),
-                                        output_tile_sizes.end())}});
-  return ComputeTiledHloInstructions(Tiling(tile_mapping),
-                                     constraints_are_known_satisfied,
-                                     compute_all_tile_offset_indexing_maps);
 }
 
 std::string SymbolicTileAnalysis::ToString() const {

@@ -1,4 +1,4 @@
-/* Copyright 2018 The OpenXLA Authors.
+/* Copyright 2025 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
-#define XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
+#if defined(WIN32) || defined(_WIN32)
+#define EXPORT_SYMBOL __declspec(dllexport)
+#else
+#define EXPORT_SYMBOL __attribute__((visibility("default")))
+#endif
 
-#include <stdint.h>
+#define TOKEN_CONCAT(a, b) a##b
+#define WRAPPED_PY_MODULE(name)                                  \
+  extern "C" void *TOKEN_CONCAT(Wrapped_PyInit_, name)();        \
+  extern "C" EXPORT_SYMBOL void *TOKEN_CONCAT(PyInit_, name)() { \
+    return TOKEN_CONCAT(Wrapped_PyInit_, name)();                \
+  }
 
-extern "C" {
-
-extern void __xla_cpu_runtime_DuccSingleThreadedFft(
-    const void* /* xla::ExecutableRunOptions* */ run_options_ptr, void* out,
-    void* operand, int32_t fft_type, int32_t double_precision, int32_t fft_rank,
-    const int64_t* input_shape, const int64_t* fft_length);
-
-}  // extern "C"
-
-#endif  // XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
+WRAPPED_PY_MODULE(WRAPPED_PY_MODULE_NAME)

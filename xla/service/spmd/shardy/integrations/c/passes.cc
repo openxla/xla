@@ -1,4 +1,4 @@
-/* Copyright 2023 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,24 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_OVERLOAD_H_
-#define XLA_SERVICE_OVERLOAD_H_
+#include "xla/service/spmd/shardy/integrations/c/passes.h"
 
-namespace xla {
+#include "xla/service/spmd/shardy/sdy_round_trip/import_shardy_attrs.h"
 
-// This structure is used to support C++17 overload pattern as described in
-// https://en.cppreference.com/w/cpp/utility/variant/visit
-//
-// TODO(b/319202112): Replace with absl::Overload once abs lts_2024_XXX is
-// tagged.
-template <class... Ts>
-struct Overload : Ts... {
-  using Ts::operator()...;
-};
-
-template <class... Ts>
-Overload(Ts...) -> Overload<Ts...>;
-
-}  // namespace xla
-
-#endif  // XLA_SERVICE_OVERLOAD_H_
+void mlirRegisterAllXlaSdyPassesAndPipelines() {
+  // TODO(b/426219837): Register all passes and pipelines of XLA Shardy.
+  xla::sdy::registerSdyRoundTripImportShardyAttrsPass();
+}

@@ -65,13 +65,25 @@ HloInstruction* XnnGraphFusion::Fuse(HloInstruction* producer,
 }
 
 bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
+  if (!IsLayoutSupportedByXnn(instr->shape())) {
+    return false;
+  }
+  if (!XnnDatatype(instr->shape().element_type()).ok()) {
+    return false;
+  }
   if (instr->IsConstant()) {
     return IsConstantSupportedByXnn(instr);
   }
   if (instr->IsElementwise()) {
     return IsElementwiseOpSupportedByXnn(instr);
   }
-  return false;
+
+  switch (instr->opcode()) {
+    case HloOpcode::kBitcast:
+      return IsBitcastOpSupportedByXnn(instr);
+    default:
+      return false;
+  }
 }
 
 bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) const {

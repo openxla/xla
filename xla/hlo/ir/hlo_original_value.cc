@@ -21,9 +21,11 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -66,7 +68,7 @@ std::string OriginalValueToString(const OriginalValue& original_value,
   return result;
 }
 
-std::string OriginalValue::ToString() {
+std::string OriginalValue::ToString() const {
   std::vector<int64_t> shape_index;
   return OriginalValueToString(*this, shape(), shape_index);
 }
@@ -84,19 +86,19 @@ std::shared_ptr<OriginalValue> OriginalValue::FromProto(
   return original_value;
 }
 
-OriginalValueProto OriginalValue::ToProto() {
+OriginalValueProto OriginalValue::ToProto() const {
   OriginalValueProto original_value_proto;
   *original_value_proto.mutable_shape() = shape().ToProto();
   for (const auto& leaf : leaves()) {
-    OriginalTensorProto* original_tensor_proto =
+    OriginalArrayProto* original_array_proto =
         original_value_proto.add_leaves();
     for (const auto& index : leaf.first) {
-      original_tensor_proto->add_leaf_shape_index(index);
+      original_array_proto->add_leaf_shape_index(index);
     }
-    *original_tensor_proto->mutable_instruction_name() =
+    *original_array_proto->mutable_instruction_name() =
         leaf.second->instruction_name;
     for (const auto& index : leaf.second->shape_index) {
-      original_tensor_proto->add_shape_index(index);
+      original_array_proto->add_shape_index(index);
     }
   }
   return original_value_proto;
@@ -128,6 +130,24 @@ void CopyOriginalValue(const HloInstruction* src_instruction,
       std::make_shared<OriginalValue>(original_value->shape());
   original_value_clone->CopySubtreeFrom(*original_value, {}, {});
   dest_instruction->set_original_value(original_value_clone);
+}
+
+void DeduplicateOriginalValues(HloModule* module) {
+  absl::flat_hash_set<OriginalValuePointer> unique_original_values;
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (std::shared_ptr<OriginalValue> original_value =
+              instruction->original_value()) {
+        OriginalValuePointer original_value_ptr(original_value);
+        auto p = unique_original_values.insert(original_value_ptr);
+        if (!p.second) {
+          // Reassign the pointer with the existing identical object and release
+          // the duplicate.
+          instruction->set_original_value(p.first->original_value);
+        }
+      }
+    }
+  }
 }
 
 }  // namespace xla
