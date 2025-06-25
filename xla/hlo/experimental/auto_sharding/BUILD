@@ -494,9 +494,9 @@ cc_library(
     hdrs = ["auto_sharding_iopddl.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
+        ":auto_sharding_proto_cc",
+        ":auto_sharding_strategy",
         ":iopddl_lib",
-        "//xla/hlo/experimental/auto_sharding:auto_sharding_proto_cc",
-        "//xla/hlo/experimental/auto_sharding:auto_sharding_strategy",
         "@com_google_absl//absl/log:check",
     ],
 )
@@ -510,6 +510,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/translate:stablehlo",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
+        "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//mlir:IR",
@@ -524,6 +525,7 @@ xla_cc_test(
     deps = [
         ":stablehlo_utils",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/mlir_hlo",
@@ -532,6 +534,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",

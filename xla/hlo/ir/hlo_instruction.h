@@ -1640,7 +1640,8 @@ class HloInstruction {
   // Returns the sharding applied to this operator.
   // REQUIRES: has_sharding() is true.
   const HloSharding& sharding() const {
-    CHECK(has_sharding());
+    CHECK(has_sharding()) << "Sharding instruction expected for: "
+                          << ToString();
     return *sharding_;
   }
   std::shared_ptr<const HloSharding> sharding_ptr() const { return sharding_; }
@@ -1891,7 +1892,7 @@ class HloInstruction {
     return it.second;
   }
 
-  size_t erase_frontend_attribute(const std::string& key) {
+  size_t erase_frontend_attribute(absl::string_view key) {
     return mutable_rare()->frontend_attributes.mutable_map()->erase(key);
   }
 

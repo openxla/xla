@@ -432,7 +432,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
-        "//xla/service:overload",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:errors",
@@ -440,6 +439,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -874,6 +874,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -885,6 +886,7 @@ cc_library(
         ":all_reduce",
         ":collective_thunk",
         ":thunk",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/core/collectives:rank_id",
@@ -916,11 +918,9 @@ cc_library(
     srcs = ["all_reduce_thunk.cc"],
     hdrs = ["all_reduce_thunk.h"],
     deps = [
-        ":all_reduce",
         ":collective_kernel_thunk",
         ":collective_thunk",
         ":thunk",
-        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -942,6 +942,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1026,6 +1027,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1053,6 +1055,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1097,6 +1100,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1243,7 +1247,6 @@ cc_library(
         ":thunk",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/core/collectives:communicator",
         "//xla/hlo/ir:hlo",
@@ -1256,6 +1259,7 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -1398,7 +1402,6 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
-        "//xla/pjrt/distributed:client",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:global_device_id",
@@ -1731,6 +1734,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:safe_reinterpret_cast",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -1764,6 +1768,7 @@ xla_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor/gpu:all_reduce_kernel",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/host:host_platform",
         "//xla/tsl/platform:errors",
@@ -1774,6 +1779,7 @@ xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
     ],

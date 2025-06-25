@@ -156,12 +156,13 @@ xla_test(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -326,6 +327,7 @@ xla_cc_test(
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
@@ -551,6 +553,7 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
@@ -678,6 +681,7 @@ cc_library(
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -817,6 +821,7 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -1130,7 +1135,7 @@ xla_cc_test(
     srcs = ["interpolator_test.cc"],
     deps = [
         ":interpolator",
-        "//xla/service:overload",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
     ],

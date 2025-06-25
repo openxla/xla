@@ -661,6 +661,10 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
+    env = {
+        "CUBLAS_EMULATE_SINGLE_PRECISION": "1",  # Trigger single precision emulation (F32_F32_F32) with BF16x9 cublas algorithm. It was introduced in cublas 12.9.
+        "CUBLAS_EMULATION_STRATEGY": "performant",  # Trigger single precision emulation (F32_F32_F32) with BF16x9 cublas algorithm. It was introduced in cublas 12.9.
+    },
     shard_count = 30,
     tags = [
         "no_mac",
@@ -743,9 +747,11 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -937,7 +943,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:algorithm_util",
         "//xla/service:instruction_fusion",
-        "//xla/service:overload",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_indexing_utils",
@@ -946,6 +951,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

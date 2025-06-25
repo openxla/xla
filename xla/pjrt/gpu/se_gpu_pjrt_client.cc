@@ -561,7 +561,7 @@ absl::Status AbortOnFailure(
         update.previous_state.size(), update.current_state.size());
   }
 
-  bool task_failed = false;
+  std::vector<IncarnationId> failed_incarnations;
   for (int i = 0; i < update.previous_state.size(); ++i) {
     const tensorflow::CoordinatedTaskStateInfo& previous =
         update.previous_state[i];
@@ -581,13 +581,14 @@ absl::Status AbortOnFailure(
             tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED ||
         previous.incarnation() != current.incarnation()) {
       // The task is either failed, or restarted with a different incarnation.
-      VLOG(1) << "Task " << previous.task().task_id() << " failed";
-      task_failed = true;
+      VLOG(1) << "Task " << previous.task().task_id() << " (incarnation "
+              << previous.incarnation() << ") failed";
+      failed_incarnations.push_back(IncarnationId(previous.incarnation()));
     }
   }
 
-  if (task_failed) {
-    return xla::gpu::AbortAllCliques();
+  if (!failed_incarnations.empty()) {
+    return xla::gpu::AbortCliquesWithIncarnations(failed_incarnations);
   }
   return absl::OkStatus();
 }
@@ -643,7 +644,7 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
                });
 
   // Add a JobStateCallback to abort collectives when tasks fail.
-  if (distributed_client_) {
+  if (abort_collectives_on_failure && distributed_client_) {
     absl::StatusOr<tsl::CoordinationServiceAgent*> agent =
         distributed_client_->GetCoordinationServiceAgent();
     if (agent.ok()) {
@@ -685,7 +686,7 @@ StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
       memory_space);
 }
 
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, uint64_t>>
+absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
 StreamExecutorGpuClient::GetLatestIncarnations() {
   // Get the coordination service agent.
   if (!distributed_client_) {
@@ -698,11 +699,11 @@ StreamExecutorGpuClient::GetLatestIncarnations() {
   TF_ASSIGN_OR_RETURN(int num_tasks, topology_.ProcessCount());
   std::vector<int> tasks(num_tasks);
   std::iota(tasks.begin(), tasks.end(), 0);
-  TF_ASSIGN_OR_RETURN(std::vector<uint64_t> task_incarnations,
+  TF_ASSIGN_OR_RETURN(std::vector<IncarnationId> task_incarnations,
                       agent->Incarnations(tasks));
 
   // Map every device to its incarnation.
-  absl::flat_hash_map<GlobalDeviceId, uint64_t> device_incarnations;
+  absl::flat_hash_map<GlobalDeviceId, IncarnationId> device_incarnations;
   for (const PjRtDevice* device : devices()) {
     device_incarnations[GlobalDeviceId(device->global_device_id().value())] =
         task_incarnations[device->process_index()];
@@ -711,8 +712,8 @@ StreamExecutorGpuClient::GetLatestIncarnations() {
 }
 
 gpu::GpuExecutableRunOptions* StreamExecutorGpuClient::gpu_run_options() {
-  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, uint64_t>> incarnations =
-      GetLatestIncarnations();
+  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+      incarnations = GetLatestIncarnations();
   if (!incarnations.ok()) {
     VLOG(1) << "Unable to set incarnations in GpuExecutableRunOptions: "
             << incarnations.status();
