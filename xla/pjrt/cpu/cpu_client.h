@@ -191,14 +191,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
     return std::make_pair(std::move(last_launch), std::move(count_down));
   }
 
-  tsl::AsyncValueRef<CpuEvent> GetLastEnqueueEvent() {
-    return last_enqueue_event_.CopyRef();
-  }
-
-  void SetLastEnqueueEvent(tsl::AsyncValueRef<CpuEvent> event) {
-    last_enqueue_event_ = std::move(event);
-  }
-
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
     return &topology_;
@@ -206,7 +198,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
-      tsl::AsyncValueRef<bool> allocate_after) override;
+      bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) override;
 
   absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
                            tsl::RCReference<PjRtDeviceEvent>>>
@@ -317,13 +309,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   // A callback to customize the HloModuleConfig for each compiled module.
   std::function<void(HloModuleConfig&)> customize_hlo_module_config_;
-
-  // Used to prevent too much parallelism: we will not enqueue next non-parallel
-  // computation until last one is done within each user thread.
-  // TODO(yueshengys): Consider moving the enqueuing/ordering logic to JAX via
-  // token threading.
-  inline static thread_local tsl::AsyncValueRef<CpuEvent> last_enqueue_event_ =
-      tsl::MakeAvailableAsyncValueRef<CpuEvent>();
 };
 
 class PjRtCpuBuffer final : public AbstractCpuBuffer {
@@ -359,7 +344,6 @@ class PjRtCpuBuffer final : public AbstractCpuBuffer {
 
   PjRtCpuClient* client_;
   PjRtCpuDevice* const device_;
-  PjRtMemorySpace* const memory_space_;
 };
 
 class PjRtCpuExecutable final : public PjRtLoadedExecutable {
@@ -426,6 +410,8 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
     memory_stats.PopulateBufferStatsFromAllocations(
         cpu_executable_->GetAllocations());
+    TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
+    memory_stats.peak_memory_in_bytes = peak_memory;
     return memory_stats;
   }
 

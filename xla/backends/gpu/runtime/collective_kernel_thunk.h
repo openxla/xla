@@ -15,6 +15,8 @@ limitations under the License.*/
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_THUNK_H_
 
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -24,6 +26,7 @@ limitations under the License.*/
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -53,14 +56,21 @@ class CollectiveKernelThunk : public Thunk {
 
   CollectiveKernelThunk(ThunkInfo info, CollectiveConfig collective_config,
                         ReductionKind reduction_kind, bool is_async,
-                        CollectiveThunk::Buffer buffer)
+                        absl::Span<const CollectiveThunk::Buffer> buffers,
+                        bool is_collective_kernel_enabled)
       : Thunk{Thunk::kCollectiveKernel, info},
+        collective_kernel_enabled_(is_collective_kernel_enabled),
         is_async_(is_async),
         collective_config_(std::move(collective_config)),
         reduction_kind_(reduction_kind),
-        buffer_(buffer) {
+        buffers_(buffers) {
     per_stream_state_.reserve(kMaxNumExecutors);
   }
+
+  // Returns true if the collective kernel is supported for the given clique.
+  absl::StatusOr<bool> IsSupported(
+      const GpuCliqueKey& clique_key,
+      const CollectiveCliques* collective_cliques) const;
 
   // The single host collective thunk actually requires a clique key.
   absl::Status Prepare(const PrepareParams& params,
@@ -73,20 +83,33 @@ class CollectiveKernelThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams& params) final;
 
  private:
+  // We use a double buffering strategy for the buffers.
+  // See docs on struct StreamState for more details.
+  static constexpr int64_t kNumBuffers = 2;
   // Per-executor state that needs to be synchronized for access.
   struct StreamState {
     int device_ordinal;
     RankId rank;
     // Buffers and signal flags allocated for the collective.
+    // Buffers are double buffered to allow for consecutive invocation
+    // of the kernel on different GPUs.
+    // - GPUs sync on Buffer 0 on first invocation.
+    // - GPUs sync on Buffer 1 on second invocation.
+    //   This implies that all GPUs must have finished the first invocation
+    //   before they can sync on the second invocation.
+    // - Alternate back to Buffer 0 on third invocation. And so on.
     se::DeviceMemoryHandle local_buffer;
     se::DeviceMemoryHandle signal_buffer;
     // These vectors are merely pointers into the buffer(s) above ordered
     // by RankId. They are initialized once at the end of Initialize() and never
     // changed.
-    absl::InlinedVector<se::DeviceMemoryBase, kMaxNumExecutors>
+    std::array<absl::InlinedVector<se::DeviceMemoryBase, kMaxNumExecutors>,
+               kNumBuffers>
         remote_buffer_ptrs{};
-    absl::InlinedVector<se::DeviceMemoryBase, kMaxNumExecutors>
+    std::array<absl::InlinedVector<se::DeviceMemoryBase, kMaxNumExecutors>,
+               kNumBuffers>
         signal_buffer_ptrs{};
+    uint32_t invocation_count = 0;
 
     // Constructor to make OSS builds happy.
     StreamState() = default;
@@ -99,11 +122,16 @@ class CollectiveKernelThunk : public Thunk {
           signal_buffer(std::move(signal_buffer_arg)) {}
   };
 
+  // Returns the input size in bytes for the collective.
+  int64_t GetInputSizeBytes() const;
+
   // Internal method to sync thread after Initialize.
   // Modifies the state to include pointers to all buffers in the clique.
   absl::Status RendezvousAfterInit(const GpuCliqueKey& clique_key,
                                    StreamState& state);
 
+  // Whether the one-shot kernel is enabled.
+  const bool collective_kernel_enabled_;
   // Whether the collective is run on an async stream.
   const bool is_async_;
   // Collective config being used. Copied over to avoid lifetime issues.
@@ -111,7 +139,7 @@ class CollectiveKernelThunk : public Thunk {
   // Reduction kind being to use for AllReduce collective.
   ReductionKind reduction_kind_;
   // Reference to the buffer related information required for the collective.
-  CollectiveThunk::Buffer buffer_;
+  absl::Span<const CollectiveThunk::Buffer> buffers_;
 
   // Guard access to the stream state across different threads (which control
   // different streams).

@@ -60,7 +60,8 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
       DebugOptions debug_options,
       std::function<void(HloPassPipeline &pipeline)> add_passes = nullptr,
       bool skip_checking_windowed_einsum_users = false,
-      bool disable_ag_rewrite_for_multiple_consumers = false) {
+      bool disable_ag_rewrite_for_multiple_consumers = false,
+      bool enable_partial_windowed_einsums = false) {
     HloModuleConfig config = GetModuleConfigForTest(1, num_partitions);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
@@ -80,6 +81,7 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
         debug_options.xla_gpu_multi_streamed_windowed_einsum(),
         skip_checking_windowed_einsum_users,
         disable_ag_rewrite_for_multiple_consumers,
+        enable_partial_windowed_einsums,
         debug_options.xla_gpu_operand_bytes_threshold_for_windowed_einsum());
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -218,6 +220,7 @@ TEST_F(StatefulRngSpmdPartitionerTest,
       /*windowed_einsum_use_multiple_streams=*/false,
       /*skip_checking_windowed_einsum_users=*/false,
       /*disable_ag_rewrite_for_multiple_consumers=*/false,
+      /*enable_partial_windowed_einsums=*/false,
       /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
       /*max_windowed_einsum_iteration=*/max_windowed_einsum_iteration);
   EXPECT_EQ(rng_spmd_partitioner.options().max_windowed_einsum_iteration,
@@ -253,6 +256,7 @@ ENTRY main {
         /*windowed_einsum_use_multiple_streams=*/true,
         /*skip_checking_windowed_einsum_users=*/true,
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/2);
 
@@ -297,6 +301,7 @@ ENTRY main {
         /*windowed_einsum_use_multiple_streams=*/true,
         /*skip_checking_windowed_einsum_users=*/true,
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/4);
 
@@ -382,6 +387,7 @@ ENTRY main {
         /*windowed_einsum_use_multiple_streams=*/true,
         /*skip_checking_windowed_einsum_users=*/true,
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/32);  // Explicitly set to default
 
@@ -436,6 +442,7 @@ ENTRY main {
         /*windowed_einsum_use_multiple_streams=*/true,
         /*skip_checking_windowed_einsum_users=*/true,
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/0);
 
@@ -472,6 +479,7 @@ ENTRY main {
         /*windowed_einsum_use_multiple_streams=*/true,
         /*skip_checking_windowed_einsum_users=*/true,
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/INT64_MAX);
 

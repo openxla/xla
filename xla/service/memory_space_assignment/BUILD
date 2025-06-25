@@ -81,6 +81,7 @@ xla_cc_test(
         ":algorithm",
         ":allocation",
         ":allocation_value",
+        ":best_fit_repacker",
         ":buffer_interval_comparator",
         ":cost_analysis",
         ":memory_space_assignment",
@@ -580,6 +581,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/analysis:hlo_operand_index",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_live_range",
         "//xla/service:buffer_value",
@@ -592,6 +594,7 @@ cc_library(
         "//xla/service/heap_simulator",
         "//xla/service/heap_simulator:allocation_block",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -637,6 +640,7 @@ cc_library(
 
 cc_library(
     name = "allocation_value",
+    srcs = ["allocation_value.cc"],
     hdrs = ["allocation_value.h"],
     deps = [
         ":allocation",
@@ -644,6 +648,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
 )

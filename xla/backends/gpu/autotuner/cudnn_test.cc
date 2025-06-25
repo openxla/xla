@@ -27,9 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -89,11 +87,30 @@ const char kCudnnCustomCallHlo[] = R"(
     ROOT %get-tuple-element = f32[54,54,16,64]{1,0,3,2} get-tuple-element(%cudnn-conv), index=0
   })";
 
+const char kUnsupportedHlo[] = R"(
+  HloModule module
+
+  computation {
+    p0 = bf16[1024,1024]{1,0} parameter(0)
+    convert0 = f32[1024,1024]{1,0} convert(p0)
+    p1 = s8[1024,1024]{1,0} parameter(1)
+    convert1 = f32[1024,1024]{1,0} convert(p1)
+    ROOT dot = f32[1024,1024]{1,0} dot(convert0, convert1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+
+  ENTRY main {
+    p0 = bf16[1024,1024]{1,0} parameter(0)
+    p1 = s8[1024,1024]{1,0} parameter(1)
+    ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
 class CudnnBackendTest : public HloHardwareIndependentTestBase {
  protected:
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
-  Compiler::TargetConfig target_config_;
   CudnnBackend backend_;
 
   CudnnBackendTest()
@@ -102,13 +119,11 @@ class CudnnBackendTest : public HloHardwareIndependentTestBase {
           debug_options.set_xla_gpu_cudnn_gemm_fusion_level(2);
           return debug_options;
         }()),
-        target_config_([]() {
-          se::GpuTargetConfigProto target_config_proto;
-          *target_config_proto.mutable_gpu_device_info() =
-              TestGpuDeviceInfo().CudaOrRocmDeviceInfo().ToGpuProto();
-          return Compiler::TargetConfig(target_config_proto);
-        }()),
-        backend_(&target_config_, &debug_options_, &compiler_) {}
+        backend_(PlatformUtil::GetDefaultPlatform()
+                     .value()
+                     ->ExecutorForDevice(0)
+                     .value(),
+                 &debug_options_, &compiler_) {}
 };
 
 TEST_F(CudnnBackendTest, CanCreateCublasBackend) {
@@ -118,25 +133,29 @@ TEST_F(CudnnBackendTest, CanCreateCublasBackend) {
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnFusion) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kCudnnFusionHlo));
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          (*hlo_module->entry_computation()->root_instruction()),
-          stream_executor);
+          (*hlo_module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, IsOkAndHolds(SizeIs(Gt(0))));
 }
 
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnCustomCall) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kCudnnCustomCallHlo));
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          (*hlo_module->entry_computation()->root_instruction()->operand(0)),
-          stream_executor);
+          (*hlo_module->entry_computation()->root_instruction()->operand(0)));
   EXPECT_THAT(configs, IsOkAndHolds(SizeIs(Gt(0))));
+}
+
+TEST_F(CudnnBackendTest,
+       GetSupportedConfigsFromNonCudnnFusionReturnsEmptyVector) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kUnsupportedHlo));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          (*hlo_module->entry_computation()->root_instruction()));
+  EXPECT_THAT(configs, IsOkAndHolds(SizeIs(0)));
 }
 
 TEST_F(CudnnBackendTest, GetDefaultConfigFromCudnnFusionFails) {

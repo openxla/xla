@@ -85,7 +85,9 @@ std::string KernelThunk::ToString(int indent) const {
 }
 
 absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
-  TF_ASSIGN_OR_RETURN(ThunkProto proto, Thunk::ToProto());
+  ThunkProto proto;
+  TF_ASSIGN_OR_RETURN(*proto.mutable_thunk_info(), GetThunkInfoProto());
+
   auto* kernel_proto = proto.mutable_kernel_thunk();
   for (const auto& arg : args_) {
     TF_ASSIGN_OR_RETURN(*kernel_proto->add_args(), arg.ToProto());
@@ -143,10 +145,17 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
   // lets the time spent loading the kernel not count towards our execution
   // profiles.
   if (!kernel_cache_.contains(params.executor)) {
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::Kernel> kernel,
-        CreateKernel(kernel_name_, args_.size(), params.src.text,
-                     params.src.binary, params.executor, shmem_bytes_));
+    std::unique_ptr<se::Kernel> kernel;
+    if (!params.src.binary.empty()) {
+      TF_ASSIGN_OR_RETURN(
+          kernel, CreateKernel(kernel_name_, args_.size(), params.src.binary,
+                               params.executor, shmem_bytes_));
+
+    } else {
+      TF_ASSIGN_OR_RETURN(
+          kernel, CreateKernel(kernel_name_, args_.size(), params.src.text,
+                               params.executor, shmem_bytes_));
+    }
 
     kernel_cache_.emplace(params.executor, std::move(kernel));
   }

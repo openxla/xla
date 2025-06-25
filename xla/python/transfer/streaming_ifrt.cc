@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/python/ifrt/array.h"
@@ -43,7 +44,8 @@ namespace aux {
 
 class PremappedPjRtBuffer {
  public:
-  PremappedPjRtBuffer(absl::Span<uint8_t> data, xla::PjRtClient* client,
+  PremappedPjRtBuffer(absl::Span<uint8_t> data,
+                      std::shared_ptr<xla::PjRtClient> client,
                       std::shared_ptr<void> owner)
       : data_(data), client_(client), owner_(std::move(owner)) {}
   ~PremappedPjRtBuffer();
@@ -52,7 +54,7 @@ class PremappedPjRtBuffer {
 
  private:
   absl::Span<uint8_t> data_;
-  xla::PjRtClient* client_;
+  std::shared_ptr<xla::PjRtClient> client_;
   std::shared_ptr<void> owner_;
 };
 
@@ -69,7 +71,13 @@ absl::StatusOr<std::shared_ptr<absl::Span<uint8_t>>> MapPjrtMemory(
   if (ifrt_client == nullptr) {
     return absl::InternalError("MapPjrtMemory only supports PjRtClient");
   }
-  auto* pjrt_client = ifrt_client->pjrt_client();
+  return MapPjrtMemory(ifrt_client->shared_ptr_pjrt_client(), data, buffer_size,
+                       std::move(owner));
+}
+
+absl::StatusOr<std::shared_ptr<absl::Span<uint8_t>>> MapPjrtMemory(
+    std::shared_ptr<xla::PjRtClient> pjrt_client, void* data,
+    size_t buffer_size, std::shared_ptr<void> owner) {
   auto s = pjrt_client->DmaMap(data, buffer_size);
   if (s.code() == ::absl::StatusCode::kUnimplemented) {
     pjrt_client = nullptr;
@@ -93,20 +101,28 @@ absl::StatusOr<std::shared_ptr<absl::Span<uint8_t>>> AllocateAndMapPjrtMemory(
   return MapPjrtMemory(client, data, buffer_size, std::move(owner));
 }
 
+absl::StatusOr<std::shared_ptr<absl::Span<uint8_t>>> AllocateAndMapPjrtMemory(
+    std::shared_ptr<xla::PjRtClient> client, size_t buffer_size) {
+  void* data = nullptr;
+  if (posix_memalign(&data, kCpuPageSize, buffer_size) != 0) {
+    return absl::InternalError("error in posix_memalign.");
+  }
+  std::shared_ptr<void> owner =
+      std::shared_ptr<void>(data, [](void* data) { free(data); });
+  return MapPjrtMemory(client, data, buffer_size, std::move(owner));
+}
+
 absl::StatusOr<std::vector<DmaCopyChunk>>
-DmaCopyChunk::DivideBufferCopiesEvenly(xla::ifrt::ArrayRef arr,
+DmaCopyChunk::DivideBufferCopiesEvenly(std::shared_ptr<xla::PjRtBuffer> buffer,
                                        size_t xfer_size, size_t buffer_id) {
-  auto* pjrt_arr =
-      llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(arr.get());
-  auto* buffer = pjrt_arr->pjrt_buffers()[0].get();
   TF_ASSIGN_OR_RETURN(size_t copy_size, buffer->GetOnDeviceSizeInBytes());
   size_t total_num_copies = (copy_size + xfer_size - 1) / xfer_size;
   std::vector<DmaCopyChunk> work_units;
   work_units.reserve(total_num_copies);
   for (size_t i = 0; i < total_num_copies; ++i) {
     work_units.push_back(
-        DmaCopyChunk{[arr, buffer](void* dst, int64_t offset,
-                                   int64_t transfer_size) -> xla::PjRtFuture<> {
+        DmaCopyChunk{[buffer](void* dst, int64_t offset,
+                              int64_t transfer_size) -> xla::PjRtFuture<> {
                        return buffer->CopyRawToHost(dst, offset, transfer_size);
                      },
                      buffer_id, i* xfer_size,
@@ -272,12 +288,27 @@ bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
   for (uint64_t bid : req.buffer_ids()) {
     auto req_id = base_req_id;
     ++base_req_id;
+    if (bid >= arrs_.size()) {
+      state->SendError(
+          req_id, 0, 0, true,
+          absl::InternalError(absl::StrFormat("Buffer id: %d out of range %d",
+                                              bid, arrs_.size())));
+      continue;
+    }
     arrs_[bid].ready_future.OnReady(
         [state, copier_state = state_, xfer_size = xfer_size_,
          buf_size = arrs_[bid].buf_size, req_id, bid,
          buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
           if (!s.ok()) {
             state->SendError(req_id, 0, buf_size, true, s);
+            return;
+          }
+          if (!buffer) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InternalError(absl::StrFormat(
+                    "Buffer id: %d has already been fetched", bid)));
+
             return;
           }
           for (size_t i = 0; i * xfer_size < buf_size; ++i) {
@@ -297,11 +328,11 @@ bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                     PremappedCopierState* copier_state_ptr,
                     absl::StatusOr<void*> buf, const DmaCopyChunk& chunk) {
                   if (!buf.ok()) {
-                    CHECK_OK(buf.status());
                     state->SendError(req_id, chunk.offset, chunk.size,
                                      is_largest, buf.status());
                     return;
                   }
+                  CHECK_OK(buf.status());
                   state->Send(req_id, buf.value(), chunk.offset, chunk.size,
                               is_largest, [copier_state, buf = buf.value()]() {
                                 copier_state->ReturnBuffer(buf);
@@ -331,12 +362,27 @@ bool PjRtBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
   for (uint64_t bid : req.buffer_ids()) {
     auto req_id = base_req_id;
     ++base_req_id;
+    if (bid >= arrs_.size()) {
+      state->SendError(
+          req_id, 0, 0, true,
+          absl::InternalError(absl::StrFormat("Buffer id: %d out of range %d",
+                                              bid, arrs_.size())));
+      continue;
+    }
     arrs_[bid].ready_future.OnReady(
         [state, copier_state = state_, xfer_size = xfer_size_,
          buf_size = arrs_[bid].buf_size, req_id, bid,
          buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
           if (!s.ok()) {
             state->SendError(req_id, 0, buf_size, true, s);
+            return;
+          }
+          if (!buffer) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InternalError(absl::StrFormat(
+                    "Buffer id: %d has already been fetched", bid)));
+
             return;
           }
           for (size_t i = 0; i * xfer_size < buf_size; ++i) {

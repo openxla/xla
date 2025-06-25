@@ -29,8 +29,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/compiler.h"
-#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -72,17 +70,14 @@ class FissionBackendTest : public HloHardwareIndependentTestBase {
  protected:
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
-  Compiler::TargetConfig target_config_;
   FissionBackend backend_;
 
   FissionBackendTest()
-      : target_config_([]() {
-          se::GpuTargetConfigProto target_config_proto;
-          *target_config_proto.mutable_gpu_device_info() =
-              TestGpuDeviceInfo().CudaOrRocmDeviceInfo().ToGpuProto();
-          return Compiler::TargetConfig(target_config_proto);
-        }()),
-        backend_(&target_config_, &debug_options_, &compiler_) {}
+      : backend_(PlatformUtil::GetDefaultPlatform()
+                     .value()
+                     ->ExecutorForDevice(0)
+                     .value(),
+                 &debug_options_, &compiler_) {}
 };
 
 TEST_F(FissionBackendTest, CanCreateCublasBackend) {
@@ -92,11 +87,9 @@ TEST_F(FissionBackendTest, CanCreateCublasBackend) {
 TEST_F(FissionBackendTest, GetSupportedConfigsFromCublasCustomCall) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kTritonFusionHlo));
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          (*module->entry_computation()->root_instruction()), stream_executor);
+          (*module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, IsOkAndHolds(SizeIs(11)));
   // The first config is the cublas config.
   EXPECT_EQ(
@@ -122,11 +115,9 @@ TEST_F(FissionBackendTest, GetSupportedConfigsForUnsupportedInstructionFails) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo));
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          (*module->entry_computation()->root_instruction()), stream_executor);
+          (*module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs.status(), StatusIs(absl::StatusCode::kInvalidArgument));
 }
 

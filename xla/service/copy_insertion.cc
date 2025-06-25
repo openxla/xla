@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1041,9 +1042,9 @@ absl::Status AddCopiesForNonCopyableTransitionsRotatedCase(
 // Adds the needed copies for transitioning into and out of non-copyable values,
 // to prevent overlapping live times of buffers. This is needed when the unique
 // user of the non-copyable op is rotated (also called pipelined) in a
-// while-loop. In particlar, if a non-copyable op has an input aliasing with its
-// output, such as async Send, we make a copy of its input to transition from
-// copyable to non-copyable. If a non-copyable op's unique user produces an
+// while-loop. In particular, if a non-copyable op has an input aliasing with
+// its output, such as async Send, we make a copy of its input to transition
+// from copyable to non-copyable. If a non-copyable op's unique user produces an
 // output aliasing with its input, such as async Recv, we make a copy of the
 // output produced by the unique user, to transition out of non-copyable to
 // copyable. We also add control-flow edges between the copies and the
@@ -1148,7 +1149,7 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                      HloAliasAnalysis::Run(module, can_share_buffer_));
+                      HloAliasAnalysis::Run(module, alias_info_));
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     if (computation->IsAsyncComputation()) {
@@ -1184,25 +1185,13 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
             continue;
           }
 
-          bool can_share_buffer = false;
-          if (can_share_buffer_ != nullptr) {
-            auto maybe_can_share_buffer = can_share_buffer_(
-                instruction, instruction->operand(operand_index.operand_number),
-                operand_index.operand_index);
-            if (maybe_can_share_buffer.has_value()) {
-              can_share_buffer = maybe_can_share_buffer.value();
-            }
-          }
-
           // Skip copies for aliasing input/output pairs iff:
-          // *) Operand can share buffer with 'instruction' output.
           // *) Instruction has frontend attribute which indicates that the
           //    write region of the input/output aliased buffer updated by
           //    'instruction' is disjoint from the read region of the shared
           //    buffer.
           // *) All uses of the operand are 'instruction'.
-          if (can_share_buffer &&
-              HasDisjointReadWriteRegionsAttr(instruction) &&
+          if (HasDisjointReadWriteRegionsAttr(instruction) &&
               absl::c_all_of(
                   instruction->operand(operand_index.operand_number)->users(),
                   [&instruction](const HloInstruction* user) {
@@ -1225,17 +1214,22 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
 
 absl::Status CopyInsertion::AddSpecialCaseCopies(
     HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    std::function<bool(const HloValue* value)>
+        should_add_target_specific_copies) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
-  return AddSpecialCaseCopies(*call_graph, execution_threads, module);
+  return AddSpecialCaseCopies(*call_graph, execution_threads, module,
+                              should_add_target_specific_copies);
 }
 
 absl::Status CopyInsertion::AddSpecialCaseCopies(
     const CallGraph& call_graph,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
-    HloModule* module) {
+    HloModule* module,
+    std::function<bool(const HloValue* value)>
+        should_add_target_specific_copies) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                      HloAliasAnalysis::Run(module, can_share_buffer_));
+                      HloAliasAnalysis::Run(module, alias_info_));
 
   // Identify which shape indices of which instructions need to be copied. Store
   // these results in 'instructions_to_copy'.
@@ -1275,6 +1269,14 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
                  "Copying.";
       add_index_to_copy(value->defining_instruction(), value->defining_index());
     }
+
+    if (should_add_target_specific_copies &&
+        should_add_target_specific_copies(value)) {
+      VLOG(2) << "Adding target specific copies for value "
+              << value->ToShortString();
+      add_index_to_copy(value->defining_instruction(), value->defining_index());
+    }
+
     for (const HloValue* value2 : buffer.values()) {
       // Find HloValues that share a position and use, which would cause the use
       // and operand to share buffers. Check if this is allowed and insert a
@@ -1426,7 +1428,7 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
   }
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                      HloAliasAnalysis::Run(module, can_share_buffer_));
+                      HloAliasAnalysis::Run(module, alias_info_));
   CopyRemover copy_remover(*module, *alias_analysis, ordering.get(),
                            check_live_range_ordering, execution_threads);
   if (VLOG_IS_ON(3)) {
@@ -1543,7 +1545,7 @@ absl::StatusOr<bool> CopyInsertion::Run(
   DumpHloModuleDuringPassIfEnabled(name(), "after removing unnecessary copies",
                                    *module);
   TF_RETURN_IF_ERROR(
-      AddSpecialCaseCopies(*call_graph, execution_threads, module));
+      AddSpecialCaseCopies(*call_graph, execution_threads, module, nullptr));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 

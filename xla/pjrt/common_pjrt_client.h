@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -47,9 +48,11 @@ class CommonPjRtClient : public PjRtClient {
   }
 
   // Allocates a raw buffer of a particular size after an optional
-  // allocate_after.
+  // allocate_after. Backends may support retrying allocation on oom which
+  // can be controlled via retry_on_oom.
   virtual absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
   AllocateRawBuffer(PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+                    bool retry_on_oom,
                     tsl::AsyncValueRef<bool> allocate_after) {
     return absl::UnimplementedError("AllocateRawBuffer is not supported");
   }
@@ -146,6 +149,17 @@ class CommonPjRtClient : public PjRtClient {
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
     return absl::UnimplementedError("LinearizeHostBufferInto is not supported");
   }
+};
+
+// TODO(parkers): Merge everything here into CommonPjRtBuffer.
+class CommonPjRtBufferImpl : public CommonPjRtBuffer {
+ public:
+  using CommonPjRtBuffer::CommonPjRtBuffer;
+
+  // This behaves like CopyToMemorySpace for memory space pairs which
+  // require no layout changes.
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> DirectCopyToMemorySpace(
+      PjRtMemorySpace* dst_memory_space);
 };
 
 }  // namespace xla

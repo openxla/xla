@@ -58,6 +58,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool windowed_einsum_use_multiple_streams = false,
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
+      bool enable_partial_windowed_einsums = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
           std::nullopt,
       int64_t max_windowed_einsum_iteration = 32)
@@ -67,6 +68,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
                                       windowed_einsum_use_multiple_streams,
                                       skip_checking_windowed_einsum_users,
                                       disable_ag_rewrite_for_multiple_consumers,
+                                      enable_partial_windowed_einsums,
                                       total_bytes_windowed_einsum_threshold,
                                       max_windowed_einsum_iteration)) {}
 
@@ -91,6 +93,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
       bool windowed_einsum_use_multiple_streams = false,
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
+      bool enable_partial_windowed_einsums = false,
       std::optional<int64_t> total_bytes_windowed_einsum_threshold =
           std::nullopt,
       int64_t max_windowed_einsum_iteration = 32) {
@@ -108,6 +111,7 @@ class StatefulRngSpmdPartitioner : public spmd::SpmdPartitioner {
     options.max_windowed_einsum_iteration = max_windowed_einsum_iteration;
     VLOG(3) << "Set SPMD max windowed einsum iteration to "
             << options.max_windowed_einsum_iteration;
+    options.partial_windowed_einsum = enable_partial_windowed_einsums;
     return options;
   }
 };

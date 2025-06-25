@@ -82,12 +82,9 @@ bool IsSupported(const HloInstruction& instr) {
 }  // namespace
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-CublasLtBackend::GetSupportedConfigs(
-    const HloInstruction& instr,
-    stream_executor::StreamExecutor* stream_executor) {
+CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
-    return absl::InvalidArgumentError(
-        "Not a CublasLt custom call instruction.");
+    return std::vector<std::unique_ptr<BackendConfig>>();
   }
 
   GpuBackendConfig gpu_config =
@@ -103,9 +100,10 @@ CublasLtBackend::GetSupportedConfigs(
                       AsBlasLtEpilogue(backend_config.epilogue()));
 
   auto allocator =
-      std::make_unique<se::StreamExecutorMemoryAllocator>(stream_executor);
-  TF_ASSIGN_OR_RETURN(se::Stream * stream,
-                      allocator->GetStream(stream_executor->device_ordinal()));
+      std::make_unique<se::StreamExecutorMemoryAllocator>(stream_executor());
+  TF_ASSIGN_OR_RETURN(
+      se::Stream * stream,
+      allocator->GetStream(stream_executor()->device_ordinal()));
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BlasLt::MatmulPlan> plan,

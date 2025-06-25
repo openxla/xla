@@ -125,8 +125,9 @@ class CpuRawBuffer : public CommonPjRtRawBuffer {
   CopyRawHostToDeviceAndReturnEvent(const void* src, int64_t offset,
                                     int64_t transfer_size) override;
 
-  PjRtFuture<> CopyRawDeviceToHost(void* dst, int64_t offset,
-                                   int64_t transfer_size) override;
+  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+  CopyRawDeviceToHostAndReturnEvent(void* dst, int64_t offset,
+                                    int64_t transfer_size) override;
 
   absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> CopyFromLiteral(
       const LiteralSlice& literal, const xla::Layout& layout,
@@ -142,6 +143,14 @@ class CpuRawBuffer : public CommonPjRtRawBuffer {
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       const Shape& shape, AsyncWorkRunner* async_work_runner,
       absl::Mutex* transpose_mu, TransposePlanCache* transpose_cache);
+
+  void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
+                        xla::Shape shape) override;
+
+  void CopyTo(tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+              tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
+              tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
+              ::tsl::AsyncValueRef<bool> allocation_event) override;
 
  private:
   PjRtMemorySpace* const memory_space_;

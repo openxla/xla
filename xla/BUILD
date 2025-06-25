@@ -1245,6 +1245,18 @@ cc_library(
         ],
 )
 
+xla_cc_test(
+    name = "debug_options_flags_test",
+    srcs = ["debug_options_flags_test.cc"],
+    deps = [
+        ":xla_proto_cc",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
 cc_library(
     name = "cpu_function_runtime",
     srcs = ["cpu_function_runtime.cc"],
@@ -1454,6 +1466,7 @@ bzl_library(
         "@bazel_skylib//lib:paths",
         "//xla/tsl:package_groups_bzl",
         "//xla/tsl:tsl_bzl",
+        "//xla/tsl:tsl_default_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
     ],
 )

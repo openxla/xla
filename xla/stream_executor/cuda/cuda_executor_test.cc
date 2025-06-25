@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
+#include <cstdint>
 #include <memory>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
@@ -78,7 +81,7 @@ TEST(CudaExecutorTest, GetCudaKernel) {
   auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
   ASSERT_NE(cuda_executor, nullptr);
 
-  auto verify_kernel = [&](const MultiKernelLoaderSpec& spec) {
+  auto verify_kernel = [&](const KernelLoaderSpec& spec) {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> kernel,
                             executor->LoadKernel(spec));
     EXPECT_THAT(cuda_executor->GetCudaKernel(kernel.get()),
@@ -92,7 +95,9 @@ TEST(CudaExecutorTest, GetCudaKernel) {
                 StatusIs(absl::StatusCode::kNotFound));
   };
 
-  verify_kernel(GetAddI32KernelSpec());
+  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec add,
+                          GetAddI32TestKernelSpec(cuda::kCudaPlatformId));
+  verify_kernel(add);
   verify_kernel(GetAddI32PtxKernelSpec());
 }
 

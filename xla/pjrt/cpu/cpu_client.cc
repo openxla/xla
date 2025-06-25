@@ -318,17 +318,17 @@ PjRtCpuClient::PjRtCpuClient(
       memory_spaces_.push_back(cpu_device_memory_space.get());
       owned_memory_spaces_.push_back(std::move(cpu_device_memory_space));
 
-      auto unpinned_memory_space =
-          std::make_unique<UnpinnedHostMemorySpace>(id * 3 + 1, device);
-      cpu_device->AttachMemorySpace(unpinned_memory_space.get());
-      memory_spaces_.push_back(unpinned_memory_space.get());
-      owned_memory_spaces_.push_back(std::move(unpinned_memory_space));
-
       auto pinned_memory_space =
-          std::make_unique<PinnedHostMemorySpace>(id * 3 + 2, device);
+          std::make_unique<PinnedHostMemorySpace>(id * 3 + 1, device);
       cpu_device->AttachMemorySpace(pinned_memory_space.get());
       memory_spaces_.push_back(pinned_memory_space.get());
       owned_memory_spaces_.push_back(std::move(pinned_memory_space));
+
+      auto unpinned_memory_space =
+          std::make_unique<UnpinnedHostMemorySpace>(id * 3 + 2, device);
+      cpu_device->AttachMemorySpace(unpinned_memory_space.get());
+      memory_spaces_.push_back(unpinned_memory_space.get());
+      owned_memory_spaces_.push_back(std::move(unpinned_memory_space));
     }
   }
   VLOG(1) << "PjRtCpuClient created.";
@@ -1007,6 +1007,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
 absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
 PjRtCpuClient::AllocateRawBuffer(PjRtMemorySpace* memory_space,
                                  size_t on_device_bytes_count,
+                                 bool retry_on_oom,
                                  tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr) << "allocate_after is not supported for "
                                       "PjRtCpuClient.";
@@ -1029,10 +1030,9 @@ PjRtCpuBuffer::PjRtCpuBuffer(
     std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
     PjRtCpuClient* client, PjRtCpuDevice* device, PjRtMemorySpace* memory_space)
     : AbstractCpuBuffer(std::move(on_device_shape),
-                        std::move(tracked_device_buffer)),
+                        std::move(tracked_device_buffer), memory_space),
       client_(client),
-      device_(device),
-      memory_space_(memory_space) {}
+      device_(device) {}
 
 static std::vector<tsl::RCReference<tsl::AsyncValue>> CopyAsyncValues(
     absl::Span<const tsl::RCReference<tsl::AsyncValue>> events) {
@@ -1085,8 +1085,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuBuffer::CopyToMemorySpace(
 
   return std::unique_ptr<PjRtBuffer>(std::make_unique<PjRtCpuBuffer>(
       on_device_shape_, std::move(tracked_device_buffer), client(),
-      tsl::down_cast<PjRtCpuDevice*>(dst_device),
-      *dst_device->default_memory_space()));
+      tsl::down_cast<PjRtCpuDevice*>(dst_device), dst_memory_space));
 }
 
 PjRtCpuExecutable::PjRtCpuExecutable(
@@ -1573,7 +1572,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
   } else {
     // This is a non-parallel computation. Add the last enqueue event as a
     // dependency with any error cleared.
-    auto last_enqueue_event = client_->GetLastEnqueueEvent();
+    auto last_enqueue_event = device->stream_event_map()->GetLastEnqueueEvent(
+        options.execution_stream_id);
     if (!last_enqueue_event.IsAvailable()) {
       auto last_enqueue_done_event =
           tsl::MakeUnconstructedAsyncValueRef<CpuEvent>();
@@ -1701,7 +1701,14 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     } else {
       // This is a non-parallel computation. Set the execute event as the new
       // last enqueue event.
-      client_->SetLastEnqueueEvent(execute_event.CopyRef());
+      auto* stream_event_map = device->stream_event_map();
+      stream_event_map->SetLastEnqueueEvent(options.execution_stream_id,
+                                            execute_event.CopyRef());
+      execute_event.AndThen([stream_event_map,
+                             execution_stream_id = options.execution_stream_id,
+                             self = execute_event.AsPtr()]() {
+        stream_event_map->Clear(execution_stream_id, self);
+      });
     }
     std::vector<tsl::RCReference<tsl::AsyncValue>> input_deps_avs_copy =
         CopyAsyncValues(input_deps);

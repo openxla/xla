@@ -551,6 +551,7 @@ xla_cc_test(
         "data/add_mhlo.mlir",
         "data/add_stablehlo.mlir",
         "data/input_literal_f32_2_2.pbtxt",
+        "data/large_constant.hlo",
         "data/must_alias.hlo",
         "data/must_alias_with_sharding.hlo",
         ":run_hlo_module",
@@ -853,8 +854,9 @@ xla_test(
     # TODO(b/372714955): Fix the memory leak.
     args = if_google(["--heap_check="]),
     backends = [
-        "gpu_h100",
-        "gpu_b200",
+        "h100",
+        "b200",
+        "amdgpu_any",
     ],
     tags = [
         "gpu",

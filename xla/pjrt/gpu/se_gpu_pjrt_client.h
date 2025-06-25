@@ -112,6 +112,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
     return kv_store_;
   }
 
+  gpu::GpuExecutableRunOptions* gpu_run_options() override;
+
   absl::StatusOr<xla::DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
 
@@ -137,6 +139,15 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       LocalDeviceState* local_device,
       tsl::RCReference<RawSEDeviceMemory> device_buffer, void* dst,
       int64_t offset, int64_t transfer_size) override;
+
+  void CopyToRemoteDevice(PjRtBuffer* buffer,
+                          absl::string_view serialized_descriptor,
+                          PjRtBuffer::RemoteSendCallback on_done) override;
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
+                              PjRtDevice* device,
+                              PjRtCrossHostRecvNotifier notifier) override;
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
@@ -166,6 +177,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       bool lookup_addressable_devices) override;
 
  private:
+  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+  GetLatestIncarnations();
+
   xla::StreamExecutorGpuTopologyDescription topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
   std::shared_ptr<DistributedRuntimeClient> distributed_client_;

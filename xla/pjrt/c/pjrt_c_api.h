@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_H_
 #define XLA_PJRT_C_PJRT_C_API_H_
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,11 +27,24 @@ limitations under the License.
 #define PJRT_STRUCT_SIZE(struct_type, last_field) \
   offsetof(struct_type, last_field) + sizeof(((struct_type*)0)->last_field)
 
+#ifdef __cplusplus
+#define PJRT_CHECK_STRUCT_SIZE(sname, last_field)                       \
+  static_assert(                                                        \
+      sizeof(struct sname) ==                                           \
+          ((PJRT_STRUCT_SIZE(sname, last_field) + alignof(sname) - 1) / \
+           alignof(sname)) *                                            \
+              alignof(sname),                                           \
+      "Failed to update last_field");
+#else
+#define PJRT_CHECK_STRUCT_SIZE(sname, last_field)
+#endif
+
 // Must update PJRT_DEFINE_STRUCT_TRAITS with the new `last_field` after
 // adding a new member to a struct.
-#define PJRT_DEFINE_STRUCT_TRAITS(sname, last_field) \
-  typedef struct sname sname;                        \
-  enum { sname##_STRUCT_SIZE = PJRT_STRUCT_SIZE(sname, last_field) }
+#define PJRT_DEFINE_STRUCT_TRAITS(sname, last_field)                  \
+  typedef struct sname sname;                                         \
+  enum { sname##_STRUCT_SIZE = PJRT_STRUCT_SIZE(sname, last_field) }; \
+  PJRT_CHECK_STRUCT_SIZE(sname, last_field)
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,7 +61,8 @@ typedef enum {
   PJRT_Extension_Type_FFI,
   PJRT_Extension_Type_MemoryDescriptions,
   PJRT_Extension_Type_Triton,
-  PJRT_Extension_Type_RawBuffer,  // Experimental.
+  PJRT_Extension_Type_RawBuffer,     // Experimental.
+  PJRT_Extension_Type_PhaseCompile,  // Experimental.
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -82,7 +97,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 69
+#define PJRT_API_MINOR 71
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -215,7 +230,7 @@ struct PJRT_Plugin_Attributes_Args {
   const PJRT_NamedValue* attributes;  // out
   size_t num_attributes;              // out
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Plugin_Attributes_Args, attributes);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Plugin_Attributes_Args, num_attributes);
 
 // Returns an array of plugin attributes which are key-value pairs. Common keys
 // include `xla_version`, `stablehlo_current_version`, and
@@ -318,6 +333,7 @@ typedef struct PJRT_LoadedExecutable PJRT_LoadedExecutable;
 typedef struct PJRT_Buffer PJRT_Buffer;
 typedef struct PJRT_AsyncHostToDeviceTransferManager
     PJRT_AsyncHostToDeviceTransferManager;
+typedef struct PJRT_PhaseCompiler PJRT_PhaseCompiler;
 
 // The caller of PJRT_Client_Create can optionally provide a key-value store
 // accessible across nodes and/or processes. KV store access may be necessary to
@@ -1803,9 +1819,14 @@ struct PJRT_Executable_DeserializeAndLoad_Args {
   const char* serialized_executable;
   size_t serialized_executable_size;
   PJRT_LoadedExecutable* loaded_executable;  // out
+  // Serialized CompileOptionsProto or null (to use the options
+  // from the serialized executable).
+  // (https://github.com/openxla/xla/blob/main/xla/pjrt/compile_options.proto)
+  const char* overridden_serialized_compile_options;
+  size_t overridden_serialized_compile_options_size;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_DeserializeAndLoad_Args,
-                          loaded_executable);
+                          overridden_serialized_compile_options_size);
 
 // Deserializes an executable serialized by `PJRT_Executable_Serialize`.
 // `serialized_executable` must have been produced by the same platform and

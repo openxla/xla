@@ -57,10 +57,13 @@ limitations under the License.
 #include "xla/service/memory_annotations.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
+#include "xla/service/spmd/shardy/constants.h"
+#include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
@@ -659,6 +662,27 @@ TEST_F(AlgebraicSimplifierTest, MulZero) {
   HloInstruction* root = computation->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kMultiply);
   AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_EQ(computation->root_instruction(), zero);
+}
+
+TEST_F(AlgebraicSimplifierTest, FastMulZero) {
+  auto m = CreateNewVerifiedModule();
+  Shape r0f32 = ShapeUtil::MakeShape(F32, {});
+  HloComputation::Builder builder(TestName());
+  HloInstruction* param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, r0f32, "param0"));
+  HloInstruction* zero = builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0.0f)));
+  builder.AddInstruction(
+      HloInstruction::CreateBinary(r0f32, HloOpcode::kMultiply, param0, zero));
+
+  auto computation = m->AddEntryComputationWithLayouts(builder.Build());
+  HloInstruction* root = computation->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kMultiply);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  AlgebraicSimplifier simplifier(options);
   ASSERT_TRUE(simplifier.Run(m.get()).value());
   EXPECT_EQ(computation->root_instruction(), zero);
 }
@@ -6461,6 +6485,66 @@ ENTRY entry {
   EXPECT_EQ(root->window().dimensions(1).padding_high(), 100);
   EXPECT_EQ(root->window().dimensions(2).padding_high(), 100);
   EXPECT_EQ(root->window().dimensions(3).padding_high(), 102);
+}
+
+// Test that ReduceWindow(Convert(Pad(op, x)), y) can simplify to
+// ReduceWindow(Convert(op), x) if the padding is small avoid merging.
+TEST_F(AlgebraicSimplifierTest,
+       FoldingConvertedPadIntoReduceWindowEnableRewriter) {
+  const std::string& hlo_string = R"(
+HloModule test
+fn {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+ENTRY entry {
+  param = bf16[32, 24575] parameter(0)
+  const = bf16[] constant(5)
+  pad = pad(param, const), padding=0_0x1_0
+  converted = f32[32, 24576] convert(pad)
+  ROOT r = reduce-window(converted, const), to_apply=fn, window={size=1x24576 pad=0_0x24575_0}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(RunHloPass(&simplifier, module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::ReduceWindow(
+                        m::Convert(m::Pad(m::Parameter(0), m::Constant())),
+                        m::Constant())));
+}
+
+// Test that ReduceWindow(Convert(Pad(op, x)), y) can simplify to
+// ReduceWindow(Convert(op), x) if the padding is large enough enable
+// simplifier.
+TEST_F(AlgebraicSimplifierTest,
+       FoldingConvertedPadIntoReduceWindowDisableRewriter) {
+  const std::string& hlo_string = R"(
+HloModule test
+fn {
+p0 = f32[] parameter(0)
+p1 = f32[] parameter(1)
+ROOT add = f32[] add(p0, p1)
+}
+ENTRY entry {
+param = bf16[32, 20096] parameter(0)
+const = bf16[] constant(5)
+pad = pad(param, const), padding=0_0x4480_0
+converted = f32[32, 24576] convert(pad)
+ROOT r = reduce-window(converted, const), to_apply=fn, window={size=1x24576 pad=0_0x24575_0}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(RunHloPass(&simplifier, module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::ReduceWindow(m::Convert(m::Parameter(0)),
+                                               m::Constant())));
 }
 
 TEST_F(AlgebraicSimplifierTest, ReversalOfTrivialDimensionsToBitcast) {
@@ -12531,6 +12615,23 @@ TEST_F(AlgebraicSimplifierTest, PreserveSharding) {
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
   EXPECT_TRUE(m->entry_computation()->parameter_instruction(0)->has_sharding());
+}
+
+TEST_F(AlgebraicSimplifierTest, PreserveSdySharding) {
+  const std::string hlo_string = R"(
+  HloModule jit_matmul, entry_computation_layout={(f64[8,3]{1,0}, f64[])->f64[8,3]{1,0}}, allow_spmd_sharding_propagation_to_parameters={false,true}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=2
+    ENTRY %main.4 (Arg_0.1: f64[8,3], Arg_1.2: f64[]) -> f64[8,3] {
+      %Arg_1.2 = f64[] parameter(1)
+      %Arg_0.1 = f64[8,3]{1,0} parameter(0), frontend_attributes={xla.sdy.sharding="#sdy.sharding<@mesh, [{\"x\"}, {}]>"}
+      ROOT %dot.3 = f64[8,3]{1,0} dot(f64[] %Arg_1.2, f64[8,3]{1,0} %Arg_0.1), lhs_contracting_dims={}, rhs_contracting_dims={}, metadata={op_name="jit(matmul)/jit(main)/dot_general[dimension_numbers=(((), ()), ((), ())) precision=None preferred_element_type=float64]" source_file="third_party/py/jax/tests/pjit_test.py" source_line=4021}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_EQ(
+      m->entry_computation()->parameter_instruction(0)->get_frontend_attribute(
+          sdy::toStringView(sdy::kShardingRoundTripAttr)),
+      "#sdy.sharding<@mesh, [{\"x\"}, {}]>");
 }
 
 // Move parameter from the LHS of a dot to the RHS.
