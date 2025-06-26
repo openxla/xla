@@ -90,3 +90,6 @@ bazel \
     -//xla/service/gpu/tests:command_buffer_test_gpu_amd_any \
     -//xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any \
     -//xla/service/gpu/tests:gpu_triton_custom_call_test_gpu_amd_any \
+    -//xla/tests:conv_depthwise_backprop_filter_test_gpu_amd_any \
+    -//xla/tests:dot_operation_test_autotune_disabled_gpu_amd_any \
+    -//xla/service/gpu/tests:gpu_index_test_gpu_amd_any \
