@@ -348,19 +348,6 @@ absl::Status NvshmemCommunicator::P2P(absl::string_view op_name,
   void* source_ptr = send_buffer.opaque();
   void* dest_ptr = recv_buffer.opaque();
 
-  // Register the source buffer only for "send" operations since it's allocated
-  // in device memory (not with nvshmem_malloc). For "recv" operations, the
-  // source buffer is already allocated with NVSHMEM.
-  if (op_name == "send") {
-    VLOG(1) << "Registering source buffer for send operation: " << source_ptr;
-    TF_RETURN_IF_ERROR(
-        RegisterBuffer(source_ptr, count * GetPrimitiveTypeSize(type)));
-  } else {
-    VLOG(1)
-        << "Skipping buffer registration for recv operation, source buffer: "
-        << source_ptr;
-  }
-
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
   switch (type) {
@@ -439,35 +426,6 @@ absl::Status NvshmemCommunicator::P2P(absl::string_view op_name,
     default:
       return absl::InternalError(
           absl::StrFormat("Invalid NVSHMEM %s type.", op_name));
-  }
-  return absl::OkStatus();
-}
-
-absl::Status NvshmemCommunicator::RegisterBuffer(void* addr, size_t length) {
-  VLOG(3) << absl::StreamFormat("Registering NVSHMEM buffer: %p, length: %zu",
-                                addr, length);
-
-  // Check if buffer is already registered
-  {
-    std::lock_guard<std::mutex> lock(registered_buffers_mutex_);
-    if (registered_buffers_.find(addr) != registered_buffers_.end()) {
-      VLOG(3) << absl::StreamFormat("Buffer %p already registered, skipping",
-                                    addr);
-      return absl::OkStatus();
-    }
-  }
-
-  if (nvshmemx_buffer_register(addr, length) != 0) {
-    LOG(ERROR) << absl::StrFormat(
-        "Failed to register NVSHMEM buffer at %p with length %zu", addr,
-        length);
-    return absl::InternalError("Failed to register NVSHMEM buffer");
-  }
-
-  // Add to registered buffers set
-  {
-    std::lock_guard<std::mutex> lock(registered_buffers_mutex_);
-    registered_buffers_.insert(addr);
   }
   return absl::OkStatus();
 }
