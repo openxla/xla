@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <vector>
 
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
@@ -80,18 +81,20 @@ double NodeAttributesSimilarity(const HloInstructionNode* absl_nonnull left,
   return sim_score;
 }
 
-double AncestorSubGraphSimilarity(const HloInstructionNode* left,
-                                  const HloInstructionNode* right,
-                                  int candidate_traversal_limit,
-                                  int min_bfs_distance, int left_graph_size,
-                                  int right_graph_size) {
-  absl::flat_hash_map<uint64_t, int> left_ancestor_fingerprints,
-      right_ancestor_fingerprints;
+double AncestorSubGraphLcsSimilarity(const HloInstructionNode* left,
+                                     const HloInstructionNode* right,
+                                     int candidate_traversal_limit,
+                                     int min_bfs_distance, int left_graph_size,
+                                     int right_graph_size) {
+  std::vector<uint64_t> left_fingerprints, right_fingerprints;
   int left_traversal_count = 0;
   HloGumgraphBfs(
       *left,
       [&](const HloInstructionNode& node, int distance) {
-        ++left_ancestor_fingerprints[node.props.fingerprint];
+        if (node.instruction == nullptr) {
+          return true;
+        }
+        left_fingerprints.push_back(node.props.fingerprint);
         ++left_traversal_count;
         return distance <= min_bfs_distance ||
                left_traversal_count < candidate_traversal_limit;
@@ -101,22 +104,31 @@ double AncestorSubGraphSimilarity(const HloInstructionNode* left,
   HloGumgraphBfs(
       *right,
       [&](const HloInstructionNode& node, int distance) {
-        ++right_ancestor_fingerprints[node.props.fingerprint];
+        if (node.instruction == nullptr) {
+          return true;
+        }
+        right_fingerprints.push_back(node.props.fingerprint);
         ++right_traversal_count;
         return distance <= min_bfs_distance ||
                right_traversal_count < candidate_traversal_limit;
       },
       BfsTraversalDirection::kReverse, right_graph_size);
-
-  int matching_ancestors = 0;
-  for (const auto& [fingerprint, count] : left_ancestor_fingerprints) {
-    if (right_ancestor_fingerprints.contains(fingerprint)) {
-      matching_ancestors +=
-          std::min(count, right_ancestor_fingerprints[fingerprint]);
+  // Calculate longest common subsequence.
+  std::vector<std::vector<int>> lcs(
+      left_fingerprints.size() + 1,
+      std::vector<int>(right_fingerprints.size() + 1, 0));
+  for (int i = 1; i <= left_fingerprints.size(); ++i) {
+    for (int j = 1; j <= right_fingerprints.size(); ++j) {
+      if (left_fingerprints[i - 1] == right_fingerprints[j - 1]) {
+        lcs[i][j] = lcs[i - 1][j - 1] + 1;
+      } else {
+        lcs[i][j] = std::max(lcs[i - 1][j], lcs[i][j - 1]);
+      }
     }
   }
-
-  return 2.0 * static_cast<double>(matching_ancestors) /
+  return 2.0 *
+         static_cast<double>(
+             lcs[left_fingerprints.size()][right_fingerprints.size()]) /
          static_cast<double>(left_traversal_count + right_traversal_count);
 }
 

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <string>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -34,14 +35,33 @@ class XnnMatcher : public LibraryMatcher {
       : LibraryMatcher(target_machine_features) {}
   ~XnnMatcher() override = default;
 
+  // Returns the set of supported HLO instructions.
+  absl::flat_hash_set<HloOpcode> SupportedOps() const override {
+    static const auto* kSupportedOps = []() {
+      static auto* supported_ops =
+          new absl::flat_hash_set<HloOpcode>{HloOpcode::kDot};
+      for (const auto& op : *GetXnnUnaryOpMap()) {
+        supported_ops->insert(op.first);
+      }
+      for (const auto& op : *GetXnnBinaryOpMap()) {
+        supported_ops->insert(op.first);
+      }
+      return supported_ops;
+    }();
+    return *kSupportedOps;
+  }
+
   // Returns true if the HLO instruction is supported by the library.
   absl::StatusOr<bool> IsOpSupported(const HloInstruction* instr) override {
-    if (instr->opcode() != HloOpcode::kDot) {
-      return false;
+    if (instr->opcode() == HloOpcode::kDot) {
+      return IsDotSupportedByXnn(
+          instr->dot_dimension_numbers(), instr->operand(0)->shape(),
+          instr->operand(1)->shape(), instr->shape(), target_machine_features_);
     }
-    return IsXnnDotSupported(
-        instr->dot_dimension_numbers(), instr->operand(0)->shape(),
-        instr->operand(1)->shape(), instr->shape(), target_machine_features_);
+    if (instr->IsElementwise()) {
+      return IsElementwiseOpSupportedByXnn(instr);
+    }
+    return false;
   }
 
   // Returns the output type of the XNN op, so we can insert a convert node if

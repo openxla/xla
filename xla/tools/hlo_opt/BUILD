@@ -33,6 +33,7 @@ cc_library(
     deps = [
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/tools/hlo_opt:opt_lib",
         "//xla/hlo/transforms/expanders:bitcast_dtypes_expander",
@@ -94,7 +95,7 @@ cc_library(
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
-        "//xla/service/gpu:buffer_sharing",
+        "//xla/service/gpu:alias_info",
         "//xla/service/gpu:compile_module_to_llvm_ir",
         "//xla/service/gpu:executable_proto_cc",
         "//xla/service/gpu:gpu_compiler",

@@ -24,6 +24,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -54,6 +56,7 @@ limitations under the License.
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/permutation_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -99,6 +102,27 @@ bool TmaIsEnabledForDevice(
   return is_cuda && device_info.cuda_compute_capability().IsAtLeastHopper();
 }
 
+// Canonicalizes tile strides. If a tile stride is 0, and the corresponding
+// tile shape or original shape value at the same index is 1, then the tile
+// stride is set to 1. Otherwise, it returns an error.
+absl::Status CanonicalizeTileStrides(SmallVector<int64_t>& tile_strides,
+                                     const ArrayRef<int64_t>& tile_shape,
+                                     const ArrayRef<int64_t>& original_shape) {
+  for (int64_t i = 0; i < tile_strides.size(); ++i) {
+    if (tile_strides[i] == 0) {
+      if (tile_shape[i] != 1 && original_shape[i] != 1) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "tile_stride at index %d is 0, but tile_shape at the same "
+            "index is %d, and original_shape at the same index is %d. Expected "
+            "tile_shape or original_shape to be 1 at that index.",
+            i, tile_shape[i], original_shape[i]));
+      }
+      tile_strides[i] = 1;
+    }
+  }
+  return absl::OkStatus();
+}
+
 bool CanUseTMA(::xla::EmitterLocOpBuilder& builder, bool tma_enabled,
                const stream_executor::DeviceDescription& device_description,
                const ArrayRef<int64_t>& tile_shape,
@@ -111,9 +135,9 @@ bool CanUseTMA(::xla::EmitterLocOpBuilder& builder, bool tma_enabled,
   if (!TmaIsEnabledForDevice(device_description)) {
     return false;
   }
-  // Currently only 2D tensors are supported.
-  // TODO(b/417039624): Support more dimensions.
-  if (tile_shape.size() != 2) {
+
+  // Nvidia TMA supports between 1 and up to 5 dimensions.
+  if (tile_shape.empty() || tile_shape.size() > 5) {
     return false;
   }
 
@@ -291,6 +315,16 @@ SmallVector<int64_t> Normalize(ArrayRef<int64_t> values,
   return NormalizeImpl<int64_t>(values, layout);
 }
 
+// Given the layout of a tensor, return the inverse permutation required to
+// transpose an already normalized tensor to the original tensor.
+SmallVector<int32_t> GetInverseLayoutPermutation(ArrayRef<int64_t> layout) {
+  auto reversed_layout = llvm::to_vector(layout);
+  std::reverse(reversed_layout.begin(), reversed_layout.end());
+  auto permutation =
+      llvm::to_vector_of<int32_t>(::xla::InversePermutation(reversed_layout));
+  return SmallVector<int32_t>(permutation.begin(), permutation.end());
+}
+
 Value CreateAddPtrOp(::xla::EmitterLocOpBuilder& builder,
                      const TypedValue<RankedTensorType>& tensor,
                      ValueRange offsets, llvm::ArrayRef<int64_t> layout) {
@@ -463,7 +497,14 @@ class RewriteExtract : public mlir::OpRewritePattern<ExtractOp> {
     auto offsets = op.getOffsetsAsValues(builder);
     if (CanUseTMA(builder, tma_enabled_, *device_description_, tile_shape,
                   op.getStaticStrides(), op.getSrc(), op.getLayout())) {
-      AddTmaAttributes(builder, op.getSrc(), tile_shape, op.getStaticStrides(),
+      SmallVector<int64_t> strides = llvm::to_vector(op.getStaticStrides());
+      if (auto result =
+              CanonicalizeTileStrides(strides, tile_shape, original_shape);
+          !result.ok()) {
+        return rewriter.notifyMatchFailure(op, result.message());
+      }
+
+      AddTmaAttributes(builder, op.getSrc(), tile_shape, strides,
                        op.getLayout());
 
       SmallVector<int64_t> normalized_tile_shape =
@@ -486,14 +527,11 @@ class RewriteExtract : public mlir::OpRewritePattern<ExtractOp> {
           IndexCastUI(builder, builder.getI32Type(), normalized_offsets));
 
       // Insert a transpose if the layout is not normalized.
-      // TODO(b/417039624): This needs to be generalized beyond 2D tensors. We
-      // would need to figure out what dim_order should be used and pass it to
-      // the transpose op.
       if (!IsNormalizedLayout(op.getLayout())) {
-        auto dim_order = llvm::to_vector_of<int32_t>(op.getLayout());
-        std::reverse(dim_order.begin(), dim_order.end());
-        auto transpose = builder.create<TransOp>(op.getResultType(),
-                                                 descriptor_load, dim_order);
+        // Transpose an already normalized tensor back to the original layout.
+        auto transpose = builder.create<TransOp>(
+            op.getResultType(), descriptor_load,
+            GetInverseLayoutPermutation(op.getLayout()));
         rewriter.replaceOp(op, transpose);
         return mlir::success();
       }
@@ -555,7 +593,14 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
     auto offsets = op.getOffsetsAsValues(builder);
     if (CanUseTMA(builder, tma_enabled_, *device_description_, tile_shape,
                   op.getStaticStrides(), op.getDst(), op.getLayout())) {
-      AddTmaAttributes(builder, op.getDst(), tile_shape, op.getStaticStrides(),
+      SmallVector<int64_t> strides = llvm::to_vector(op.getStaticStrides());
+      if (auto result =
+              CanonicalizeTileStrides(strides, tile_shape, original_shape);
+          !result.ok()) {
+        return rewriter.notifyMatchFailure(op, result.message());
+      }
+
+      AddTmaAttributes(builder, op.getDst(), tile_shape, strides,
                        op.getLayout());
 
       SmallVector<int64_t> normalized_tile_shape =
@@ -574,15 +619,13 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
               .getResult(0);
 
       // Insert a transpose if the layout is not normalized.
-      // TODO(b/417039624): This needs to be generalized beyond 2D tensors. We
-      // would need to figure out what dim_order should be used and pass it to
-      // the transpose op.
       auto src = op.getSrc();
       if (!IsNormalizedLayout(op.getLayout())) {
-        auto dim_order = llvm::to_vector_of<int32_t>(op.getLayout());
-        std::reverse(dim_order.begin(), dim_order.end());
+        // Transpose to a normalized tensor by simply reversing the layout.
+        auto transpose_order = llvm::to_vector_of<int32_t>(op.getLayout());
+        std::reverse(transpose_order.begin(), transpose_order.end());
         src = builder.create<TransOp>(normalized_tile_type, op.getSrc(),
-                                      dim_order);
+                                      transpose_order);
       }
       builder.create<DescriptorStoreOp>(
           cast_to_tensor_desc, src,

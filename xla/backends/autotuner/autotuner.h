@@ -20,11 +20,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/service/executable.h"
+#include "xla/tsl/platform/threadpool.h"
+#include "tsl/platform/fingerprint.h"
+
+using InstructionFilterFn = absl::FunctionRef<bool(const xla::HloInstruction&)>;
 
 namespace xla {
 
@@ -39,28 +46,53 @@ struct AutotuneConfig {
 
 class Autotuner {
  public:
-  static std::unique_ptr<Autotuner> Create(
+  static absl::StatusOr<std::unique_ptr<Autotuner>> Create(
       std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
-      stream_executor::StreamExecutor* stream_executor,
-      std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config);
+      std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
+      tsl::thread::ThreadPool* thread_pool = nullptr);
 
   // Try all supported configs from the registered codegen backends for the
   // given HLO instruction and apply the best one.
   absl::Status Autotune(HloInstruction* instr);
 
+  // Autotune all instructions in the module for which the filter function
+  // returns true. The instructions inside fusion computations will be
+  // ignored.
+  absl::Status Autotune(HloModule* module,
+                        const InstructionFilterFn& should_autotune);
+
  private:
+  using InstructionsByFingerprint =
+      absl::flat_hash_map<tsl::Fprint128, std::vector<HloInstruction*>,
+                          tsl::Fprint128Hasher>;
+
+  struct Config {
+    CodegenBackend* codegen_backend;
+    std::unique_ptr<BackendConfig> backend_config;
+  };
+
   Autotuner(std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
-            stream_executor::StreamExecutor* stream_executor,
-            std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config)
+            std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
+            tsl::thread::ThreadPool* thread_pool)
       : codegen_backends_(std::move(codegen_backends)),
-        stream_executor_(stream_executor),
         profiler_(std::move(profiler)),
-        autotune_config_(autotune_config) {}
+        autotune_config_(autotune_config),
+        thread_pool_(thread_pool) {}
+
+  InstructionsByFingerprint GetAutotuningCandidates(
+      const HloModule* module, const InstructionFilterFn& should_autotune);
+
+  absl::StatusOr<Config> GetBestConfig(HloInstruction* instr);
+
+  absl::StatusOr<std::vector<Config>> GetSupportedConfigs(
+      HloInstruction* instr);
+  std::vector<absl::StatusOr<std::unique_ptr<Executable>>> CompileAll(
+      HloInstruction* instr, std::vector<Config>& configs);
 
   std::vector<std::unique_ptr<CodegenBackend>> codegen_backends_;
-  se::StreamExecutor* stream_executor_;
   std::unique_ptr<Profiler> profiler_;
   AutotuneConfig autotune_config_;
+  tsl::thread::ThreadPool* thread_pool_;
 };
 }  // namespace xla
 

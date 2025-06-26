@@ -1,7 +1,6 @@
 # Description:
 #    LLVM-based CPU backend for XLA.
 
-load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load(
     "//third_party/compute_library:build_defs.bzl",
     "acl_deps",
@@ -9,7 +8,6 @@ load(
 )
 load(
     "//xla:xla.default.bzl",
-    "xla_cc_binary",
     "xla_cc_test",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -65,7 +63,6 @@ filegroup(
         "runtime_pow.cc",
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
-        "runtime_single_threaded_fft.cc",
         "runtime_single_threaded_matmul_c128.cc",
         "runtime_single_threaded_matmul_c64.cc",
         "runtime_single_threaded_matmul_common.h",
@@ -79,7 +76,6 @@ filegroup(
         # Multi-threaded support.
         "runtime_conv2d.cc",
         "runtime_conv3d.cc",
-        "runtime_fft.cc",
         "runtime_matmul_c128.cc",
         "runtime_matmul_c64.cc",
         "runtime_matmul_common.h",
@@ -106,13 +102,11 @@ filegroup(
         "runtime_pow.h",
         "runtime_single_threaded_conv2d.h",
         "runtime_single_threaded_conv3d.h",
-        "runtime_single_threaded_fft.h",
         "runtime_single_threaded_matmul.h",
         "runtime_topk.h",
         # Multi-threaded support.
         "runtime_conv2d.h",
         "runtime_conv3d.h",
-        "runtime_fft.h",
         "runtime_fork_join.h",
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
@@ -246,6 +240,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_serdes",
         "//xla/backends/cpu/transforms:dot_library_rewriter",
         "//xla/backends/cpu/transforms:xnn_graph_fusion",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/analysis:indexed_array_analysis",
         "//xla/hlo/ir:hlo",
@@ -457,7 +452,7 @@ cc_library(
 cc_library(
     # The old target name will still be used so that dependencies won't break.
     # In the future, dependencies should be cleaned up and relinked to the above
-    # target if registration is not necesary.
+    # target if registration is not necessary.
     name = "cpu_compiler",
     srcs = ["cpu_compiler_registerer.cc"],
     hdrs = ["cpu_compiler.h"],
@@ -497,7 +492,6 @@ xla_test(
     ],
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
-        "test_xla_cpu_no_thunks",
     ],
     deps = [
         "//xla/hlo/testlib:verified_hlo_module",
@@ -603,7 +597,6 @@ cc_library(
         ":runtime_conv2d_acl",
         ":runtime_conv3d",
         ":runtime_custom_call_status",
-        ":runtime_fft",
         ":runtime_fork_join",
         ":runtime_fp16",
         ":runtime_handle_ffi_call",
@@ -613,7 +606,6 @@ cc_library(
         ":runtime_pow",
         ":runtime_single_threaded_conv2d",
         ":runtime_single_threaded_conv3d",
-        ":runtime_single_threaded_fft",
         ":runtime_single_threaded_matmul",
         ":runtime_topk",
         "//xla/service:custom_call_target_registry",
@@ -699,6 +691,10 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/host:host_stream",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -708,9 +704,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:denormal",
+        "@tsl//tsl/platform:setround",
     ],
 )
 
@@ -793,6 +788,7 @@ xla_cc_test(
         "//xla/backends/cpu/codegen:ir_compiler",
         "//xla/backends/cpu/codegen:jit_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -843,6 +839,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/codegen:kernel_api_ir_builder",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
@@ -1071,33 +1068,6 @@ cc_library(
     ],
 )
 
-build_test(
-    name = "sample_harness_build_test",
-    targets = [
-        ":sample_harness",
-    ],
-)
-
-xla_cc_binary(
-    name = "sample_harness",
-    srcs = ["sample_harness.cc"],
-    deps = [
-        "//xla:array4d",
-        "//xla:literal",
-        "//xla:types",
-        "//xla:xla_data_proto_cc",
-        "//xla/client",
-        "//xla/client:client_library",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder:xla_computation",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
 cc_library(
     name = "cpu_runtime",
     srcs = [
@@ -1190,22 +1160,6 @@ cc_library(
     deps = [
         "//xla/service:custom_call_status_internal",
         "@com_google_absl//absl/base:core_headers",
-    ],
-)
-
-cc_library(
-    name = "runtime_fft",
-    srcs = [
-        "runtime_fft.cc",
-    ],
-    hdrs = ["runtime_fft.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla:executable_run_options",
-        "@com_google_absl//absl/base:core_headers",
-        "@ducc//:fft_wrapper",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1303,20 +1257,6 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_single_threaded_fft",
-    srcs = [
-        "runtime_single_threaded_fft.cc",
-    ],
-    hdrs = ["runtime_single_threaded_fft.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_fft",
-        "@com_google_absl//absl/base:core_headers",
-    ],
-)
-
-cc_library(
     name = "runtime_single_threaded_matmul_impl",
     srcs = [
         "runtime_single_threaded_matmul_c128.cc",
@@ -1357,6 +1297,7 @@ cc_library(
 
 cc_library(
     name = "runtime_single_threaded_matmul_nomkl",
+    hdrs = ["runtime_single_threaded_matmul.h"],
     compatible_with = get_compatible_with_portable(),
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
@@ -1365,6 +1306,7 @@ cc_library(
         "//xla/tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
         "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -1794,6 +1736,7 @@ xla_cc_test(
         ":cpu_executable",
         ":ir_emitter",
         ":target_machine_features_stub",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:buffer_assignment",
