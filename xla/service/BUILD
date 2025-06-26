@@ -4394,7 +4394,6 @@ cc_library(
     deps = [
         ":computation_layout",
         ":computation_placer_hdr",
-        ":hlo_module_util",
         ":hlo_runner_interface",
         "//xla:literal",
         "//xla:literal_util",
