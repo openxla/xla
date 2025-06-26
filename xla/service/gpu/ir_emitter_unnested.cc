@@ -184,8 +184,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_send_thunk.h"
 
 namespace xla {
 namespace gpu {

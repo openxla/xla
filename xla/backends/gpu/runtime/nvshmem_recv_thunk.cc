@@ -112,53 +112,53 @@ absl::Status NvshmemRecvThunk::RunNvshmemCollective(const ExecuteParams& params,
                                        buffer.destination_buffer.opaque());
   }
 
-  if (source_id) {
-    bool should_run =
-        config_.validation_kind != P2PConfig::ValidationKind::kInvalid;
-
-    if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
-      se::StreamExecutor* executor = params.stream->parent();
-      TF_ASSIGN_OR_RETURN(int64_t * counter,
-                          execution_counters_->GetCounter(
-                              executor, params.collective_params->run_id));
-      auto it = config_.source_target_to_bounds.find(
-          std::make_pair(*source_target.source, current_id));
-      if (it == config_.source_target_to_bounds.end()) {
-        return absl::InternalError("Missing bounds for conditional Recv");
-      }
-      if (*counter < it->second.first || *counter > it->second.second) {
-        should_run = false;
-      }
-      VLOG(3) << "RunNvshmemCollective counter " << *counter << " "
-              << should_run;
-      ++(*counter);
-    }
-
-    if (!should_run) {
-      VLOG(3) << "Skipping Recv operation";
-      return absl::OkStatus();
-    }
-
-    TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
-                        collectives->CreateCommunicator());
-    VLOG(1) << "Running Recv operation"
-            << " element_type=" << buffer.element_type
-            << " destination_buffer=" << buffer.destination_buffer.opaque()
-            << " source_buffer=" << buffer.source_buffer.opaque()
-            << " element_count=" << buffer.element_count
-            << " source_id=" << *source_id;
-    auto recv_event = nvshmem_comm->Recv(
-        buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
-        buffer.element_count, RankId(*source_id), GpuCollectives::On(stream));
-    tsl::BlockUntilReady(recv_event);
-    if (recv_event.IsError()) {
-      return recv_event.GetError();
-    }
-    TF_RETURN_IF_ERROR(nvshmem_comm->Quiet(GpuCollectives::On(stream)));
-  } else {
+  if (!source_id) {
     VLOG(3) << "No source ID found, skipping Recv operation";
+    return absl::OkStatus();
   }
+
+  bool should_run =
+      config_.validation_kind != P2PConfig::ValidationKind::kInvalid;
+
+  if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
+    se::StreamExecutor* executor = params.stream->parent();
+    TF_ASSIGN_OR_RETURN(int64_t * counter,
+                        execution_counters_->GetCounter(
+                            executor, params.collective_params->run_id));
+    auto it = config_.source_target_to_bounds.find(
+        std::make_pair(*source_target.source, current_id));
+    if (it == config_.source_target_to_bounds.end()) {
+      return absl::InternalError("Missing bounds for conditional Recv");
+    }
+    if (*counter < it->second.first || *counter > it->second.second) {
+      should_run = false;
+    }
+    VLOG(3) << "RunNvshmemCollective counter " << *counter << " " << should_run;
+    ++(*counter);
+  }
+
+  if (!should_run) {
+    VLOG(3) << "Skipping Recv operation";
+    return absl::OkStatus();
+  }
+
+  TF_ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
+                      collectives->CreateCommunicator());
+  VLOG(1) << "Running Recv operation"
+          << " element_type=" << buffer.element_type
+          << " destination_buffer=" << buffer.destination_buffer.opaque()
+          << " source_buffer=" << buffer.source_buffer.opaque()
+          << " element_count=" << buffer.element_count
+          << " source_id=" << *source_id;
+  auto recv_event = nvshmem_comm->Recv(
+      buffer.destination_buffer, buffer.source_buffer, buffer.element_type,
+      buffer.element_count, RankId(*source_id), GpuCollectives::On(stream));
+  tsl::BlockUntilReady(recv_event);
+  if (recv_event.IsError()) {
+    return recv_event.GetError();
+  }
+  TF_RETURN_IF_ERROR(nvshmem_comm->Quiet(GpuCollectives::On(stream)));
 
   return absl::OkStatus();
 }

@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -50,8 +51,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-class NvshmemBufferAddresses;
 
 // Emits LLVM IR for an "unnested computation".
 //

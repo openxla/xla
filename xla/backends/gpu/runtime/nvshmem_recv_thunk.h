@@ -37,9 +37,6 @@ class NvshmemRecvThunk : public NvshmemCollectiveThunk {
                    std::shared_ptr<NvshmemBufferAddresses> buffer_addresses);
   absl::Status Initialize(const InitializeParams& params) override;
 
-  // Returns the group mode (cross-replica or cross-partition) for the operation
-  static CollectiveOpGroupMode GetGroupMode(const HloRecvInstruction* inst);
-
  protected:
   const CollectiveConfig& config() const override { return config_.config; }
   absl::Status RunNvshmemCollective(const ExecuteParams& params,

@@ -39,10 +39,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// Used for global NVSHMEM buffer registration tracking
-std::mutex NvshmemCommunicator::registered_buffers_mutex_;
-absl::flat_hash_set<void*> NvshmemCommunicator::registered_buffers_;
-
 //==-----------------------------------------------------------------------===//
 // NVSHMEM Utility Functions
 //==-----------------------------------------------------------------------===//

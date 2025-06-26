@@ -138,10 +138,6 @@ class NvshmemCommunicator : public Communicator {
 
   NvshmemCollectives* collectives_;  // Parent NvshmemCollectives instance
   bool aborted_ = false;             // Has Abort() been called?
-
-  // Global tracking of registered buffers to avoid re-registration
-  static std::mutex registered_buffers_mutex_;
-  static absl::flat_hash_set<void*> registered_buffers_;
 };
 
 }  // namespace xla::gpu
