@@ -85,7 +85,6 @@ bazel \
     -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_legacy_test_gpu_amd_any \
     -//xla/backends/gpu/codegen/triton:support_legacy_test_gpu_amd_any \
     -//xla/backends/gpu/codegen/triton:support_test \
-    -//xla/backends/gpu/runtime:command_buffer_thunk_test_gpu_amd_any \
     -//xla/backends/profiler/gpu:cupti_error_manager_test_gpu_amd_any \
     -//xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any \
     -//xla/service/gpu/tests:command_buffer_test_gpu_amd_any \
