@@ -38,12 +38,13 @@ double NodeAttributesSimilarity(const HloInstructionNode* absl_nonnull left,
                                 const HloInstructionNode* absl_nonnull right);
 
 // A heuristic score based on the ancestor subgraphs of the given nodes.
-// Calculated by comparing the fingerprints of the ancestors of the nodes.
-double AncestorSubGraphSimilarity(const HloInstructionNode* left,
-                                  const HloInstructionNode* right,
-                                  int candidate_traversal_limit,
-                                  int min_bfs_distance, int left_graph_size,
-                                  int right_graph_size);
+// Calculated by the longest common subsequence of the fingerprints of the
+// ancestors of the nodes in BFS order.
+double AncestorSubGraphLcsSimilarity(const HloInstructionNode* left,
+                                     const HloInstructionNode* right,
+                                     int candidate_traversal_limit,
+                                     int min_bfs_distance, int left_graph_size,
+                                     int right_graph_size);
 
 // Returns similarity of properties between two instructions.
 double NodePropertySimilarity(const HloInstructionNode* left,

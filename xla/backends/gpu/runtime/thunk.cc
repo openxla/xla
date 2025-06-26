@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -157,7 +158,7 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     GlobalDeviceId global_device_id, const DeviceAssignment* device_assn,
     const GlobalDeviceIdMap* global_device_id_map,
     const CliqueIdCallback* nccl_clique_id_callback,
-    const absl::flat_hash_map<GlobalDeviceId, uint64_t>* incarnations,
+    const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
     : collectives(collectives),
       executor(executor),
@@ -394,10 +395,15 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
 }
 
 absl::StatusOr<ThunkProto> Thunk::ToProto() const {
-  ThunkProto proto;
-  proto.mutable_thunk_info()->set_execution_stream_id(
-      execution_stream_id_.value());
-  proto.mutable_thunk_info()->set_profile_annotation(profile_annotation_);
+  return absl::UnimplementedError(absl::StrFormat(
+      "Proto serialization for thunk of type %s is not implemented",
+      typeid(*this).name()));
+}
+
+absl::StatusOr<ThunkInfoProto> Thunk::GetThunkInfoProto() const {
+  ThunkInfoProto proto;
+  proto.set_execution_stream_id(execution_stream_id_.value());
+  proto.set_profile_annotation(profile_annotation_);
   return proto;
 }
 
