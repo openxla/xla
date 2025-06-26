@@ -16,9 +16,9 @@ limitations under the License.
 #include <cstddef>
 #include <optional>
 #include <string>
-#include <unordered_set>
 #include <mutex>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -143,7 +143,7 @@ class NvshmemCommunicator : public Communicator {
 
   // Global tracking of registered buffers to avoid re-registration
   static std::mutex registered_buffers_mutex_;
-  static std::unordered_set<void*> registered_buffers_;
+  static absl::flat_hash_set<void*> registered_buffers_;
 };
 
 }  // namespace xla::gpu

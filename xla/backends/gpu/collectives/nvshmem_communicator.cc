@@ -16,8 +16,8 @@ limitations under the License.
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <unordered_set>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -41,7 +41,7 @@ namespace xla::gpu {
 
 // Used for global NVSHMEM buffer registration tracking
 std::mutex NvshmemCommunicator::registered_buffers_mutex_;
-std::unordered_set<void*> NvshmemCommunicator::registered_buffers_;
+absl::flat_hash_set<void*> NvshmemCommunicator::registered_buffers_;
 
 //==-----------------------------------------------------------------------===//
 // NVSHMEM Utility Functions
