@@ -61,7 +61,7 @@ GPU_NAME=${GPU_NAME[1]}
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
-    --config=rocm_gcc \
+    --config=rocm_ci \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \
     --test_timeout=920,2400,7200,9600 \
