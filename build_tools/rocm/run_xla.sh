@@ -89,4 +89,3 @@ bazel \
     -//xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any \
     -//xla/service/gpu/tests:command_buffer_test_gpu_amd_any \
     -//xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any \
-    -//xla/service/gpu/tests:gpu_triton_custom_call_test_gpu_amd_any \
