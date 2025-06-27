@@ -78,18 +78,20 @@ namespace profiler {
 // Constructor provides all configuration needed to set up sampling on a
 // single device
 CuptiPmSamplerDevice::CuptiPmSamplerDevice(int device_id,
-                                           CuptiPmSamplerOptions* options)
+                                           CuptiPmSamplerOptions& options)
     : device_id_(device_id), cupti_interface_(GetCuptiInterface()) {
-  // Provide some defaults for metrics and handler
-  if (options->metrics.size() == 0) {
-    c_metrics_ = default_c_metrics_;
-  } else {
-    c_metrics_ = options->metrics;
+  // Save local copy of metrics strings
+  metrics_ = options.metrics;
+
+  // Build list of local c string pointers (required by CUPTI)
+  for (const auto& metric : metrics_) {
+    c_metrics_.push_back(metric.c_str());
   }
 
-  max_samples_ = options->max_samples;
-  hw_buf_size_ = options->hw_buf_size;
-  sample_interval_ns_ = options->sample_interval_ns;
+  // Save other values provided by the options struct
+  max_samples_ = options.max_samples;
+  hw_buf_size_ = options.hw_buf_size;
+  sample_interval_ns_ = options.sample_interval_ns;
 }
 
 // Destructor cleans up all images and objects
@@ -220,7 +222,7 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
 
     WarnPmSamplingMetrics();
 
-    std::vector<const char*> valid_c_metrics;
+    std::vector<const char*> valid_metrics;
 
     // Use ConfigAddMetrics to test each metric, log invalid ones, add valid
     // ones to valid vector
@@ -235,7 +237,7 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
         LOG(WARNING) << "(Profiling::PM Sampling)   Invalid metric name: "
                      << metric;
       } else if (status == CUPTI_SUCCESS) {
-        valid_c_metrics.push_back(metric);
+        valid_metrics.push_back(metric);
       } else {
         LOG(WARNING) << "(Profiling::PM Sampling)   Unknown error for metric "
                      << metric;
@@ -247,12 +249,12 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
     }
 
     // If no valid metrics, return error
-    if (valid_c_metrics.size() == 0) {
+    if (valid_metrics.size() == 0) {
       return absl::FailedPreconditionError("No valid metrics for PM sampling");
     }
 
-    // Reset c_metrics_ to valid ones
-    c_metrics_ = valid_c_metrics;
+    // Reset metrics_ to valid ones
+    c_metrics_ = valid_metrics;
 
     // Recreate host object with valid metrics
     TF_RETURN_IF_ERROR(CreateProfilerHostObj());
@@ -563,25 +565,27 @@ absl::Status CuptiPmSamplerDevice::CreateConfig() {
 // Constructor, creates worker thread
 CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
     std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs,
-    CuptiPmSamplerOptions* options) {
-  c_metrics_ = options->metrics;
+    CuptiPmSamplerOptions& options) {
   devs_ = devs;
 
-  for (auto metric : c_metrics_) {
-    metrics_.emplace_back(metric);
+  metrics_ = options.metrics;
+
+  // Create C string vector of metrics (used repeatedly in CUPTI calls)
+  for (auto metric : metrics_) {
+    c_metrics_.emplace_back(metric.c_str());
   }
 
-  decode_period_ = options->decode_period;
+  decode_period_ = options.decode_period;
 
-  if (options->process_samples == nullptr) {
-    process_samples = [](PmSamples* info) {
+  if (!options.process_samples) {
+    process_samples_ = [](PmSamples* info) {
       LOG(WARNING) << "(Profiling::PM Sampling) No decode handler specified, "
                    << "discarding " << info->GetSamplerRanges().size()
                    << " samples";
       return;
     };
   } else {
-    process_samples = options->process_samples;
+    process_samples_ = options.process_samples;
   }
 
   thd_ = new std::thread(&CuptiPmSamplerDecodeThread::MainFunc, this);
@@ -624,9 +628,11 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
       absl::Time process_samples_time = start_time;
       absl::Time initialize_image_time = start_time;
 
-      CuptiPmSamplerDecodeInfo info{.metrics = c_metrics_};
+      CuptiPmSamplerDecodeInfo info;
+
       if (!dev->FillCounterDataImage(info).ok()) continue;
       fill_time = absl::Now();
+
       if (!dev->GetSampleCounts(info).ok()) continue;
       get_count_time = absl::Now();
 
@@ -675,8 +681,8 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
           info.sampler_ranges[i].metric_values.clear();
         } else {
           if (VLOG_IS_ON(4)) {
-            for (int j = 0; j < c_metrics_.size(); j++) {
-              LOG(INFO) << "            " << info.metrics[j] << "[" << i
+            for (int j = 0; j < metrics_.size(); j++) {
+              LOG(INFO) << "            " << metrics_[j] << "[" << i
                         << "] = " << info.sampler_ranges[i].metric_values[j];
             }
           }
@@ -687,9 +693,13 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
 
       // info now contains a list of samples and metrics,
       // hand off to process or store elsewhere
-      if (process_samples != nullptr) {
-        PmSamples samples(metrics_, info.sampler_ranges);
-        process_samples(&samples);
+      if (process_samples_) {
+        std::vector<std::string> metrics;
+        for (const auto& metric : c_metrics_) {
+          metrics.emplace_back(metric);
+        }
+        PmSamples samples(metrics, info.sampler_ranges);
+        process_samples_(&samples);
       }
 
       process_samples_time = absl::Now();
@@ -797,7 +807,7 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
 }
 
 absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
-                                            CuptiPmSamplerOptions* options) {
+                                            CuptiPmSamplerOptions& options) {
   // Ensure not already initialized
   if (initialized_) {
     return absl::AlreadyExistsError("PM sampler already initialized");
@@ -808,6 +818,8 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
   // PM sampling has to be enabled on individual devices
   for (int dev_idx = 0; dev_idx < num_gpus; dev_idx++) {
     // Create a new PM sampling instance for this device
+    // This makes a copy of the relevant options passed in including a copy of
+    // the metrics vector, so can free after this point
     std::shared_ptr<CuptiPmSamplerDevice> dev =
         std::make_shared<CuptiPmSamplerDevice>(dev_idx, options);
 
@@ -832,10 +844,10 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
   if (devices_.size() < 1) return absl::OkStatus();
 
   // Create decode thread(s)
-  for (int i = 0; i < devices_.size(); i += options->devs_per_decode_thd) {
+  for (int i = 0; i < devices_.size(); i += options.devs_per_decode_thd) {
     // Slice iterators
     auto begin = devices_.begin() + i;
-    auto end = begin + options->devs_per_decode_thd;
+    auto end = begin + options.devs_per_decode_thd;
     // Don't go past end of vector
     end = std::min(end, devices_.end());
 

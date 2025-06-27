@@ -40,7 +40,6 @@ struct CuptiPmSamplerDecodeInfo {
   size_t num_populated = 0;
   int device_id;
   std::vector<SamplerRange> sampler_ranges;
-  std::vector<char const*> metrics;
 };
 
 // Container class for all CUPTI pm sampling infrastructure
@@ -92,7 +91,7 @@ class CuptiPmSamplerDevice {
 
   // Constructor provides all configuration needed to set up sampling on a
   // single device
-  CuptiPmSamplerDevice(int device_id, CuptiPmSamplerOptions* options);
+  CuptiPmSamplerDevice(int device_id, CuptiPmSamplerOptions& options);
 
   // Destructor cleans up all images and objects
   ~CuptiPmSamplerDevice();
@@ -102,14 +101,12 @@ class CuptiPmSamplerDevice {
   size_t max_samples_;
   size_t hw_buf_size_;
   size_t sample_interval_ns_;
-  std::vector<char const*> default_c_metrics_{
-      "sm__cycles_active.sum", "sm__inst_executed_pipe_fmalite.sum",
-      "pcie__read_bytes.sum", "pcie__write_bytes.sum"};
 
   // CUPTI PM sampling objects
   // Declared roughly in order of initialization
   std::string chip_name_;
-  std::vector<char const*> c_metrics_;
+  std::vector<std::string> metrics_; // Local copy of metrics strings
+  std::vector<const char *> c_metrics_; // CUPTI needs C string pointers
   std::vector<uint8_t> counter_availability_image_;
   CUpti_Profiler_Host_Object* host_obj_ = nullptr;
   std::vector<uint8_t> config_image_;
@@ -159,7 +156,7 @@ class CuptiPmSamplerDecodeThread {
  public:
   CuptiPmSamplerDecodeThread(
       std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs,
-      CuptiPmSamplerOptions* options);
+      CuptiPmSamplerOptions& options);
 
   // Signal thread to exit; join thread
   ~CuptiPmSamplerDecodeThread() {
@@ -184,10 +181,10 @@ class CuptiPmSamplerDecodeThread {
   // Space to asynchronously initialize this class and the thread it spawns
   absl::Duration decode_period_ = absl::Seconds(1);
 
-  std::vector<char const*> c_metrics_;
-  std::vector<std::string> metrics_;
-
-  void (*process_samples)(PmSamples* samples) = nullptr;
+  std::vector<std::string> metrics_; // Private copy of metrics
+  std::vector<const char *> c_metrics_; // C string vector of metrics, needed 
+                                        // for repeated CUPTI calls
+  std::function<void(PmSamples* samples)> process_samples_;
 
   // Guard state change with mutexes
   absl::Mutex state_mutex_;
@@ -270,6 +267,15 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
   // Constructor
   CuptiPmSamplerImpl() = default;
 
+  // Construct and initiailze
+  CuptiPmSamplerImpl(size_t num_gpus, CuptiPmSamplerOptions& options) {
+    absl::Status status = Initialize(num_gpus, options);
+    if (!status.ok()) {
+      LOG(ERROR) << "Failed to initialize CuptiPmSamplerImpl: " << status;
+      return;
+    }
+  }
+
   // Not copyable or movable
   CuptiPmSamplerImpl(const CuptiPmSamplerImpl&) = delete;
   CuptiPmSamplerImpl& operator=(const CuptiPmSamplerImpl&) = delete;
@@ -278,7 +284,7 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
   ~CuptiPmSamplerImpl() override = default;
 
   // Initialize the PM sampler, but do not start sampling or decoding
-  absl::Status Initialize(size_t num_gpus, CuptiPmSamplerOptions* options)
+  absl::Status Initialize(size_t num_gpus, CuptiPmSamplerOptions& options)
       override;
 
   // Start sampling and decoding

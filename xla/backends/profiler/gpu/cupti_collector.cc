@@ -628,7 +628,7 @@ void PmSamples::PopulateCounterLine(XPlaneBuilder* plane) {
   }
 }
 
-size_t PmSamples::GetNumSamples() { return sampler_ranges_.size(); }
+const size_t PmSamples::GetNumSamples() { return sampler_ranges_.size(); }
 
 const std::vector<std::string>& PmSamples::GetMetrics() { return metrics_; }
 

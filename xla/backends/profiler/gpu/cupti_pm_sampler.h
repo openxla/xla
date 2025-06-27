@@ -16,6 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_H_
 #define XLA_BACKENDS_PROFILER_GPU_CUPTI_PM_SAMPLER_H_
 
+#include <optional>
+#include <string> 
+#include <vector>
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/time/time.h"
 
@@ -36,7 +41,7 @@ struct CuptiPmSamplerOptions {
   // Whether to enable PM sampler
   bool enable = false;
   // List of metrics to enable
-  std::vector<const char*> metrics{};
+  std::vector<std::string> metrics{};
   // 64MB hardware buffer (on device)
   size_t hw_buf_size = 64 * 1024 * 1024;
   // Sample interval of 500,000ns = 2khz
@@ -49,33 +54,38 @@ struct CuptiPmSamplerOptions {
   size_t devs_per_decode_thd = 8;
   // What to do with samples once gathered
   // Note, must be thread-safe - may be called by multiple decode threads
-  // simultaneously
-  void (*process_samples)(PmSamples* samples) = nullptr;
+  // simultaneously (with different samples data per thread)
+  std::function<void(PmSamples* samples)> process_samples;
 };
 
 class CuptiPmSampler {
  public:
   // Constructor
   CuptiPmSampler() = default;
+  // Construct and initialize
+  CuptiPmSampler(size_t num_gpus, CuptiPmSamplerOptions& options);
+
   // Not copyable or movable
   CuptiPmSampler(const CuptiPmSampler&) = delete;
+  CuptiPmSampler(CuptiPmSampler&&) = delete;
   CuptiPmSampler& operator=(const CuptiPmSampler&) = delete;
+  CuptiPmSampler& operator=(CuptiPmSampler&&) = delete;
 
   // Destructor
   virtual ~CuptiPmSampler() = default;
 
   // Initialize the PM sampler
   virtual absl::Status Initialize(size_t num_gpus,
-                                  CuptiPmSamplerOptions* options);
+                                  CuptiPmSamplerOptions& options) = 0;
 
   // Start sampler
-  virtual absl::Status StartSampler();
+  virtual absl::Status StartSampler() = 0;
 
   // Stop sampler
-  virtual absl::Status StopSampler();
+  virtual absl::Status StopSampler() = 0;
 
   // Deinitialize the PM sampler
-  virtual absl::Status Deinitialize();
+  virtual absl::Status Deinitialize() = 0;
 };
 
 }  // namespace profiler

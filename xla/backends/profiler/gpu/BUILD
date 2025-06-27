@@ -172,6 +172,7 @@ tsl_gpu_library(
         ":cupti_collector",
         ":cupti_interface",
         ":cupti_utils",
+        ":cupti_pm_sampler_factory",
         ":nvtx_utils",
         "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "//xla/tsl/profiler/utils:lock_free_queue",
@@ -190,18 +191,29 @@ tsl_gpu_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:types",
     ]
-    + if_cuda_newer_than("12_6",
-        [":cupti_pm_sampler_impl",],
-        [":cupti_pm_sampler_stub",]
-    ),
 )
 
-tsl_gpu_library(
-    name = "cupti_pm_sampler_stub",
-    srcs = ["cupti_pm_sampler.cc"],
-    hdrs = ["cupti_pm_sampler.h"],
+cc_library(
+    name = "cupti_pm_sampler_factory",
+    srcs = ["cupti_pm_sampler_factory.cc"],
+    hdrs = ["cupti_pm_sampler_factory.h",
+            "cupti_pm_sampler.h"],
     copts = tf_profiler_copts() + tsl_copts(),
-    visibility = ["//visibility:public"],
+    deps = [
+        ":cupti_collector",
+        ":cupti_interface",
+        "@com_google_absl//absl/status",
+    ] + if_cuda_newer_than(
+        "12_6",
+        [":cupti_pm_sampler_impl"],
+        [":cupti_pm_sampler_stub"]), 
+)
+
+cc_library(
+    name = "cupti_pm_sampler_stub",
+    srcs = ["cupti_pm_sampler_stub.cc"],
+    hdrs = ["cupti_pm_sampler_stub.h", "cupti_pm_sampler.h"],
+    copts = tf_profiler_copts() + tsl_copts(),
     deps = [
         ":cupti_collector",
         ":cupti_interface",
@@ -209,13 +221,15 @@ tsl_gpu_library(
     ],
 )
 
-
-tsl_gpu_library(
+cc_library(
     name = "cupti_pm_sampler_impl",
-    srcs = if_cuda(["cupti_pm_sampler_impl.cc"]),
-    hdrs = if_cuda(["cupti_pm_sampler_impl.h"]),
+    tags = [
+        "gpu",
+        "cuda-only"
+    ],
+    srcs = ["cupti_pm_sampler_impl.cc"],
+    hdrs = ["cupti_pm_sampler_impl.h", "cupti_pm_sampler.h"],
     copts = tf_profiler_copts() + tsl_copts(),
-    visibility = ["//visibility:public"],
     deps = [
         ":cupti_pm_sampler_stub",
         ":cupti_collector",
@@ -223,7 +237,8 @@ tsl_gpu_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
-    ] + if_cuda(["//xla/tsl/cuda:cupti"]),
+        "//xla/tsl/cuda:cupti"
+    ],
 )
 
 tsl_gpu_library(
@@ -512,11 +527,10 @@ xla_test(
         "cuda-only",
         "no_mac",
     ],
-    deps = if_cuda([
+    deps = [
         ":cupti_collector",
         ":cupti_tracer",
         ":cupti_utils",
-    ]) + [
         ":profile_with_cuda_kernels",
         "@com_google_googletest//:gtest_main",
     ],

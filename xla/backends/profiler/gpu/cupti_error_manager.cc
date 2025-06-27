@@ -300,73 +300,73 @@ CUptiResult CuptiErrorManager::SetThreadIdType(
 
 // Profiler Host APIs
 CUptiResult CuptiErrorManager::ProfilerHostInitialize(
-    CUpti_Profiler_Host_Initialize_Params* pParams) {
+    CUpti_Profiler_Host_Initialize_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostInitialize(pParams);
+  CUptiResult err = interface_->ProfilerHostInitialize(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostDeinitialize(
-    CUpti_Profiler_Host_Deinitialize_Params* pParams) {
+    CUpti_Profiler_Host_Deinitialize_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostDeinitialize(pParams);
+  CUptiResult err = interface_->ProfilerHostDeinitialize(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetSupportedChips(
-    CUpti_Profiler_Host_GetSupportedChips_Params* pParams) {
+    CUpti_Profiler_Host_GetSupportedChips_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetSupportedChips(pParams);
+  CUptiResult err = interface_->ProfilerHostGetSupportedChips(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetBaseMetrics(
-    CUpti_Profiler_Host_GetBaseMetrics_Params* pParams) {
+    CUpti_Profiler_Host_GetBaseMetrics_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetBaseMetrics(pParams);
+  CUptiResult err = interface_->ProfilerHostGetBaseMetrics(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetSubMetrics(
-    CUpti_Profiler_Host_GetSubMetrics_Params* pParams) {
+    CUpti_Profiler_Host_GetSubMetrics_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetSubMetrics(pParams);
+  CUptiResult err = interface_->ProfilerHostGetSubMetrics(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetMetricProperties(
-    CUpti_Profiler_Host_GetMetricProperties_Params* pParams) {
+    CUpti_Profiler_Host_GetMetricProperties_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetMetricProperties(pParams);
+  CUptiResult err = interface_->ProfilerHostGetMetricProperties(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetRangeName(
-    CUpti_Profiler_Host_GetRangeName_Params* pParams) {
+    CUpti_Profiler_Host_GetRangeName_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetRangeName(pParams);
+  CUptiResult err = interface_->ProfilerHostGetRangeName(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostEvaluateToGpuValues(
-    CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams) {
+    CUpti_Profiler_Host_EvaluateToGpuValues_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostEvaluateToGpuValues(pParams);
+  CUptiResult err = interface_->ProfilerHostEvaluateToGpuValues(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostConfigAddMetrics(
-    CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams) {
+    CUpti_Profiler_Host_ConfigAddMetrics_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostConfigAddMetrics(pParams);
+  CUptiResult err = interface_->ProfilerHostConfigAddMetrics(params);
   // INVALID_PARAMETER is expected when the metric is not supported in current
   // CUPTI.  Can re-try with a different metric set.
   ALLOW_ERROR(err, CUPTI_ERROR_INVALID_PARAMETER);
@@ -377,34 +377,34 @@ CUptiResult CuptiErrorManager::ProfilerHostConfigAddMetrics(
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetConfigImageSize(
-    CUpti_Profiler_Host_GetConfigImageSize_Params* pParams) {
+    CUpti_Profiler_Host_GetConfigImageSize_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetConfigImageSize(pParams);
+  CUptiResult err = interface_->ProfilerHostGetConfigImageSize(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetConfigImage(
-    CUpti_Profiler_Host_GetConfigImage_Params* pParams) {
+    CUpti_Profiler_Host_GetConfigImage_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetConfigImage(pParams);
+  CUptiResult err = interface_->ProfilerHostGetConfigImage(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetNumOfPasses(
-    CUpti_Profiler_Host_GetNumOfPasses_Params* pParams) {
+    CUpti_Profiler_Host_GetNumOfPasses_Params* params) {
   IGNORE_CALL_IF_DISABLED;
-  CUptiResult err = interface_->ProfilerHostGetNumOfPasses(pParams);
+  CUptiResult err = interface_->ProfilerHostGetNumOfPasses(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }
 
 CUptiResult CuptiErrorManager::ProfilerHostGetMaxNumHardwareMetricsPerPass(
-    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams) {
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* params) {
   IGNORE_CALL_IF_DISABLED;
   CUptiResult err =
-      interface_->ProfilerHostGetMaxNumHardwareMetricsPerPass(pParams);
+      interface_->ProfilerHostGetMaxNumHardwareMetricsPerPass(params);
   LOG_AND_DISABLE_IF_ERROR(err);
   return err;
 }

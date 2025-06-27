@@ -46,51 +46,33 @@ namespace profiler {
 
 #if !CUPTI_PM_SAMPLING_SUPPORTED
 // Safe types if CUPTI PM sampling or profiler host headers are not present
-typedef struct CUpti_Profiler_Host_Initialize_Params
-    CUpti_Profiler_Host_Initialize_Params;
-typedef struct CUpti_Profiler_Host_Deinitialize_Params
-    CUpti_Profiler_Host_Deinitialize_Params;
-typedef struct CUpti_Profiler_Host_GetSupportedChips_Params
-    CUpti_Profiler_Host_GetSupportedChips_Params;
-typedef struct CUpti_Profiler_Host_GetBaseMetrics_Params
-    CUpti_Profiler_Host_GetBaseMetrics_Params;
-typedef struct CUpti_Profiler_Host_GetSubMetrics_Params
-    CUpti_Profiler_Host_GetSubMetrics_Params;
-typedef struct CUpti_Profiler_Host_GetMetricProperties_Params
-    CUpti_Profiler_Host_GetMetricProperties_Params;
-typedef struct CUpti_Profiler_Host_GetRangeName_Params
-    CUpti_Profiler_Host_GetRangeName_Params;
-typedef struct CUpti_Profiler_Host_EvaluateToGpuValues_Params
-    CUpti_Profiler_Host_EvaluateToGpuValues_Params;
-typedef struct CUpti_Profiler_Host_ConfigAddMetrics_Params
-    CUpti_Profiler_Host_ConfigAddMetrics_Params;
-typedef struct CUpti_Profiler_Host_GetConfigImageSize_Params
-    CUpti_Profiler_Host_GetConfigImageSize_Params;
-typedef struct CUpti_Profiler_Host_GetConfigImage_Params
-    CUpti_Profiler_Host_GetConfigImage_Params;
-typedef struct CUpti_Profiler_Host_GetNumOfPasses_Params
-    CUpti_Profiler_Host_GetNumOfPasses_Params;
-typedef struct CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params
-    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params;
+extern "C" {
+struct CUpti_Profiler_Host_Initialize_Params;
+struct CUpti_Profiler_Host_Deinitialize_Params;
+struct CUpti_Profiler_Host_GetSupportedChips_Params;
+struct CUpti_Profiler_Host_GetBaseMetrics_Params;
+struct CUpti_Profiler_Host_GetSubMetrics_Params;
+struct CUpti_Profiler_Host_GetMetricProperties_Params;
+struct CUpti_Profiler_Host_GetRangeName_Params;
+struct CUpti_Profiler_Host_EvaluateToGpuValues_Params;
+struct CUpti_Profiler_Host_ConfigAddMetrics_Params;
+struct CUpti_Profiler_Host_GetConfigImageSize_Params;
+struct CUpti_Profiler_Host_GetConfigImage_Params;
+struct CUpti_Profiler_Host_GetNumOfPasses_Params;
+struct CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params;
 
-typedef struct CUpti_PmSampling_SetConfig_Params
-    CUpti_PmSampling_SetConfig_Params;
-typedef struct CUpti_PmSampling_Enable_Params CUpti_PmSampling_Enable_Params;
-typedef struct CUpti_PmSampling_Disable_Params CUpti_PmSampling_Disable_Params;
-typedef struct CUpti_PmSampling_Start_Params CUpti_PmSampling_Start_Params;
-typedef struct CUpti_PmSampling_Stop_Params CUpti_PmSampling_Stop_Params;
-typedef struct CUpti_PmSampling_DecodeData_Params
-    CUpti_PmSampling_DecodeData_Params;
-typedef struct CUpti_PmSampling_GetCounterAvailability_Params
-    CUpti_PmSampling_GetCounterAvailability_Params;
-typedef struct CUpti_PmSampling_GetCounterDataSize_Params
-    CUpti_PmSampling_GetCounterDataSize_Params;
-typedef struct CUpti_PmSampling_CounterDataImage_Initialize_Params
-    CUpti_PmSampling_CounterDataImage_Initialize_Params;
-typedef struct CUpti_PmSampling_GetCounterDataInfo_Params
-    CUpti_PmSampling_GetCounterDataInfo_Params;
-typedef struct CUpti_PmSampling_CounterData_GetSampleInfo_Params
-    CUpti_PmSampling_CounterData_GetSampleInfo_Params;
+struct CUpti_PmSampling_SetConfig_Params;
+struct CUpti_PmSampling_Enable_Params;
+struct CUpti_PmSampling_Disable_Params;
+struct CUpti_PmSampling_Start_Params;
+struct CUpti_PmSampling_Stop_Params;
+struct CUpti_PmSampling_DecodeData_Params;
+struct CUpti_PmSampling_GetCounterAvailability_Params;
+struct CUpti_PmSampling_GetCounterDataSize_Params;
+struct CUpti_PmSampling_CounterDataImage_Initialize_Params;
+struct CUpti_PmSampling_GetCounterDataInfo_Params;
+struct CUpti_PmSampling_CounterData_GetSampleInfo_Params;
+}
 #endif  // ! CUPTI_PM_SAMPLING_SUPPORTED
 
 // Provides a wrapper interface to every single CUPTI API function. This class

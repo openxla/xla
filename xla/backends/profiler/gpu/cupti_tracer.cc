@@ -50,10 +50,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
-
-#if CUPTI_PM_SAMPLING_SUPPORTED  // Defined in cupti_interface.h
-#include "xla/backends/profiler/gpu/cupti_pm_sampler_impl.h"
-#endif
+#include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 
 namespace xla {
 namespace profiler {
@@ -1057,16 +1054,8 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
   tsl::profiler::AnnotationStack::Enable(true);
 
   if (option_->pm_sampler_options.enable) {
-#if CUPTI_PM_SAMPLING_SUPPORTED  // Defined in cupti_interface.h
-    // CuptiPmSamplerImpl can only build with CUDA 12.6 or higher
-    pm_sampler_ = std::make_unique<CuptiPmSamplerImpl>();
-#else
-    // Default sampler is a safe stub implmeentation which builds everywhere
-    pm_sampler_ = std::make_unique<CuptiPmSampler>();
-#endif
+    pm_sampler_ = CreatePmSampler(NumGpus(), option_->pm_sampler_options);
 
-    TF_RETURN_IF_ERROR(pm_sampler_->Initialize(num_gpus_,
-                                               &(option_->pm_sampler_options)));
     TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
   }
 
