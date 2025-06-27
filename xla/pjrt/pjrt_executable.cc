@@ -279,10 +279,9 @@ void CompiledMemoryStats::PopulateBufferStatsFromAllocations(
     int64_t alloc_memory_space = -1;
     for (const auto& [value, _] : alloc.assigned_buffers()) {
       const HloPosition& defining_position = value->defining_position();
-      int64_t memory_space = Layout::kDefaultMemorySpace;
-      if (defining_position.shape().has_layout()) {
-        memory_space = defining_position.shape().layout().memory_space();
-      }
+      if (defining_position.shape().IsTuple()) continue;
+      CHECK_EQ(defining_position.shape().has_layout(), true);
+      int64_t memory_space = defining_position.shape().layout().memory_space();
       if (alloc_memory_space == -1) {
         alloc_memory_space = memory_space;
       } else {
