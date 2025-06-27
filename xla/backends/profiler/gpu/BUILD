@@ -106,6 +106,7 @@ xla_test(
     copts = tf_profiler_copts() + tsl_copts(),
     tags = [
         "no_mac",
+        "cuda-only"
     ],
     deps = [
         ":cupti_interface",
