@@ -20,7 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
-#include "xla/service/cpu/collectives_interface.h"
+#include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/service/hlo_module_config.h"
 
 namespace xla {
@@ -34,6 +34,10 @@ struct CpuClientOptions {
   // computations inline.
   bool asynchronous = true;
 
+  // If true, there is only one memory space, "unpinned_host", and it behaves
+  // the same as "device" from the non-legacy behavior.
+  bool legacy_memory_space_behavior = true;
+
   // Number of CPU devices. If not provided, the value of
   // --xla_force_host_platform_device_count is used.
   std::optional<int> cpu_device_count = std::nullopt;
@@ -45,7 +49,7 @@ struct CpuClientOptions {
 
   // Distributed collectives implementation. Optional. If not provided, an
   // in-process collectives implementation will be used.
-  std::shared_ptr<cpu::CollectivesInterface> collectives;
+  std::shared_ptr<cpu::CpuCollectives> collectives;
 
   // If defined this function will be called on the HloModuleConfig before
   // compilation, and allows users to set custom flags.

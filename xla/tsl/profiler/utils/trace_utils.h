@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/types.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -39,6 +39,13 @@ constexpr uint32 kLastCustomPlaneDeviceId =
     kFirstCustomPlaneDeviceId + kMaxCustomPlaneDevicesPerHost - 1;
 // Host threads are shown as a single fake device.
 constexpr uint32 kHostThreadsDeviceId = kLastCustomPlaneDeviceId + 1;
+
+// Constants used as plane ID for custom NCCL planes, starting from the last
+// kMaxNcclPlanes in the custom plane device ID range.
+constexpr uint32 kMaxNcclPlanes = 100;
+constexpr uint32 kFirstNcclPlaneId =
+    tsl::profiler::kMaxCustomPlaneDevicesPerHost - kMaxNcclPlanes;
+constexpr uint32 kLastNcclPlaneId = kFirstNcclPlaneId + kMaxNcclPlanes - 1;
 
 // Constants used as trace_viewer TID (resource_id in trace_events.proto).
 constexpr int kThreadIdDerivedMin = 0xdeadbeef;

@@ -16,8 +16,8 @@ limitations under the License.
 #include "xla/tsl/lib/io/random_inputstream.h"
 
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace io {
@@ -44,7 +44,7 @@ TEST(RandomInputStream, ReadNBytes) {
   TF_ASSERT_OK(in.ReadNBytes(0, &read));
   EXPECT_EQ(read, "");
   EXPECT_EQ(8, in.Tell());
-  EXPECT_TRUE(errors::IsOutOfRange(in.ReadNBytes(20, &read)));
+  EXPECT_TRUE(absl::IsOutOfRange(in.ReadNBytes(20, &read)));
   EXPECT_EQ(read, "89");
   EXPECT_EQ(10, in.Tell());
   TF_ASSERT_OK(in.ReadNBytes(0, &read));
@@ -76,7 +76,7 @@ TEST(RandomInputStream, ReadNBytesWithCords) {
   TF_ASSERT_OK(in.ReadNBytes(0, &read));
   EXPECT_EQ(read, "01234567");
   EXPECT_EQ(8, in.Tell());
-  EXPECT_TRUE(errors::IsOutOfRange(in.ReadNBytes(20, &read)));
+  EXPECT_TRUE(absl::IsOutOfRange(in.ReadNBytes(20, &read)));
   EXPECT_EQ(read, "0123456789");
   EXPECT_EQ(10, in.Tell());
   TF_ASSERT_OK(in.ReadNBytes(0, &read));
@@ -107,11 +107,11 @@ TEST(RandomInputStream, SkipNBytes) {
   TF_ASSERT_OK(in.ReadNBytes(2, &read));
   EXPECT_EQ(read, "78");
   EXPECT_EQ(9, in.Tell());
-  EXPECT_TRUE(errors::IsOutOfRange(in.SkipNBytes(20)));
+  EXPECT_TRUE(absl::IsOutOfRange(in.SkipNBytes(20)));
   EXPECT_EQ(10, in.Tell());
   // Making sure that if we read after we've skipped beyond end of file, we get
   // nothing.
-  EXPECT_TRUE(errors::IsOutOfRange(in.ReadNBytes(5, &read)));
+  EXPECT_TRUE(absl::IsOutOfRange(in.ReadNBytes(5, &read)));
   EXPECT_EQ(read, "");
   EXPECT_EQ(10, in.Tell());
 }

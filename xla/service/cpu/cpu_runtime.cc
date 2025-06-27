@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdio>
 #include <cstring>
 #include <iterator>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -30,6 +29,7 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -40,27 +40,31 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/collectives/cpu_clique_key.h"
+#include "xla/backends/cpu/collectives/cpu_cliques.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
+#include "xla/backends/cpu/collectives/in_process_collectives.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
-#include "xla/service/cpu/in_process_collectives.h"
 #include "xla/service/cpu/xfeed_manager.h"
 #include "xla/service/global_device_id.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
@@ -68,8 +72,8 @@ namespace cpu {
 namespace runtime {
 
 XfeedManager* GetXfeedManager(int device_ordinal) {
-  static auto* managers = new absl::flat_hash_map<int, XfeedManager*>();
-  static absl::Mutex* mutex = new absl::Mutex();
+  static auto* const managers = new absl::flat_hash_map<int, XfeedManager*>();
+  static absl::Mutex* const mutex = new absl::Mutex();
 
   absl::MutexLock lock(mutex);
   auto it = managers->find(device_ordinal);
@@ -104,8 +108,6 @@ extern const char* const kEigenMatMulS32SymbolName =
     "__xla_cpu_runtime_EigenMatMulS32";
 extern const char* const kEigenBatchMatMulF32SymbolName =
     "__xla_cpu_runtime_EigenBatchMatMulF32";
-extern const char* const kMKLConv2DF32SymbolName =
-    "__xla_cpu_runtime_MKLConv2DF32";
 extern const char* const kACLConv2DF32SymbolName =
     "__xla_cpu_runtime_ACLConv2DF32";
 extern const char* const kACLMatMulF32SymbolName =
@@ -120,6 +122,8 @@ extern const char* const kEigenConv3DF16SymbolName =
     "__xla_cpu_runtime_EigenConv3DF16";
 extern const char* const kEigenConv3DF32SymbolName =
     "__xla_cpu_runtime_EigenConv3DF32";
+extern const char* const kLegacyDuccFftSymbolName =
+    "__xla_cpu_runtime_LegacyDuccFft";
 extern const char* const kDuccFftSymbolName = "__xla_cpu_runtime_DuccFft";
 extern const char* const kDuccSingleThreadedFftSymbolName =
     "__xla_cpu_runtime_DuccSingleThreadedFft";
@@ -200,9 +204,9 @@ absl::StatusOr<Shape> DecodeSelfDescribingShapeConstant(const void* shape_ptr,
                                                         int32_t size_bytes) {
   ShapeProto shape_proto;
   if (!shape_proto.ParseFromArray(shape_ptr, size_bytes)) {
-    return tsl::errors::Internal("Failed parsing the shape proto");
+    return absl::InternalError("Failed parsing the shape proto");
   }
-  Shape shape(shape_proto);
+  TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(shape_proto));
   auto status = ShapeUtil::ValidateShape(shape);
   if (!status.ok()) {
     return status;
@@ -296,276 +300,6 @@ void ReleaseOutfeedBufferAfterPopulationImpl(
                                          std::move(shape));
 }
 
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void ReplicaIdImpl(const ExecutableRunOptions* run_options,
-                   void* output_buffer) {
-  int device_ordinal = GetDeviceOrdinal(run_options);
-  int32_t replica_id = run_options->device_assignment()
-                           ->ReplicaIdForDevice(GlobalDeviceId(device_ordinal))
-                           .value();
-  std::memcpy(output_buffer, &replica_id, 4);
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void PartitionIdImpl(const ExecutableRunOptions* run_options,
-                     void* output_buffer) {
-  int device_ordinal = GetDeviceOrdinal(run_options);
-  const DeviceAssignment::LogicalID logical_id =
-      run_options->device_assignment()
-          ->LogicalIdForDevice(GlobalDeviceId(device_ordinal))
-          .value();
-  std::memcpy(output_buffer, &logical_id.computation_id, 4);
-}
-
-RendezvousKey GetRendezvousKey(const ExecutableRunOptions* run_options,
-                               GlobalDeviceId device,
-                               std::vector<ReplicaGroup> group,
-                               int32_t channel_id_present,
-                               std::optional<bool> use_global_device_ids,
-                               int64_t op_id) {
-  const DeviceAssignment& device_assignment = *run_options->device_assignment();
-  RendezvousKey::CollectiveOpKind op_kind = channel_id_present
-                                                ? RendezvousKey::kCrossModule
-                                                : RendezvousKey::kCrossReplica;
-  std::vector<GlobalDeviceId> participating_devices =
-      GetParticipatingDevices(GlobalDeviceId(device), device_assignment, group,
-                              GetCollectiveOpGroupMode(channel_id_present != 0,
-                                                       use_global_device_ids)
-                                  .value())
-          .value();
-  int num_local_participants = participating_devices.size();
-  return RendezvousKey{run_options->run_id(), std::move(participating_devices),
-                       num_local_participants, op_kind, op_id};
-}
-
-CollectivesInterface* GetInProcessCollectivesImpl() {
-  static InProcessCollectives* c = new InProcessCollectives();
-  return c;
-}
-
-CollectivesInterface* GetCollectivesImpl(
-    const ExecutableRunOptions* run_options) {
-  if (run_options->cpu_executable_run_options() &&
-      run_options->cpu_executable_run_options()->collectives()) {
-    return run_options->cpu_executable_run_options()->collectives();
-  }
-  return GetInProcessCollectivesImpl();
-}
-
-absl::Duration DefaultCollectiveTimeout() { return absl::Minutes(30); }
-
-absl::StatusOr<int> RankInGlobalDevices(
-    absl::Span<GlobalDeviceId const> devices, GlobalDeviceId device) {
-  auto it = absl::c_find(devices, device);
-  if (it == devices.end()) {
-    return InvalidArgument(
-        "Device %d not present in global devices %s.", device.value(),
-        absl::StrJoin(devices, ", ", [](std::string* out, GlobalDeviceId id) {
-          absl::StrAppend(out, id.value());
-        }));
-  }
-  return std::distance(devices.begin(), it);
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void AllToAllImpl(const ExecutableRunOptions* run_options,
-                  int32_t channel_id_present, int64_t op_id,
-                  const void* replica_groups_str,
-                  int32_t replica_groups_str_size, int32_t num_buffers,
-                  int64_t buffer_size, void** source_buffers,
-                  void** destination_buffers) {
-  GlobalDeviceId device(GetDeviceOrdinal(run_options));
-  absl::string_view replica_groups_serialized(
-      static_cast<const char*>(replica_groups_str), replica_groups_str_size);
-  std::vector<ReplicaGroup> group =
-      ParseReplicaGroupsOnly(replica_groups_serialized).value();
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, group, channel_id_present,
-                       /*use_global_device_ids=*/std::nullopt, op_id);
-
-  int rank = RankInGlobalDevices(rendezvous_key.global_devices, device).value();
-
-  CollectivesInterface* collectives = GetCollectivesImpl(run_options);
-
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(source_buffers,
-                                      sizeof(void*) * num_buffers);
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(destination_buffers,
-                                      sizeof(void*) * num_buffers);
-  auto communicator =
-      collectives->GetCommunicator(rendezvous_key.global_devices, rank).value();
-  TF_CHECK_OK(communicator->AllToAll(
-      rendezvous_key, buffer_size,
-      absl::Span<const void* const>(source_buffers, num_buffers),
-      absl::Span<void* const>(destination_buffers, num_buffers),
-      DefaultCollectiveTimeout()));
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void AllGatherImpl(const ExecutableRunOptions* run_options,
-                   int32_t channel_id_present, int32_t use_global_device_ids,
-                   int64_t op_id, const void* replica_groups_str,
-                   int32_t replica_groups_str_size, int64_t buffer_size,
-                   void* source_buffer, void* destination_buffer) {
-  GlobalDeviceId device(GetDeviceOrdinal(run_options));
-  absl::string_view replica_groups_serialized(
-      static_cast<const char*>(replica_groups_str), replica_groups_str_size);
-  std::vector<ReplicaGroup> group =
-      ParseReplicaGroupsOnly(replica_groups_serialized).value();
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, group, channel_id_present,
-                       use_global_device_ids, op_id);
-
-  int rank = RankInGlobalDevices(rendezvous_key.global_devices, device).value();
-
-  CollectivesInterface* collectives = GetCollectivesImpl(run_options);
-
-  auto communicator =
-      collectives->GetCommunicator(rendezvous_key.global_devices, rank).value();
-
-  se::DeviceMemoryBase input_buffer_data(source_buffer, buffer_size);
-  se::DeviceMemoryBase output_buffer_data(destination_buffer, buffer_size);
-
-  CpuCollectives::Executor executor(rendezvous_key, DefaultCollectiveTimeout());
-  TF_CHECK_OK(communicator->AllGather(input_buffer_data, output_buffer_data, U8,
-                                      buffer_size, executor));
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void ReduceScatterImpl(const ExecutableRunOptions* run_options,
-                       const void* replica_groups_str,
-                       int32_t replica_groups_str_size,
-                       int32_t channel_id_present,
-                       int32_t use_global_device_ids, int64_t op_id,
-                       int32_t reduction_kind, int32_t element_type,
-                       int64_t chunk_elems, void* input_buffer,
-                       void* output_buffer) {
-  GlobalDeviceId device(GetDeviceOrdinal(run_options));
-  absl::string_view replica_groups_serialized(
-      static_cast<const char*>(replica_groups_str), replica_groups_str_size);
-  std::vector<ReplicaGroup> group =
-      ParseReplicaGroupsOnly(replica_groups_serialized).value();
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, group, channel_id_present,
-                       use_global_device_ids, op_id);
-
-  int rank = RankInGlobalDevices(rendezvous_key.global_devices, device).value();
-
-  CollectivesInterface* collectives = GetCollectivesImpl(run_options);
-
-  auto communicator =
-      collectives->GetCommunicator(rendezvous_key.global_devices, rank).value();
-
-  auto dtype = static_cast<PrimitiveType>(element_type);
-
-  se::DeviceMemoryBase input_buffer_data(input_buffer,
-                                         primitive_util::ByteWidth(dtype));
-  se::DeviceMemoryBase output_buffer_data(output_buffer,
-                                          primitive_util::ByteWidth(dtype));
-
-  CpuCollectives::Executor executor(rendezvous_key, DefaultCollectiveTimeout());
-  TF_CHECK_OK(communicator->ReduceScatter(
-      input_buffer_data, output_buffer_data, dtype, chunk_elems,
-      static_cast<ReductionKind>(reduction_kind), executor));
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void AllReduceImpl(const ExecutableRunOptions* run_options,
-                   const void* replica_groups_str,
-                   int32_t replica_groups_str_size, int32_t channel_id_present,
-                   int32_t use_global_device_ids, int64_t op_id,
-                   int32_t reduction_kind, const void* shape_ptr,
-                   int32_t shape_length, int32_t num_buffers,
-                   void** input_buffers, void** output_buffers) {
-  GlobalDeviceId device(GetDeviceOrdinal(run_options));
-  absl::string_view replica_groups_serialized(
-      static_cast<const char*>(replica_groups_str), replica_groups_str_size);
-  std::vector<ReplicaGroup> group =
-      ParseReplicaGroupsOnly(replica_groups_serialized).value();
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, group, channel_id_present,
-                       use_global_device_ids, op_id);
-  auto shape_str = ShapeString(shape_ptr, shape_length);
-  VLOG(2) << "All-reduce input/output shape : " << shape_str;
-
-  Shape shape =
-      DecodeSelfDescribingShapeConstant(shape_ptr, shape_length).value();
-
-  CHECK((num_buffers > 1 && shape.IsTuple()) ||
-        (num_buffers == 1 && LayoutUtil::IsDenseArray(shape)));
-
-  int rank = RankInGlobalDevices(rendezvous_key.global_devices, device).value();
-
-  CollectivesInterface* collectives = GetCollectivesImpl(run_options);
-
-  auto communicator =
-      collectives->GetCommunicator(rendezvous_key.global_devices, rank).value();
-
-  // Convert input/output buffers to DeviceMemoryBase.
-  std::vector<se::DeviceMemoryBase> input_buffers_data;
-  std::vector<se::DeviceMemoryBase> output_buffers_data;
-  for (int i = 0; i < num_buffers; i++) {
-    Shape subshape = num_buffers == 1 ? shape : shape.tuple_shapes(i);
-    input_buffers_data.push_back(se::DeviceMemoryBase(
-        input_buffers[i], ShapeUtil::ByteSizeOf(subshape)));
-    output_buffers_data.push_back(se::DeviceMemoryBase(
-        output_buffers[i], ShapeUtil::ByteSizeOf(subshape)));
-  }
-
-  CpuCollectives::Executor executor(rendezvous_key, DefaultCollectiveTimeout());
-
-  for (int i = 0; i < num_buffers; i++) {
-    Shape subshape = num_buffers == 1 ? shape : shape.tuple_shapes(i);
-    TF_CHECK_OK(communicator->AllReduce(
-        input_buffers_data[i], output_buffers_data[i], subshape.element_type(),
-        ShapeUtil::ElementsIn(subshape),
-        static_cast<ReductionKind>(reduction_kind), executor));
-  }
-}
-
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY
-void CollectivePermuteImpl(const ExecutableRunOptions* run_options,
-                           int32_t channel_id_present, int64_t op_id,
-                           int32_t byte_size, void* input_buffer,
-                           void* output_buffer, const void* source_target_pairs,
-                           int32_t source_target_pairs_size) {
-  GlobalDeviceId device(GetDeviceOrdinal(run_options));
-  absl::string_view source_target_pairs_serialized(
-      static_cast<const char*>(source_target_pairs), source_target_pairs_size);
-  auto pairs = absl::StrSplit(source_target_pairs_serialized, ',');
-  const DeviceAssignment::LogicalID logical_id =
-      run_options->device_assignment()->LogicalIdForDevice(device).value();
-  int32_t logical_device_id =
-      channel_id_present ? logical_id.computation_id : logical_id.replica_id;
-
-  std::optional<int> source_replica_id;
-  std::vector<int> copy_to;
-  for (auto& p : pairs) {
-    std::vector<std::string> mapping = absl::StrSplit(p, '=');
-    CHECK_EQ(mapping.size(), 2);
-    int from = std::stoi(mapping[0]);
-    int to = std::stoi(mapping[1]);
-    if (from == logical_device_id) {
-      copy_to.push_back(to);
-    }
-    if (to == logical_device_id) {
-      CHECK(!source_replica_id.has_value());
-      source_replica_id = from;
-    }
-  }
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, {}, channel_id_present,
-                       /*use_global_device_ids=*/std::nullopt, op_id);
-
-  int rank = RankInGlobalDevices(rendezvous_key.global_devices, device).value();
-
-  CollectivesInterface* collectives = GetCollectivesImpl(run_options);
-
-  auto communicator =
-      collectives->GetCommunicator(rendezvous_key.global_devices, rank).value();
-  TF_CHECK_OK(communicator->CollectivePermute(
-      rendezvous_key, byte_size, source_replica_id, copy_to, input_buffer,
-      output_buffer, DefaultCollectiveTimeout()));
-}
 }  // namespace
 }  // namespace runtime
 }  // namespace cpu
@@ -635,10 +369,7 @@ void __xla_cpu_runtime_AllToAll(const xla::ExecutableRunOptions* run_options,
                                 int32_t num_buffers, int64_t buffer_size,
                                 void** source_buffers,
                                 void** destination_buffers) {
-  return xla::cpu::runtime::AllToAllImpl(
-      run_options, channel_id_present, op_id, replica_groups_str,
-      replica_groups_str_size, num_buffers, buffer_size, source_buffers,
-      destination_buffers);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_AllGather(const xla::ExecutableRunOptions* run_options,
@@ -648,10 +379,7 @@ void __xla_cpu_runtime_AllGather(const xla::ExecutableRunOptions* run_options,
                                  int32_t replica_groups_str_size,
                                  int64_t buffer_size, void* source_buffer,
                                  void* destination_buffer) {
-  return xla::cpu::runtime::AllGatherImpl(
-      run_options, channel_id_present, use_global_device_ids, op_id,
-      replica_groups_str, replica_groups_str_size, buffer_size, source_buffer,
-      destination_buffer);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_ReduceScatter(
@@ -660,10 +388,7 @@ void __xla_cpu_runtime_ReduceScatter(
     int32_t channel_id_present, int32_t use_global_device_ids, int64_t op_id,
     int32_t reduction_kind, int32_t element_type, int64_t chunk_elems,
     void* input_buffer, void* output_buffer) {
-  return xla::cpu::runtime::ReduceScatterImpl(
-      run_options, replica_groups_str, replica_groups_str_size,
-      channel_id_present, use_global_device_ids, op_id, reduction_kind,
-      element_type, chunk_elems, input_buffer, output_buffer);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_AllReduce(const xla::ExecutableRunOptions* run_options,
@@ -674,29 +399,24 @@ void __xla_cpu_runtime_AllReduce(const xla::ExecutableRunOptions* run_options,
                                  int32_t reduction_kind, const void* shape_ptr,
                                  int32_t shape_length, int32_t num_buffers,
                                  void** input_buffers, void** output_buffers) {
-  return xla::cpu::runtime::AllReduceImpl(
-      run_options, replica_groups_str, replica_groups_str_size,
-      channel_id_present, use_global_device_ids, op_id, reduction_kind,
-      shape_ptr, shape_length, num_buffers, input_buffers, output_buffers);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_ReplicaId(const xla::ExecutableRunOptions* run_options,
                                  void* output_buffer) {
-  return xla::cpu::runtime::ReplicaIdImpl(run_options, output_buffer);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_PartitionId(const xla::ExecutableRunOptions* run_options,
                                    void* output_buffer) {
-  return xla::cpu::runtime::PartitionIdImpl(run_options, output_buffer);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 void __xla_cpu_runtime_CollectivePermute(
     const xla::ExecutableRunOptions* run_options, int32_t channel_id_present,
     int64_t op_id, int32_t byte_size, void* input_buffer, void* output_buffer,
     const void* source_target_pairs, int32_t source_target_pairs_size) {
-  return xla::cpu::runtime::CollectivePermuteImpl(
-      run_options, channel_id_present, op_id, byte_size, input_buffer,
-      output_buffer, source_target_pairs, source_target_pairs_size);
+  LOG(FATAL) << "Legacy XLA:CPU runtime does not support collective execution";
 }
 
 }  // extern "C"

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/while_util.h"
 
 namespace xla {
 
@@ -73,6 +74,37 @@ struct UnrollResult {
 std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
     const HloInstruction* instr, const HloInstruction* input, HloOpcode opcode,
     const WhileLoopConfig& config);
+
+// More advanced version of the above method. Also checks if `instr` is a
+// dynamic index instruction, i.e. dynamic-elice or dynamic-update-slice with
+// the given input that operates on the entire shape of the instruction. To
+// satisfy this (this constraint list is looser):
+// 1. All start indices must be constant zero except for a single dimension,
+//    hereafter referred to as the dynamic dimension.
+// 2. The slice sizes of all nondynamic dimensions is the same as their size in
+//    the input shape.
+// 3. The start index of the dynamic dimension should be equal to the enclosing
+//    loop induction variable times the dynamic dimension's slice size.
+// 4. The size of the dynamic dimension must be at most the loop trip count
+//    times the slice size.
+// If so, it returns the index of the dynamic dimension.
+std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
+    const HloInstruction* instr, const HloInstruction* input, HloOpcode opcode,
+    const WhileLoopConfig& config);
+
+// More advanced version of the above two methods that handles limited cases of
+// nested while loops. Specifically, it returns true if all of the following are
+// true:
+// 1. The input shape is fully covered by dynamic_update_slice instructions in
+// the while loop (potentially via those in nested loops).
+// 2. In the case of nested loops, there are only two levels of nesting.
+// 3. In the case of nested loops, the input shape and slice shape are
+// effectively square, i.e., all dynamic_update_slice instructions have two
+// dynamic dimensions, and the input shape and slice shape have the same size in
+// both those dimensions.
+// 4. There is a single DUS in the outer while loop.
+absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
+    int64_t input_idx, const WhileLoopConfig& config);
 
 // Check if `instr` is a dynamic-slice with the given input and a single dynamic
 // start index that is effectively static, i.e., it is an expression that only
@@ -149,6 +181,31 @@ class WhileLoopUnroller : public HloModulePass {
   bool wrap_in_trivial_loop_;
   UnrollConfig unroll_config_;
 };
+
+// Creates a partially unrolled while loop in `computation`. The structure of
+// the while loop is as follows, in pseudocode:
+//
+//  loop_state while_loop() {
+//    indvar = 0;
+//    loop_state = init_values
+//    while (indvar < trip_count) {
+//      loop_state = loop_body_generator(indvar, loop_state)
+//      indvar++;
+//      loop_state = loop_body_generator(indvar, loop_state)
+//      indvar++;
+//      ...
+//    }
+//    return loop_state;
+//  }
+//
+// Where there are `unroll_factor` calls to `loop_body_generator` for each
+// iteration of the while loop, resulting in `trip_count` total calls to
+// `loop_body_generator`. When `trip_count` is not divisible by `unroll_factor`,
+// the remainder is handled by creating an additional rolled loop.
+absl::StatusOr<std::vector<HloInstruction*>> CreatePartiallyUnrolledLoop(
+    HloComputation* computation, std::vector<HloInstruction*>& init_values,
+    WhileUtil::LoopBodyGeneratorTy loop_body_generator, int32_t trip_count,
+    int32_t unroll_factor, const OpMetadata& metadata);
 
 }  // namespace xla
 

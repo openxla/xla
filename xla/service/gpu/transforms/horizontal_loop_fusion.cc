@@ -317,14 +317,13 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
               << " rejects may-not-be profitable fusion instr"
               << instr->ToString();
       continue;
-    } else if ((sliced_input_fusion_ || IsDynamicUpdateSliceFusion(instr)) &&
+    } else if (IsDynamicUpdateSliceFusion(instr) &&
                AnyOperandIsSharedAmongFusions(instr, fusible_candidates)) {
-      // Don't fuse fusions with at least one shared operand because we cannot
-      // i/o alias the produced horizontal fusion due to the concat insertion
-      // (or run into aliasing problems with DynamicUpdateSlice fusions).
+      // Don't fuse DUS fusions with shared operands because we cannot
+      // i/o alias the produced horizontal fusion due to the concat insertion.
       VLOG(2) << "sliced_input_fusion=" << sliced_input_fusion_
-              << " rejects the fusion instr because it shares parameter with"
-              << " other fusion candidates, instr: " << instr->ToString();
+              << " rejects the DUS fusion because it shares an operand with"
+              << " other fusion candidates: " << instr->ToString();
       continue;
     } else {
       // Encapsulate it into a fusion computation for unified representation
@@ -556,7 +555,7 @@ absl::Status HorizontalLoopFusionImpl::CreateFusedComputation(
         const HloInstruction* old_output =
             GetOutputsOfFusible(*fused_fusion_instrs[j])[i];
         HloInstruction* new_output = clone_map[old_output];
-        if (new_output->shape().dimensions_size() == 1) {
+        if (new_output->shape().dimensions().size() == 1) {
           instr_outputs[j] = new_output;
         } else {
           if (!LayoutUtil::IsMonotonicWithDim0Major(
@@ -672,7 +671,7 @@ absl::Status HorizontalLoopFusionImpl::Fuse(
           HloInstruction * gep,
           MakeGetTupleElementHlo(hori_fusion_instr, total_output_id++));
       // This pass runs late, so useless bitcast won't be cleaned up.
-      if (output->shape().dimensions_size() == 1) {
+      if (output->shape().dimensions().size() == 1) {
         bitcasts_or_gte.push_back(gep);
       } else {
         bitcasts_or_gte.push_back(computation_->AddInstruction(

@@ -13,8 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstddef>
+#include <cstdint>
 
+#include "absl/status/statusor.h"
 #include "xla/stream_executor/cuda/delay_kernel.h"
 #include "xla/stream_executor/gpu/gpu_semaphore.h"
 #include "xla/stream_executor/typed_kernel_factory.h"
@@ -66,9 +67,9 @@ absl::StatusOr<GpuSemaphore> LaunchDelayKernel(Stream* stream) {
   // Launch a delay kernel into this stream, which will spin until
   // GetElapsedDuration() is called, the timer is destroyed, or the timeout
   // in the kernel is reached.
-  TF_RETURN_IF_ERROR(stream->ThenLaunch(ThreadDim(1, 1, 1), BlockDim(1, 1, 1),
-                                        kernel, semaphore.device(),
-                                        GpuSemaphoreState::kRelease));
+  TF_RETURN_IF_ERROR(kernel.Launch(ThreadDim(1, 1, 1), BlockDim(1, 1, 1),
+                                   stream, semaphore.device(),
+                                   GpuSemaphoreState::kRelease));
 
   return semaphore;
 }

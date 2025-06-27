@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -50,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/map_util.h"
+#include "xla/service/buffer_assignment.pb.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
@@ -61,11 +64,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -236,6 +239,29 @@ std::string BufferAllocation::Slice::ToString() const {
                       ", offset:", offset_, ", size:", size_, "}");
 }
 
+absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto>
+BufferAllocation::Slice::ToProto() const {
+  xla::buffer_assignment::BufferAllocationSliceProto proto;
+  proto.set_offset(offset());
+  proto.set_size(size());
+  proto.set_buffer_allocation_index(allocation() == nullptr ? -1 : index());
+  return proto;
+}
+
+absl::StatusOr<BufferAllocation::Slice> BufferAllocation::Slice::FromProto(
+    const xla::buffer_assignment::BufferAllocationSliceProto& proto,
+    absl::Span<const BufferAllocation> buffer_allocations) {
+  if (proto.buffer_allocation_index() < 0 ||
+      proto.buffer_allocation_index() >= buffer_allocations.size()) {
+    return absl::OutOfRangeError(absl::StrCat("Buffer allocation index ",
+                                              proto.buffer_allocation_index(),
+                                              " is out of range."));
+  }
+  const BufferAllocation& allocation =
+      buffer_allocations[proto.buffer_allocation_index()];
+  return BufferAllocation::Slice(&allocation, proto.offset(), proto.size());
+}
+
 BufferAllocation::Slice BufferAllocation::GetSlice(
     const HloValue& buffer) const {
   const OffsetSize os = FindOrDie(assigned_buffers_, &buffer);
@@ -288,6 +314,8 @@ BufferAllocationProto BufferAllocation::ToProto() const {
       proto.add_parameter_shape_index(idx);
     }
     proto.set_parameter_number(parameter_number_);
+    proto.set_is_parameter_aliased_with_output(
+        is_parameter_aliased_with_output_);
   }
   proto.set_is_constant(is_constant_);
   proto.set_maybe_live_out(maybe_live_out_);
@@ -304,6 +332,24 @@ BufferAllocationProto BufferAllocation::ToProto() const {
                         assign2.logical_buffer_id();
                });
   return proto;
+}
+
+BufferAllocation BufferAllocation::FromProto(
+    const BufferAllocationProto& proto) {
+  BufferAllocation allocation{proto.index(), proto.size(), proto.color()};
+  allocation.set_constant(proto.is_constant());
+  allocation.set_is_thread_local(proto.is_thread_local());
+  allocation.set_is_tuple(proto.is_tuple());
+  if (proto.is_entry_computation_parameter()) {
+    ShapeIndex shape_index{proto.parameter_shape_index().begin(),
+                           proto.parameter_shape_index().end()};
+    allocation.set_entry_computation_parameter(
+        proto.parameter_number(), std::move(shape_index),
+        proto.is_parameter_aliased_with_output());
+  }
+  allocation.set_maybe_live_out(proto.maybe_live_out());
+
+  return allocation;
 }
 
 static bool CompareHloValuesById(const HloValue* a, const HloValue* b) {
@@ -1224,8 +1270,11 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
       absl::c_copy(alloc_proto.parameter_shape_index(),
                    std::back_inserter(shape_idx_vals));
       ShapeIndex shape_index(shape_idx_vals);
+      const bool parameter_has_alias =
+          module->input_output_alias_config().ParameterHasAlias(
+              alloc_proto.parameter_number(), shape_index);
       allocation->set_entry_computation_parameter(
-          alloc_proto.parameter_number(), shape_index, false);
+          alloc_proto.parameter_number(), shape_index, parameter_has_alias);
     }
 
     // Process each logical buffer assigned to the current allocation and create
@@ -1256,11 +1305,10 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
 /* static */
 absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
     const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
-    BufferValue::SizeFunction buffer_size,
+    BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info,
     LogicalBuffer::AlignmentFunction color_alignment,
     bool allocate_buffers_for_constants, BufferAssigner::Colorer colorer,
     std::optional<BufferAssigner::MustNotLiveOut> must_not_live_out,
-    HloDataflowAnalysis::CanShareBuffer can_share_buffer,
     std::unique_ptr<PresetAssignments> preset_assignments,
     const PrivateStacks& private_stacks,
     GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
@@ -1270,9 +1318,9 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
   BufferAssigner assigner(allocate_buffers_for_constants, std::move(colorer),
                           must_not_live_out, std::move(preset_assignments));
   return assigner.CreateAssignment(
-      module, std::move(hlo_ordering), std::move(buffer_size),
-      std::move(color_alignment), std::move(can_share_buffer), private_stacks,
-      heap_buffer_interval_compare, isolation_options, temp_buffer_color);
+      module, std::move(hlo_ordering), std::move(buffer_size), alias_info,
+      std::move(color_alignment), private_stacks, heap_buffer_interval_compare,
+      isolation_options, temp_buffer_color);
 }
 
 bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
@@ -2171,16 +2219,15 @@ void BufferAssigner::AssignBuffersFromHeapSimulator(
 absl::StatusOr<std::unique_ptr<BufferAssignment>>
 BufferAssigner::CreateAssignment(
     const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
-    BufferValue::SizeFunction buffer_size,
+    BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info,
     LogicalBuffer::AlignmentFunction color_alignment,
-    HloDataflowAnalysis::CanShareBuffer can_share_buffer,
     const PrivateStacks& private_stacks,
     GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
         heap_buffer_interval_compare,
     std::optional<BufferAssignment::BufferIsolationOptions> isolation_options,
     std::optional<BufferValue::Color> temp_buffer_color) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                      HloAliasAnalysis::Run(module, can_share_buffer));
+                      HloAliasAnalysis::Run(module, alias_info));
 
   // Set up a schedule for each computation.
   HloSchedule schedule(module);
@@ -2295,6 +2342,106 @@ BufferAssigner::CreateAssignment(
                  assignment->StatsString(/*report_total_fragmentation=*/true));
   VLOG(1) << "Buffer assignment done.";
   return std::move(assignment);
+}
+
+namespace {
+
+struct Buffer {
+  int64_t size;
+  int ref_count;
+  struct Buffer* underlying;  // canonical buffer in case of SHARE_WITH
+  explicit Buffer(int64_t size)
+      : size(size), ref_count(0), underlying(nullptr) {}
+};
+
+struct BufferMap {
+  explicit BufferMap(const BufferAssignmentProto& proto) {
+    buffers.reserve(proto.logical_buffers_size());
+    for (const LogicalBufferProto& b : proto.logical_buffers()) {
+      buffers.push_back(Buffer(b.size()));
+      id_to_buffer[b.id()] = &buffers.back();
+    }
+  }
+  absl::flat_hash_map<int64_t, Buffer*> id_to_buffer;
+  std::vector<Buffer> buffers;
+};
+
+int64_t AllocateStaticBuffers(BufferMap& buffers,
+                              const BufferAssignmentProto& proto) {
+  int64_t memory = 0;
+  for (const auto& alloc : proto.buffer_allocations()) {
+    if (alloc.is_thread_local() ||
+        (!alloc.is_entry_computation_parameter() && !alloc.is_constant() &&
+         !alloc.maybe_live_out())) {
+      continue;
+    }
+    Buffer* largest_buffer = nullptr;
+    size_t largest_size = 0;
+    for (const auto& assigned : alloc.assigned()) {
+      if (!buffers.id_to_buffer.contains(assigned.logical_buffer_id())) {
+        continue;
+      }
+      Buffer* buffer = buffers.id_to_buffer[assigned.logical_buffer_id()];
+      if (buffer->size > largest_size) {
+        largest_size = buffer->size;
+        largest_buffer = buffer;
+      }
+    }
+    if (largest_buffer) {
+      largest_buffer->ref_count++;
+      memory += largest_buffer->size;
+    }
+  }
+  return memory;
+}
+
+}  // namespace
+
+absl::StatusOr<int> ComputePeakMemory(const BufferAssignmentProto& proto) {
+  BufferMap buffers(proto);
+
+  int64_t memory = AllocateStaticBuffers(buffers, proto);
+  int64_t peak_memory = memory;
+
+  for (const HeapSimulatorTrace& trace : proto.heap_simulator_traces()) {
+    for (const HeapSimulatorTrace::Event& event : trace.events()) {
+      Buffer* buffer = buffers.id_to_buffer[event.buffer_id()];
+      switch (event.kind()) {
+        case HeapSimulatorTrace::Event::ALLOC:
+          buffer->ref_count++;
+          if (buffer->ref_count == 1) {
+            memory += buffer->size;
+          }
+          break;
+        case HeapSimulatorTrace::Event::FREE: {
+          Buffer* root = buffer;
+          while (root->underlying) {
+            root = root->underlying;
+          }
+          buffer->underlying = nullptr;  // we no longer share the buffer.
+          if (--root->ref_count == 0) {
+            memory -= root->size;
+          }
+          break;
+        }
+        case HeapSimulatorTrace::Event::SHARE_WITH: {
+          Buffer* root = buffers.id_to_buffer[event.share_with_canonical_id()];
+          while (root->underlying) {
+            root = root->underlying;
+          }
+          buffer->underlying = root;
+          if (++root->ref_count == 1) {
+            memory += root->size;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      peak_memory = std::max(peak_memory, memory);
+    }
+  }
+  return peak_memory;
 }
 
 }  // namespace xla

@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -39,9 +38,9 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 // TODO(jmudigonda): Several BasicStringArray operations such as
 // DisassembleIntoSingleDeviceArrays, Reshard, FullyReplicatedShard,
@@ -55,43 +54,14 @@ namespace ifrt {
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// BasicStringArrayLayout
-//
-
-std::string BasicStringArrayLayout::Serialize() const {
-  // We currently do not have any state that need to be serialized. Return an
-  // empty string.
-  return std::string();
-}
-
-std::string BasicStringArrayLayout::ToString() const {
-  return "BasicStringArrayLayout: Dense, major-to-minor.";
-}
-
-bool BasicStringArrayLayout::operator==(const PjRtLayout& other) const {
-  auto* other_basic_string_array_layout =
-      dynamic_cast<const xla::ifrt::BasicStringArrayLayout*>(&other);
-  if (other_basic_string_array_layout == nullptr) {
-    return false;
-  }
-  // All BasicStringArrayLayout objects are the same - they are all dense,
-  // major-to-minor. So, all of them are equal.
-  return true;
-}
-
-void BasicStringArrayLayout::Hash(absl::HashState state) const {
-}  // Nothing to add to the hash state. Just return.
-
-/////////////////////////////////////////////////////////////////////////////
-//
 // BasicStringArray
 //
 
 char BasicStringArray::ID = 0;
 
 absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
-    Client* client, Shape shape, std::shared_ptr<const Sharding> sharding,
-    Future<Buffers> buffers, OnDoneWithBuffer on_done_with_buffer) {
+    Client* client, Shape shape, ShardingRef sharding, Future<Buffers> buffers,
+    OnDoneWithBuffer on_done_with_buffer) {
   if (!buffers.IsValid()) {
     return absl::InvalidArgumentError("Got buffers_ future is invalid");
   }
@@ -118,11 +88,13 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
           return;
         }
 
-        if (sharding->devices()->size() != (*buffers).size()) {
+        const int64_t num_addressable_devices =
+            sharding->devices()->AddressableDeviceList()->size();
+        if (num_addressable_devices != (*buffers).size()) {
           auto error = absl::FailedPreconditionError(absl::StrCat(
               "Number of buffers: ", (*buffers).size(),
-              " does not match the number of devices in sharding: ",
-              sharding->devices()->size()));
+              " does not match the number of addressable devices in sharding: ",
+              num_addressable_devices));
           buffers_promise.Set(error);
           ready_promise.Set(error);
           return;
@@ -140,7 +112,7 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
 }
 
 BasicStringArray::BasicStringArray(Client* client, Shape shape,
-                                   std::shared_ptr<const Sharding> sharding,
+                                   ShardingRef sharding,
                                    Future<Buffers> buffers,
                                    Future<> ready_future,
                                    OnDoneWithBuffer on_done_with_buffer)
@@ -184,15 +156,7 @@ Future<> BasicStringArray::GetReadyFuture() const {
   return ready_future_;
 }
 
-absl::StatusOr<std::vector<tsl::RCReference<Array>>>
-BasicStringArray::DisassembleIntoSingleDeviceArrays(
-    ArrayCopySemantics semantics) {
-  DCHECK(this);
-  return DisassembleIntoSingleDeviceArrays(
-      semantics, SingleDeviceShardSemantics::kAllShards);
-}
-
-absl::StatusOr<std::vector<tsl::RCReference<Array>>>
+absl::StatusOr<std::vector<ArrayRef>>
 BasicStringArray::DisassembleIntoSingleDeviceArrays(
     ArrayCopySemantics semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
@@ -210,7 +174,10 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
     return absl::FailedPreconditionError("Array has already been deleted");
   }
 
-  int num_shards = sharding_->devices()->size();
+  TF_ASSIGN_OR_RETURN(
+      auto shapes_and_shadings,
+      sharding_->Disassemble(shape_, single_device_shard_semantics));
+  const int num_shards = shapes_and_shadings.size();
 
   // For each single device array we are going to pre-make:
   //   (1) a Promise-Future pair for passing the buffers,
@@ -278,9 +245,7 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   // Make and return the individual single device arrays. These will become
   // ready when the this (source) array becomes ready and the callback we set
   // up above runs.
-  TF_ASSIGN_OR_RETURN(auto shapes_and_shadings, sharding_->Disassemble(shape_));
-
-  std::vector<tsl::RCReference<Array>> arrays;
+  std::vector<ArrayRef> arrays;
   arrays.reserve(num_shards);
   for (int i = 0; i < num_shards; ++i) {
     TF_ASSIGN_OR_RETURN(auto array,
@@ -331,8 +296,8 @@ Future<> BasicStringArray::CopyToHostBuffer(
   return copy_completion_future;
 }
 
-absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::Copy(
-    std::optional<tsl::RCReference<xla::ifrt::DeviceList>> devices,
+absl::StatusOr<ArrayRef> BasicStringArray::Copy(
+    std::optional<xla::ifrt::DeviceListRef> devices,
     std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);
@@ -389,21 +354,19 @@ absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::Copy(
 }
 
 // Makes a single sharded BasicStringArray from the first shard.
-absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::FullyReplicatedShard(
+absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
     ArrayCopySemantics semantics) {
   absl::MutexLock lock(&mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
 
-  // Some user code paths (e.g.: through JAX) may not correctly set the
-  // `is_fully_replicated` flag when they are using ConcreteEvenSharding. If
-  // and when that causes a problem, we should investigate a way to actually
-  // looking into the sharding to determine if it is a fully replicated
-  // sharding.
-  if (!sharding_->IsFullyReplicated()) {
-    return absl::FailedPreconditionError("This array is not fully replicated");
-  }
+  // Consider a check here to make sure that the first shard contains the full
+  // array - i.e., this indeed is a fully replicated array. Checking the shading
+  // object may not be sufficient since currently IFRT users (e.g., JAX) can
+  // sometimes use ConcreteSharding even for single device arrays, and
+  // ConcreteSharding is currently hardcoded to be non-fully-replicated.
+
   struct StringStore {  // Data (strings) for a single shard.
     void CopyFrom(absl::Span<const absl::Cord> input_buffer) {
       strings.reserve(input_buffer.size());
@@ -446,12 +409,9 @@ absl::StatusOr<tsl::RCReference<Array>> BasicStringArray::FullyReplicatedShard(
       std::move(buffers_future), std::move(on_done_with_buffer));
 }
 
-absl::StatusOr<std::unique_ptr<PjRtLayout>> BasicStringArray::layout() const {
-  absl::MutexLock lock(&mu_);
-  if (is_deleted_) {
-    return absl::FailedPreconditionError("Array has already been deleted");
-  }
-  return std::make_unique<BasicStringArrayLayout>();
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
+BasicStringArray::layout() const {
+  return absl::UnimplementedError("String arrays do not support PjRtLayout");
 }
 
 std::string BasicStringArray::DebugString() const {

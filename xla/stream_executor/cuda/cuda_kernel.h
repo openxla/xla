@@ -25,6 +25,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/kernel.h"
@@ -60,6 +61,10 @@ class CudaKernel : public Kernel {
   absl::StatusOr<KernelMetadata> GetKernelMetadata();
 
  private:
+  absl::Status Launch(const ThreadDim &thread_dims, const BlockDim &block_dims,
+                      const std::optional<ClusterDim> &cluster_dims,
+                      Stream *stream, const KernelArgs &args) override;
+
   StreamExecutor* executor_ = nullptr;
 
   CUfunction gpu_function_ = nullptr;  // wrapped CUDA kernel handle

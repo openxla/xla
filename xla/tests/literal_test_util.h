@@ -28,10 +28,10 @@ limitations under the License.
 #include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -45,11 +45,6 @@ class LiteralTestUtil {
   // Asserts that the given shapes have the same rank, dimension sizes, and
   // primitive types.
   [[nodiscard]] static ::testing::AssertionResult EqualShapes(
-      const Shape& expected, const Shape& actual);
-
-  // Asserts that the provided shapes are equal as defined in AssertEqualShapes
-  // and that they have the same layout.
-  [[nodiscard]] static ::testing::AssertionResult EqualShapesAndLayouts(
       const Shape& expected, const Shape& actual);
 
   [[nodiscard]] static ::testing::AssertionResult Equal(

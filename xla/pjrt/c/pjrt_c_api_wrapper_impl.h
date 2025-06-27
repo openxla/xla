@@ -130,7 +130,8 @@ struct PJRT_ExecuteContext {
 
 struct PJRT_Executable {
   // Must be shared_ptr so that we can share with PJRT_LoadedExecutable.
-  std::shared_ptr<xla::PjRtExecutable> executable;
+  std::shared_ptr<xla::PjRtExecutable> shared_executable;
+  xla::PjRtExecutable* executable;
 
   absl::StatusOr<std::string> fingerprint;
 
@@ -156,9 +157,10 @@ struct PJRT_Executable {
   std::vector<size_t> out_dimension_sizes;
 
   explicit PJRT_Executable(std::shared_ptr<xla::PjRtExecutable> executable);
+  explicit PJRT_Executable(xla::PjRtExecutable* executable);
 
-  const xla::PjRtExecutable* get() const { return executable.get(); }
-  xla::PjRtExecutable* get() { return executable.get(); }
+  const xla::PjRtExecutable* get() const { return executable; }
+  xla::PjRtExecutable* get() { return executable; }
 };
 
 struct PJRT_LoadedExecutable {
@@ -218,7 +220,7 @@ struct PJRT_CopyToDeviceStream {
 };
 
 struct PJRT_Layouts_MemoryLayout {
-  std::unique_ptr<xla::PjRtLayout> layout;
+  std::shared_ptr<const xla::PjRtLayout> layout;
 };
 
 struct PJRT_Layouts_SerializedLayout {
@@ -258,16 +260,32 @@ PJRT_Error* PJRT_Client_AddressableMemories(
 PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args);
 PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
     PJRT_Client_DefaultDeviceAssignment_Args* args);
+PJRT_Error* PJRT_Client_CreateUninitializedBuffer(
+    PJRT_Client_CreateUninitializedBuffer_Args* args);
 PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args);
 PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     PJRT_Client_CreateViewOfDeviceBuffer_Args* args);
 PJRT_Error* PJRT_Client_CreateBuffersForAsyncHostToDevice(
     PJRT_Client_CreateBuffersForAsyncHostToDevice_Args* args);
+PJRT_Error* PJRT_Client_DmaMap(PJRT_Client_DmaMap_Args* args);
+PJRT_Error* PJRT_Client_DmaUnmap(PJRT_Client_DmaUnmap_Args* args);
 PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Destroy(
     PJRT_AsyncHostToDeviceTransferManager_Destroy_Args* args);
 PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
     PJRT_AsyncHostToDeviceTransferManager_TransferData_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer(
+    PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Device(
+    PJRT_AsyncHostToDeviceTransferManager_Device_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferCount(
+    PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferSize(
+    PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_SetBufferError(
+    PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_AddMetadata(
+    PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args* args);
 PJRT_Error* PJRT_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args);
 PJRT_Error* PJRT_DeviceDescription_ProcessIndex(
     PJRT_DeviceDescription_ProcessIndex_Args* args);
@@ -461,9 +479,16 @@ PJRT_TopologyDescription* CreateWrapperDeviceTopology(
 // should be destroyed with PJRT_Client_Destroy.
 PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client);
 
+// Searches `client` for a PJRT_Memory* that wraps a provided
+// `xla::PjRtMemorySpace *` (`cpp_memory`). If a match is found, that
+// PJRT_Memory* is returned. Otherwise, returns nullptr.
+PJRT_Memory* PJRT_Client_FindMemoryWrapper(xla::PjRtMemorySpace* cpp_memory,
+                                           PJRT_Client* client);
+
 // Helper functions for converting C key-value store callbacks to C++ callbacks.
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(
     PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
+    PJRT_KeyValueTryGetCallback c_try_get_callback, void* try_get_user_arg,
     PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg);
 
 // A method that does not nothing other than returning a nullptr. Can be used as

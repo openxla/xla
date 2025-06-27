@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 
 namespace xla {
 
@@ -50,6 +49,15 @@ MATCHER_P(MatchIndexingMap, indexing_string, "") {
   }
   return ExplainMatchResult(
       true, ApproximateMatch(indexing_string, ToString(arg)), result_listener);
+}
+
+MATCHER_P(MatchOperandIndexing, indexing_string, "") {
+  if (arg.IsUndefined()) {
+    return false;
+  }
+  return ExplainMatchResult(
+      true, ApproximateMatch(indexing_string, ToString(arg.map())),
+      result_listener);
 }
 
 MATCHER_P(MatchIndexingString, indexing_string, "") {

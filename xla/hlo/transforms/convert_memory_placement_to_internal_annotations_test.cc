@@ -23,7 +23,7 @@
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
-#include "xla/service/host_memory_offload_annotations.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -250,9 +250,9 @@ ENTRY main.183 {
   for (auto* c : module->computations()) {
     for (auto* instr : c->instructions()) {
       if (instr->IsCustomCall(
-              host_memory_offload_annotations::kMoveToHostCustomCallTarget) ||
+              memory_annotations::kMoveToHostCustomCallTarget) ||
           instr->IsCustomCall(
-              host_memory_offload_annotations::kMoveToDeviceCustomCallTarget)) {
+              memory_annotations::kMoveToDeviceCustomCallTarget)) {
         ++custom_calls_count;
       }
     }
@@ -474,9 +474,9 @@ ENTRY main.183 {
   for (auto* c : module->computations()) {
     for (auto* instr : c->instructions()) {
       if (instr->IsCustomCall(
-              host_memory_offload_annotations::kMoveToHostCustomCallTarget) ||
+              memory_annotations::kMoveToHostCustomCallTarget) ||
           instr->IsCustomCall(
-              host_memory_offload_annotations::kMoveToDeviceCustomCallTarget)) {
+              memory_annotations::kMoveToDeviceCustomCallTarget)) {
         ++custom_calls_count;
       }
     }
@@ -503,8 +503,8 @@ TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
   int64_t move_to_host_count = 0;
   for (auto* c : module->computations()) {
     for (auto* instr : c->instructions()) {
-      move_to_host_count += instr->IsCustomCall(
-          host_memory_offload_annotations::kMoveToHostCustomCallTarget);
+      move_to_host_count +=
+          instr->IsCustomCall(memory_annotations::kMoveToHostCustomCallTarget);
     }
   }
   EXPECT_EQ(move_to_host_count, 1);
@@ -521,7 +521,7 @@ TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
     broadcast.3 = s32[8,2]{1,0} broadcast(constant.2), dimensions={}
     multiply.4 = s32[8,2]{1,0} multiply(Arg_0.1, broadcast.3), metadata={op_name="jit(f)/jit(main)/mul" source_file="third_party/py/jax/tests/memories_test.py" source_line=707}
     custom-call.5 = s32[8,2]{1,0} custom-call(multiply.4), custom_call_target="Sharding", sharding={devices=[2,1]<=[2]}, metadata={op_name="jit(f)/jit(main)/device_put" source_file="third_party/py/jax/tests/memories_test.py" source_line=708}
-    custom-call.6 = s32[8,2]{1,0} custom-call(custom-call.5), custom_call_target="annotate_device_placement", custom_call_has_side_effect=true, frontend_attributes={_xla_buffer_placement="device_sram"}, metadata={op_name="jit(f)/jit(main)/device_put" source_file="third_party/py/jax/tests/memories_test.py" source_line=708}
+    custom-call.6 = s32[8,2]{1,0} custom-call(custom-call.5), custom_call_target="annotate_device_placement", custom_call_has_side_effect=true, frontend_attributes={_xla_buffer_placement="vmem"}, metadata={op_name="jit(f)/jit(main)/device_put" source_file="third_party/py/jax/tests/memories_test.py" source_line=708}
     ROOT multiply.7 = s32[8,2]{1,0} multiply(custom-call.6, broadcast.3), metadata={op_name="jit(f)/jit(main)/mul" source_file="third_party/py/jax/tests/memories_test.py" source_line=709}
   } // main.8 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
@@ -530,14 +530,44 @@ TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
       ConvertMemoryPlacementToInternalAnnotations().Run(module.get()).value();
   EXPECT_TRUE(changed);
   XLA_VLOG_LINES(1, module->ToString());
-  int64_t pin_todevice_sramcount = 0;
+  int64_t pin_to_vmem_count = 0;
   for (auto* c : module->computations()) {
     for (auto* instr : c->instructions()) {
-      pin_todevice_sramcount += instr->IsCustomCall(
-          host_memory_offload_annotations::kPinToDeviceSramCustomCallTarget);
+      pin_to_vmem_count += instr->IsCustomCall(
+          memory_annotations::kPinToDeviceSramCustomCallTarget);
     }
   }
-  EXPECT_EQ(pin_todevice_sramcount, 1);
+  EXPECT_EQ(pin_to_vmem_count, 1);
+}
+
+TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
+       ConvertPinToDeviceTest) {
+  constexpr absl::string_view hlo_string = R"(
+  HloModule jit_f, entry_computation_layout={(s32[8,2]{0,1:T(2,128)S(1)})->s32[8,2]{0,1:T(2,128)}}, allow_spmd_sharding_propagation_to_output={true}
+
+  ENTRY main.8 {
+    Arg_0.1 = s32[8,2]{1,0} parameter(0), sharding={devices=[2,1]<=[2]}, metadata={op_name="x"}
+    constant.2 = s32[] constant(2)
+    broadcast.3 = s32[8,2]{1,0} broadcast(constant.2), dimensions={}
+    multiply.4 = s32[8,2]{1,0} multiply(Arg_0.1, broadcast.3), metadata={op_name="jit(f)/jit(main)/mul" source_file="third_party/py/jax/tests/memories_test.py" source_line=707}
+    custom-call.5 = s32[8,2]{1,0} custom-call(multiply.4), custom_call_target="Sharding", sharding={devices=[2,1]<=[2]}, metadata={op_name="jit(f)/jit(main)/device_put" source_file="third_party/py/jax/tests/memories_test.py" source_line=708}
+    custom-call.6 = s32[8,2]{1,0} custom-call(custom-call.5), custom_call_target="annotate_device_placement", custom_call_has_side_effect=true, frontend_attributes={_xla_buffer_placement="pinned_device"}, metadata={op_name="jit(f)/jit(main)/device_put" source_file="third_party/py/jax/tests/memories_test.py" source_line=708}
+    ROOT multiply.7 = s32[8,2]{1,0} multiply(custom-call.6, broadcast.3), metadata={op_name="jit(f)/jit(main)/mul" source_file="third_party/py/jax/tests/memories_test.py" source_line=709}
+  } // main.8 )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  bool changed =
+      ConvertMemoryPlacementToInternalAnnotations().Run(module.get()).value();
+  EXPECT_TRUE(changed);
+  XLA_VLOG_LINES(1, module->ToString());
+  int64_t pin_todevice_count = 0;
+  for (auto* c : module->computations()) {
+    for (auto* instr : c->instructions()) {
+      pin_todevice_count +=
+          instr->IsCustomCall(memory_annotations::kPinToDeviceCustomCallTarget);
+    }
+  }
+  EXPECT_EQ(pin_todevice_count, 1);
 }
 
 }  // namespace

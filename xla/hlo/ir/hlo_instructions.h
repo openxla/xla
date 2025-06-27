@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 #define XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,8 +29,10 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_device_list.h"
@@ -46,9 +49,10 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
+#include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tsl/platform/status.h"
+#include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/status.h"
 
 namespace xla {
 
@@ -298,12 +302,6 @@ class HloAsyncStartInstruction : public HloAsyncInstruction {
       absl::Span<HloInstruction* const> operands,
       HloComputation* async_computation,
       absl::string_view async_execution_thread = kMainExecutionThread);
-
-  ~HloAsyncStartInstruction() override;
-  void ClearCalledComputations() override;
-  // When an async instruction is being destructed, remove it from the vector of
-  // pointers of its called computation, to avoid referencing freed memory.
-  void ClearAsyncComputationInstruction();
 
   absl::string_view async_execution_thread() const override {
     return async_execution_thread_;
@@ -643,8 +641,6 @@ class HloRecvDoneInstruction : public HloSendRecvInstruction {
 
 class HloCollectiveInstruction : public HloChannelInstruction {
  public:
-  // TODO(b/316622399): Remove usages of this method and replace with
-  // device_list()->replica_groups().
   const std::vector<ReplicaGroup>& replica_groups() const {
     return device_list_.replica_groups();
   }
@@ -673,13 +669,6 @@ class HloCollectiveInstruction : public HloChannelInstruction {
       HloOpcode opcode, const Shape& shape,
       absl::Span<HloInstruction* const> operands,
       const CollectiveDeviceList& collective_device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id);
-
-  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
-  explicit HloCollectiveInstruction(
-      HloOpcode opcode, const Shape& shape,
-      absl::Span<HloInstruction* const> operands,
-      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id);
 
   HloInstructionProto ToProto() const override;
@@ -714,6 +703,7 @@ class HloAllGatherInstruction : public HloCollectiveInstruction {
 
   // Same as HloAllReduceInstruction::use_global_device_ids.
   bool use_global_device_ids() const { return use_global_device_ids_; }
+  void set_use_global_device_ids(bool value) { use_global_device_ids_ = value; }
 
   // The dimension on which data from different participants are concatenated.
   int64_t all_gather_dimension() const { return all_gather_dimension_; }
@@ -756,14 +746,6 @@ class HloAllReduceInstructionBase : public HloCollectiveInstruction {
       absl::Span<HloInstruction* const> operands,
       HloComputation* reduce_computation,
       const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
-
-  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
-  explicit HloAllReduceInstructionBase(
-      HloOpcode opcode, const Shape& shape,
-      absl::Span<HloInstruction* const> operands,
-      HloComputation* reduce_computation,
-      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool use_global_device_ids);
 
   // Returns true if the ids in the ReplicaGroup config represent a global id of
@@ -971,7 +953,8 @@ class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
 class HloCollectivePermuteInstruction : public HloChannelInstruction {
  public:
   explicit HloCollectivePermuteInstruction(
-      HloOpcode opcode, const Shape& shape, HloInstruction* operand,
+      HloOpcode opcode, const Shape& shape,
+      absl::Span<HloInstruction* const> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<int64_t>& channel_id);
 
@@ -999,6 +982,8 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
            hlo->opcode() == HloOpcode::kCollectivePermuteStart;
   }
 
+  bool inplace() const { return inplace_; }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -1014,6 +999,7 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
 
   const std::vector<std::pair<int64_t, int64_t>> source_target_pairs_;
   const std::vector<std::vector<int64_t>> slice_sizes_;
+  bool inplace_;
 };
 
 inline bool HloAllReduceInstructionBase::ClassOf(const HloInstruction* hlo) {
@@ -1147,8 +1133,6 @@ class HloTransposeInstruction : public HloDimensionsInstruction {
  public:
   explicit HloTransposeInstruction(const Shape& shape, HloInstruction* operand,
                                    absl::Span<const int64_t> dimensions);
-  // Returns whether this instruction does a rank-2 transposition.
-  bool IsRank2Transpose() const;
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kTranspose;
@@ -1354,6 +1338,14 @@ class HloConstantInstruction : public HloInstruction {
       }
     }
     return false;
+  }
+
+  // Add literal to the hash state.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    if (HasLiteral()) {
+      absl::HashState::combine(std::move(h),
+                               Literal::AbslHashable<true>(literal()));
+    }
   }
 
  private:
@@ -1595,6 +1587,13 @@ class HloFusionInstruction : public HloCallableInstruction {
     return hlo->opcode() == HloOpcode::kFusion;
   }
 
+  // Add various fusion parameters to the hash.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), *fused_expression_root(),
+                             fusion_kind(), fused_instruction_count(),
+                             fused_parameters().size());
+  }
+
  protected:
   std::string default_called_computation_name() const override {
     return "fused_computation";
@@ -1712,6 +1711,11 @@ class HloParameterInstruction : public HloInstruction {
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kParameter;
+  }
+
+  // Add parameter number to the hash.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), parameter_number());
   }
 
  private:
@@ -2008,6 +2012,20 @@ class HloReduceWindowInstruction : public HloInstruction {
     }
     return shapes;
   }
+  // Returns the indices of the non-trivial dimensions in the window.
+  std::vector<int64_t> non_trivial_window_dimensions() const {
+    std::vector<int64_t> non_trivial_dimensions;
+    const Shape& operand_shape = inputs().front()->shape();
+
+    int64_t rank = operand_shape.dimensions().size();
+    for (int dimension_index = 0; dimension_index < rank; ++dimension_index) {
+      const WindowDimension& window_dim = window_.dimensions(dimension_index);
+      if (!window_util::IsTrivialWindowDimension(window_dim)) {
+        non_trivial_dimensions.push_back(dimension_index);
+      }
+    }
+    return non_trivial_dimensions;
+  }
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kReduceWindow;
@@ -2086,6 +2104,16 @@ class HloCustomCallInstruction : public HloCallableInstruction {
   // 'operands_with_layout' must all have layouts.
   HloCustomCallInstruction(const Shape& shape,
                            absl::Span<HloInstruction* const> operands,
+                           absl::string_view custom_call_target,
+                           std::string opaque,
+                           absl::Span<const Shape> operand_shapes_with_layout,
+                           CustomCallApiVersion api_version);
+
+  // Constructor for a custom call with constrained layout and a to_apply
+  // computation. 'shape' and 'operands_with_layout' must all have layouts.
+  HloCustomCallInstruction(const Shape& shape,
+                           absl::Span<HloInstruction* const> operands,
+                           HloComputation* to_apply,
                            absl::string_view custom_call_target,
                            std::string opaque,
                            absl::Span<const Shape> operand_shapes_with_layout,
@@ -2196,6 +2224,26 @@ class HloCustomCallInstruction : public HloCallableInstruction {
     return hlo->opcode() == HloOpcode::kCustomCall;
   }
 
+  class PerInstructionStorage {
+    // Abstract class for per-instruction storage.
+   public:
+    virtual ~PerInstructionStorage() = default;
+  };
+
+  void SetPerInstructionStorage(
+      std::unique_ptr<PerInstructionStorage> per_instruction_storage) {
+    absl::MutexLock lock(&per_instruction_storage_mutex_);
+    if (per_instruction_storage_ != nullptr) {
+      LOG(WARNING) << "Not Overwriting existing per-instruction storage.";
+      return;
+    }
+    per_instruction_storage_ = std::move(per_instruction_storage);
+  }
+
+  const PerInstructionStorage* GetPerInstructionStorage() const {
+    return per_instruction_storage_.get();
+  }
+
  protected:
   std::string default_called_computation_name() const override {
     return "custom_call_computation";
@@ -2240,6 +2288,9 @@ class HloCustomCallInstruction : public HloCallableInstruction {
   // TODO(b/189822916): Remove this field when all clients are migrated to the
   // status-returning API.
   CustomCallApiVersion api_version_;
+
+  absl::Mutex per_instruction_storage_mutex_;
+  std::unique_ptr<PerInstructionStorage> per_instruction_storage_ = nullptr;
 };
 
 class HloPadInstruction : public HloInstruction {
@@ -2604,12 +2655,12 @@ class HloRaggedDotInstruction : public HloInstruction {
   // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes'.
   // The `dimension_numbers` are for specifying:
   //   - batch and contracting dims for 'lhs'/'rhs' (as in HloDotInstruction),
-  //   - exactly one 'lhs' ragged dimension, and
+  //   - exactly one 'lhs' ragged dimension,
   //   - up to one 'rhs' group dimension.
   // The op takes on one of three modes, based on the kind of the ragged dim:
-  // 1. [b,m,k], [g,b,k,n], [g] -> [b,m,n], where the ragged dimension is the
+  // 1. [b,m,k], [g,b,k,n], [b,g] -> [b,m,n], where the ragged dimension is the
   //    non-contracting dimension (m) of the 'lhs'.
-  // 2. [b,m,k], [b,k,n], [g] -> [g,b,m,n], where the ragged dimension is the
+  // 2. [b,m,k], [b,k,n], [b,g] -> [g,b,m,n], where the ragged dimension is the
   //    contracting dimension (k) of the 'lhs' and 'rhs'.
   // 3. [b,m,k], [b,k,n], [g] -> [b,m,n], where the ragged dimension is the
   //    batch dimension (b) of the 'lhs' and 'rhs'.
@@ -2821,6 +2872,11 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
 
   RandomAlgorithm algorithm_;
 };
+
+inline constexpr absl::string_view kPinCustomCallTarget = "Pin";
+inline constexpr absl::string_view kUnpinCustomCallTarget = "Unpin";
+inline constexpr absl::string_view kCreateBufferCustomCallTarget =
+    "CreateBuffer";
 
 }  // namespace xla
 

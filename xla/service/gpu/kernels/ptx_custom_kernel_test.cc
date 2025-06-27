@@ -28,9 +28,9 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla::gpu::kernel {
 
@@ -102,8 +102,8 @@ TEST(PtxCustomKernelTest, GetPtxCustomKernel) {
   se::KernelArgsDeviceMemoryArray args(
       std::vector<se::DeviceMemoryBase>({a, b, c}),
       custom_kernel.shared_memory_bytes());
-  TF_CHECK_OK(stream->Launch(custom_kernel.thread_dims(),
-                             custom_kernel.block_dims(), *kernel, args));
+  TF_CHECK_OK(kernel->Launch(custom_kernel.thread_dims(),
+                             custom_kernel.block_dims(), stream.get(), args));
 
   TF_CHECK_OK(stream->BlockHostUntilDone());
 

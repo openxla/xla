@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_TSL_DISTRIBUTED_RUNTIME_RPC_GRPC_STATE_H_
 #define XLA_TSL_DISTRIBUTED_RUNTIME_RPC_GRPC_STATE_H_
 
+#include <memory>
 #include <queue>
 #include <string>
 #include <utility>
@@ -26,11 +27,11 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
 #include "tsl/platform/strcat.h"
-#include "tsl/platform/threadpool.h"
 
 namespace tsl {
 
@@ -125,7 +126,7 @@ class RPCState : public GrpcClientCQTag {
   }
 
   void StartCall() {
-    context_.reset(new ::grpc::ClientContext());
+    context_ = std::make_unique<::grpc::ClientContext>();
     context_->set_wait_for_ready(!fail_fast_);
     if (timeout_in_ms_ > 0) {
       context_->set_deadline(

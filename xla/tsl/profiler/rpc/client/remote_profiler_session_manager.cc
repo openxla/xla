@@ -20,14 +20,15 @@ limitations under the License.
 
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "xla/tsl/platform/env_time.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/rpc/client/profiler_client.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
-#include "tsl/platform/env_time.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -66,7 +67,7 @@ RemoteProfilerSessionManager::~RemoteProfilerSessionManager() {
 }
 
 absl::Status RemoteProfilerSessionManager::Init() {
-  mutex_lock lock(mutex_);
+  absl::MutexLock lock(&mutex_);
   VLOG(1) << "SessionManager initializing.";
 
   const absl::Time session_created_ts =
@@ -102,7 +103,7 @@ absl::Status RemoteProfilerSessionManager::Init() {
 
 std::vector<RemoteProfilerSessionManager::Response>
 RemoteProfilerSessionManager::WaitForCompletion() {
-  mutex_lock lock(mutex_);
+  absl::MutexLock lock(&mutex_);
   std::vector<RemoteProfilerSessionManager::Response> remote_responses(
       clients_.size());
 

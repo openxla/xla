@@ -21,10 +21,10 @@ cc_library(
     srcs = ["call_options.cc"],
     hdrs = ["call_options.h"],
     deps = [
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:mutex",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 

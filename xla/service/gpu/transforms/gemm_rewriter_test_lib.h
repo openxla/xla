@@ -32,12 +32,14 @@ class GemmRewriteTestBase : public GpuCodegenTest {
   const stream_executor::GpuComputeCapability& Capability() const;
 
   stream_executor::SemanticVersion GetToolkitVersion() const;
-
+  stream_executor::SemanticVersion GetRuntimeVersion() const;
   bool IsCuda() const;
 
   bool IsRocm() const;
 
-  stream_executor::GpuComputeCapability CudaHopperOrRocmMI300();
+  bool IsBlackwell() const;
+
+  stream_executor::GpuComputeCapability CudaHopperOrRocmCapability();
 
   DebugOptions GetDebugOptionsForTest() const override;
 

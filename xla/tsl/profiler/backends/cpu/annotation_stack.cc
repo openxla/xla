@@ -19,15 +19,14 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/types.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -47,7 +46,7 @@ static auto GetAnnotationData(const std::atomic<int>& atomic) {
   return std::make_tuple(&data.stack, &data.string, &data.scope_range_id_stack);
 };
 
-void AnnotationStack::PushAnnotation(std::string_view name) {
+void AnnotationStack::PushAnnotation(absl::string_view name) {
   static std::atomic<int64_t> scope_range_counter = 0;
 
   auto [stack, string, scope_range_id_stack] = GetAnnotationData(generation_);

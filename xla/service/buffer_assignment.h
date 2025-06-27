@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -180,7 +181,7 @@ class BufferAllocation {
   // to identify the memory range that a LogicalBuffer corresponds to.
   class Slice {
    public:
-    Slice() {}
+    Slice() = default;
     Slice(const BufferAllocation* allocation, int64_t offset, int64_t size)
         : allocation_(allocation), offset_(offset), size_(size) {}
 
@@ -216,6 +217,13 @@ class BufferAllocation {
 
     std::string ToString() const;
 
+    absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto> ToProto()
+        const;
+
+    static absl::StatusOr<BufferAllocation::Slice> FromProto(
+        const xla::buffer_assignment::BufferAllocationSliceProto& proto,
+        absl::Span<const BufferAllocation> buffer_allocations);
+
    private:
     const BufferAllocation* allocation_ = nullptr;
     int64_t offset_ = 0;
@@ -241,6 +249,7 @@ class BufferAllocation {
                                 int64_t more_than_k = 50) const;
 
   BufferAllocationProto ToProto() const;
+  static BufferAllocation FromProto(const BufferAllocationProto&);
 
   // Whether the buffer is a parameter to or live out of the entry computation.
   bool IsInputOrOutput() const {
@@ -373,7 +382,7 @@ class BufferAllocation {
 };
 
 // Add stream operators for nicer output of CHECK/RET_CHECK failures.
-std::ostream& operator<<(std::ostream& out, const BufferAllocation& s);
+std::ostream& operator<<(std::ostream& out, const BufferAllocation& buffer);
 std::ostream& operator<<(std::ostream& out, const BufferAllocation::Slice& s);
 
 // This class encapsulates an assignment of the LogicalBuffers in an XLA
@@ -679,12 +688,11 @@ class BufferAssigner {
   // valid and they do not overwrite each other.
   static absl::StatusOr<std::unique_ptr<BufferAssignment>> Run(
       const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
-      BufferValue::SizeFunction buffer_size,
+      BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info,
       LogicalBuffer::AlignmentFunction color_alignment,
       bool allocate_buffers_for_constants = false,
       Colorer colorer = DefaultColorer(),
       std::optional<MustNotLiveOut> must_not_live_out = std::nullopt,
-      HloDataflowAnalysis::CanShareBuffer can_share_buffer = nullptr,
       std::unique_ptr<memory_space_assignment::PresetAssignments>
           preset_assignments = {},
       const PrivateStacks& private_stacks = {},
@@ -708,9 +716,8 @@ class BufferAssigner {
   // Create a buffer assignment.
   absl::StatusOr<std::unique_ptr<BufferAssignment>> CreateAssignment(
       const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
-      BufferValue::SizeFunction buffer_size,
+      BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info,
       LogicalBuffer::AlignmentFunction color_alignment,
-      HloDataflowAnalysis::CanShareBuffer can_share_buffer,
       const PrivateStacks& private_stacks,
       GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
           heap_buffer_interval_compare,
@@ -820,6 +827,9 @@ class BufferAssigner {
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;
 };
+
+// Computes the peak memory usage through the proto's heap simulator traces.
+absl::StatusOr<int> ComputePeakMemory(const BufferAssignmentProto& proto);
 
 }  // namespace xla
 

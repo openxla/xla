@@ -13,14 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <string_view>
-
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
+#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
-#include "tsl/platform/logging.h"
 
 // Implements the cusparse API by forwarding to cusparse loaded from the DSO.
 
@@ -54,8 +53,8 @@ const char* kSymbols[] = {
 
 constexpr size_t kNumSymbols = sizeof(kSymbols) / sizeof(const char*);
 
-absl::flat_hash_set<std::string_view> const& StringErrorSymbols() {
-  static auto* syms = new absl::flat_hash_set<std::string_view>{
+absl::flat_hash_set<absl::string_view> const& StringErrorSymbols() {
+  static auto* const syms = new absl::flat_hash_set<absl::string_view>{
       "cusparseGetErrorName",
       "cusparseGetErrorString",
   };

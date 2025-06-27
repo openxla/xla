@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/base/macros.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cubin_or_ptx_image.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
@@ -44,6 +45,14 @@ inline absl::StatusOr<std::vector<uint8_t>> CompileGpuAsm(
   return CompileGpuAsm(CudaComputeCapability(cc_major, cc_minor),
                        std::string(ptx_contents), options, cancel_if_reg_spill);
 }
+
+// Same as CompileGpuAsm, but caches the result, and returns unowned view of
+// the compiled binary.
+//
+// A copy of the string provided in ptx will be made.
+absl::StatusOr<absl::Span<const uint8_t>> CompileGpuAsmOrGetCached(
+    const CudaComputeCapability& cc, const std::string& ptx_contents,
+    GpuAsmOpts compilation_options);
 
 // Bundles the GPU machine code (cubins) and PTX if requested and returns the
 // resulting binary (i.e. a fatbin) as a byte array.

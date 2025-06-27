@@ -19,9 +19,9 @@ limitations under the License.
 
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/block.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/coding.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/raw_coding.h"
 #include "tsl/platform/snappy.h"
 
@@ -94,8 +94,8 @@ absl::Status ReadBlock(RandomAccessFile* file, const BlockHandle& handle,
 
   char* buf = new char[n + kBlockTrailerSize];
   absl::string_view contents;
-  absl::Status s =
-      file->Read(handle.offset(), n + kBlockTrailerSize, &contents, buf);
+  absl::Status s = file->Read(handle.offset(), contents,
+                              absl::MakeSpan(buf, n + kBlockTrailerSize));
   if (!s.ok()) {
     delete[] buf;
     return s;

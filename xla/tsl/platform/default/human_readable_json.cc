@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/types.h"
 #include "tsl/platform/strcat.h"
 #include "tsl/platform/stringpiece.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 
@@ -33,7 +33,7 @@ absl::StatusOr<std::string> ProtoToHumanReadableJson(
 
   protobuf::util::JsonPrintOptions json_options;
   json_options.preserve_proto_field_names = true;
-  json_options.always_print_primitive_fields = true;
+  json_options.always_print_fields_with_no_presence = true;
   auto status =
       protobuf::util::MessageToJsonString(proto, &result, json_options);
   if (!status.ok()) {

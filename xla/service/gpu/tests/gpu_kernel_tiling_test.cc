@@ -21,8 +21,8 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/platform_util.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -399,10 +399,18 @@ TEST_F(GpuKernelTilingTest, ReductionInputTooLarge) {
   )";
   auto hlo_module = ParseAndReturnVerifiedModule(kHloString).value();
   absl::Status status = CompileToExecutable(std::move(hlo_module)).status();
-  EXPECT_THAT(status.message(),
-              ::testing::ContainsRegex(
-                  "Kernel '.*' launch needs more blocks [(]4294967296, 1[)] "
-                  "than allowed by hardware [(]2147483647, 65535[)]"));
+
+  if (xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "rocm") {
+    EXPECT_THAT(status.message(),
+                ::testing::ContainsRegex(
+                    "Kernel '.*' launch needs more blocks [(]2147483648, 1[)] "
+                    "than allowed by hardware [(]2147483647, 65536[)]"));
+  } else {
+    EXPECT_THAT(status.message(),
+                ::testing::ContainsRegex(
+                    "Kernel '.*' launch needs more blocks [(]4294967296, 1[)] "
+                    "than allowed by hardware [(]2147483647, 65535[)]"));
+  }
 }
 
 }  // namespace

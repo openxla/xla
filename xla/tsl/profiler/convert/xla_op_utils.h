@@ -20,7 +20,8 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/macros.h"
+#include "xla/tsl/platform/macros.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace tsl {
 namespace profiler {
@@ -82,6 +83,24 @@ TF_CONST_INIT extern const absl::string_view kHloSparseCoreV0Outfeed;
 TF_CONST_INIT extern const absl::string_view kHloSparseCoreV0InfeedWait;
 TF_CONST_INIT extern const absl::string_view kHloSparseCoreV0InfeedTransform;
 
+// Returns true if the given op is added by xla_compiler.cc.
+inline bool IsXlaArgsOrRetvals(absl::string_view op_name) {
+  return op_name == "XLA_Args" || op_name == "XLA_Retvals";
+}
+
+// Returns the TF-op fullname from op_type and op_name.
+inline std::string TfOpFullname(absl::string_view op_type,
+                                absl::string_view op_name) {
+  if (op_type.empty()) {
+    if (op_name.empty()) return std::string();
+    if (IsXlaArgsOrRetvals(op_name)) {
+      op_type = op_name;
+    }
+  }
+  // Use TraceMeOp for consistency with TraceMe in TensorFlow executor.
+  return TraceMeOp(op_name, op_type);
+}
+
 // Return if a category is fusion.
 inline bool IsFusion(absl::string_view category) {
   return absl::EndsWith(category, " fusion");
@@ -119,6 +138,12 @@ inline bool IsInfeedOrOutfeed(absl::string_view category) {
          absl::StrContains(category, kHloOutfeed);
 }
 
+inline bool IsAllReduceOrAllToAll(absl::string_view category) {
+  return category == tsl::profiler::kHloAllReduce ||
+         category == tsl::profiler::kHloAllReduceFusion ||
+         category == tsl::profiler::kHloAllToAll;
+}
+
 inline bool IsHostOrSparseCoreV0Infeed(absl::string_view category) {
   return category == tsl::profiler::kHloInfeed ||
          category == tsl::profiler::kHloSparseCoreV0Infeed;
@@ -128,6 +153,36 @@ inline bool MayHaveInnerOps(absl::string_view category) {
   return category == kHloCall || category == kHloConditional ||
          category == kHloWhile || category == kHloMegacoreFusion;
 }
+
+inline bool IsOffDutyOp(absl::string_view category) {
+  return (category == tsl::profiler::kHloInfeed ||
+          category == tsl::profiler::kHloOutfeed ||
+          category == tsl::profiler::kHloHostSend ||
+          category == tsl::profiler::kHloHostSendDone ||
+          category == tsl::profiler::kHloHostRecv ||
+          category == tsl::profiler::kHloHostRecvDone ||
+          category ==
+              tsl::profiler::kHloMegacoreFusion  // Only self-time in megacore
+                                                 // fusion is off-duty. The op
+                                                 // time of children is on-duty.
+  );
+}
+
+// File and line that the framework op corresponding to an HLO op is associated
+// to in a user's program; e.g. it could be the file and line of user code that
+// generated the op.
+struct OpSourceInfo {
+  absl::string_view source_file;
+  int32_t source_line = -1;
+  std::string stack_frame;
+
+  std::string GetSourceTopLine() const {
+    if (source_file.empty()) return "";
+    return absl::StrCat(source_file, ":", source_line);
+  }
+
+  std::string GetSourceStack() const { return stack_frame; }
+};
 
 }  // namespace profiler
 }  // namespace tsl

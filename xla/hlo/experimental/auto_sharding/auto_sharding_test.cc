@@ -52,7 +52,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/hlo_value.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -515,10 +515,7 @@ TEST_F(AutoShardingTest, MemoryBudgetTest) {
       return spmd::ByteSizeOfShape(buffer.shape());
     };
     TF_ASSIGN_OR_RETURN(HloSchedule schedule,
-                        ScheduleModule(&module, size_fn,
-                                       ComputationSchedulerToModuleScheduler(
-                                           DFSMemoryScheduler),
-                                       /* execution_threads */ {}));
+                        ScheduleModule(&module, DFSMemoryScheduler(size_fn)));
     const HloComputation* entry_computation = module.entry_computation();
     std::unique_ptr<HloAliasAnalysis> alias_analysis =
         HloAliasAnalysis::Run(&module).value();
@@ -1530,15 +1527,19 @@ ENTRY twomatmul {
               op::Sharding("{devices=[1,2,2]0,1,2,3 last_tile_dim_replicate}"));
   const HloInstruction* param3 = FindInstruction(module.get(), "parameter.3");
   ASSERT_NE(param3, nullptr);
-  EXPECT_THAT(param3,
-              op::Sharding("{devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}"));
+  EXPECT_THAT(
+      param3,
+      AnyOf(op::Sharding("{devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}"),
+            op::Sharding("{devices=[1,2,2]<=[4] last_tile_dim_replicate}")));
   const HloInstruction* dot4 = FindInstruction(module.get(), "dot.4");
   ASSERT_NE(dot4, nullptr);
   EXPECT_THAT(dot4, op::Sharding("{devices=[2,2]0,2,1,3}"));
   const HloInstruction* dot5 = FindInstruction(module.get(), "dot.5");
   ASSERT_NE(dot5, nullptr);
-  EXPECT_THAT(dot5,
-              op::Sharding("{devices=[2,1,2]0,2,1,3 last_tile_dim_replicate}"));
+  EXPECT_THAT(
+      dot5,
+      AnyOf(op::Sharding("{devices=[2,1,2]0,2,1,3 last_tile_dim_replicate}"),
+            op::Sharding("{devices=[2,2]<=[2,2]T(1,0)}")));
 }
 
 TEST_F(AutoShardingTest, TwoMatmulWithDotReplicationEnabled) {
@@ -3122,6 +3123,44 @@ ENTRY %entry {
   EXPECT_NE(slice, nullptr);
   EXPECT_THAT(slice,
               op::Sharding("{devices=[8,16]<=[128] last_tile_dim_replicate}"));
+}
+
+TEST_F(AutoShardingTest, NegativeMemoryBudgetRatioTest) {
+  constexpr absl::string_view kHloString = R"(
+HloModule module
+
+region {
+  Arg_0 = s32[] parameter(0)
+  ROOT Arg_1 = s32[] parameter(1)
+}
+
+ENTRY %Scatter {
+  call = s32[4,128]{1,0} parameter(0)
+  clamp = s32[4,2]{1,0} parameter(1)
+  broadcast = s32[4,8]{1,0} parameter(2)
+  ROOT scatter = s32[4,128]{1,0} scatter(call, clamp, broadcast), update_window_dims={1}, inserted_window_dims={0}, scatter_dims_to_operand_dims={0,1}, index_vector_dim=1, indices_are_sorted=true, unique_indices=true, to_apply=region
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  AutoShardingOption option;
+  option.enable = true;
+  option.device_mesh_shape = {2, 2};
+  option.device_mesh_ids = {0, 1, 2, 3};
+  option.device_mesh_alpha = {1.0, 1.0};
+  option.device_mesh_beta = {0.01, 1.0};
+  // Memory budget a tad higher than what would be required if the largest
+  // tensors are sharded 4-ways
+  option.memory_budget_per_device = 0;
+  option.memory_budget_ratio = -1.1;  // Disables the soft memory constraint.
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, AutoSharding(option).Run(module.get()));
+  VLOG(10) << module->ToString();
+  EXPECT_TRUE(changed);
+  const HloInstruction* scatter = FindInstruction(module.get(), "scatter");
+  ASSERT_NE(scatter, nullptr);
+  EXPECT_EQ(scatter->sharding().NumTiles(), 4);
+  TF_EXPECT_OK(scatter->sharding().Validate(scatter->shape(), 4));
 }
 
 TEST(NormalizeTest, NormalizeHandlesNegativeCosts) {

@@ -36,42 +36,40 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/common/file_utils.h"
-#include "shardy/dialect/sdy/transforms/propagation/basic_propagation.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
+#include "re2/re2.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
-#include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
+#include "xla/hlo/translate/stablehlo.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/map_util.h"
-#include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/mhlo_round_trip/mhlo_export.h"
-#include "xla/service/spmd/shardy/mhlo_round_trip/mhlo_import.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_export.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 #include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace sdy {
@@ -174,10 +172,7 @@ Shape getFlattenedShape(const Shape& shape) {
       shape, [&](const Shape& subShape, const ShapeIndex& index) {
         flattenedShapes.push_back(subShape);
       });
-  if (flattenedShapes.empty()) {
-    return Shape();
-  }
-  return ShapeUtil::MakeMaybeTupleShape(flattenedShapes);
+  return ShapeUtil::MakeValidatedMaybeTupleShape(flattenedShapes).value();
 }
 
 // Get the flattened version of a computation layout.
@@ -300,25 +295,28 @@ void removeFrontendAttributes(HloModule* hloModule,
   hloModule->set_frontend_attributes(feAttrs);
 }
 
-}  // namespace
+std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
+                                     absl::string_view passName) {
+  std::string shardyDir = debugOptions.xla_dump_to();
+  if (shardyDir.empty()) {
+    return "";
+  }
+  if (debugOptions.xla_dump_hlo_pass_re().empty() ||
+      !RE2::PartialMatch(passName, debugOptions.xla_dump_hlo_pass_re())) {
+    return "";
+  }
+  return shardyDir;
+}
 
-absl::StatusOr<bool> ShardyXLA::Run(
-    HloModule* hloModule,
-    const absl::flat_hash_set<absl::string_view>& executionThreads) {
+absl::Status runShardingPropagation(HloModule* hloModule,
+                                    mlir::ModuleOp mlirModule,
+                                    bool importMhloShardings,
+                                    mlir::sdy::PropagationOptions options,
+                                    absl::string_view passName) {
   LOG(INFO) << "Using Shardy for XLA SPMD propagation.";
 
-  // HLO -> MLIR MHLO
-  auto mlirContext = std::make_unique<mlir::MLIRContext>();
-  loadAllRequiredDialects(mlirContext.get());
-  mlir::OwningOpRef<mlir::ModuleOp> mlirModule =
-      xla::llvm_ir::CreateMlirModuleOp(
-          mlir::UnknownLoc::get(mlirContext.get()));
-  TF_RETURN_IF_ERROR(
-      ConvertHloToMlirHlo(*mlirModule, hloModule,
-                          /*import_all_computations=*/false,
-                          /*flatten_computation_args_result=*/true));
-
-  std::string shardyDir = hloModule->config().debug_options().xla_dump_to();
+  const DebugOptions& debugOptions = hloModule->config().debug_options();
+  std::string shardyDir = getShardyDirIfShouldDump(debugOptions, passName);
 
   if (shardyDir == "sponge") {
     shardyDir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
@@ -336,7 +334,7 @@ absl::StatusOr<bool> ShardyXLA::Run(
         tsl::io::JoinPath(shardyDir, "shardy", uniqueModuleName(*hloModule));
     LOG(INFO) << "Using Shardy output directory: " << shardyDir;
   }
-
+  TF_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(shardyDir));
   // MLIR pipeline: (1) import, (2) Shardy, and (3) export.
 
   bool enableVerifier = false;
@@ -344,24 +342,17 @@ absl::StatusOr<bool> ShardyXLA::Run(
   enableVerifier = true;
 #endif
 
-  mlir::PassManager pm(mlirContext.get());
+  mlir::PassManager pm(mlirModule->getContext());
   pm.enableVerifier(enableVerifier);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
                                                "sdy_module_before_xla_import"));
-  bool useTupleArgs = false;
-  mlir::DictionaryAttr moduleFrontendAttrs = getFrontendAttrs(*mlirModule);
-  if (hasKey(moduleFrontendAttrs, kUseTupleArgs)) {
-    useTupleArgs = true;
-    removeFrontendAttribute(*mlirModule, kUseTupleArgs);
-  }
 
-  if (hasKey(moduleFrontendAttrs, kImportMhloShardings)) {
-    removeFrontendAttribute(*mlirModule, kImportMhloShardings);
+  if (importMhloShardings) {
     auto spanToArrayRef = [](absl::Span<const bool> span) {
       return mlir::ArrayRef<bool>(span.data(), span.size());
     };
 
-    addMhloImportPipeline(
+    addStablehloImportPipeline(
         pm,
         spanToArrayRef(hloModule->config()
                            .allow_spmd_sharding_propagation_to_parameters()),
@@ -371,6 +362,40 @@ absl::StatusOr<bool> ShardyXLA::Run(
     // This is the default path.
     addSdyRoundTripImportPipeline(pm);
   }
+
+  // NOTE: if we are using auto-spmd, we will use conservative propagation
+  // since the TOAST cost model cannot account for split axes or padding.
+  options.dumpDirectory = shardyDir;
+  options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
+  mlir::sdy::addPropagationPipeline(pm, options);
+  addStablehloExportPipeline(pm);
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
+                                               "sdy_module_after_xla_export"));
+  tsl::StatusScopedDiagnosticHandler diagnosticHandler(
+      mlirModule->getContext());
+  return diagnosticHandler.consumeStatus(pm.run(mlirModule));
+}
+
+}  // namespace
+
+absl::StatusOr<bool> ShardyXLA::Run(
+    HloModule* hloModule,
+    const absl::flat_hash_set<absl::string_view>& executionThreads) {
+  auto moduleFrontendAttrs = hloModule->frontend_attributes().map();
+  bool useTupleArgs = moduleFrontendAttrs.contains(kUseTupleArgs);
+  bool importMhloShardings = moduleFrontendAttrs.contains(kImportMhloShardings);
+
+  if (!runSdyShardingPropagation && !useTupleArgs) {
+    // Nothing to do.
+    return false;
+  }
+
+  // HLO -> StableHLO
+  auto mlirContext = std::make_unique<mlir::MLIRContext>();
+  loadAllRequiredDialects(mlirContext.get());
+  TF_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlirModule,
+      xla::ConvertHloToStablehlo(*mlirContext.get(), hloModule));
 
   // Store the entry computation layout, input-output alias config, and buffer
   // donors, which will be restored in the end, since MLIR does not preserve
@@ -390,23 +415,15 @@ absl::StatusOr<bool> ShardyXLA::Run(
                                      useTupleArgs);
 
   if (runSdyShardingPropagation) {
-    // NOTE: if we are using auto-spmd, we will use conservative propagation
-    // since the TOAST cost model cannot account for split axes or padding.
-    mlir::sdy::PropagationOptions options;
-    options.dumpDirectory = shardyDir;
-    options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
-    mlir::sdy::addPropagationPipeline(pm, options);
+    TF_RETURN_IF_ERROR(runShardingPropagation(hloModule, mlirModule.get(),
+                                              importMhloShardings,
+                                              defaultOptions, name()));
   }
-  addMhloExportPipeline(pm);
-  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
-                                               "sdy_module_after_xla_export"));
-  tsl::StatusScopedDiagnosticHandler diagnosticHandler(mlirContext.get());
-  TF_RETURN_IF_ERROR(diagnosticHandler.consumeStatus(pm.run(*mlirModule)));
 
-  // MLIR MHLO -> HLO
+  // StableHlo -> HLO
   HloProto hloProto;
-  TF_RETURN_IF_ERROR(ConvertMlirHloToHlo(*mlirModule, &hloProto, useTupleArgs,
-                                         /*return_tuple=*/false));
+  TF_RETURN_IF_ERROR(ConvertStablehloWithManyArgsToHloProto(
+      *mlirModule, &hloProto, useTupleArgs));
   TF_RETURN_IF_ERROR(
       createFromProtoAndReplaceComputations(hloModule, hloProto.hlo_module()));
 
@@ -417,7 +434,7 @@ absl::StatusOr<bool> ShardyXLA::Run(
 
   // Restore entry computation layout.
   *hloModule->mutable_entry_computation_layout() =
-      flattenedEntryComputationLayout;
+      std::move(flattenedEntryComputationLayout);
   hloModule->set_input_output_alias_config(
       std::move(flattenedInputOutputAliasConfig));
   hloModule->set_buffer_donor_config(std::move(flattenedBufferDonorsConfig));
@@ -427,12 +444,13 @@ absl::StatusOr<bool> ShardyXLA::Run(
   // update_parameters_layout.
   TF_RETURN_IF_ERROR(
       hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-          hloModule, /*update_output_layout=*/true,
-          /*update_parameters_layout=*/true));
+          hloModule, /*update_output_layout=*/{true},
+          /*update_parameters_layout=*/{true}));
 
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.
-  removeFrontendAttributes(hloModule, {kUseTupleArgs, kMeshesRoundTripAttr});
+  removeFrontendAttributes(
+      hloModule, {kUseTupleArgs, kImportMhloShardings, kMeshesRoundTripAttr});
 
   return true;
 }

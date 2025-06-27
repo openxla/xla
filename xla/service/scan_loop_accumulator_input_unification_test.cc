@@ -21,13 +21,14 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -552,8 +553,9 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest,
 
   // Check the inserted copies before applying the copy insertion pass.
   auto module_clone = module->Clone();
+  AliasInfo alias_info;
   TF_ASSERT_OK_AND_ASSIGN(bool clone_copy_inserted,
-                          CopyInsertion().Run(module_clone.get()));
+                          CopyInsertion(&alias_info).Run(module_clone.get()));
   EXPECT_TRUE(clone_copy_inserted);
   HloInstruction* while_instruction =
       GetTopLevelWhileInstruction(module_clone.get());
@@ -569,7 +571,7 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest,
   // Check the inserted copies after applying the copy insertion pass and
   // removing double buffers.
   TF_ASSERT_OK_AND_ASSIGN(bool copy_inserted,
-                          CopyInsertion().Run(module.get()));
+                          CopyInsertion(&alias_info).Run(module.get()));
   EXPECT_TRUE(copy_inserted);
   VLOG(3) << "After copy_insertion:\n" << module->ToString();
   while_instruction = GetTopLevelWhileInstruction(module.get());

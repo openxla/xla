@@ -21,10 +21,11 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo.pb.h"

@@ -27,9 +27,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
@@ -42,7 +42,7 @@ auto MakeDeviceDescription() {
   return device_description;
 }
 
-class StreamAttributeAnnotatorTest : public HloTestBase {
+class StreamAttributeAnnotatorTest : public HloHardwareIndependentTestBase {
  public:
   const se::DeviceDescription& device_description() const {
     return device_description_;
@@ -185,7 +185,7 @@ TEST_F(StreamAttributeAnnotatorTest, FusionIsAnnotated) {
 
 TEST_F(StreamAttributeAnnotatorTest, CopyStartIsAnnotated) {
   constexpr absl::string_view kHloString = R"(
-  HloModule offloading
+  HloModule offloading, is_scheduled=true
     ENTRY %main (param_0: f32[1024], param_1: f32[1024]) -> f32[1024] {
     %param_1 = f32[1024]{0} parameter(1)
     %param_0 = f32[1024]{0} parameter(0)
@@ -250,7 +250,7 @@ TEST_F(StreamAttributeAnnotatorTest, DynamicUpdateSliceWrappedAndAnnotated) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      StreamAttributeAnnotator{device_description()}.Run(module.get()));
+      StreamAttributeAnnotator(device_description()).Run(module.get()));
   EXPECT_TRUE(changed);
 
   // Check that the dynamic-update-slice instruction is wrapped in a fusion
@@ -314,7 +314,7 @@ TEST_F(StreamAttributeAnnotatorTest, DynamicSliceWrappedAndAnnotated) {
   EXPECT_TRUE(module->has_schedule());
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      StreamAttributeAnnotator{device_description()}.Run(module.get()));
+      StreamAttributeAnnotator(device_description()).Run(module.get()));
   EXPECT_TRUE(changed);
 
   // Check that the dynamic-slice instruction is wrapped in a fusion

@@ -36,7 +36,8 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/execute_options.pb.h"
 #include "xla/python/ifrt/future.h"
-#include "xla/tsl/concurrency/ref_count.h"
+#include "xla/python/ifrt/serdes_default_version_accessor.h"
+#include "xla/python/ifrt/serdes_version.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -78,10 +79,10 @@ class Executable : public llvm::RTTIExtends<Executable, llvm::RTTIRoot> {
   // Returns a list of output `OpSharding`.
   virtual std::optional<std::vector<OpSharding>> GetOutputShardings() const = 0;
   // Returns a list of parameter layouts.
-  virtual absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  virtual absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetParameterLayouts() const = 0;
   // Returns a list of output/result layouts.
-  virtual absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  virtual absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetOutputLayouts() const = 0;
   // Returns an `HloModule` (optimized) per partition.
   virtual absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
@@ -99,13 +100,10 @@ class Executable : public llvm::RTTIExtends<Executable, llvm::RTTIRoot> {
   // differ for different implementations and platforms.
   virtual absl::StatusOr<AttributeMap> GetCostAnalysis() const = 0;
 
-  // Returns the compile options used to compile this executable.
-  // TODO(phawkins): consider removing this API and having the client remember
-  // the compile options used to create the executable.
-  virtual const CompileOptions* GetCompileOptions() const = 0;
-
   static char ID;  // NOLINT
 };
+
+using ExecutableRef = std::shared_ptr<Executable>;
 
 struct ExecuteOptions {
   // If non-zero, identifies this execution as part of a potentially
@@ -127,11 +125,17 @@ struct ExecuteOptions {
   // an invalid future.
   bool fill_status = false;
 
+  // Execution stream ID identifies the series of executions that must be
+  // executed in program order.  Executions with different execution stream IDs
+  // may be executed in any order and concurrently.
+  int64_t execution_stream_id = 0;
+
   // Custom execution options specific to the runtime. The user and the runtime
   // are responsible for ensuring version compatibility.
   std::optional<AttributeMap> custom_options;
 
-  absl::StatusOr<ExecuteOptionsProto> ToProto() const;
+  absl::StatusOr<ExecuteOptionsProto> ToProto(
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
 
   static absl::StatusOr<ExecuteOptions> FromProto(
       const ExecuteOptionsProto& proto);
@@ -184,13 +188,20 @@ class LoadedExecutable
   // Returns a list of parameter Sharding.
   virtual std::optional<std::vector<OpSharding>> GetParameterShardings()
       const = 0;
+
+  // Returns the indices of parameters that will be donated whenever `Execute`
+  // gets called, provided they are not present in
+  // `execute_options.non_donatable_input_indices`.
+  virtual absl::StatusOr<absl::Span<const int>> GetDonatableInputIndices()
+      const = 0;
+
   // Returns a list of output OpSharding.
   virtual std::optional<std::vector<OpSharding>> GetOutputShardings() const = 0;
   // Returns a list of parameter layouts.
-  virtual absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  virtual absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetParameterLayouts() const = 0;
   // Returns a list of output/result layouts.
-  virtual absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  virtual absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetOutputLayouts() const = 0;
   // Return an HloModule (optimized) per partition.
   virtual absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
@@ -217,7 +228,7 @@ class LoadedExecutable
     // `ExecuteOptions::fill_status` is true.
     Future<> status;
     // Output arrays.
-    std::vector<tsl::RCReference<Array>> outputs;
+    std::vector<ArrayRef> outputs;
   };
 
   // Executes the executable on devices.
@@ -238,17 +249,8 @@ class LoadedExecutable
   // (e.g., having per-argument/output booleans or providing a separate barrier
   // API).
   virtual absl::StatusOr<ExecuteResult> Execute(
-      absl::Span<tsl::RCReference<Array>> args, const ExecuteOptions& options,
-      std::optional<tsl::RCReference<DeviceList>> devices) = 0;
-
-  // Deletes the executable from the devices. The operation may be asynchronous.
-  // The returned future will have the result of the deletion on the devices.
-  // Implementations that do not track the completion of the deletion operation
-  // may make the future immediately ready with an OK status.
-  virtual Future<> Delete() = 0;
-  // Returns whether the executable has been enqueued for deletion from the
-  // devices.
-  virtual bool IsDeleted() const = 0;
+      absl::Span<ArrayRef> args, const ExecuteOptions& options,
+      std::optional<DeviceListRef> devices) = 0;
 
   // The following APIs are taken from xla::PjRtLoadedExecutable for fast
   // prototyping.
@@ -259,6 +261,8 @@ class LoadedExecutable
 
   static char ID;  // NOLINT
 };
+
+using LoadedExecutableRef = std::shared_ptr<LoadedExecutable>;
 
 }  // namespace ifrt
 }  // namespace xla

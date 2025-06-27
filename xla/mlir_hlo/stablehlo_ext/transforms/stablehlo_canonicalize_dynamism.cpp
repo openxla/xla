@@ -185,25 +185,24 @@ struct StablehloCanonicalizeDynamismPass
 
   void runOnOperation() override {
     GreedyRewriteConfig config;
-    config.useTopDownTraversal = true;
-    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
-    config.maxIterations = 2;
-    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
-    config.strictMode = GreedyRewriteStrictness::AnyOp;
+    config.setUseTopDownTraversal(true)
+        .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Aggressive)
+        .setMaxIterations(2)
+        .setMaxNumRewrites(GreedyRewriteConfig::kNoLimit)
+        .setStrictness(GreedyRewriteStrictness::AnyOp);
 
     RewritePatternSet patterns(&getContext());
-    stablehlo::populateStablehloCanonicalizeDynamismPatterns(&patterns,
-                                                             &getContext());
+    stablehlo::populateStablehloCanonicalizeDynamismPatterns(&getContext(),
+                                                             &patterns);
     patterns.add<CanonicalizeDynamicReduceWindowOpPattern>(&getContext());
     patterns.add<CanonicalizeDynamicRngBitGeneratorOpPattern>(&getContext());
     patterns.add<CanonicalizeDynamicTopKOpPattern>(&getContext());
     patterns.add<CanonicalizeApproxDynamicTopKOpPattern>(&getContext());
 
     auto funcOp = getOperation();
-    if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns),
-                                            config))) {
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       funcOp.emitError("Failed to converge StablehloCanonicalizeDynamism in ")
-          << config.maxIterations << " iterations";
+          << config.getMaxIterations() << " iterations";
       return signalPassFailure();
     }
   }

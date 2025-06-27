@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_HLO_BUILDER_LIB_APPROX_TOPK_H_
 #define XLA_HLO_BUILDER_LIB_APPROX_TOPK_H_
 
+#include <cstdint>
+
 #include "absl/types/span.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -57,12 +59,23 @@ XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
                  int64_t reduction_dim, const XlaComputation& comparator,
                  float recall_target = 0.9, bool aggregate_to_topk = true,
                  int64_t reduction_input_size_override = -1);
+XlaOp ApproxTopK(XlaBuilder* builder, absl::Span<const XlaOp> operands,
+                 absl::Span<const XlaOp> init_values, int64_t top_k,
+                 int64_t reduction_dim, XlaComputationId comparator,
+                 float recall_target = 0.9, bool aggregate_to_topk = true,
+                 int64_t reduction_input_size_override = -1);
 
 // Fallback for platforms that haven't been optimized.
 XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
                          absl::Span<const XlaOp> init_values, int64_t top_k,
                          int64_t reduction_dim,
                          const XlaComputation& comparator,
+                         float recall_target = 0.9,
+                         bool aggregate_to_topk = true,
+                         int64_t reduction_input_size_override = -1);
+XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
+                         absl::Span<const XlaOp> init_values, int64_t top_k,
+                         int64_t reduction_dim, XlaComputationId comparator,
                          float recall_target = 0.9,
                          bool aggregate_to_topk = true,
                          int64_t reduction_input_size_override = -1);

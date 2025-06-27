@@ -16,7 +16,7 @@ limitations under the License.
 
 #include "tsl/platform/cpu_info.h"
 
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 
@@ -29,6 +29,12 @@ TEST(CPUInfo, CommonX86CPU) {
 
 TEST(CPUInfo, Aarch64NeoverseV1CPU) {
   if (port::TestAarch64CPU(port::Aarch64CPU::ARM_NEOVERSE_V1)) {
+    EXPECT_TRUE(port::IsAarch64CPU());
+  }
+}
+
+TEST(CPUInfo, Aarch64Bf16) {
+  if (port::TestCPUFeature(port::CPUFeature::AARCH64_BF16)) {
     EXPECT_TRUE(port::IsAarch64CPU());
   }
 }

@@ -46,18 +46,18 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
-#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
 
 namespace pjrt {
 namespace {
@@ -563,12 +563,15 @@ TEST_F(PjrtCApiTest, DeviceDescriptionAndMemoryDescriptionss) {
   PJRT_Error* error = api_->PJRT_Device_GetDescription(&get_description);
   EXPECT_EQ(error, nullptr);
 
+  absl::StatusOr<xla::PjRtMemorySpaceDescription*> default_memory;
   std::vector<xla::PjRtMemorySpaceDescription> memory_descriptions =
-      GetMemorySpaceDescriptions(get_description.device_description, api_);
+      GetMemorySpaceDescriptions(get_description.device_description, api_,
+                                 &default_memory);
 
+  EXPECT_TRUE(default_memory.ok());
   for (int i = 0; i < memory_descriptions.size(); i++) {
+    EXPECT_NE(memory_descriptions[i].kind_id(), 0);
     EXPECT_NE(memory_descriptions[i].kind().size(), 0);
-    EXPECT_GE(memory_descriptions[i].kind_id(), 0);
   }
 }
 
@@ -578,26 +581,15 @@ class PjrtCApiBufferTest : public PjrtCApiTest {
  protected:
   void SetUp() override {
     PjrtCApiTest::SetUp();
-    auto buffer_and_event = create_buffer();
-    buffer_ = std::move(buffer_and_event.first);
-    event_ = buffer_and_event.second;
+    buffer_ = create_buffer();
   }
 
   void TearDown() override {
-    // event_ need to complete before the client is destroyed; otherwise there
-    // is a data race between destroying the client and trying to access the
-    // host context in the client for the callback after host to device transfer
-    // is completed.
-    TF_CHECK_OK(event_.Await());
-    // buffer_ must be destroyed before the client is destroyed or else the
-    // unique_ptr for buffer_ will go out of scope causing heap-use-after-free
-    // error.
     buffer_.reset(nullptr);
     PjrtCApiTest::TearDown();
   }
 
   std::unique_ptr<PJRT_Buffer, ::pjrt::PJRT_BufferDeleter> buffer_;
-  xla::PjRtFuture<> event_;
 };
 
 TEST_F(PjrtCApiBufferTest, IsDeleted) {
@@ -671,10 +663,13 @@ TEST_F(PjrtCApiBufferTest, ReadyEvent) {
 }
 
 TEST_F(PjrtCApiBufferTest, ToHostBufferNoHostLayout) {
+  auto [buffer, buffer_future] = create_iota_buffer();
+  TF_CHECK_OK(buffer_future.Await());
+
   PJRT_Buffer_ToHostBuffer_Args args;
   args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
-  args.src = buffer_.get();
+  args.src = buffer.get();
   xla::Shape host_shape = xla::ShapeUtil::MakeShape(xla::F32, {4});
   auto literal = std::make_shared<xla::Literal>(host_shape);
   args.host_layout = nullptr;
@@ -912,11 +907,30 @@ FieldOffsetsAndSizesForVersion(int major_version, int minor_version) {
     if (minor_version >= 57) {
       add_field("PJRT_Buffer_CopyRawToHost", kFnPtrSize);
     }
-    if (minor_version >= 58) {
+    if (minor_version >= 60) {
       add_field("PJRT_AsyncHostToDeviceTransferManager_Destroy", kFnPtrSize);
       add_field("PJRT_AsyncHostToDeviceTransferManager_TransferData",
                 kFnPtrSize);
       add_field("PJRT_Client_CreateBuffersForAsyncHostToDevice", kFnPtrSize);
+    }
+    if (minor_version >= 62) {
+      add_field("PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer",
+                kFnPtrSize);
+      add_field("PJRT_AsyncHostToDeviceTransferManager_Device", kFnPtrSize);
+      add_field("PJRT_AsyncHostToDeviceTransferManager_BufferCount",
+                kFnPtrSize);
+      add_field("PJRT_AsyncHostToDeviceTransferManager_BufferSize", kFnPtrSize);
+      add_field("PJRT_AsyncHostToDeviceTransferManager_SetBufferError",
+                kFnPtrSize);
+      add_field("PJRT_AsyncHostToDeviceTransferManager_AddMetadata",
+                kFnPtrSize);
+    }
+    if (minor_version >= 67) {
+      add_field("PJRT_Client_DmaMap", kFnPtrSize);
+      add_field("PJRT_Client_DmaUnmap", kFnPtrSize);
+    }
+    if (minor_version >= 68) {
+      add_field("PJRT_Client_CreateUninitializedBuffer", kFnPtrSize);
     }
     return version_offsets_and_sizes;
   }
@@ -1257,6 +1271,43 @@ TEST_F(PjrtCAbiTestBase, FieldOffsetsAndSizes) {
           {"PJRT_Client_CreateBuffersForAsyncHostToDevice",
            {offsetof(PJRT_Api, PJRT_Client_CreateBuffersForAsyncHostToDevice),
             sizeof(PJRT_Api::PJRT_Client_CreateBuffersForAsyncHostToDevice)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer",
+           {offsetof(PJRT_Api,
+                     PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer),
+            sizeof(PJRT_Api::
+                       PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_Device",
+           {offsetof(PJRT_Api, PJRT_AsyncHostToDeviceTransferManager_Device),
+            sizeof(PJRT_Api::PJRT_AsyncHostToDeviceTransferManager_Device)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_BufferCount",
+           {offsetof(PJRT_Api,
+                     PJRT_AsyncHostToDeviceTransferManager_BufferCount),
+            sizeof(
+                PJRT_Api::PJRT_AsyncHostToDeviceTransferManager_BufferCount)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_BufferSize",
+           {offsetof(PJRT_Api,
+                     PJRT_AsyncHostToDeviceTransferManager_BufferSize),
+            sizeof(
+                PJRT_Api::PJRT_AsyncHostToDeviceTransferManager_BufferSize)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_SetBufferError",
+           {offsetof(PJRT_Api,
+                     PJRT_AsyncHostToDeviceTransferManager_SetBufferError),
+            sizeof(PJRT_Api::
+                       PJRT_AsyncHostToDeviceTransferManager_SetBufferError)}},
+          {"PJRT_AsyncHostToDeviceTransferManager_AddMetadata",
+           {offsetof(PJRT_Api,
+                     PJRT_AsyncHostToDeviceTransferManager_AddMetadata),
+            sizeof(
+                PJRT_Api::PJRT_AsyncHostToDeviceTransferManager_AddMetadata)}},
+          {"PJRT_Client_DmaMap",
+           {offsetof(PJRT_Api, PJRT_Client_DmaMap),
+            sizeof(PJRT_Api::PJRT_Client_DmaMap)}},
+          {"PJRT_Client_DmaUnmap",
+           {offsetof(PJRT_Api, PJRT_Client_DmaUnmap),
+            sizeof(PJRT_Api::PJRT_Client_DmaUnmap)}},
+          {"PJRT_Client_CreateUninitializedBuffer",
+           {offsetof(PJRT_Api, PJRT_Client_CreateUninitializedBuffer),
+            sizeof(PJRT_Api::PJRT_Client_CreateUninitializedBuffer)}},
       };
   ASSERT_EQ(api_->pjrt_api_version.major_version, PJRT_API_MAJOR);
   ASSERT_EQ(api_->pjrt_api_version.minor_version, PJRT_API_MINOR);

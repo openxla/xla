@@ -18,11 +18,11 @@ limitations under the License.
 #include "xla/tsl/lib/io/record_reader.h"
 #include "xla/tsl/lib/io/record_writer.h"
 #include "xla/tsl/lib/random/simple_philox.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/test.h"
 #include "tsl/platform/coding.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/str_util.h"
-#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace io {
@@ -153,7 +153,7 @@ class RecordioTest : public ::testing::Test {
     absl::Status s = reader_->ReadRecord(&readpos_, &record);
     if (s.ok()) {
       return record;
-    } else if (errors::IsOutOfRange(s)) {
+    } else if (absl::IsOutOfRange(s)) {
       return "EOF";
     } else {
       return s.ToString();
@@ -185,7 +185,7 @@ class RecordioTest : public ::testing::Test {
     uint64 offset = WrittenBytes() + offset_past_end;
     tstring record;
     absl::Status s = reader_->ReadRecord(&offset, &record);
-    ASSERT_TRUE(errors::IsOutOfRange(s)) << s;
+    ASSERT_TRUE(absl::IsOutOfRange(s)) << s;
   }
 };
 
@@ -318,7 +318,7 @@ void TestReadError(const RecordWriterOptions& writer_options,
   tstring read;
   file.force_error();
   absl::Status status = reader.ReadRecord(&offset, &read);
-  ASSERT_TRUE(errors::IsDataLoss(status));
+  ASSERT_TRUE(absl::IsDataLoss(status));
   ASSERT_EQ(0, offset);
 
   // A failed Read() shouldn't update the offset, and thus a retry shouldn't

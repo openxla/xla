@@ -31,6 +31,11 @@ const auto& GemmRewriteTestBase::device_desc() const {
   return backend().default_stream_executor()->GetDeviceDescription();
 }
 
+stream_executor::SemanticVersion GemmRewriteTestBase::GetRuntimeVersion()
+    const {
+  return device_desc().runtime_version();
+}
+
 const stream_executor::GpuComputeCapability& GemmRewriteTestBase::Capability()
     const {
   return device_desc().gpu_compute_capability();
@@ -54,12 +59,19 @@ bool GemmRewriteTestBase::IsRocm() const {
       Capability());
 }
 
-stream_executor::GpuComputeCapability
-GemmRewriteTestBase::CudaHopperOrRocmMI300() {
+bool GemmRewriteTestBase::IsBlackwell() const {
   if (IsCuda()) {
-    return stream_executor::CudaComputeCapability::Hopper();
+    return std::get<se::CudaComputeCapability>(Capability()).IsBlackwell();
+  }
+  return false;
+}
+
+stream_executor::GpuComputeCapability
+GemmRewriteTestBase::CudaHopperOrRocmCapability() {
+  if (IsCuda()) {
+    return se::CudaComputeCapability::Hopper();
   } else {
-    return stream_executor::RocmComputeCapability{"gfx942"};
+    return std::get<se::RocmComputeCapability>(Capability());
   }
 }
 

@@ -13,6 +13,14 @@ package(
     licenses = ["notice"],
 )
 
+filegroup(
+    name = "xla_cpu_runtime_hdrs",
+    srcs = [
+        "math_util.h",
+    ],
+    compatible_with = get_compatible_with_portable(),
+)
+
 cc_library(
     name = "math_util",
     hdrs = ["math_util.h"],
@@ -29,11 +37,11 @@ tsl_cc_test(
     ],
     deps = [
         ":math_util",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

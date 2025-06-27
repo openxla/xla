@@ -41,7 +41,7 @@ func.func @main(
 // -----
 
 // Test that a sharding on the result of a function is kept around. Due to how
-// MHLO->HLO conversion works discarding any frontend attributes on the function
+// StableHLO->HLO conversion works discarding any frontend attributes on the function
 // results, we copy the sharding to a temporary custom call before discarding it
 // after the round-trip.
 
@@ -86,7 +86,7 @@ func.func @main(
 // -----
 
 // Test that a result sharding whose value is the function argument. Due to how
-// MHLO->HLO conversion works discarding any frontend attributes on the function
+// StableHLO->HLO conversion works discarding any frontend attributes on the function
 // results, we copy the sharding to a temporary custom call before discarding it
 // after the round-trip.
 
@@ -189,10 +189,10 @@ func.func @main(
     %arg1: tensor<32x96xf32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {}]>})
     -> tensor<32x96xf32> {
   // CHECK-NEXT: %[[C0:.*]] = sdy.constant dense<0>
-  // CHECK-NEXT: %[[C32:.*]] = sdy.constant dense<32>
   // CHECK-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg1 <@mesh, [{?}, {?}]>
   // CHECK-NEXT: %[[WHILE:.*]]:2 = stablehlo.while(%iterArg = %arg0, %iterArg_0 = %[[C0]])
   // CHECK-NEXT:   cond {
+  // CHECK-NEXT:   %[[C32:.*]] = sdy.constant dense<32>
   // CHECK-NEXT:   %[[COND:.*]] = stablehlo.compare LT, %iterArg_0, %[[C32]]
   // CHECK-NEXT:   stablehlo.return %[[COND]]
   // CHECK-NEXT: } do {
@@ -230,28 +230,37 @@ func.func @main(%arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
 
 // -----
 
+// CHECK-LABEL: func @main
+func.func @main(%arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  // CHECK: sdy.propagation_barrier %arg0 allowed_direction=BACKWARD : tensor<8x16xf32>
+  %r = sdy.propagation_barrier %arg0 allowed_direction=BACKWARD : tensor<8x16xf32>
+  return %r : tensor<8x16xf32>
+}
+
+// -----
+
 // Test call with backend config and multiple results. This is what JAX would
 // emit in the frontend, and then we'd convert it to a NamedComputationOp when
 // coming back.
 
 func.func @main(%arg0: tensor<8x2xi32>) -> tensor<8x2xi32> {
-  // CHECK:      %[[NC:.*]]:2 = sdy.named_computation<"g.2.2">(%arg0) (%arg1: tensor<8x2xi32>) {
+  // CHECK:      %[[NC:.*]]:2 = sdy.named_computation<"g.2.{{[0-9]}}">(%arg0) (%arg1: tensor<8x2xi32>) {
   // CHECK-NEXT:   %[[MUL:.*]] = stablehlo.multiply %arg1, %arg1 : tensor<8x2xi32>
   // CHECK-NEXT:   sdy.return %[[MUL]], %[[MUL]] : tensor<8x2xi32>, tensor<8x2xi32>
   // CHECK-NEXT: } {mhlo.frontend_attributes = {backend_config = "{\22flag_configs\22:[],\22scoped_memory_configs\22:[],\22device_type\22:\22DEVICE_TYPE_HOST\22,\22used_scoped_memory_configs\22:[]}"}} : (tensor<8x2xi32>) -> (tensor<8x2xi32>, tensor<8x2xi32>)
   // CHECK-NEXT: %[[HOST:.*]] = stablehlo.custom_call @MoveToHost(%[[NC]]#0) {backend_config = ""} : (tensor<8x2xi32>) -> tensor<8x2xi32>
   // CHECK-NEXT: return %[[HOST]] : tensor<8x2xi32>
   %0:2 = call @g.2(%arg0) {mhlo.frontend_attributes = {backend_config = "{\22flag_configs\22:[],\22scoped_memory_configs\22:[],\22device_type\22:\22DEVICE_TYPE_HOST\22,\22used_scoped_memory_configs\22:[]}"}, mhlo.sharding = "{{maximal device=0}, {replicated}}"} : (tensor<8x2xi32>) -> (tensor<8x2xi32>, tensor<8x2xi32>)
-  %1 = mhlo.custom_call @MoveToHost(%0#0) {backend_config = ""} : (tensor<8x2xi32>) -> tensor<8x2xi32>
+  %1 = stablehlo.custom_call @MoveToHost(%0#0) {backend_config = ""} : (tensor<8x2xi32>) -> tensor<8x2xi32>
   return %1 : tensor<8x2xi32>
 }
 
 // CHECK-NOT: g.2
 func.func private @g.2(%arg0: tensor<8x2xi32>) -> (tensor<8x2xi32>, tensor<8x2xi32>) {
-  %0 = mhlo.multiply %arg0, %arg0 : tensor<8x2xi32>
+  %0 = stablehlo.multiply %arg0, %arg0 : tensor<8x2xi32>
   return %0, %0 : tensor<8x2xi32>, tensor<8x2xi32>
 }
 
-// TODO(b/335481977): Add more tests for MHLO ops. So far tested all SDY
+// TODO(b/335481977): Add more tests for StableHLO ops. So far tested all SDY
 // compiler APIs other than shard as/like (doesn't exist yet). See
 // round_trip_pipeline_manual_computation.mlir for ManualComputationOp tests.

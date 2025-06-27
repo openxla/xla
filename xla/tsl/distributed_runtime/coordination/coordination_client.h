@@ -20,8 +20,8 @@ limitations under the License.
 #include <string>
 
 #include "xla/tsl/distributed_runtime/call_options.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/status.h"
 
 namespace tsl {
 using tensorflow::BarrierRequest;
@@ -32,6 +32,8 @@ using tensorflow::DeleteKeyValueRequest;
 using tensorflow::DeleteKeyValueResponse;
 using tensorflow::GetAliveTasksRequest;
 using tensorflow::GetAliveTasksResponse;
+using tensorflow::GetJobStateRequest;
+using tensorflow::GetJobStateResponse;
 using tensorflow::GetKeyValueDirRequest;
 using tensorflow::GetKeyValueDirResponse;
 using tensorflow::GetKeyValueRequest;
@@ -100,6 +102,10 @@ class CoordinationClient {
   virtual void GetTaskStateAsync(const GetTaskStateRequest* request,
                                  GetTaskStateResponse* response,
                                  StatusCallback done) = 0;
+
+  virtual void GetJobStateAsync(const GetJobStateRequest* request,
+                                GetJobStateResponse* response,
+                                StatusCallback done) = 0;
 
   virtual void InsertKeyValueAsync(const InsertKeyValueRequest* request,
                                    InsertKeyValueResponse* response,

@@ -18,24 +18,35 @@ limitations under the License.
 
 #include <string>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 
 namespace xla {
 
 class InMemoryKeyValueStore : public KeyValueStoreInterface {
  public:
+  // This is the default behavior in in-memory key-value store to
+  // allow overwriting.
+  InMemoryKeyValueStore() : allow_overwrite_(true) {}
+  explicit InMemoryKeyValueStore(bool allow_overwrite)
+      : allow_overwrite_(allow_overwrite) {};
   absl::StatusOr<std::string> Get(absl::string_view key,
                                   absl::Duration timeout) override;
+
+  absl::StatusOr<std::string> TryGet(absl::string_view key) override;
 
   absl::Status Set(absl::string_view key, absl::string_view value) override;
 
  private:
   absl::Mutex mu_;
   absl::flat_hash_map<std::string, std::string> kv_store_ ABSL_GUARDED_BY(mu_);
+  bool allow_overwrite_;
 };
 
 }  // namespace xla

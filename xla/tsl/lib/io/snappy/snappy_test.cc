@@ -21,8 +21,8 @@ limitations under the License.
 #include "xla/tsl/lib/io/snappy/snappy_inputbuffer.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputstream.h"
 #include "xla/tsl/lib/io/snappy/snappy_outputbuffer.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 
@@ -103,7 +103,9 @@ absl::Status TestMultipleWritesWriteFile(size_t compress_input_buf_size,
     char* buffer = new char[bytes_to_read];
     size_t buffer_size = 0;
 
-    while ((file_reader->Read(file_pos, bytes_to_read, &data, scratch)).ok()) {
+    while ((file_reader->Read(file_pos, data,
+                              absl::MakeSpan(scratch, bytes_to_read)))
+               .ok()) {
       file_pos += data.size();
       TF_CHECK_OK(
           corrupt_file_writer->Append(absl::string_view(buffer, buffer_size)));

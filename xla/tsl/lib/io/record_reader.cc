@@ -21,8 +21,8 @@ limitations under the License.
 #include "xla/tsl/lib/io/buffered_inputstream.h"
 #include "xla/tsl/lib/io/compression.h"
 #include "xla/tsl/lib/io/random_inputstream.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/raw_coding.h"
 
 namespace tsl {
@@ -151,7 +151,7 @@ absl::Status RecordReader::GetMetadata(Metadata* md) {
       // Read header, containing size of data.
       absl::Status s = ReadChecksummed(offset, sizeof(uint64), &record);
       if (!s.ok()) {
-        if (errors::IsOutOfRange(s)) {
+        if (absl::IsOutOfRange(s)) {
           // We should reach out of range when the record file is complete.
           break;
         }
@@ -212,7 +212,7 @@ absl::Status RecordReader::ReadRecord(uint64* offset, tstring* record) {
   s = ReadChecksummed(*offset + kHeaderSize, length, record);
   if (!s.ok()) {
     last_read_failed_ = true;
-    if (errors::IsOutOfRange(s)) {
+    if (absl::IsOutOfRange(s)) {
       s = errors::DataLoss("truncated record at ", *offset, "' failed with ",
                            s.message());
     }
@@ -243,7 +243,7 @@ absl::Status RecordReader::SkipRecords(uint64* offset, int num_to_skip,
     s = input_stream_->SkipNBytes(length + kFooterSize);
     if (!s.ok()) {
       last_read_failed_ = true;
-      if (errors::IsOutOfRange(s)) {
+      if (absl::IsOutOfRange(s)) {
         s = errors::DataLoss("truncated record at ", *offset, "' failed with ",
                              s.message());
       }

@@ -26,13 +26,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/numeric/int128.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/array.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/permutation_util.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -138,6 +146,20 @@ TEST(TransposeTest, InvalidTilings) {
       plan.status().message(),
       testing::HasSubstr(
           "Only one of the input and output may have a non-trivial tiling"));
+}
+
+TEST(TransposeTest, LargeDimensions) {
+  std::vector<int64_t> dims = {3ll << 30};
+  std::vector<int64_t> permutation = {0};
+
+  TransposePlan::Options options;
+  options.elem_size_in_bytes = 8;
+  options.dims = dims;
+  options.permutation = permutation;
+  options.input_layout = TransposePlan::Tiling{};
+  options.output_tiling = TransposePlan::Tiling{};
+  options.transformation = TransposePlan::Transformation::kNone;
+  TF_EXPECT_OK(TransposePlan::Create(options).status());
 }
 
 // Computes the size in elements of a tiled array.

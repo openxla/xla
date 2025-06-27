@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 
@@ -40,9 +41,26 @@ absl::StatusOr<std::string> InMemoryKeyValueStore::Get(absl::string_view key,
   return kv_store_.find(key)->second;
 }
 
+absl::StatusOr<std::string> InMemoryKeyValueStore::TryGet(
+    absl::string_view key) {
+  absl::MutexLock lock(&mu_);
+  auto it = kv_store_.find(key);
+  if (it == kv_store_.end()) {
+    return absl::NotFoundError(
+        absl::StrCat(key, " is not found in the kv store."));
+  }
+  return it->second;
+}
+
 absl::Status InMemoryKeyValueStore::Set(absl::string_view key,
                                         absl::string_view value) {
   absl::MutexLock lock(&mu_);
+  if (!allow_overwrite_) {
+    if (kv_store_.contains(key)) {
+      return absl::AlreadyExistsError(
+          absl::StrCat(key, " already exists in the kv store."));
+    }
+  }
   kv_store_[key] = value;
   return absl::OkStatus();
 }

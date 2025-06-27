@@ -81,11 +81,23 @@ class IrEmitter2 {
     explicit KernelInfo(KernelPrototype prototype,
                         const se::BlockDim& block_dims,
                         const se::ThreadDim& thread_dims);
+    explicit KernelInfo(const std::string& name, const se::BlockDim& block_dims,
+                        const se::ThreadDim& thread_dims,
+                        const absl::flat_hash_set<int64_t>& invariant_arguments,
+                        absl::string_view backend_extra_options = "");
 
     std::string name;
     se::BlockDim block_dims;
     se::ThreadDim thread_dims;
     absl::flat_hash_set<int64_t> invariant_arguments;
+    // CSV with extra compilation options. Overrides the
+    // xla_backend_extra_options flag in ModuleConfig.
+    // This is here because currently in IrEmitter2 all codegen'ed objects
+    // end up being linked in the same LLVM::Module. If we had one module
+    // per object, we could simply embed these options in the object.
+    // TODO(ecg): move IrEmitter2 to a model where we have one object per
+    // LLVM::Module. Or migrate IrEmitter2 to something better.
+    std::string backend_extra_options;
   };
 
   // Emitted comparator function information (for sort operation).
@@ -98,29 +110,12 @@ class IrEmitter2 {
 
   absl::Span<const ComparatorInfo> comparators() const { return comparators_; }
 
-  // Emits an elemental host kernel for the given HLO instruction.
-  absl::StatusOr<KernelInfo> EmitElementalHostKernel(
-      const HloInstruction* instr);
-
   // Emits a host kernel for the pad instruction.
   absl::StatusOr<KernelInfo> EmitPadHostKernel(const HloInstruction* pad);
 
   // Emits a host kernel for the given fusion instruction.
   absl::StatusOr<KernelInfo> EmitFusionHostKernel(
       const HloFusionInstruction* fusion);
-
-  // Emits a host kernel for the given reduction instruction.
-  absl::StatusOr<KernelInfo> EmitReductionHostKernel(
-      const HloInstruction* instr);
-
-  // Emits a host kernel for the given dot instruction. Small dot operations
-  // are emitted as LLVM IR directly, while larger ones are emitted as a dot
-  // thunk that calls into libraries.
-  absl::StatusOr<KernelInfo> EmitDotHostKernel(const HloInstruction* instr);
-
-  // Emits a host kernel for the given concatenate instruction.
-  absl::StatusOr<KernelInfo> EmitConcatenateHostKernel(
-      const HloInstruction* instr);
 
   // Emits a host kernel for the given dot fusion instruction (output fusion).
   absl::StatusOr<KernelInfo> EmitDotFusionHostKernel(
@@ -136,6 +131,10 @@ class IrEmitter2 {
 
   // Emits a comparator function for the given sort instruction.
   absl::StatusOr<ComparatorInfo> EmitSortComparator(HloComputation* comparator);
+
+  bool CanUpdateDynamicSliceInPlace(const HloInstruction* update) const;
+
+  bool IsSupportedByFusionEmitter(const HloFusionInstruction* fusion) const;
 
  private:
   class ElementalIrEmitter;
@@ -159,8 +158,6 @@ class IrEmitter2 {
   // Returns parallel config for the given instruction or std::nullopt if
   // the instruction has to be compiled to a single threaded loop.
   std::optional<ParallelConfig> GetParallelConfig(const HloInstruction* instr);
-
-  absl::Status CanDoFastConcatenate(const HloInstruction* concatenate) const;
 
   // Emits LLVM IR that computes parallel partition bounds from the call frame's
   // block and thread dimensions and parallel execution config.

@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_HLO_UTILS_HLO_SHARDING_UTIL_H_
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -24,7 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -34,11 +35,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/literal.h"
+#include "xla/layout.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dot_as_convolution_util.h"
 #include "xla/shape.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace hlo_sharding_util {
@@ -53,6 +55,7 @@ struct FormattingStep {
   std::optional<Shape> reverse_input_shape;
   HloOpcode formatting_opcode;
   HloInstruction* padding_value;
+  std::optional<absl::Span<const int64_t>> xpose_permutation;
 };
 
 struct GatherScatterDims {
@@ -403,11 +406,39 @@ HloSharding InferGatherScatterParallelShardingFromOperandSharding(
     absl::Span<const int64_t> output_aligned_operand_parallel_dims,
     absl::Span<const int64_t> output_parallel_dims);
 
+// Tile assignment representing device groups. Tile assignment has two
+// dimensions and is of shape [num_groups, num_devices_per_group].
+class DeviceGroupTileAssignment : public TileAssignment {
+ public:
+  explicit DeviceGroupTileAssignment(int64_t num_groups,
+                                     int64_t num_devices_per_group)
+      : TileAssignment({num_groups, num_devices_per_group}) {}
+  explicit DeviceGroupTileAssignment(int64_t num_groups,
+                                     int64_t num_devices_per_group,
+                                     absl::Span<const int64_t> reshape_dims,
+                                     absl::Span<const int> transpose_perm)
+      : TileAssignment({num_groups, num_devices_per_group}, reshape_dims,
+                       transpose_perm) {}
+  explicit DeviceGroupTileAssignment(const TileAssignment& tile_assignment)
+      : TileAssignment(tile_assignment) {
+    CHECK(tile_assignment.num_dimensions() == 2)
+        << "DeviceGroupTileAssignment expects TileAssignment to have exactly 2 "
+           "dimensions. Found: "
+        << tile_assignment.num_dimensions();
+  }
+
+  bool has_iota() const { return iota().has_value(); }
+  int64_t num_total_devices() const { return num_elements(); }
+  int64_t num_groups() const { return dim(0); }
+  int64_t num_devices_per_group() const { return dim(1); }
+  std::vector<std::vector<int64_t>> flattened_device_groups() const;
+};
+
 // Represents grouping devices in a tiled sharding along certain dimensions.
 // Elements in group dimensions define different device groups, and the sharding
 // represents the in-group sharding.
 struct GroupedSharding {
-  GroupedSharding(std::vector<std::vector<int64_t>> device_groups,
+  GroupedSharding(DeviceGroupTileAssignment device_groups,
                   DimensionVector group_dims, DimensionVector group_dim_sizes,
                   int64_t data_rank, HloSharding grouped_sharding,
                   bool subgroup_manual = false)
@@ -418,8 +449,7 @@ struct GroupedSharding {
         sharding(std::move(grouped_sharding)),
         subgroup_manual(subgroup_manual) {}
   std::string ToString() const;
-  // TODO(b/316622399): Migrate this to be a TileAssignment.
-  std::vector<std::vector<int64_t>> device_groups;
+  DeviceGroupTileAssignment device_groups;
   DimensionVector group_dims;
   DimensionVector group_dim_sizes;
   int64_t data_rank;
@@ -476,7 +506,7 @@ GroupedSharding GetManualSubgroupSharding(const HloSharding& sharding);
 std::optional<GroupedSharding>
 PartialReplicatedGroupShardingWithAssignedDeviceGroups(
     const HloSharding& sharding, int64_t num_shards,
-    const std::vector<std::vector<int64_t>>& device_groups);
+    const DeviceGroupTileAssignment& device_groups);
 
 // Reconstructs the ungrouped sharding from a GroupedSharding.
 HloSharding UngroupSharding(const GroupedSharding& grouped_sharding);
@@ -503,19 +533,21 @@ HloSharding MergeShardingDimension(const HloSharding& sharding,
 std::shared_ptr<const HloSharding> CreateTupleSharding(
     const Shape& shape, absl::Span<const HloInstruction* const> elements);
 
-// Returns the first mergeable dimension for the sort operand. A mergeable
-// dimension satisfies:
-// 1. The sort dimension is sharded. The size of the sort dimension is larger
-// than 1.
-// 2. The mergeable dimension is not a sort dimension.
-// 3. The size of the mergeable dimension is divisible by the merged tile size,
-// which is the product of the tile sizes of the sort dim and the picked
-// mergeable dim.
+// We intend to move the sharding tiles from the source dimension to a target
+// dimension. Returns the first target dimension, which satisfies:
+// 1. The source dimension is sharded. The size of the source dimension is
+// larger than 1.
+// 2. The target dimension and source dimension are different.
+// 3. The target dimension satisfies the can_be_target_dim predicate.
+// 4. The size of the target dimension is divisible by the merged tile size,
+// which is the product of the tile sizes of the source dim and the target dim.
 //
 // If there is no such dimension, returns std::nullopt.
-std::optional<int64_t> GetFirstMergeableDimForSortOperand(
-    const Shape& operand_shape, const HloSharding& operand_sharding,
-    int64_t sort_dim);
+std::optional<int64_t> GetFirstTargetDimToMoveShardingTiles(
+    const Shape& shape, const HloSharding& sharding, int64_t source_dim,
+    std::function<bool(int64_t)> can_be_target_dim = [](int64_t) {
+      return true;
+    });
 
 // Returns the sharding of an output of an instruction. Some instructions have
 // special handling like Outfeed and this function takes care of those.
@@ -542,8 +574,8 @@ Shape TileLeafShape(const HloSharding& sharding, const Shape& shape);
 // DetermineArgumentLayoutsFromCompileOptions() in
 // tensorflow/compiler/xla/pjrt/utils.h.
 absl::Status CanonicalizeLayoutAfterShardingPropagation(
-    HloModule* module, bool update_output_layout,
-    bool update_parameters_layout);
+    HloModule* module, const std::vector<bool>& update_output_layout,
+    const std::vector<bool>& update_parameters_layout);
 
 // Returns true iff the specified hlo or sharding has a spatially partitioned
 // sharding (tiled or replicated) that can be propagated by sharding

@@ -1,45 +1,38 @@
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
-    packages = [
-        "//learning/deepmind/partir/compiler/shardonnay/...",
-        "//third_party/openxla/shardy/tools/...",
-        "//xla/service/spmd/shardy/...",
+    includes = [
+        "//xla:friends",
     ],
 )
 
 cc_library(
-    name = "mhlo_to_hlo_to_mhlo",
-    srcs = ["mhlo_to_hlo_to_mhlo.cc"],
-    hdrs = ["mhlo_to_hlo_to_mhlo.h"],
+    name = "stablehlo_to_hlo_to_stablehlo",
+    srcs = ["stablehlo_to_hlo_to_stablehlo.cc"],
+    hdrs = ["stablehlo_to_hlo_to_stablehlo.h"],
     deps = [
-        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "//xla/hlo/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
-        "//xla/mlir_hlo",
-        "//xla/mlir_hlo:mhlo_passes",
+        "//xla/hlo/translate:stablehlo",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:QuantOps",
-        "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:Support",
-        "@shardy//shardy/dialect/sdy/ir:dialect",
-        "@stablehlo//:stablehlo_ops",
-        "@tsl//tsl/platform:errors",
+        "@llvm-project//mlir:UBDialect",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -48,8 +41,7 @@ cc_library(
     srcs = ["testing_pipeline.cc"],
     hdrs = ["testing_pipeline.h"],
     deps = [
-        ":mhlo_to_hlo_to_mhlo",
-        "//xla/mlir_hlo:mhlo_passes",
+        ":stablehlo_to_hlo_to_stablehlo",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "@llvm-project//mlir:Pass",
     ],

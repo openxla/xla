@@ -30,12 +30,12 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/utils/file_system_utils.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/file_system.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
 #include "tsl/profiler/protobuf/profiler_service.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
@@ -51,8 +51,9 @@ absl::Status DumpToolData(absl::string_view run_dir, absl::string_view host,
                           const tensorflow::ProfileToolData& tool,
                           std::ostream* os) {
   // Don't save the intermediate results for combining the per host tool data.
-  if (absl::EndsWith(tool.name(), kTfStatsHelperSuffix))
+  if (absl::EndsWith(tool.name(), kTfStatsHelperSuffix)) {
     return absl::OkStatus();
+  }
   std::string host_prefix = host.empty() ? "" : absl::StrCat(host, ".");
   std::string path =
       ProfilerJoinPath(run_dir, absl::StrCat(host_prefix, tool.name()));
@@ -98,7 +99,9 @@ absl::Status SaveProfile(const std::string& repository_root,
                          const std::string& run, const std::string& host,
                          const tensorflow::ProfileResponse& response,
                          std::ostream* os) {
-  if (response.tool_data().empty()) return absl::OkStatus();
+  if (response.tool_data().empty()) {
+    return absl::OkStatus();
+  }
   std::string run_dir;
   TF_RETURN_IF_ERROR(GetOrCreateRunDir(repository_root, run, &run_dir, os));
   // Windows file names do not support colons.

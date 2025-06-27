@@ -27,12 +27,11 @@ limitations under the License.
 #include "absl/meta/type_traits.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/timespan.h"
-#include "tsl/platform/macros.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {

@@ -71,10 +71,10 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/status/statusor.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/status.h"
 
 // Include appropriate platform-dependent `TF_ASSIGN_OR_RETURN`.
 #if defined(PLATFORM_GOOGLE)
@@ -100,9 +100,10 @@ using StatusOr ABSL_DEPRECATE_AND_INLINE() = absl::StatusOr<T>;
       TF_STATUS_MACROS_CONCAT_NAME(_status_or_value, __COUNTER__), lhs, \
       rexpr);
 
-#define TF_ASSERT_OK_AND_ASSIGN_IMPL(statusor, lhs, rexpr)  \
-  auto statusor = (rexpr);                                  \
-  ASSERT_TRUE(statusor.status().ok()) << statusor.status(); \
+#define TF_ASSERT_OK_AND_ASSIGN_IMPL(statusor, lhs, rexpr) \
+  auto statusor = (rexpr);                                 \
+  ASSERT_TRUE(statusor.status().ok())                      \
+      << ADD_SOURCE_LOCATION(statusor.status());           \
   lhs = std::move(statusor).value()
 
 #define TF_STATUS_MACROS_CONCAT_NAME(x, y) TF_STATUS_MACROS_CONCAT_IMPL(x, y)

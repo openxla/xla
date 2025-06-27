@@ -19,11 +19,11 @@ limitations under the License.
 
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/rpc/client/profiler_client_test_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/types.h"
 #include "tsl/profiler/protobuf/profiler_service.pb.h"
 
 namespace tsl {
@@ -88,7 +88,7 @@ TEST(RemoteProfilerSession, Timeout) {
   absl::Status status;
   auto response = remote_session->WaitForCompletion(status);
   // At end of session we will have a timeout error.
-  EXPECT_TRUE(errors::IsDeadlineExceeded(status));
+  EXPECT_TRUE(absl::IsDeadlineExceeded(status));
   // True because there was no workload traced and subsequently no XEvents.
   EXPECT_TRUE(response->empty_trace());
   // XSpaces are serialized and not returned as tools in ProfileResponse.

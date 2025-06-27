@@ -23,13 +23,12 @@ limitations under the License.
 #include <optional>
 
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "xla/tsl/framework/numeric_types.h"
 #include "xla/tsl/framework/type_traits.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/macros.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 #include "tsl/platform/numa.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 
@@ -224,7 +223,7 @@ class Allocator {
   }
 
   // Fills in 'stats' with statistics collected by this allocator.
-  virtual absl::optional<AllocatorStats> GetStats() { return absl::nullopt; }
+  virtual std::optional<AllocatorStats> GetStats() { return std::nullopt; }
 
   // If implemented, clears the internal stats except for the `in_use` fields
   // and sets the `peak_bytes_in_use` to be equal to the `bytes_in_use`. Returns

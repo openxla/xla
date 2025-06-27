@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "third_party/gpus/cudnn/cudnn.h"
+#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
-#include "tsl/platform/logging.h"
 
 // Implements the cuDNN API by forwarding to cuDNN loaded from the DSO.
 
@@ -65,8 +65,8 @@ static cudnnStatus_t GetSymbolNotFoundError() {
   return CUDNN_STATUS_INTERNAL_ERROR;
 }
 
-static absl::flat_hash_map<std::string_view, void*> const& SymbolOverrides() {
-  static auto* syms = new absl::flat_hash_map<std::string_view, void*>{
+static absl::flat_hash_map<absl::string_view, void*> const& SymbolOverrides() {
+  static auto* const syms = new absl::flat_hash_map<absl::string_view, void*>{
       {"cudnnGetVersion", reinterpret_cast<void*>(&GetVersionStub)},
       {"cudnnGetMaxDeviceVersion", reinterpret_cast<void*>(&GetVersionStub)},
       {"cudnnGetCudartVersion", reinterpret_cast<void*>(&GetVersionStub)},

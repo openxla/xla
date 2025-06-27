@@ -25,6 +25,7 @@
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -35,6 +36,7 @@
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
@@ -76,10 +78,12 @@ class LoadedExecutable final
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
   std::optional<std::vector<OpSharding>> GetParameterShardings() const override;
+  absl::StatusOr<absl::Span<const int>> GetDonatableInputIndices()
+      const override;
   std::optional<std::vector<OpSharding>> GetOutputShardings() const override;
-  absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetParameterLayouts() const override;
-  absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
+  absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetOutputLayouts() const override;
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
   GetOutputMemoryKinds() const override;
@@ -88,13 +92,14 @@ class LoadedExecutable final
 
   absl::StatusOr<xla::ifrt::AttributeMap> GetCostAnalysis() const override;
 
+  // The following may return an OK status even if the underlying IFRT backend
+  // would (eagerly) return an error. If that happens, the fields of the
+  // returned `ExecuteResult` will resolve to the error (for example,
+  // `result->status.Await()` will return the error, where `result` is the
+  // returned value from the `Execute()` call).
   absl::StatusOr<ExecuteResult> Execute(
-      absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
-      const ExecuteOptions& options,
-      std::optional<tsl::RCReference<xla::ifrt::DeviceList>> devices) override;
-
-  Future<> Delete() override;
-  bool IsDeleted() const override;
+      absl::Span<xla::ifrt::ArrayRef> args, const ExecuteOptions& options,
+      std::optional<xla::ifrt::DeviceListRef> devices) override;
 
   absl::Span<xla::ifrt::Device* const> addressable_devices() const override;
 
@@ -105,8 +110,10 @@ class LoadedExecutable final
     std::optional<std::vector<xla::OpSharding>> parameter_shardings;
     std::optional<std::vector<xla::OpSharding>> output_shardings;
 
-    absl::StatusOr<std::vector<xla::Layout>> parameter_layouts;
-    absl::StatusOr<std::vector<xla::Layout>> output_layouts;
+    absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+        parameter_layouts;
+    absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+        output_layouts;
 
     // Elements in `output_memory_kinds` point to elements in `memory_kinds`.
     // Required since `GetOutputMemoryKinds()` returns `absl::string_view`.
@@ -114,6 +121,10 @@ class LoadedExecutable final
     absl::node_hash_set<std::string> memory_kinds;
     absl::StatusOr<std::vector<std::vector<absl::string_view>>>
         output_memory_kinds;
+
+    absl::StatusOr<std::vector<int>> donatable_input_indices;
+
+    std::optional<absl::flat_hash_set<int>> donatable_input_indices_set;
   };
 
   void PollLoadedHostCallback(

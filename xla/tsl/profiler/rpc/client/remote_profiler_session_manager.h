@@ -21,12 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/rpc/client/profiler_client.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/mutex.h"
-#include "tsl/platform/status.h"
 #include "tsl/platform/thread_annotations.h"
-#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {
@@ -67,7 +67,7 @@ class RemoteProfilerSessionManager {
   // Initialization of all client contexts.
   absl::Status Init();
 
-  mutex mutex_;
+  absl::Mutex mutex_;
   // Remote profiler session options.
   tensorflow::RemoteProfilerSessionManagerOptions options_
       TF_GUARDED_BY(mutex_);

@@ -22,11 +22,11 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #if defined(PLATFORM_GOOGLE)
 #include "thread/executor.h"
 #include "thread/signal.h"
@@ -167,7 +167,7 @@ TEST_F(PreemptNotifierTest, DestructorCancelsPendingCalls) {
   n.WaitForNotification();
 
   // Verify that pending callbacks are cancelled.
-  EXPECT_TRUE(errors::IsCancelled(result.status()));
+  EXPECT_TRUE(absl::IsCancelled(result.status()));
 }
 }  // namespace
 }  // namespace tsl

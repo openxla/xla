@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -190,6 +191,9 @@ const std::vector<PJRT_NamedValue>& GetXlaPluginCAttributes();
 // than or equal to the expected size. The actual struct size can be larger if
 // it comes from a forwards-compatible caller built at a later version than this
 // check. Returns a non-OK status if the expected is smaller.
+//
+// This function is only valid when called from the *plugin* side, not the
+// *client* side.
 absl::Status ActualStructSizeIsGreaterOrEqual(absl::string_view struct_name,
                                               size_t expected_size,
                                               size_t actual_size);
@@ -218,6 +222,9 @@ int GetId(const PJRT_Api* api, PJRT_DeviceDescription* device_desc);
 using PJRT_KeyValueGetCFunc =
     std::function<PJRT_Error*(PJRT_KeyValueGetCallback_Args* args)>;
 
+using PJRT_KeyValueTryGetCFunc =
+    std::function<PJRT_Error*(PJRT_KeyValueTryGetCallback_Args* args)>;
+
 using PJRT_KeyValuePutCFunc =
     std::function<PJRT_Error*(PJRT_KeyValuePutCallback_Args* args)>;
 
@@ -228,17 +235,21 @@ struct PJRT_KeyValueCallbackData {
 
   std::shared_ptr<xla::KeyValueStoreInterface> kv_store;
 
-  // kv_get_c_func and kv_put_c_func are holding pointers to kv_store.
+  // kv_get_c_func, kv_try_get_c_func and kv_put_c_func are holding pointers to
+  // kv_store.
   pjrt::PJRT_KeyValueGetCFunc kv_get_c_func;
   pjrt::PJRT_KeyValuePutCFunc kv_put_c_func;
-  // c_kv_get and c_kv_put are holding pointers to kv_get_c_func and
-  // kv_put_c_func.
+  // c_kv_get, c_kv_try_get and c_kv_put are holding pointers to kv_get_c_func,
+  // kv_try_get_c_func and kv_put_c_func.
   PJRT_KeyValueGetCallback c_kv_get;
   PJRT_KeyValuePutCallback c_kv_put;
+  pjrt::PJRT_KeyValueTryGetCFunc kv_try_get_c_func;
+  PJRT_KeyValueTryGetCallback c_kv_try_get;
 };
 
-// The returned &kv_get_c_func and &kv_put_c_func must be set as
-// PJRT_Client_Create_Args.kv_get_user_arg and
+// The returned &kv_get_c_func, &kv_try_get_c_func and &kv_put_c_func must be
+// set as PJRT_Client_Create_Args.kv_get_user_arg,
+// PJRT_Client_Create_Args.kv_try_get_user_arg and
 // PJRT_Client_Create_Args.kv_put_user_arg, respectively. The entire
 // PJRT_KeyValueCallbackData must be kept alive as long as c_kv_get and c_kv_put
 // may be called.
@@ -276,6 +287,14 @@ struct BufferMemoryLayoutData {
   std::vector<int64_t> minor_to_major;
   std::vector<int64_t> tile_dims;
   std::vector<size_t> tile_dim_sizes;
+  // Don't allow copy and copy construction because c_layout includes naked C
+  // pointers, which could lead the field to point to freed memory if the RHS of
+  // the copy goes out of scope.
+  BufferMemoryLayoutData() = default;
+  BufferMemoryLayoutData(const BufferMemoryLayoutData&) = delete;
+  BufferMemoryLayoutData(BufferMemoryLayoutData&&) = default;
+  BufferMemoryLayoutData& operator=(const BufferMemoryLayoutData&) = delete;
+  BufferMemoryLayoutData& operator=(BufferMemoryLayoutData&&) = default;
 };
 absl::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
     const xla::Layout& cpp_layout);
@@ -351,7 +370,12 @@ int64_t GetTracemeContextId(InputType* args) {
 }
 
 std::vector<xla::PjRtMemorySpaceDescription> GetMemorySpaceDescriptions(
-    PJRT_DeviceDescription* device_description, const PJRT_Api* c_api);
+    PJRT_DeviceDescription* device_description, const PJRT_Api* c_api,
+    absl::StatusOr<xla::PjRtMemorySpaceDescription*>* default_memory);
+
+PJRT_Error* InvokePjRtEventWhenReady(
+    const PJRT_Api* api, PJRT_Event* event,
+    absl::AnyInvocable<void() &&> on_done_with_event);
 
 }  // namespace pjrt
 

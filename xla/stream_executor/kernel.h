@@ -79,6 +79,7 @@ limitations under the License.
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/meta/type_traits.h"
@@ -88,9 +89,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "tsl/platform/logging.h"
+#include "xla/stream_executor/stream.h"
 
 namespace stream_executor {
 
@@ -219,9 +219,7 @@ class Kernel {
       ThreadDim threads, size_t dynamic_shared_memory_bytes) const = 0;
 
   const KernelMetadata &metadata() const { return metadata_; }
-  void set_metadata(KernelMetadata metadata) {
-    metadata_ = std::move(metadata);
-  }
+  void set_metadata(KernelMetadata metadata) { metadata_ = metadata; }
 
   const KernelArgsPacking &args_packing() const { return args_packing_; }
   void set_args_packing(KernelArgsPacking args_packing) {
@@ -231,12 +229,44 @@ class Kernel {
   absl::string_view name() const { return name_; }
   void set_name(absl::string_view name);
 
+  // Launches a data parallel kernel with the given thread/block
+  // dimensionality and already-packed args/sizes to pass to the underlying
+  // platform driver.
+  absl::Status Launch(const ThreadDim &thread_dims, const BlockDim &block_dims,
+                      Stream *stream, const KernelArgs &args);
+
+  // Launches a data parallel kernel with the given thread/block
+  // dimensionality and already-packed args/sizes to pass to the underlying
+  // platform driver.
+  absl::Status Launch(const ThreadDim &thread_dims, const BlockDim &block_dims,
+                      const ClusterDim &cluster_dims, Stream *stream,
+                      const KernelArgs &args);
+
  private:
+  // Helper method to launch a kernel with optional cluster dimensions.
+  virtual absl::Status Launch(const ThreadDim &thread_dims,
+                              const BlockDim &block_dims,
+                              const std::optional<ClusterDim> &cluster_dims,
+                              Stream *stream, const KernelArgs &args) = 0;
+
   std::string name_;
 
   KernelMetadata metadata_;
   KernelArgsPacking args_packing_;
 };
+
+inline absl::Status Kernel::Launch(const ThreadDim &thread_dims,
+                                   const BlockDim &block_dims, Stream *stream,
+                                   const KernelArgs &args) {
+  return Launch(thread_dims, block_dims, std::nullopt, stream, args);
+}
+inline absl::Status Kernel::Launch(const ThreadDim &thread_dims,
+                                   const BlockDim &block_dims,
+                                   const ClusterDim &cluster_dims,
+                                   Stream *stream, const KernelArgs &args) {
+  return Launch(thread_dims, block_dims, std::make_optional(cluster_dims),
+                stream, args);
+}
 
 //===----------------------------------------------------------------------===//
 // Typed kernel
@@ -262,6 +292,39 @@ class TypedKernel {
 
   // Type of factory used to create a TypedKernel.
   using FactoryType = TypedKernelFactory<Params...>;
+
+  // Launches a kernel with the given (variadic) parameters for the invocation
+  // onto the specified stream. These arguments can be things
+  // like DeviceMemory or primitive types such as int. What arguments you may
+  // pass to a given kernel are noted as the template parameters to the
+  // TypedKernel type that the compiler generates.
+  //
+  //  Template parameters:
+  //   Params...   The type list of formal parameters that the typed kernel
+  //               expects, which is matched against Args...
+  //   Args...     The deduced type list for passed actual arguments
+  //
+  // Implementation: A compile-time compatibility check is performed that has
+  // some leniency versus an exact parameter pack match -- for example,
+  // `const DeviceMemory<T>` is considered "pack compatible" with a
+  // `const DeviceMemory<T>&` formal parameter; in part, because we don't have
+  // perfect forwarding support without rvalue references. It also attempts to
+  // spit out helpful static_assert error traces with information as to the
+  // argument number and types that were mismatched.
+  template <typename... Args>
+  inline absl::Status Launch(ThreadDim thread_dims, BlockDim block_dims,
+                             Stream *stream, Args... args) {
+    auto kernel_args = PackKernelArgs(*this, args...);
+    return kernel_->Launch(thread_dims, block_dims, stream, *kernel_args);
+  }
+
+  template <typename... Args>
+  inline absl::Status Launch(ThreadDim thread_dims, BlockDim block_dims,
+                             int32_t shmem_bytes, Stream *stream,
+                             Args... args) {
+    auto kernel_args = PackKernelArgs(shmem_bytes, args...);
+    return kernel_->Launch(thread_dims, block_dims, stream, *kernel_args);
+  }
 
  private:
   friend class TypedKernelFactory<Params...>;
@@ -364,9 +427,9 @@ class PodArgs {
  protected:
   template <typename T>
   const std::byte *add_pod_argument(const T &arg) {
-    static_assert(
-        std::is_pod_v<T> && sizeof(T) <= size & alignof(T) <= alignment,
-        "Type is not compatible with POD arguments storage");
+    static_assert(std::is_trivially_copyable_v<T> &&
+                      sizeof(T) <= size & alignof(T) <= alignment,
+                  "Type is not compatible with POD arguments storage");
 
     assert(num_args_ < capacity && "pod args overflow");
     std::byte *arg_storage = args_storage_[num_args_++].storage;
@@ -464,6 +527,8 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
   size_t number_of_argument_addresses_ = 0;
 };
 
+using KernelArgument = std::variant<DeviceMemoryBase, TensorMap>;
+
 namespace internal {
 template <int n>
 std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
@@ -477,18 +542,57 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
   }
   return packed;
 }
+
+template <int n>
+std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
+    absl::Span<const KernelArgument> args, uint32_t shared_mem_bytes) {
+  auto contains_tensor_map = [](absl::Span<const KernelArgument> args) -> bool {
+    return absl::c_any_of(args, [](const auto &arg) {
+      return std::holds_alternative<TensorMap>(arg);
+    });
+  };
+
+  if (contains_tensor_map(args)) {
+    auto packed =
+        std::make_unique<KernelArgsPackedArray<n, PodArgs<n, 128, 64>>>();
+    for (auto &buf : args) {
+      if (std::holds_alternative<DeviceMemoryBase>(buf)) {
+        // Buffer argument.
+        packed->add_device_memory_argument(std::get<DeviceMemoryBase>(buf));
+      } else {
+        // TMA descriptor argument.
+        packed->add_argument(std::get<TensorMap>(buf).storage);
+      }
+    }
+    if (shared_mem_bytes > 0) {
+      packed->add_shared_bytes(shared_mem_bytes);
+    }
+    return packed;
+  }
+
+  // No TensorMap arguments -> Can use EmptyArgs.
+  auto packed = std::make_unique<KernelArgsPackedArray<n, EmptyArgs>>();
+  for (auto &buf : args) {
+    packed->add_device_memory_argument(std::get<DeviceMemoryBase>(buf));
+  }
+  if (shared_mem_bytes > 0) {
+    packed->add_shared_bytes(shared_mem_bytes);
+  }
+  return packed;
+}
 }  // namespace internal
 
+template <typename ArgType>
 inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const DeviceMemoryBase> args,
-               uint32_t shared_mem_bytes) {
+PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
   static constexpr int kKernelArgsLimit = 1024;
 
-  if (args.size() > kKernelArgsLimit)
+  if (args.size() > kKernelArgsLimit) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't pack device memory arguments array of size ", args.size(),
         " which is larger than the maximum supported size of ",
         kKernelArgsLimit));
+  }
 
   // Specialize kernel arguments array for small sizes to allocate a smaller
   // chunk of memory and hopefully hit a small allocations cache.
@@ -511,9 +615,9 @@ PackKernelArgs(absl::Span<const DeviceMemoryBase> args,
   return internal::PackKernelArgs<kKernelArgsLimit>(args, shared_mem_bytes);
 }
 
+template <typename ArgType>
 inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const DeviceMemoryBase> args,
-               const KernelMetadata &metadata) {
+PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata &metadata) {
   return PackKernelArgs(args, metadata.shared_memory_bytes().value_or(0));
 }
 

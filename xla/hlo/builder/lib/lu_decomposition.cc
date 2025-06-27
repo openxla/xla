@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/builder/lib/lu_decomposition.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include "absl/status/statusor.h"
@@ -32,7 +33,7 @@ LuDecompositionResult LuDecomposition(XlaOp a) {
   XlaBuilder* builder = a.builder();
   XlaOp result = builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape a_shape, builder->GetShape(a));
-    const int ndims = a_shape.rank();
+    const int ndims = a_shape.dimensions().size();
     TF_RET_CHECK(ndims >= 2);
     const int64_t m = ShapeUtil::GetDimension(a_shape, -2);
     const int64_t n = ShapeUtil::GetDimension(a_shape, -1);
