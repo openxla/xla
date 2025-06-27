@@ -543,7 +543,7 @@ absl::Status HloReplicationAnalysis::ComputeHloReplication() {
 void HloReplicationAnalysis::BuildReplicaGroupDedupMap() {
   std::vector<std::vector<const HloInstruction*>> dedupable_instructions;
   for (const HloComputation* computation :
-       module_->MakeNonfusionComputations()) {
+       module_->MakeNonFusionNonCompositeComputations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kAllReduce ||
           instruction->opcode() == HloOpcode::kAllGather) {

@@ -34,7 +34,7 @@ absl::StatusOr<bool> OpExpanderPass::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::vector<HloInstruction*> matching_instructions;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     absl::c_copy_if(computation->MakeInstructionPostOrder(),
                     std::back_inserter(matching_instructions),
                     [&](HloInstruction* inst) {

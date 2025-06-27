@@ -1888,7 +1888,6 @@ HloCallableInstruction::HloCallableInstruction(HloOpcode opcode,
   auto frontend_attributes =
       BuildFrontendAttributesForComposite(name, attributes, version);
   add_frontend_attributes(frontend_attributes);
-  set_is_composite(true);
 }
 
 HloCallableInstruction::HloCallableInstruction(
@@ -1905,7 +1904,6 @@ HloCallableInstruction::HloCallableInstruction(
   auto frontend_attributes =
       BuildFrontendAttributesForComposite(name, attributes, version);
   add_frontend_attributes(frontend_attributes);
-  set_is_composite(true);
 }
 
 HloCallableInstruction::~HloCallableInstruction() { ClearCalledComputations(); }
@@ -1964,6 +1962,8 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     AppendComputation(new_computation);
     if (opcode() == HloOpcode::kFusion) {
       new_computation->SetFusionInstruction(this);
+    } else if (opcode() == HloOpcode::kCall && is_composite()) {
+      new_computation->SetCompositeInstruction(this);
     }
 
     clone = called_computation_root();
@@ -2608,16 +2608,8 @@ HloCallInstruction::HloCallInstruction(const Shape& shape,
   CHECK(decomposition_root != nullptr);
   SetAndSanitizeName(HloOpcodeString(opcode()));
 
-  FrontendAttributes frontend_attributes;
-  frontend_attributes.mutable_map()->insert({"composite.name", name});
-  frontend_attributes.mutable_map()->insert(
-      {"composite.attributes", attributes});
-  frontend_attributes.mutable_map()->insert(
-      {"composite.version", std::to_string(version)});
-
-  add_frontend_attributes(frontend_attributes);
-  set_is_composite(true);
   set_metadata(decomposition_root->metadata());
+  set_is_composite(true);
   CloneAndAppendInstructionIntoCalledComputation(decomposition_root);
 }
 
@@ -2627,15 +2619,14 @@ HloCallInstruction::HloCallInstruction(
     const std::string& attributes, int64_t version)
     : HloCallableInstruction(HloOpcode::kCall, shape, operands, decomposition,
                              name, attributes, version) {
-  FrontendAttributes frontend_attributes;
-  frontend_attributes.mutable_map()->insert({"composite.name", name});
-  frontend_attributes.mutable_map()->insert(
-      {"composite.attributes", attributes});
-  frontend_attributes.mutable_map()->insert(
-      {"composite.version", std::to_string(version)});
-
-  add_frontend_attributes(frontend_attributes);
   set_is_composite(true);
+  decomposition->SetCompositeInstruction(this);
+}
+
+HloCallInstruction::~HloCallInstruction() {
+  if (is_composite() && has_to_apply()) {
+    to_apply()->SetCompositeInstruction(nullptr);
+  }
 }
 
 HloRngInstruction::HloRngInstruction(

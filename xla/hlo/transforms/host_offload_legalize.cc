@@ -869,7 +869,7 @@ HostOffloadLegalize::FindStartingInstructionsOfHostMemoryOffload(
   std::vector<HloInstruction*> starting_instructions;
   // Iterate over all instructions and look for XLA host offload annotations.
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (IsEntryComputationParameter(instruction)) {
         Shape param_shape =

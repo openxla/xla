@@ -257,7 +257,7 @@ absl::StatusOr<bool> HloConstantFolding::Run(
   absl::flat_hash_map<HloComputation*, bool> is_foldable_computation;
 
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       // Skip dead code.
       if (instruction->IsDead()) {

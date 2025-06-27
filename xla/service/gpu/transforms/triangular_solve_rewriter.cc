@@ -42,7 +42,7 @@ absl::StatusOr<bool> TriangularSolveRewriter::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     std::vector<HloInstruction*> to_rewrite;
     for (HloInstruction* instr : comp->instructions()) {
       if (HloPredicateIsOp<HloOpcode::kTriangularSolve>(instr)) {

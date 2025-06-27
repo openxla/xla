@@ -1174,7 +1174,7 @@ absl::StatusOr<bool> IndexedArrayAnalysisPrinterPass::Run(
 
   IndexedArrayAnalysis analysis;
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* instr : computation->instructions()) {
       TF_ASSIGN_OR_RETURN(Analysis::Array * t, analysis.GetArrayFor(instr));
       if (!dynamic_cast<UnknownArray*>(t) && !dynamic_cast<ConstantArray*>(t)) {

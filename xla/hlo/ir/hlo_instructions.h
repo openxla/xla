@@ -1636,6 +1636,8 @@ class HloCallInstruction : public HloCallableInstruction {
                      HloComputation* decomposition, const std::string& name,
                      const std::string& attributes, int64_t version);
 
+  ~HloCallInstruction() override;
+
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kCall;
   }

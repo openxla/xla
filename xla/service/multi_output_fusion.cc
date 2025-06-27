@@ -42,7 +42,7 @@ absl::StatusOr<bool> MultiOutputFusion::Run(
   bool changed = false;
 
   for (auto* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     // Do not operate over async computations (computations of async
     // instructions).
     if (computation->IsAsyncComputation()) {

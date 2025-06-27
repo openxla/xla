@@ -49,7 +49,7 @@ absl::StatusOr<bool> ChangeOpDataType::Run(
   HloCloner cloner = cloner_ ? cloner_ : default_cloner;
 
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
       std::optional<PrimitiveType> operand_type = GetUniformOperandType(instr);
       if (!op_matcher_(instr) || !operand_type.has_value() ||

@@ -587,7 +587,7 @@ absl::StatusOr<bool> BatchNormExpander::Run(
   XLA_VLOG_LINES(2, "BatchNormExpander::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (BatchNormExpanderVisitor::Run(computation, rewrite_training_op_,
                                       rewrite_inference_op_,
                                       rewrite_grad_op_)) {

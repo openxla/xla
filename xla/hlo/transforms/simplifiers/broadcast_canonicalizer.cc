@@ -42,7 +42,7 @@ absl::StatusOr<bool> BroadcastCanonicalizer::Run(
   // Sort broadcast dims. Then insert a transpose on the broadcast to get the
   // original shape back.
   for (const auto& computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* hlo : computation->MakeInstructionPostOrder()) {
       if (hlo->opcode() != HloOpcode::kBroadcast) {
         continue;

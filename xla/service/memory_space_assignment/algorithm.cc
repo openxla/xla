@@ -2353,7 +2353,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
     VLOG(3) << "Running post allocation transformation on module";
     for (HloComputation* comp : alias_analysis_.dataflow_analysis()
                                     .module()
-                                    .MakeNonfusionComputations()) {
+                                    .MakeNonFusionNonCompositeComputations()) {
       for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
         // If the operand is in alternate memory, we don't run the
         // post-allocation transformation.
@@ -4403,7 +4403,8 @@ void MsaAlgorithm::AddInputAndOutputRequiredAssignments() {
         }
       });
 
-  for (const HloComputation* computation : module.MakeNonfusionComputations()) {
+  for (const HloComputation* computation :
+       module.MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kConstant) {
         auto constant_instruction_it = instruction_schedule.find(instruction);

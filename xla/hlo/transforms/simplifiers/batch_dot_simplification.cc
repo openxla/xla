@@ -132,7 +132,7 @@ absl::StatusOr<bool> BatchDotSimplification::Run(
   bool changed = false;
   std::vector<HloInstruction*> dot_instrs;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     absl::c_copy_if(computation->instructions(), std::back_inserter(dot_instrs),
                     [](HloInstruction* instr) {
                       return instr->opcode() == HloOpcode::kDot;

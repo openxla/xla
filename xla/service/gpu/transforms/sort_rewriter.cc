@@ -579,7 +579,7 @@ absl::StatusOr<bool> SortRewriter::Run(
   XLA_VLOG_LINES(3, "SortRewriter::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
     changed |= result;
   }

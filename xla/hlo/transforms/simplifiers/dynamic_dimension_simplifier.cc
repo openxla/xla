@@ -177,39 +177,45 @@ absl::StatusOr<bool> DynamicDimensionSimplifier::Run(
       2, "DynamicDimensionSimplifier::Run(), before:\n" + module->ToString());
   bool changed = false;
 
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, ConcatForwarding(inst));
       changed |= local_changed;
     }
   }
 
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, SliceConcatForwarding(inst));
       changed |= local_changed;
     }
   }
 
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, ReshapeBroadcastForwarding(inst));
       changed |= local_changed;
     }
   }
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, ReshapeReshapeForwarding(inst));
       changed |= local_changed;
     }
   }
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, IdentityConvertRemoving(inst));
       changed |= local_changed;
     }
   }
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
       TF_ASSIGN_OR_RETURN(bool local_changed, IdentityReshapeRemoving(inst));
       changed |= local_changed;

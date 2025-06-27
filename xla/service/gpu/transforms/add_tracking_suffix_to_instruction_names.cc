@@ -33,7 +33,7 @@ absl::StatusOr<bool> AddTrackingSuffixToInstructionNames::Run(
 
   // Only rename instructions in non-fusion computations.
   for (xla::HloComputation* computation :
-       module->MakeNonfusionComputationsSorted(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputationsSorted(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
       // Skip non-fusible instruction to avoid breaking tests that are not
       // related to fusion.

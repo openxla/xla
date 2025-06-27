@@ -102,7 +102,7 @@ absl::StatusOr<bool> FusionConstantSinking::Run(
   XLA_VLOG_LINES(3, module->ToString());
 
   bool changed = false;
-  for (HloComputation* c : module->MakeNonfusionComputations()) {
+  for (HloComputation* c : module->MakeNonFusionNonCompositeComputations()) {
     changed |= ProcessComputation(c);
   }
 

@@ -164,7 +164,7 @@ absl::StatusOr<bool> GemvRewriter::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   GemvRewriterVisitor gemv_rewriter;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_RETURN_IF_ERROR(computation->Accept(&gemv_rewriter));
   }
   return gemv_rewriter.changed();

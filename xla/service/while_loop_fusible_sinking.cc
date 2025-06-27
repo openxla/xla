@@ -490,7 +490,8 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::Run(
   call_counts_.clear();
   bool changed = false;
   std::vector<HloInstruction*> while_instrs;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  for (auto* comp :
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     // Right now we don't particularly care about optimizing while-of-while
     // patterns.  If/When we do, we'll want to visit the outer while (while_0)
     // before we visit the inner while (while_1):
@@ -528,7 +529,8 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::Run(
   }
 
   if (sink_broadcast_of_constant_) {
-    for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+    for (auto* comp :
+         module->MakeNonFusionNonCompositeComputations(execution_threads)) {
       for (HloInstruction* instr : comp->instructions()) {
         // TODO: b/358837872 - Handle loops with sharding.
         if (Match(instr, match::While()) && !instr->has_sharding()) {

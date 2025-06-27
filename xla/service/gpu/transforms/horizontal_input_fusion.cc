@@ -91,23 +91,21 @@ std::vector<HloInstruction*> FindAndSortFusionCandidates(
     }
   }
 
-  std::sort(fusion_instrs.begin(), fusion_instrs.end(),
-            [&](const HloInstruction* a, const HloInstruction* b) {
-              Shape shape_a =
-                  GetInputShapeForMultiOutputFusion(*a, device_info);
-              Shape shape_b =
-                  GetInputShapeForMultiOutputFusion(*b, device_info);
-              auto tuple_for_op = [](const Shape& shape,
-                                     const HloInstruction* op) {
-                // Sort shapes according to dimensions, so that the same input
-                // shapes will be placed adjacent each other.
-                // Sort `fusion_instrs` according to instruction counts, because
-                // we'd like to fuse together computations of similar sizes.
-                return std::tuple{shape.dimensions().size(), shape.dimensions(),
-                                  GetInstrCountOfFusible(*op), op->unique_id()};
-              };
-              return tuple_for_op(shape_a, a) < tuple_for_op(shape_b, b);
-            });
+  std::sort(
+      fusion_instrs.begin(), fusion_instrs.end(),
+      [&](const HloInstruction* a, const HloInstruction* b) {
+        Shape shape_a = GetInputShapeForMultiOutputFusion(*a, device_info);
+        Shape shape_b = GetInputShapeForMultiOutputFusion(*b, device_info);
+        auto tuple_for_op = [](const Shape& shape, const HloInstruction* op) {
+          // Sort shapes according to dimensions, so that the same input
+          // shapes will be placed adjacent each other.
+          // Sort `fusion_instrs` according to instruction counts, because
+          // we'd like to fuse together computations of similar sizes.
+          return std::tuple{shape.dimensions().size(), shape.dimensions(),
+                            GetInstrCountOfFusible(*op), op->unique_id()};
+        };
+        return tuple_for_op(shape_a, a) < tuple_for_op(shape_b, b);
+      });
 
   return fusion_instrs;
 }
@@ -174,7 +172,7 @@ absl::StatusOr<bool> HorizontalInputFusion::Run(
   bool any_changed = false;
   VLOG(2) << "Run horizontal input fusion.";
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool changed, RunOnComputation(comp));
     any_changed |= changed;
   }

@@ -211,7 +211,7 @@ absl::StatusOr<bool> ConvertAsyncCollectivesToSync::Run(
   }
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     if (!module->schedule().is_computation_scheduled(computation)) {
       VLOG(3) << "Skipping computation" << computation->name()
               << " as it is not scheduled";

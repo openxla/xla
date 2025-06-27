@@ -38,7 +38,7 @@ absl::StatusOr<bool> DynamicIndexSplitter::Run(
   bool changed = false;
 
   std::vector<HloComputation*> computations =
-      module->MakeNonfusionComputations(execution_threads);
+      module->MakeNonFusionNonCompositeComputations(execution_threads);
   for (HloComputation* computation : computations) {
     for (HloInstruction* dynamic_op : computation->MakeInstructionPostOrder()) {
       switch (dynamic_op->opcode()) {

@@ -173,7 +173,7 @@ absl::StatusOr<bool> LoopScheduleLinearizer::Run(
 
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() != HloOpcode::kWhile) {
         continue;

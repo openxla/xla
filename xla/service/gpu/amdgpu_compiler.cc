@@ -215,7 +215,8 @@ bool AMDGPUCompiler::RequiresCollectiveScheduleLinearizer(
   if (stream_exec == nullptr || !GpuConvAlgorithmPicker::IsEnabled(module)) {
     return false;
   }
-  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
+  for (const HloComputation* comp :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (const HloInstruction* inst : comp->instructions()) {
       if (GpuConvAlgorithmPicker::IsCandidate(inst)) {
         return true;

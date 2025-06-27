@@ -354,7 +354,7 @@ absl::StatusOr<bool> AllReduceBlueConnect::Run(
 
   std::vector<HloAllReduceInstruction*> all_reduces;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (HloPredicateIsOp<HloOpcode::kAllReduce>(instruction)) {
         all_reduces.push_back(Cast<HloAllReduceInstruction>(instruction));

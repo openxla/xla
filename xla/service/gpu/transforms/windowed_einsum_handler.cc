@@ -1358,7 +1358,7 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
   int64_t stream_id = hlo_query::NextChannelId(*module);
   std::vector<HloInstruction*> all_windowed_einsum_loops;
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     // If we have a einsum loop with less than 1 dot, it's not
     // a loop of interest.
     if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
@@ -1391,7 +1391,7 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
   }
 
   for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     WindowedEinsumVisitor visitor(all_ag_loops_);
     TF_RETURN_IF_ERROR(comp->Accept(&visitor));
     changed |= visitor.changed();

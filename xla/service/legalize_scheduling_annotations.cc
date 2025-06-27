@@ -289,7 +289,8 @@ absl::StatusOr<bool> HaulAnnotationToFusionInstruction(
 
 absl::StatusOr<bool> RemoveLoopIterationAnnotation(HloModule* module) {
   bool changed = false;
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instr : computation->instructions()) {
       TF_ASSIGN_OR_RETURN(bool removed,
                           RemoveSchedulingAnnotationIterationId(instr));
@@ -373,7 +374,8 @@ bool LegalizeSchedulingAnnotations::RemoveTrivialGroups(
 
 absl::Status LegalizeSchedulingAnnotations::Verify(HloModule* module) {
   VLOG(1) << "Verifying scheduling annotations for module: " << module->name();
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     auto reachability_map = HloReachabilityMap::Build(computation);
     absl::flat_hash_map<Annotation, std::vector<HloInstruction*>> grp_map;
     for (HloInstruction* instr : computation->instructions()) {
@@ -454,7 +456,8 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::Run(
       annotation_to_instruction;
   // Filter the annotated ops (using config) to keep the annotations only in the
   // desired sync ops. Annotations in all async ops are kept.
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+  for (HloComputation* computation :
+       module->MakeNonFusionNonCompositeComputations()) {
     for (HloInstruction* instr : computation->instructions()) {
       if (HasSchedulingAnnotation(instr) && !KeepSchedulingAnnotation(instr)) {
         changed |= RemoveSchedulingAnnotation(instr);
@@ -464,7 +467,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::Run(
 
   // Find the annotated instructions and save relevant information.
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instr : computation->instructions()) {
       TF_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
                           GetSchedulingAnnotation(instr));
@@ -506,7 +509,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::Run(
     // Propagate the annotation to fill the gaps between instructions with the
     // same annotation ID.
     for (HloComputation* computation :
-         module->MakeNonfusionComputations(execution_threads)) {
+         module->MakeNonFusionNonCompositeComputations(execution_threads)) {
       absl::btree_map<Annotation, std::vector<HloInstruction*>>
           per_computation_annotation_to_instruction;
       for (const auto& [annotation, comp_inst_vector] :

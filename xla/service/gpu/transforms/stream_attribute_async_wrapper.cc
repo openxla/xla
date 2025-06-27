@@ -61,7 +61,7 @@ absl::StatusOr<bool> StreamAttributeAsyncWrapper::Run(
       2, "StreamAttributeAsyncWrapper::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (const HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonFusionNonCompositeComputations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
       TF_ASSIGN_OR_RETURN(bool result, AsynchronizeInstruction(instr));
       changed |= result;
