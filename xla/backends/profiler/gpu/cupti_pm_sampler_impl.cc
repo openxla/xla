@@ -80,11 +80,12 @@ namespace profiler {
 CuptiPmSamplerDevice::CuptiPmSamplerDevice(int device_id,
                                            CuptiPmSamplerOptions& options)
     : device_id_(device_id), cupti_interface_(GetCuptiInterface()) {
-  // Save local copy of metrics strings
-  metrics_ = options.metrics;
+  // Save local copy of configured metrics strings
+  config_metrics_ = options.metrics;
+  enabled_metrics_ = options.metrics;
 
-  // Build list of local c string pointers (required by CUPTI)
-  for (const auto& metric : metrics_) {
+  // Build list of local c string pointers (required by CUPTI calls)
+  for (const auto& metric : config_metrics_) {
     c_metrics_.push_back(metric.c_str());
   }
 
@@ -182,12 +183,12 @@ void CuptiPmSamplerDevice::WarnPmSamplingMetrics() {
 CUptiResult CuptiPmSamplerDevice::AddMetricsToHostObj(
     std::vector<const char*> metrics) {
   // Add metrics to the host obj
-  DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, pm);
-  pm.pHostObject = host_obj_;
-  pm.ppMetricNames = metrics.data();
-  pm.numMetrics = metrics.size();
+  DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_ConfigAddMetrics_Params, p);
+  p.pHostObject = host_obj_;
+  p.ppMetricNames = metrics.data();
+  p.numMetrics = metrics.size();
   CUptiResult status;
-  WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&pm), status);
+  WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&p), status);
 
   return status;
 }
@@ -293,15 +294,16 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
 }
 
 // Return number of passes
-size_t CuptiPmSamplerDevice::NumPasses() {
+absl::Status CuptiPmSamplerDevice::NumPasses(size_t* passes) {
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_GetNumOfPasses_Params, p);
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
 
-  if (cupti_interface_->ProfilerHostGetNumOfPasses(&p) != CUPTI_SUCCESS)
-    return 0;
+  RETURN_IF_CUPTI_ERROR(ProfilerHostGetNumOfPasses(&p));
 
-  return p.numOfPasses;
+  *passes = p.numOfPasses;
+
+  return absl::OkStatus();
 }
 
 // Initialize profiler APIs - required before PM sampler specific calls.
@@ -524,7 +526,7 @@ absl::Status CuptiPmSamplerDevice::CreateConfig() {
     TF_RETURN_IF_ERROR(CreateConfigImage());
 
     // Test config image for number of passes
-    passes = NumPasses();
+    TF_RETURN_IF_ERROR(NumPasses(&passes));
 
     if (passes > 1) {
       // If on last metric, return error
@@ -553,6 +555,12 @@ absl::Status CuptiPmSamplerDevice::CreateConfig() {
     }
   } while (passes != 1);
 
+  // Update enabled_metrics_ with the current metrics
+  enabled_metrics_.clear();
+  for (const auto& metric : c_metrics_) {
+    enabled_metrics_.emplace_back(metric);
+  }
+
   // Create PM sampler object
   TF_RETURN_IF_ERROR(CreatePmSamplerObject());
 
@@ -567,13 +575,6 @@ CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
     std::vector<std::shared_ptr<CuptiPmSamplerDevice>> devs,
     CuptiPmSamplerOptions& options) {
   devs_ = devs;
-
-  metrics_ = options.metrics;
-
-  // Create C string vector of metrics (used repeatedly in CUPTI calls)
-  for (auto metric : metrics_) {
-    c_metrics_.emplace_back(metric.c_str());
-  }
 
   decode_period_ = options.decode_period;
 
@@ -681,8 +682,8 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
           info.sampler_ranges[i].metric_values.clear();
         } else {
           if (VLOG_IS_ON(4)) {
-            for (int j = 0; j < metrics_.size(); j++) {
-              LOG(INFO) << "            " << metrics_[j] << "[" << i
+            for (int j = 0; j < dev->GetEnabledMetrics().size(); j++) {
+              LOG(INFO) << "            " << dev->GetEnabledMetrics()[j] << "[" << i
                         << "] = " << info.sampler_ranges[i].metric_values[j];
             }
           }
@@ -694,11 +695,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
       // info now contains a list of samples and metrics,
       // hand off to process or store elsewhere
       if (process_samples_) {
-        std::vector<std::string> metrics;
-        for (const auto& metric : c_metrics_) {
-          metrics.emplace_back(metric);
-        }
-        PmSamples samples(metrics, info.sampler_ranges);
+        PmSamples samples(dev->GetEnabledMetrics(), info.sampler_ranges);
         process_samples_(&samples);
       }
 

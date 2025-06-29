@@ -96,6 +96,11 @@ class CuptiPmSamplerDevice {
   // Destructor cleans up all images and objects
   ~CuptiPmSamplerDevice();
 
+  // Return reference to enabled metrics
+  const std::vector<std::string>& GetEnabledMetrics() const {
+    return enabled_metrics_;
+  }
+
  private:
   // Internal state
   size_t max_samples_;
@@ -105,7 +110,8 @@ class CuptiPmSamplerDevice {
   // CUPTI PM sampling objects
   // Declared roughly in order of initialization
   std::string chip_name_;
-  std::vector<std::string> metrics_; // Local copy of metrics strings
+  std::vector<std::string> config_metrics_; // Local copy of metrics strings
+  std::vector<std::string> enabled_metrics_; // Metrics enabled in host object
   std::vector<const char *> c_metrics_; // CUPTI needs C string pointers
   std::vector<uint8_t> counter_availability_image_;
   CUpti_Profiler_Host_Object* host_obj_ = nullptr;
@@ -133,7 +139,7 @@ class CuptiPmSamplerDevice {
   CUptiResult AddMetricsToHostObj(std::vector<const char*> metrics);
 
   // Requires config image
-  size_t NumPasses();
+  absl::Status NumPasses(size_t* passes);
 
   absl::Status InitializeProfilerAPIs();
   absl::Status CreatePmSamplerObject();
@@ -181,9 +187,6 @@ class CuptiPmSamplerDecodeThread {
   // Space to asynchronously initialize this class and the thread it spawns
   absl::Duration decode_period_ = absl::Seconds(1);
 
-  std::vector<std::string> metrics_; // Private copy of metrics
-  std::vector<const char *> c_metrics_; // C string vector of metrics, needed 
-                                        // for repeated CUPTI calls
   std::function<void(PmSamples* samples)> process_samples_;
 
   // Guard state change with mutexes
