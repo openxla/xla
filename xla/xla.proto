@@ -814,6 +814,9 @@ message DebugOptions {
   // ragged-all-to-all operations.
   optional bool xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel = 375;
 
+  // Use embeded device library in codegen
+  bool xla_gpu_use_embeded_device_lib = 393;
+
   // Use lld as a library for the linking step
   optional bool xla_gpu_use_inprocess_lld = 389;
 
