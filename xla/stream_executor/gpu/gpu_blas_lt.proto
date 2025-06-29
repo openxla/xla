@@ -49,5 +49,6 @@ message GemmConfigProto {
   optional int64 algorithm = 10;
   bool grad_x = 11;
   bool grad_y = 12;
-  xla.BlasComputationTypeProto compute_type = 13;
+  bool mx_mode = 13;
+  xla.BlasComputationTypeProto compute_type = 14;
 }
