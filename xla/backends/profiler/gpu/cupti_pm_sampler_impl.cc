@@ -589,7 +589,8 @@ CuptiPmSamplerDecodeThread::CuptiPmSamplerDecodeThread(
     process_samples_ = options.process_samples;
   }
 
-  thd_ = new std::thread(&CuptiPmSamplerDecodeThread::MainFunc, this);
+  thread_ = std::make_unique<std::thread>(&CuptiPmSamplerDecodeThread::MainFunc,
+      this);
 }
 
 void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
@@ -604,7 +605,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
     VLOG(2) << "(Profiling::PM Sampling) Top of decode loop";
 
     // If next state is not enabled, do one more pass
-    if (next_state_ != kStateEnabled) {
+    if (next_state_ != ThreadState::kEnabled) {
       if (!final_pass) {
         final_pass = true;
       } else {
@@ -770,34 +771,34 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
     state_mutex_.Await(absl::Condition(&stateChanged));
 
     switch (next_state_) {
-      case kStateInitialized:
+      case ThreadState::kInitialized:
         // Space for thread initialization if needed
         // ...
         // Initialization done, transition to disabled state
-        StateIs(kStateDisabled);
+        StateIs(ThreadState::kDisabled);
         break;
-      case kStateEnabled:
-        StateIs(kStateEnabled);
+      case ThreadState::kEnabled:
+        StateIs(ThreadState::kEnabled);
         {
           // Release lock but regain before returning to control loop
           MutexUnlock unlock(&state_mutex_);
           DecodeUntilDisabled();
         }
         // Returns when Disabled has been requested
-        StateIs(kStateDisabled);
+        StateIs(ThreadState::kDisabled);
         break;
-      case kStateUninitialized:
+      case ThreadState::kUninitialized:
         // Initially both current and next state should be uninitialized so we
         // should never get here
         LOG(WARNING) << "(Profiling::PM Sampling) Decode thread transitioned "
                      << "to uninitialized state";
-        StateIs(kStateUninitialized);
+        StateIs(ThreadState::kUninitialized);
         break;
-      case kStateExiting:
+      case ThreadState::kExiting:
         // Space for thread teardown if needed
         // ...
         // Thread is exiting, so return to allow joining
-        StateIs(kStateExiting);
+        StateIs(ThreadState::kExiting);
         return;
     }
   } while (true);

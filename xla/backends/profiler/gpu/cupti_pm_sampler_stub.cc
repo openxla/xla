@@ -1,3 +1,4 @@
+#include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_stub.h"
 

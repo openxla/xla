@@ -231,7 +231,6 @@ cc_library(
     hdrs = ["cupti_pm_sampler_impl.h", "cupti_pm_sampler.h"],
     copts = tf_profiler_copts() + tsl_copts(),
     deps = [
-        ":cupti_pm_sampler_stub",
         ":cupti_collector",
         ":cupti_interface",
         "@com_google_absl//absl/log",
@@ -514,7 +513,6 @@ cuda_library(
         "ptxas-options=-v",
     ]),
     tags = ["cuda-only"],
-    visibility = ["//visibility:public"],
 )
 
 xla_test(

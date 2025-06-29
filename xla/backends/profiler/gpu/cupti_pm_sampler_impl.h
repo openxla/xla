@@ -166,21 +166,21 @@ class CuptiPmSamplerDecodeThread {
 
   // Signal thread to exit; join thread
   ~CuptiPmSamplerDecodeThread() {
-    next_state_ = kStateExiting;
-    thd_->join();
+    next_state_ = ThreadState::kExiting;
+    thread_->join();
   }
 
   // Transitions to disabled
-  void Initialize() { ChangeState(kStateInitialized); }
-  void AwaitInitialization() { AwaitState(kStateInitialized); }
+  void Initialize() { ChangeState(ThreadState::kInitialized); }
+  void AwaitInitialization() { AwaitState(ThreadState::kInitialized); }
 
   // Straightforward state transitions
-  void Enable() { ChangeState(kStateEnabled); }
-  void AwaitEnablement() { AwaitState(kStateEnabled); }
-  void Disable() { ChangeState(kStateDisabled); }
-  void AwaitDisablement() { AwaitState(kStateDisabled); }
-  void Exit() { ChangeState(kStateExiting); }
-  void AwaitExit() { AwaitState(kStateExiting); }
+  void Enable() { ChangeState(ThreadState::kEnabled); }
+  void AwaitEnablement() { AwaitState(ThreadState::kEnabled); }
+  void Disable() { ChangeState(ThreadState::kDisabled); }
+  void AwaitDisablement() { AwaitState(ThreadState::kDisabled); }
+  void Exit() { ChangeState(ThreadState::kExiting); }
+  void AwaitExit() { AwaitState(ThreadState::kExiting); }
 
  private:
   // Spin wait sleep period, set to the min of this and all device periods
@@ -197,39 +197,41 @@ class CuptiPmSamplerDecodeThread {
 
   // Thread state.  Initialization goes straight to disabled, hence they are
   // equivalent.
-  enum ThdState {
+  enum class ThreadState {
     // Thread is starting, not yet ready to be enabled
-    kStateUninitialized,
+    kUninitialized,
     // Thread is ready for enablement but decoding has not yet been triggered
-    kStateInitialized,
+    kInitialized,
     // Thread is disabled but could be re-enabled
-    kStateDisabled = kStateInitialized,
+    kDisabled = kInitialized,
     // Thread is enabled, polling for metrics from all devices
-    kStateEnabled,
+    kEnabled,
     // Thread is finishing and guaranteed to return, allowing join
-    kStateExiting
+    kExiting
   };
 
   // Current state of the thread
-  ThdState current_state_ ABSL_GUARDED_BY(state_mutex_) = kStateUninitialized;
+  ThreadState current_state_ ABSL_GUARDED_BY(state_mutex_) =
+    ThreadState::kUninitialized;
 
   // State thread should transition to
-  ThdState next_state_ ABSL_GUARDED_BY(state_mutex_) = kStateInitialized;
+  ThreadState next_state_ ABSL_GUARDED_BY(state_mutex_) =
+    ThreadState::kInitialized;
 
   // Tell thread to change state
-  void ChangeState(ThdState state) {
+  void ChangeState(ThreadState state) {
     absl::MutexLock lock(&state_mutex_);
     next_state_ = state;
     stateChangeNotifier_.SignalAll();
   }
 
   // Internal state change
-  void StateIs(ThdState state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mutex_) {
+  void StateIs(ThreadState state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mutex_) {
     current_state_ = state;
     stateChangeNotifier_.SignalAll();
   }
 
-  void AwaitState(ThdState state) {
+  void AwaitState(ThreadState state) {
     absl::MutexLock lock(&state_mutex_);
     auto equals = [this, state] {
       return current_state_ == state;
@@ -252,9 +254,9 @@ class CuptiPmSamplerDecodeThread {
   };
 
   // Thread handle
-  std::thread* thd_;
+  std::unique_ptr<std::thread> thread_;
 
-  // Function run by thd_
+  // Function run by thread_
   void MainFunc();
 
   // Isolate the main decode loop
