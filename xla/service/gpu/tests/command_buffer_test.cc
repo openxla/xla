@@ -27,8 +27,16 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-class CommandBufferTest : public HloTestBase,
-                          public ::testing::WithParamInterface<bool> {
+struct CommandBufferTest : public HloTestBase,
+                           public ::testing::WithParamInterface<bool> {
+  auto GetComputeCapability() const {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
+ private:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_graph_enable_concurrent_region(GetParam());
@@ -78,6 +86,10 @@ TEST_P(CommandBufferTest, Fusions) {
 }
 
 TEST_P(CommandBufferTest, TrueFalseConditional) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GetComputeCapability())) {
+    GTEST_SKIP() << "Graph conditionals are not yet supported on HIP graphs.";
+  }
   constexpr absl::string_view hlo_text = R"(
   HloModule m, is_scheduled=true
 
@@ -137,6 +149,10 @@ TEST_P(CommandBufferTest, TrueFalseConditional) {
 }
 
 TEST_P(CommandBufferTest, IndexConditional) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GetComputeCapability())) {
+    GTEST_SKIP() << "Graph conditionals are not yet supported on HIP graphs.";
+  }
   constexpr absl::string_view hlo_text = R"(
   HloModule m, is_scheduled=true
 
@@ -204,6 +220,10 @@ TEST_P(CommandBufferTest, IndexConditional) {
 }
 
 TEST_P(CommandBufferTest, WhileLoop) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GetComputeCapability())) {
+    GTEST_SKIP() << "Graph conditionals are not yet supported on HIP graphs.";
+  }
   constexpr absl::string_view hlo_text = R"(
   HloModule m, is_scheduled=true
 
