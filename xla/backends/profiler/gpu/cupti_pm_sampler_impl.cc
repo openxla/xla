@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/errors.h"
+#include "xla/backends/profiler/gpu/cupti_utils.h"
 
 namespace xla {
 namespace profiler {
@@ -31,49 +32,6 @@ namespace profiler {
 // This class is responsible for managing the PM sampling process, and
 // requires the CUPTI PM sampling APIs to be defined and available.
 // This means this cannot build with CUDA < 12.6.
-
-// CUPTI params struct definitions are very long, macro it for convenience
-// They all have a struct_size field which must be set to type_STRUCT_SIZE
-// Many strucs also have a pPriv field which must be null, ie:
-// CUpti_Struct_Type var = { CUpti_Struct_Type_STRUCT_SIZE, .pPriv = nullptr }
-#define DEF_SIZED_PRIV_STRUCT(type, name) \
-  type name = {.structSize = type##_STRUCT_SIZE, .pPriv = nullptr}
-
-#define RETURN_IF_CUPTI_ERROR(expr)                                         \
-  do {                                                                      \
-    CUptiResult status = (cupti_interface_->expr);                          \
-    if (ABSL_PREDICT_FALSE(status != CUPTI_SUCCESS)) {                      \
-      const char* errstr = "";                                              \
-      cuptiGetResultString(status, &errstr);                                \
-      LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      if (status == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {                  \
-        return absl::PermissionDeniedError("CUPTI needs root access");      \
-      } else {                                                              \
-        return absl::UnknownError(absl::StrCat("CUPTI error ", errstr));    \
-      }                                                                     \
-    }                                                                       \
-  } while (false)
-
-#define WRAP_CUPTI_CALL(expr, status)                                       \
-  do {                                                                      \
-    status = (cupti_interface_->expr);                                      \
-    if (ABSL_PREDICT_FALSE(status != CUPTI_SUCCESS)) {                      \
-      const char* errstr = "";                                              \
-      cuptiGetResultString(status, &errstr);                                \
-      LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-    }                                                                       \
-  } while (false)
-
-#define RETURN_IF_CUDA_DRIVER_ERROR(expr)                                   \
-  do {                                                                      \
-    CUresult status = expr;                                                 \
-    if (ABSL_PREDICT_FALSE(status != CUDA_SUCCESS)) {                       \
-      const char* errstr = "";                                              \
-      cuGetErrorName(status, &errstr);                                      \
-      LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      return absl::UnknownError(absl::StrCat("CUDA driver error", errstr)); \
-    }                                                                       \
-  } while (false)
 
 // Constructor provides all configuration needed to set up sampling on a
 // single device
@@ -104,11 +62,18 @@ CuptiPmSamplerDevice::~CuptiPmSamplerDevice() {
   DestroyProfilerHostObj();
 }
 
+// CUPTI params struct definitions are very long, macro it for convenience
+// They all have a struct_size field which must be set to type_STRUCT_SIZE
+// These strucs also have a pPriv field which must be null, ie:
+// CUpti_Struct_Type var = { CUpti_Struct_Type_STRUCT_SIZE, .pPriv = nullptr }
+#define DEF_SIZED_PRIV_STRUCT(type, name) \
+  type name = {.structSize = type##_STRUCT_SIZE, .pPriv = nullptr}
+
 // Fetch chip name for this device
 absl::Status CuptiPmSamplerDevice::GetChipName() {
   DEF_SIZED_PRIV_STRUCT(CUpti_Device_GetChipName_Params, p);
   p.deviceIndex = device_id_;
-  RETURN_IF_CUPTI_ERROR(DeviceGetChipName(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->DeviceGetChipName(&p)));
 
   chip_name_ = std::string(p.pChipName);
 
@@ -118,13 +83,13 @@ absl::Status CuptiPmSamplerDevice::GetChipName() {
 // Test for device support for PM sampling
 absl::Status CuptiPmSamplerDevice::DeviceSupported() {
   CUdevice cuDevice;
-  RETURN_IF_CUDA_DRIVER_ERROR(cuDeviceGet(&cuDevice, device_id_));
+  TF_RETURN_IF_ERROR(ToStatus(cuDeviceGet(&cuDevice, device_id_)));
 
   // CUPTI call to validate configuration
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_DeviceSupported_Params, p);
   p.cuDevice = cuDevice;
   p.api = CUPTI_PROFILER_PM_SAMPLING;
-  RETURN_IF_CUPTI_ERROR(ProfilerDeviceSupported(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->ProfilerDeviceSupported(&p)));
 
   if (p.isSupported != CUPTI_PROFILER_CONFIGURATION_SUPPORTED) {
     return absl::FailedPreconditionError("Device does not support pm sampling");
@@ -138,13 +103,15 @@ absl::Status CuptiPmSamplerDevice::DeviceSupported() {
 absl::Status CuptiPmSamplerDevice::CreateCounterAvailabilityImage() {
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterAvailability_Params, p);
   p.deviceIndex = device_id_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterAvailability(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingGetCounterAvailability(&p)));
 
   counter_availability_image_.clear();
   counter_availability_image_.resize(p.counterAvailabilityImageSize);
 
   p.pCounterAvailabilityImage = counter_availability_image_.data();
-  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterAvailability(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingGetCounterAvailability(&p)));
 
   return absl::OkStatus();
 }
@@ -155,7 +122,7 @@ absl::Status CuptiPmSamplerDevice::CreateProfilerHostObj() {
   p.profilerType = CUPTI_PROFILER_TYPE_PM_SAMPLING;
   p.pChipName = chip_name_.c_str();
   p.pCounterAvailabilityImage = counter_availability_image_.data();
-  RETURN_IF_CUPTI_ERROR(ProfilerHostInitialize(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->ProfilerHostInitialize(&p)));
 
   host_obj_ = p.pHostObject;
 
@@ -187,10 +154,7 @@ CUptiResult CuptiPmSamplerDevice::AddMetricsToHostObj(
   p.pHostObject = host_obj_;
   p.ppMetricNames = metrics.data();
   p.numMetrics = metrics.size();
-  CUptiResult status;
-  WRAP_CUPTI_CALL(ProfilerHostConfigAddMetrics(&p), status);
-
-  return status;
+  return cupti_interface_->ProfilerHostConfigAddMetrics(&p);
 }
 
 // Register metrics, resize config image, and initialize it
@@ -279,7 +243,8 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
   // Resize and create config image
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Host_GetConfigImageSize_Params, ps);
   ps.pHostObject = host_obj_;
-  RETURN_IF_CUPTI_ERROR(ProfilerHostGetConfigImageSize(&ps));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->ProfilerHostGetConfigImageSize(&ps)));
 
   config_image_.clear();
   config_image_.resize(ps.configImageSize);
@@ -288,7 +253,8 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
   p.pHostObject = host_obj_;
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
-  RETURN_IF_CUPTI_ERROR(ProfilerHostGetConfigImage(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->ProfilerHostGetConfigImage(&p)));
 
   return absl::OkStatus();
 }
@@ -299,7 +265,8 @@ absl::Status CuptiPmSamplerDevice::NumPasses(size_t* passes) {
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
 
-  RETURN_IF_CUPTI_ERROR(ProfilerHostGetNumOfPasses(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->ProfilerHostGetNumOfPasses(&p)));
 
   *passes = p.numOfPasses;
 
@@ -311,7 +278,7 @@ absl::Status CuptiPmSamplerDevice::NumPasses(size_t* passes) {
 // FIXME: Remove?
 absl::Status CuptiPmSamplerDevice::InitializeProfilerAPIs() {
   DEF_SIZED_PRIV_STRUCT(CUpti_Profiler_Initialize_Params, p);
-  RETURN_IF_CUPTI_ERROR(ProfilerInitialize(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->ProfilerInitialize(&p)));
 
   return absl::OkStatus();
 }
@@ -320,7 +287,7 @@ absl::Status CuptiPmSamplerDevice::InitializeProfilerAPIs() {
 absl::Status CuptiPmSamplerDevice::CreatePmSamplerObject() {
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Enable_Params, p);
   p.deviceIndex = device_id_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingEnable(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingEnable(&p)));
 
   sampling_obj_ = p.pPmSamplingObject;
 
@@ -334,7 +301,8 @@ absl::Status CuptiPmSamplerDevice::CreateCounterDataImage() {
   p.numMetrics = c_metrics_.size();
   p.pMetricNames = c_metrics_.data();
   p.maxSamples = max_samples_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataSize(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingGetCounterDataSize(&p)));
 
   counter_data_image_.resize(p.counterDataSize);
 
@@ -350,7 +318,7 @@ absl::Status CuptiPmSamplerDevice::SetConfig() {
   p.hardwareBufferSize = hw_buf_size_;
   p.samplingInterval = sample_interval_ns_;
   p.triggerMode = CUPTI_PM_SAMPLING_TRIGGER_MODE_GPU_TIME_INTERVAL;
-  RETURN_IF_CUPTI_ERROR(PmSamplingSetConfig(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingSetConfig(&p)));
 
   return absl::OkStatus();
 }
@@ -359,7 +327,7 @@ absl::Status CuptiPmSamplerDevice::SetConfig() {
 absl::Status CuptiPmSamplerDevice::StartSampling() {
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Start_Params, p);
   p.pPmSamplingObject = sampling_obj_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingStart(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingStart(&p)));
 
   return absl::OkStatus();
 }
@@ -368,7 +336,7 @@ absl::Status CuptiPmSamplerDevice::StartSampling() {
 absl::Status CuptiPmSamplerDevice::StopSampling() {
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Stop_Params, p);
   p.pPmSamplingObject = sampling_obj_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingStop(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingStop(&p)));
 
   return absl::OkStatus();
 }
@@ -381,7 +349,7 @@ absl::Status CuptiPmSamplerDevice::DisableSampling() {
   //
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_Disable_Params, p);
   p.pPmSamplingObject = sampling_obj_;
-  RETURN_IF_CUPTI_ERROR(PmSamplingDisable(&p));
+  TF_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingDisable(&p)));
 
   sampling_obj_ = nullptr;
 
@@ -437,7 +405,8 @@ absl::Status CuptiPmSamplerDevice::GetSampleCounts(
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataInfo_Params, p);
   p.pCounterDataImage = counter_data_image_.data();
   p.counterDataImageSize = counter_data_image_.size();
-  RETURN_IF_CUPTI_ERROR(PmSamplingGetCounterDataInfo(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingGetCounterDataInfo(&p)));
 
   decode_info.num_samples = p.numTotalSamples;
   decode_info.num_populated = p.numPopulatedSamples;
@@ -455,7 +424,8 @@ absl::Status CuptiPmSamplerDevice::GetSample(SamplerRange& sample,
   ps.pCounterDataImage = counter_data_image_.data();
   ps.counterDataImageSize = counter_data_image_.size();
   ps.sampleIndex = index;
-  RETURN_IF_CUPTI_ERROR(PmSamplingCounterDataGetSampleInfo(&ps));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingCounterDataGetSampleInfo(&ps)));
 
   sample.range_index = index;
   sample.start_timestamp_ns = ps.startTimestamp;
@@ -471,7 +441,8 @@ absl::Status CuptiPmSamplerDevice::GetSample(SamplerRange& sample,
   p.numMetrics = c_metrics_.size();
   p.rangeIndex = index;
   p.pMetricValues = sample.metric_values.data();
-  RETURN_IF_CUPTI_ERROR(ProfilerHostEvaluateToGpuValues(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->ProfilerHostEvaluateToGpuValues(&p)));
 
   return absl::OkStatus();
 }
@@ -482,7 +453,8 @@ absl::Status CuptiPmSamplerDevice::InitializeCounterDataImage() {
   p.pPmSamplingObject = sampling_obj_;
   p.counterDataSize = counter_data_image_.size();
   p.pCounterData = counter_data_image_.data();
-  RETURN_IF_CUPTI_ERROR(PmSamplingCounterDataImageInitialize(&p));
+  TF_RETURN_IF_ERROR(ToStatus(
+        cupti_interface_->PmSamplingCounterDataImageInitialize(&p)));
 
   // Stash this in a vector so it can be restored with copy semantics
   counter_data_image_backup_ = std::vector<uint8_t>(counter_data_image_);

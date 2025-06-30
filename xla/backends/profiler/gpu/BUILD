@@ -233,6 +233,7 @@ cc_library(
     deps = [
         ":cupti_collector",
         ":cupti_interface",
+        ":cupti_utils",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
@@ -416,7 +417,7 @@ tsl_gpu_library(
 
 tsl_gpu_library(
     name = "cupti_utils",
-    srcs = if_cuda(["cupti_utils.cc"]),
+    srcs = if_cuda(["cupti_utils.cc", "cupti_utils.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
     cuda_deps = [
         ":cupti_error_manager",

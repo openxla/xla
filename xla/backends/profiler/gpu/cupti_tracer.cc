@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
+#include "xla/backends/profiler/gpu/cupti_utils.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 
@@ -69,24 +70,6 @@ class CuptiApiTracingDisabler {
   CuptiApiTracingDisabler() { internalCuCall++; }
   ~CuptiApiTracingDisabler() { internalCuCall--; }
 };
-
-absl::Status ToStatus(CUptiResult result) {
-  if (result == CUPTI_SUCCESS) {
-    return absl::OkStatus();
-  }
-  const char* str = nullptr;
-  cuptiGetResultString(result, &str);
-  return tsl::errors::Unavailable("CUPTI error: ", str ? str : "<unknown>");
-}
-
-absl::Status ToStatus(CUresult result) {
-  if (result == CUDA_SUCCESS) {
-    return absl::OkStatus();
-  }
-  const char* str = nullptr;
-  cuGetErrorName(result, &str);
-  return tsl::errors::Unavailable("CUDA error: ", str ? str : "<unknown>");
-}
 
 inline void LogIfError(const absl::Status& status) {
   if (status.ok()) return;
@@ -1316,14 +1299,14 @@ absl::Status CuptiTracer::HandleDriverApiCallback(
     // API callback is called before any CUDA context is created.
     // This is expected to be rare, and we ignore this case.
     VLOG(3) << "API callback received before creation of CUDA context\n";
-    return tsl::errors::Internal("cutpi callback without context");
+    return absl::InternalError("cutpi callback without context");
   }
 
   // Grab a correct device ID.
   uint32_t device_id = -1;
   RETURN_IF_CUPTI_ERROR(GetDeviceId(cbdata->context, &device_id));
   if (device_id >= num_gpus_) {
-    return tsl::errors::Internal("Invalid device id:", device_id);
+    return absl::InternalError(absl::StrCat("Invalid device id:", device_id));
   }
 
   if (cbdata->callbackSite == CUPTI_API_ENTER) {
@@ -1422,7 +1405,7 @@ absl::Status CuptiTracer::ProcessActivityBuffer(CUcontext context,
     LOG(WARNING) << "CUPTI activity buffer is reclaimed after flush.";
     return absl::OkStatus();
   }
-  if (cupti_interface_->Disabled()) return tsl::errors::Internal("Disabled.");
+  if (cupti_interface_->Disabled()) return absl::InternalError("Disabled.");
 
   // Report dropped records.
   size_t dropped = 0;
