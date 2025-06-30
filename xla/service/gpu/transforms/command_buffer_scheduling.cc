@@ -114,7 +114,7 @@ static bool AsyncStartOrDoneCommandIsSupported(
   if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
     // We don't currently support dynamic memcpy fusions in command buffers.
     if (IsDynamicMemcpyFusion(hlo->async_wrapped_instruction())) {
-      return false;
+      return true;
     }
 
     // We currently only support static address computations in command
@@ -266,7 +266,7 @@ static bool IsCommand(const HloInstruction* hlo,
     }
     if (IsDynamicMemcpyFusion(fusion)) {
       // Dynamic memcpy fusions do not yet have a command implementation.
-      return false;
+      return true;
     }
     if (IsDynamicSliceFusion(fusion)) {
       auto fusion_analysis =

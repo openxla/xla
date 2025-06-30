@@ -1589,4 +1589,55 @@ ENTRY %e (m: f32[3200,6400], n: f32[3200,6400]) -> (f32[3200,6400], f32[3200,640
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-3, 2e-3}));
 }
 
+TEST_F(CmdBufferTest, DynamicSliceCopyFusionCmd) {
+  const char* module_str = R"(
+    dynamic_slice {
+      p0 = s32[4,8,8] parameter(0)
+      p1 = s32[1,1,8] parameter(1)
+      p2 = s32[] parameter(2)
+      c1 = s32[] constant(1)
+      ROOT update-slice = s32[4,8,8] dynamic-update-slice(p0, p1, p2, c1, c1)
+    }
+
+    body {
+      p0 = (s32[], s32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      input = s32[4,8,8] get-tuple-element(p0), index=1
+      val = s32[1,1,8] constant({{{1,2,3,4,5,6,7,8}}})
+
+      updated = s32[4,8,8] fusion(input, val, ivar), kind=kLoop, calls=dynamic_slice
+      c1 = s32[] constant(1)
+      next_ivar = s32[] add(ivar, c1)
+
+      ROOT result = (s32[], s32[4,8,8])
+          tuple(next_ivar, updated)
+    }
+
+    condition {
+      p0 = (s32[], s32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c6 = s32[] constant(6)
+      ROOT cmp = pred[] compare(ivar, c6), direction=LT
+    }
+
+    ENTRY main {
+      input = s32[4,8,8] parameter(0)
+      c0 = s32[] constant(0)
+      tuple = (s32[], s32[4,8,8]) tuple(c0, input)
+      ROOT while = (s32[], s32[4,8,8]) while(tuple),
+          condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"6"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    })";
+
+  // running with module without exclusive lock on GpuExecutable
+  HloModuleConfig config;
+  auto debug_options = GetDebugOptionsForTest();
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(module_str, config));
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-3, 2e-3}));
+  }
+
 }  // namespace xla::gpu
