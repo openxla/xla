@@ -96,27 +96,6 @@ inline void LogIfError(const absl::Status& status) {
     }                                                                       \
   } while (false)
 
-#define RETURN_IF_CUDA_ERROR(expr)                                          \
-  do {                                                                      \
-    cudaError_t status = expr;                                              \
-    if (ABSL_PREDICT_FALSE(status != cudaSuccess)) {                        \
-      const char* errstr = cudaGetErrorName(status);                        \
-      LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      return absl::UnknownError(absl::StrCat("CUDA error ", errstr));       \
-    }                                                                       \
-  } while (false)
-
-#define RETURN_IF_CUDA_DRIVER_ERROR(expr)                                   \
-  do {                                                                      \
-    CUresult status = expr;                                                 \
-    if (ABSL_PREDICT_FALSE(status != CUDA_SUCCESS)) {                       \
-      const char* errstr = "";                                              \
-      cuGetErrorName(status, &errstr);                                      \
-      LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
-      return absl::UnknownError(absl::StrCat("CUDA driver error", errstr)); \
-    }                                                                       \
-  } while (false)
-
 size_t Bytes2D(const CUDA_MEMCPY2D* p) { return p->Height * p->WidthInBytes; }
 
 size_t Bytes3D(const CUDA_MEMCPY3D* p) {

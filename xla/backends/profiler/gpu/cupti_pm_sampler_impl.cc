@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <thread>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/errors.h"
@@ -799,7 +800,12 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
     return absl::AlreadyExistsError("PM sampler already initialized");
   }
 
-  absl::Status status;
+  // OK to have no devices that support PM sampling
+  if (devices_.size() < 1) return absl::OkStatus();
+
+  // Use absl cleanup to clear alloced memory on error
+  // (Cancel before successful return)
+  absl::Cleanup cleanup([this]() { threads_.clear(); devices_.clear(); });
 
   // PM sampling has to be enabled on individual devices
   for (int dev_idx = 0; dev_idx < num_gpus; dev_idx++) {
@@ -809,25 +815,16 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
     std::shared_ptr<CuptiPmSamplerDevice> dev =
         std::make_shared<CuptiPmSamplerDevice>(dev_idx, options);
 
-    // Create all configuration needed for this device, or skip device on error
-    if (status = dev->CreateConfig(); !status.ok()) break;
+    // Create all configuration needed for this device, or error out
+    TF_RETURN_IF_ERROR(dev->CreateConfig());
 
-    // Set configuration
-    if (status = dev->SetConfig(); !status.ok()) break;
+    // Set configuration or error out
+    TF_RETURN_IF_ERROR(dev->SetConfig());
 
     // Device is fully configured but PM sampling not yet started - push to list
     // of PM sampling devices
     devices_.push_back(std::move(dev));
   }
-
-  // If error occurred, clean up created devices and return failure
-  if (!status.ok()) {
-    devices_.clear();
-    return status;
-  }
-
-  // OK to have no devices that support PM sampling as long as not due to error
-  if (devices_.size() < 1) return absl::OkStatus();
 
   // Create decode thread(s)
   for (int i = 0; i < devices_.size(); i += options.devs_per_decode_thd) {
@@ -841,7 +838,8 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
     std::vector<std::shared_ptr<CuptiPmSamplerDevice>> slice(begin, end);
 
     // Create worker thread for this slice
-    auto thd = std::make_unique<CuptiPmSamplerDecodeThread>(slice, options);
+    auto thd = std::make_unique<CuptiPmSamplerDecodeThread>(std::move(slice),
+        options);
     threads_.push_back(std::move(thd));
   }
 
@@ -852,6 +850,9 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
   for (auto& thd : threads_) {
     thd->AwaitInitialization();
   }
+
+  // Cancel the cleanup, as we are now initialized
+  std::move(cleanup).Cancel();
 
   initialized_ = true;
 

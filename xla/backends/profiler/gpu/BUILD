@@ -234,6 +234,7 @@ cc_library(
         ":cupti_collector",
         ":cupti_interface",
         ":cupti_utils",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
