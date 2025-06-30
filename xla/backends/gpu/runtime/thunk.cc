@@ -67,7 +67,7 @@ absl::StatusOr<Communicator*> Thunk::CollectiveCliques::GetComm(
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);
   if (clique == cliques_map_.end()) {
-    return absl::NotFoundError(absl::StrCat("GetComm, No clique found for clique key: ",
+    return absl::NotFoundError(absl::StrCat("No clique found for clique key: ",
                                             clique_key.ToString()));
   }
 
@@ -87,7 +87,7 @@ absl::StatusOr<bool> Thunk::CollectiveCliques::peer_access_enabled(
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);
   if (clique == cliques_map_.end()) {
-    return absl::NotFoundError(absl::StrCat("Peer Access, No clique found for clique key: ",
+    return absl::NotFoundError(absl::StrCat("No clique found for clique key: ",
                                             clique_key.ToString()));
   }
 

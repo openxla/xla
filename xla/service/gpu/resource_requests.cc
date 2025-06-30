@@ -58,7 +58,6 @@ static PersistentCliquesMap& GetPersistentCliquesMap() {
 }  // namespace
 
 absl::Status ResourceRequests::AddClique(const GpuCliqueKey& clique_key) {
-  std::cout << std::endl << clique_key.ToString() << std::endl;
   VLOG(5) << "Add collective clique request: " << clique_key.ToString();
 
   // XLA compiler guarantees that all collective operations have the same

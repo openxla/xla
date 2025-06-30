@@ -129,12 +129,12 @@ std::string GpuCliqueKey::ToString() const {
 }
 
 void GpuCliqueKey::HashValue(absl::HashState state) const {
-  absl::HashState::combine(std::move(state), devices(), is_p2p_,
-                           participant_groups_, root_device_, incarnations_);
+  absl::HashState::combine(std::move(state), devices(), participant_groups_,
+                           root_device_, incarnations_);
 }
 
 bool operator==(const GpuCliqueKey& a, const GpuCliqueKey& b) {
-  return a.devices() == b.devices() && a.is_p2p_ == b.is_p2p_ &&
+  return a.devices() == b.devices() &&
          a.participant_groups_ == b.participant_groups_ &&
          a.num_local_participants_ == b.num_local_participants_ &&
          a.root_device_ == b.root_device_ && a.incarnations_ == b.incarnations_;
@@ -143,8 +143,7 @@ bool operator==(const GpuCliqueKey& a, const GpuCliqueKey& b) {
 // Constructs a tuple from the clique key for comparison purposes.
 static auto CmpKey(const GpuCliqueKey& key) {
   return std::make_tuple(key.devices().size(), key.devices(), key.root_device(),
-                         key.num_local_participants(), key.is_p2p(),
-                         key.incarnations());
+                         key.num_local_participants(), key.incarnations());
 }
 
 bool operator<(const GpuCliqueKey& a, const GpuCliqueKey& b) {

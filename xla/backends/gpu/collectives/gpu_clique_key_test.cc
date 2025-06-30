@@ -91,13 +91,11 @@ TEST(GpuCliqueKeyTest, Compare) {
   GlobalDeviceId id2 = GlobalDeviceId(2);
   GlobalDeviceId id3 = GlobalDeviceId(3);
 
-  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1, false);
-  GpuCliqueKey key1({id1, id2, id3}, /*num_local_participants=*/1, false);
-  GpuCliqueKey key2({id1, id2, id3}, /*num_local_participants=*/1, true);
+  GpuCliqueKey key0({id0, id1}, /*num_local_participants=*/1);
+  GpuCliqueKey key1({id1, id2, id3}, /*num_local_participants=*/1);
 
   EXPECT_LT(key0, key1);
   EXPECT_GT(key1, key0);
-  EXPECT_LT(key1, key2);
 }
 
 TEST(GpuCliqueKeyTest, CompareWithParticipantGroups) {
