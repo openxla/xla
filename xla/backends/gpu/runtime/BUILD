@@ -61,6 +61,7 @@ cc_library(
         ":collective_broadcast_thunk",
         ":collective_thunk",
         ":custom_call_thunk",
+        ":copy_thunk",
         ":dynamic_slice_thunk",
         ":gpublas_lt_matmul_thunk",
         ":thunk",
