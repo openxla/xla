@@ -380,6 +380,10 @@ absl::Status MaybeRegisterBuffers(se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
                                   Communicator* comm) {
   for (int i = 0; i < buffers.size(); ++i) {
+    if (buffers[i].element_count == 1) {
+      VLOG(5) << "Skipping buffer registration for single element collectives.";
+      continue;
+    }
     if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
       TF_RETURN_IF_ERROR(
           RegisterBufferOnce(executor, comm, buffers[i].source_buffer));
