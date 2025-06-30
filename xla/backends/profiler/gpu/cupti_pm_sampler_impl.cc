@@ -409,7 +409,23 @@ absl::Status CuptiPmSamplerDevice::FillCounterDataImage(
     return absl::InternalError("CUPTI error during cuptiPmSamplingDecodeData");
   }
 
-  decode_info.decode_stop_reason = p.decodeStopReason;
+  // Map decode stop reason to enum class
+  if (p.decodeStopReason == CUPTI_PM_SAMPLING_DECODE_STOP_REASON_OTHER) {
+    decode_info.decode_stop_reason =
+      CuptiPmSamplingDecodeStopReason::kOther;
+  } else if (p.decodeStopReason == 
+      CUPTI_PM_SAMPLING_DECODE_STOP_REASON_END_OF_RECORDS) {
+    decode_info.decode_stop_reason =
+      CuptiPmSamplingDecodeStopReason::kEndOfRecords;
+  } else if (p.decodeStopReason ==
+      CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNTER_DATA_FULL) {
+    decode_info.decode_stop_reason =
+      CuptiPmSamplingDecodeStopReason::kCounterDataFull;
+  } else {
+    LOG(WARNING) << "Profiling::PM Sampling - decode stopped for unhandled "
+      "reason: " << p.decodeStopReason;
+  }
+
   decode_info.overflow = p.overflow;
 
   return absl::OkStatus();
@@ -640,7 +656,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
 
       // Track whether this device reached end of records
       if (info.decode_stop_reason !=
-          CUPTI_PM_SAMPLING_DECODE_STOP_REASON_END_OF_RECORDS) {
+          CuptiPmSamplingDecodeStopReason::kEndOfRecords) {
         all_devs_end_of_records = false;
       } else {
         VLOG(2) << "(Profiling::PM Sampling)   End of records for device "
@@ -654,7 +670,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
       }
 
       if (info.decode_stop_reason ==
-          CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNTER_DATA_FULL) {
+          CuptiPmSamplingDecodeStopReason::kCounterDataFull) {
         LOG(WARNING) << "(Profiling::PM Sampling) ran out of host buffer space "
                      << "before decoding all records from the device buffer on "
                      << "device " << dev->device_id_;

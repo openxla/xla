@@ -31,9 +31,19 @@ namespace xla {
 namespace profiler {
 
 // Information related to a decode counters pass over a single device
+
+// Maps to CUpti_PmSampling_DecodeStopReason without requiring CUPTI headers
+// Only include the enum values that are used in the code
+enum class CuptiPmSamplingDecodeStopReason {
+  kOther, // CUPTI_PM_SAMPLING_DECODE_STOP_REASON_OTHER
+  kCounterDataFull, // CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNTER_DATA_FULL
+  kEndOfRecords, // CUPTI_PM_SAMPLING_DECODE_STOP_REASON_END_OF_RECORDS
+  kCount     // CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT
+};
+
 struct CuptiPmSamplerDecodeInfo {
-  CUpti_PmSampling_DecodeStopReason decode_stop_reason =
-      CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT;
+  CuptiPmSamplingDecodeStopReason decode_stop_reason =
+      CuptiPmSamplingDecodeStopReason::kCount;
   uint8_t overflow = 0;
   size_t num_samples = 0;
   size_t num_completed = 0;

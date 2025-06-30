@@ -36,14 +36,6 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
-// Provide safe types if CUPTI_PM_SAMPLING is not defined
-// (And therefor CUPTI PM sampling headers are not included)
-#if !CUPTI_PM_SAMPLING_SUPPORTED
-enum CUpti_PmSampling_DecodeStopReason {
-  CUPTI_PM_SAMPLING_DECODE_STOP_REASON_COUNT = 0
-};
-#endif
-
 struct CuptiTracerOptions {
   bool required_callback_api_events = true;
   // The callback ids that will be enabled and monitored, if empty, all
