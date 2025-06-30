@@ -158,408 +158,456 @@ CUptiResult CuptiWrapper::GetStreamIdEx(CUcontext context, CUstream stream,
 
 // Prototypes for PM sampling and profiler host APIs if headers are not present
 #if !CUPTI_PM_SAMPLING_SUPPORTED
-CUptiResult cuptiProfilerHostInitialize(
-    CUpti_Profiler_Host_Initialize_Params* pParams);
-CUptiResult cuptiProfilerHostDeinitialize(
-    CUpti_Profiler_Host_Deinitialize_Params* pParams);
-CUptiResult cuptiProfilerHostGetSupportedChips(
-    CUpti_Profiler_Host_GetSupportedChips_Params* pParams);
-CUptiResult cuptiProfilerHostGetBaseMetrics(
-    CUpti_Profiler_Host_GetBaseMetrics_Params* pParams);
-CUptiResult cuptiProfilerHostGetSubMetrics(
-    CUpti_Profiler_Host_GetSubMetrics_Params* pParams);
-CUptiResult cuptiProfilerHostGetMetricProperties(
-    CUpti_Profiler_Host_GetMetricProperties_Params* pParams);
-CUptiResult cuptiProfilerHostGetRangeName(
-    CUpti_Profiler_Host_GetRangeName_Params* pParams);
-CUptiResult cuptiProfilerHostEvaluateToGpuValues(
-    CUpti_Profiler_Host_EvaluateToGpuValues_Params* pParams);
-CUptiResult cuptiProfilerHostConfigAddMetrics(
-    CUpti_Profiler_Host_ConfigAddMetrics_Params* pParams);
-CUptiResult cuptiProfilerHostGetConfigImageSize(
-    CUpti_Profiler_Host_GetConfigImageSize_Params* pParams);
-CUptiResult cuptiProfilerHostGetConfigImage(
-    CUpti_Profiler_Host_GetConfigImage_Params* pParams);
-CUptiResult cuptiProfilerHostGetNumOfPasses(
-    CUpti_Profiler_Host_GetNumOfPasses_Params* pParams);
-CUptiResult cuptiProfilerHostGetMaxNumHardwareMetricsPerPass(
-    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* pParams);
+[[gnu::weak]] CUptiResult cuptiProfilerHostInitialize(
+    CUpti_Profiler_Host_Initialize_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostDeinitialize(
+    CUpti_Profiler_Host_Deinitialize_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetSupportedChips(
+    CUpti_Profiler_Host_GetSupportedChips_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetBaseMetrics(
+    CUpti_Profiler_Host_GetBaseMetrics_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetSubMetrics(
+    CUpti_Profiler_Host_GetSubMetrics_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetMetricProperties(
+    CUpti_Profiler_Host_GetMetricProperties_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetRangeName(
+    CUpti_Profiler_Host_GetRangeName_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostEvaluateToGpuValues(
+    CUpti_Profiler_Host_EvaluateToGpuValues_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostConfigAddMetrics(
+    CUpti_Profiler_Host_ConfigAddMetrics_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetConfigImageSize(
+    CUpti_Profiler_Host_GetConfigImageSize_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetConfigImage(
+    CUpti_Profiler_Host_GetConfigImage_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetNumOfPasses(
+    CUpti_Profiler_Host_GetNumOfPasses_Params* params);
+[[gnu::weak]] CUptiResult cuptiProfilerHostGetMaxNumHardwareMetricsPerPass(
+    CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* params);
 
-CUptiResult cuptiPmSamplingSetConfig(
-    CUpti_PmSampling_SetConfig_Params* pParams);
-CUptiResult cuptiPmSamplingEnable(CUpti_PmSampling_Enable_Params* pParams);
-CUptiResult cuptiPmSamplingDisable(CUpti_PmSampling_Disable_Params* pParams);
-CUptiResult cuptiPmSamplingStart(CUpti_PmSampling_Start_Params* pParams);
-CUptiResult cuptiPmSamplingStop(CUpti_PmSampling_Stop_Params* pParams);
-CUptiResult cuptiPmSamplingDecodeData(
-    CUpti_PmSampling_DecodeData_Params* pParams);
-CUptiResult cuptiPmSamplingGetCounterAvailability(
-    CUpti_PmSampling_GetCounterAvailability_Params* pParams);
-CUptiResult cuptiPmSamplingGetCounterDataSize(
-    CUpti_PmSampling_GetCounterDataSize_Params* pParams);
-CUptiResult cuptiPmSamplingCounterDataImageInitialize(
-    CUpti_PmSampling_CounterDataImage_Initialize_Params* pParams);
-CUptiResult cuptiPmSamplingGetCounterDataInfo(
-    CUpti_PmSampling_GetCounterDataInfo_Params* pParams);
-CUptiResult cuptiPmSamplingCounterDataGetSampleInfo(
-    CUpti_PmSampling_CounterData_GetSampleInfo_Params* pParams);
+[[gnu::weak]] CUptiResult cuptiPmSamplingSetConfig(
+    CUpti_PmSampling_SetConfig_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingEnable(CUpti_PmSampling_Enable_Params*
+    params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingDisable(
+    CUpti_PmSampling_Disable_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingStart(CUpti_PmSampling_Start_Params*
+    params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingStop(CUpti_PmSampling_Stop_Params*
+    params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingDecodeData(
+    CUpti_PmSampling_DecodeData_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingGetCounterAvailability(
+    CUpti_PmSampling_GetCounterAvailability_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingGetCounterDataSize(
+    CUpti_PmSampling_GetCounterDataSize_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingCounterDataImageInitialize(
+    CUpti_PmSampling_CounterDataImage_Initialize_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingGetCounterDataInfo(
+    CUpti_PmSampling_GetCounterDataInfo_Params* params);
+[[gnu::weak]] CUptiResult cuptiPmSamplingCounterDataGetSampleInfo(
+    CUpti_PmSampling_CounterData_GetSampleInfo_Params* params);
 #endif  // !CUPTI_PM_SAMPLING_SUPPORTED
 
 // Profiler Host APIs
 CUptiResult CuptiWrapper::ProfilerHostInitialize(
     CUpti_Profiler_Host_Initialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostInitialize != nullptr) {
     return cuptiProfilerHostInitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostDeinitialize(
     CUpti_Profiler_Host_Deinitialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostDeinitialize != nullptr) {
     return cuptiProfilerHostDeinitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetSupportedChips(
     CUpti_Profiler_Host_GetSupportedChips_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetSupportedChips != nullptr) {
     return cuptiProfilerHostGetSupportedChips(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetBaseMetrics(
     CUpti_Profiler_Host_GetBaseMetrics_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetBaseMetrics != nullptr) {
     return cuptiProfilerHostGetBaseMetrics(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetSubMetrics(
     CUpti_Profiler_Host_GetSubMetrics_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetSubMetrics != nullptr) {
     return cuptiProfilerHostGetSubMetrics(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetMetricProperties(
     CUpti_Profiler_Host_GetMetricProperties_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetMetricProperties != nullptr) {
     return cuptiProfilerHostGetMetricProperties(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetRangeName(
     CUpti_Profiler_Host_GetRangeName_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetRangeName != nullptr) {
     return cuptiProfilerHostGetRangeName(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostEvaluateToGpuValues(
     CUpti_Profiler_Host_EvaluateToGpuValues_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostEvaluateToGpuValues != nullptr) {
     return cuptiProfilerHostEvaluateToGpuValues(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostConfigAddMetrics(
     CUpti_Profiler_Host_ConfigAddMetrics_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostConfigAddMetrics != nullptr) {
     return cuptiProfilerHostConfigAddMetrics(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetConfigImageSize(
     CUpti_Profiler_Host_GetConfigImageSize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetConfigImageSize != nullptr) {
     return cuptiProfilerHostGetConfigImageSize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetConfigImage(
     CUpti_Profiler_Host_GetConfigImage_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetConfigImage != nullptr) {
     return cuptiProfilerHostGetConfigImage(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetNumOfPasses(
     CUpti_Profiler_Host_GetNumOfPasses_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetNumOfPasses != nullptr) {
     return cuptiProfilerHostGetNumOfPasses(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerHostGetMaxNumHardwareMetricsPerPass(
     CUpti_Profiler_Host_GetMaxNumHardwareMetricsPerPass_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerHostGetMaxNumHardwareMetricsPerPass != nullptr) {
     return cuptiProfilerHostGetMaxNumHardwareMetricsPerPass(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 // Profiler Target APIs
 CUptiResult CuptiWrapper::ProfilerInitialize(
     CUpti_Profiler_Initialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerInitialize != nullptr) {
     return cuptiProfilerInitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerDeInitialize(
     CUpti_Profiler_DeInitialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerDeInitialize != nullptr) {
     return cuptiProfilerDeInitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerCounterDataImageCalculateSize(
     CUpti_Profiler_CounterDataImage_CalculateSize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerCounterDataImageCalculateSize != nullptr) {
     return cuptiProfilerCounterDataImageCalculateSize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerCounterDataImageInitialize(
     CUpti_Profiler_CounterDataImage_Initialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerCounterDataImageInitialize != nullptr) {
     return cuptiProfilerCounterDataImageInitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerCounterDataImageCalculateScratchBufferSize(
     CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerCounterDataImageCalculateScratchBufferSize != nullptr) {
     return cuptiProfilerCounterDataImageCalculateScratchBufferSize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerCounterDataImageInitializeScratchBuffer(
     CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerCounterDataImageInitializeScratchBuffer != nullptr) {
     return cuptiProfilerCounterDataImageInitializeScratchBuffer(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerBeginSession(
     CUpti_Profiler_BeginSession_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerBeginSession != nullptr) {
     return cuptiProfilerBeginSession(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerEndSession(
     CUpti_Profiler_EndSession_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerEndSession != nullptr) {
     return cuptiProfilerEndSession(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerSetConfig(
     CUpti_Profiler_SetConfig_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerSetConfig != nullptr) {
     return cuptiProfilerSetConfig(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerUnsetConfig(
     CUpti_Profiler_UnsetConfig_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerUnsetConfig != nullptr) {
     return cuptiProfilerUnsetConfig(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerBeginPass(
     CUpti_Profiler_BeginPass_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerBeginPass != nullptr) {
     return cuptiProfilerBeginPass(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerEndPass(
     CUpti_Profiler_EndPass_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerEndPass != nullptr) {
     return cuptiProfilerEndPass(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerEnableProfiling(
     CUpti_Profiler_EnableProfiling_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerEnableProfiling != nullptr) {
     return cuptiProfilerEnableProfiling(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerDisableProfiling(
     CUpti_Profiler_DisableProfiling_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerDisableProfiling != nullptr) {
     return cuptiProfilerDisableProfiling(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerIsPassCollected(
     CUpti_Profiler_IsPassCollected_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerIsPassCollected != nullptr) {
     return cuptiProfilerIsPassCollected(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerFlushCounterData(
     CUpti_Profiler_FlushCounterData_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerFlushCounterData != nullptr) {
     return cuptiProfilerFlushCounterData(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerPushRange(
     CUpti_Profiler_PushRange_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerPushRange != nullptr) {
     return cuptiProfilerPushRange(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerPopRange(
     CUpti_Profiler_PopRange_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerPopRange != nullptr) {
     return cuptiProfilerPopRange(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerGetCounterAvailability(
     CUpti_Profiler_GetCounterAvailability_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerGetCounterAvailability != nullptr) {
     return cuptiProfilerGetCounterAvailability(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::ProfilerDeviceSupported(
     CUpti_Profiler_DeviceSupported_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiProfilerDeviceSupported != nullptr) {
     return cuptiProfilerDeviceSupported(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingSetConfig(
     CUpti_PmSampling_SetConfig_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingSetConfig != nullptr) {
     return cuptiPmSamplingSetConfig(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingEnable(
     CUpti_PmSampling_Enable_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingEnable != nullptr) {
     return cuptiPmSamplingEnable(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingDisable(
     CUpti_PmSampling_Disable_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingDisable != nullptr) {
     return cuptiPmSamplingDisable(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingStart(
     CUpti_PmSampling_Start_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingStart != nullptr) {
     return cuptiPmSamplingStart(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingStop(CUpti_PmSampling_Stop_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingStop != nullptr) {
     return cuptiPmSamplingStop(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingDecodeData(
     CUpti_PmSampling_DecodeData_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingDecodeData != nullptr) {
     return cuptiPmSamplingDecodeData(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingGetCounterAvailability(
     CUpti_PmSampling_GetCounterAvailability_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingGetCounterAvailability != nullptr) {
     return cuptiPmSamplingGetCounterAvailability(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingGetCounterDataSize(
     CUpti_PmSampling_GetCounterDataSize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingGetCounterDataSize != nullptr) {
     return cuptiPmSamplingGetCounterDataSize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingCounterDataImageInitialize(
     CUpti_PmSampling_CounterDataImage_Initialize_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingCounterDataImageInitialize != nullptr) {
     return cuptiPmSamplingCounterDataImageInitialize(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingGetCounterDataInfo(
     CUpti_PmSampling_GetCounterDataInfo_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingGetCounterDataInfo != nullptr) {
     return cuptiPmSamplingGetCounterDataInfo(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
 CUptiResult CuptiWrapper::PmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* params) {
-  if constexpr (kCuptiPmSamplingSupported)
+  if (cuptiPmSamplingCounterDataGetSampleInfo != nullptr) {
     return cuptiPmSamplingCounterDataGetSampleInfo(params);
-  else
+  } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
+  }
 }
 
-CUptiResult CuptiWrapper::DeviceGetChipName(
-    CUpti_Device_GetChipName_Params* params) {
+CUptiResult CuptiWrapper::DeviceGetChipName(CUpti_Device_GetChipName_Params*
+    params) {
   return cuptiDeviceGetChipName(params);
 }
 
