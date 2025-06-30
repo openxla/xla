@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
@@ -1180,6 +1181,11 @@ bool CaseCmd::requires_initialization() {
       branches_, [](const auto& seq) { return seq.requires_initialization(); });
 }
 
+bool CaseCmd::force_update() {
+  return absl::c_any_of(branches_,
+                        [](const auto& seq) { return seq.force_update(); });
+}
+
 CommandBufferCmd::BufferUseVector CaseCmd::buffers() const {
   absl::flat_hash_set<BufferUse> buffers;
   buffers.emplace(index_, MemoryAccess::kRead);
@@ -1241,6 +1247,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
 bool WhileCmd::requires_initialization() {
   return (cond_commands_.requires_initialization() ||
           body_commands_.requires_initialization());
+}
+
+bool WhileCmd::force_update() {
+  return cond_commands_.force_update() || body_commands_.force_update();
 }
 
 CommandBufferCmd::BufferUseVector WhileCmd::buffers() const {
@@ -2286,23 +2296,11 @@ DynamicSliceCopyFusionCmd::DynamicSliceCopyFusionCmd(
     const BufferAllocation::Slice& destination_buffer, uint64_t mem_size,
     DynamicMemcpyThunk::Offsets offsets)
     : CommandBufferCmd(CommandBufferCmdType::kDynamicSliceCopyFusionCmd,
-                       execution_stream_id, {}),
+                       execution_stream_id, resources),
       source_buffer_(source_buffer),
       destination_buffer_(destination_buffer),
       mem_size_(mem_size),
       offsets_(offsets) {}
-
-absl::Status DynamicSliceCopyFusionCmd::Initialize(
-    const Thunk::InitializeParams& params, StateManager& state) {
-  return absl::OkStatus();
-}
-
-absl::Status DynamicSliceCopyFusionCmd::Prepare(
-    const Thunk::PrepareParams& params,
-    Thunk::ResourceRequestsInterface& resource_requests) {
-  TF_RET_CHECK(!offsets_.depends_on_loop);
-  return absl::OkStatus();
-}
 
 absl::StatusOr<const se::CommandBuffer::Command*>
 DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
@@ -2313,23 +2311,37 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
       execute_params.buffer_allocations->GetDeviceAddress(source_buffer_);
   se::DeviceMemoryBase dst_data =
       execute_params.buffer_allocations->GetDeviceAddress(destination_buffer_);
-
-  int64_t src_offset = offsets_.src_offsets[0];
-  int64_t dst_offset = offsets_.dst_offsets[0];
-
-  auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);
-  auto dst_with_offset = dst_data.GetByteSlice(dst_offset, mem_size_);
-  VLOG(3) << "Memcpy of size " << mem_size_ << " from "
-          << src_with_offset.opaque() << " (offset " << src_offset << ") to "
-          << dst_with_offset.opaque() << " (offset " << dst_offset << ")";
+  
+  VLOG(3) << "DynamicSliceCopyFusionCmd, dependends_on_loop: " << offsets_.depends_on_loop;
 
   return Handle(
       std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies)
+          -> absl::StatusOr<const se::CommandBuffer::Command*> {
+        int64_t iteration_index = 0;
+        if (offsets_.depends_on_loop) {
+          TF_ASSIGN_OR_RETURN(iteration_index,
+                              WhileThunk::CurrentLoopIteration());
+        }
+        VLOG(3) << "Create DynamicSliceCopyFusionCmd with iteration_index " << iteration_index;
+        int64_t src_offset = offsets_.src_offsets[iteration_index];
+        int64_t dst_offset = offsets_.dst_offsets[iteration_index];
+        auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);
+        auto dst_with_offset = dst_data.GetByteSlice(dst_offset, mem_size_);
         return command_buffer->CreateMemcpyD2D(
             &dst_with_offset, src_with_offset, mem_size_, dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
+        int64_t iteration_index = 0;
+        if (offsets_.depends_on_loop) {
+          TF_ASSIGN_OR_RETURN(iteration_index,
+                              WhileThunk::CurrentLoopIteration());
+        }
+        VLOG(3) << "Update DynamicSliceCopyFusionCmd with iteration_index " << iteration_index;
+        int64_t src_offset = offsets_.src_offsets[iteration_index];
+        int64_t dst_offset = offsets_.dst_offsets[iteration_index];
+        auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);
+        auto dst_with_offset = dst_data.GetByteSlice(dst_offset, mem_size_);
         return command_buffer->UpdateMemcpyD2D(command, &dst_with_offset,
                                                src_with_offset, mem_size_);
       });
