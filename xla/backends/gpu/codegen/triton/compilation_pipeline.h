@@ -32,6 +32,8 @@ struct ClusterInfo;
 namespace xla {
 namespace gpu {
 
+namespace se = ::stream_executor;
+
 // Creates a Triton compilation pipeline.
 //
 // `out_cluster_info` must be kept alive at least until pm.run() is called.

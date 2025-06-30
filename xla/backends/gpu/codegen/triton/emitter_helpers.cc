@@ -372,7 +372,9 @@ absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
     triple.setTriple("amdgcn-unknown-unknown");
   }
   llvm::SmallVector<Value, 2> casted_inputs;
-  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+  if (output_type == PrimitiveType::BF16 ||
+      (output_type == PrimitiveType::F16 &&
+       !HasF16Implementation(dev_fn_id.value(), triple))) {
     // Upcast the inputs to F32.
     for (int64_t i = 0; i < inputs.size(); ++i) {
       casted_inputs.push_back(Cast(b, inputs[i], b.getF32Type()));
@@ -384,7 +386,9 @@ absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
       casted_inputs[0].getType(), casted_inputs, "libdevice", libdevice_path,
       ObtainDeviceFunctionName(dev_fn_id.value(), output_type, triple),
       /*pure=*/true);
-  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+  if (output_type == PrimitiveType::BF16 ||
+      (output_type == PrimitiveType::F16 &&
+       !HasF16Implementation(dev_fn_id.value(), triple))) {
     // Downcast back to the original output type.
     TF_ASSIGN_OR_RETURN(auto dst_ty, TritonType(b, output_type));
     res = Cast(b, res, dst_ty);

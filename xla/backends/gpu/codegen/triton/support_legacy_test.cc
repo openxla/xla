@@ -71,6 +71,13 @@ bool CombinationCrashesTriton(PrimitiveType lhs_type, PrimitiveType rhs_type,
 
 class DotTest : public TritonSupportTestBaseWithParam {
  protected:
+  se::GpuComputeCapability GetComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
   void TestDotWithTypes(PrimitiveType lhs_type, PrimitiveType rhs_type,
                         PrimitiveType output_type) {
     if (lhs_type == BF16 && !SupportsBF16(GetComputeCapability())) {

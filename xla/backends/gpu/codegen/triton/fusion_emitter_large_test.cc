@@ -37,13 +37,6 @@ class TritonGemmTest : public GpuCodegenTest {
         .gpu_compute_capability();
   }
 
-  void SetUp() override {
-    if (std::holds_alternative<se::RocmComputeCapability>(
-            GetGpuComputeCapability())) {
-      GTEST_SKIP() << "Not supported on ROCm until Triton is re-enabled.";
-    }
-  }
-
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_cublas_fallback(false);
@@ -139,6 +132,10 @@ using TritonNormalizationTest = GpuCodegenTest;
 
 TEST_F(TritonNormalizationTest,
        CanEmitDiamondWithInputNumberOfElementsLargerThanInt32Max) {
+  auto cc = backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .gpu_compute_capability();
   const std::string hlo_text = R"(
 HloModule softmax
 

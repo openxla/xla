@@ -1206,8 +1206,14 @@ ENTRY entry {
                           ParseAndReturnVerifiedModule(kHloText));
   HloFusionInstruction* triton_dot_fusion = Cast<HloFusionInstruction>(
       hlo_module->entry_computation()->root_instruction());
-  const se::DeviceDescription dev_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  se::DeviceDescription dev_info;
+  if (std::holds_alternative<stream_executor::RocmComputeCapability>(
+    GpuComputeComp())) {
+    dev_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+  } else {
+    dev_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  }
+  
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;

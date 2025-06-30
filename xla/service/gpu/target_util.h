@@ -100,6 +100,10 @@ std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
                                      PrimitiveType output_type,
                                      llvm::Triple target_triple);
 
+// Return true if there is no need to upcast operands to F32 for F16 type.
+bool HasF16Implementation(TargetDeviceFunctionID func_id,
+                          llvm::Triple target_triple);
+
 }  // namespace gpu
 }  // namespace xla
 

@@ -311,6 +311,16 @@ std::optional<TargetDeviceFunctionID> GetTargetDeviceFunctionID(HloOpcode op) {
   return std::nullopt;
 }
 
+bool HasF16Implementation(TargetDeviceFunctionID func_id,
+                          llvm::Triple target_triple) {
+  if(target_triple.isAMDGPU() &&
+     (func_id != TargetDeviceFunctionID::kHypot &&
+      func_id != TargetDeviceFunctionID::kSqrt)) {
+      return true;
+  }
+  return false;
+}
+
 namespace {
 // TODO(b/370452608): Add more functions that have a fast approximation for f32
 // that we can use for f16 types.
@@ -348,6 +358,10 @@ std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
   } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
     // TODO(b/370452608): Are there approximate functions we can use for BF16
     // and F16 types?
+    if (output_type == F16 && HasF16Implementation(func_id, target_triple)) {
+      // All these functions have f16 implementation - no need for conversion
+      return StrCat(gpu_root_names.amdgpu_root, "_f16");
+    }
     if (output_type == BF16 || output_type == F16 || output_type == F32) {
       return StrCat(gpu_root_names.amdgpu_root, "_f32");
     } else if (output_type == F64) {
