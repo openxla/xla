@@ -464,7 +464,7 @@ CHECK: mma
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
 TEST_F(TritonGemmTest, FailIfTooMuchShmem) {
-  auto cc = se::CudaComputeCapability::Ampere();
+  auto cc = CudaAmpereOrRocm();
   const se::DeviceDescription device_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo();
   llvm::LLVMContext llvm_ctx;

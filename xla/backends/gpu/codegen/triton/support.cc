@@ -138,6 +138,11 @@ CodegenDecision IsTritonSupportedConversion(
     return error_message();
   }
 
+  if (input != output && any_is(PrimitiveType::F8E4M3FN) &&
+      std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
+    return error_message();
+  }
+
   bool is_f8_conversion =
       any_is(PrimitiveType::F8E4M3FN) && any_is(PrimitiveType::F8E5M2);
   bool is_f8 = any_is(PrimitiveType::F8E4M3FN) || any_is(PrimitiveType::F8E5M2);

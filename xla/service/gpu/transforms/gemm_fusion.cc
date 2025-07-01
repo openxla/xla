@@ -797,10 +797,9 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     // If a GEMM requiring padding for cuBLAS is encountered here this
     // happened because earlier ShouldTritonHandleGEMM() accepted it and padding
     // was skipped. Accept it ignoring profitability checks.
-    if (std::holds_alternative<se::CudaComputeCapability>(gpu_version_)||
-+        std::holds_alternative<se::RocmComputeCapability>(gpu_version_)) {
-      if (!CublasRequiresPadding(
-              *Cast<HloDotInstruction>(dot), gpu_version_) &&
+    if (std::holds_alternative<se::CudaComputeCapability>(gpu_version_) ||
+        std::holds_alternative<se::RocmComputeCapability>(gpu_version_)) {
+      if (!CublasRequiresPadding(*Cast<HloDotInstruction>(dot), gpu_version_) &&
           !decision.WantToFuse()) {
         return absl::OkStatus();
       }
