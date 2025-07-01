@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -89,6 +90,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
+#include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 #include "xla/hlo/transforms/expanders/real_imag_expander.h"
 #include "xla/hlo/transforms/expanders/reduce_decomposer.h"
 #include "xla/hlo/transforms/expanders/reshape_decomposer.h"
@@ -246,6 +248,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/layout_normalization.h"
@@ -696,6 +699,7 @@ absl::Status RunOptimizationPasses(
 
   HloPassPipeline pipeline("optimization");
   AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id());
+  pipeline.AddPass<RaggedDotRewriter>();
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
   if (debug_options.xla_gpu_multi_streamed_windowed_einsum()) {
     pipeline.AddPass<WindowedEinsumHandler>();
@@ -1741,11 +1745,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // Match the location of this pass in `gemm_fusion_autotuner.cc` to make sure
   // that there is no discrepancy.
-  if (debug_options
-          .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms()) {
-    pipeline.AddPass<NestGemmFusion>(
-        gpu_target_config.device_description.gpu_compute_capability());
-  }
+  pipeline.AddPass<NestGemmFusion>(
+      gpu_target_config.device_description.gpu_compute_capability());
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
@@ -1916,6 +1917,29 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 }
 
 namespace {
+bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
+  const HloInstruction* inst = value->defining_instruction();
+  const HloModule* module = inst->GetModule();
+  // If no collective memory is needed, return.
+  if (!module->config().debug_options().xla_gpu_enable_nccl_user_buffers() &&
+      !module->config().debug_options().xla_gpu_experimental_enable_nvshmem()) {
+    return false;
+  }
+  // Add copy if a potential collective-memmory-spaced op directly consumes from
+  // module input or a constant as they are allocated by bfc ahead of time and
+  // the alignment might not match collective memory space's requiment.
+  if (absl::c_linear_search(
+          module->entry_computation()->parameter_instructions(), inst) ||
+      (inst->opcode() == HloOpcode::kConstant)) {
+    for (auto& use : value->GetUses()) {
+      if (IsCollective(use.instruction)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
                                             const GpuAliasInfo* alias_info) {
   // We run a separate pass of copy elision here because the sequential ordering
@@ -1939,8 +1963,8 @@ absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
   // whether it is legal to remove a copy. However, copies in the graph may be
   // necessary for other reason such as preventing a constant from being live
   // out of the graph. So run AddSpecialCaseCopies to re-insert these copies.
-  TF_RETURN_IF_ERROR(
-      copy_insertion.CopyInsertion::AddSpecialCaseCopies(module));
+  TF_RETURN_IF_ERROR(copy_insertion.CopyInsertion::AddSpecialCaseCopies(
+      module, /*execution_threads=*/{}, ShouldAddCopyForCollectiveMemorySpace));
 
   TF_RETURN_IF_ERROR(HloDCE().Run(module).status());
 

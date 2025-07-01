@@ -385,7 +385,8 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
 
   ifrt::ShardingRef shared_ptr_sharding() const override { return sharding_; }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout() const override {
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
+      const override {
     TF_RETURN_IF_ERROR(ValidateNotDeleted());
     return std::make_shared<PjRtLayout>(xla::Layout(shape().dims()));
   }
@@ -596,7 +597,8 @@ class ShardedNanoArray final : public NanoValue<ShardedNanoArray, ifrt::Array> {
 
   ifrt::ShardingRef shared_ptr_sharding() const override { return sharding_; }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout() const override {
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
+      const override {
     return std::make_shared<PjRtLayout>(xla::Layout(shape().dims()));
   }
 
@@ -1419,10 +1421,10 @@ NanoIfrtClient::GetTopologyForDevices(
 }
 
 absl::StatusOr<std::shared_ptr<const PjRtLayout>>
-NanoIfrtClient::GetDefaultLayout(ifrt::DType dtype,
-                                 absl::Span<const int64_t> dims,
-                                 ifrt::Device* device,
-                                 ifrt::MemoryKind memory_kind) const {
+NanoIfrtClient::GetDefaultPjRtLayout(ifrt::DType dtype,
+                                     absl::Span<const int64_t> dims,
+                                     ifrt::Device* device,
+                                     ifrt::MemoryKind memory_kind) const {
   return std::make_shared<PjRtLayout>(xla::Layout(dims));
 }
 

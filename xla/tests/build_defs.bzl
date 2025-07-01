@@ -286,6 +286,9 @@ def xla_test(
       **kwargs: Additional keyword arguments to pass to strict_cc_test.
     """
 
+    # precompile_test is not supported in OSS.
+    kwargs.pop("precompile_test", None)
+
     test_names = []
     if not backends:
         backends = _DEFAULT_BACKENDS
@@ -362,13 +365,8 @@ def xla_test(
             for lib_dep in xla_test_library_deps:
                 backend_deps += ["%s_%s" % (lib_dep, backend)]  # buildifier: disable=list-append
 
-        if backend in GPU_BACKENDS:
-            # TODO(b/414877419): Remove special case, update backend_predicates
-            device = "gpu"
-            modifiers = backend.split("_")
-        else:
-            modifiers = backend.split("_")
-            device = modifiers.pop(0)
+        modifiers = backend.split("_")
+        device = modifiers.pop(0)
 
         xla_cc_test(
             name = test_name,

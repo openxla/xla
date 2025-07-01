@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -285,6 +286,10 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kNvshmemCollectivePermute);
     CASE(kNvshmemCollectivePermuteDone);
     CASE(kNvshmemCollectivePermuteStart);
+    CASE(kNvshmemRecv);
+    CASE(kNvshmemRecvDone);
+    CASE(kNvshmemSend);
+    CASE(kNvshmemSendDone);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
@@ -394,10 +399,15 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
 }
 
 absl::StatusOr<ThunkProto> Thunk::ToProto() const {
-  ThunkProto proto;
-  proto.mutable_thunk_info()->set_execution_stream_id(
-      execution_stream_id_.value());
-  proto.mutable_thunk_info()->set_profile_annotation(profile_annotation_);
+  return absl::UnimplementedError(absl::StrFormat(
+      "Proto serialization for thunk of type %s is not implemented",
+      typeid(*this).name()));
+}
+
+absl::StatusOr<ThunkInfoProto> Thunk::GetThunkInfoProto() const {
+  ThunkInfoProto proto;
+  proto.set_execution_stream_id(execution_stream_id_.value());
+  proto.set_profile_annotation(profile_annotation_);
   return proto;
 }
 

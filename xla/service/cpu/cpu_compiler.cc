@@ -1988,12 +1988,13 @@ CpuCompiler::CompileAheadOfTimeLegacy(
 
   // Run buffer analysis on the HLO graph. This analysis figures out which
   // temporary buffers are required to run the computation.
+  AliasInfo alias_info;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> assignment,
-      BufferAssigner::Run(module.get(),
-                          std::make_unique<SequentialHloOrdering>(schedule),
-                          BufferSizeBytesFunction(), memory_alignment,
-                          /*allocate_buffers_for_constants=*/true));
+      BufferAssigner::Run(
+          module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+          BufferSizeBytesFunction(), &alias_info, memory_alignment,
+          /*allocate_buffers_for_constants=*/true));
   // BufferAssignment::ToString() includes a header, so no need for us to
   // print one ourselves.
   if (DumpingEnabledForHloModule(*module)) {
@@ -2219,8 +2220,8 @@ CpuCompiler::CompileAheadOfTimeThunks(
   IrEmitter2 ir_emitter2(*module, llvm_module.get(), &nested_ir_emitter);
 
   ThunkEmitter::Options thunk_emitter_options = {
-      /*compile_copy_as_llvm_kernel=*/aot_options
-          .compile_copy_as_llvm_kernel()};
+      /*compile_copy_as_llvm_kernel=*/aot_options.compile_copy_as_llvm_kernel(),
+      /*is_aot_compilation=*/true};
   // Thunk emitter is responsible for building a Thunk sequence that will
   // resolved kernels in the compiled LLVM module and execute them together
   // with Thunks implemented as library calls (e.g. oneDNN or Eigen).
@@ -2732,9 +2733,10 @@ absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
 absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
+  AliasInfo alias_info;
   return BufferAssigner::Run(
       &module, std::make_unique<SequentialHloOrdering>(module.schedule()),
-      BufferSizeBytesFunction(), memory_alignment,
+      BufferSizeBytesFunction(), &alias_info, memory_alignment,
       /*allocate_buffers_for_constants=*/true);
 }
 

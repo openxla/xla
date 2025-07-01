@@ -33,6 +33,10 @@ struct OriginalArray {
   std::string instruction_name;
   // Shape index of the array if the instruction produces a tuple.
   ShapeIndex shape_index;
+  std::string ToString() const;
+  OriginalArrayProto ToProto() const;
+  static OriginalArray FromProto(
+      const xla::OriginalArrayProto& original_array_proto);
 };
 
 // The information of an HLO value produced by an instruction in an unoptimized
@@ -44,6 +48,8 @@ class OriginalValue : public ShapeTree<std::optional<OriginalArray>> {
   OriginalValueProto ToProto() const;
   static std::shared_ptr<OriginalValue> FromProto(
       const xla::OriginalValueProto& original_value_proto);
+  static std::unique_ptr<OriginalValue> CreateFromInstruction(
+      const HloInstruction* instruction, absl::string_view prefix = "");
 };
 
 struct OriginalValuePointer {

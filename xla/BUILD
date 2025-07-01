@@ -47,7 +47,7 @@ config_setting(
 bool_flag(
     name = "ci_build",
     build_setting_default = False,
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
 )
 
 exports_files([
@@ -1243,6 +1243,18 @@ cc_library(
             "@tsl//tsl/platform:platform_port",
             "@tsl//tsl/platform:protobuf",
         ],
+)
+
+xla_cc_test(
+    name = "debug_options_flags_test",
+    srcs = ["debug_options_flags_test.cc"],
+    deps = [
+        ":xla_proto_cc",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:protobuf",
+    ],
 )
 
 cc_library(
