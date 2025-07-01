@@ -15,15 +15,20 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "xla/backends/cpu/xnn_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tsl/platform/status.h"
@@ -69,6 +74,25 @@ HloInstruction* XnnGraphFusion::Fuse(HloInstruction* producer,
   return fusion;
 }
 
+std::vector<HloComputation*> XnnGraphFusion::GetNonFusionComputations(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  std::vector<HloComputation*> non_fusion_computations =
+      InstructionFusion::GetNonFusionComputations(module, execution_threads);
+  std::unique_ptr<CallGraph> call_graph =
+      CallGraph::Build(module, execution_threads);
+  auto SkipComputation = [&](HloComputation* c) {
+    auto callers = call_graph->GetComputationCallers(c);
+    return std::any_of(
+        callers.begin(), callers.end(),
+        [&](HloInstruction* caller) { return caller->has_to_apply(); });
+  };
+  auto it = std::remove_if(non_fusion_computations.begin(),
+                           non_fusion_computations.end(), SkipComputation);
+  non_fusion_computations.erase(it, non_fusion_computations.end());
+  return non_fusion_computations;
+}
+
 bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
   if (!IsLayoutSupportedByXnn(instr->shape())) {
     return false;
@@ -96,6 +120,8 @@ bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
       }
       return IsBroadcastOpSupportedByXnn(instr);
     }
+    case HloOpcode::kReduce:
+      return IsReduceOpSupportedByXnn(instr);
     default:
       return false;
   }

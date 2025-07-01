@@ -344,7 +344,7 @@ class XLAConfigOptions:
 
     elif self.backend == Backend.CUDA:
       build_and_test_tag_filters.append("-rocm-only")
-      build_and_test_tag_filters.append("-sycl-only")
+      build_and_test_tag_filters.append("-oneapi-only")
 
       compiler_pair = self.cuda_compiler, self.host_compiler
 
@@ -395,7 +395,7 @@ class XLAConfigOptions:
         rc.append("build --config nonccl")
     elif self.backend == Backend.ROCM:
       build_and_test_tag_filters.append("-cuda-only")
-      build_and_test_tag_filters.append("-sycl-only")
+      build_and_test_tag_filters.append("-oneapi-only")
 
       compiler_pair = self.rocm_compiler, self.host_compiler
 
@@ -410,7 +410,7 @@ class XLAConfigOptions:
     elif self.backend == Backend.SYCL:
       build_and_test_tag_filters.append("-cuda-only")
       build_and_test_tag_filters.append("-rocm-only")
-      build_and_test_tag_filters.append("-no-sycl")
+      build_and_test_tag_filters.append("-no-oneapi")
 
       compiler_pair = self.sycl_compiler, self.host_compiler
       

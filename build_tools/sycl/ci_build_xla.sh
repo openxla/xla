@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+
+# Copyright 2025 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,8 +20,11 @@
 # Pass --host_compiler=GCC to configure.py
 
 ./configure.py --backend=SYCL --host_compiler=CLANG --sycl_compiler=ICPX
+# This script only builds modules and tests, it doesn't execute them. It
+# can be run on any system and doesn't need an Intel GPU.
 bazel build \
       --config=sycl_hermetic --verbose_failures --copt=-fclang-abi-compat=17 -c opt\
-      --build_tag_filters=gpu,sycl,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
-      --test_tag_filters=gpu,sycl,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-sycl \
-      //xla/stream_executor/sycl:stream_executor_sycl
+      --build_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      --test_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
+      //xla/stream_executor/sycl:stream_executor_sycl \
+      //xla/stream_executor/sycl:sycl_status_test
