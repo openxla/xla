@@ -2294,9 +2294,9 @@ DynamicSliceCopyFusionCmd::DynamicSliceCopyFusionCmd(
     ExecutionStreamId execution_stream_id,
     const BufferAllocation::Slice& source_buffer,
     const BufferAllocation::Slice& destination_buffer, uint64_t mem_size,
-    DynamicMemcpyThunk::Offsets offsets)
+    DynamicMemcpyThunk::Offsets offsets, ResourceUseVector resources)
     : CommandBufferCmd(CommandBufferCmdType::kDynamicSliceCopyFusionCmd,
-                       execution_stream_id, resources),
+                       execution_stream_id, std::move(resources)),
       source_buffer_(source_buffer),
       destination_buffer_(destination_buffer),
       mem_size_(mem_size),
@@ -2311,8 +2311,9 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
       execute_params.buffer_allocations->GetDeviceAddress(source_buffer_);
   se::DeviceMemoryBase dst_data =
       execute_params.buffer_allocations->GetDeviceAddress(destination_buffer_);
-  
-  VLOG(3) << "DynamicSliceCopyFusionCmd, dependends_on_loop: " << offsets_.depends_on_loop;
+
+  VLOG(3) << "DynamicSliceCopyFusionCmd, dependends_on_loop: "
+          << offsets_.depends_on_loop;
 
   return Handle(
       std::move(record_action),
@@ -2323,7 +2324,8 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
           TF_ASSIGN_OR_RETURN(iteration_index,
                               WhileThunk::CurrentLoopIteration());
         }
-        VLOG(3) << "Create DynamicSliceCopyFusionCmd with iteration_index " << iteration_index;
+        VLOG(3) << "Create DynamicSliceCopyFusionCmd with iteration_index "
+                << iteration_index;
         int64_t src_offset = offsets_.src_offsets[iteration_index];
         int64_t dst_offset = offsets_.dst_offsets[iteration_index];
         auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);
@@ -2337,7 +2339,8 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
           TF_ASSIGN_OR_RETURN(iteration_index,
                               WhileThunk::CurrentLoopIteration());
         }
-        VLOG(3) << "Update DynamicSliceCopyFusionCmd with iteration_index " << iteration_index;
+        VLOG(3) << "Update DynamicSliceCopyFusionCmd with iteration_index "
+                << iteration_index;
         int64_t src_offset = offsets_.src_offsets[iteration_index];
         int64_t dst_offset = offsets_.dst_offsets[iteration_index];
         auto src_with_offset = src_data.GetByteSlice(src_offset, mem_size_);
