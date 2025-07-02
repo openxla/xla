@@ -38,7 +38,7 @@ NVIDIA_GPU_DEFAULT_BACKENDS = [
 
 AMD_GPU_DEFAULT_BACKENDS = ["amdgpu_any"]
 
-INTEL_GPU_DEFAULT_BACKENDS = ["gpu_intel_any"]
+INTEL_GPU_DEFAULT_BACKENDS = ["intelgpu_any"]
 
 _DEFAULT_BACKENDS = ["cpu"] + NVIDIA_GPU_DEFAULT_BACKENDS + AMD_GPU_DEFAULT_BACKENDS + INTEL_GPU_DEFAULT_BACKENDS
 
@@ -153,6 +153,7 @@ def prepare_amd_gpu_backend_data(backends, disabled_backends, backend_tags, back
 
     return new_backends, new_disabled_backends, new_backend_tags, backend_args
 
+# buildifier: disable=function-docstring
 def prepare_intel_gpu_backend_data(backends, disabled_backends, backend_tags, backend_args, common_tags):
     new_backends = [name for name in backends if name != "gpu"]
 
