@@ -70,6 +70,23 @@ limitations under the License.
 
 namespace xla::gpu {
 
+namespace {
+// Indvar is a thread-local map that stores the induction variable for each
+// dynamic slice thunk. The same thunk object in the memory is shared by
+// multiple replicas of the same computation. So, each replica should have its
+// own tracking of the induction variable (threadlocal). With threadlocal, we
+// cannot embed this inside the dynamic slice thunk object, and so we have a
+// static map. There could be multiple dynamic slice thunks in the same module,
+// and so we need a map to store the induction variable for each thunk. The
+// usage of threadlocal in this context is similar to `LoopCounters` in
+// while_thunk.cc (b/343294327).
+Literal& Indvar(DynamicSliceFusionCmd* cmd) {
+  static thread_local absl::flat_hash_map<DynamicSliceFusionCmd*, Literal>
+      indvar_map;
+  return indvar_map[cmd];
+}
+}  // namespace
+
 // clang-format off
 #define COMMAND_BUFFER_CMD_LIST(V)                               \
   V(kEmptyCmd, "EmptyCmd")                                       \
