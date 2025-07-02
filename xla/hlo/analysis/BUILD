@@ -160,6 +160,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
         "//xla/service:value_range",
+        "//xla/service:call_inliner",
         "//xla/tools:hlo_extractor",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/algorithm:container",
