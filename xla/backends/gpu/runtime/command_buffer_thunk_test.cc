@@ -1583,6 +1583,8 @@ class CmdBufferTest : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
     debug_options.add_xla_gpu_enable_command_buffer(
+        DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+    debug_options.add_xla_gpu_enable_command_buffer(
         DebugOptions::DYNAMIC_SLICE_FUSION);
     return debug_options;
   }
