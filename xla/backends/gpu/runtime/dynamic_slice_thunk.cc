@@ -140,7 +140,12 @@ absl::Status DynamicSliceThunk::Prepare(
                 /*module=*/*offset_as_function_of_indvar_metadata_->indvar_init,
                 /*arg_literals=*/{})
             .value();
-    VLOG(2) << "Indvar = " << Indvar(this).ToString();
+    VLOG(2) << "Indvar init module: "
+            << offset_as_function_of_indvar_metadata_->indvar_init->ToString();
+    VLOG(2)
+        << "Indvar update module: "
+        << offset_as_function_of_indvar_metadata_->indvar_update->ToString();
+    VLOG(2) << "Indvar initialized to " << Indvar(this).ToString();
   }
   return absl::OkStatus();
 }
@@ -223,6 +228,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
         TF_ASSIGN_OR_RETURN(
             Literal offset,
             HloEvaluator().Evaluate(**offset_module, {&Indvar(this)}));
+        VLOG(2) << "New offset value from offset module: " << offset.ToString();
         auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
         if (offset_int.has_value()) {
           offset_value(argument_idx, offset_idx) = *offset_int;
@@ -232,7 +238,6 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
                               offset.shape().ToString()));
         }
         VLOG(2) << "Offset value = " << offset_value(argument_idx, offset_idx);
-
       } else {
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
@@ -309,7 +314,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
             .Evaluate(*offset_as_function_of_indvar_metadata_->indvar_update,
                       {&Indvar(this)})
             .value();
-    VLOG(2) << "Indvar = " << Indvar(this).ToString();
+    VLOG(2) << "Update Indvar = " << Indvar(this).ToString();
   }
 
   return absl::OkStatus();

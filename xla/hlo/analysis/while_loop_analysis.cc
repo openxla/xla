@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/constant_value.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/call_inliner.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/value_range.h"
 #include "xla/shape.h"
@@ -443,14 +444,21 @@ optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
   //   and M is such that while_op->operand(0)->operand(M) is in known_values.
   //
   // If it does, set indvar_tuple_idx to N.
-  auto* while_cond = while_op->while_condition();
+  ModuleCallInliner inliner(while_op->parent()->parent());
+  auto while_op_mapped = inliner.get_mapped_instruction(while_op);
+
+  VLOG(3) << "Inlined module: \n" << inliner.inlined_module()->ToString();
+
+  CHECK(while_op_mapped != nullptr)
+      << "Unable to map while condition root: " << while_op->ToString();
+
+  auto* while_cond = while_op_mapped->while_condition();
   auto* while_cond_root = while_cond->root_instruction();
   auto* while_cond_param = while_cond->parameter_instruction(0);
   optional<absl::flat_hash_set<int64_t>> cond_tuple_indices =
       GetGTEDependenceIndices(while_cond_root, while_cond_param);
   if (!cond_tuple_indices.has_value()) {
-    VLOG(2) << "Induction variable not found in loop condition: "
-            << while_cond->root_instruction()->ToString();
+    VLOG(2) << "Induction variable not found in loop condition: ";
     return nullopt;
   }
 
@@ -476,6 +484,7 @@ optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
             << while_cond->root_instruction()->ToString();
     return nullopt;
   }
+  VLOG(2) << "Found indvar tuple idx from condition: " << indvar_tuple_idx;
 
   // We have found the induction variable.
   // The rest of the method verifies that the while body is of the form:
@@ -485,8 +494,7 @@ optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
   //
   // where N is the same as the induction variable found in the while condition.
 
-  auto* while_body = while_op->while_body();
-  auto* while_body_root = while_body->root_instruction();
+  auto* while_body_root = while_op_mapped->while_body()->root_instruction();
   if (while_body_root->opcode() != HloOpcode::kTuple) {
     VLOG(2) << "While body's root is not a tuple instruction: "
             << while_body_root->ToString();
@@ -495,7 +503,7 @@ optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
   const HloInstruction* while_body_inc;
   while_body_inc = TraceThroughCopyAndGteTupleChain(
       while_body_root->operand(indvar_tuple_idx));
-  auto* while_body_param = while_body->parameter_instruction(0);
+  auto* while_body_param = while_body_root->parent()->parameter_instruction(0);
   optional<int64_t> while_body_indvar_tuple_idx =
       GetUniqueGTEDependenceIndex(while_body_inc, while_body_param);
   if (!while_body_indvar_tuple_idx) {
@@ -514,7 +522,7 @@ optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
 
   // Finally, check that the while loop's initial value is a tuple with enough
   // elements.
-  auto* while_init = while_op->operand(0);
+  auto* while_init = while_op_mapped->operand(0);
   if (while_init->opcode() != HloOpcode::kTuple) {
     VLOG(2) << "While init expected to be a tuple: " << while_init->ToString();
     return nullopt;
