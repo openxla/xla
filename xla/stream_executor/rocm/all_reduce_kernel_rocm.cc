@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
+#include <hip/hip_runtime.h>
 #include <hip/hip_bfloat16.h>
 #include "absl/base/casts.h"
 #include "xla/service/collective_ops_utils.h"
@@ -25,6 +26,32 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/types.h"
+
+namespace stream_executor::gpu {
+
+template <>
+union alignas(8) Vec<hip_bfloat16> {
+  using PackedType = int2;
+
+  hip_bfloat16 data[4];
+  PackedType packed;
+};
+
+__device__ __forceinline__ void PutSignalFlag(uint32_t* addr, uint32_t val) {
+  __atomic_store_n(addr, val, __ATOMIC_RELEASE);
+  __threadfence_system();  // Ensure visibility across all GPUs
+}
+
+__device__ __forceinline__ void WaitSignalFlag(uint32_t* addr,
+                                               uint32_t expected) {
+  uint32_t val;
+  do {
+    __threadfence_system();  // Ensure we see the latest value
+    val = __atomic_load_n(addr, __ATOMIC_ACQUIRE);
+  } while (val < expected);
+}
+
+}  // namespace stream_executor::gpu
 
 // C++ macros don't like commas in template arguments, so we need to use
 // __VA_ARGS__ to get around this.

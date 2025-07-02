@@ -23,16 +23,6 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/gpu/all_reduce_kernel.h"
 
-#if TENSORFLOW_USE_ROCM
-#include <hip/hip_runtime.h>
-#include <hip/hip_bfloat16.h>
-using bf16_t = hip_bfloat16;
-#else  // CUDA
-#include "third_party/gpus/cuda/include/cuda/atomic"
-#include "third_party/gpus/cuda/include/cuda_bf16.h"
-using bf16_t = __nv_bfloat16;
-#endif
-
 namespace stream_executor::gpu {
 
 template <typename T>
@@ -43,14 +33,6 @@ union alignas(16) Vec<float> {
   using PackedType = int4;
 
   float data[4];
-  PackedType packed;
-};
-
-template <>
-union alignas(8) Vec<bf16_t> {
-  using PackedType = int2;
-
-  bf16_t data[4];
   PackedType packed;
 };
 
@@ -96,36 +78,10 @@ __device__ __forceinline__ void VecOp(Vec<T>& res, const Vec<T>& vec) {
   res.data[3] = ApplyBinaryOp<T, ReductionKindT>(res.data[3], vec.data[3]);
 }
 
-__device__ __forceinline__ void PutSignalFlag(uint32_t* addr, uint32_t val) {
-#if TENSORFLOW_USE_ROCM
-  __atomic_store_n(addr, val, __ATOMIC_RELEASE);
-  __threadfence_system();  // Ensure visibility across all GPUs
-#else                      // cuda
-  ::cuda::atomic_ref<uint32_t, ::cuda::thread_scope_system> ref(*addr);
-  // During signaling release semantics are used to ensure that writes
-  // by the current thread are visible to the waiting thread.
-  ref.store(val, ::cuda::memory_order_release);
-#endif
-}
+__device__ __forceinline__ void PutSignalFlag(uint32_t* addr, uint32_t val);
 
 __device__ __forceinline__ void WaitSignalFlag(uint32_t* addr,
-                                               uint32_t expected) {
-#if TENSORFLOW_USE_ROCM
-  uint32_t val;
-  do {
-    __threadfence_system();  // Ensure we see the latest value
-    val = __atomic_load_n(addr, __ATOMIC_ACQUIRE);
-  } while (val < expected);
-#else  // cuda
-  ::cuda::atomic_ref<uint32_t, ::cuda::thread_scope_system> ref(*addr);
-  // During waiting we use acquire semantics to ensure all memory writes by the
-  // remote thread are visible to the current thread.
-  // If the flag is greater it means that the other GPU has already signaled
-  // the next sync point.
-  while (ref.load(::cuda::memory_order_acquire) < expected) {
-  }
-#endif
-}
+                                               uint32_t expected);
 
 __device__ __forceinline__ void SyncRemoteBlocks(
     std::array<RestrictedPtr<uint32_t>, kMaxNumAllReduceInputPtrs>
