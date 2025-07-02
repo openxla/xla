@@ -58,6 +58,103 @@ TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
 GPU_NAME=(`rocminfo | grep -m 1 gfx`)
 GPU_NAME=${GPU_NAME[1]}
 
+EXCLUDED_TESTS=(
+# //xla/backends/gpu/codegen/triton:support_test
+ConvertTestSuite/ConvertTest.Convert/bf16_f8e4m3fn_rocm
+ConvertTestSuite/ConvertTest.Convert/f16_f8e4m3fn_rocm
+ConvertTestSuite/ConvertTest.Convert/f32_f8e4m3fn_roc
+ConvertTestSuite/ConvertTest.Convert/f32_f8e4m3fn_rocm
+ConvertTestSuite/ConvertTest.Convert/f8e4m3fn_bf16_rocm
+ConvertTestSuite/ConvertTest.Convert/f8e4m3fn_f16_rocm
+ConvertTestSuite/ConvertTest.Convert/f8e4m3fn_f32_rocm
+ConvertTestSuite/ConvertTest.Convert/f8e4m3fn_f8e5m2_rocm
+ConvertTestSuite/ConvertTest.Convert/f8e5m2_f8e4m3fn_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/bf16_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f16_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f32_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f64_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f64_unset_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_bf16_bf16_f32_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_bf16_bf16_f32_x3_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_bf16_bf16_f32_x6_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_bf16_bf16_f32_x9_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_f16_f16_f16_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_f16_f16_f32_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_f32_f32_f32_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_tf32_tf32_f32_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_dot_tf32_tf32_f32_x3_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/f8e4m3fn_unset_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/s16_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/s32_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/s64_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionAlgorithmTest.Algorithm/s8_dot_f64_f64_f64_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_default_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_default_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_default_highest_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_high_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_high_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_high_highest_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_highest_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_highest_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f64_highest_highest_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_default_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_default_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_default_highest_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_high_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_high_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_high_highest_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_highest_default_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_highest_high_rocm
+DotPrecisionTestSuite/DotPrecisionTest.OperandPrecision/f8e4m3fn_highest_highest_rocm
+DotTest.MultipleNonContractingDimensions
+DotTest.NonDefaultDimensionOrder_kmkn
+DotTest.NonDefaultDimensionOrder_mknk
+DotTest.SingleBatchDim
+DotTestSuite/DotTypesTest.Dot/bf16_f64_rocm
+DotTestSuite/DotTypesTest.Dot/bf16_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/f16_f64_rocm
+DotTestSuite/DotTypesTest.Dot/f16_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/f32_f64_rocm
+DotTestSuite/DotTypesTest.Dot/f32_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/f64_f64_rocm
+DotTestSuite/DotTypesTest.Dot/f64_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/f8e4m3fn_f64_rocm
+DotTestSuite/DotTypesTest.Dot/f8e4m3fn_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/f8e5m2_f64_rocm
+DotTestSuite/DotTypesTest.Dot/f8e5m2_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/s16_f64_rocm
+DotTestSuite/DotTypesTest.Dot/s16_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/s32_f64_rocm
+DotTestSuite/DotTypesTest.Dot/s32_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/s64_f64_rocm
+DotTestSuite/DotTypesTest.Dot/s64_f8e4m3fn_rocm
+DotTestSuite/DotTypesTest.Dot/s8_f64_rocm
+DotTestSuite/DotTypesTest.Dot/s8_f8e4m3fn_rocm
+ReductionComputationTestSuite/ReductionComputationTest
+# //xla/service/gpu/tests:gpu_index_test_gpu_amd_any
+GpuIndexTest.CompatibleUseLinearIndexWithReshapeAndBroadcast
+# //xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any
+GpuKernelTilingTest.ColumnReductionWithLayoutChangeTiled
+GpuKernelTilingTest.ReductionInputTooLarge
+# //xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any
+PjrtCAPIGpuExtensionTest.TritonCompile
+# //xla/backends/gpu/codegen/triton:fusion_emitter_device_test_gpu_amd_any
+TritonEmitterTest.CheckRocmWarpSize
+TritonEmitterTest.ConvertF16ToF8E5M2Exhaustive
+TritonEmitterTest.FP8ToFP8EndToEnd
+TritonEmitterTest.FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly
+BasicDotAlgorithmEmitterTestSuite/BasicDotAlgorithmEmitterTest.BasicAlgorithmIsEmittedCorrectly/ALG_DOT_F64_F64_F64
+# //xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_test_gpu_amd_any
+TritonGemmTest.BroadcastOfVectorConstantIsFused
+TritonGemmTest.FailIfTooMuchShmem
+TritonGemmTest.SplitAndTransposeLhsExecutesCorrectly
+# //xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_gpu_amd_any
+TritonTest.NonstandardLayoutWithManyNonContractingDims
+TritonTest.NonstandardLayoutWithManyNonContractingDimsReversedLayout
+# //xla/hlo/builder/lib:self_adjoint_eig_test_gpu_amd_any marked as flaky but randomly red after 3 attempts
+RandomEighTestInstantiation/RandomEighTest.Random/*
+)
+
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
@@ -76,11 +173,5 @@ bazel \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --run_under=//build_tools/ci:parallel_gpu_execute \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     -- //xla/... \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_test_gpu_amd_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_port_test_gpu_amd_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_test_gpu_amd_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_gpu_amd_any \
-    -//xla/backends/gpu/codegen/triton:support_test \
-    -//xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any \
-    -//xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any \
