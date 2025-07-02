@@ -31,7 +31,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "absl/algorithm/container.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -350,6 +352,7 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     absl::Span<HloInstruction* const> instruction_sequence,
     std::optional<InlinedInstructionMap*> inline_map) {
   HloModule* module = computation->parent();
+  VLOG(0) << "module has schedule: " << module->has_schedule();
   bool did_node_mutate = false;
   std::vector<HloInstruction*> inlined_instructions;
   for (HloInstruction* instruction : instruction_sequence) {

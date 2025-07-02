@@ -151,6 +151,7 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:call_inliner",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:gpu_constants",
@@ -185,7 +186,7 @@ xla_test(
     backend_tags = {
         "gpu": [
             "multi_gpu",
-            "no_oss",
+            "no_oss"
         ],
     },
     backends = ["gpu"],
