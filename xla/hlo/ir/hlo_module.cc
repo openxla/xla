@@ -1271,19 +1271,16 @@ void CopyUniqueIds(const HloModule& source, HloModule* clone,
 
 }  // namespace
 
-std::unique_ptr<HloModule> HloModule::Clone(
-    const std::string& suffix,
-    std::optional<const HloModuleConfig> config_in) const {
-  auto module = CreateModule(suffix, config_in, *this);
-
-  HloCloneContext context(module.get(), suffix);
+void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
+                      std::optional<const HloModuleConfig> config) const {
+  auto module = context->module();
   if (entry_computation_) {
-    auto cloned_computation = entry_computation_->Clone(suffix, &context);
+    auto cloned_computation = entry_computation_->Clone(suffix, context);
     module->AddEntryComputation(std::move(cloned_computation));
   }
 
   // Preserve original instruction and computation ids.
-  CopyUniqueIds(*this, module.get(), context);
+  CopyUniqueIds(*this, module, *context);
   module->next_unique_id_ = next_unique_id_;
 
   module->input_output_alias_config() = input_output_alias_config();
@@ -1291,10 +1288,10 @@ std::unique_ptr<HloModule> HloModule::Clone(
   module->set_is_dynamic(is_dynamic());
   module->set_frontend_attributes(frontend_attributes());
   if (has_schedule() && schedule().Verify().ok()) {
-    HloSchedule clone_schedule(module.get());
+    HloSchedule clone_schedule(module);
     for (HloComputation* computation : computations()) {
       if (schedule().is_computation_scheduled(computation)) {
-        HloComputation* new_computation = context.FindComputation(computation);
+        HloComputation* new_computation = context->FindComputation(computation);
         // The module being cloned may have computations that are dead, i.e.,
         // unreachable from the entry computation. In that case, new_computation
         // is nullptr.
@@ -1303,7 +1300,7 @@ std::unique_ptr<HloModule> HloModule::Clone(
               clone_schedule.GetOrCreateSequence(new_computation);
           for (const HloInstruction* instruction :
                schedule().sequence(computation).instructions()) {
-            clone_sequence.push_back(context.GetInstruction(instruction));
+            clone_sequence.push_back(context->GetInstruction(instruction));
           }
         }
       }
@@ -1318,7 +1315,7 @@ std::unique_ptr<HloModule> HloModule::Clone(
   // module->computations_ to match the order in computations_.
   using ComputationSorter = MappedPtrContainerSorter<HloComputation>;
   auto computation_map_fn = [&context](const HloComputation* c) {
-    return context.FindComputation(c);
+    return context->FindComputation(c);
   };
   auto status = ComputationSorter::Sort(
       computation_map_fn, ComputationSorter::IndexAfterMappedElementsFn(),
@@ -1327,7 +1324,14 @@ std::unique_ptr<HloModule> HloModule::Clone(
     LOG(ERROR) << "Failed to sort module computations for " << name() << "; "
                << status;
   }
+}
 
+std::unique_ptr<HloModule> HloModule::Clone(
+    const std::string& suffix,
+    std::optional<const HloModuleConfig> config) const {
+  auto module = CreateModule(suffix, config, *this);
+  HloCloneContext context(module.get(), suffix);
+  Clone(suffix, &context, config);
   return module;
 }
 
