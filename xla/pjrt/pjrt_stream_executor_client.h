@@ -672,7 +672,6 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
   PjRtStreamExecutorClient* const client_;
   const Shape on_device_shape_;
   PjRtStreamExecutorDevice* const device_;
-  PjRtMemorySpace* const memory_space_;
 };
 
 // Allocates the device buffers for a buffer that will be used as the
@@ -742,6 +741,8 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
         executables_[0]->executable()->buffer_assignment_proto();
     if (proto != nullptr) {
       memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
+      TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
+      memory_stats.peak_memory_in_bytes = peak_memory;
     }
     memory_stats.PopulateBufferStatsFromAllocations(
         executables_[0]->executable()->GetAllocations());

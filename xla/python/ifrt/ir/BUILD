@@ -139,6 +139,7 @@ cc_library(
     visibility = ["//xla/python/ifrt:users"],
     deps = [
         ":sharding_param_proto_cc",
+        "//xla/python/ifrt:serdes_default_version_accessor",
         "//xla/python/ifrt:serdes_version",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
@@ -169,6 +170,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_default_version_accessor",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/tsl/platform:statusor",
@@ -279,6 +281,33 @@ cc_library(
         "//xla/python/ifrt/hlo:hlo_program",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "basic_atom_program_compiler",
+    srcs = ["basic_atom_program_compiler.cc"],
+    hdrs = ["basic_atom_program_compiler.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla/python/ifrt:friends"],
+    deps = [
+        ":atom_program_compiler",
+        ":ir",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt/hlo:hlo_program",
+        "//xla/python/pjrt_ifrt:xla_ifrt",
+        "//xla/service:computation_placer_hdr",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:random",
     ],
 )
 

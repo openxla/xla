@@ -301,6 +301,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/utils:hlo_query",
+        "//xla/service/gpu:alias_info",
         "//xla/service/gpu:gpu_hlo_schedule",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:errors",
@@ -321,6 +322,7 @@ xla_cc_test(
         ":collective_combiner_annotator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:alias_info",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
@@ -519,10 +521,8 @@ xla_cc_test(
     deps = [
         ":all_reduce_decomposer",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:hlo_cse",
-        "//xla/service:hlo_runner",
-        "//xla/service:platform_util",
-        "//xla/tests:hlo_runner_agnostic_test_base",
         "//xla/tests:test_utils",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
@@ -683,5 +683,45 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "collective_pipelining_analyzer",
+    srcs = ["collective_pipelining_analyzer.cc"],
+    hdrs = ["collective_pipelining_analyzer.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:call_graph",
+        "//xla/service:collective_opt_utils",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:dynamic_slicing_utils",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_pipelining_analyzer_test",
+    srcs = ["collective_pipelining_analyzer_test.cc"],
+    deps = [
+        ":collective_pipelining_analyzer",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:hlo_module_config",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )

@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ir_compile_options.pb.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/serdes.h"
+#include "xla/python/ifrt/serdes_default_version_accessor.h"
 #include "xla/python/ifrt/serdes_version.h"
 
 namespace xla {
@@ -63,10 +64,15 @@ struct IfrtIRProgram : llvm::RTTIExtends<IfrtIRProgram, Program> {
 // Options for serializing IFRT IR programs.
 struct SerializeIfrtIRProgramOptions
     : llvm::RTTIExtends<SerializeIfrtIRProgramOptions, SerializeOptions> {
-  explicit SerializeIfrtIRProgramOptions(std::string ifrt_version,
-                                         std::string atom_program_version,
-                                         bool version_in_place = true)
-      : ifrt_version(std::move(ifrt_version)),
+  explicit SerializeIfrtIRProgramOptions(
+      std::string ifrt_version, std::string atom_program_version,
+      bool version_in_place = true,
+      // Using a parameter name `serdes_version` avoids shadowing the base class
+      // member variable `version`.
+      SerDesVersion serdes_version = SerDesDefaultVersionAccessor::Get())
+      : llvm::RTTIExtends<SerializeIfrtIRProgramOptions, SerializeOptions>(
+            /*version=*/serdes_version),
+        ifrt_version(std::move(ifrt_version)),
         atom_program_version(std::move(atom_program_version)),
         version_in_place(version_in_place) {}
 
@@ -108,11 +114,17 @@ struct IfrtIRCompileOptions
       std::shared_ptr<absl::flat_hash_map<
           std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
           compile_options_overrides = {},
-      bool propagate_shardings = false)
+      bool propagate_shardings = false, std::string mlir_dump_to = "",
+      std::string mlir_dump_pass_re = "", std::string mlir_dump_func_re = ".*",
+      bool mlir_enable_timing = false, std::string dot_graph_dump_to = "")
       : device_assignments(std::move(device_assignments)),
         loaded_exec_binding(std::move(loaded_exec_binding)),
         compile_options_overrides(std::move(compile_options_overrides)),
-        propagate_shardings(propagate_shardings) {}
+        propagate_shardings(propagate_shardings),
+        mlir_dump_to(std::move(mlir_dump_to)),
+        mlir_dump_pass_re(std::move(mlir_dump_pass_re)),
+        mlir_dump_func_re(std::move(mlir_dump_func_re)),
+        mlir_enable_timing(mlir_enable_timing) {}
 
   // Mapping from logical device ids in IFRT IR MLIR module to runtime device
   // ids obtained from IFRT client.
@@ -130,17 +142,22 @@ struct IfrtIRCompileOptions
       std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
       compile_options_overrides;
 
-  // Whether to propagate shardings from atom program executables for
-  // unspecified shardings.
-  bool propagate_shardings;
-
   // Constructs `IfrtIRCompileOptions` from `IfrtIrCompileOptionsProto`.
   static absl::StatusOr<std::unique_ptr<IfrtIRCompileOptions>> FromProto(
       const IfrtIrCompileOptionsProto& proto);
 
   // Returns a `IfrtIrCompileOptionsProto` representation.
   absl::StatusOr<IfrtIrCompileOptionsProto> ToProto(
-      SerDesVersion version = SerDesVersion::current()) const;
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
+
+  // Whether to propagate shardings from atom program executables for
+  // unspecified shardings.
+  bool propagate_shardings;
+
+  std::string mlir_dump_to;
+  std::string mlir_dump_pass_re;
+  std::string mlir_dump_func_re;
+  bool mlir_enable_timing;
 
   static char ID;  // NOLINT
 };

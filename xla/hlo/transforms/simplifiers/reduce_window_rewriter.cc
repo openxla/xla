@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -36,12 +37,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -153,6 +151,65 @@ absl::Status ReduceWindowRewriter::ReplaceReduceWindowWithReshape(
   return absl::OkStatus();
 }
 
+std::vector<int64_t> ReduceWindowRewriter::GetTransposedInputs(
+    HloComputation* hlo_computation, std::vector<HloInstruction*>& inputs,
+    int64_t rank, int64_t scan_dim, int64_t last_dim) {
+  std::vector<int64_t> permutation(rank);
+  absl::c_iota(permutation, 0);
+  if (scan_dim != last_dim) {
+    // permute the dimensions.
+    permutation[scan_dim] = last_dim;
+    permutation[last_dim] = scan_dim;
+
+    // add transpose for each input.
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      inputs[i] =
+          hlo_computation->AddInstruction(HloInstruction::CreateTranspose(
+              ShapeUtil::PermuteDimensions(permutation, inputs[i]->shape()),
+              inputs[i], permutation));
+    }
+  }
+
+  return permutation;
+}
+
+int64_t ReduceWindowRewriter::PreparePaddingForRewrite(
+    HloReduceWindowInstruction* reduce_window,
+    std::vector<HloInstruction*>& inputs, int64_t scan_length,
+    int64_t last_dim) {
+  HloComputation* hlo_computation = reduce_window->parent();
+  absl::Span<HloInstruction* const> init_values = reduce_window->init_values();
+
+  Shape shape = inputs.front()->shape();
+  int64_t rank = shape.dimensions().size();
+
+  // getting round up to the base length to ensure that the padded length is a
+  // multiple of the base length.
+  const int64_t padded_length = RoundUpTo(scan_length, base_length_);
+
+  if (scan_length != padded_length) {
+    for (size_t input_index = 0; input_index < inputs.size(); ++input_index) {
+      HloInstruction* input = inputs[input_index];
+
+      // We already moved scan dimensions to last dimension always -> rank - 1
+      Shape padded_shape = input->shape();
+      padded_shape.set_dimensions(last_dim, padded_length);
+      UpdateLayout(&padded_shape);
+
+      // Padding config for only the last dimension.
+      std::vector<std::pair<int64_t, int64_t>> padding(rank);
+      padding.back() = {0, padded_length - scan_length};
+
+      // Pad the input with the init value.
+      inputs[input_index] =
+          hlo_computation->AddInstruction(HloInstruction::CreatePad(
+              padded_shape, input, init_values[input_index],
+              MakeEdgePaddingConfig(padding)));
+    }
+  }
+  return padded_length;
+}
+
 absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
     HloReduceWindowInstruction* reduce_window) {
   const Shape& operand_shape = reduce_window->inputs().front()->shape();
@@ -160,6 +217,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   // Try to find the scan axis. We expect all window dimensions to be trivial,
   // except for one.
   const int64_t rank = operand_shape.dimensions().size();
+  const int64_t last_dim = rank - 1;
   const Window& window = reduce_window->window();
   std::vector<int64_t> non_trivial_window_dimensions =
       reduce_window->non_trivial_window_dimensions();
@@ -172,8 +230,8 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
             << reduce_window->ToString();
     return false;
   }
-  const int64_t scan_dim_num = non_trivial_window_dimensions.front();
-  const int64_t scan_length = operand_shape.dimensions(scan_dim_num);
+  const int64_t scan_dim = non_trivial_window_dimensions.front();
+  const int64_t scan_length = operand_shape.dimensions(scan_dim);
 
   // Early checks to avoid unnecessary work.
   if (scan_length <= base_length_) {
@@ -185,7 +243,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
     return false;
   }
 
-  const WindowDimension& scan_window_dim = window.dimensions(scan_dim_num);
+  const WindowDimension& scan_window_dim = window.dimensions(scan_dim);
   bool forward_scan = (scan_window_dim.padding_low() == scan_length - 1 ||
                        scan_window_dim.padding_low() == scan_length) &&
                       scan_window_dim.padding_high() == 0;
@@ -209,19 +267,11 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   std::vector<HloInstruction*> sources(reduce_window->inputs().begin(),
                                        reduce_window->inputs().end());
 
-  // Since we need to tile this dimension, it's convenient to have it logically
-  // last.
-  std::vector<int64_t> permutation(rank);
-  absl::c_iota(permutation, 0);
-  permutation[scan_dim_num] = rank - 1;
-  permutation[rank - 1] = scan_dim_num;
-  if (scan_dim_num != rank - 1) {
-    for (size_t i = 0; i < sources.size(); ++i) {
-      sources[i] = parent->AddInstruction(HloInstruction::CreateTranspose(
-          ShapeUtil::PermuteDimensions(permutation, sources[i]->shape()),
-          sources[i], permutation));
-    }
-  }
+  // Since we need to tile the scan dimension, it's convenient to have it
+  // logically last. If the scan dimension is not the last dimension, we need to
+  // transpose the inputs by permuting the dimensions.
+  std::vector<int64_t> permutation =
+      GetTransposedInputs(parent, sources, rank, scan_dim, last_dim);
 
   // We don't actually need to match the computation - this transformation will
   // work for an commutative/associative reducer, which is what we assume for
@@ -275,26 +325,11 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   //
   // For reverse scans, we perform the same as forward scans, except: we perform
   // a reverse scan at (3), slice out the first column at (4), and perform an
-  // exclusive reverse scan of the first columnt at (5).
+  // exclusive reverse scan of the first column at (5).
 
   // Pad.
-  absl::Span<HloInstruction* const> init_values = reduce_window->init_values();
-  const int64_t padded_length = RoundUpTo(scan_length, base_length_);
-  if (scan_length != padded_length) {
-    for (size_t i = 0; i < sources.size(); ++i) {
-      auto* source = sources[i];
-      Shape padded_shape = source->shape();
-      padded_shape.set_dimensions(rank - 1, padded_length);
-
-      UpdateLayout(&padded_shape);
-      auto padding_config = MakeNoPaddingConfig(rank);
-      padding_config.mutable_dimensions(rank - 1)->set_edge_padding_high(
-          padded_length - scan_length);
-
-      sources[i] = parent->AddInstruction(HloInstruction::CreatePad(
-          padded_shape, source, init_values[i], padding_config));
-    }
-  }
+  const int64_t padded_length =
+      PreparePaddingForRewrite(reduce_window, sources, scan_length, last_dim);
 
   // Reshape to R(k+1).
   const int64_t num_columns = padded_length / base_length_;
@@ -303,7 +338,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   for (size_t i = 0; i < sources.size(); ++i) {
     auto* source = sources[i];
     Shape tiled_shape = source->shape();
-    tiled_shape.set_dimensions(rank - 1, num_columns);
+    tiled_shape.set_dimensions(last_dim, num_columns);
 
     UpdateLayout(&tiled_shape);
     ShapeUtil::AppendMajorDimension(base_length_, &tiled_shape);
@@ -313,6 +348,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   }
 
   // Outer scan.
+  absl::Span<HloInstruction* const> init_values = reduce_window->init_values();
   Window outer_window =
       window_util::MakeWindow(std::vector<int64_t>(rank + 1, 1));
   outer_window.mutable_dimensions(rank)->set_size(base_length_);
@@ -359,18 +395,18 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
             HloInstruction::CreateReshape(column_shape, last_col));
         last_cols.push_back(last_col);
 
-        column_shape.set_dimensions(rank - 1, num_columns + 1);
+        column_shape.set_dimensions(last_dim, num_columns + 1);
         UpdateLayout(&column_shape);
         column_shapes.push_back(column_shape);
       });
 
   // Inner scan
   Window inner_window = window_util::MakeWindow(std::vector<int64_t>(rank, 1));
-  inner_window.mutable_dimensions(rank - 1)->set_size(num_columns);
+  inner_window.mutable_dimensions(last_dim)->set_size(num_columns);
   if (forward_scan) {
-    inner_window.mutable_dimensions(rank - 1)->set_padding_low(num_columns);
+    inner_window.mutable_dimensions(last_dim)->set_padding_low(num_columns);
   } else {
-    inner_window.mutable_dimensions(rank - 1)->set_padding_high(num_columns);
+    inner_window.mutable_dimensions(last_dim)->set_padding_high(num_columns);
   }
   auto inner_reduce_window =
       parent->AddInstruction(HloInstruction::CreateReduceWindow(
@@ -382,10 +418,10 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
   std::vector<int64_t> exclusive_slice_limits =
       SpanToVector(column_shapes[0].dimensions());
   if (forward_scan) {
-    exclusive_slice_limits[rank - 1] = num_columns;
+    exclusive_slice_limits[last_dim] = num_columns;
   } else {
-    exclusive_slice_starts[rank - 1] = 1;
-    exclusive_slice_limits[rank - 1] = num_columns + 1;
+    exclusive_slice_starts[last_dim] = 1;
+    exclusive_slice_limits[last_dim] = num_columns + 1;
   }
   std::vector<HloInstruction*> inner_scan_components;
   ShapeUtil::ForEachSubshape(
@@ -462,7 +498,7 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
             HloInstruction::CreateReshape(source->shape(), scan));
 
         // If necessary, transpose back to the original order.
-        if (scan_dim_num != rank - 1) {
+        if (scan_dim != last_dim) {
           scan = parent->AddInstruction(HloInstruction::CreateTranspose(
               ShapeUtil::PermuteDimensions(permutation, source->shape()), scan,
               permutation));
@@ -478,11 +514,11 @@ absl::StatusOr<bool> ReduceWindowRewriter::TryOptimizeCumSumOrProd(
         if (is_exclusive) {
           auto padding_config = MakeNoPaddingConfig(rank);
           if (forward_scan) {
-            padding_config.mutable_dimensions(scan_dim_num)
-                ->set_edge_padding_low(1);
+            padding_config.mutable_dimensions(scan_dim)->set_edge_padding_low(
+                1);
           } else {
-            padding_config.mutable_dimensions(scan_dim_num)
-                ->set_edge_padding_high(1);
+            padding_config.mutable_dimensions(scan_dim)->set_edge_padding_high(
+                1);
           }
           scan = parent->AddInstruction(HloInstruction::CreatePad(
               ShapeAtIndex(reduce_window->shape(), shape_index), scan,

@@ -44,28 +44,20 @@ namespace gpu {
 // ```
 class CublasLtBackend : public GpuCodegenBackend {
  public:
-  explicit CublasLtBackend(const Compiler::TargetConfig* target_config,
+  explicit CublasLtBackend(stream_executor::StreamExecutor* stream_executor,
                            const DebugOptions* debug_options,
                            Compiler* compiler)
-      : GpuCodegenBackend("CublasLt", target_config, debug_options, compiler) {}
+      : GpuCodegenBackend("CublasLt", stream_executor, debug_options,
+                          compiler) {}
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-  GetSupportedConfigs(
-      const HloInstruction& instr,
-      stream_executor::StreamExecutor* stream_executor) override;
+  GetSupportedConfigs(const HloInstruction& instr) override;
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
       const HloInstruction& instr) override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
-
- private:
-  absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
-      std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) override {
-    return absl::UnimplementedError("Not implemented.");
-  }
 };
 
 }  // namespace gpu

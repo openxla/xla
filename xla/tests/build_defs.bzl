@@ -330,6 +330,9 @@ def xla_test(
       **kwargs: Additional keyword arguments to pass to strict_cc_test.
     """
 
+    # precompile_test is not supported in OSS.
+    kwargs.pop("precompile_test", None)
+
     test_names = []
     if not backends:
         backends = _DEFAULT_BACKENDS
@@ -354,20 +357,16 @@ def xla_test(
         backend_deps = []
         if backend == "cpu":
             device_type_for_env = "cpu"
-            backend_deps += [
-                "//xla/service:cpu_plugin",
-                "//xla/tests:test_macros_cpu",
-            ]
+            backend_deps.append("//xla/service:cpu_plugin")
 
             # TODO: b/382779188 - Remove this when all tests are migrated to PjRt.
             if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags:
                 backend_deps.append("//xla/tests:pjrt_cpu_client_registry")
         elif backend in NVIDIA_GPU_BACKENDS + AMD_GPU_DEFAULT_BACKENDS + INTEL_GPU_DEFAULT_BACKENDS:
             device_type_for_env = "gpu"
-            backend_deps += [
+            backend_deps.append(
                 "//xla/service:gpu_plugin",
-                "//xla/tests:test_macros_%s" % backend,
-            ]
+            )
             if backend in NVIDIA_GPU_BACKENDS:
                 this_backend_tags += tf_gpu_tests_tags()
                 backend_deps += [
@@ -395,10 +394,9 @@ def xla_test(
                 backend_deps.append("//xla/tests:pjrt_gpu_client_registry")
         elif backend == "interpreter":
             device_type_for_env = "interpreter"
-            backend_deps += [
+            backend_deps.append(
                 "//xla/service:interpreter_plugin",
-                "//xla/tests:test_macros_interpreter",
-            ]
+            )
 
             # TODO: b/382779188 - Remove this when all tests are migrated to PjRt.
             if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags:
@@ -417,13 +415,8 @@ def xla_test(
             for lib_dep in xla_test_library_deps:
                 backend_deps += ["%s_%s" % (lib_dep, backend)]  # buildifier: disable=list-append
 
-        if backend in GPU_BACKENDS:
-            # TODO(b/414877419): Remove special case, update backend_predicates
-            device = "gpu"
-            modifiers = backend.split("_")
-        else:
-            modifiers = backend.split("_")
-            device = modifiers.pop(0)
+        modifiers = backend.split("_")
+        device = modifiers.pop(0)
 
         xla_cc_test(
             name = test_name,
@@ -532,17 +525,10 @@ def xla_test_library(
 
     for backend in backends:
         this_backend_copts = []
-        if backend == "cpu":
-            backend_deps = ["//xla/tests:test_macros_cpu"]
-        elif backend in GPU_BACKENDS:
-            backend_deps = ["//xla/tests:test_macros_%s" % backend]
-        elif backend == "interpreter":
-            backend_deps = ["//xla/tests:test_macros_interpreter"]
-        elif backend in plugins:
-            backend_deps = plugins[backend]["deps"]
+        this_backend_deps = []
+        if backend in plugins:
+            this_backend_deps += plugins[backend]["deps"]
             this_backend_copts += plugins[backend]["copts"]
-        else:
-            fail("Unknown backend %s" % backend)
 
         native.cc_library(
             name = "%s_%s" % (name, backend),
@@ -551,7 +537,7 @@ def xla_test_library(
             hdrs = hdrs,
             copts = ["-DXLA_TEST_BACKEND_%s=1" % backend.upper()] +
                     this_backend_copts,
-            deps = deps + backend_deps,
+            deps = deps + this_backend_deps,
             **kwargs
         )
 
@@ -571,27 +557,4 @@ def generate_backend_suites(backends = []):  # buildifier: disable=unnamed-macro
         native.test_suite(
             name = "%s_tests" % backend,
             tags = ["xla_%s" % backend, "-broken", "manual"],
-        )
-
-def generate_backend_test_macros(backends = []):  # buildifier: disable=unnamed-macro
-    """Generates test_macro libraries for each backend with correct options.
-
-    Args:
-      backends: The list of backends to generate libraries for.
-    """
-    if not backends:
-        backends = _ALL_BACKENDS
-    for backend in backends:
-        manifest = ""
-        if backend in plugins:
-            manifest = plugins[backend]["disabled_manifest"]
-
-        native.cc_library(
-            name = "test_macros_%s" % backend,
-            testonly = True,
-            hdrs = ["test_macros.h"],
-            copts = [
-                "-DXLA_PLATFORM=\\\"%s\\\"" % backend.upper(),
-                "-DXLA_DISABLED_MANIFEST=\\\"%s\\\"" % manifest,
-            ],
         )

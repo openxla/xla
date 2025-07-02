@@ -33,13 +33,11 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/log_sink.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -61,12 +59,14 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_runner_interface.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/xla_debug_info_manager.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -87,13 +87,10 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/regexp.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {
@@ -115,9 +112,14 @@ class GpuCompilerTest : public HloTestBase {
     auto compiler = backend().compiler();
     const se::DeviceDescription& gpu_device_info =
         backend().default_stream_executor()->GetDeviceDescription();
-    TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info).status());
-    return tensorflow::down_cast<GpuCompiler*>(compiler)
-        ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
+    GpuCompiler* gpu_compiler = tensorflow::down_cast<GpuCompiler*>(compiler);
+    std::unique_ptr<GpuAliasInfo> alias_info =
+        gpu_compiler->GetAliasInfo(gpu_device_info);
+    TF_RETURN_IF_ERROR(
+        ScheduleGpuModule(module, 4, gpu_device_info, alias_info.get())
+            .status());
+    return gpu_compiler->RunPostSchedulingPipelines(
+        module, 4 * 1024 * 1024, gpu_device_info, alias_info.get());
   }
 
   // Like GetOptimizedModule, but also runs the backend. This is important for
@@ -539,8 +541,13 @@ ENTRY main {
   ROOT while = (f32[1,128], f32[2,128], pred[]) while(tuple), condition=condition, body=body
 }
 )";
+  HloModuleConfig config = GetModuleConfigForTest();
+  auto& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_enable_analytical_sol_latency_estimator(false);
+  TF_ASSERT_OK_AND_ASSIGN(auto parsed,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_string));
+                          GetOptimizedModule(std::move(parsed)));
 
   EXPECT_EQ(CountCopies(*module), 7);
 
@@ -1092,9 +1099,9 @@ TEST_F(
   // succeed.
   constexpr absl::string_view rewritable_transpose_string = R"(
 ENTRY main {
-  p0 = f32[1024,2048]{1,0} parameter(0)
-  reshape = f32[1024,1024,2]{2,1,0} reshape(p0)
-  ROOT transpose = f32[2,1024,1024]{2,1,0} transpose(reshape), dimensions={2,1,0}
+  p0 = f32[1024,4096]{1,0} parameter(0)
+  reshape = f32[1024,1024,4]{2,1,0} reshape(p0)
+  ROOT transpose = f32[4,1024,1024]{2,1,0} transpose(reshape), dimensions={2,1,0}
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1756,7 +1763,6 @@ TEST_F(GpuCompilerTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
                           test_runner_as_hlo_runner().ExecutableFromWrapped(
                               std::move(wrapped_exec)));
-  std::cout << "exec module: " << exec->module().ToString() << "\n";
   const char* kExpected = R"(
     // CHECK:      dynamic-slice-fusion{{.+}} {
     // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}

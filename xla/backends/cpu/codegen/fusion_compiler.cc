@@ -61,6 +61,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h"
+#include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/codegen/emitters/ir/xla_attrs.h.inc"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -92,6 +93,7 @@ static absl::Status RunPassPipeline(
 
 static void AddXlaOpsOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<mlir::func::FuncOp>(emitters::CreateSimplifyArithPass());
+  pm.addPass(CreateAddReductionFastMathFlagsPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(emitters::CreateEraseDeadFunctionsPass());
@@ -112,6 +114,7 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm) {
   pm.addPass(mlir::mhlo::createConvertToSignlessPass());
   pm.addPass(emitters::CreatePropagateSliceIndicesPass());
   pm.addPass(emitters::CreateFlattenTensorsPass());
+  pm.addPass(emitters::createPropagateAliasScopesPass());
   // We need LICM before unswitching loops, because our loop unswitcher only
   // detects for loops with a single if inside them.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
@@ -151,11 +154,13 @@ static void AddLoweringPasses(mlir::OpPassManager& pm, int32_t vector_width) {
   pm.addPass(mlir::createSymbolDCEPass());
   pm.addPass(mlir::createCSEPass());
 
+  pm.addNestedPass<mlir::func::FuncOp>(cpu::CreateExpandFloatOpsPass());
   pm.addPass(emitters::CreateExpandFloatOpsPass());
   pm.addPass(emitters::CreateEraseDeadFunctionsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createInlinerPass());
   pm.addPass(mlir::createSCFToControlFlowPass());
+  pm.addNestedPass<mlir::func::FuncOp>(emitters::CreateLowerXlaMathLibPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertMathToLLVMPass());
   pm.addPass(emitters::CreateLowerToLLVMPass(/*target_type=*/"cpu"));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
@@ -230,6 +235,12 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> FusionCompiler::Compile(
         llvm::MDString::get(llvm_context, options_csv);
     llvm_module->addModuleFlag(llvm::Module::Error, "xla_backend_extra_options",
                                options_mdstring);
+  }
+
+  if (mlir::Attribute options =
+          mlir_module->getAttr(xla::CpuMemoryRegionNameAttr::name)) {
+    SetModuleMemoryRegionName(*llvm_module,
+                              mlir::cast<mlir::StringAttr>(options).str());
   }
 
   TF_RET_CHECK(llvm_module != nullptr)

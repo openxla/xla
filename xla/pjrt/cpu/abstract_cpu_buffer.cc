@@ -121,8 +121,9 @@ ShapedBuffer AsShapedBuffer(int device_ordinal, const Shape& on_device_shape,
 
 AbstractCpuBuffer::AbstractCpuBuffer(
     Shape on_device_shape,
-    std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer)
-    : CommonPjRtBuffer(std::move(tracked_device_buffer)),
+    std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
+    PjRtMemorySpace* memory_space)
+    : CommonPjRtBuffer(std::move(tracked_device_buffer), memory_space),
       on_device_shape_(std::move(on_device_shape)) {}
 
 AbstractCpuBuffer::~AbstractCpuBuffer() { AbstractCpuBuffer::Delete(); }
@@ -563,6 +564,7 @@ void PackOrCopy(PrimitiveType element_type, const LiteralSlice& literal,
 AbstractCpuBuffer::AllocateTrackedDeviceBuffer(
     const Shape& on_device_shape,
     absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> definition_events) {
+  VLOG(0) << "Allocate: " << on_device_shape.ToString();
   if (on_device_shape.IsTuple()) {
     return absl::InvalidArgumentError(
         absl::StrCat("Tuples are not supported for cpu-buffers: ",

@@ -194,11 +194,7 @@ absl::StatusOr<ShardingProto> Sharding::ToProto(SerDesVersion version) const {
   ShardingProto sharding_proto;
   // `ShardingProto` does not store its own version. It delegates the details to
   // SerDes of the `Sharding` subclasses.
-  std::unique_ptr<SerializeOptions> options;
-  if (version != SerDesVersion::current()) {
-    options = std::make_unique<SerializeOptions>();
-    options->version = version;
-  }
+  auto options = std::make_unique<SerializeOptions>(version);
   TF_ASSIGN_OR_RETURN(*sharding_proto.mutable_serialized_sharding(),
                       Serialize(*this, std::move(options)));
   return sharding_proto;
@@ -659,13 +655,16 @@ std::string ConcreteSharding::DebugString() const {
   return std::visit(
       [this](const auto& shape, const auto& shard_shapes) {
         return absl::StrFormat(
-            "ConcreteSharding(devices: %v, shape: %s, shard_shapes: %s, "
-            "memory_kind: %v)",
+            "ConcreteSharding(devices: %v, shape: %s, shard_shapes: [%s], "
+            "index_domains: %s, memory_kind: %v)",
             *devices_, shape.DebugString(),
             absl::StrJoin(shard_shapes, ",",
                           [](std::string* out, const auto& shard_shape) {
                             absl::StrAppend(out, shard_shape.DebugString());
                           }),
+            index_domains_.has_value()
+                ? absl::StrCat("[", absl::StrJoin(*index_domains_, ","), "]")
+                : "<nullopt>",
             memory_kind_);
       },
       shape_, shard_shapes_);

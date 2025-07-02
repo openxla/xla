@@ -627,17 +627,16 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
       if (!allow_full_replication) {
         return *this;
       }
-      LOG(ERROR)
-          << "[spmd] Involuntary full rematerialization. The compiler was "
-             "not able to go from sharding "
-          << sharding().ToString(/*include_metadata=*/true) << " to "
-          << target.ToString(/*include_metadata=*/true)
-          << " without doing a full rematerialization of the tensor for HLO "
-             "operation: "
-          << hlo_->ToString()
-          << ". You probably want to enrich the sharding annotations to "
-             "prevent "
-             "this from happening.";
+      LOG(WARNING) << "[SPMD] Involuntary full rematerialization. The compiler "
+                      "cannot go from sharding "
+                   << sharding().ToString(/*include_metadata=*/true) << " to "
+                   << target.ToString(/*include_metadata=*/true)
+                   << " efficiently for HLO operation " << hlo_->ToString()
+                   << ". As the last resort, SPMD will replicate the tensor "
+                      "and then partition it to obtain the target sharding, "
+                      "which is inefficient. This issue will be fixed by "
+                      "Shardy with explicit collectives features enabled. "
+                      "Contact XLA or Shardy team for help.";
     }
     return Replicate().Reshard(target);
   }
@@ -3948,7 +3947,7 @@ absl::Status SpmdPartitioningVisitor::HandleGetTupleElement(
       gte, tuple.base_shape().tuple_shapes(hlo->tuple_index()),
       MakePartitioningState());
   source_partitioned_gte = source_partitioned_gte.Reshard(hlo->sharding());
-  SetPartitionedHlo(hlo, source_partitioned_gte);
+  SetPartitionedHlo(hlo, std::move(source_partitioned_gte));
   return absl::OkStatus();
 }
 

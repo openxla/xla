@@ -663,12 +663,14 @@ ENTRY r {
 })";
 
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: fusion(
-; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "__triton_nested_gemm_fusion"
+; CHECK: %[[p0:.*]] = f16[10,3,128]{2,0,1} parameter(0)
+; CHECK: %[[cv:.*]] = f32[10,3,128]{2,0,1} convert(%[[p0]])
+; CHECK: ROOT
+; CHECK-SAME: f32[3,10,128]{2,0,1} transpose(%[[cv]]), dimensions={1,0,2}
+; CHECK: %[[p0:.*]] = f16[10,3,128]{2,0,1} parameter(0)
+; CHECK: %[[fusion:.*]] = f32[3,10,128]{2,0,1} fusion(%[[p0]])
+; CHECK: ROOT
+; CHECK-SAME: f32[3,128,123]{2,1,0} dot(%[[fusion]],
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1290,7 +1292,8 @@ ENTRY e {
                           GetOptimizedModule(kHloText));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
+      GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()),
+                           m::Bitcast(m::Parameter()))
                      .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 }
 
@@ -1644,7 +1647,7 @@ ENTRY e {
 // TODO(b/393299275): this should be rewritten to work on post-optimization HLO,
 // and potentially have an associated fusion test.
 // Disabled because pads are not supported in the new emitter yet.
-TEST_F(TritonGemmTestWithSplitK, DISABLED_SplitKWithTrivialDimension) {
+TEST_F(TritonGemmTestWithSplitK, SplitKWithTrivialDimension) {
   constexpr absl::string_view kHloText = R"(
 ENTRY entry_computation {
   p0 = f16[1001,1]{1,0} parameter(0)
@@ -1708,8 +1711,9 @@ ENTRY e {
   }
   EXPECT_THAT(
       instr,
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
-                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+      GmockMatch(
+          m::Fusion(m::Parameter(), m::Parameter(), m::Bitcast(m::Parameter()))
+              .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
 }
@@ -2289,9 +2293,7 @@ ENTRY entry {
 // There were relatively large numeric errors with an f16 temporary buffer, so I
 // ended up using --xla_gpu_triton_gemm_disable_reduced_precision_reduction=true
 // when generating this test case.
-//
-// TODO(b/393299275): transform this test once padding derivation if fixed.
-TEST_F(CompareTest, DISABLED_SupportsSplitKWithIndivisibleKComplexExample) {
+TEST_F(CompareTest, SupportsSplitKWithIndivisibleKComplexExample) {
   constexpr absl::string_view kHloTextRef = R"(
 dot {
   p0 = s8[3,129,5,32]{3,2,1,0} parameter(0)
@@ -2374,7 +2376,7 @@ ENTRY entry_computation {
 }
 
 // TODO(b/393299275): transform this test once padding derivation if fixed.
-TEST_F(CompareTest, DISABLED_SupportsSplitKWithIndivisibleKUsingPaddingEqual1) {
+TEST_F(CompareTest, SupportsSplitKWithIndivisibleKUsingPaddingEqual1) {
   constexpr absl::string_view kHloTextRef = R"(
 HloModule extracted, entry_computation_layout={(f16[1,8,4,1023]{3,2,1,0}, f16[1,1023,128]{2,1,0})->f16[1,8,4,128]{3,2,1,0}}
 
@@ -2446,9 +2448,18 @@ ENTRY entry_computation {
 }
 )";
 
-  EXPECT_TRUE(RunAndCompareTwoModules(kHloTextRef, kHloTextSplitK,
-                                      ErrorSpec{/*aabs=*/4e-2, /*arel=*/2e-2},
-                                      /*run_hlo_passes=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ModuleAndNestedFusionMetadata test_module_and_metadata,
+      GetModuleAndNestedFusionMetadata(kHloTextSplitK));
+
+  TF_ASSERT_OK_AND_ASSIGN(ModuleAndNestedFusionMetadata ref_module_and_metadata,
+                          GetModuleAndNestedFusionMetadata(kHloTextRef));
+
+  EXPECT_TRUE(
+      RunAndCompareTwoModules(std::move(ref_module_and_metadata.module),
+                              std::move(test_module_and_metadata.module),
+                              ErrorSpec{/*aabs=*/4e-2, /*arel=*/2e-2},
+                              /*run_hlo_passes=*/false));
 }
 
 // TODO(b/393299275): symbolic tile derivation fails for one of the padded
@@ -2468,7 +2479,7 @@ ENTRY entry_computation {
 // is that offset constraints are handled via `tile_offsets_indexing` anyway,
 // and it's all that should be relevant afaik. We can probably let the caller
 // decide to drop pre-existing constraints.
-TEST_F(CompareTest, DISABLED_SupportsSplitKWithIndivisibleKUsingPaddingEqual5) {
+TEST_F(CompareTest, SupportsSplitKWithIndivisibleKUsingPaddingEqual5) {
   constexpr absl::string_view kHloTextRef = R"(
 HloModule extracted
 
@@ -3176,7 +3187,7 @@ ENTRY e {
   CompileAndOptionallyVerifyPtx(std::move(module_and_metadata.module), R"(
                                 R"(
 CHECK: $L__BB0_1:
-CHECK-NEXT: // begin inline asm
+CHECK:      // begin inline asm
 CHECK-NEXT: .pragma "nounroll";
 CHECK: wgmma
 )",

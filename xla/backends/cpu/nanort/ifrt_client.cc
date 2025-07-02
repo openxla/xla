@@ -385,7 +385,8 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
 
   ifrt::ShardingRef shared_ptr_sharding() const override { return sharding_; }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout() const override {
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
+      const override {
     TF_RETURN_IF_ERROR(ValidateNotDeleted());
     return std::make_shared<PjRtLayout>(xla::Layout(shape().dims()));
   }
@@ -596,7 +597,8 @@ class ShardedNanoArray final : public NanoValue<ShardedNanoArray, ifrt::Array> {
 
   ifrt::ShardingRef shared_ptr_sharding() const override { return sharding_; }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout() const override {
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
+      const override {
     return std::make_shared<PjRtLayout>(xla::Layout(shape().dims()));
   }
 
@@ -764,7 +766,7 @@ class NanoExecutable final
       return InvalidArgument("NanoRT requires an HloProgram");
     }
     XlaComputation computation;
-    TF_RETURN_IF_ERROR(MlirToXlaComputation(xla_program->mlir_module,
+    TF_RETURN_IF_ERROR(MlirToXlaComputation(xla_program->mlir_module(),
                                             computation, false, true, false));
     TF_ASSIGN_OR_RETURN(auto nano_executable,
                         client->nano_client()->Compile(computation));
@@ -1005,7 +1007,7 @@ class NanoExecutable final
       const ProgramShape& program_shape, const XlaComputation& computation) {
     const auto& result_shape = program_shape.result();
 
-    int output_id = computation.proto().computations(0).root_id();
+    int64_t output_id = computation.proto().computations(0).root_id();
 
     std::vector<OpSharding> shardings(
         (result_shape.IsTuple() ? result_shape.tuple_shapes().size() : 1));
@@ -1419,10 +1421,10 @@ NanoIfrtClient::GetTopologyForDevices(
 }
 
 absl::StatusOr<std::shared_ptr<const PjRtLayout>>
-NanoIfrtClient::GetDefaultLayout(ifrt::DType dtype,
-                                 absl::Span<const int64_t> dims,
-                                 ifrt::Device* device,
-                                 ifrt::MemoryKind memory_kind) const {
+NanoIfrtClient::GetDefaultPjRtLayout(ifrt::DType dtype,
+                                     absl::Span<const int64_t> dims,
+                                     ifrt::Device* device,
+                                     ifrt::MemoryKind memory_kind) const {
   return std::make_shared<PjRtLayout>(xla::Layout(dims));
 }
 

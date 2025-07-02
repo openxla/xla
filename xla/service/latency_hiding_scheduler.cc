@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -50,7 +51,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/map_util.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
+#include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
@@ -177,6 +180,46 @@ GetNumResourcesNeededForAnnotationWithKeepOriginalOrderAttrs(
   }
   return max_resources_needed;
 }
+
+int64_t EstimateFragmentationSize(
+    HloModule* module, std::vector<HloComputation*> computations,
+    const absl::flat_hash_map<HloComputation*, std::vector<HloInstruction*>>&
+        saved_schedules,
+    const HloAliasAnalysis& alias_analysis, const AliasInfo* alias_info) {
+  // Run heap simulator on the whole module to estimate the fragmentation size.
+  auto algorithm = std::make_unique<GlobalDecreasingSizeBestFitHeap<HloValue>>(
+      /*alignment=*/1);
+  auto size_fn = [](const BufferValue& buffer) -> int64_t {
+    const Shape& shape = buffer.shape();
+    if (!shape.IsArray()) {
+      return 0;
+    }
+    return ShapeUtil::ByteSizeOf(shape);
+  };
+  HloSchedule before_schedule(module);
+  for (HloComputation* computation : computations) {
+    before_schedule.set_sequence(
+        computation,
+        absl::MakeConstSpan(
+            module->schedule().sequence(computation).instructions()));
+    module->schedule().set_sequence(
+        computation, absl::MakeConstSpan(saved_schedules.at(computation)));
+  }
+  auto result =
+      HeapSimulator::Run(std::move(algorithm), *module, module->schedule(),
+                         alias_analysis, alias_info, size_fn);
+  CHECK_OK(result.status());
+  for (HloComputation* computation : computations) {
+    module->schedule().set_sequence(
+        computation, absl::MakeConstSpan(
+                         before_schedule.sequence(computation).instructions()));
+  }
+  int64_t fragmentation_size = result.value().fragmentation_size;
+  VLOG(3) << module->name() << ": Heap simulator estimated fragmentation size: "
+          << fragmentation_size;
+  return fragmentation_size > 0 ? fragmentation_size : 0;
+}
+
 }  // namespace
 
 CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
@@ -766,17 +809,17 @@ void ModulePressureState::InitializePressureStates() {
               process_computation(called_computation, tracker.live_buffers());
             }
           }
-          VLOG(10) << "Instruction: " << instruction->ToString();
-          VLOG(10) << "Pressure change: "
+          VLOG(15) << "Instruction: " << instruction->ToString();
+          VLOG(15) << "Pressure change: "
                    << tracker.MemoryPressureDifference(instruction).first;
-          VLOG(10) << "Current usage: " << tracker.memory_usage();
+          VLOG(15) << "Current usage: " << tracker.memory_usage();
           tracker.UpdateBuffers(instruction);
-          VLOG(10) << "Current usage after update: " << tracker.memory_usage();
-          VLOG(10) << "Current peak after update: "
+          VLOG(15) << "Current usage after update: " << tracker.memory_usage();
+          VLOG(15) << "Current peak after update: "
                    << tracker.pressure_state().memory_peak;
         }
-        VLOG(6) << "Pressure peak for " << computation->name() << ": "
-                << tracker.pressure_state().memory_peak;
+        VLOG(15) << "Pressure peak for " << computation->name() << ": "
+                 << tracker.pressure_state().memory_peak;
         UpdatePressureStateForComputation(computation,
                                           tracker.pressure_state());
       };
@@ -1215,6 +1258,13 @@ class ReadySetLt {
         return *value;
       }
     }
+    // Schedule according to ForceDelayAfterTarget when we executed the early
+    // target scheduling rule.
+    if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+            !a.node->GetForceDelay(), a, !b.node->GetForceDelay(), b,
+            "kForceDelayAfterTarget")) {
+      return *value;
+    }
     // Some heuristic that try to prioritize unlocking "done" instructions
     // so that we can perform overlap. More fancy heuristics can be used by
     // discovering the closest "done" to every instruction and prioritize
@@ -1544,6 +1594,9 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kShouldSkipNodeFunction});
+        VLOG(2) << "Skipped due to kShouldSkipNodeFunction: "
+                << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1555,6 +1608,9 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kAnnotationGroupNotReady});
+        VLOG(2) << "Skipped due to kShouldSkipNodeFunction: "
+                << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1565,6 +1621,9 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kExceedsOverlapLimit});
+        VLOG(2) << "Skipped due to kShouldSkipNodeFunction: "
+                << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1928,7 +1987,7 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
       ++non_ready_instr;
       node->ClearAnnotation();
       if (config_.aggressive_flexible_annotation_scheduling) {
-        node->SetForceDelay(true);
+        node->SetForceDelayAfterTarget(true);
       }
       sched_state->nodes_holding_annotations.insert(node);
       continue;
@@ -3148,7 +3207,10 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
   computations_to_schedule_.reserve(module->computation_count());
   // Collect which computations have latency hiding opportunities.
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeComputationPostOrder(execution_threads)) {
+    if (computation->IsFusionComputation()) {
+      continue;
+    }
     for (auto* instr : computation->instructions()) {
       if (scheduling_context_->GetAsyncTracker()->IsSupportedAsyncStart(
               *instr) ||
@@ -3180,13 +3242,22 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
     saved_schedules[computation] = std::move(new_schedule);
     scheduling_context_->GetAsyncTracker()->ResetTargetDefinedStates();
   }
+  int64_t fragmentation_size =
+      scheduling_context_->GetAsyncTracker()
+              ->GetConfig()
+              .estimate_fragmentation_size
+          ? EstimateFragmentationSize(module, computations_to_schedule_,
+                                      saved_schedules,
+                                      *scheduling_context_->GetAliasAnalysis(),
+                                      scheduling_context_->GetAliasInfo())
+          : 0;
   uint64_t initial_memory_limit = scheduler_core_->GetMemoryLimit();
-  for (int64_t iter = 0;
-       iter < scheduler_core_->GetRerunTimes() &&
-       scheduler_core_->GetMemoryPeak() > initial_memory_limit;
+  for (int64_t iter = 0; iter < scheduler_core_->GetRerunTimes() &&
+                         scheduler_core_->GetMemoryPeak() + fragmentation_size >
+                             initial_memory_limit;
        iter++) {
     LOG(INFO) << "LatencyHidingScheduler current memory usage: "
-              << scheduler_core_->GetMemoryPeak()
+              << scheduler_core_->GetMemoryPeak() + fragmentation_size
               << " bytes, does not fit in limit: "
               << scheduler_core_->GetMemoryLimit()
               << ". Setting the new limit to "
@@ -3200,6 +3271,15 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
           computation);
       saved_schedules[computation] = std::move(new_schedule);
       scheduling_context_->GetAsyncTracker()->ResetTargetDefinedStates();
+      fragmentation_size =
+          scheduling_context_->GetAsyncTracker()
+                  ->GetConfig()
+                  .estimate_fragmentation_size
+              ? EstimateFragmentationSize(
+                    module, computations_to_schedule_, saved_schedules,
+                    *scheduling_context_->GetAliasAnalysis(),
+                    scheduling_context_->GetAliasInfo())
+              : 0;
     }
   }
   LOG(INFO) << "[" << name() << "]"

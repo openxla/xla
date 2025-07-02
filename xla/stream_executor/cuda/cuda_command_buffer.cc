@@ -135,7 +135,7 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
   VLOG(2) << "Instantiate CUDA executable graph from graph " << graph;
 
 #if CUDA_VERSION >= 12000
-  uint64_t cu_flags = 0;
+  uint64_t cu_flags = CUDA_GRAPH_INSTANTIATE_FLAG_USE_NODE_PRIORITY;
   return cuda::ToStatus(cuGraphInstantiate(exec, graph, cu_flags),
                         "Failed to instantiate CUDA graph");
 #else
@@ -552,6 +552,21 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
   return cuda::ToStatus(cuGraphExecKernelNodeSetParams(
                             exec_, ToCudaGraphHandle(node_handle), &params),
                         "Failed to set CUDA graph kernel node params");
+}
+
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateEmptyNode(
+    absl::Span<const GraphNodeHandle> dependencies) {
+  VLOG(2) << "Add empty node to a graph " << graph_
+          << "; deps: " << dependencies.size();
+
+  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
+
+  CUgraphNode node_handle = nullptr;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphAddEmptyNode(&node_handle, graph_, deps.data(), deps.size()),
+      "Failed to add empty node to a CUDA graph"));
+
+  return FromCudaGraphHandle(node_handle);
 }
 
 absl::Status CudaCommandBuffer::Trace(

@@ -1999,7 +1999,6 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
     // repacking can account for the reserved memory.
     repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
         start_time, end_time, chunk_candidate.size, chunk_candidate.offset,
-        static_cast<int64_t>(repack_allocation_blocks_.size()),
         reserved_allocations.back().get()));
     repack_allocation_blocks_.back().next_colocated =
         &(repack_allocation_blocks_.back());
@@ -4067,7 +4066,6 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
       repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
           allocation->start_time(), allocation->end_time(),
           allocation->chunk().size, allocation->chunk().offset,
-          static_cast<int64_t>(repack_allocation_blocks_.size()),
           allocation.get()));
       colocations.push_back(&repack_allocation_blocks_.back());
     }
@@ -4156,9 +4154,7 @@ void MsaAlgorithm::AllocateScopedAllocation(HloInstruction* instruction,
 
   repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
       time, time, size,
-      /*initial_offset=*/0,
-      static_cast<int64_t>(repack_allocation_blocks_.size()),
-      allocations_->back().get()));
+      /*initial_offset=*/0, allocations_->back().get()));
   repack_allocation_blocks_.back().next_colocated =
       &repack_allocation_blocks_.back();
 }
@@ -4873,9 +4869,7 @@ void MsaAlgorithm::FinalizeAllocations(
       repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
           colocated_allocation->start_time(), colocated_allocation->end_time(),
           colocated_allocation->chunk().size,
-          colocated_allocation->chunk().offset,
-          static_cast<int64_t>(repack_allocation_blocks_.size()),
-          colocated_allocation));
+          colocated_allocation->chunk().offset, colocated_allocation));
       colocations.push_back(&repack_allocation_blocks_.back());
     }
     for (int i = 0; i < colocations.size() - 1; ++i) {
@@ -5048,15 +5042,12 @@ void MsaAlgorithm::ReleaseReservedAllocationForAlternateMemoryColorings(
                               reserved_allocation->end_time(),
                               reserved_allocation->chunk()));
   reserved_allocation->chunk_freed_in_interval_tree();
-  // Remove the allocation from the repack_allocation_blocks_ list.
-  auto it = std::remove_if(
-      repack_allocation_blocks_.begin(), repack_allocation_blocks_.end(),
+  size_t original_size = repack_allocation_blocks_.size();
+  repack_allocation_blocks_.remove_if(
       [reserved_allocation](
           const RepackAllocationBlock& repack_allocation_block) {
         return repack_allocation_block.allocation == reserved_allocation;
       });
-  size_t original_size = repack_allocation_blocks_.size();
-  repack_allocation_blocks_.erase(it, repack_allocation_blocks_.end());
   CHECK_EQ(original_size - repack_allocation_blocks_.size(), 1);
 }
 
@@ -5686,6 +5677,8 @@ AllocationResult MsaAlgorithm::ForceAlternateMemoryAllocationForMinTime(
     return AllocationResult::kFailOutOfMemory;
   }
 
+  AddToPendingChunks(alternate_mem_interval, chunk_candidate);
+
   const HloPosition& defining_position =
       request.allocation_value->defining_position();
   request.allocation_value->mutable_allocation_sequence()->push_back(
@@ -6103,6 +6096,7 @@ AllocationResult MsaAlgorithm::Prefetch(
   if (chunk_candidate.chunk_end() > available_heap_size()) {
     return AllocationResult::kFailOutOfMemory;
   }
+  AddToPendingChunks(alternate_mem_interval, chunk_candidate);
 
   AddAsyncCopyOrOtherMemOp(
       prev_allocation_in_default_mem, MemorySpace::kAlternate, chunk_candidate,
@@ -6651,13 +6645,6 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
   CHECK_EQ(sliced_buffer_interval->num_slices(),
            copy_resource_per_slice_sorted_by_start_time.size());
 
-  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
-                                  context.prefetch_end_time,
-                                  copy_resource_per_slice_sorted_by_start_time,
-                                  prefetch_async_copy_resource_)) {
-    return AllocationResult::kFailViolatesAsyncCopyResource;
-  }
-
   // Check if the copies we would add for the prefetch would violate copy
   // ordering.
   if (options_.enforce_prefetch_fifo_order &&
@@ -6679,6 +6666,13 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
       VLOG(4) << "This would violate the outstanding async copy limit.";
       return AllocationResult::kFailOutOfAsyncCopies;
     }
+  }
+
+  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
+                                  context.prefetch_end_time,
+                                  copy_resource_per_slice_sorted_by_start_time,
+                                  prefetch_async_copy_resource_)) {
+    return AllocationResult::kFailViolatesAsyncCopyResource;
   }
 
   // Check if we can find a place in alternate memory for the prefetch.
@@ -7017,6 +7011,19 @@ bool MsaAlgorithm::IsPositionColoredInDefaultMemoryAtTime(
     }
   }
   return false;
+}
+
+int64_t AsynchronousCopyResource::GetScaledIntegerResource(
+    float resource) const {
+  float scaled_value = resource * kCopyResourceIntScale;
+  if (scaled_value > std::numeric_limits<int64_t>::max()) {
+    LOG(WARNING) << "Scaled value " << scaled_value
+                 << " is greater than the maximum int64_t value "
+                 << std::numeric_limits<int64_t>::max();
+    return std::numeric_limits<int64_t>::max();
+  }
+  int64_t scaled_value_int = static_cast<int64_t>(scaled_value);
+  return scaled_value_int;
 }
 
 }  // namespace memory_space_assignment

@@ -191,14 +191,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
     return std::make_pair(std::move(last_launch), std::move(count_down));
   }
 
-  tsl::AsyncValueRef<CpuEvent> GetLastEnqueueEvent() {
-    return last_enqueue_event_.CopyRef();
-  }
-
-  void SetLastEnqueueEvent(tsl::AsyncValueRef<CpuEvent> event) {
-    last_enqueue_event_ = std::move(event);
-  }
-
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
     return &topology_;
@@ -317,13 +309,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   // A callback to customize the HloModuleConfig for each compiled module.
   std::function<void(HloModuleConfig&)> customize_hlo_module_config_;
-
-  // Used to prevent too much parallelism: we will not enqueue next non-parallel
-  // computation until last one is done within each user thread.
-  // TODO(yueshengys): Consider moving the enqueuing/ordering logic to JAX via
-  // token threading.
-  inline static thread_local tsl::AsyncValueRef<CpuEvent> last_enqueue_event_ =
-      tsl::MakeAvailableAsyncValueRef<CpuEvent>();
 };
 
 class PjRtCpuBuffer final : public AbstractCpuBuffer {
@@ -359,7 +344,6 @@ class PjRtCpuBuffer final : public AbstractCpuBuffer {
 
   PjRtCpuClient* client_;
   PjRtCpuDevice* const device_;
-  PjRtMemorySpace* const memory_space_;
 };
 
 class PjRtCpuExecutable final : public PjRtLoadedExecutable {
@@ -369,7 +353,6 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
       std::shared_ptr<DeviceAssignment> device_assignment,
       bool parameter_is_tupled_arguments, CompileOptions compile_options,
       std::unique_ptr<Executable> cpu_executable,
-      BufferAllocation::Index result_buffer_index,
       absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
       std::vector<LogicalDeviceIds> addressable_device_logical_ids,
       std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client);
@@ -426,6 +409,8 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
     memory_stats.PopulateBufferStatsFromAllocations(
         cpu_executable_->GetAllocations());
+    TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
+    memory_stats.peak_memory_in_bytes = peak_memory;
     return memory_stats;
   }
 
@@ -494,11 +479,9 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
 
   std::shared_ptr<Executable> cpu_executable_;
 
-  // Caching `result_buffer_index_` and `result_buffer_indices_` to avoid lookup
+  // Caching `result_buffer_indices_` to avoid lookup
   // HLO dataflow analysis data structures in program execution critical path.
 
-  // Buffer allocation index corresponding to root buffer buffer.
-  BufferAllocation::Index result_buffer_index_;
   // Buffer allocation indices corresponding to each result buffer leaf buffer.
   absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices_;
 

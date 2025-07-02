@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1643,28 +1644,30 @@ absl::StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
   auto dataflow_analysis = absl::WrapUnique(
       new HloDataflowAnalysis(module, ssa_form, bitcast_defines_value,
                               can_share_buffer, execution_threads));
+  TF_RETURN_IF_ERROR(dataflow_analysis->RunImpl());
+  return dataflow_analysis;
+}
 
-  TF_RETURN_IF_ERROR(dataflow_analysis->InitializeInstructionValueSets());
-  dataflow_analysis->Propagate();
-  dataflow_analysis->OptimizePhiValues();
+absl::Status HloDataflowAnalysis::RunImpl() {
+  TF_RETURN_IF_ERROR(InitializeInstructionValueSets());
+  Propagate();
+  OptimizePhiValues();
 
   // Delete all values marked for deletion.
-  dataflow_analysis->DeleteMarkedValues();
+  DeleteMarkedValues();
 
   // Gather and set all non-definition positions of all values. Value deletion
   // is rare, so just use a vector indexed by Value::Id rather than a map from
   // Value::Id to positions. There should be very few holes in the vector, and
   // lookup is faster.
-  std::vector<std::vector<HloPosition>> value_positions(
-      dataflow_analysis->next_value_id_);
-  for (const HloComputation* computation : module.computations()) {
+  std::vector<std::vector<HloPosition>> value_positions(next_value_id_);
+  for (const HloComputation* computation : module_.computations()) {
     if (!HloInstruction::IsThreadIncluded(computation->execution_thread(),
-                                          execution_threads)) {
+                                          execution_threads_)) {
       continue;
     }
     for (HloInstruction* instruction : computation->instructions()) {
-      for (const auto& pair :
-           dataflow_analysis->GetInstructionValueSet(instruction)) {
+      for (const auto& pair : GetInstructionValueSet(instruction)) {
         const ShapeIndex& index = pair.first;
         const HloValueSet& value_set = pair.second;
         for (const HloValue* value : value_set.values()) {
@@ -1676,24 +1679,24 @@ absl::StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
       }
     }
   }
-  for (auto& pair : dataflow_analysis->values_) {
+  for (auto& pair : values_) {
     HloValue::Id value_id = pair.first;
     HloValue& value = *pair.second;
     value.SetPositions(value_positions[value_id]);
   }
 
   // Construct vector of values.
-  dataflow_analysis->values_vector_.reserve(dataflow_analysis->values_.size());
-  for (const auto& pair : dataflow_analysis->values_) {
-    dataflow_analysis->values_vector_.push_back(pair.second.get());
+  values_vector_.reserve(values_.size());
+  for (const auto& pair : values_) {
+    values_vector_.push_back(pair.second.get());
   }
-  absl::c_sort(dataflow_analysis->values_vector_, HloValue::IdLessThan);
+  absl::c_sort(values_vector_, HloValue::IdLessThan);
 
-  TF_DCHECK_OK(dataflow_analysis->Verify());
+  TF_DCHECK_OK(Verify());
 
-  XLA_VLOG_LINES(1, dataflow_analysis->ToString());
+  XLA_VLOG_LINES(1, ToString());
 
-  return dataflow_analysis;
+  return absl::OkStatus();
 }
 
 absl::Status HloDataflowAnalysis::Verify() const {
@@ -1758,21 +1761,6 @@ bool HloDataflowAnalysis::DoesNotUseOperandBuffer(
     }
   }
   return true;
-}
-
-/*static*/ bool HloDataflowAnalysis::IsPotentialInPlaceOperation(
-    const HloInstruction* hlo) {
-  HloOpcode opcode = hlo->opcode();
-  return opcode == HloOpcode::kDynamicUpdateSlice ||
-         opcode == HloOpcode::kScatter ||
-         (opcode == HloOpcode::kCollectivePermute &&
-          hlo->operands().size() == 4) ||
-         (opcode == HloOpcode::kCollectivePermuteStart &&
-          hlo->operands().size() == 4) ||
-         opcode == HloOpcode::kCustomCall ||
-         opcode == HloOpcode::kAllReduceStart || opcode == HloOpcode::kFusion ||
-         opcode == HloOpcode::kSetDimensionSize ||
-         opcode == HloOpcode::kRaggedAllToAll;
 }
 
 /*static*/ bool HloDataflowAnalysis::IsAsynchronousOperationStart(
@@ -1886,21 +1874,37 @@ GetFusionInstructionInPlaceInputOutputPairs(const HloInstruction* instruction) {
   return in_place_input_output_pairs;
 }
 
+bool IsDefaultInPlaceOperation(const HloInstruction* hlo) {
+  HloOpcode opcode = hlo->opcode();
+  return opcode == HloOpcode::kDynamicUpdateSlice ||
+         opcode == HloOpcode::kScatter || opcode == HloOpcode::kAllReduceStart;
+}
+
 }  // namespace
 
 /*static*/ std::vector<std::pair<HloOperandIndex, ShapeIndex>>
 HloDataflowAnalysis::GetInPlaceInputOutputPairs(
     const HloInstruction* instruction) {
-  if (!IsPotentialInPlaceOperation(instruction)) {
-    return {};
-  }
-  int64_t num_in_place_operands = instruction->operand_count();
-  const HloScatterInstruction* scatter =
-      DynCast<HloScatterInstruction>(instruction);
-  if (scatter) {
-    num_in_place_operands = scatter->scatter_operand_count();
-  } else if (instruction->opcode() == HloOpcode::kDynamicUpdateSlice) {
-    num_in_place_operands = 1;
+  if (IsDefaultInPlaceOperation(instruction)) {
+    int64_t num_in_place_operands = instruction->operand_count();
+    const HloScatterInstruction* scatter =
+        DynCast<HloScatterInstruction>(instruction);
+    if (scatter) {
+      num_in_place_operands = scatter->scatter_operand_count();
+    } else if (instruction->opcode() == HloOpcode::kDynamicUpdateSlice) {
+      num_in_place_operands = 1;
+    }
+    // Default handling: one operand shares buffer with single output.
+    if (num_in_place_operands == 1) {
+      return {{HloOperandIndex{0, {}}, {}}};
+    }
+    // Default handling: operand i shares buffer with output i.
+    std::vector<std::pair<HloOperandIndex, ShapeIndex>> in_place_pairs;
+    in_place_pairs.reserve(num_in_place_operands);
+    for (int i = 0; i < num_in_place_operands; i++) {
+      in_place_pairs.push_back({HloOperandIndex{i, {}}, {i}});
+    }
+    return in_place_pairs;
   }
 
   // Ops that require special handling.
@@ -1981,23 +1985,13 @@ HloDataflowAnalysis::GetInPlaceInputOutputPairs(
   if (instruction->opcode() == HloOpcode::kRaggedAllToAll) {
     return {{HloOperandIndex{1, {}}, {}}};
   }
-
-  // Default handling: one operand shares buffer with single output.
-  if (num_in_place_operands == 1) {
-    return {{HloOperandIndex{0, {}}, {}}};
-  }
-  // Default handling: operand i shares buffer with output i.
-  std::vector<std::pair<HloOperandIndex, ShapeIndex>> in_place_pairs;
-  in_place_pairs.reserve(num_in_place_operands);
-  for (int i = 0; i < num_in_place_operands; i++) {
-    in_place_pairs.push_back({HloOperandIndex{i, {}}, {i}});
-  }
-  return in_place_pairs;
+  return {};
 }
 
 bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     HloInstruction* operand, const ShapeIndex& operand_index,
-    HloInstruction* user, const ShapeIndex& user_index) const {
+    HloInstruction* user, const ShapeIndex& user_index,
+    const AliasInfo* alias_info) const {
   CHECK(user->IsUserOf(operand))
       << "user: " << user->ToString() << " operand: " << operand->ToString();
   if (operand->opcode() == HloOpcode::kConstant) {
@@ -2041,11 +2035,16 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     }
   }
 
+  // TODO(b/424109294): remove this block.
   if (can_share_buffer_ != nullptr) {
     if (std::optional<bool> hint =
             can_share_buffer_(user, operand, user_index)) {
       return *hint;
     }
+  }
+  if (std::optional<bool> hint =
+          alias_info->MayAlias(operand, operand_index, user, user_index)) {
+    return *hint;
   }
 
   if (!shapes_equal) {

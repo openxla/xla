@@ -277,7 +277,7 @@ class PjRtClient final
   absl::StatusOr<std::shared_ptr<Topology>> GetTopologyForDevices(
       const DeviceListRef& devices) const override;
 
-  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultLayout(
+  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultPjRtLayout(
       DType dtype, absl::Span<const int64_t> dims, Device* device,
       MemoryKind memory_kind) const override;
 
@@ -358,6 +358,9 @@ class PjRtClient final
   // must call it, regardless of whether it participates in the cross-host
   // transfer, so that the returned value must be the same in all processes.
   int64_t CreateNewTransferKey();
+
+  // If true, the backend implements the cross-host transfer APIs.
+  bool pjrt_supports_cross_host_transfers_ = false;
 
   std::atomic<int64_t> next_transfer_key_ = 0;
   std::shared_ptr<xla::KeyValueStoreInterface> kv_store_;

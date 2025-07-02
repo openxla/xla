@@ -438,9 +438,9 @@ cc_library(
         ":cuda_diagnostics",
         ":cuda_platform_id",
         ":cudnn_frontend_helpers",
+        ":cudnn_sdpa_score_mod",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:data_type",
-        "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:event_based_timer",
@@ -479,6 +479,45 @@ cc_library(
         "@tsl//tsl/platform:tensor_float_32_utils",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "cudnn_sdpa_score_mod",
+    srcs = ["cudnn_sdpa_score_mod.cc"],
+    hdrs = ["cudnn_sdpa_score_mod.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:dnn",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+        "@local_config_cuda//cuda:cudnn_header",
+    ],
+)
+
+xla_test(
+    name = "cudnn_sdpa_score_mod_test",
+    srcs = ["cudnn_sdpa_score_mod_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cudnn_sdpa_score_mod",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+        "@jsoncpp_git//:jsoncpp",
+        "@local_config_cuda//cuda:cudnn_header",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+    ],
 )
 
 cc_library(
@@ -1349,6 +1388,10 @@ cc_library(
         ),
     ),
     local_defines = if_windows(["PLATFORM_WINDOWS"]),
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = [
         ":cubin_or_ptx_image",
         ":ptx_compiler_helpers",
@@ -1405,11 +1448,18 @@ stage_in_bin_subdirectory(
     data = [":dummy_cuda_binary"],
 )
 
+stage_in_bin_subdirectory(
+    name = "nvdisasm",
+    testonly = True,
+    data = [":dummy_cuda_binary"],
+)
+
 xla_cc_test(
     name = "subprocess_compilation_test",
     srcs = ["subprocess_compilation_test.cc"],
     data = [
         ":fatbinary",
+        ":nvdisasm",
         ":nvlink",
         ":ptxas",
     ],
@@ -1766,6 +1816,10 @@ cc_library(
     name = "compilation_provider_options",
     srcs = ["compilation_provider_options.cc"],
     hdrs = ["compilation_provider_options.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = [
         "//xla:xla_proto_cc",
         "@com_google_absl//absl/strings:str_format",
@@ -1925,9 +1979,13 @@ cuda_library(
         "//xla:shape_util",
         "//xla:types",
         "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor/gpu:buffer_comparator_kernel",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/platform:initialize",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
     ],
     alwayslink = 1,
@@ -1964,11 +2022,9 @@ cuda_library(
     ],
     deps = [
         ":cuda_platform_id",
-        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:ragged_all_to_all_kernel",
         "@com_google_absl//absl/base",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
     alwayslink = 1,
 )
@@ -2083,6 +2139,7 @@ cuda_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:repeat_buffer_kernel",
+        "@com_google_absl//absl/base",
     ],
     alwayslink = 1,
 )
@@ -2103,6 +2160,7 @@ cuda_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:redzone_allocator_kernel",
+        "@com_google_absl//absl/base",
     ],
     alwayslink = 1,
 )

@@ -2525,6 +2525,41 @@ ENTRY entry {
   EXPECT_THAT(root, op::Select(_, op::DynamicSlice(pad, op::Constant(), _), _));
 }
 
+// Pad is treated as a special case of window operator. When this pad-window has
+// a large edge pad, halo exchange with collective permute is not sufficient.
+// resharding with collective(AG or AR) is needed.
+// This test case aims to validate the collective insertion behavior when spmd
+// partitioner handles large cross-partition pad in SPMD partitioner.
+TEST_P(SpmdPartitioningTest, LargeEdgePadAlongCrossPartitionDimension) {
+  absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY entry {
+      %param0 = f32[14,257] parameter(0), sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+      %const = f32[] constant(0)
+      ROOT %pad = f32[14,2257] pad(%param0, %const), padding=0_0x0_2000,
+    sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  // Reshard operand will trigger collective.
+  // All-gather is intended to be used in production for pad operation,
+  // dynamic-update-slice + all-reduce is used in test environment for pattern
+  // matching purpose.
+  const HloInstruction* all_reduce =
+      FindInstruction(module.get(), HloOpcode::kAllReduce);
+  ASSERT_NE(all_reduce, nullptr);
+
+  EXPECT_THAT(all_reduce->operand(0), op::DynamicUpdateSlice());
+
+  EXPECT_THAT(root, op::DynamicSlice(op::Pad(all_reduce, _), _, _));
+}
+
 TEST_P(SpmdPartitioningTest, PadAlongPartitionedDimensionWithInteriorPadding) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -4939,7 +4974,7 @@ ENTRY entry {
   EXPECT_THAT(root, AllOf(op::Dot(lhs, rhs), op::Shape("f32[24,19648]")));
 }
 
-TEST_P(SpmdPartitioningTest, DotTwoContractingDims) {
+TEST_P(SpmdPartitioningTest, DotTwoContractingDims1) {
   absl::string_view hlo_string = R"(
 HloModule module
 
@@ -4960,6 +4995,31 @@ ENTRY entry {
             op::Shape("bf16[64,7]"));
   const auto dot_reshard =
       AllOf(op::DynamicSlice(dot, _, _), op::Shape("bf16[16,7]"));
+  EXPECT_THAT(module->entry_computation()->root_instruction(), dot_reshard);
+}
+
+TEST_P(SpmdPartitioningTest, DotTwoContractingDims2) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = bf16[16,32,7] parameter(0), sharding={devices=[4,1,1,2]<=[8] last_tile_dim_replicate}
+  %rhs = bf16[16,32,64] parameter(1), sharding={devices=[4,2,1]<=[8]}
+  ROOT %dot = bf16[7,64] dot(%lhs, %rhs), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}, sharding={devices=[1,4,2]<=[2,2,2]T(0,2,1) last_tile_dim_replicate}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+
+  const auto lhs = AllOf(op::Parameter(0), op::Shape("bf16[4,32,7]"));
+  const auto lhs_reshard =
+      AllOf(op::DynamicSlice(lhs, _, _, _), op::Shape("bf16[4,16,7]"));
+  const auto rhs = AllOf(op::Parameter(1), op::Shape("bf16[4,16,64]"));
+  const auto dot =
+      AllOf(op::AllReduce(op::AllReduce(op::Dot(lhs_reshard, rhs))),
+            op::Shape("bf16[7,64]"));
+  const auto dot_reshard =
+      AllOf(op::DynamicSlice(dot, _, _), op::Shape("bf16[7,16]"));
   EXPECT_THAT(module->entry_computation()->root_instruction(), dot_reshard);
 }
 
@@ -14863,7 +14923,7 @@ TEST_P(SpmdPartitioningTest, CustomCallShardingRegistration) {
                                operand_partitioned.base_shape(),
                                operand_partitioned.state())
               .Reshard(hlo->sharding());
-      partitioner->SetPartitionedHlo(hlo, result_partitioned);
+      partitioner->SetPartitionedHlo(hlo, std::move(result_partitioned));
       return absl::OkStatus();
     }
   };

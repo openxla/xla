@@ -43,6 +43,14 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// "Real root"
+
+// SymbolicTileAnalysis supports multi-output fusions where the root is of the
+// form tuple(A, B, C, foo(A, B, C)), i.e. one of the root is a (transitive)
+// consumer of all the other roots (here foo(A, B, C)). In such cases, the
+// consumer root is the only root that requires defining tiling parameters, and
+// we call it the "real root" of the computation.
+
 class SymbolicTileAnalysis;
 using SymbolicTileAnalysisOrError =
     std::variant<SymbolicTileAnalysis, FusionDecision>;
@@ -147,6 +155,11 @@ class TilingSpecification {
   int64_t num_parameters_;
 };
 
+// A sequence of tile sizes.
+//
+// This is an inlined vector to avoid too many heap allocations.
+using FlatTiling = absl::InlinedVector<int64_t, 4>;
+
 // `Tiling`s are instantiations of `TilingSpecification`s, and the conformance
 // of a `Tiling` `t` to a `TilingSpecification` `spec` can be checked by calling
 // `t.ConformsTo(spec)`.
@@ -170,8 +183,7 @@ class TilingSpecification {
 // them.
 class Tiling {
  public:
-  using TileMapping = absl::flat_hash_map<const HloInstruction*,
-                                          absl::InlinedVector<int64_t, 4>>;
+  using TileMapping = absl::flat_hash_map<const HloInstruction*, FlatTiling>;
   explicit Tiling(TileMapping tile_sizes)
       : tile_sizes_(std::move(tile_sizes)) {}
 
@@ -195,8 +207,16 @@ class Tiling {
   // Note that `Flatten` does not check whether this tiling conforms to the
   // parameter `TilingSpecification`, and it is the caller's responsibility to
   // ensure that this is the case.
-  absl::StatusOr<std::vector<int64_t>> Flatten(
+  absl::StatusOr<FlatTiling> Flatten(
       const TilingSpecification& tiling_specification) const;
+
+  // Returns a `Tiling` that conforms to the parameter `TilingSpecification`
+  // from the given flattened list of tile sizes.
+  //
+  // `Unflatten` is the dual of `Flatten`.
+  static absl::StatusOr<Tiling> Unflatten(
+      absl::Span<const int64_t> flat_tile_sizes,
+      const TilingSpecification& tiling_specification);
 
  private:
   TileMapping tile_sizes_;
@@ -249,21 +269,19 @@ using EmitterSpecificConstraintsBuilder =
         const HloFusionAdaptor&)>;
 
 // Constructs and holds symbolic tiles for all the instructions within a
-// computation. We may hold several different symbolic tiles for the same
-// instruction if the instruction is indexed in several different ways in order
-// to produce a single chunk of the output. In order to handle this properly,
-// we store a symbolic tile for each possible path starting from the root
-// instruction of the computation to the relevant instruction.
+// computation. The analysis may hold several different symbolic tiles for the
+// same instruction if the instruction is indexed in several different ways in
+// order to produce a single chunk of the output. In order to handle this
+// properly, we store a symbolic tile for each possible path starting from the
+// root instruction of the computation to the relevant instruction.
+//
 // We support a simple form of multi-output fusion, where the computation has a
 // single "real" root, and the other roots appear in the chain of producers of
 // the real root.
+//
+// Use `AnalyzeComputation` or `AnalyzeFusion` to construct a new analysis.
 class SymbolicTileAnalysis {
  public:
-  // A tile size for each dimension.
-  //
-  // This is an inlined vector to avoid too many heap allocations.
-  using Tiling = absl::InlinedVector<int64_t, 4>;
-
   // Tries to construct a symbolic tile analysis from a computation. Returns
   // a diagnostic if the construction fails for any reason.
   //
@@ -289,30 +307,13 @@ class SymbolicTileAnalysis {
   // constraints are satisfied by the chosen tiling parameters. Setting
   // `constraints_are_known_satisfied` to true bypasses this check.
   //
-  // If `compute_all_tile_offset_indexing_maps == true`, all
-  // `TiledHloInstruction`s will have tile offset indexing maps set. Otherwise,
-  // the indexing maps will be set only for instructions that have equal hash to
-  // deduplicate them.
+  // `TiledHloInstruction` will have tile offset indexing map set if either:
+  // - compute_all_tile_offset_indexing_maps == true, or
+  // - there are at least two `TiledHloInstruction`s with the same hash. In that
+  //   case we need tile offset indexing map to decide if we can deduplicate
+  //   those instruction.
   absl::StatusOr<TiledHloComputation> ComputeTiledHloInstructions(
       const ::xla::gpu::Tiling& tiling,
-      bool constraints_are_known_satisfied = false,
-      bool compute_all_tile_offset_indexing_maps = false) const;
-
-  // Returns a graph of HLO instructions tiled with the given tiling parameters.
-  // The provided tiling parameters must satisfy the analysis's constraints.
-  // By default, `ComputeTiledHloInstructions` performs a check that the
-  // constraints are satisfied by the chosen tiling parameters. Setting
-  // `constraints_are_known_satisfied` to true bypasses this check.
-  //
-  // If `compute_all_tile_offset_indexing_maps == true`, all
-  // `TiledHloInstruction`s will have tile offset indexing maps set. Otherwise,
-  // the indexing maps will be set only for instructions that have equal hash to
-  // deduplicate them.
-  //
-  // This variant can only be used for fusions with no hidden nested parameters.
-  [[deprecated]] absl::StatusOr<TiledHloComputation>
-  ComputeTiledHloInstructions(
-      absl::Span<const int64_t> output_tile_sizes,
       bool constraints_are_known_satisfied = false,
       bool compute_all_tile_offset_indexing_maps = false) const;
 
@@ -350,26 +351,6 @@ class SymbolicTileAnalysis {
     return tiling_specification_;
   }
 
-  // Returns true if a list of tile parameters satisfies the symbolic tile
-  // analysis's constraints. If provided, also checks the emitter-specific
-  // constraints.
-  //
-  // Returns false if the constraints are not satisfied but can be evaluated
-  // correctly. Returns an error if the constraints cannot be evaluated
-  // correctly. This is typically the case if too few tile parameters are
-  // provided to fully reduce the constraint expressions to constants.
-  //
-  // This is a convenience overload for the case when only output tile sizes
-  // need to be set.
-  //
-  // DEPRECATED: Use `ParametersSatisfyConstraints(const Tiling& tiling)`
-  // instead. This is not safe for fusions involving hidden parameters.
-  //
-  // TODO(b/421837868): deprecate `SymbolicTileAnalysis::Tiling` everywhere to
-  // use logic that supports nests everywhere.
-  [[deprecated]] absl::StatusOr<bool> ParametersSatisfyConstraints(
-      absl::Span<const int64_t> tile_parameters) const;
-
   // Returns `true` if a `Tiling` conforms to the symbolic tile analysis's
   // `TilingSpecification`. If provided, also checks the emitter-specific
   // constraints.
@@ -386,13 +367,9 @@ class SymbolicTileAnalysis {
   // messages and debugging.
   std::string ToString() const;
 
-  // Returns a list of tilings for the symbolic tiled HLO computation of the
-  // analysis that are expected to perform well.
-  //
-  // Note: This is an initial implementation where the results may not perform
-  // that well, and now we're filtering the tilings with Triton in mind
-  // (allowing only powers of 2 or the full dimension size).
-  absl::StatusOr<std::vector<Tiling>> GetGoodTilings() const;
+  // Returns a list of valid tilings for the `SymbolicTiledHloComputation`
+  // produced by this analysis.
+  absl::StatusOr<std::vector<Tiling>> GetValidTilings() const;
 
  private:
   SymbolicTileAnalysis(
@@ -451,11 +428,11 @@ class SymbolicTileAnalysis {
 };
 
 namespace detail {
-// Only exposed for testing, please use SymbolicTileAnalysis::GetGoodTilings()
-// instead.
-std::vector<SymbolicTileAnalysis::Tiling> GetGoodTilings(
-    absl::Span<const int64_t> dim_sizes,
-    std::function<bool(absl::Span<const int64_t>)> is_valid);
+
+// Only exposed for testing.
+std::vector<FlatTiling> GetFlatTilingsForInputSpace(
+    absl::Span<const int64_t> input_space);
+
 }  // namespace detail
 }  // namespace gpu
 }  // namespace xla

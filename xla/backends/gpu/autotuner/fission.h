@@ -42,30 +42,21 @@ namespace gpu {
 // subgraph, it will generate a config using the CustomKernel.
 class FissionBackend : public GpuCodegenBackend {
  public:
-  explicit FissionBackend(const Compiler::TargetConfig* target_config,
+  explicit FissionBackend(stream_executor::StreamExecutor* stream_executor,
                           const DebugOptions* debug_options, Compiler* compiler)
-      : GpuCodegenBackend("Fission", target_config, debug_options, compiler),
-        cublas_backend_(target_config, debug_options, compiler),
-        cublaslt_backend_(target_config, debug_options, compiler),
-        custom_kernel_backend_(target_config, debug_options, compiler) {}
+      : GpuCodegenBackend("Fission", stream_executor, debug_options, compiler),
+        cublas_backend_(stream_executor, debug_options, compiler),
+        cublaslt_backend_(stream_executor, debug_options, compiler),
+        custom_kernel_backend_(stream_executor, debug_options, compiler) {}
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-  GetSupportedConfigs(
-      const HloInstruction& instr,
-      stream_executor::StreamExecutor* stream_executor) override;
+  GetSupportedConfigs(const HloInstruction& instr) override;
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
       const HloInstruction& instr) override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
-
- private:
-  absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
-      std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) override {
-    return absl::UnimplementedError("Not implemented.");
-  }
 
   CublasBackend cublas_backend_;
   CublasLtBackend cublaslt_backend_;
