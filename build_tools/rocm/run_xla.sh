@@ -155,9 +155,14 @@ TritonTest.NonstandardLayoutWithManyNonContractingDimsReversedLayout
 RandomEighTestInstantiation/RandomEighTest.Random/*
 )
 
+BAZEL_DISK_CACHE_SIZE=100G
+BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
+
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --config=rocm_ci \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \
@@ -175,3 +180,8 @@ bazel \
     --run_under=//build_tools/ci:parallel_gpu_execute \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     -- //xla/... \
+
+# clean up bazel disk_cache
+bazel shutdown \
+  --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+  --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}
