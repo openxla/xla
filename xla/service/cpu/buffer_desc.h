@@ -16,22 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_BUFFER_DESC_H_
 #define XLA_SERVICE_CPU_BUFFER_DESC_H_
 
-#include <cstddef>
-
 namespace xla {
 namespace cpu {
-
-// BufferDesc for passing raw `buffer` (i.e. void ptr + size) arguments.
-class BufferDesc {
- public:
-  BufferDesc(void* data, size_t size) : data_(data), size_(size) {}
-  void* data() const { return data_; }
-  size_t size() const { return size_; }
-
- private:
-  void* data_;
-  size_t size_;
-};
 
 }  // namespace cpu
 }  // namespace xla
