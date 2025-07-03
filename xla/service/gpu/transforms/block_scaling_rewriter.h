@@ -64,10 +64,17 @@ namespace xla::gpu {
 //
 class BlockScalingRewriter : public OpExpanderPass {
  public:
-  explicit BlockScalingRewriter(bool allow_cudnn)
-      : allow_cudnn_(allow_cudnn) {};
+  explicit BlockScalingRewriter(const se::DeviceDescription& device_description,
+                                const bool allow_cudnn,
+                                const bool allow_hipblaslt)
+      : device_description_(device_description),
+        allow_cudnn_(allow_cudnn),
+        allow_hipblaslt_(allow_hipblaslt) {};
 
   absl::string_view name() const override { return "block-scaling-rewriter"; }
+
+  bool IsCuda();
+  bool IsRocm();
 
   bool InstructionMatchesPattern(HloInstruction* instruction) override;
 
@@ -82,12 +89,16 @@ class BlockScalingRewriter : public OpExpanderPass {
   static constexpr absl::string_view kBlockScaledDotCustomCallTarget =
       "__op$block_scaled_dot";
 
-  // Common block size constants.
+  // Common block size constants for CUDA
   static constexpr int kBlockSizeMXFP8 = 32;
   static constexpr int kBlockSizeNVFP4 = 16;
+  // Common block size constants for ROCm
+  static constexpr int kBlockSizeHipblaslt = 32;
 
  private:
-  bool allow_cudnn_;
+  const se::DeviceDescription device_description_;
+  const bool allow_cudnn_;
+  const bool allow_hipblaslt_;
 };
 
 }  // namespace xla::gpu
