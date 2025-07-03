@@ -24,6 +24,7 @@ cc_library(
         ":onednn_matcher",
         ":xnn_matcher",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -50,6 +51,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
@@ -73,10 +75,12 @@ cc_library(
     hdrs = ["onednn_matcher.h"],
     deps = [
         ":library_matcher",
+        "//xla/backends/cpu:onednn_fusion",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -100,8 +104,8 @@ cc_library(
     hdrs = ["xnn_graph_fusion.h"],
     deps = [
         "//xla/backends/cpu:xnn_fusion",
-        "//xla/backends/cpu:xnnpack_config_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:call_graph",
         "//xla/service:instruction_fusion",
         "//xla/service/cpu:backend_config_proto_cc",
         "//xla/tsl/platform:status",

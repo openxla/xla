@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
@@ -847,8 +848,17 @@ std::optional<RotatedChainInfo> FindRotatedChainInfo(
     return std::nullopt;
   }
 
-  HloInstruction* first_part_start =
-      while_body->parameter_instruction(second_part_end_output_index);
+  HloInstruction* first_part_start = nullptr;
+  for (HloInstruction* user : while_body->parameter_instruction(0)->users()) {
+    if (Match(user, match::GetTupleElement(match::Parameter(0),
+                                           second_part_end_output_index))) {
+      first_part_start = user;
+      break;
+    }
+  }
+  if (first_part_start == nullptr) {
+    return std::nullopt;
+  }
   VLOG(2) << "FindRotatedChainInfo first_part_start: "
           << first_part_start->ToString();
 
@@ -1298,7 +1308,7 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
                            use.operand_number),
                        /*operand_index=*/use.operand_index,
                        /*user=*/position.instruction,
-                       /*user_index=*/position.index)) {
+                       /*user_index=*/position.index, alias_info_)) {
             VLOG(2) << "Adding back copy: "
                     << use.instruction->operand(use.operand_number)->ToString()
                     << "@" << use.operand_index.ToString()
@@ -1429,8 +1439,9 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, alias_info_));
-  CopyRemover copy_remover(*module, *alias_analysis, ordering.get(),
-                           check_live_range_ordering, execution_threads);
+  CopyRemover copy_remover(*module, *alias_analysis, alias_info_,
+                           ordering.get(), check_live_range_ordering,
+                           execution_threads);
   if (VLOG_IS_ON(3)) {
     LOG(INFO) << "Removing unnecessary copies in " << module->name();
     LOG(INFO) << "Buffer values, in dependency order: ";

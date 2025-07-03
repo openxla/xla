@@ -1142,7 +1142,8 @@ class ConvertToHloModule {
   // Lower function call to HLO call instruction
   LogicalResult LowerFunctionCall(
       mlir::func::CallOp call_op, xla::XlaBuilder* builder,
-      ConvertToHloModule::ValueLoweringMap* value_lowering);
+      ConvertToHloModule::ValueLoweringMap* value_lowering,
+      mlir::StackFrameIndexBuilder* stack_frame_indexes_builder);
 
   // Lower infeed to HLO infeed instruction.
   LogicalResult LowerInfeed(
@@ -5677,7 +5678,8 @@ LogicalResult ConvertToHloModule::Lower(
   }
 
   if (auto call_op = dyn_cast<mlir::func::CallOp>(inst)) {
-    return LowerFunctionCall(call_op, builder, value_lowering);
+    return LowerFunctionCall(call_op, builder, value_lowering,
+                             &stack_frame_indexes_builder_);
   }
 
   if (isa<mlir::tensor::CastOp>(inst)) {
@@ -5715,9 +5717,11 @@ LogicalResult ConvertToHloModule::Lower(
 
 LogicalResult ConvertToHloModule::LowerFunctionCall(
     mlir::func::CallOp call_op, xla::XlaBuilder* builder,
-    ConvertToHloModule::ValueLoweringMap* value_lowering) {
+    ConvertToHloModule::ValueLoweringMap* value_lowering,
+    mlir::StackFrameIndexBuilder* stack_frame_indexes_builder) {
   xla::XlaScopedShardingAssignment scoped_sharding(
       builder, CreateOpShardingFromAttribute(call_op));
+
   auto& value_map = *value_lowering;
   mlir::func::FuncOp callee =
       module_.lookupSymbol<mlir::func::FuncOp>(call_op.getCallee());
@@ -5745,6 +5749,9 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
     fe_attrs_map->erase(kBackendConfig);
   }
   xla::XlaScopedFrontendAttributesAssignment assignment(builder, fe_attrs);
+  xla::XlaScopedOpMetadataAssignment op_metadata(
+      builder, mlir::mhlo::CreateOpMetadataFromLocation(
+                   call_op, stack_frame_indexes_builder));
   xla::XlaOp call_result =
       xla::Call(builder, lowered_computation_[callee], operands);
   xla::HloInstructionProto* call_instruction =

@@ -706,17 +706,19 @@ class BufferAssigner {
   BufferAssigner(bool allocate_buffers_for_constants, Colorer colorer,
                  std::optional<MustNotLiveOut> must_not_live_out,
                  std::unique_ptr<memory_space_assignment::PresetAssignments>
-                     preset_assignments)
+                     preset_assignments,
+                 const AliasInfo* alias_info)
       : allocate_buffers_for_constants_(allocate_buffers_for_constants),
         colorer_(colorer),
         must_not_live_out_(must_not_live_out),
-        preset_assignments_(std::move(preset_assignments)) {}
+        preset_assignments_(std::move(preset_assignments)),
+        alias_info_(alias_info) {}
   virtual ~BufferAssigner() = default;
 
   // Create a buffer assignment.
   absl::StatusOr<std::unique_ptr<BufferAssignment>> CreateAssignment(
       const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
-      BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info,
+      BufferValue::SizeFunction buffer_size,
       LogicalBuffer::AlignmentFunction color_alignment,
       const PrivateStacks& private_stacks,
       GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
@@ -824,12 +826,14 @@ class BufferAssigner {
   std::unique_ptr<memory_space_assignment::PresetAssignments>
       preset_assignments_;
 
+  const AliasInfo* alias_info_;
+
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;
 };
 
 // Computes the peak memory usage through the proto's heap simulator traces.
-absl::StatusOr<int> ComputePeakMemory(const BufferAssignmentProto& proto);
+absl::StatusOr<int64_t> ComputePeakMemory(const BufferAssignmentProto& proto);
 
 }  // namespace xla
 

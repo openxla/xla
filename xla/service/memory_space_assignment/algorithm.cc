@@ -6645,13 +6645,6 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
   CHECK_EQ(sliced_buffer_interval->num_slices(),
            copy_resource_per_slice_sorted_by_start_time.size());
 
-  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
-                                  context.prefetch_end_time,
-                                  copy_resource_per_slice_sorted_by_start_time,
-                                  prefetch_async_copy_resource_)) {
-    return AllocationResult::kFailViolatesAsyncCopyResource;
-  }
-
   // Check if the copies we would add for the prefetch would violate copy
   // ordering.
   if (options_.enforce_prefetch_fifo_order &&
@@ -6673,6 +6666,13 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
       VLOG(4) << "This would violate the outstanding async copy limit.";
       return AllocationResult::kFailOutOfAsyncCopies;
     }
+  }
+
+  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
+                                  context.prefetch_end_time,
+                                  copy_resource_per_slice_sorted_by_start_time,
+                                  prefetch_async_copy_resource_)) {
+    return AllocationResult::kFailViolatesAsyncCopyResource;
   }
 
   // Check if we can find a place in alternate memory for the prefetch.
@@ -7011,6 +7011,19 @@ bool MsaAlgorithm::IsPositionColoredInDefaultMemoryAtTime(
     }
   }
   return false;
+}
+
+int64_t AsynchronousCopyResource::GetScaledIntegerResource(
+    float resource) const {
+  float scaled_value = resource * kCopyResourceIntScale;
+  if (scaled_value > std::numeric_limits<int64_t>::max()) {
+    LOG(WARNING) << "Scaled value " << scaled_value
+                 << " is greater than the maximum int64_t value "
+                 << std::numeric_limits<int64_t>::max();
+    return std::numeric_limits<int64_t>::max();
+  }
+  int64_t scaled_value_int = static_cast<int64_t>(scaled_value);
+  return scaled_value_int;
 }
 
 }  // namespace memory_space_assignment

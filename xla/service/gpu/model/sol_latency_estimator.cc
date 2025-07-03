@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -35,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/model/collective_interpolator.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
@@ -56,6 +56,21 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+bool HasOnlySupportedCollectives(const HloModule& module) {
+  for (const HloComputation* comp : module.computations()) {
+    for (const HloInstruction* instr : comp->instructions()) {
+      if (hlo_query::IsCollectiveCommunicationOp(instr->opcode()) &&
+          HloPredicateIsNotOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduce,
+                              HloOpcode::kReduceScatter,
+                              HloOpcode::kAllGatherStart,
+                              HloOpcode::kAllGather>(instr)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 absl::StatusOr<HloInstructionProfileList> ReadProfiles(
     const std::string& perf_table_path,
@@ -309,6 +324,26 @@ SolLatencyEstimator::Create(
       std::move(matmul_interpolator)));
 }
 
+/*static*/ bool SolLatencyEstimator::IsSupportedForModule(
+    const HloModule& module, const se::DeviceDescription& gpu_device_info) {
+  if (IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(module)) {
+    // If the user enabled opt effort we turn the estimator on if we're
+    // compiling for Hopper.
+    return gpu_device_info.cuda_compute_capability().IsHopper();
+  }
+  // If this flag is on by default then we provide users an escape hatch in case
+  // they find the new cost model less profitable than T-shirt sizes.
+  if (!module.config()
+           .debug_options()
+           .xla_gpu_enable_analytical_sol_latency_estimator()) {
+    return false;
+  }
+  // Otherwise we are more conservative and we turn it on only for Hopper and if
+  // `module` contains only supported collectives.
+  return gpu_device_info.cuda_compute_capability().IsHopper() &&
+         HasOnlySupportedCollectives(module);
+}
+
 LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
     const HloGraphNode& from, const HloGraphNode& target) const {
   const HloOpcode from_op = from.GetInstr().opcode();
@@ -321,7 +356,7 @@ LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
     double coll_time = absl::ToDoubleMicroseconds(ComputeCollectiveTime(
         from.GetInstr(), gpu_info_, shape_size_function_, sol_flags_,
         *cost_analysis_, collective_interpolator_.get()));
-    VLOG(10) << "[SoL] Analytical estimator calculated latency between "
+    VLOG(10) << "Analytical estimator calculated latency between "
              << from.GetInstr().name() << " and " << target.GetInstr().name()
              << " to be: " << coll_time << " us.";
     return coll_time;
@@ -343,6 +378,9 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
   }
 
   LatencyEstimator::TimeCost cost_in_us;
+  // Custom fusion ops are hard to estimate, so we only use the performance
+  // model for loop and input fusions. Otherwise we return a small cost to make
+  // sure we can achieve overlap (even at the cost of overextension).
   if (instr->IsLoopFusion() || instr->IsInputFusion()) {
     absl::Duration total_estimated_time =
         gpu_performance_model_
@@ -350,7 +388,7 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
             .exec_time;
     cost_in_us = absl::ToDoubleMicroseconds(total_estimated_time);
   } else {
-    cost_in_us = 0.01 * kLowCost;
+    cost_in_us = 0.01 * latency_estimator_->NodeCost(instr);
   }
   VLOG(10) << "Analytical estimator calculated cost for: " << instr->name()
            << ". Cost: " << cost_in_us;
