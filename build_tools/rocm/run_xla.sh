@@ -163,6 +163,7 @@ bazel \
     --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
+    --experimental_guard_against_concurrent_changes \
     --config=rocm_ci \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \

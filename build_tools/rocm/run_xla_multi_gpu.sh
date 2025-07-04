@@ -74,11 +74,17 @@ TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
 GPU_NAME=(`rocminfo | grep -m 1 gfx`)
 GPU_NAME=${GPU_NAME[1]}
 
+BAZEL_DISK_CACHE_SIZE=100G
+BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
+
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false \
     --define xnn_enable_avx512fp16=false \
-    --config=rocm_gcc \
+    --config=rocm_ci \
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
+    --experimental_guard_against_concurrent_changes \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \
     --test_timeout=920,2400,7200,9600 \
@@ -100,3 +106,8 @@ bazel \
        //xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
        //xla/pjrt/distributed:topology_util_test \
        //xla/pjrt/distributed:client_server_test
+
+# clean up bazel disk_cache
+bazel shutdown \
+  --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+  --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}
