@@ -224,7 +224,7 @@ def prepare_gpu_backend_data(backends, disabled_backends, backend_tags, backend_
         for backend in nvidia_backends + amd_backends + intel_backends + other_backends
     ]
 
-    disabled_backends = nvidia_disabled_backends + amd_disabled_backends
+    disabled_backends = nvidia_disabled_backends + amd_disabled_backends + intel_disabled_backends
 
     backend_tags = nvidia_backend_tags | amd_backend_tags | intel_backend_tags
 
