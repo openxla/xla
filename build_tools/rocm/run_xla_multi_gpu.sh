@@ -71,7 +71,7 @@ TAGS_FILTER="-requires-gpu-nvidia,-oss_excluded,-oss_serial"
 UNSUPPORTED_GPU_TAGS="$(echo -requires-gpu-sm{60,70,80,86,89,90}{,-only})"
 TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
 
-bazel \
+bazel --bazelrc=%workspace%/build_tools/rocm/multi_gpu.bazelrc \
     test \
     --define xnn_enable_avxvnniint8=false \
     --define xnn_enable_avx512fp16=false \

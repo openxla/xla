@@ -1,0 +1,5 @@
+import %workspace%/tensorflow.bazelrc
+
+test:rocm_base --test_env=TF_PER_DEVICE_MEMORY_LIMIT_MB=4096
+test:rocm_base --test_env=TF_GPU_COUNT=4
+test:rocm_base --test_env TF_TESTS_PER_GPU=8
