@@ -262,6 +262,8 @@ class TfrtGpuClient final : public PjRtClient {
     return addressable_devices_.size();
   }
 
+  std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+
   absl::Span<PjRtDevice* const> devices() const override { return devices_; }
 
   absl::Span<PjRtDevice* const> addressable_devices() const override {
@@ -546,7 +548,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
 
   void Delete() override;
 
-  bool IsDeleted() override;
+  bool IsDeleted() const override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
@@ -765,7 +767,7 @@ class TfrtGpuExecutable final : public PjRtLoadedExecutable {
 
   void Delete() override { executables_.clear(); }
 
-  bool IsDeleted() override { return executables_.empty(); }
+  bool IsDeleted() const override { return executables_.empty(); }
 
   absl::Span<const std::shared_ptr<LocalExecutable>> executables() const {
     return executables_;

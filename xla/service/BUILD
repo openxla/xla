@@ -981,6 +981,7 @@ xla_cc_test(
     size = "small",
     srcs = ["call_inliner_test.cc"],
     deps = [
+        ":call_graph",
         ":call_inliner",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -1177,6 +1178,7 @@ cc_library(
     srcs = ["latency_hiding_scheduler.cc"],
     hdrs = ["latency_hiding_scheduler.h"],
     deps = [
+        ":buffer_value",
         ":dump",
         ":hlo_buffer",
         ":hlo_cost_analysis",
@@ -1192,6 +1194,7 @@ cc_library(
         "//xla/hlo/analysis:hlo_reachability",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/service/heap_simulator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -3156,7 +3159,7 @@ xla_cc_test(
         ":computation_placer",
         "//xla/runtime:device_id",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
     ],
 )

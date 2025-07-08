@@ -254,6 +254,7 @@ void PjRtCApiClient::InitAttributes() {
   pjrt::LogFatalIfPjrtError(c_api_->PJRT_Plugin_Attributes(&args), c_api_);
   attributes_ =
       pjrt::ConvertFromPjRtNamedValueList(args.attributes, args.num_attributes);
+  attributes_["serialize_with_sdy"] = true;
 }
 
 int PjRtCApiClient::device_count() const { return devices_.size(); }
@@ -2044,7 +2045,7 @@ void PjRtCApiLoadedExecutable::Delete() {
   pjrt::LogFatalIfPjrtError(c_api->PJRT_LoadedExecutable_Delete(&args), c_api);
 }
 
-bool PjRtCApiLoadedExecutable::IsDeleted() {
+bool PjRtCApiLoadedExecutable::IsDeleted() const {
   PJRT_LoadedExecutable_IsDeleted_Args args;
   args.struct_size = PJRT_LoadedExecutable_IsDeleted_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -2334,7 +2335,7 @@ void PjRtCApiBuffer::Delete() {
   pjrt::LogFatalIfPjrtError(api->PJRT_Buffer_Delete(&args), api);
 }
 
-bool PjRtCApiBuffer::IsDeleted() {
+bool PjRtCApiBuffer::IsDeleted() const {
   PJRT_Buffer_IsDeleted_Args args;
   args.struct_size = PJRT_Buffer_IsDeleted_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
