@@ -325,11 +325,12 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
-  opts.set_xla_gpu_experimental_enable_sync_collective_combining(false);
+  opts.set_xla_gpu_experimental_enable_heuristic_collective_combining(false);
   opts.set_xla_unsupported_crash_on_hlo_pass_silent_hlo_change(false);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
+  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(false);
   return opts;
 }
 
@@ -2304,12 +2305,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_hlo_pass_fix_detect_cycles(),
       "Perform hash-based cycle detection in fixed-point loops."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_sync_collective_combining",
+      "xla_gpu_experimental_enable_heuristic_collective_combining",
       bool_setter_for(
           &DebugOptions::
-              set_xla_gpu_experimental_enable_sync_collective_combining),
-      debug_options->xla_gpu_experimental_enable_sync_collective_combining(),
-      "Enable sync collective combining."));
+              set_xla_gpu_experimental_enable_heuristic_collective_combining),
+      debug_options
+          ->xla_gpu_experimental_enable_heuristic_collective_combining(),
+      "Enable heuristic based collective combining."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_collective_cse_distance_threshold",
       int64_setter_for(
@@ -2361,6 +2363,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_enable_triton_tma),
       debug_options->xla_gpu_experimental_enable_triton_tma(),
       "Enable Triton's TMA loads/stores for arguments where applicable."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_command_buffer_on_thunks",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_command_buffer_on_thunks),
+      debug_options->xla_gpu_experimental_enable_command_buffer_on_thunks(),
+      "Enables an experimental feature for command buffer conversion on "
+      "thunks."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

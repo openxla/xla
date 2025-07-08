@@ -293,6 +293,14 @@ PjRtStreamExecutorClient::PjRtStreamExecutorClient(
   }
 }
 
+std::optional<PjRtPluginAttributes>
+PjRtStreamExecutorClient::plugin_attributes() const {
+  PjRtPluginAttributes attributes =
+      PjRtClient::plugin_attributes().value_or(PjRtPluginAttributes());
+  attributes.attributes["serialize_with_sdy"] = true;
+  return attributes;
+}
+
 absl::StatusOr<DeviceAssignment>
 PjRtStreamExecutorClient::GetDefaultDeviceAssignment(int num_replicas,
                                                      int num_partitions) const {
@@ -2880,11 +2888,20 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
     std::vector<std::unique_ptr<PjRtBuffer>> outputs;
     TF_ASSIGN_OR_RETURN(auto hlo_modules, GetHloModules());
     for (const auto& hlo_module : hlo_modules) {
-      TF_ASSIGN_OR_RETURN(
-          auto error_buffer,
-          client_->CreateErrorBuffer(input_error, hlo_module->result_shape(),
-                                     memory_space));
-      outputs.push_back(std::move(error_buffer));
+      if (hlo_module->result_shape().IsTuple()) {
+        for (const Shape& shape : hlo_module->result_shape().tuple_shapes()) {
+          TF_ASSIGN_OR_RETURN(
+              auto error_buffer,
+              client_->CreateErrorBuffer(input_error, shape, memory_space));
+          outputs.push_back(std::move(error_buffer));
+        }
+      } else {
+        TF_ASSIGN_OR_RETURN(
+            auto error_buffer,
+            client_->CreateErrorBuffer(input_error, hlo_module->result_shape(),
+                                       memory_space));
+        outputs.push_back(std::move(error_buffer));
+      }
     }
     auto future = std::make_optional(PjRtFuture<>(input_error));
     return Result({std::move(future), /*buffers=*/std::move(outputs)});

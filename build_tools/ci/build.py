@@ -51,6 +51,7 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//xla/...",
     "//build_tools/...",
     "@tsl//tsl/...",
+    "-//xla/hlo/tools/hlo_diff/..."
 )
 _XLA_ONEAPI_TARGET_PATTERNS = (
     "//xla/stream_executor/sycl:stream_executor_sycl",
@@ -279,6 +280,7 @@ def nvidia_gpu_build_with_compute_capability(
       options={
           "run_under": "//build_tools/ci:parallel_gpu_execute",
           "@cuda_driver//:enable_forward_compatibility": "true",
+          "//xla/tsl:ci_build": True,
           **_DEFAULT_BAZEL_OPTIONS,
       },
       repo_env={"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"},
@@ -300,7 +302,7 @@ Build(
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
 )
 
 cpu_arm_tag_filter = (
@@ -316,7 +318,11 @@ Build(
     repo="openxla/xla",
     configs=("warnings", "rbe_cross_compile_linux_arm64", "nonccl"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
-    options={**_DEFAULT_BAZEL_OPTIONS, "build_tests_only": True},
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "build_tests_only": True,
+        "//xla/tsl:ci_build": True,
+    },
     build_tag_filters=cpu_arm_tag_filter,
     test_tag_filters=cpu_arm_tag_filter,
 )
@@ -358,7 +364,7 @@ Build(
     target_patterns=_XLA_ONEAPI_TARGET_PATTERNS,
     build_tag_filters=oneapi_build_tag_filter,
     test_tag_filters=oneapi_test_tag_filter,
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
 )
 
 Build(
@@ -368,7 +374,7 @@ Build(
     target_patterns=_XLA_CPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
     subcommand="build",
 )
 
@@ -377,7 +383,11 @@ Build(
     repo="openxla/xla",
     configs=("warnings", "rbe_cross_compile_linux_arm64", "nonccl"),
     target_patterns=_XLA_CPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
-    options={**_DEFAULT_BAZEL_OPTIONS, "build_tests_only": False},
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "build_tests_only": False,
+        "//xla/tsl:ci_build": True,
+    },
     build_tag_filters=cpu_arm_tag_filter,
     test_tag_filters=cpu_arm_tag_filter,
     subcommand="build",
@@ -406,6 +416,7 @@ Build(
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "@cuda_driver//:enable_forward_compatibility": "false",
+        "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
     },
     repo_env={
@@ -438,6 +449,7 @@ Build(
     options={
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "@cuda_driver//:enable_forward_compatibility": "false",
+        "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
     },
     repo_env={
@@ -471,6 +483,7 @@ Build(
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         # Use User Mode and Kernel Mode Drivers pre-installed on the system.
         "@cuda_driver//:enable_forward_compatibility": "true",
+        "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
     },
     repo_env={
@@ -503,12 +516,13 @@ Build(
         "-//xla/python/...",
         "-//xla/service/gpu/...",
     ),
-    options=dict(
+    options={
         **_DEFAULT_BAZEL_OPTIONS,
-        macos_minimum_os="10.15",
-        test_tmpdir="/Volumes/BuildData/bazel_output",
-        define="xnn_enable_avxvnniint8=false",
-    ),
+        "macos_minimum_os": "10.15",
+        "test_tmpdir": "/Volumes/BuildData/bazel_output",
+        "define": "xnn_enable_avxvnniint8=false",
+        "//xla/tsl:ci_build": True,
+    },
     build_tag_filters=macos_tag_filter,
     test_tag_filters=macos_tag_filter,
     extra_setup_commands=(
@@ -537,13 +551,14 @@ Build(
         "-//xla/python/...",
         "-//xla/service/gpu/...",
     ),
-    options=dict(
+    options={
         **_DEFAULT_BAZEL_OPTIONS,
-        macos_minimum_os="10.15",
-        test_tmpdir="/tmpfs/bazel_output",
-        test_size_filters="small,medium",
-        define="xnn_enable_avxvnniint8=false",
-    ),
+        "macos_minimum_os": "10.15",
+        "test_tmpdir": "/tmpfs/bazel_output",
+        "test_size_filters": "small,medium",
+        "define": "xnn_enable_avxvnniint8=false",
+        "//xla/tsl:ci_build": True,
+    },
     build_tag_filters=macos_tag_filter,
     test_tag_filters=macos_tag_filter,
     extra_setup_commands=(

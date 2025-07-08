@@ -257,7 +257,7 @@ class InterpreterLiteralWrapperBuffer final : public PjRtBuffer {
         "InterpreterLiteralWrapperBuffer.");
   }
 
-  bool IsDeleted() override { return is_deleted_; }
+  bool IsDeleted() const override { return is_deleted_; }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override {
@@ -369,7 +369,7 @@ class InterpreterLoadedExecutable final : public PjRtLoadedExecutable {
 
   void Delete() override { hlo_module_ = nullptr; }
 
-  bool IsDeleted() override { return hlo_module_ == nullptr; }
+  bool IsDeleted() const override { return hlo_module_ == nullptr; }
 
  private:
   absl::StatusOr<Literal> Evaluate(
@@ -442,6 +442,8 @@ class InterpreterClient final : public PjRtClient {
   absl::string_view platform_name() const override { return "interpreter"; }
 
   absl::string_view platform_version() const override { return "<unknown>"; }
+
+  std::optional<PjRtPluginAttributes> plugin_attributes() const override;
 
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
