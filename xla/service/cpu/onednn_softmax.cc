@@ -36,8 +36,7 @@ namespace xla {
 namespace cpu {
 
 void ExecuteOneDnnSoftmax(void* input, void* result, void* softmax_config_ptr,
-                          bool use_thunk_runtime, dnnl::engine& cpu_engine,
-                          dnnl::stream& onednn_stream,
+                          dnnl::engine& cpu_engine, dnnl::stream& onednn_stream,
                           OneDnnResources& resources) {
   // This function executes the oneDNN softmax primitive with the thunk runtime.
   // It takes the result buffer, scratch buffer, and arguments as inputs, along
