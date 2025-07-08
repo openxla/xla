@@ -285,9 +285,7 @@ absl::Status BufferAllocation::AddAssignment(const HloValue& buffer,
     TF_RET_CHECK(buffer.color() == color())
         << "Buffer color " << buffer.color() << " for buffer " << buffer
         << " does not match allocation color " << color()
-        << ". This could be caused by a buffer being donated but not reusable, "
-           "try specifying explicit memory space for in_shardings and "
-           "out_shardings.";
+        << ". This could be caused by an unusable donated buffer.";
   }
   OffsetSize offset_size;
   offset_size.offset = offset;
