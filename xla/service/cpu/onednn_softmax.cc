@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/tsl/util/onednn_threadpool.h"
 // Below must come after `onednn_threadpool.h`
@@ -33,6 +34,45 @@ limitations under the License.
 
 namespace xla {
 namespace cpu {
+
+void ExecuteOneDnnSoftmax(void* input, void* result, void* softmax_config_ptr,
+                          bool use_thunk_runtime, dnnl::engine& cpu_engine,
+                          dnnl::stream& onednn_stream,
+                          OneDnnResources& resources) {
+  // This function executes the oneDNN softmax primitive with the thunk runtime.
+  // It takes the result buffer, scratch buffer, and arguments as inputs, along
+  // with the oneDNN engine and stream. It also takes pre-created resources
+  // struct (containing primitive and memory objects for input, kernel, result,
+  // scratch, and post-ops) to ensure that they remain alive while the thunks
+  // are being executed asynchronously.
+
+  std::string config_str(static_cast<const char*>(softmax_config_ptr));
+  OneDnnSoftmaxConfig softmax_config;
+  softmax_config.ParseFromString(config_str);
+
+  MemrefInfo input_minfo(input);
+  MemrefInfo result_minfo(result);
+
+  auto src_md = input_minfo.GetOneDnnMemDesc();
+  auto dst_md = result_minfo.GetOneDnnMemDesc();
+
+  resources.src_mem = dnnl::memory(src_md, cpu_engine, input_minfo.Data());
+  resources.dst_mem = dnnl::memory(dst_md, cpu_engine, result_minfo.Data());
+
+  int axis = softmax_config.softmax_axis();
+
+  auto softmax_pd = dnnl::softmax_forward::primitive_desc(
+      cpu_engine, dnnl::prop_kind::forward_inference,
+      dnnl::algorithm::softmax_accurate, src_md, dst_md, axis);
+
+  resources.primitive = dnnl::primitive(softmax_pd);
+
+  std::unordered_map<int, dnnl::memory> softmax_args;
+  softmax_args.insert({DNNL_ARG_SRC, resources.src_mem});
+  softmax_args.insert({DNNL_ARG_DST, resources.dst_mem});
+
+  resources.primitive.execute(onednn_stream, softmax_args);
+}
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnSoftmax(
     const void* run_options_ptr, void* input, void* result,

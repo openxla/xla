@@ -34,6 +34,10 @@ Shape OneDnnMatMulOptWeightsShape(const Shape& input_shape,
                                   const Shape& output_shape,
                                   const OneDnnMatMulConfig* matmul_config);
 
+void ExecuteOneDnnMatMul(void* result, void* scratch, void** args,
+                         dnnl::engine& cpu_engine, dnnl::stream& onednn_stream,
+                         OneDnnResources& resources);
+
 extern "C" {
 extern void __xla_cpu_runtime_OneDnnMatMul(void* result, void* scratch,
                                            void** args);
