@@ -41,7 +41,6 @@ namespace {
 
 using ::llvm::SmallVector;
 using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 using ::mlir::MLIRContext;
 using ::testing::Optional;
 
@@ -132,6 +131,104 @@ TEST_F(SymbolicTilePropagationTest, CanPropagateToInputsOfBroadcastOp) {
   )")));
 }
 
+TEST_F(SymbolicTilePropagationTest, CanPropagateToInputsOfConcatenateOp) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      ROOT concatenate = f32[60] concatenate(p0, p1, p2), dimensions={0}
+    }
+  )");
+  MLIRContext mlir_context;
+  std::optional<TiledOperands> tiled_operands = PropagateTileToInput(
+      *root, GetTestSymbolicTile(root->shape().dimensions(), &mlir_context), 0);
+  EXPECT_THAT(tiled_operands, Optional(MatchString(R"(
+    0) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [10]
+    1) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0 - 10]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [20]
+    2) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0 - 30]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [30]
+  )")));
+}
+
+TEST_F(SymbolicTilePropagationTest,
+       CanPropagateToInputsOfConcatenateOpWithNonDefaultUpperBound) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      ROOT concatenate = f32[60] concatenate(p0, p1, p2), dimensions={0}
+    }
+  )");
+  MLIRContext mlir_context;
+  ExperimentalSymbolicTile symbolic_tile =
+      GetTestSymbolicTile(root->shape().dimensions(), &mlir_context);
+  llvm::SmallVector<AffineExpr, 1> upper_bounds{
+      mlir::getAffineConstantExpr(25, &mlir_context)};
+  symbolic_tile = ExperimentalSymbolicTile{
+      &mlir_context,         /*num_tile_ids=*/1,      symbolic_tile.offsets(),
+      symbolic_tile.sizes(), symbolic_tile.strides(), upper_bounds,
+      /*rt_vars=*/{}};
+  std::optional<TiledOperands> tiled_operands =
+      PropagateTileToInput(*root, symbolic_tile, 0);
+  EXPECT_THAT(tiled_operands, Optional(MatchString(R"(
+    0) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [10]
+    1) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0 - 10]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [15]
+    2) (tid_0)[ts_0]
+      -> offsets [tid_0 * ts_0 - 30]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [0]
+  )")));
+}
+
+TEST_F(SymbolicTilePropagationTest,
+       CanPropagateToInputsOfConcatenateOpWithNonConstantUpperBound) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      ROOT concatenate = f32[60] concatenate(p0, p1, p2), dimensions={0}
+    }
+  )");
+  MLIRContext mlir_context;
+  ExperimentalSymbolicTile symbolic_tile =
+      GetTestSymbolicTile(root->shape().dimensions(), &mlir_context);
+  llvm::SmallVector<AffineExpr, 1> upper_bounds{
+      mlir::getAffineDimExpr(0, &mlir_context) * 30};
+  symbolic_tile = ExperimentalSymbolicTile{
+      &mlir_context,         /*num_tile_ids=*/1,      symbolic_tile.offsets(),
+      symbolic_tile.sizes(), symbolic_tile.strides(), upper_bounds,
+      /*rt_vars=*/{}};
+  std::optional<TiledOperands> tiled_operands =
+      PropagateTileToInput(*root, symbolic_tile, 0);
+  EXPECT_EQ(tiled_operands, std::nullopt);
+}
+
 TEST_F(SymbolicTilePropagationTest,
        CanPropagateToInputsOfPadOpWithEdgePadding) {
   auto root = ParseAndGetRoot(R"(
@@ -211,6 +308,39 @@ TEST_F(SymbolicTilePropagationTest, CanPropagateToInputsOfSliceOp) {
          sizes [ts_0, ts_1, ts_2]
          strides [2, 2, 6]
          upper bounds [5, 7, 13]
+  )")));
+}
+
+TEST_F(SymbolicTilePropagationTest, CanPropagateToInputsOfDynSliceOp) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = s32[20,2,258] parameter(0)
+      c4 = s32[] constant(4)
+      p1 = s32[] parameter(1)
+      p2 = s32[] parameter(2)
+      ROOT ds = s32[1,2,32] dynamic-slice(p0, c4, p1, p2),
+        dynamic_slice_sizes={1, 2, 32}
+    }
+  )");
+  MLIRContext mlir_context;
+  std::optional<TiledOperands> tiled_operands = PropagateTileToInput(
+      *root, GetTestSymbolicTile(root->shape().dimensions(), &mlir_context), 0);
+  EXPECT_THAT(tiled_operands, Optional(MatchString(R"(
+    0) (tid_0, tid_1, tid_2)[ts_0, ts_1, ts_2]{rt_0, rt_1}
+      -> offsets [tid_0 * ts_0 + 4, tid_1 * ts_1 + rt_0, tid_2 * ts_2 + rt_1]
+         sizes [ts_0, ts_1, ts_2]
+         strides [1, 2, 3]
+         upper bounds [5, rt_0 + 2, rt_1 + 32]
+         rt_0: %p1 = s32[] parameter(1) in [0, 0]
+         rt_1: %p2 = s32[] parameter(2) in [0, 226]
+
+    1) (tid_0, tid_1, tid_2)[ts_0, ts_1, ts_2]
+      -> offsets [] sizes [] strides [] upper bounds []
+    2) (tid_0, tid_1, tid_2)[ts_0, ts_1, ts_2]
+      -> offsets [] sizes [] strides [] upper bounds []
+    3) (tid_0, tid_1, tid_2)[ts_0, ts_1, ts_2]
+      -> offsets [] sizes [] strides [] upper bounds []
   )")));
 }
 

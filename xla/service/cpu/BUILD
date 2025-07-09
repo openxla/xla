@@ -91,8 +91,6 @@ filegroup(
 filegroup(
     name = "runtime_hdrs",
     srcs = [
-        # XLA Runtime support.
-        "buffer_desc.h",
         # Single-threaded support.
         "runtime_custom_call_status.h",
         "runtime_fp16.h",
@@ -210,7 +208,6 @@ cc_library(
         ":runtime_symbol_generator",
         ":small_while_loop_hoisting_pass",
         ":thunk_emitter",
-        ":xla_framework",
         "//xla:cpu_function_runtime",
         "//xla:debug_options_flags",
         "//xla:literal",
@@ -428,6 +425,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:buffer_value",
@@ -559,22 +557,10 @@ tf_proto_library(
     name = "executable_proto",
     srcs = ["executable.proto"],
     protodeps = [
-        ":xla_framework_proto",
         "//xla/service:hlo_proto",
         "//xla:xla_proto",
         "//xla/backends/cpu/runtime:thunk_proto",
     ],
-)
-
-tf_proto_library(
-    name = "xla_framework_proto",
-    srcs = ["xla_framework.proto"],
-)
-
-cc_library(
-    name = "xla_framework",
-    hdrs = ["xla_framework.h"],
-    deps = [":xla_framework_proto_cc"],
 )
 
 cc_library(
@@ -646,11 +632,6 @@ cc_library(
     ],
     copts = runtime_copts(),
     deps = ["@com_google_absl//absl/base:core_headers"],
-)
-
-cc_library(
-    name = "buffer_desc",
-    hdrs = ["buffer_desc.h"],
 )
 
 cc_library(
@@ -1025,10 +1006,12 @@ cc_library(
     srcs = ["tiled_dot_emitter.cc"],
     hdrs = ["tiled_dot_emitter.h"],
     deps = [
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:vector_ir_builder",
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:kernel_support_library",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings",
@@ -1059,9 +1042,11 @@ cc_library(
         "//xla/service/llvm_ir:kernel_support_library",
         "//xla/service/llvm_ir:llvm_loop",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

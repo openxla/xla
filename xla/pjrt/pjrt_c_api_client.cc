@@ -254,6 +254,7 @@ void PjRtCApiClient::InitAttributes() {
   pjrt::LogFatalIfPjrtError(c_api_->PJRT_Plugin_Attributes(&args), c_api_);
   attributes_ =
       pjrt::ConvertFromPjRtNamedValueList(args.attributes, args.num_attributes);
+  attributes_["serialize_with_sdy"] = true;
 }
 
 int PjRtCApiClient::device_count() const { return devices_.size(); }
@@ -2732,6 +2733,21 @@ absl::StatusOr<std::unique_ptr<PjRtCompiler>> GetCApiCompiler(
     return Internal("PJRT C API is nullptr for %s", device_type);
   }
   return std::make_unique<PjRtCApiCompiler>(c_api);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtCompiler>> GetCApiCompiler() {
+  TF_ASSIGN_OR_RETURN(std::vector<std::string> device_types,
+                      pjrt::GetRegisteredPjrtApis());
+  if (device_types.empty()) {
+    return absl::FailedPreconditionError("PJRT_Api is not initialized.");
+  }
+  if (device_types.size() > 1) {
+    return absl::FailedPreconditionError(
+        "More than one device type registered. Please use "
+        "GetCApiCompiler(absl::string_view device_type) "
+        "instead.");
+  }
+  return GetCApiCompiler(device_types[0]);
 }
 
 }  // namespace xla

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/cpu/xnn_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace cpu {
@@ -93,7 +95,7 @@ std::vector<HloComputation*> XnnGraphFusion::GetNonFusionComputations(
   return non_fusion_computations;
 }
 
-bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
+bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) {
   if (!IsLayoutSupportedByXnn(instr->shape())) {
     return false;
   }
@@ -127,7 +129,7 @@ bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
   }
 }
 
-bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) const {
+bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) {
   if (instr->opcode() != HloOpcode::kFusion) {
     return false;
   }

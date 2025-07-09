@@ -30,6 +30,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
@@ -558,6 +559,53 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
                                                 shape->dimensions().size() - 1);
   }
   TF_DCHECK_OK(ValidateShape(*shape));
+}
+
+/* static */ Shape ShapeUtil::InsertDimensionAtIndex(Shape shape,
+                                                     int64_t dim_idx,
+                                                     int64_t bound) {
+  return InsertDimensionsAtIndex(shape, dim_idx, {bound});
+}
+
+/* static */ [[nodiscard]] Shape ShapeUtil::InsertDimensionsAtIndex(
+    Shape shape, int64_t dim_idx, absl::Span<const int64_t> bounds) {
+  CHECK(shape.IsArray());
+  CHECK_GE(dim_idx, 0);
+  CHECK_LE(dim_idx, shape.dimensions().size());
+
+  const auto& dims = shape.dimensions();
+  std::vector<int64_t> new_dims(dims.begin(), dims.begin() + dim_idx);
+  new_dims.insert(new_dims.end(), bounds.begin(), bounds.end());
+  new_dims.insert(new_dims.end(), dims.begin() + dim_idx, dims.end());
+  Shape new_shape(shape.element_type(), new_dims);
+
+  if (shape.has_layout()) {
+    auto* layout = new_shape.mutable_layout();
+    const int64_t num_new_dims = bounds.size();
+
+    // When dim_idx is at the end, the new dimensions are made the most minor,
+    // and the rest of the layout is preserved.
+    if (dim_idx == shape.dimensions().size()) {
+      for (int64_t i = num_new_dims - 1; i >= 0; --i) {
+        layout->add_minor_to_major(dim_idx + i);
+      }
+    }
+
+    for (int64_t dim : shape.layout().minor_to_major()) {
+      layout->add_minor_to_major(dim >= dim_idx ? dim + num_new_dims : dim);
+      // When inserting in the middle, the loop finds the original dimension at
+      // dim_idx, shifts it and all more major dimensions up, and inserts the
+      // new dimensions to be "next major" to the original one.
+      if (dim == dim_idx) {
+        for (int64_t i = num_new_dims - 1; i >= 0; --i) {
+          layout->add_minor_to_major(dim_idx + i);
+        }
+      }
+    }
+  }
+
+  TF_DCHECK_OK(ValidateShape(new_shape));
+  return new_shape;
 }
 
 /* static */ void ShapeUtil::CopyDynamicDimensions(Shape* to,
@@ -1950,9 +1998,9 @@ struct ParallelState {
   explicit ParallelState(int64_t task_count) {
     // If this method is changed, please remember to change
     // GetForEachIndexParallelThreadCount() as well.
-    static auto* const global_pool = new tsl::thread::ThreadPool(
+    static absl::NoDestructor<tsl::thread::ThreadPool> global_pool(
         tsl::Env::Default(), "foreach", tsl::port::MaxParallelism());
-    pool = global_pool;
+    pool = global_pool.get();
   }
   ~ParallelState() = default;
 

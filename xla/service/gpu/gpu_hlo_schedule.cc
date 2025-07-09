@@ -633,6 +633,22 @@ bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint,
   return false;
 }
 
+absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
+    const HloModule* module, int64_t pointer_size, int64_t* peak_memory_bytes) {
+  BufferValue::SizeFunction size_func =
+      [pointer_size](const BufferValue& buffer) -> int64_t {
+    const Shape& shape = buffer.shape();
+    if (shape.has_layout() &&
+        shape.layout().memory_space() == Layout::kHostMemorySpace) {
+      return static_cast<int64_t>(0);
+    }
+    return ShapeUtil::ByteSizeOf(shape, pointer_size);
+  };
+  return ScheduleModule(module,
+                        DefaultMemoryScheduler(size_func, PostProcessSchedule),
+                        /*execution_threads=*/{}, peak_memory_bytes);
+}
+
 }  // end namespace
 
 absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
@@ -720,9 +736,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // We need to run it anyway because LHS relies on it.
   // See `xla::LatencyHidingScheduler::Run`.
   TF_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
-  TF_ASSIGN_OR_RETURN(
-      HloSchedule schedule,
-      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size));
+  int64_t peak_memory_bytes;
+  TF_ASSIGN_OR_RETURN(HloSchedule schedule,
+                      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size,
+                                                           &peak_memory_bytes));
   TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =
@@ -736,23 +753,7 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
         alias_info));
   }
 
-  return ScheduleMetadata{memory_limit};
-}
-
-absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
-    const HloModule* module, int64_t pointer_size, int64_t* peak_memory_bytes) {
-  BufferValue::SizeFunction size_func =
-      [pointer_size](const BufferValue& buffer) -> int64_t {
-    const Shape& shape = buffer.shape();
-    if (shape.has_layout() &&
-        shape.layout().memory_space() == Layout::kHostMemorySpace) {
-      return static_cast<int64_t>(0);
-    }
-    return ShapeUtil::ByteSizeOf(shape, pointer_size);
-  };
-  return ScheduleModule(module,
-                        DefaultMemoryScheduler(size_func, PostProcessSchedule),
-                        /*execution_threads=*/{}, peak_memory_bytes);
+  return ScheduleMetadata{memory_limit, peak_memory_bytes};
 }
 
 HloInstructionSequence PostProcessSchedule(
