@@ -42,10 +42,7 @@ filegroup(
 
 filegroup(
     name = "cpu_runtime_srcs",
-    srcs = [
-        "cpu_function_runtime.cc",
-        "executable_run_options.cc",
-    ],
+    srcs = ["executable_run_options.cc"],
     visibility = internal_visibility([":friends"]),
 )
 
