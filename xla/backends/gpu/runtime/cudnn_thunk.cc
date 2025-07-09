@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "tsl/platform/errors.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -44,6 +45,7 @@ CuDnnThunk::CuDnnThunk(
   args_.reserve(kernel_arguments.size());
   for (const emitters::KernelArgument& kernel_argument : kernel_arguments) {
     args_.push_back(kernel_argument.slice());
+    is_output_.push_back(kernel_argument.written());
   };
 }
 
@@ -72,7 +74,14 @@ absl::Status CuDnnThunk::ExecuteOnStream(const ExecuteParams& params) {
   std::vector<se::DeviceMemoryBase> buffer_args;
   buffer_args.reserve(args_.size());
   for (const BufferAllocation::Slice& arg : args_) {
-    buffer_args.push_back(params.buffer_allocations->GetDeviceAddress(arg));
+    auto addr = params.buffer_allocations->GetDeviceAddress(arg);
+    if (is_output_[buffer_args.size()]) {
+      tsl::profiler::MarkMemoryInitialized(
+          addr.opaque(), addr.size(),
+          static_cast<tsl::profiler::StreamHandle>(
+              params.stream->platform_specific_handle().stream));
+    }
+    buffer_args.push_back(addr);
   }
   return graph_->get()->Execute(*params.stream,
                                 absl::Span<se::DeviceMemoryBase>(buffer_args),
