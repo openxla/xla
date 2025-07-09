@@ -111,6 +111,7 @@ cc_library(
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
