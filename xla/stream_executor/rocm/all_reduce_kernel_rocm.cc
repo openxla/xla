@@ -37,13 +37,16 @@ union alignas(8) Vec<hip_bfloat16> {
   PackedType packed;
 };
 
-__device__ __forceinline__ void PutSignalFlag(uint32_t* addr, uint32_t val) {
+template <>
+__device__ __forceinline__ void PutSignalFlag<PlatformType::ROCM>(
+    uint32_t* addr, uint32_t val) {
   __atomic_store_n(addr, val, __ATOMIC_RELEASE);
   __threadfence_system();  // Ensure visibility across all GPUs
 }
 
-__device__ __forceinline__ void WaitSignalFlag(uint32_t* addr,
-                                               uint32_t expected) {
+template <>
+__device__ __forceinline__ void WaitSignalFlag<PlatformType::ROCM>(
+    uint32_t* addr, uint32_t expected) {
   uint32_t val;
   do {
     __threadfence_system();  // Ensure we see the latest value
@@ -69,7 +72,8 @@ __device__ __forceinline__ void WaitSignalFlag(uint32_t* addr,
             absl::bit_cast<void*>(                                           \
                 &stream_executor::gpu::AllReduceKernelImpl<                  \
                     HIP_TYPE, xla::ReductionKind::REDUCTION_KIND,            \
-                    xla::se::gpu::AllReduceStrategy::STRATEGY>),             \
+                    xla::se::gpu::AllReduceStrategy::STRATEGY,               \
+                    stream_executor::gpu::PlatformType::ROCM>),              \
             "all_reduce_" #SUFFIX #STRATEGY, arity);                         \
       }));
 
