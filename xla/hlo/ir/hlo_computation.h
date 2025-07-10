@@ -103,6 +103,7 @@ class HloComputation {
     // `original_inst->AddInstruction(new_inst)` instead.
     virtual HloInstruction* AddInstruction(
         std::unique_ptr<HloInstruction> instruction) {
+      VLOG(0) << "AddInstruction " << instruction->ToString();
       auto* added_instruction = instruction.get();
       instructions_.push_back(std::move(instruction));
       return added_instruction;
@@ -116,6 +117,8 @@ class HloComputation {
 
     absl::StatusOr<HloInstruction*> AddParameter(
         std::unique_ptr<HloInstruction> parameter) {
+
+      VLOG(0) << "AddParameter " << parameter->ToString();
       if (!parameter_numbers_.insert(parameter->parameter_number()).second) {
         return Internal("Duplicate parameter number %d",
                         parameter->parameter_number());

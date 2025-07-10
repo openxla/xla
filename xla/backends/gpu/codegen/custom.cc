@@ -222,14 +222,15 @@ std::unique_ptr<HloModule> ExtractOffsetModule(
   std::unique_ptr<HloModule> extracted_offset = ExtractModule(
       /*instruction=*/offset_value, /*height=*/-1,
       /*extract_selector=*/
-      [](const HloInstruction* instr) -> bool {
-        return instr->opcode() != HloOpcode::kParameter;
+      [&](const HloInstruction* instr) -> bool {
+        return (instr->opcode() != HloOpcode::kParameter) &&
+               (instr->parent() == offset_value->parent());
       },
       /*replace_type_selector=*/
       [](const HloInstruction*) -> ReplaceType {
         return ReplaceType::kReplaceParam;
       },
-      /*cross_computation=*/false, /*inline_calls_and_fusions=*/true,
+      /*cross_computation=*/true, /*inline_calls_and_fusions=*/true,
       /*run_verifier=*/false);
 
   // In the extracted computation
@@ -256,7 +257,10 @@ std::unique_ptr<HloModule> ExtractOffsetModule(
       [](const HloInstruction* instr) {
         return instr->opcode() != HloOpcode::kGetTupleElement ||
                instr->operand(0)->opcode() != HloOpcode::kParameter;
-      });
+      },
+      /*replace_type_selector=*/nullptr,
+      /*cross_computation=*/true, /*inline_calls_and_fusions=*/false,
+      /*run_verifier=*/true);
 }
 
 // Extracts the while induction variable update as a function of the induction
@@ -286,7 +290,7 @@ std::unique_ptr<HloModule> ExtractWhileInitModule(
   const HloInstruction* init = while_op->operand(0)->operand(*tuple_idx);
   std::unique_ptr<HloModule> init_module = ExtractModule(
       /*instruction=*/init, /*height=*/-1, /*extract_selector=*/nullptr,
-      /*replace_type_selector=*/nullptr, /*cross_computation=*/false,
+      /*replace_type_selector=*/nullptr, /*cross_computation=*/true,
       /*inline_calls_and_fusions=*/true, /*run_verifier=*/false);
   CHECK(init_module->entry_computation()->num_parameters() == 0)
       << "Expected zero parameter for init module: " << init_module->ToString();
@@ -548,6 +552,7 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
   if (while_op != std::nullopt) {
     CHECK(while_op.value() != nullptr)
         << "GetWhileOp is not expected to return nullptr.";
+
     init_module = ExtractWhileInitModule(*while_op);
     update_module = ExtractWhileUpdateModule(*while_op);
   }

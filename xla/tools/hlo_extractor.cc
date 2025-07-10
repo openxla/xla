@@ -74,7 +74,7 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
       const HloInstruction* root_instruction,
       absl::flat_hash_set<const HloInstruction*>* boundary,
       ExtractSelector extract_selector,
-      ReplaceTypeSelector replace_type_selector)
+      ReplaceTypeSelector replace_type_selector, bool cross_computation = false)
       : root_instruction_(root_instruction),
         old_module_(root_instruction->GetModule()),
         module_(std::make_unique<HloModule>(
@@ -84,7 +84,8 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
         clone_context_(module_.get()),
         boundary_(boundary),
         extract_selector_(extract_selector),
-        replace_type_selector_(replace_type_selector) {
+        replace_type_selector_(replace_type_selector),
+        cross_computation_(cross_computation) {
     // Initialize the computation builder for every computations.
     for (auto computation : old_module_->computations()) {
       old_computations_to_builders_.insert(
@@ -100,23 +101,43 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
 
   absl::Status HandleParameter(const HloInstruction* parameter) override {
     // Entry parameters need renumbering.
-    return ReplaceWithParameter(parameter);
+    CHECK(parameter->opcode() == HloOpcode::kParameter);
+    if (parameter->parent() == root_instruction_->parent()) {
+      VLOG(0) << "HandleParameter inside root " << parameter->ToString();
+      return ReplaceWithParameter(parameter);
+    } else {
+      // For embedded computation's parameter, just map the parameter
+      // instruction with the caller instruction's operand.
+      CHECK(cross_computation_);
+      VLOG(0) << "HandleParameter inside nested " << parameter->ToString();
+      return MapParameterWithCallerOperand(parameter);
+    }
+  }
+
+  // For call instruction, will extract the operand from the called computation
+  // with `cross_computation` flag of DFS traversal, so just ignore the caller
+  // instruction.
+  absl::Status HandleCall(const HloInstruction* call) override {
+    if (cross_computation_) {
+      VLOG(0) << "Handling call " << call->ToString();
+      return MapCallerResultWithComputationRoot(call);
+    }
+    return DefaultAction(call);
   }
 
   absl::Status DefaultAction(const HloInstruction* hlo) override {
     // Replace the following two types of instructions with parameters/constants
     // (1) the instructions at the boundary with (2) the instructions that are
     // not selected by the hlo_selector.
+    VLOG(0) << "Handling default action for instruction " << hlo->ToString();
     if ((boundary_ != nullptr && boundary_->contains(hlo) > 0) ||
         (extract_selector_ != nullptr && !extract_selector_(hlo))) {
       if (replace_type_selector_ != nullptr) {
+        VLOG(0) << "DefaultAction 1";
         switch (replace_type_selector_(hlo)) {
           case ReplaceType::kReplaceConst:
             return ReplaceWithConstant(hlo);
           case ReplaceType::kReplaceParam:
-            CHECK(hlo->parent() == root_instruction_->parent())
-                << "Replacing instructions at non-entry computation with "
-                   "parameters is not supported.";
             return ReplaceWithParameter(hlo);
           case ReplaceType::kReplaceZeroBroadcast:
             return ReplaceWithConstantBroadcast(
@@ -127,41 +148,64 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
           default:
             QCHECK(false) << "Unsupported replacement type";
         }
+
+        VLOG(0) << "DefaultAction 2";
       }
 
+      VLOG(0) << "DefaultAction 3";
       return ReplaceWithParameter(hlo);
     }
 
+    VLOG(0) << "DefaultAction 4";
     // Clone the visiting hlo and add it to computation builder.
     std::vector<HloInstruction*> new_operands;
     for (auto operand : hlo->operands()) {
+      VLOG(0) << "hlo is " << hlo->ToString();
+      VLOG(0) << "operand is " << operand->ToString();
+
+      VLOG(0) << "DefaultAction 5";
       new_operands.push_back(clone_context_.GetInstruction(operand));
+
+      VLOG(0) << "DefaultAction 6";
     }
+
     auto instruction =
         hlo->CloneWithNewOperands(hlo->shape(), new_operands, &clone_context_);
 
-    auto it = old_computations_to_builders_.find(hlo->parent());
-    CHECK(it != old_computations_to_builders_.end());
+    VLOG(0) << "DefaultAction 7";
+    auto it =
+        cross_computation_
+            ? old_computations_to_builders_.find(root_instruction_->parent())
+            : old_computations_to_builders_.find(hlo->parent());
+
     auto builder = it->second.get();
     builder->AddInstruction(std::move(instruction));
 
+    VLOG(0) << "DefaultAction 8";
+    VLOG(0) << "DefaultAction 9";
     // If the visiting `hlo` is the root instruction of a computation (except
     // for the root of the entry computation), we can build the new computation
     // now and put it in `clone_context_`. The entry computation would be built
     // in `FinishVisit()` when all the instructions are visited.
-    if (hlo->IsRoot() && hlo != root_instruction_) {
+    if (hlo->IsRoot() && hlo != root_instruction_ && !cross_computation_) {
+      VLOG(0) << "DefaultAction 10";
       CHECK(clone_context_.FindComputation(hlo->parent()) == nullptr);
       auto new_computation = module_->AddEmbeddedComputation(builder->Build());
       clone_context_.MapComputation(hlo->parent(), new_computation);
+      VLOG(0) << "DefaultAction 11";
     }
 
+    VLOG(0) << "DefaultAction 12";
     return absl::OkStatus();
   }
 
   absl::Status FinishVisit(const HloInstruction* /*root*/) override {
     // Create the entry computation for the extracted module.
+    VLOG(0) << "FinishVisit 1";
     auto new_entry_computation = module_->AddEntryComputation(
         old_computations_to_builders_.at(root_instruction_->parent())->Build());
+
+    VLOG(0) << "FinishVisit 2";
     clone_context_.MapComputation(root_instruction_->parent(),
                                   new_entry_computation);
 
@@ -172,12 +216,15 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
          clone_context_.cloned_instructions()) {
       auto old_instruction = instruction_mapping.first;
       auto new_instruction = instruction_mapping.second;
+      VLOG(0) << "old instruction " << old_instruction->name();
       new_instruction->SetAndSanitizeName(old_instruction->name());
+      VLOG(0) << "new instruction " << new_instruction->name();
     }
     // For the extra created instructions (e.g., the ones created when replacing
     // with broadcasted zeros), we make sure they have unique names without
     // breaking the matches made at above code.
     for (HloInstruction* instruction : extra_created_instructions_) {
+      VLOG(0) << "extra created instruction " << instruction->name();
       module_->SetAndUniquifyInstrName(instruction, instruction->name());
     }
 
@@ -196,9 +243,16 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
     auto new_const =
         HloInstruction::CreateConstant(std::move(literal_status.value()));
     clone_context_.MapInstruction(hlo, new_const.get());
-    auto it = old_computations_to_builders_.find(hlo->parent());
+    auto it =
+        cross_computation_
+            ? old_computations_to_builders_.find(root_instruction_->parent())
+            : old_computations_to_builders_.find(hlo->parent());
     CHECK(it != old_computations_to_builders_.end());
     auto builder = it->second.get();
+
+    VLOG(0) << "Replacing constant " << hlo->ToString();
+    VLOG(0) << "With new instruction " << new_const->ToString();
+
     builder->AddInstruction(std::move(new_const));
     return absl::OkStatus();
   }
@@ -209,18 +263,84 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
     auto new_parameter = HloInstruction::CreateParameter(
         parameter_numbers_.at(hlo->parent())++, hlo->shape(), hlo->name());
     clone_context_.MapInstruction(hlo, new_parameter.get());
-    CHECK(old_computations_to_builders_.contains(hlo->parent()));
-    auto builder = old_computations_to_builders_[hlo->parent()].get();
+    auto it =
+        cross_computation_
+            ? old_computations_to_builders_.find(root_instruction_->parent())
+            : old_computations_to_builders_.find(hlo->parent());
+    CHECK(it != old_computations_to_builders_.end());
+    auto builder = it->second.get();
+
+    VLOG(0) << "Replacing parameter " << hlo->ToString();
+    VLOG(0) << "With new instruction " << new_parameter->ToString();
+
     builder->AddInstruction(std::move(new_parameter));
     return absl::OkStatus();
   }
 
+  // Map the `hlo` with the operand of the caller of the `hlo`'s parent
+  // computation, assume `hlo` is a parameter of the parent computation.
+  absl::Status MapParameterWithCallerOperand(const HloInstruction* hlo) {
+    CHECK(cross_computation_);
+    CHECK(hlo->parent() != root_instruction_->parent());
+    CHECK(hlo->opcode() == HloOpcode::kParameter);
+
+    const HloInstruction* caller_operand = nullptr;
+
+    auto caller_instructions = hlo->parent()->caller_instructions();
+    CHECK_EQ(caller_instructions.size(), 1)
+        << "Can only extract nested computation with only 1 caller instruction";
+    auto caller_instruction = caller_instructions[0];
+    auto operand_index = hlo->parameter_number();
+
+    caller_operand = caller_instruction->operand(operand_index);
+
+    while (caller_operand->opcode() == HloOpcode::kParameter &&
+           caller_operand->parent() != root_instruction_->parent()) {
+      auto caller_instructions =
+          caller_operand->parent()->caller_instructions();
+      CHECK_EQ(caller_instructions.size(), 1)
+          << "Can only extract nested computation with only 1 caller "
+             "instruction";
+      auto caller_instruction = caller_instructions[0];
+      auto operand_index = caller_operand->parameter_number();
+      caller_operand = caller_instruction->operand(operand_index);
+    }
+    CHECK(clone_context_.FindInstruction(
+              caller_instruction->operand(operand_index)) != nullptr)
+        << "Operand of the caller instruction is not cloned";
+    clone_context_.MapInstruction(
+        hlo, clone_context_.GetInstruction(caller_operand));
+    VLOG(0) << "Map parameter instruction " << hlo->ToString();
+    VLOG(0) << "With new instruction " << caller_operand->ToString();
+    return absl::OkStatus();
+  }
+
+  // Map the `hlo` with the operand of the caller of the `hlo`'s parent
+  // computation, assume `hlo` is a parameter of the parent computation.
+  absl::Status MapCallerResultWithComputationRoot(const HloInstruction* hlo) {
+    CHECK(hlo->called_computations().size() == 1);
+    CHECK(cross_computation_);
+    CHECK(clone_context_.FindInstruction(
+              hlo->called_computations()[0]->root_instruction()) != nullptr)
+        << "Root instruction of the called computation is not cloned";
+    clone_context_.MapInstruction(
+        hlo, clone_context_.GetInstruction(
+                 hlo->called_computations()[0]->root_instruction()));
+    VLOG(0) << "Map call instruction " << hlo->ToString();
+    VLOG(0) << "With new instruction "
+            << clone_context_
+                   .GetInstruction(
+                       hlo->called_computations()[0]->root_instruction())
+                   ->ToString();
+    return absl::OkStatus();
+  }
+
   // Helper to create constant instruction (that return a constant tensor) of
-  // the given shape. If the shape is of tuple type, we recursively reuse/create
-  // constant instruction for each of its sub-type. If it is not tuple type, we
-  // just create a constant and broadcast it to the desired shape.
-  // Currently the constant could be either a zero or a random number, depending
-  // on `replace_type`.
+  // the given shape. If the shape is of tuple type, we recursively
+  // reuse/create constant instruction for each of its sub-type. If it is not
+  // tuple type, we just create a constant and broadcast it to the desired
+  // shape. Currently the constant could be either a zero or a random number,
+  // depending on `replace_type`.
   HloInstruction* ReplaceWithConstantBroadcastHelper(
       const Shape& shape, HloComputation::Builder* builder,
       ReplaceType replace_type) {
@@ -274,8 +394,12 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
                                             ReplaceType replace_type) {
     CHECK(replace_type == ReplaceType::kReplaceZeroBroadcast ||
           replace_type == ReplaceType::kReplaceRandomBroadcast);
-    CHECK(old_computations_to_builders_.contains(hlo->parent()));
-    auto builder = old_computations_to_builders_[hlo->parent()].get();
+    auto it =
+        cross_computation_
+            ? old_computations_to_builders_.find(root_instruction_->parent())
+            : old_computations_to_builders_.find(hlo->parent());
+    CHECK(it != old_computations_to_builders_.end());
+    auto builder = it->second.get();
     HloInstruction* zero_broadcast =
         ReplaceWithConstantBroadcastHelper(hlo->shape(), builder, replace_type);
     clone_context_.MapInstruction(hlo, zero_broadcast);
@@ -287,18 +411,19 @@ class ExtractionVisitor : public ConstDfsHloVisitorWithDefault {
   HloModuleConfig config_;
   std::unique_ptr<HloModule> module_;
   HloCloneContext clone_context_;
-  // Map from the old (i.e., original) computations to the builders (that build
-  // the new computations in the extracted module).
+  // Map from the old (i.e., original) computations to the builders (that
+  // build the new computations in the extracted module).
   absl::flat_hash_map<const HloComputation*,
                       std::unique_ptr<HloComputation::Builder>>
       old_computations_to_builders_;
-  // Keep track of the number of parameters of each computation, as the counter
-  // is necessary to create a valid Parameter op.
+  // Keep track of the number of parameters of each computation, as the
+  // counter is necessary to create a valid Parameter op.
   absl::flat_hash_map<const HloComputation*, int> parameter_numbers_;
   absl::flat_hash_set<const HloInstruction*>* boundary_;
   ExtractSelector extract_selector_;
   ReplaceTypeSelector replace_type_selector_;
   std::vector<HloInstruction*> extra_created_instructions_;
+  bool cross_computation_;
 };
 
 void ComputeBoundary(const HloInstruction* root, int64_t limit,
@@ -362,21 +487,35 @@ std::unique_ptr<HloModule> ExtractModule(
   QCHECK(height == -1 || !cross_computation)
       << "Boundary cannnot be calculated across the computations.";
 
+  VLOG(0) << "Extracting module from instruction: " << instruction->ToString();
+  VLOG(0) << "Cross computation: " << cross_computation;
+  VLOG(0) << "Module: " << instruction->parent()->parent()->ToString();
+  VLOG(0) << "========================";
+
   absl::flat_hash_set<const HloInstruction*> boundary;
   if (height != -1) {
     ComputeBoundary(instruction, height, &boundary);
   }
   ExtractionVisitor visitor(instruction, &boundary, extract_selector,
-                            replace_type_selector);
+                            replace_type_selector, cross_computation);
 
-  TF_CHECK_OK(instruction->Accept(&visitor, /*call_finish_visit=*/true,
-                                  /*ignore_control_predecessors=*/false,
-                                  /*cross_computation=*/cross_computation));
+  if (cross_computation) {
+    TF_CHECK_OK(const_cast<HloInstruction*>(instruction)
+                    ->AcceptCrossComputationAndIgnoreCaller(
+                        &visitor, /*call_finish_visit=*/true));
+  } else {
+    TF_CHECK_OK(instruction->Accept(&visitor, /*call_finish_visit=*/true,
+                                    /*ignore_control_predecessors=*/false,
+                                    /*cross_computation=*/false));
+  }
 
   // Inline called computations and fusions if the flag
   // `inline_calls_and_fusions` is true.
   if (inline_calls_and_fusions) {
+    VLOG(0) << "Inlining calls and fusions 1";
+    VLOG(0) << "visitor.module() is " << visitor.module()->ToString();
     TF_CHECK_OK(Inline(visitor.module()));
+    VLOG(0) << "Inlining calls and fusions 2";
   }
 
   // The first pass may leave unused parameter instructions in the entry

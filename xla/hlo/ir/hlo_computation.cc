@@ -135,7 +135,10 @@ class HloComputation::VisitMap {
 std::unique_ptr<HloComputation> HloComputation::Builder::Build(
     HloInstruction* root_instruction) {
   int parameter_count = 0;
+  VLOG(0) << "Build 1";
   for (auto& instruction : instructions_) {
+    VLOG(0) << "instruction " << instruction.get();
+    VLOG(0) << "instruction " << instruction->ToString();
     if (instruction->opcode() == HloOpcode::kParameter) {
       parameter_count++;
     }
@@ -143,6 +146,7 @@ std::unique_ptr<HloComputation> HloComputation::Builder::Build(
   // If root_instruction is not specified use the last added instruction.
   HloInstruction* root =
       root_instruction ? root_instruction : last_added_instruction();
+  VLOG(0) << "root " << root->ToString();
   CHECK_NE(nullptr, root);
   return absl::WrapUnique(
       new HloComputation(name_, parameter_count, &instructions_, root));

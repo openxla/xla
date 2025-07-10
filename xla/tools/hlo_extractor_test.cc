@@ -221,6 +221,80 @@ TEST_F(HloExtractorTest, ExtractFromMultipleComputation) {
   }
 }
 
+TEST_F(HloExtractorTest, ExtractFromMultipleComputationWithParameter) {
+  const std::string& hlo_string = R"(
+  HloModule axpy_module
+    calculate_alpha {
+      c.1 = f32[] parameter(0)
+      c.2 = f32[] constant(2)
+      add.0 = f32[] add(c.1, c.2)
+      c.3 = f32[] constant(4)
+      ROOT ret = f32[] subtract(add.0, c.3)
+    }
+    
+    ENTRY axpy_computation {
+      a = f32[] parameter(0)
+      c.4 = f32[] constant(2)
+      add.1 = f32[] add(a, c.4)
+      alpha = f32[] call(add.1), to_apply=calculate_alpha
+      broadcast = f32[10] broadcast(alpha), dimensions={}
+      x = f32[10] parameter(0)
+      ax = f32[10] multiply(broadcast, x)
+      y = f32[10] parameter(1)
+      ROOT add.1 = f32[10] add(ax, y)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  HloInstruction* inst = FindInstruction(hlo_module.get(), "add.0");
+  EXPECT_THAT(inst, op::Add());
+
+  auto extract_selector = [&inst](const HloInstruction* hlo_inst) {
+    return !(hlo_inst->opcode() == HloOpcode::kParameter &&
+             hlo_instr->parent() == hlo_module->entry_computation());
+  };
+
+  {
+    auto replace_type_selector = [](const HloInstruction* hlo_inst) {
+      return ReplaceType::kReplaceConst;
+    };
+
+    auto extracted_module =
+        ExtractModule(hlo_module->entry_computation()->root_instruction(),
+                      /*height=*/-1, /*extract_selector=*/extract_selector,
+                      /*replace_type_selector=*/replace_type_selector,
+                      /*cross_computation=*/true);
+    EXPECT_EQ(extracted_module->computation_count(), 2);
+    auto calculate_alpha_root_instruction =
+        FindComputation(extracted_module.get(), "calculate_alpha")
+            ->root_instruction();
+    EXPECT_THAT(calculate_alpha_root_instruction,
+                op::Subtract(op::Constant(), op::Constant()));
+  }
+
+  // Exclude `add.0 = f32[] add(c.1, c.2)` from computation `calculate_alpha`,
+  // and replace it with a broadcasted zero.
+  {
+    auto replace_type_selector = [](const HloInstruction* hlo_inst) {
+      return ReplaceType::kReplaceZeroBroadcast;
+    };
+
+    auto extracted_module =
+        ExtractModule(hlo_module->entry_computation()->root_instruction(),
+                      /*height=*/-1, /*extract_selector=*/extract_selector,
+                      /*replace_type_selector=*/replace_type_selector,
+                      /*cross_computation=*/true);
+    EXPECT_EQ(extracted_module->computation_count(), 2);
+    auto calculate_alpha_root_instruction =
+        FindComputation(extracted_module.get(), "calculate_alpha")
+            ->root_instruction();
+    EXPECT_THAT(calculate_alpha_root_instruction,
+                op::Subtract(op::Broadcast(op::Constant()), op::Constant()));
+  }
+}
+
 TEST_F(HloExtractorTest, HloSelector) {
   const std::string& hlo_string = R"(
   HloModule axpy_module

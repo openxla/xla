@@ -123,6 +123,7 @@ static bool AsyncStartOrDoneCommandIsSupported(
       bool is_static_ds_fusion =
           GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
           kDynamicSliceFusionWithStaticAddressComputationConfigName;
+      VLOG(3) << "IsDynamicSliceFusion: " << is_static_ds_fusion;
       return is_static_ds_fusion && config.enabled_commands.contains(
                                         DebugOptions::DYNAMIC_SLICE_FUSION);
     }
@@ -269,6 +270,7 @@ static bool IsCommand(const HloInstruction* hlo,
       return false;
     }
     if (IsDynamicSliceFusion(fusion)) {
+      VLOG(3) << "IsDynamicSliceFusion: " << fusion->ToString();
       auto fusion_analysis =
           HloFusionAnalysis::Create(*hlo, config.device_description);
       const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
@@ -283,11 +285,17 @@ static bool IsCommand(const HloInstruction* hlo,
           backend_config.custom_fusion_config().name();
       if (config_name ==
           kDynamicSliceFusionWithStaticAddressComputationConfigName) {
+        VLOG(3) << "config_name ";
         return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
       } else {
         // DynamicSliceFusionRewriter currently only rewrites for dynamic slice
         // fusion with constant or loop iteration offset values, which are all
         // supported by command buffer.
+        VLOG(3) << "config_name_1 ";
+        VLOG(3) << "hero command: " << hero->ToString();
+        VLOG(3) << "hero command is command buffer: "
+                << IsCommand(hero, config);
+        VLOG(3) << "async hero command: " << IsAsyncStartCommand(hero, config);
         return (config.enabled_commands.contains(
                     DebugOptions::DYNAMIC_SLICE_FUSION) &&
                 (IsCommand(hero, config) || IsAsyncStartCommand(hero, config)));
@@ -334,6 +342,12 @@ static bool IsCommand(const HloInstruction* hlo,
 
   if (HloPredicateIsOp<HloOpcode::kConditional>(hlo))
     return IsCommand<HloOpcode::kConditional>(hlo, config);
+
+  if (hlo->opcode() == HloOpcode::kReduceScatter ||
+      hlo->opcode() == HloOpcode::kAllToAll ||
+      hlo->opcode() == HloOpcode::kAllReduce) {
+    return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
+  }
 
   return false;
 }
@@ -460,43 +474,6 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 
   auto& instructions = schedule.instructions();
 
-  // we currently require that when lowering DynamicSliceFusion, the offset
-  // value should not come from the output of operators that are already
-  // captured in command buffer.
-  auto check_dynamic_slice_operand_not_from_seq =
-      [&](const HloInstructionSequence& seq, const HloInstruction* inst) {
-        if (!config.enabled_commands.contains(
-                DebugOptions::DYNAMIC_SLICE_FUSION))
-          return true;
-        const auto* fusion = DynCast<HloFusionInstruction>(inst);
-        if (!fusion) return true;
-
-        auto gpu_config = fusion->backend_config<GpuBackendConfig>();
-        const FusionBackendConfig& backend_config =
-            gpu_config->fusion_backend_config();
-        const auto& custom_config = backend_config.custom_fusion_config();
-        if (custom_config.name() !=
-            kDynamicSliceFusionWithDynamicAddressComputationConfigName)
-          return true;
-
-        auto* fused_computation = fusion->called_computation();
-        return !absl::c_any_of(
-            fused_computation->instructions(), [&](const HloInstruction* inst) {
-              const auto* dynamic_inst =
-                  DynCast<HloDynamicIndexInstruction>(inst);
-              if (!dynamic_inst) return false;
-              for (auto* operand : dynamic_inst->index_operands()) {
-                const auto* param = DynCast<HloParameterInstruction>(operand);
-                const auto* fusion_operand =
-                    fusion->operand(param->parameter_number());
-                if (seq.contains(fusion_operand)) {
-                  return true;
-                }
-              }
-              return false;
-            });
-      };
-
   // Collect the sequence of instructions that contains the async start and its
   // corresponding done instruction. If there is another start instruction
   // between the original start and done, we may potentially extend the sequence
@@ -533,11 +510,7 @@ CommandBufferScheduling::CollectCommandBufferSequences(
   // we do not capture unmatched async done instruction.
   auto check_async_region = [&](const HloInstructionSequence& seq) {
     if (!absl::c_all_of(seq.instructions(), [&](HloInstruction* inst) {
-          return IsNoOp(inst) ||
-                 (IsCommand(inst, config) &&
-                  check_dynamic_slice_operand_not_from_seq(seq, inst) &&
-                  check_dynamic_slice_operand_not_from_seq(current_seq,
-                                                           inst)) ||
+          return IsNoOp(inst) || IsCommand(inst, config) ||
                  IsAsyncStartCommand(inst, config) ||
                  IsAsyncDoneCommand(inst, config);
         })) {
@@ -571,8 +544,7 @@ CommandBufferScheduling::CollectCommandBufferSequences(
     }
 
     // Synchronous commands always can be added to instruction sequence.
-    if (IsCommand(inst, config) &&
-        check_dynamic_slice_operand_not_from_seq(current_seq, inst)) {
+    if (IsCommand(inst, config)) {
       num_commands_in_current_seq++;
       current_seq.push_back(inst);
       continue;

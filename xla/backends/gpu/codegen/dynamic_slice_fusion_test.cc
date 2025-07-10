@@ -83,6 +83,22 @@ class DynamicSliceFusionTest : public HloTestBase {
     return config;
   }
 
+  HloModuleConfig GetModuleConfigWithCommandBuffer() {
+    DebugOptions debug_options = GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_graph_min_graph_size(1);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+    debug_options.add_xla_gpu_enable_command_buffer(
+        DebugOptions::DYNAMIC_SLICE_FUSION);
+    HloModuleConfig config;
+    config.set_debug_options(debug_options);
+    return config;
+  }
+
   HloModuleConfig GetModuleConfigWithDeterministicOps() {
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
@@ -3388,6 +3404,118 @@ TEST_F(DynamicSliceFusionTest,
       std::move(fused_module), std::move(unfused_module),
       /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
 }
+
+TEST_F(DynamicSliceFusionTest,
+       OffsetAsFunctionOfInductionVariableShouldUseOffsetModules_CmdBuffer) {
+  const char* hlo_fused = R"(
+    HloModule test, replica_count=2
+    add {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT add = s32[] add(a, b)
+    }
+    dynamic-slice-fusion {
+      p1 = s32[32,32] parameter(1)
+      p0 = s32[32,32] parameter(0)
+      rs = s32[16,32] reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      p2 = s32[] parameter(2)
+      p3 = s32[] parameter(3)
+      ROOT dus = s32[32,32] dynamic-update-slice(p1, rs, p2, p3)
+    }
+    body {
+      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter = s32[] get-tuple-element(param), index=0
+      c1 = s32[] constant(1)
+      add = s32[] add(iter, c1)
+      src = s32[32,32] get-tuple-element(param), index=1
+      dest = s32[32,32] get-tuple-element(param), index=2
+
+      // Offset calculation as a function of the induction variable.
+      add.1 = s32[] add(iter, iter)
+      c3 = s32[] constant(3)
+      multiply = s32[] multiply(add.1, c3)
+      c16 = s32[] constant(16)
+      offset = s32[] subtract(multiply, c16)
+
+      c0 = s32[] constant(0)
+      address_computation = s32[32,32] fusion(src, dest, offset, c0), kind=kCustom, calls=dynamic-slice-fusion, backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
+      ROOT tuple = (s32[], s32[32,32], s32[32,32]) tuple(add, src, address_computation)
+    }
+    condition {
+      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter = s32[] get-tuple-element(param), index=0
+      c16 = s32[] constant(16)
+      ROOT compare = pred[] compare(iter, c16), direction=LT
+    }
+    ENTRY main {
+      c0 = s32[] constant(0)
+      src = s32[32,32] parameter(0)
+      dest = s32[32,32] parameter(1)
+      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
+      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), condition=condition, body=body
+    })";
+
+  const char* hlo_unfused = R"(
+    HloModule test, replica_count=2
+
+    add {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT add = s32[] add(a, b)
+    }
+
+    body {
+      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter = s32[] get-tuple-element(param), index=0
+      src = s32[32,32] get-tuple-element(param), index=1
+      dest = s32[32,32] get-tuple-element(param), index=2
+
+      // Offset calculation as a function of the induction variable.
+      add = s32[] add(iter, iter)
+      c3 = s32[] constant(3)
+      multiply = s32[] multiply(add, c3)
+      c16 = s32[] constant(16)
+      offset = s32[] subtract(multiply, c16)
+
+      c0 = s32[] constant(0)
+      rs_start = ((s32[32,32]), s32[16,32]) reduce-scatter-start(src), dimensions={0}, replica_groups={{0,1}}, to_apply=add
+      rs = s32[16,32] reduce-scatter-done(rs_start)
+      dus = s32[32,32] dynamic-update-slice(dest, rs, offset, c0)
+      c1 = s32[] constant(1)
+      add.1 = s32[] add(iter, c1)
+      ROOT tuple = tuple(add.1, src, dus)
+    }
+
+    condition {
+      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter = s32[] get-tuple-element(param), index=0
+      c16 = s32[] constant(16)
+      ROOT compare = pred[] compare(iter, c16), direction=LT
+    }
+
+    ENTRY main {
+      src = s32[32,32] parameter(0)
+      dest = s32[32,32] parameter(1)
+      c0 = s32[] constant(0)
+      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
+      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), body=body, condition=condition
+    }
+  )";
+ 
+  // run with command buffer
+  HloModuleConfig config = GetModuleConfigWithCommandBuffer();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> cmd_buffer_module,
+                          ParseAndReturnVerifiedModule(hlo_fused, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> unfused_module,
+                          ParseAndReturnVerifiedModule(hlo_unfused));
+
+  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
+      std::move(cmd_buffer_module), std::move(unfused_module),
+      /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
+}
+
+
 
 TEST_F(DynamicSliceFusionTest, MultipleOffsetsAsFunctionOfInductionVariable) {
   const char* hlo_fused = R"(

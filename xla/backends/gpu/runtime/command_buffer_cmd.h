@@ -70,23 +70,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-namespace {
-// Indvar is a thread-local map that stores the induction variable for each
-// dynamic slice thunk. The same thunk object in the memory is shared by
-// multiple replicas of the same computation. So, each replica should have its
-// own tracking of the induction variable (threadlocal). With threadlocal, we
-// cannot embed this inside the dynamic slice thunk object, and so we have a
-// static map. There could be multiple dynamic slice thunks in the same module,
-// and so we need a map to store the induction variable for each thunk. The
-// usage of threadlocal in this context is similar to `LoopCounters` in
-// while_thunk.cc (b/343294327).
-Literal& Indvar(DynamicSliceFusionCmd* cmd) {
-  static thread_local absl::flat_hash_map<DynamicSliceFusionCmd*, Literal>
-      indvar_map;
-  return indvar_map[cmd];
-}
-}  // namespace
-
 // clang-format off
 #define COMMAND_BUFFER_CMD_LIST(V)                               \
   V(kEmptyCmd, "EmptyCmd")                                       \
@@ -1147,6 +1130,9 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
+      std::optional<
+          const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
+          offset_as_function_of_indvar_metadata = std::nullopt,
       ResourceUseVector resources = {});
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
@@ -1188,6 +1174,13 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
   // command sequences.
   absl::flat_hash_map<int64_t, std::optional<BufferAllocation::Slice>>
       embeded_to_origin_slice_map_;
+
+  // This structure holds the metadata for offset computations on host. It
+  // stores a single induction variable initialization module, its update module
+  // and the offsets that are a function of the induction variable.
+  std::optional<
+      const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
+      offset_as_function_of_indvar_metadata_;
 };
 
 //===----------------------------------------------------------------------===//

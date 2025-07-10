@@ -163,6 +163,15 @@ class DynamicSliceThunk : public Thunk {
 
   void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
 
+  std::optional<const OffsetAsFunctionOfIndvarModulesMetadata*> get_offset_function()
+      const {
+    if (offset_as_function_of_indvar_metadata_.has_value()) {
+      return &offset_as_function_of_indvar_metadata_.value();
+    } else {
+      return std::nullopt;
+    }
+  }
+
  private:
   std::unique_ptr<SequentialThunk> embedded_thunk_;
   std::vector<std::optional<BufferAllocation::Slice>> arguments_;

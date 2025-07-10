@@ -45,6 +45,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/literal_util.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
@@ -93,6 +95,23 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
+
+namespace {
+// Indvar is a thread-local map that stores the induction variable for each
+// dynamic slice thunk. The same thunk object in the memory is shared by
+// multiple replicas of the same computation. So, each replica should have its
+// own tracking of the induction variable (threadlocal). With threadlocal, we
+// cannot embed this inside the dynamic slice thunk object, and so we have a
+// static map. There could be multiple dynamic slice thunks in the same module,
+// and so we need a map to store the induction variable for each thunk. The
+// usage of threadlocal in this context is similar to `LoopCounters` in
+// while_thunk.cc (b/343294327).
+Literal& Indvar(DynamicSliceFusionCmd* cmd) {
+  static thread_local absl::flat_hash_map<DynamicSliceFusionCmd*, Literal>
+      indvar_map;
+  return indvar_map[cmd];
+}
+}  // namespace
 
 using MemoryAccess = BufferUse::MemoryAccess;
 
@@ -2023,11 +2042,16 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
     std::vector<std::optional<uint64_t>> offset_byte_sizes,
+    std::optional<
+        const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
+        offset_as_function_of_indvar_metadata,
     ResourceUseVector resources)
     : CommandBufferCmd(CommandBufferCmdType::kDynamicSliceFusionCmd,
                        execution_stream_id, std::move(resources)),
       embedded_commands_(std::move(embedded_commands)),
-      fake_allocations_(std::move(fake_allocations)) {
+      fake_allocations_(std::move(fake_allocations)),
+      offset_as_function_of_indvar_metadata_(
+          std::move(offset_as_function_of_indvar_metadata)) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offset, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
@@ -2109,6 +2133,15 @@ absl::Status DynamicSliceFusionCmd::Prepare(
     }
   }
   TF_RETURN_IF_ERROR(embedded_commands_.Prepare(params, resource_requests));
+  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
+    Indvar(this) =
+        HloEvaluator()
+            .Evaluate(
+                *offset_as_function_of_indvar_metadata_.value()->indvar_init,
+                {&Indvar(this)})
+            .value();
+    VLOG(2) << "Indvar = " << Indvar(this).ToString();
+  }
   return absl::OkStatus();
 }
 
@@ -2173,6 +2206,19 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
                 << "]: constant offset = " << *const_offset;
         offset_value(argument_idx, offset_idx) = *const_offset;
 
+      } else if (HloModule** offset_module = std::get_if<HloModule*>(&offset)) {
+        TF_ASSIGN_OR_RETURN(
+            Literal offset,
+            HloEvaluator().Evaluate(**offset_module, {&Indvar(this)}));
+        auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
+        if (offset_int.has_value()) {
+          offset_value(argument_idx, offset_idx) = *offset_int;
+        } else {
+          return absl::InternalError(
+              absl::StrFormat("Unhandled type returned from offset module: %s",
+                              offset.shape().ToString()));
+        }
+        VLOG(2) << "Offset value = " << offset_value(argument_idx, offset_idx);
       } else {
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
@@ -2252,6 +2298,15 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
           .value();
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, record_params,
                                                nested_command_buffer.get()));
+  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
+    Indvar(this) =
+        HloEvaluator()
+            .Evaluate(
+                *offset_as_function_of_indvar_metadata_.value()->indvar_update,
+                {&Indvar(this)})
+            .value();
+    VLOG(2) << "Indvar = " << Indvar(this).ToString();
+  }
 
   return Handle(
       std::move(record_action),

@@ -3884,6 +3884,7 @@ void HloInstruction::PrintWithCanonicalNameMap(
       printer->Append(" = ");
     }
   } else {
+    // If we are canonicalizing instruction names and this is a top-level
     PrintNameInternal(printer, name(), options);
     printer->Append(" = ");
   }
@@ -3919,10 +3920,10 @@ void HloInstruction::PrintWithCanonicalNameMap(
   } else {
     printer->Append(HloOpcodeString(opcode()));
   }
+
   printer->Append("(");
   PrintOperandsWithCanonicalNameMap(printer, options, canonical_name_map);
   printer->Append(")");
-
   // Print additional attributes. If an instruction contains a subcomputation,
   // the subcomputation is also printed here.
   AttributePrinter attr_printer([printer]() {
@@ -3930,7 +3931,6 @@ void HloInstruction::PrintWithCanonicalNameMap(
     return printer;
   });
   PrintExtraAttributes(attr_printer, options);
-
   if (options.print_original_value() && original_value_) {
     printer->Append(", origin={");
     printer->Append(original_value()->ToString());
@@ -4725,6 +4725,7 @@ template <typename Visitor>
 inline bool PushDFSChild(Visitor* visitor, DFSStack* dfs_stack,
                          HloInstruction* child) {
   CHECK(child != nullptr);
+  VLOG(0) << "Pushing DFS child " << child->ToString();
   const int64_t id = child->unique_id_64_bits();
   CHECK_GE(id, 0) << "instruction may not have a parent computation";
   switch (visitor->GetVisitState(id)) {
@@ -4748,7 +4749,8 @@ template <typename Visitor>
 static absl::Status PostOrderDFS(
     HloInstruction* root, Visitor* visitor,
     std::optional<InternalCompareFunction> operand_order,
-    bool ignore_control_predecessors, bool cross_computation) {
+    bool ignore_control_predecessors, bool cross_computation,
+    bool cross_computation_ignore_caller = false) {
   visitor->ReserveVisitStates(root->parent()->instruction_count());
 
   // dfs_stack holds pairs of <HloInstruction*->unique_id(), HloInstruction*>.
@@ -4760,6 +4762,7 @@ static absl::Status PostOrderDFS(
   DFSStack dfs_stack;
   dfs_stack.emplace_back(root->unique_id_64_bits(), root);
 
+  VLOG(0) << "2";
   do {
     DCHECK(!dfs_stack.empty());
 
@@ -4794,7 +4797,21 @@ static absl::Status PostOrderDFS(
     visitor->SetVisitState(current_id, Visitor::kVisiting);
 
     const size_t old_dfs_stack_size = dfs_stack.size();
-    for (HloInstruction* child : current_node->operands()) {
+
+    if ((dynamic_cast<HloCallableInstruction*>(current_node) == nullptr) ||
+          !cross_computation || !cross_computation_ignore_caller) {
+      for (HloInstruction* child : current_node->operands()) {
+        if (!ABSL_PREDICT_TRUE(PushDFSChild(visitor, &dfs_stack, child))) {
+          return FailedPrecondition(
+              "A cycle is detected while visiting instruction %s %s",
+              current_node->ToString(),
+              PrintCycle(child, &dfs_stack, ignore_control_predecessors));
+        }
+      }
+
+    }
+
+    for (HloInstruction* child : current_node->control_predecessors()) {
       if (!ABSL_PREDICT_TRUE(PushDFSChild(visitor, &dfs_stack, child))) {
         return FailedPrecondition(
             "A cycle is detected while visiting instruction %s %s",
@@ -4803,32 +4820,76 @@ static absl::Status PostOrderDFS(
       }
     }
 
-    if (!ignore_control_predecessors) {
-      for (HloInstruction* child : current_node->control_predecessors()) {
-        if (!ABSL_PREDICT_TRUE(PushDFSChild(visitor, &dfs_stack, child))) {
-          return FailedPrecondition(
-              "A cycle is detected while visiting instruction %s %s",
-              current_node->ToString(),
-              PrintCycle(child, &dfs_stack, ignore_control_predecessors));
-        }
-      }
-    }
-
     // If `cross_computation` is enabled, and the current visiting instruction
     // is a caller of other computations, we try to push the root instruction of
     // those called computations onto the stack .
     if (cross_computation) {
-      for (const HloComputation* called_computation :
-           current_node->called_computations()) {
-        HloInstruction* root_instruction =
-            called_computation->root_instruction();
-        if (!ABSL_PREDICT_TRUE(
-                PushDFSChild(visitor, &dfs_stack, root_instruction))) {
-          return FailedPrecondition(
-              "A cycle is detected while visiting instruction %s %s",
-              current_node->ToString(),
-              PrintCycle(root_instruction, &dfs_stack,
-                         ignore_control_predecessors));
+      if (cross_computation_ignore_caller) {
+        if (dynamic_cast<HloCallableInstruction*>(current_node) != nullptr) {
+          for (const HloComputation* called_computation :
+               current_node->called_computations()) {
+            HloInstruction* root_instruction =
+                called_computation->root_instruction();
+            if (!ABSL_PREDICT_TRUE(
+                    PushDFSChild(visitor, &dfs_stack, root_instruction))) {
+              return FailedPrecondition(
+                  "A cycle is detected while visiting instruction %s %s",
+                  current_node->ToString(),
+                  PrintCycle(root_instruction, &dfs_stack,
+                             ignore_control_predecessors));
+            }
+          }
+        }
+
+        if (current_node->opcode() == HloOpcode::kParameter &&
+            current_node->parent() != root->parent()) {
+          VLOG(0) << "Processing parameter instruction: "
+                  << current_node->ToString();
+          VLOG(0) << "---------------";
+          VLOG(0) << "Parent computation: "
+                  << current_node->parent()->ToString();
+          VLOG(0) << "---------------";
+          VLOG(0) << "Module: " << current_node->parent()->parent()->ToString();
+          VLOG(0) << "---------------";
+          auto i = current_node->parameter_number();
+          auto caller_instructions =
+              current_node->parent()->caller_instructions();
+          CHECK_EQ(caller_instructions.size(), 1)
+              << "Cross computation traversal does not support called "
+                 "computation with multiple callers";
+          VLOG(0) << "processing parameter instruction: "
+                  << current_node->ToString();
+          VLOG(0) << "caller_instruction:"
+                  << caller_instructions[0]->ToString();
+          VLOG(0) << "Operand index:" << i;
+          VLOG(0) << "Operand:"
+                  << caller_instructions[0]->mutable_operand(i)->ToString();
+
+          if (!ABSL_PREDICT_TRUE(
+                  PushDFSChild(visitor, &dfs_stack,
+                               caller_instructions[0]->mutable_operand(i)))) {
+            return FailedPrecondition(
+                "A cycle is detected while visiting instruction %s %s",
+                current_node->ToString(),
+                PrintCycle(caller_instructions[0]->operand(i), &dfs_stack,
+                           ignore_control_predecessors));
+          }
+          VLOG(0) << "caller_instruction_done:"
+                  << caller_instructions[0]->ToString();
+        }
+      } else {
+        for (const HloComputation* called_computation :
+             current_node->called_computations()) {
+          HloInstruction* root_instruction =
+              called_computation->root_instruction();
+          if (!ABSL_PREDICT_TRUE(
+                  PushDFSChild(visitor, &dfs_stack, root_instruction))) {
+            return FailedPrecondition(
+                "A cycle is detected while visiting instruction %s %s",
+                current_node->ToString(),
+                PrintCycle(root_instruction, &dfs_stack,
+                           ignore_control_predecessors));
+          }
         }
       }
     }
@@ -4884,6 +4945,22 @@ absl::Status HloInstruction::AcceptWithOperandOrder(
     VLOG(3) << "HloInstruction::AcceptWithOperandOrder AFTER FINISH VISIT";
   }
   VLOG(2) << "HloInstruction::AcceptWithOperandOrder EXIT";
+  return absl::OkStatus();
+}
+
+absl::Status HloInstruction::AcceptCrossComputationAndIgnoreCaller(
+    ConstDfsHloVisitor* visitor, bool call_finish_visit) {
+  VLOG(0) << "1";
+  TF_RETURN_IF_ERROR(PostOrderDFS(this, visitor, std::nullopt,
+                                  /*ignore_control_predecessors=*/false,
+                                  /*cross_computation=*/true,
+                                  /*cross_computation_ignore_caller=*/true));
+  if (call_finish_visit) {
+    VLOG(3) << "HloInstruction::AcceptIgnoreCaller BEFORE FINISH VISIT";
+    TF_RETURN_IF_ERROR(visitor->FinishVisit(this));
+    VLOG(3) << "HloInstruction::AcceptIgnoreCaller AFTER FINISH VISIT";
+  }
+  VLOG(2) << "HloInstruction::AcceptIgnoreCaller EXIT";
   return absl::OkStatus();
 }
 
