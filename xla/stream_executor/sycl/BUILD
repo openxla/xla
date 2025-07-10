@@ -171,19 +171,19 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
         "@local_config_sycl//sycl:sycl_headers",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
 xla_test(
     name = "sycl_kernel_test",
     srcs = ["sycl_kernel_test.cc"],
+    backends = ["gpu"],
     tags = [
         "gpu",
         "oneapi-only",
     ],
-    backends = ["gpu"],
     deps = [
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:launch_dim",
@@ -193,7 +193,7 @@ xla_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@local_config_sycl//sycl:sycl_headers",
         "@com_google_googletest//:gtest_main",
+        "@local_config_sycl//sycl:sycl_headers",
     ],
 )
