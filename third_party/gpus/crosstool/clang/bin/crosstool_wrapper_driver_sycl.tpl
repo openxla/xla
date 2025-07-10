@@ -155,18 +155,39 @@ def call_compiler(argv, link = False, sycl_compile = True):
       ar_cmd = ('env ' + AR_PATH + ar_flags)
       return system(ar_cmd)
   elif link:
-    new_flags = []
+    # Expand @params file if present
+    expanded_flags = []
     for s in flags:
-      if s.endswith(".o"):
-        new_flags.append("-Wl,--whole-archive")
-      new_flags.append(shlex.quote(s))
-      if s.endswith(".o"):
-        new_flags.append("-Wl,--no-whole-archive")
-    # sycl link
-    out_files.append('-o')
-    out_files.extend(args.o[0])
-    new_flags += (common_flags + in_files + out_files + link_flags)
-    cmd = ('env ' + CPU_COMPILER + ' ' + ' '.join(new_flags))
+        if s.startswith("@") and os.path.isfile(s[1:]):
+            with open(s[1:], "r") as f:
+                expanded_flags += shlex.split(f.read())
+        else:
+            expanded_flags.append(s)
+
+    # Deduplicate flags
+    seen = set()
+    deduped_flags = []
+    for s in expanded_flags:
+        if s not in seen:
+            seen.add(s)
+            if s.endswith(".o"):
+                deduped_flags.append("-Wl,--whole-archive")
+            deduped_flags.append(shlex.quote(s))
+            if s.endswith(".o"):
+                deduped_flags.append("-Wl,--no-whole-archive")
+
+    # Output file
+    if args.o:
+        out_files.append('-o')
+        out_files.extend(args.o[0])
+    deduped_flags += common_flags + in_files + out_files + link_flags
+
+    # Write to response file to avoid command line length issues
+    # This saves all flags into a temporary .params file like /tmp/tmpabc123.params to avoid blowing up command line limits.
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".params") as f:
+        f.write('\n'.join(deduped_flags))
+        response_file = f.name
+    cmd = f'env {CPU_COMPILER} @{response_file}' # env icpx @/tmp/tmpabc123.params
     return system(cmd)
   else:
     # host compilation
