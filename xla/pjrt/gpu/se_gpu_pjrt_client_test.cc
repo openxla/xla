@@ -1235,14 +1235,13 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
               auto fabric_info =
                   GetDeviceFabricInfo(executor->device_ordinal());
               if (!fabric_info.ok()) {
-                auto error_message = fabric_info.status().message();
                 // Only allow failures due to insufficient CUDA driver version.
-                EXPECT_TRUE(
-                    (error_message.find("Failed to initialize NVML library.") !=
-                     std::string::npos) ||
-                    (error_message.find(
-                         "NVML library doesn't have required functions.") !=
-                     std::string::npos));
+                EXPECT_THAT(
+                    fabric_info.status().message(),
+                    AnyOf(
+                        HasSubstr("Failed to initialize NVML library."),
+                        HasSubstr(
+                            "NVML library doesn't have required functions.")));
               }
             }
           }
