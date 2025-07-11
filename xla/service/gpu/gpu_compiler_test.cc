@@ -470,7 +470,7 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
       }
 
       ENTRY entry {
-        c0 = s32[] constant(0)
+        c0 = s32[] constant(1)
         p0 = bf16[3,8,128] parameter(0)
         tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
         while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple),
@@ -827,7 +827,6 @@ ENTRY main {
     EXPECT_TRUE(filecheck_matched);
   }
 }
-
 
 class KernelCacheTest : public HloTestBase {
  public:
@@ -1950,6 +1949,7 @@ ENTRY main {
   debug_options.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
 
   hlo_module->mutable_config().set_debug_options(debug_options);
 

@@ -1388,7 +1388,10 @@ absl::Span<PjRtMemorySpace* const> TfrtGpuClient::memory_spaces() const {
 std::optional<PjRtPluginAttributes> TfrtGpuClient::plugin_attributes() const {
   PjRtPluginAttributes attributes =
       PjRtClient::plugin_attributes().value_or(PjRtPluginAttributes());
-  attributes.attributes["serialize_with_sdy"] = true;
+  attributes.pjrt_c_api_major_version = 0;
+  attributes.pjrt_c_api_minor_version = 0;
+  attributes.attributes["serialize_with_sdy"] = PjRtValueType(true);
+  attributes.attributes["supports_cross_host_transfers"] = PjRtValueType(true);
   return attributes;
 }
 
@@ -2584,32 +2587,41 @@ absl::StatusOr<Shape> TfrtGpuBuffer::logical_on_device_shape() {
     return InvalidArgument(
         "logical_on_device_shape() called on deleted or donated buffer");
   }
-  MarkGpuEventReadyOnExit ready_on_exit(std::move(usage_event));
+  MarkGpuEventReadyOnExit ready_on_exit(usage_event);
 
-  // Wait for the definition event.
-  const auto& av = device_buffer->definition_event();
-  tsl::BlockUntilReady(av);
-  if (auto* error = av.GetErrorIfPresent()) {
-    return absl::InternalError(
-        absl::StrFormat("Error Execute: %s", error->message()));
-  }
+  auto get_shape = [this, device_buffer]() -> absl::StatusOr<Shape> {
+    if (auto* error = device_buffer->definition_event().GetErrorIfPresent()) {
+      return *error;
+    }
 
-  const auto& buffer = device_buffer->buffer();
+    const auto& buffer = device_buffer->buffer();
 
-  ShapedBuffer shaped_buffer =
-      buffer->AsShapedBuffer(on_device_shape_, device_);
-  Shape ret_shape = on_device_shape_;
-  TransferManager* transfer_manager =
-      client_->xla_client()->backend().transfer_manager();
+    ShapedBuffer shaped_buffer =
+        buffer->AsShapedBuffer(on_device_shape_, device_);
+    Shape ret_shape = on_device_shape_;
+    TransferManager* transfer_manager =
+        client_->xla_client()->backend().transfer_manager();
 
-  auto stream = device_->stream();
-  TF_RETURN_IF_ERROR(
-      transfer_manager->ReadDynamicShapes(stream, &shaped_buffer, &ret_shape));
-  {
-    tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-    TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
-  }
-  return ret_shape;
+    auto stream = device_->stream();
+    TF_RETURN_IF_ERROR(transfer_manager->ReadDynamicShapes(
+        stream, &shaped_buffer, &ret_shape));
+    {
+      tsl::profiler::TraceMe traceme("BlockHostUntilDone");
+      TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+    }
+    return ret_shape;
+  };
+
+  absl::StatusOr<Shape> shape_or;
+  EnqueueWorkWhenReady(client_->blocking_thread_pool(),
+                       {device_buffer->definition_event().CopyRCRef()},
+                       [get_shape = std::move(get_shape), &shape_or,
+                        usage_event_holder = std::move(ready_on_exit)]() {
+                         shape_or = get_shape();
+                       });
+
+  tsl::BlockUntilReady(usage_event);
+  return shape_or;
 }
 
 PjRtFuture<> TfrtGpuBuffer::GetReadyFuture() {
@@ -3216,8 +3228,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
           return;
         }
 
-        // TODO: Use the destination device stream for D2D copies.
-        auto stream = src_device->stream();
+        auto stream = dst_device->stream();
+
         se::DeviceMemoryBase dst(allocated_dst_buffer->buffer());
         VLOG(3) << "D2D copy: " << src_buffer->buffer().opaque() << " -> "
                 << dst.opaque() << " (" << src_buffer->buffer().size()
@@ -3243,7 +3255,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
       };
 
   EnqueueWorkWhenReady(client_->blocking_thread_pool(),
-                       {src_device_buffer->definition_event().CopyRCRef()},
+                       {src_device_buffer->ready_event().CopyRCRef()},
                        std::move(transfer_d2d));
   return output_buffer;
 }

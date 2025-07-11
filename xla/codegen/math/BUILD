@@ -22,6 +22,44 @@ package_group(
 )
 
 cc_library(
+    name = "intrinsic",
+    hdrs = ["intrinsic.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Core",
+    ],
+)
+
+cc_library(
+    name = "fptrunc",
+    srcs = ["fptrunc.cc"],
+    hdrs = ["fptrunc.h"],
+    deps = [
+        ":intrinsic",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Core",  # buildcleaner: keep
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "fptrunc_test",
+    srcs = ["fptrunc_test.cc"],
+    deps = [
+        ":fptrunc",
+        ":intrinsic",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "ldexp",
     srcs = ["ldexp.cc"],
     hdrs = ["ldexp.h"],
@@ -163,7 +201,9 @@ cc_library(
     srcs = ["exp.cc"],
     hdrs = ["exp.h"],
     deps = [
+        ":intrinsic",
         ":ldexp",
+        "//xla:shape_util",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Analysis",
@@ -184,6 +224,7 @@ xla_cc_test(
     srcs = ["exp_test.cc"],
     deps = [
         ":exp",
+        ":intrinsic",
         ":ldexp",
         ":simple_jit_runner",
         ":test_matchers",

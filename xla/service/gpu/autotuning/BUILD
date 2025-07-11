@@ -166,6 +166,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:ptx_compiler_helpers",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
@@ -297,6 +298,29 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
+    name = "autotuner_pass_test",
+    srcs = ["autotuner_pass_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":autotuner_pass",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/backends/gpu/autotuner:cublas",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:platform_util",
+        "//xla/service/gpu:nvptx_compiler_impl",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -727,5 +751,33 @@ xla_cc_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+cc_library(
+    name = "autotuner_pass",
+    srcs = [
+        "autotuner_pass.cc",
+    ],
+    hdrs = ["autotuner_pass.h"],
+    tags = ["gpu"],
+    deps = [
+        "//xla/backends/autotuner",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/backends/autotuner:profiler",
+        "//xla/backends/gpu/autotuner:gpu_profiler",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )

@@ -110,6 +110,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_prefer_vector_width(256);
   opts.set_xla_cpu_max_isa(DefaultMaxIsa());
   opts.set_xla_cpu_generate_unique_c_style_kernel_entry_points(false);
+  opts.set_xla_cpu_emitter_verification_level(0);
 
   opts.set_xla_cpu_enable_fast_math(false);
   // Disable forms of fast math that have caused users problems in the past.
@@ -322,6 +323,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(false);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
+  opts.set_xla_gpu_experimental_use_autotuner_pass(false);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
@@ -1025,6 +1027,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "use newer instructions. Available values: SSE4_2, AVX, AVX2, AVX512, "
       "AVX512_VNNI, AVX512_BF16, AMX, and AMX_FP16. (`AMX` will enable both "
       "`AMX_BF16` and `AMX_INT8` instructions.)"));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_emitter_verification_level",
+      int32_setter_for(&DebugOptions::set_xla_cpu_emitter_verification_level),
+      debug_options->xla_cpu_emitter_verification_level(),
+      "Sets how often we verify the emitted modules. Higher levels mean more "
+      "frequent verification. Currently supported: 0, 1."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_crash_on_verification_failures",
       bool_setter_for(
@@ -2371,6 +2379,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_command_buffer_on_thunks(),
       "Enables an experimental feature for command buffer conversion on "
       "thunks."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_use_autotuner_pass",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_use_autotuner_pass),
+      debug_options->xla_gpu_experimental_use_autotuner_pass(),
+      "If true, use the AutotunerPass to autotune fusions, instead of the "
+      "gemm_fusion_autotuner."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
