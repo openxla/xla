@@ -58,6 +58,7 @@ class Intrinsic {
   // that get forwarded to the concrete implementation.
   //
   // go/keep-sorted start
+  class Erf;
   class Exp;
   class FpTrunc;
   class Log1p;
