@@ -1756,7 +1756,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
         return RunAllReduce(reduction_kind_, device_buffers, *stream,
-                            comm_handle.comm);
+                            comm_handle.comm, config().use_symmetric_buffer);
       });
 }
 
@@ -1820,9 +1820,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
 
   return RecordTracedCommand(execute_params, record_params, record_action,
                              command_buffer, [&](se::Stream* stream) {
-                               return RunReduceScatter(reduction_kind_,
-                                                       device_buffers, *stream,
-                                                       comm_handle.comm);
+                               return RunReduceScatter(
+                                   reduction_kind_, device_buffers, *stream,
+                                   comm_handle.comm,
+                                   config().use_symmetric_buffer);
                              });
 }
 
@@ -1885,7 +1886,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
         return RunAllToAll(has_split_dimension_, device_buffers, *stream,
-                           comm_handle.comm);
+                           comm_handle.comm, config().use_symmetric_buffer);
       });
 }
 
@@ -1947,7 +1948,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunAllGather(device_buffers, *stream, comm_handle.comm);
+        return RunAllGather(device_buffers, *stream, comm_handle.comm,
+                            config().use_symmetric_buffer);
       });
 }
 

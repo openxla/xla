@@ -457,6 +457,9 @@ message DebugOptions {
   // Enable NCCL user buffers.
   optional bool xla_gpu_enable_nccl_user_buffers = 267;
 
+  // Enable NCCL symmetric buffers.
+  bool xla_gpu_enable_nccl_symmetric_buffers = 397;
+
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
   optional bool xla_gpu_enable_pipelined_all_reduce = 217;
