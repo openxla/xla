@@ -1,4 +1,5 @@
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -201,6 +202,31 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_test(
+    name = "kernel_arguments_test",
+    srcs = ["kernel_arguments_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
+    deps = [
+        ":kernel_arguments",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_ordering",
+        "//xla/service:buffer_assignment",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:test_utils",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest",
     ],
 )
 
