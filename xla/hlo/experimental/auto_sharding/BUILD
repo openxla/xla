@@ -50,6 +50,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -344,6 +345,7 @@ xla_cc_binary(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         ":auto_sharding",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/tools:hlo_module_loader",
         "@com_google_absl//absl/status",
@@ -399,6 +401,7 @@ xla_cc_test(
         ":auto_sharding_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -509,13 +512,17 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/hlo/translate:stablehlo",
+        "//xla/mlir/utils:error_util",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@shardy//shardy/dialect/sdy/transforms/export:passes",
     ],
 )
 
@@ -551,6 +558,7 @@ cc_library(
         ":auto_sharding",
         ":auto_sharding_option",
         ":stablehlo_utils",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:hlo_dialect_registration",
@@ -579,6 +587,10 @@ xla_cc_test(
     name = "auto_sharding_stablehlo_pass_test",
     srcs = [
         "auto_sharding_stablehlo_pass_test.cc",
+    ],
+    tags = [
+        # Disabled until autosharding is fully supported for CPU and x86 GPU
+        "no_oss",
     ],
     deps = [
         ":auto_sharding_stablehlo_pass",

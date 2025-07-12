@@ -61,6 +61,7 @@ limitations under the License.
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "xla/codegen/math/exp.h"
 #include "xla/codegen/math/fptrunc.h"
+#include "xla/codegen/math/intrinsic.h"
 #include "xla/codegen/math/ldexp.h"
 #include "xla/codegen/math/string_interner.h"
 #include "xla/codegen/math/vec_name_mangler.h"
@@ -201,8 +202,10 @@ class FpextF32ToBf16MathFunction final : public MathFunction {
 
   std::string GenerateVectorizedFunctionName(
       VectorType vector_type) const override {
-    return math::FptruncFunctionName(vector_type.width, F32, BF16,
-                                     vector_type.width > 1);
+    if (vector_type.width == 1) {
+      return Intrinsic::Name<Intrinsic::FpTrunc>(F32, BF16);
+    }
+    return Intrinsic::Name<Intrinsic::FpTrunc>(F32, BF16, vector_type.width);
   }
 
   std::string GenerateMangledSimdName(VectorType vector_type) const override {
@@ -212,14 +215,9 @@ class FpextF32ToBf16MathFunction final : public MathFunction {
 
   llvm::Function* CreateDefinition(llvm::Module& module, absl::string_view name,
                                    VectorType vector_type) const override {
-    llvm::Type* float_type =
-        llvm_ir::PrimitiveTypeToIrType(vector_type.dtype, module.getContext());
-    llvm::Type* vec_type = float_type;
-    if (vector_type.width > 1) {
-      vec_type = llvm::VectorType::get(float_type, vector_type.width, false);
-    }
-    return math::CreateFptruncF32ToBf16(&module, vec_type,
-                                        vector_type.width > 1);
+    return Intrinsic::CreateDefinition<Intrinsic::FpTrunc>(&module, F32, BF16,
+                                                           vector_type.width)
+        .value();
   }
 };
 

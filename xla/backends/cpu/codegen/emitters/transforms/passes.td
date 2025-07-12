@@ -53,7 +53,7 @@ def LowerXlaSharedPass :
   let constructor = "CreateLowerXlaSharedPass()";
 }
 
-def ExpandFloatOpsPass : Pass<"xla-cpu-expand-float-ops", "mlir::func::FuncOp"> {
+def ExpandFloatOpsPass : Pass<"xla-cpu-expand-float-ops", "mlir::ModuleOp"> {
   let summary = "Expands float ops that are not natively supported on cpu.";
 
   let description = [{
@@ -65,6 +65,8 @@ def ExpandFloatOpsPass : Pass<"xla-cpu-expand-float-ops", "mlir::func::FuncOp"> 
 
   let dependentDialects = [
     "mlir::arith::ArithDialect",
+    "mlir::math::MathDialect",
+    "mlir::func::FuncDialect",
   ];
 
   let constructor = "CreateExpandFloatOpsPass()";
@@ -105,3 +107,21 @@ def AddLoopUnrollFlagsPass : Pass<"xla-cpu-add-loop-unroll-flags", "mlir::func::
 
   let constructor = "CreateAddLoopUnrollFlagsPass()";
 }
+
+
+def PeelWorkgroupLoopPass : Pass<"xla-cpu-peel-workgroup-loop", "mlir::func::FuncOp"> {
+  let summary = "Split the loop into two, creating one with no constraints.";
+
+  let description = [{
+    Having a loop with no constraints makes vectorization much harder, by
+    creating two loops, the first having no constraints in the body helps with
+    autovectorization significantly.
+  }];
+
+  let dependentDialects = [
+    "xla::XlaDialect",
+    "mlir::scf::SCFDialect",
+  ];
+  let constructor = "CreatePeelWorkgroupLoopPass()";
+}
+

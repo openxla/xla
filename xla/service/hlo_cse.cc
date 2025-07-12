@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_cse.h"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,7 +24,13 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/hash/hash.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -30,8 +38,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_domain_map.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -62,8 +73,9 @@ struct ConstantKey {
 // While we're here, also combine identical iota instructions, since they need
 // similar treatment.
 template <bool kIsLayoutSensitive>
-absl::StatusOr<bool> CombineConstants(HloComputation* computation,
-                                      bool only_scalars) {
+absl::StatusOr<bool> CombineConstants(
+    HloComputation* computation,
+    absl::AnyInvocable<bool(const HloInstruction*)> should_combine_constant) {
   // Populating the domain map is somewhat expensive -- only do it if there are
   // kDomain ops in the computation.  If there are no kDomain ops, the domain
   // map is trivial, every op gets mapped to the same domain.
@@ -88,7 +100,8 @@ absl::StatusOr<bool> CombineConstants(HloComputation* computation,
     // invalidated due to deletion.
     ++inst_it;
 
-    if (only_scalars && !ShapeUtil::IsScalar(instruction->shape())) {
+    if (should_combine_constant != nullptr &&
+        !should_combine_constant(instruction)) {
       continue;
     }
 
@@ -234,6 +247,24 @@ struct CseKey {
 
 }  // namespace
 
+/*static*/
+bool HloCSE::ShouldEliminateInstruction(const HloInstruction* instruction) {
+  // If the instruction has zero operands (constants, parameters, etc.) skip
+  // over it.
+  if (instruction->operand_count() == 0 &&
+      instruction->opcode() != HloOpcode::kPartitionId &&
+      instruction->opcode() != HloOpcode::kReplicaId) {
+    return false;
+  }
+
+  // Skip instructions which have side effects.
+  if (instruction->HasSideEffect()) {
+    return false;
+  }
+
+  return true;
+}
+
 absl::StatusOr<bool> HloCSE::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -248,14 +279,20 @@ absl::StatusOr<bool> HloCSE::Run(
 }
 
 absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
-  if (only_fusion_computations_ && !computation->IsFusionComputation()) {
+  if (should_eliminate_computation_ &&
+      !should_eliminate_computation_(computation)) {
+    VLOG(10) << "Skipping computation that should not be eliminated: "
+             << computation->name();
     return false;
   }
 
   TF_ASSIGN_OR_RETURN(
-      bool changed, is_layout_sensitive_
-                        ? CombineConstants<true>(computation, only_scalars_)
-                        : CombineConstants<false>(computation, only_scalars_));
+      bool changed,
+      is_layout_sensitive_
+          ? CombineConstants<true>(computation,
+                                   std::move(should_combine_constant_))
+          : CombineConstants<false>(computation,
+                                    std::move(should_combine_constant_)));
 
   const auto eq_instructions = [&](const HloInstruction* a,
                                    const HloInstruction* b) {
@@ -275,11 +312,21 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
     return *lhs == *rhs;
   };
 
-  auto cse_equal = [&](const CseKey& lhs, const CseKey& rhs) {
-    return lhs.hlo->IdenticalIgnoringCommutativeOperandOrder(
-        *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
-        /*sharding_sensitive=*/true);
-  };
+  std::function<bool(const CseKey&, const CseKey&)> cse_equal_with_channel_id =
+      [&](const CseKey& lhs, const CseKey& rhs) {
+        return lhs.hlo->IdenticalIgnoringCommutativeOperandOrder(
+            *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
+            /*sharding_sensitive=*/true);
+      };
+  std::function<bool(const CseKey&, const CseKey&)> cse_equal_no_channel_id =
+      [&](const CseKey& lhs, const CseKey& rhs) {
+        return lhs.hlo->IdenticalIgnoringChannelIdValues(
+            *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
+            /*sharding_sensitive=*/true);
+      };
+  auto cse_equal = computation->parent()->config().ChannelIdSensitive()
+                       ? cse_equal_with_channel_id
+                       : cse_equal_no_channel_id;
 
   // HLO instructions are grouped into equivalency classes by using the
   // cse_equal predicate defined above. This set holds a representative
@@ -288,29 +335,27 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
       representatives(/*N=*/computation->instruction_count() + 1,
                       absl::Hash<CseKey>{}, cse_equal);
   for (auto instruction : computation->MakeInstructionPostOrder()) {
-    // If the instruction has zero operands (constants, parameters, etc.) skip
-    // over it.
-    if (instruction->operand_count() == 0 &&
-        instruction->opcode() != HloOpcode::kPartitionId &&
-        instruction->opcode() != HloOpcode::kReplicaId) {
-      continue;
-    }
-    // Skip instructions which have side effects.
-    if (instruction->HasSideEffect()) {
+    if (should_eliminate_instruction_ != nullptr
+            ? !should_eliminate_instruction_(instruction)
+            : !ShouldEliminateInstruction(instruction)) {
+      VLOG(10) << "Skipping instruction that should not be eliminated: "
+               << instruction->name();
       continue;
     }
 
-    // Skip instructions that cannot be safely removed.
+    // Skip instructions that cannot be safely removed, regardless if they were
+    // requested to be removed or not.
     if (!computation->IsSafelyRemovable(instruction,
                                         ignore_control_dependencies_)) {
+      VLOG(10) << "Skipping instruction that cannot be safely removed: "
+               << instruction->name();
       continue;
     }
 
-    if (only_scalars_ && !ShapeUtil::IsScalar(instruction->shape())) {
-      continue;
-    }
-
-    auto pair = representatives.insert(CseKey{instruction});
+    auto cse_key = CseKey{instruction};
+    VLOG(10) << "Adding instruction " << instruction->name() << " with CSE key "
+             << absl::Hash<CseKey>{}(cse_key);
+    auto pair = representatives.insert(cse_key);
     if (!pair.second) {
       HloInstruction* equivalent_instruction = pair.first->hlo;
       TF_RETURN_IF_ERROR(
