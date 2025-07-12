@@ -180,8 +180,7 @@ xla_test(
     srcs = ["dynamic_slice_fusion_test.cc"],
     backend_tags = {
         "gpu": [
-            "multi_gpu",
-            "no_oss",
+            "multi_gpu"
         ],
     },
     backends = ["gpu"],

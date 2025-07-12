@@ -1481,6 +1481,9 @@ class HloInstruction {
                                       CompareFunction operand_order,
                                       bool call_finish_visit = true);
 
+  absl::Status AcceptCrossComputationAndIgnoreCaller(
+      ConstDfsHloVisitor* visitor, bool call_finish_visit = true);
+
   // Visit this instruction and only this instruction with the given visitor.
   template <typename HloInstructionPtr>
   absl::Status Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor);
