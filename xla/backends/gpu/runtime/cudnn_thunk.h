@@ -54,6 +54,7 @@ class CuDnnThunk : public Thunk {
   std::string fingerprint_;
   std::shared_ptr<se::dnn::LazyDnnGraph> graph_;
   std::vector<BufferAllocation::Slice> args_;
+  std::vector<bool> is_output_;
   // Sdpa dropout seed
   std::optional<int64_t> sdpa_dropout_seed_;
 };
