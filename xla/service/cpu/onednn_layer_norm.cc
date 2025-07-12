@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/tsl/util/onednn_threadpool.h"
 // Below must come after `onednn_threadpool.h`
@@ -42,9 +43,62 @@ using dnnl::engine;
 using dnnl::layer_normalization_forward;
 using dnnl::memory;
 using dnnl::normalization_flags;
+using dnnl::primitive;
 using dnnl::prop_kind;
 using dnnl::stream;
 }  // namespace
+
+void ExecuteOneDnnLayerNorm(void* result, void** args,
+                            dnnl::engine& cpu_engine,
+                            dnnl::stream& onednn_stream,
+                            OneDnnResources& resources) {
+  // This function executes the oneDNN layer_norm primitive with the thunk
+  // runtime. It takes the result buffer, scratch buffer, and arguments as
+  // inputs, along with the oneDNN engine and stream. It also takes
+  // pre-created resources struct (containing primitive and memory objects
+  // for input, kernel, result, scratch, and post-ops) to ensure that they
+  // remain alive while the thunks are being executed asynchronously.
+
+  // args[0]: ptr to nargs. We don't use nargs here.
+  // args[1]: ptr to OneDnnNormConfig.
+  // args[2...]: ptrs to operands.
+
+  int arg_indx = 1;
+  std::string config_str(static_cast<const char*>(args[arg_indx++]));
+  OneDnnNormConfig ln_config;
+  ln_config.ParseFromString(config_str);
+
+  MemrefInfo layer_minfo(args[arg_indx++]);
+  MemrefInfo gamma_minfo(args[arg_indx++]);
+  MemrefInfo beta_minfo(args[arg_indx++]);
+  MemrefInfo result_minfo(result);
+
+  auto src_md = layer_minfo.GetOneDnnMemDesc();
+  auto dst_md = result_minfo.GetOneDnnMemDesc();
+  auto scaleshift_md = beta_minfo.GetOneDnnMemDesc();
+
+  resources.src_mem = memory(src_md, cpu_engine, layer_minfo.Data());
+  resources.dst_mem = memory(dst_md, cpu_engine, result_minfo.Data());
+  resources.scale_mem = memory(scaleshift_md, cpu_engine, gamma_minfo.Data());
+  resources.shift_mem = memory(scaleshift_md, cpu_engine, beta_minfo.Data());
+
+  float epsilon;
+  *(reinterpret_cast<int32_t*>(&epsilon)) = ln_config.epsilon_typecast();
+
+  auto lnorm_pd = layer_normalization_forward::primitive_desc(
+      cpu_engine, prop_kind::forward_inference, src_md, dst_md, epsilon,
+      normalization_flags::use_scale | normalization_flags::use_shift);
+
+  resources.primitive = primitive(lnorm_pd);
+
+  std::unordered_map<int, memory> ln_args;
+  ln_args.insert({DNNL_ARG_SRC, resources.src_mem});
+  ln_args.insert({DNNL_ARG_SCALE, resources.scale_mem});
+  ln_args.insert({DNNL_ARG_SHIFT, resources.shift_mem});
+  ln_args.insert({DNNL_ARG_DST, resources.dst_mem});
+
+  resources.primitive.execute(onednn_stream, ln_args);
+}
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnLayerNorm(
     void* result, void** args) {
