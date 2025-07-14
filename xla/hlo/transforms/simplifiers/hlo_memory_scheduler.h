@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
-#include "xla/hlo/analysis/tuple_points_to_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -39,14 +38,11 @@ namespace xla {
 // 'module' given a points-to analysis result that describes buffer aliasing.
 // peak_memory (may be nullptr) is set to the peak memory of the resulting
 // schedule according to the HeapSimulator.
-//
-// TODO(yunxing): Cleanup usage of TuplePointsToAnalysis.
 class ModuleSchedulerAlgorithm {
  public:
   virtual ~ModuleSchedulerAlgorithm() = default;
   virtual absl::StatusOr<HloSchedule> Run(
-      const HloModule* module, const TuplePointsToAnalysis& points_to_analysis,
-      const HloAliasAnalysis& alias_analysis,
+      const HloModule* module, const HloAliasAnalysis& alias_analysis,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       int64_t* peak_memory) const = 0;
 };
@@ -65,11 +61,9 @@ class ComputationSchedulerAlgorithm : public ModuleSchedulerAlgorithm {
  public:
   virtual absl::StatusOr<HloInstructionSequence> Run(
       HloComputation* computation,
-      const TuplePointsToAnalysis& points_to_analysis,
       const HloAliasAnalysis& alias_analysis) const = 0;
   absl::StatusOr<HloSchedule> Run(
-      const HloModule* module, const TuplePointsToAnalysis& points_to_analysis,
-      const HloAliasAnalysis& alias_analysis,
+      const HloModule* module, const HloAliasAnalysis& alias_analysis,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       int64_t* peak_memory) const override;
 
@@ -99,7 +93,6 @@ class ListMemoryScheduler : public ComputationSchedulerAlgorithm {
   using ModuleSchedulerAlgorithm::Run;
   absl::StatusOr<HloInstructionSequence> Run(
       HloComputation* computation,
-      const TuplePointsToAnalysis& points_to_analysis,
       const HloAliasAnalysis& alias_analysis) const override;
 };
 
@@ -114,7 +107,6 @@ class DFSMemoryScheduler : public ComputationSchedulerAlgorithm {
   using ModuleSchedulerAlgorithm::Run;
   absl::StatusOr<HloInstructionSequence> Run(
       HloComputation* computation,
-      const TuplePointsToAnalysis& points_to_analysis,
       const HloAliasAnalysis& alias_analysis) const override;
 };
 
@@ -137,7 +129,6 @@ class BFScheduler : public ComputationSchedulerAlgorithm {
                                       std::move(postprocessor)) {}
   absl::StatusOr<HloInstructionSequence> Run(
       HloComputation* computation,
-      const TuplePointsToAnalysis& points_to_analysis,
       const HloAliasAnalysis& alias_analysis) const override;
 };
 
@@ -152,7 +143,6 @@ class PostOrderScheduler : public ComputationSchedulerAlgorithm {
   using ModuleSchedulerAlgorithm::Run;
   absl::StatusOr<HloInstructionSequence> Run(
       HloComputation* computation,
-      const TuplePointsToAnalysis& points_to_analysis,
       const HloAliasAnalysis& alias_analysis) const override;
 };
 
@@ -169,8 +159,7 @@ class DefaultMemoryScheduler : public ModuleSchedulerAlgorithm {
         dfs_scheduler_(alias_info, size_function, postprocessor),
         post_order_scheduler_(alias_info, size_function, postprocessor) {}
   absl::StatusOr<HloSchedule> Run(
-      const HloModule* module, const TuplePointsToAnalysis& points_to_analysis,
-      const HloAliasAnalysis& alias_analysis,
+      const HloModule* module, const HloAliasAnalysis& alias_analysis,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       int64_t* peak_memory) const override;
 
