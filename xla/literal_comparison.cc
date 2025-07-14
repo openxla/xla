@@ -684,6 +684,10 @@ absl::Status EqualHelper(const LiteralSlice& expected,
                          const LiteralSlice& actual,
                          const ShapeIndex& shape_index,
                          const MiscompareCallback& miscompare_callback) {
+  if (expected.precompilation_tracing_always_true_in_comparisons() ||
+      actual.precompilation_tracing_always_true_in_comparisons()) {
+    return absl::OkStatus();
+  }
   if (expected.shape().is_static() && actual.shape().is_static()) {
     TF_RETURN_IF_ERROR(EqualShapes(expected.shape(), actual.shape()));
   } else {
@@ -754,6 +758,10 @@ absl::Status NearHelper(const LiteralSlice& expected,
                         const ShapeIndex& shape_index, const ErrorSpec& error,
                         std::optional<bool> detailed_message,
                         const MiscompareCallback& miscompare_callback) {
+  if (expected.precompilation_tracing_always_true_in_comparisons() ||
+      actual.precompilation_tracing_always_true_in_comparisons()) {
+    return absl::OkStatus();
+  }
   if (expected.shape().is_static() && actual.shape().is_static()) {
     TF_RETURN_IF_ERROR(EqualShapes(expected.shape(), actual.shape()));
   } else {

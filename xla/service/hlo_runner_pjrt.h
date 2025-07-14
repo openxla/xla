@@ -128,6 +128,10 @@ class HloRunnerPjRt : public HloRunnerInterface {
       const OpaqueExecutable* absl_nonnull lhs,
       const OpaqueExecutable* absl_nonnull rhs) const override;
 
+ protected:
+  absl::StatusOr<Shape> OutputShape(
+      const OpaqueExecutable* absl_nonnull executable) const;
+
  private:
   absl::StatusOr<CompileOptions> GenerateDefaultCompileOptions(
       HloModule* module, bool run_hlo_passes);
@@ -163,22 +167,14 @@ class CompilePhaseHloRunnerPjRt : public HloRunnerPjRt {
 
   absl::StatusOr<std::vector<absl::StatusOr<Literal>>> ExecuteWithExecutable(
       OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
-      int64_t num_repeats) override {
-    return absl::UnimplementedError(
-        "CompilePhaseHloRunnerPjRt does not support execution. This is "
-        "expected.");
-  }
+      int64_t num_repeats) override;
 
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
       std::function<OpaqueExecutable*(int64_t)> executable_provider,
       std::function<int64_t(int64_t)> argument_count_provider,
       std::function<const Literal*(int64_t, int64_t)> argument_provider,
       const ReplicatedExecuteOptions& options,
-      DeviceAssignment* device_assignment) override {
-    return absl::UnimplementedError(
-        "CompilePhaseHloRunnerPjRt does not support execution. This is "
-        "expected.");
-  }
+      DeviceAssignment* device_assignment) override;
 
  private:
   std::string artifact_dir_;

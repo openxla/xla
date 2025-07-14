@@ -310,6 +310,15 @@ Literal::Literal(const Shape& shape, bool allocate_arrays,
 
 Literal::~Literal() { DeallocateBuffers(); }
 
+// This special literal represents an abstract value that is always true in
+// comparisons and stubbed sufficiently to pass checks commonly found in tests.
+/*static*/ Literal Literal::CreateSpecialLiteralForPrecompilation(
+    const Shape& shape) {
+  Literal literal(shape);
+  literal.precompilation_tracing_always_true_in_comparisons_ = true;
+  return literal;
+}
+
 void Literal::DeallocateBuffers() {
   root_piece_.ForEachMutableSubpiece(
       [&](const ShapeIndex& index, Piece* piece) {
@@ -325,6 +334,8 @@ Literal& Literal::operator=(Literal&& other) {
   swap(shape_, other.shape_);
   swap(root_piece_, other.root_piece_);
   DCHECK(&root_piece_.subshape() == shape_.get());
+  precompilation_tracing_always_true_in_comparisons_ =
+      other.precompilation_tracing_always_true_in_comparisons_;
 
   return *this;
 }
@@ -1602,6 +1613,9 @@ void PrintHelper(const LiteralBase& literal, const ShapeIndex& shape_index,
   const Shape& subshape = ShapeUtil::GetSubshape(literal.shape(), shape_index);
   CHECK(LayoutUtil::HasLayout(literal.shape()));
   CHECK(LayoutUtil::HasLayout(subshape));
+  if (literal.precompilation_tracing_always_true_in_comparisons()) {
+    printer->Append("(always true for precompilation tracing)");
+  }
   if (subshape.IsTuple()) {
     TuplePrintHelper(literal, shape_index, print_shape, print_layout, oneline,
                      printer);
@@ -1960,6 +1974,11 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
 }
 
 bool LiteralBase::Equal(const LiteralBase& other, bool layout_sensitive) const {
+  if (precompilation_tracing_always_true_in_comparisons_ ||
+      other.precompilation_tracing_always_true_in_comparisons_) {
+    return true;
+  }
+
   // Checking the structure of tuple literals. Checks for dense arrays are
   // performed below.
   if (!ShapeUtil::EqualStructure(shape(), other.shape())) {
@@ -2875,11 +2894,17 @@ MutableBorrowingLiteral::~MutableBorrowingLiteral() {
 }
 
 LiteralSlice::LiteralSlice(const LiteralBase& literal)
-    : root_piece_(&literal.root_piece()) {}
+    : root_piece_(&literal.root_piece()) {
+  precompilation_tracing_always_true_in_comparisons_ =
+      literal.precompilation_tracing_always_true_in_comparisons_;
+}
 
 LiteralSlice::LiteralSlice(const LiteralBase& literal,
                            const ShapeIndex& view_root)
-    : root_piece_(&literal.piece(view_root)) {}
+    : root_piece_(&literal.piece(view_root)) {
+  precompilation_tracing_always_true_in_comparisons_ =
+      literal.precompilation_tracing_always_true_in_comparisons_;
+}
 
 BorrowingLiteral::BorrowingLiteral(const char* src_buf_ptr, const Shape& shape)
     : shape_(std::make_unique<Shape>(shape)) {

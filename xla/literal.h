@@ -567,6 +567,10 @@ class LiteralBase {
   // Similar to CreateFromShape() but marks all leaf arrays as undetermined.
   static Literal CreateFromShapeWithUndeterminedLeafArrays(const Shape& shape);
 
+  bool precompilation_tracing_always_true_in_comparisons() const {
+    return precompilation_tracing_always_true_in_comparisons_;
+  }
+
  protected:
   class Piece;
 
@@ -1256,6 +1260,13 @@ class LiteralBase {
   friend class LiteralSlice;
   friend class BorrowingLiteral;
 
+  // If true, this literal is always true in comparisons.
+  //
+  // This feature is used for precompilation tracing. We want to run test code
+  // without modifications to the tests themselves. In order to trace every
+  // compile call, we need all assertions on execution results to be true.
+  bool precompilation_tracing_always_true_in_comparisons_ = false;
+
  private:
   // Like IsAllFloat, but if round_value is false and the value is not
   // representable with the literal's type (e.g., due to rounding error or
@@ -1586,6 +1597,10 @@ class Literal : public MutableLiteralBase {
  private:
   friend class LiteralBase;
   friend class MutableLiteralBase;
+  friend class CompilePhaseHloRunnerPjRt;
+
+  static Literal CreateSpecialLiteralForPrecompilation(const Shape& shape);
+
   const Piece& root_piece() const final { return root_piece_; };
   // Deallocate the buffers held by this literal.
   void DeallocateBuffers();

@@ -871,6 +871,15 @@ bool HloRunnerPjRt::ExecutablesAreEquivalent(
   return *lhs_fingerprint == *rhs_fingerprint;
 }
 
+absl::StatusOr<Shape> HloRunnerPjRt::OutputShape(
+    const OpaqueExecutable* absl_nonnull executable) const {
+  TF_ASSIGN_OR_RETURN(const HloModule* const module,
+                      HloModuleFromWrapped(executable));
+  TF_RET_CHECK(module->has_entry_computation())
+      << "Executable has no entry computation.";
+  return module->entry_computation_layout().result_shape();
+}
+
 // Split-phase HloRunnerPjRt implementations:
 
 namespace {
@@ -913,6 +922,38 @@ CompilePhaseHloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
   TF_RETURN_IF_ERROR(tsl::WriteStringToFile(tsl::Env::Default(), filename,
                                             serialized_executable));
   return wrapped_executable;
+}
+
+absl::StatusOr<std::vector<absl::StatusOr<Literal>>>
+CompilePhaseHloRunnerPjRt::ExecuteWithExecutable(
+    OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
+    int64_t num_repeats) {
+  TF_ASSIGN_OR_RETURN(const Shape output_shape, OutputShape(executable));
+  std::vector<absl::StatusOr<Literal>> results;
+  results.reserve(num_repeats);
+  for (int64_t i = 0; i < num_repeats; ++i) {
+    results.push_back(
+        Literal::CreateSpecialLiteralForPrecompilation(output_shape));
+  }
+  return results;
+}
+
+absl::StatusOr<std::vector<Literal>>
+CompilePhaseHloRunnerPjRt::ExecuteReplicated(
+    std::function<OpaqueExecutable*(int64_t)> executable_provider,
+    std::function<int64_t(int64_t)> argument_count_provider,
+    std::function<const Literal*(int64_t, int64_t)> argument_provider,
+    const ReplicatedExecuteOptions& options,
+    DeviceAssignment* device_assignment) {
+  std::vector<Literal> literals;
+  literals.reserve(options.num_replicas);
+  for (int i = 0; i < options.num_replicas; ++i) {
+    TF_ASSIGN_OR_RETURN(const Shape output_shape,
+                        OutputShape(executable_provider(i)));
+    literals.push_back(
+        Literal::CreateSpecialLiteralForPrecompilation(output_shape));
+  }
+  return literals;
 }
 
 absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
