@@ -94,12 +94,11 @@ class OneDnnThreadPool : public threadpool_iface {
   }
   virtual uint64_t get_flags() const override { return ASYNCHRONOUS; }
 #ifdef ENABLE_ONEDNN_ASYNC
-  virtual void wait() override {
-    // wait() method for synchronous execution is basically a no-op.
-    // But we need to implement it to satisfy the interface.
-    // This is the requirement of the new experimental async runtime support
-    // in oneDNN.
-  }
+  // wait() method for synchronous execution is basically a no-op.
+  // But we need to implement it to satisfy the interface.
+  // This is the requirement of the new experimental async runtime support
+  // in oneDNN.
+  virtual void wait() override {}
 #endif  // ENABLE_ONEDNN_ASYNC
   virtual void parallel_for(int n,
                             const std::function<void(int, int)>& fn) override {

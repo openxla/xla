@@ -122,7 +122,7 @@ def if_onednn_async(if_true, if_false = []):
     Otherwise, the select statement evaluates to if_false.
     """
     return select({
-        "@xla//xla/tsl/mkl:build_with_onednn_async": if_true,
+        "@xla//xla/tsl:linux_x86_64_with_onednn_async": if_true,
         "//conditions:default": if_false,
     })
 
