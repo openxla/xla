@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -81,6 +82,11 @@ namespace gpu {
 //     usually by adding a stream wait.
 //
 TSL_LIB_GTL_DEFINE_INT_TYPE(ExecutionStreamId, uint64_t);
+
+// Unique identifier for async events. The same identifier is expected to be
+// shared between a pair of StartThunk and corresponding DoneThunk. It is used
+// to collect async regions for a CommandBufferThunk.
+TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t)
 
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
@@ -164,6 +170,10 @@ class Thunk {
     kNvshmemCollectivePermute,
     kNvshmemCollectivePermuteDone,
     kNvshmemCollectivePermuteStart,
+    kNvshmemRecv,
+    kNvshmemRecvDone,
+    kNvshmemSend,
+    kNvshmemSendDone,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
@@ -518,6 +528,22 @@ class Thunk {
       absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
           const ThunkProto&) const>;
 
+  void add_control_predecessor(const Thunk* control_predecessor) {
+    control_predecessors_.push_back(control_predecessor);
+  }
+
+  std::vector<const Thunk*> control_predecessors() const {
+    return control_predecessors_;
+  }
+
+  virtual std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const {
+    return std::nullopt;
+  }
+
+  virtual bool IsAsyncStart() const { return false; }
+
+  virtual bool IsAsyncDone() const { return false; }
+
  protected:
   // Returns a ThunkProto that has the common Thunk fields already set.
   // It's meant to be called by subclasses in its implementation of `ToProto()`.
@@ -527,6 +553,13 @@ class Thunk {
   Kind kind_;
   std::string profile_annotation_;
   ExecutionStreamId execution_stream_id_;
+
+  // The list of control predecessors of the thunk.
+  // Thunk needs to maintain the control dependency information because
+  // when it is executed by command buffer, and command buffer may execute the
+  // sequence in concurrent mode, and we should make sure that it does not
+  // violate the control dependency in the original computation.
+  std::vector<const Thunk*> control_predecessors_;
 };
 
 // A sequence of thunks.

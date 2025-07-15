@@ -64,6 +64,7 @@ class DotHandlerTest : public HloHardwareIndependentTestBase {
         debug_options.xla_gpu_multi_streamed_windowed_einsum(),
         /*skip_checking_windowed_einsum_users=*/true,  // Skip user checking
         /*disable_ag_rewrite_for_multiple_consumers=*/false,
+        /*enable_partial_windowed_einsums=*/false,
         /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
         /*max_windowed_einsum_iteration=*/max_windowed_einsum_iteration);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -109,6 +110,7 @@ TEST_F(DotHandlerTest, VerifyDefaultMaxWindowedEinsumIterationInPartitioner) {
       /*windowed_einsum_use_multiple_streams=*/false,
       /*skip_checking_windowed_einsum_users=*/false,
       /*disable_ag_rewrite_for_multiple_consumers=*/false,
+      /*enable_partial_windowed_einsums=*/false,
       /*total_bytes_windowed_einsum_threshold=*/std::nullopt,
       /*max_windowed_einsum_iteration=*/custom_max);
 

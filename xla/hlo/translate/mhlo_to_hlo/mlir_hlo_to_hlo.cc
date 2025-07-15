@@ -982,7 +982,12 @@ std::optional<xla::OpSharding> CreateTupleSharding(
   xla::OpSharding sharding;
   sharding.set_type(xla::OpSharding::TUPLE);
   for (const std::optional<xla::OpSharding>& tuple_sharding : tuple_shardings) {
-    if (tuple_sharding) {
+    if (tuple_sharding && tuple_sharding->type() == xla::OpSharding::TUPLE) {
+      for (const xla::OpSharding& subsharding :
+           tuple_sharding->tuple_shardings()) {
+        *sharding.add_tuple_shardings() = subsharding;
+      }
+    } else if (tuple_sharding) {
       *sharding.add_tuple_shardings() = *tuple_sharding;
     } else {
       xla::OpSharding fallback_sharding;
@@ -1091,7 +1096,7 @@ class ConvertToHloModule {
     TF_RET_CHECK(main) << "requires module to have main function";
     TF_ASSIGN_OR_RETURN(xla::XlaComputation computation,
                         module_builder_.Build(lowered_computation_[main]));
-    return computation.proto();
+    return std::move(*computation.mutable_proto());
   }
 
   // Lower a `mlir::Region` to a `XlaComputation`
@@ -1142,7 +1147,8 @@ class ConvertToHloModule {
   // Lower function call to HLO call instruction
   LogicalResult LowerFunctionCall(
       mlir::func::CallOp call_op, xla::XlaBuilder* builder,
-      ConvertToHloModule::ValueLoweringMap* value_lowering);
+      ConvertToHloModule::ValueLoweringMap* value_lowering,
+      mlir::StackFrameIndexBuilder* stack_frame_indexes_builder);
 
   // Lower infeed to HLO infeed instruction.
   LogicalResult LowerInfeed(
@@ -5137,6 +5143,25 @@ LogicalResult ExportXlaOp(MinimumBroadcastShapesOp op, OpLoweringContext ctx) {
 namespace mlir {
 namespace {
 
+// Set the sharding of the created tuple to the sharding of the operand.
+// If operand has no sharding, then we are okay for the tuple to have no
+// sharding either.
+std::optional<xla::OpSharding> getTupleShardingForSingleElementReturnLowering(
+    xla::XlaOp operand, xla::XlaBuilder* builder) {
+  // TODO(b/260756663): Remove this check once we have a better
+  // way to handle token[] operands.
+  if (auto shape_or_status = builder->GetShape(operand);
+      shape_or_status.ok() && shape_or_status.value().IsToken()) {
+    return std::nullopt;
+  }
+  if (absl::StatusOr<std::optional<xla::OpSharding>> in_sharding =
+          operand.builder()->GetOpSharding(operand);
+      in_sharding.ok() && in_sharding.value().has_value()) {
+    return in_sharding.value().value();
+  }
+  return std::nullopt;
+}
+
 LogicalResult ConvertLayout(mlir::Operation* op, const mlir::ArrayAttr& layout,
                             xla::ShapeProto* shape) {
   // In the case of tuples, Shape protos can be nested, and so can the mlir
@@ -5624,6 +5649,11 @@ LogicalResult ConvertToHloModule::LowerReturn(
     if (failed(GetXlaOp(ret, value_map, &operand, inst))) return failure();
 
     if (ret_tuple_sharding) {
+      if (std::optional<xla::OpSharding> sharding =
+              getTupleShardingForSingleElementReturnLowering(operand,
+                                                             builder)) {
+        builder->SetSharding(sharding.value());
+      }
       auto tuple = Tuple(builder, {operand});
       builder->SetSharding(*ret_shardings[0]);
       *return_value = GetTupleElement(tuple, 0);
@@ -5677,7 +5707,8 @@ LogicalResult ConvertToHloModule::Lower(
   }
 
   if (auto call_op = dyn_cast<mlir::func::CallOp>(inst)) {
-    return LowerFunctionCall(call_op, builder, value_lowering);
+    return LowerFunctionCall(call_op, builder, value_lowering,
+                             &stack_frame_indexes_builder_);
   }
 
   if (isa<mlir::tensor::CastOp>(inst)) {
@@ -5715,9 +5746,11 @@ LogicalResult ConvertToHloModule::Lower(
 
 LogicalResult ConvertToHloModule::LowerFunctionCall(
     mlir::func::CallOp call_op, xla::XlaBuilder* builder,
-    ConvertToHloModule::ValueLoweringMap* value_lowering) {
+    ConvertToHloModule::ValueLoweringMap* value_lowering,
+    mlir::StackFrameIndexBuilder* stack_frame_indexes_builder) {
   xla::XlaScopedShardingAssignment scoped_sharding(
       builder, CreateOpShardingFromAttribute(call_op));
+
   auto& value_map = *value_lowering;
   mlir::func::FuncOp callee =
       module_.lookupSymbol<mlir::func::FuncOp>(call_op.getCallee());
@@ -5745,6 +5778,9 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
     fe_attrs_map->erase(kBackendConfig);
   }
   xla::XlaScopedFrontendAttributesAssignment assignment(builder, fe_attrs);
+  xla::XlaScopedOpMetadataAssignment op_metadata(
+      builder, mlir::mhlo::CreateOpMetadataFromLocation(
+                   call_op, stack_frame_indexes_builder));
   xla::XlaOp call_result =
       xla::Call(builder, lowered_computation_[callee], operands);
   xla::HloInstructionProto* call_instruction =

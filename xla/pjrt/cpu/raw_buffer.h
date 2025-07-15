@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -117,6 +118,14 @@ class CpuRawBuffer : public CommonPjRtRawBuffer {
 
   void* GetHostPointer() const override;
 
+  void* OpaqueDeviceMemoryDataPointer() const override {
+    // We need to wait for the memory to be allocated before sharing it with
+    // external frameworks like NumPy.
+    tsl::BlockUntilReady(buffer_);
+    CHECK(buffer_.IsConcrete());
+    return buffer_->untyped_data();
+  }
+
   const tsl::AsyncValueRef<CpuDeviceMemory>& buffer() const { return buffer_; }
 
   PjRtMemorySpace* memory_space() const override { return memory_space_; }
@@ -146,6 +155,11 @@ class CpuRawBuffer : public CommonPjRtRawBuffer {
 
   void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
                         xla::Shape shape) override;
+
+  void CopyToLiteralAsync(
+      PjRtFuture<>::Promise promise,
+      tsl::RCReference<PjRtDeviceEventPromise> device_promise,
+      MutableLiteralBase* literal, xla::Shape shape) override;
 
   void CopyTo(tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
               tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,

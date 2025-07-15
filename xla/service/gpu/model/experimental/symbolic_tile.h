@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,15 +37,16 @@ namespace xla::gpu {
 //     offsets [offsets_]  sizes [sizes_] strides [strides_]
 //     upper bounds [upper_bounds_]
 //
-// tile IDs correspond to the dimension variables of the affine expressions
+// tile IDs correspond to the dimension variables of the affine expressions;
 // tile sizes and RT vars correspond to the symbol variables.
 //
+// The masking condition of the upper bound can be written as:
+// dimension_index < upper_bounds[i](tile IDs)
+//
 // In most of the cases, the upper bounds will coincide with the shape of the
-// tensor from which the tile is extracted. It can be different when we tile the
-// reshape.
+// tensor from which the tile is extracted.
 //
-// Example:
-//
+// One example when upper bound does not match the shape is a reshape:
 // output = s32[2, 17] reshape (s32[34] input)
 //
 // If we propagate the `output` tile with the ts0 == 1,
@@ -54,17 +56,16 @@ namespace xla::gpu {
 //
 // to the `input` we will get a stricter upper bound
 //
-// (tid)[ts] -> offsets [17 * tid0 + tid1 * ts1] sizes [ts1] strides [1]
-//              upper bounds [17]
+// (tid0, tid1)[ts1] -> offsets [17 * tid0 + tid1 * ts1] sizes [ts1] strides [1]
+//              upper bounds [17 * tid0]
 class ExperimentalSymbolicTile {
  public:
   ExperimentalSymbolicTile(mlir::MLIRContext* mlir_context,
-                           int64_t num_tile_ids,
+                           int64_t num_tile_ids, int64_t num_rt_vars,
                            llvm::ArrayRef<mlir::AffineExpr> offsets,
                            llvm::ArrayRef<mlir::AffineExpr> sizes,
                            llvm::ArrayRef<mlir::AffineExpr> strides,
-                           llvm::ArrayRef<mlir::AffineExpr> upper_bounds,
-                           llvm::ArrayRef<const HloInstruction*> rt_vars);
+                           llvm::ArrayRef<mlir::AffineExpr> upper_bounds);
 
   std::string ToString() const;
 
@@ -77,9 +78,7 @@ class ExperimentalSymbolicTile {
 
   int64_t num_tile_ids() const { return num_tile_ids_; }
   int64_t num_result_dims() const { return offsets().size(); }
-
-  llvm::ArrayRef<const HloInstruction*> rt_vars() const { return rt_vars_; }
-  int64_t num_rt_vars() const { return rt_vars_.size(); }
+  int64_t num_rt_vars() const { return num_rt_vars_; }
 
   mlir::MLIRContext* mlir_context() const { return mlir_context_; }
 
@@ -92,11 +91,11 @@ class ExperimentalSymbolicTile {
  private:
   mlir::MLIRContext* mlir_context_;
   int64_t num_tile_ids_;
+  int64_t num_rt_vars_;
   llvm::SmallVector<mlir::AffineExpr> offsets_;
   llvm::SmallVector<mlir::AffineExpr> sizes_;
   llvm::SmallVector<mlir::AffineExpr> strides_;
   llvm::SmallVector<mlir::AffineExpr> upper_bounds_;
-  llvm::SmallVector<const HloInstruction*> rt_vars_;
 };
 
 }  // namespace xla::gpu

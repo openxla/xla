@@ -1970,7 +1970,7 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
                           /*colocations=*/{},
                           /*need_allocation=*/true};
     Chunk chunk_candidate = FindChunkCandidate(interval);
-    if (chunk_candidate.chunk_end() > available_heap_size()) {
+    if (chunk_candidate.chunk_end() > options_.max_size_in_bytes) {
       if (use_colored) {
         return FailedPrecondition(
             "%s",
@@ -4857,6 +4857,12 @@ void MsaAlgorithm::FinalizeAllocations(
           size_t index = it->second;
           colocation_vector[index].second.push_back(inserted_allocation);
         }
+        // Register the allocation start time - 1 and end time + 1 as the edge
+        // time indices for the allocation to indicate the time indices that the
+        // alternate memory will be freer than the next index. Evict uses this
+        // to bypass some of the redundant calls to FindChunkCandidate.
+        edge_time_indices_.insert(inserted_allocation->start_time() - 1);
+        edge_time_indices_.insert(inserted_allocation->end_time() + 1);
       }
     }
   }
@@ -5673,9 +5679,11 @@ AllocationResult MsaAlgorithm::ForceAlternateMemoryAllocationForMinTime(
 
   Chunk chunk_candidate = FindChunkCandidate(alternate_mem_interval);
 
-  if (chunk_candidate.chunk_end() > available_heap_size()) {
+  if (chunk_candidate.chunk_end() > options_.max_size_in_bytes) {
     return AllocationResult::kFailOutOfMemory;
   }
+
+  AddToPendingChunks(alternate_mem_interval, chunk_candidate);
 
   const HloPosition& defining_position =
       request.allocation_value->defining_position();
@@ -5874,8 +5882,19 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
   VLOG(3) << "Considering eviction after" << eviction_exclusive_start_time
           << ", with preferred end time = " << eviction_mem_interval.end;
 
+  auto next_eviction_end_time_candidate = [&]() {
+    // Only call FindChunkCandidate if the index is an edge time (where there is
+    // another allocation that starts or ends at this time index). This reduces
+    // redundant calls to FundChunkCandidate and so reduces compilation time.
+    int64_t next_eviction_end_time = eviction_mem_interval.end;
+    do {
+      --next_eviction_end_time;
+    } while (next_eviction_end_time > eviction_end_time &&
+             !edge_time_indices_.contains(next_eviction_end_time));
+    return next_eviction_end_time;
+  };
   for (; eviction_mem_interval.end > eviction_end_time;
-       --eviction_mem_interval.end) {
+       eviction_mem_interval.end = next_eviction_end_time_candidate()) {
     Chunk chunk_candidate =
         FindChunkCandidate(eviction_mem_interval, preferred_offset);
     if (chunk_candidate.offset == preferred_offset) {
@@ -6091,9 +6110,10 @@ AllocationResult MsaAlgorithm::Prefetch(
 
   Chunk chunk_candidate = FindChunkCandidate(alternate_mem_interval);
 
-  if (chunk_candidate.chunk_end() > available_heap_size()) {
+  if (chunk_candidate.chunk_end() > options_.max_size_in_bytes) {
     return AllocationResult::kFailOutOfMemory;
   }
+  AddToPendingChunks(alternate_mem_interval, chunk_candidate);
 
   AddAsyncCopyOrOtherMemOp(
       prev_allocation_in_default_mem, MemorySpace::kAlternate, chunk_candidate,
@@ -6642,13 +6662,6 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
   CHECK_EQ(sliced_buffer_interval->num_slices(),
            copy_resource_per_slice_sorted_by_start_time.size());
 
-  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
-                                  context.prefetch_end_time,
-                                  copy_resource_per_slice_sorted_by_start_time,
-                                  prefetch_async_copy_resource_)) {
-    return AllocationResult::kFailViolatesAsyncCopyResource;
-  }
-
   // Check if the copies we would add for the prefetch would violate copy
   // ordering.
   if (options_.enforce_prefetch_fifo_order &&
@@ -6670,6 +6683,13 @@ AllocationResult MsaAlgorithm::CheckPrefetchFit(bool for_sliced_solution,
       VLOG(4) << "This would violate the outstanding async copy limit.";
       return AllocationResult::kFailOutOfAsyncCopies;
     }
+  }
+
+  if (!DoWeHaveEnoughCopyResource(exclusive_slice_start_times,
+                                  context.prefetch_end_time,
+                                  copy_resource_per_slice_sorted_by_start_time,
+                                  prefetch_async_copy_resource_)) {
+    return AllocationResult::kFailViolatesAsyncCopyResource;
   }
 
   // Check if we can find a place in alternate memory for the prefetch.
@@ -7008,6 +7028,19 @@ bool MsaAlgorithm::IsPositionColoredInDefaultMemoryAtTime(
     }
   }
   return false;
+}
+
+int64_t AsynchronousCopyResource::GetScaledIntegerResource(
+    float resource) const {
+  float scaled_value = resource * kCopyResourceIntScale;
+  if (scaled_value > std::numeric_limits<int64_t>::max()) {
+    LOG(WARNING) << "Scaled value " << scaled_value
+                 << " is greater than the maximum int64_t value "
+                 << std::numeric_limits<int64_t>::max();
+    return std::numeric_limits<int64_t>::max();
+  }
+  int64_t scaled_value_int = static_cast<int64_t>(scaled_value);
+  return scaled_value_int;
 }
 
 }  // namespace memory_space_assignment

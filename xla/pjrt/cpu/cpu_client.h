@@ -353,7 +353,6 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
       std::shared_ptr<DeviceAssignment> device_assignment,
       bool parameter_is_tupled_arguments, CompileOptions compile_options,
       std::unique_ptr<Executable> cpu_executable,
-      BufferAllocation::Index result_buffer_index,
       absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
       std::vector<LogicalDeviceIds> addressable_device_logical_ids,
       std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client);
@@ -419,23 +418,26 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures) override;
+      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
+      const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   void Delete() override;
 
-  bool IsDeleted() override;
+  bool IsDeleted() const override;
 
   absl::StatusOr<std::string> SerializeExecutable() const override;
 
@@ -468,7 +470,7 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const RunId& run_id, const ExecuteOptions& options,
       PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
-      bool fill_future, PjRtCpuDevice* device = nullptr);
+      bool fill_future, PjRtCpuDevice* device = nullptr) const;
 
   PjRtCpuClient* client_;
 
@@ -480,11 +482,9 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
 
   std::shared_ptr<Executable> cpu_executable_;
 
-  // Caching `result_buffer_index_` and `result_buffer_indices_` to avoid lookup
+  // Caching `result_buffer_indices_` to avoid lookup
   // HLO dataflow analysis data structures in program execution critical path.
 
-  // Buffer allocation index corresponding to root buffer buffer.
-  BufferAllocation::Index result_buffer_index_;
   // Buffer allocation indices corresponding to each result buffer leaf buffer.
   absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices_;
 

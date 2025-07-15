@@ -13,41 +13,20 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
-#include <type_traits>
-#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Value.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/core/collectives/communicator.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/collective_ops_utils.h"
-#include "xla/service/global_device_id.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/resource_requests.h"
-#include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/service/rendezvous.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 
@@ -79,6 +58,10 @@ class NvshmemCollectiveThunk : public Thunk {
       std::shared_ptr<CollectiveThunk::AsyncEvents> async_events) {
     async_events_ = async_events;
   }
+
+  std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
+
+  bool IsAsyncStart() const override { return async_events_ != nullptr; }
 
  protected:
   virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,
@@ -112,6 +95,10 @@ class NvshmemCollectiveDoneThunk : public Thunk {
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
+  std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
+
+  bool IsAsyncDone() const override { return async_events_ != nullptr; }
+
  private:
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
   AsyncStreamKind async_stream_kind_ = AsyncStreamKind::kCollective;
@@ -124,6 +111,24 @@ absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op);
 //===----------------------------------------------------------------------===//
 
 absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectivesFromRegistry();
+
+// NvshmemBufferAddresses provides a mechanism to store and retrieve buffer
+// addresses for NVSHMEM put/get operations. This is necessary because NVSHMEM
+// uses one-way put/get operations where both source and destination addresses
+// are required.
+class NvshmemBufferAddresses {
+ public:
+  // Get buffer address for a device
+  absl::StatusOr<void*> GetNvshmemPtr(int device_ordinal);
+
+  // Store buffer address for a device
+  void StoreNvshmemPtr(int device_ordinal, void* buffer_addr);
+
+ private:
+  absl::Mutex mu_;
+  // Map from device ordinal to buffer address
+  absl::flat_hash_map<int, void*> buffer_addrs_ ABSL_GUARDED_BY(mu_);
+};
 
 }  // namespace gpu
 }  // namespace xla

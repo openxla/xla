@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,13 +29,19 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/literal_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/model/collective_interpolator.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
@@ -80,11 +87,16 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
             /*rtt=*/absl::Microseconds(100),
             /*gpus_per_node=*/8,
             /*chunk_size_bytes=*/4 * 1024 * 1024,
-        }) {}
+        }),
+        collective_interpolator_(*CollectiveInterpolator::Create(
+            sol_flags_.gpus_per_node, gpu_device_info_,
+            /*analysis=*/nullptr)) {}
 
-  absl::Duration ComputeCollectiveTime(const HloInstruction& instr) {
+  absl::StatusOr<absl::Duration> ComputeCollectiveTime(
+      const HloInstruction& instr) {
     return SolLatencyEstimator::ComputeCollectiveTime(
-        instr, gpu_device_info_, shape_size_fn_, sol_flags_);
+        instr, gpu_device_info_, shape_size_fn_, sol_flags_,
+        collective_interpolator_.get());
   }
 
   absl::Duration ComputeNodeCost(const HloInstruction& instr,
@@ -101,6 +113,7 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
   const se::DeviceDescription gpu_device_info_;
   const SolGPUCostModel::Config sol_flags_;
   SchedulerConfig scheduler_config_;
+  std::unique_ptr<CollectiveInterpolator> collective_interpolator_;
 };
 
 TEST_P(SolLatencyEstimatorTest, TestLatencyEstimation) {
@@ -110,11 +123,12 @@ TEST_P(SolLatencyEstimatorTest, TestLatencyEstimation) {
 
   HloInstruction* instr = hlo_query::FindInstruction(
       module->entry_computation(), test_case.opcode_to_find);
-  CHECK_NE(instr, nullptr);
+  ASSERT_NE(instr, nullptr);
   absl::Duration actual_time_us;
   if (test_case.cost_type == CostType::kCollectiveTime) {
-    actual_time_us =
-        absl::Trunc(ComputeCollectiveTime(*instr), absl::Microseconds(1));
+    TF_ASSERT_OK_AND_ASSIGN(absl::Duration time_us,
+                            ComputeCollectiveTime(*instr));
+    actual_time_us = absl::Trunc(time_us, absl::Microseconds(1));
   } else if (test_case.cost_type == CostType::kNodeCost) {
     actual_time_us = ComputeNodeCost(*instr, module->entry_computation());
   } else {
@@ -141,7 +155,7 @@ ENTRY main {
 })",
       /*opcode_to_find=*/HloOpcode::kAllGatherStart,
       /*cost_type=*/CostType::kCollectiveTime,
-      /*expected_latency=*/GpuPerformanceModelBase::kNcclKernelLaunchOverhead,
+      /*expected_latency=*/absl::Microseconds(695),
   };
 
   EstimatorTestCase all_gather_inter_host_pairwise = {
@@ -330,6 +344,19 @@ ENTRY e {
       /*expected_latency=*/absl::Microseconds(8),
   };
 
+  EstimatorTestCase noop = {
+      /*test_name=*/"noop",
+      /*module_string=*/R"(
+HloModule m
+
+ENTRY e {
+  ROOT _ = f16[] constant(3.14)
+})",
+      /*opcode_to_find=*/HloOpcode::kConstant,
+      /*cost_type=*/CostType::kNodeCost,
+      /*expected_latency=*/absl::ZeroDuration(),
+  };
+
   return {all_gather_intra_host,
           all_gather_inter_host_pairwise,
           all_gather_all_ranks,
@@ -338,7 +365,8 @@ ENTRY e {
           matmul_f32_batch4_256_1024_256,
           triton_matmul_bf16_batch1_1024_1024_1024,
           cublas_matmul_bf16_batch1_1024_1024_1024,
-          simple_fusion_elementwise};
+          simple_fusion_elementwise,
+          noop};
 }
 
 INSTANTIATE_TEST_SUITE_P(SolLatencyEstimatorTests, SolLatencyEstimatorTest,
@@ -346,6 +374,125 @@ INSTANTIATE_TEST_SUITE_P(SolLatencyEstimatorTests, SolLatencyEstimatorTest,
                          [](const TestParamInfo<EstimatorTestCase>& info) {
                            return info.param.test_name;
                          });
+
+class IsSolLatencyEstimatorEnabledTest : public HloTestBase {
+ protected:
+  IsSolLatencyEstimatorEnabledTest()
+      : gpu_device_info_(TestGpuDeviceInfo::RTXA6000DeviceInfo()) {}
+
+  std::unique_ptr<HloModule> CreateTestModule(
+      const HloModuleConfig& config,
+      const std::string& module_name = "test_module") {
+    auto module = std::make_unique<HloModule>(module_name, config);
+    HloComputation::Builder builder("entry");
+    auto param = builder.AddInstruction(HloInstruction::CreateParameter(
+        0, ShapeUtil::MakeShape(F32, {}), "param"));
+    module->AddEntryComputation(builder.Build(param));
+    return module;
+  }
+
+  // Helper to add an AllReduce instruction to a module's entry computation.
+  void AddAllReduce(HloModule* module) {
+    HloComputation* entry = module->entry_computation();
+    Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+    auto dummy_operand = entry->AddInstruction(HloInstruction::CreateConstant(
+        LiteralUtil::CreateR2<float>({{1, 2}, {3, 4}})));
+    Shape s(shape.element_type(), /*dimensions=*/{});
+    HloComputation::Builder wrapped_computation("wrapped_computation");
+    HloInstruction* a = wrapped_computation.AddInstruction(
+        HloInstruction::CreateParameter(0, s, "p0.1"));
+    HloInstruction* b = wrapped_computation.AddInstruction(
+        HloInstruction::CreateParameter(1, s, "p0.2"));
+    wrapped_computation.AddInstruction(
+        HloInstruction::CreateBinary(s, HloOpcode::kAdd, a, b));
+
+    HloComputation* subcomp =
+        module->AddEmbeddedComputation(wrapped_computation.Build());
+    entry->AddInstruction(HloInstruction::CreateAllReduce(
+        shape, {dummy_operand}, subcomp,
+        /*replica_groups=*/{}, /*constrain_layout=*/false,
+        /*channel_id=*/std::nullopt, /*use_global_device_ids=*/false));
+  }
+
+  // Helper to add a CollectivePermute instruction.
+  void AddCollectivePermute(HloModule* module) {
+    HloComputation* entry = module->entry_computation();
+    Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+    auto dummy_operand = entry->AddInstruction(HloInstruction::CreateConstant(
+        LiteralUtil::CreateR2<float>({{1, 2}, {3, 4}})));
+    entry->AddInstruction(HloInstruction::CreateCollectivePermute(
+        shape, dummy_operand, /*source_target_pairs=*/{}, std::nullopt));
+  }
+
+  se::DeviceDescription gpu_device_info_;
+};
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, EnabledBySolEstimatorFlagOnHopper) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  EXPECT_TRUE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledIfFlagIsOffOnHopper) {
+  HloModuleConfig config;
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest,
+       DisabledForHopperWithUnsupportedCollective) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  AddCollectivePermute(module.get());  // Unsupported collective
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest,
+       DisabledForHopperWithMixedCollectives) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(9, 0);  // Hopper
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());          // Supported
+  AddCollectivePermute(module.get());  // Unsupported
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledIfNotHopper) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+
+  gpu_device_info_.set_cuda_compute_capability(8, 0);  // Not Hopper
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());  // Supported collective
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
 
 }  // namespace
 }  // namespace xla::gpu

@@ -8,7 +8,7 @@ load(
 )
 load("//xla:package_groups.bzl", "xla_test_friend_package_group")
 load("//xla:xla.default.bzl", "tests_build_defs_bzl_deps", "xla_cc_test", "xla_internal")
-load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test", "xla_test_library")
+load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -166,14 +166,15 @@ cc_library(
         ":pjrt_client_registry",
         "//xla:error_spec",
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/pjrt:pjrt_client",
         "//xla/service:backend",
+        "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
-        "//xla/service:executable",
         "//xla/service:hlo_module_util",
         "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
@@ -188,6 +189,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -207,6 +209,7 @@ cc_library(
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -288,7 +291,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
-        "//xla/service:hlo_runner_interface",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -829,7 +831,6 @@ xla_test(
 xla_test(
     name = "scalar_computations_test",
     srcs = ["scalar_computations_test.cc"],
-    precompile_test = False,
     shard_count = 32,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -894,7 +895,6 @@ xla_test(
 xla_test(
     name = "array_elementwise_ops_test",
     srcs = ["array_elementwise_ops_test.cc"],
-    precompile_test = False,
     shard_count = 25,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -1272,7 +1272,6 @@ xla_test(
 xla_test(
     name = "transpose_test",
     srcs = ["transpose_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -1570,7 +1569,6 @@ xla_test(
         # TODO(b/31436974): Fix msan failure. Failed on 2016-09-12.
         "cpu": ["nomsan"],
     },
-    precompile_test = False,
     shard_count = 30,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -1817,7 +1815,6 @@ xla_test(
     name = "dynamic_ops_test",
     timeout = "moderate",
     srcs = ["dynamic_ops_test.cc"],
-    precompile_test = False,
     shard_count = 4,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -1954,12 +1951,13 @@ xla_test(
     ],
 )
 
-# External xla_test targets can add "reduce_window_test_library" to xla_test_library_deps, in order
-# to refer to the cc_library compiled with the correct backend macros. The following test target
-# "reduce_window_test" is an example.
-xla_test_library(
+cc_library(
     name = "reduce_window_test_library",
+    testonly = True,
     srcs = ["reduce_window_test.cc"],
+    # This is set intentionally as to avoid the default behavior of the TSL
+    # `cc_library` definition that is used in this file.
+    compatible_with = [],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -1997,8 +1995,8 @@ xla_test(
     tags = [
         "optonly",
     ],
-    xla_test_library_deps = [":reduce_window_test_library"],
     deps = [
+        ":reduce_window_test_library",
         ":xla_internal_test_main",
     ],
 )
@@ -2562,7 +2560,6 @@ xla_test(
 xla_test(
     name = "convert_test",
     srcs = ["convert_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -2852,7 +2849,6 @@ xla_test(
 xla_test(
     name = "floor_ceil_test",
     srcs = ["floor_ceil_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -3683,7 +3679,6 @@ cc_library(
     hdrs = ["hlo_runner_pjrt_test_utils.h"],
     deps = [
         "//xla/pjrt:pjrt_client",
-        "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_runner_pjrt",
         "@com_google_absl//absl/flags:flag",
         "@com_google_absl//absl/strings:string_view",

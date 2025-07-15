@@ -25,9 +25,12 @@
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "grpcpp/client_context.h"
+#include "grpcpp/grpcpp.h"
 #include "xla/pjrt/distributed/util.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/future.h"
+#include "xla/python/ifrt/serdes_any_version_accessor.h"
+#include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt_proxy/client/client.h"
 #include "xla/python/ifrt_proxy/client/global_flags.h"
 #include "xla/python/ifrt_proxy/client/grpc_client_session.h"
@@ -39,6 +42,7 @@
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 namespace ifrt {
@@ -86,7 +90,8 @@ absl::StatusOr<std::unique_ptr<Client>> AttemptConnection(
         if (init_response.IsReady() && init_response.Await().ok()) {
           // If the init RPC has already completed successfully, we have
           // already or will be returning OK from the `AttemptConnection` call.
-          LOG(WARNING) << "IFRT proxy server disconnected: " << s;
+          LOG(WARNING) << "IFRT proxy server disconnected: " << s
+                       << "; Stack trace: " << tsl::CurrentStackTrace();
           if (on_disconnect != nullptr) {
             on_disconnect(s);
           }
@@ -103,6 +108,10 @@ absl::StatusOr<std::unique_ptr<Client>> AttemptConnection(
     GrpcGetVersionRequest request;
     request.mutable_min_version()->set_protocol_version(kClientMinVersion);
     request.mutable_max_version()->set_protocol_version(kClientMaxVersion);
+    request.mutable_min_version()->set_ifrt_serdes_version_number(
+        SerDesAnyVersionAccessor::GetMinimum().version_number().value());
+    request.mutable_max_version()->set_ifrt_serdes_version_number(
+        SerDesVersion::current().version_number().value());
 
     ::grpc::ClientContext context;
     GrpcGetVersionResponse response;
@@ -111,10 +120,15 @@ absl::StatusOr<std::unique_ptr<Client>> AttemptConnection(
 
     CHECK_GE(response.version().protocol_version(), kClientMinVersion);
     CHECK_LE(response.version().protocol_version(), kClientMaxVersion);
+    CHECK_GE(response.version().ifrt_serdes_version_number(),
+             SerDesAnyVersionAccessor::GetMinimum().version_number().value());
+    CHECK_LE(response.version().ifrt_serdes_version_number(),
+             SerDesVersion::current().version_number().value());
     *metadata.mutable_version() = response.version();
   }
-  *metadata.mutable_initialization_data() =
-      options.initialization_data.ToProto();
+  *metadata.mutable_initialization_data() = options.initialization_data.ToProto(
+      SerDesAnyVersionAccessor::Get(SerDesVersionNumber(
+          metadata.version().ifrt_serdes_version_number())));
 
   auto session = GrpcClientSession::Create(control_path_stub, metadata,
                                            session_disconnect_cb);
@@ -154,8 +168,9 @@ absl::StatusOr<std::unique_ptr<Client>> CreateGrpcClient(
   absl::Time start_time = absl::Now();
   absl::Status last_status;
   for (int i = 0; absl::Now() - start_time < options.connection_timeout; ++i) {
-    CONN_UPDATE_LOG(absl::StrCat("Connecting to IFRT proxy server at ",
-                                 server_address, ", attempt #", i, "..."));
+    CONN_UPDATE_LOG(absl::StrCat(
+        "Connecting to IFRT proxy server (grpc version '", ::grpc::Version(),
+        "') at ", server_address, ", attempt #", i, "..."));
     absl::StatusOr<std::unique_ptr<Client>> result =
         AttemptConnection(server_address, i, options);
     if (result.ok()) {

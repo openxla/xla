@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -603,12 +604,14 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
     std::shared_ptr<KeyValueStoreInterface> kv_store,
     std::shared_ptr<DistributedRuntimeClient> distributed_client,
     bool abort_collectives_on_failure,
-    std::shared_ptr<const GpuTopology> gpu_topology)
+    std::shared_ptr<const GpuTopology> gpu_topology,
+    std::optional<int> num_nodes)
     : xla::PjRtStreamExecutorClient(
           platform_name, client, std::move(devices), process_index,
           /*memory_spaces=*/{},  // Initialized below.
           std::move(allocator), std::move(host_memory_allocator),
           should_stage_host_to_device_transfers, std::move(gpu_run_options)),
+      num_nodes_(num_nodes),
       topology_(xla::StreamExecutorGpuTopologyDescription(
           tsl::Fingerprint64(platform_name), platform_name,
           std::move(gpu_topology), GetAttrsForDevices(addressable_devices()),
@@ -672,6 +675,15 @@ absl::string_view StreamExecutorGpuClient::platform_version() const {
 #endif  // TENSORFLOW_USE_ROCM && defined(TF_ROCM_VERSION)
 }
 
+std::optional<PjRtPluginAttributes> StreamExecutorGpuClient::plugin_attributes()
+    const {
+  PjRtPluginAttributes attrs;
+  attrs.pjrt_c_api_major_version = 0;
+  attrs.pjrt_c_api_minor_version = 0;
+  attrs.attributes["supports_cross_host_transfers"] = PjRtValueType(true);
+  return attrs;
+}
+
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const PjRtClient::ShapeSpec> shape_specs,
@@ -696,8 +708,10 @@ StreamExecutorGpuClient::GetLatestIncarnations() {
                       distributed_client_->GetCoordinationServiceAgent());
 
   // Get the latest incarnation for every task.
-  TF_ASSIGN_OR_RETURN(int num_tasks, topology_.ProcessCount());
-  std::vector<int> tasks(num_tasks);
+  if (!num_nodes_.has_value()) {
+    return FailedPrecondition("Unknown number of nodes");
+  }
+  std::vector<int> tasks(*num_nodes_);
   std::iota(tasks.begin(), tasks.end(), 0);
   TF_ASSIGN_OR_RETURN(std::vector<IncarnationId> task_incarnations,
                       agent->Incarnations(tasks));
@@ -1756,7 +1770,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       options.node_id, std::move(allocator), std::move(host_memory_allocator),
       options.should_stage_host_to_device_transfers, std::move(gpu_run_options),
       std::move(kv_store), std::move(options.distributed_runtime_client),
-      options.abort_collectives_on_failure, std::move(gpu_topology)));
+      options.abort_collectives_on_failure, std::move(gpu_topology),
+      options.num_nodes));
 }
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(

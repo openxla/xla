@@ -253,13 +253,8 @@ class HloRunnerPjRtExecutable : public OpaqueExecutable {
 
 }  // namespace
 
-HloRunnerPjRt::HloRunnerPjRt(
-    std::unique_ptr<PjRtClient> pjrt_client,
-    DeviceShapeRepresentationFn device_shape_representation_fn,
-    DeviceShapeSizeFn device_shape_size_fn)
-    : pjrt_client_(std::move(pjrt_client)),
-      device_shape_representation_fn_(device_shape_representation_fn),
-      device_shape_size_fn_(device_shape_size_fn) {}
+HloRunnerPjRt::HloRunnerPjRt(std::unique_ptr<PjRtClient> pjrt_client)
+    : pjrt_client_(std::move(pjrt_client)) {}
 
 absl::StatusOr<CompileOptions> HloRunnerPjRt::GenerateDefaultCompileOptions(
     HloModule* module, bool run_hlo_passes) {
@@ -879,7 +874,7 @@ std::string MakeFilename(const HloModule& module, const bool run_hlo_passes) {
   // within PjRt itself since the environment is not easily accessed at this
   // level of abstraction.
   const tsl::Fprint128 module_fingerprint =
-      tsl::Fingerprint128(module.ToString(HloPrintOptions::Fingerprint()));
+      tsl::Fingerprint128(module.ToString(HloPrintOptions::Default()));
   const tsl::Fprint128 run_hlo_passes_fingerprint =
       tsl::Fingerprint128(run_hlo_passes ? "true" : "false");
   const tsl::Fprint128 fingerprint =

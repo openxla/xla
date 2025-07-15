@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/layout_util.h"
+#include "xla/runtime/work_dimensions.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
@@ -108,8 +110,9 @@ absl::Status AnnotateKernelLaunchDimensions(
 IndexingMap KernelFusionInterface::GetDefaultThreadIdIndexingMap(
     const LaunchDimensions& launch_dims, int unroll_factor, const Shape& shape,
     mlir::MLIRContext* ctx) {
-  return emitters::GetDefaultWorkItemIndexingMap(launch_dims.AsWorkDimensions(),
-                                                 unroll_factor, shape, ctx);
+  WorkDimensions work_dimensions = launch_dims.AsWorkDimensions();
+  work_dimensions.work_tile_size.dimensions.push_back(unroll_factor);
+  return emitters::GetDefaultWorkItemIndexingMap(work_dimensions, shape, ctx);
 }
 
 std::string GetSanitizedUniqueName(IrEmitterContext& ir_emitter_context,

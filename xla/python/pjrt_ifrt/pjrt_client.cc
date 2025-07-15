@@ -103,6 +103,7 @@ namespace {
 AttributeMap MakeAttributeMap(xla::PjRtClient* pjrt_client) {
   absl::flat_hash_map<std::string, PjRtValueType> attributes;
   attributes.insert({"supports_executable_serialization", true});
+  attributes.insert({"serialize_with_sdy", PjRtValueType(true)});
   if (std::optional<PjRtPluginAttributes> plugin_attributes =
           pjrt_client->plugin_attributes();
       plugin_attributes.has_value()) {
@@ -826,6 +827,14 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> PjRtClient::Create(
   client->kv_store_ = std::move(options.kv_store);
   client->cross_host_transfer_timeout_ = options.cross_host_transfer_timeout;
 
+  if (client->pjrt_client()->plugin_attributes().has_value()) {
+    auto attrs = client->pjrt_client()->plugin_attributes()->attributes;
+    if (attrs.contains("supports_cross_host_transfers")) {
+      client->pjrt_supports_cross_host_transfers_ =
+          std::get<bool>(attrs.at("supports_cross_host_transfers"));
+    }
+  }
+
   LogDeviceSummary(client.get());
   return client;
 }
@@ -1166,10 +1175,10 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
     layout = std::make_shared<xla::PjRtLayout>(xla::Layout());
   } else if (buffers.empty()) {
     TF_ASSIGN_OR_RETURN(auto shard_shape, sharding->GetShardShape(shape));
-    TF_ASSIGN_OR_RETURN(layout,
-                        GetDefaultLayout(dtype, shard_shape.dims(),
-                                         sharding->devices()->devices().front(),
-                                         sharding->memory_kind()));
+    TF_ASSIGN_OR_RETURN(
+        layout, GetDefaultPjRtLayout(dtype, shard_shape.dims(),
+                                     sharding->devices()->devices().front(),
+                                     sharding->memory_kind()));
   } else {
     layout = buffers.front()->layout();
   }
@@ -1234,6 +1243,10 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
       }
     }
     return new_arrays;
+  }
+  if (!pjrt_supports_cross_host_transfers_) {
+    return absl::UnimplementedError(
+        "Cross-host transfers are not supported by this backend.");
   }
   return CopyArraysForCrossHost(arrays, src_devices, dst_devices, memory_kind);
 }
@@ -1451,8 +1464,8 @@ absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
 }
 
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
-PjRtClient::GetDefaultLayout(DType dtype, absl::Span<const int64_t> dims,
-                             Device* device, MemoryKind memory_kind) const {
+PjRtClient::GetDefaultPjRtLayout(DType dtype, absl::Span<const int64_t> dims,
+                                 Device* device, MemoryKind memory_kind) const {
   static MemoryKind kUnpinnedHostMemoryKind(UnpinnedHostMemorySpace::kKind);
   if (memory_kind == kUnpinnedHostMemoryKind) {
     return std::make_shared<xla::PjRtLayout>(

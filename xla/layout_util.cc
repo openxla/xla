@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -150,7 +149,7 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   }
 
   // A Layout proto corresponds to a single array, not a tuple.
-  CHECK(shape.IsArray());
+  CHECK(shape.IsArrayOrBuffer());
   return CreateDefaultLayoutForRank(shape.dimensions().size());
 }
 
@@ -337,7 +336,11 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     // Tuple shape: all subshapes must have a layout.
     return absl::c_all_of(shape.tuple_shapes(),
                           [](const Shape& s) { return HasLayout(s); });
-  } else if (!shape.IsArray()) {
+  }
+  if (shape.IsBuffer()) {
+    return HasLayout(shape.buffer_shape());
+  }
+  if (!shape.IsArray()) {
     // Opaque, token types etc. ignore layout.
     return true;
   }
@@ -349,7 +352,11 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     // Tuple shape: all subshapes must have a layout.
     return absl::c_any_of(shape.tuple_shapes(),
                           [](const Shape& s) { return HasAnyLayout(s); });
-  } else if (!shape.IsArray()) {
+  }
+  if (shape.IsBuffer()) {
+    return HasAnyLayout(shape.buffer_shape());
+  }
+  if (!shape.IsArray()) {
     // Opaque, token types etc. ignore layout.
     return true;
   }
