@@ -97,7 +97,6 @@ absl::flat_hash_set<HloOpcode> TritonSupportedUnaryElementwiseOps(
 
   if (element_type != PrimitiveType::F8E5M2 &&
       element_type != PrimitiveType::F8E4M3FN &&
-      element_type != PrimitiveType::F8E4M3B11FNUZ &&
       element_type != PrimitiveType::F8E5M2FNUZ &&
       element_type != PrimitiveType::F8E4M3FNUZ) {
     ret.insert(HloOpcode::kNegate);
@@ -147,9 +146,11 @@ CodegenDecision IsTritonSupportedConversion(
     return error_message();
   }
 
-  bool is_f8_conversion =
-      any_is(PrimitiveType::F8E4M3FN) && any_is(PrimitiveType::F8E5M2);
-  bool is_f8 = any_is(PrimitiveType::F8E4M3FN) || any_is(PrimitiveType::F8E5M2);
+  auto supported_fp8_types = {F8E4M3FN, F8E5M2, F8E4M3FNUZ, F8E5M2FNUZ};
+  bool is_input_fp8 = absl::c_linear_search(supported_fp8_types, input);
+  bool is_output_fp8 = absl::c_linear_search(supported_fp8_types, output);
+  bool is_f8_conversion = is_input_fp8 && is_output_fp8;
+  bool is_f8 = is_input_fp8 || is_output_fp8;
   bool is_f16_or_f32 = any_is(PrimitiveType::F16) ||
                        any_is(PrimitiveType::BF16) ||
                        any_is(PrimitiveType::F32);
@@ -179,7 +180,6 @@ absl::flat_hash_set<HloOpcode> TritonSupportedBinaryElementwiseOps(
   if (element_type == PrimitiveType::S4 || element_type == PrimitiveType::U16 ||
       element_type == PrimitiveType::F8E5M2 ||
       element_type == PrimitiveType::F8E4M3FN || 
-      element_type == PrimitiveType::F8E4M3B11FNUZ ||
       element_type == PrimitiveType::F8E5M2FNUZ ||
       element_type == PrimitiveType::F8E4M3FNUZ) {
     return {};
@@ -217,6 +217,7 @@ absl::flat_hash_set<HloOpcode> TritonSupportedBinaryElementwiseOps(
     ret.insert(HloOpcode::kAtan2);
     ret.insert(HloOpcode::kPower);
     ret.insert(HloOpcode::kRemainder);
+    ret.insert(HloOpcode::kDivide);
   }
 
   return ret;
@@ -231,7 +232,6 @@ absl::flat_hash_set<HloOpcode> TritonSupportedTernaryElementwiseOps(
 
   if (element_type == PrimitiveType::F8E5M2 ||
       element_type == PrimitiveType::F8E4M3FN || 
-      element_type == PrimitiveType::F8E4M3B11FNUZ ||
       element_type == PrimitiveType::F8E5M2FNUZ ||
       element_type == PrimitiveType::F8E4M3FNUZ) {
     return {HloOpcode::kSelect};
@@ -263,8 +263,8 @@ CodegenDecision CanTritonHandleReduce(
   if (reduce.shape().element_type() == PrimitiveType::F8E4M3FN ||
       reduce.shape().element_type() == PrimitiveType::F8E5M2 || 
       reduce.shape().element_type() == PrimitiveType::F8E5M2FNUZ ||
-      reduce.shape().element_type() == PrimitiveType::F8E4M3FNUZ ||
-      reduce.shape().element_type() == PrimitiveType::F8E4M3B11FNUZ) {
+      reduce.shape().element_type() == PrimitiveType::F8E4M3FNUZ /*||
+      reduce.shape().element_type() == PrimitiveType::F8E4M3B11FNUZ*/) {
     return CodegenDecision::Forbid(
         "F8E4M3FN and F8E5M2 are not supported for reductions.");
   }
@@ -358,15 +358,15 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
     }
   }
 
-  if (input_type == F8E4M3B11FNUZ || result_type == F8E4M3B11FNUZ ||
-      input_type == F64) {
+  if (input_type == F8E4M3B11FNUZ || result_type == F8E4M3B11FNUZ) {
     if (std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
       return CodegenDecision::Forbid(
           "Dot operation for F8E4M3B11FNUZ is not supported on ROCM.");
     }
   }
 
-  auto supported_float_types = {BF16, F16, F32, F64, F8E5M2};
+  auto supported_float_types = {BF16, F16, F32, F8E4M3FN, F8E5M2, F8E4M3FNUZ,
+                                F8E5M2FNUZ};
   if (absl::c_linear_search(supported_float_types, input_type)) {
     return CodegenDecision::Allow();
   }
@@ -375,13 +375,15 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
     return CodegenDecision::Allow();
   }
 
-  auto partially_supported_signed_types = {S4, S8, S16, S32, S64};
+  auto partially_supported_signed_types = {S8, S16, S32, S64};
   if (absl::c_linear_search(partially_supported_signed_types, input_type)) {
-    if (absl::c_linear_search(partially_supported_signed_types, result_type)) {
+    if ((absl::c_linear_search(partially_supported_signed_types, result_type) &&
+          !std::holds_alternative<se::RocmComputeCapability>(gpu_version))) {
       return CodegenDecision::Forbid(
           "Dot operation does not support these signed integer types.");
     }
-    if (primitive_util::IsFloatingPointType(result_type)) {
+    if (primitive_util::IsFloatingPointType(result_type) &&
+        !std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
       return CodegenDecision::Forbid(
           "Dot operation does not support floating point input and signed "
           "integer result types.");
@@ -435,9 +437,9 @@ CodegenDecision AreDotAlgorithmInputAndOutputConversionsSupported(
     return forbid("Unsupported BF16 on GPUs before Blackwell");
   }
 
-  if (allowed_operands_types_or->front() == PrimitiveType::F64 &&
+  if (algorithm == PrecisionConfig::ALG_DOT_F64_F64_F64 &&
       std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
-   return forbid("Unsupported result conversion");
+    return forbid("Unsupported BF16 on Rocm");
   }
 
   if (allowed_operands_types_or->size() != 1) {
@@ -679,6 +681,13 @@ CodegenDecision IsTritonSupportedInstructionImpl(
       return CodegenDecision::Forbid(
           "dynamic slice is supported but not enabled yet");
     case HloOpcode::kBitcast:
+      if (ShapeUtil::ElementsIn(instr.operand(0)->shape()) !=
+          ShapeUtil::ElementsIn(instr.shape())) {
+        return CodegenDecision::Forbid(
+            "only bitcasts with the same number of elements are supported");
+      }
+      return CodegenDecision(instr.shape().element_type() != S4,
+                             "S4 is not supported.");
     case HloOpcode::kBroadcast:
     case HloOpcode::kReshape:
     case HloOpcode::kSlice:
