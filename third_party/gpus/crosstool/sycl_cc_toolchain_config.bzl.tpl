@@ -592,7 +592,6 @@ cc_toolchain_config = rule(
         "host_unfiltered_compile_flags": attr.string_list(),
         "linker_bin_path": attr.string(),
         "builtin_sysroot": attr.string(),
-        # TODO: refine
         "ar_path": attr.string(),
     },
     provides = [CcToolchainConfigInfo],
