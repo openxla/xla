@@ -50,7 +50,7 @@ static constexpr int64_t kCostlyAllGatherThreshold = 30 * 1024 * 1024;
 
 // Multiplier which we apply to expand the base cost for the costly AR.
 static constexpr int64_t kCostlyAllReduceMultiplier = 4;
-static constexpr int64_t kCosttlyAllGatherMultiplier = 2;
+static constexpr int64_t kCostlyAllGatherMultiplier = 2;
 
 // Multipliers for p2p collectives.
 static constexpr int64_t kCostlyP2PSendMultiplier = 1024;
