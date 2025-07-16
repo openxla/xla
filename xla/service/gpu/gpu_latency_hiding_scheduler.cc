@@ -46,9 +46,11 @@ namespace {
 
 // A threshold for which we consider AR to be costly perf-wise.
 static constexpr int64_t kCostlyAllReduceThreshold = 30 * 1024 * 1024;
+static constexpr int64_t kCostlyAllGatherThreshold = 30 * 1024 * 1024;
 
 // Multiplier which we apply to expand the base cost for the costly AR.
 static constexpr int64_t kCostlyAllReduceMultiplier = 4;
+static constexpr int64_t kCosttlyAllGatherMultiplier = 2;
 
 // Multipliers for p2p collectives.
 static constexpr int64_t kCostlyP2PSendMultiplier = 1024;
@@ -635,13 +637,22 @@ ApproximateLatencyEstimator::TimeCost GpuLatencyEstimator::GetLatencyBetween(
             .debug_options()
             .xla_gpu_enable_approx_costly_collectives();
     bool is_all_reduce = from.GetInstr().opcode() == HloOpcode::kAllReduceStart;
-    bool collective_size_exceeds_threshold =
+    bool is_all_gather = from.GetInstr().opcode() == HloOpcode::kAllGatherStart;
+    bool all_reduce_collective_size_exceeds_threshold =
         ShapeSizeBytesFunction(pointer_size_)(from.GetInstr().shape()) >
         kCostlyAllReduceThreshold;
+    bool all_gather_collective_size_exceeds_threshold =
+        ShapeSizeBytesFunction(pointer_size_)(from.GetInstr().shape()) >
+        kCostlyAllGatherThreshold;
     if (enable_approx_collectives && is_all_reduce &&
-        collective_size_exceeds_threshold) {
+        all_reduce_collective_size_exceeds_threshold) {
       return ApproximateLatencyEstimator::kHighLatency *
              kCostlyAllReduceMultiplier;
+    }
+    if (enable_approx_collectives && is_all_gather &&
+        all_gather_collective_size_exceeds_threshold) {
+      return ApproximateLatencyEstimator::kHighLatency *
+             kCostlyAllGatherMultiplier;
     }
 
     return ApproximateLatencyEstimator::kHighLatency;
