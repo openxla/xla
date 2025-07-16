@@ -93,6 +93,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/llvm_ir:llvm_util",
+        #"//xla/stream_executor:device_description",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:errors",
