@@ -38,7 +38,7 @@ if ('%{tf_icpx_clang}')=="False":
  USE_ICPX_CLANG = False
 else:
  USE_ICPX_CLANG = True
-baskekit_path = "%{basekit_path}"
+basekkit_path = "%{basekit_path}"
 basekit_version = "%{basekit_version}"
 
 result = subprocess.run(["which", "ar"], capture_output=True, text=True)
