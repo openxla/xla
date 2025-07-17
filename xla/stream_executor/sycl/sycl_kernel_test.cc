@@ -12,17 +12,9 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
-#include <fstream>
-#include <memory>
-
-#include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/status_matchers.h"
-#include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {

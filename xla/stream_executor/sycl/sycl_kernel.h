@@ -13,17 +13,11 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_SYCL_SYCL_KERNEL_H_
 #define XLA_STREAM_EXECUTOR_SYCL_SYCL_KERNEL_H_
 
-#include <cstddef>
-#include <cstdint>
 #include <sycl/sycl.hpp>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "tsl/platform/logging.h"
-#include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/sycl/sycl_status.h"
 
 namespace stream_executor::gpu {
 
