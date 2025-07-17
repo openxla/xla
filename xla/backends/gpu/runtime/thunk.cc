@@ -283,6 +283,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
+    CASE(kNvshmemAllReduceDone);
+    CASE(kNvshmemAllReduceStart);
     CASE(kNvshmemCollectivePermute);
     CASE(kNvshmemCollectivePermuteDone);
     CASE(kNvshmemCollectivePermuteStart);
@@ -330,7 +332,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
-         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
+         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart ||
+         kind == Thunk::kNvshmemAllReduceStart;
+  ;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
@@ -404,19 +408,19 @@ absl::StatusOr<ThunkProto> Thunk::ToProto() const {
       typeid(*this).name()));
 }
 
-absl::StatusOr<ThunkInfoProto> Thunk::GetThunkInfoProto() const {
-  ThunkInfoProto proto;
-  proto.set_execution_stream_id(execution_stream_id_.value());
-  proto.set_profile_annotation(profile_annotation_);
-  return proto;
-}
-
 absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
     CollectiveExecuteParams const& params) {
   if (params.collectives == nullptr) {
     return Internal("Collectives API is not provided");
   }
   return params.collectives;
+}
+
+ThunkInfoProto Thunk::ThunkInfo::ToProto() const {
+  ThunkInfoProto proto;
+  proto.set_profile_annotation(profile_annotation);
+  proto.set_execution_stream_id(execution_stream_id.value());
+  return proto;
 }
 }  // namespace gpu
 }  // namespace xla

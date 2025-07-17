@@ -52,7 +52,6 @@ cc_toolchain_config(
     name = "cc-compiler-local-config",
     cpu = "local",
     builtin_include_directories = [%{cxx_builtin_include_directories}],
-    extra_no_canonical_prefixes_flags = [%{extra_no_canonical_prefixes_flags}],
     host_compiler_path = "%{host_compiler_path}",
     host_compiler_prefix = "%{host_compiler_prefix}",
     host_unfiltered_compile_flags = [%{unfiltered_compile_flags}],

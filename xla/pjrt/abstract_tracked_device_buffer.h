@@ -51,6 +51,26 @@ class AbstractTrackedDeviceBuffer {
 
   // Only to be called by ScopedHold to mark a successful donation.
   virtual void ConfirmDonation() = 0;
+
+  // Asynchronously frees all memory.
+  virtual void Delete(PjRtMemorySpace* memory_space) = 0;
+
+  // Clones an abstract buffer with an additional control dependency.
+  virtual absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+  CloneWithControlDependency(PjRtMemorySpace* memory_space,
+                             PjRtFuture<> dependency) {
+    return absl::UnimplementedError(
+        "DonateWithControlDependency is not supported.");
+  }
+
+  virtual PjRtFuture<>::Promise GetReadyFuturePromise(
+      PjRtMemorySpace* memory_space) {
+    auto promise = PjRtFuture<>::CreatePromise();
+    promise.Set(absl::UnimplementedError(
+        absl::StrCat("GetReadyFuturePromise not supported for ",
+                     memory_space->DebugString())));
+    return promise;
+  }
 };
 
 class CommonPjRtBuffer : public PjRtBuffer {
@@ -194,6 +214,8 @@ class CommonPjRtBuffer : public PjRtBuffer {
           scoped_acquire,
       const char* caller_name = "AcquireScopedRawBuffer");
 
+  ScopedHold GetBufferWithHold(ScopedHold::Type type);
+
  protected:
   CommonPjRtBuffer(std::unique_ptr<AbstractTrackedDeviceBuffer> device_buffer,
                    PjRtMemorySpace* memory_space);
@@ -254,8 +276,6 @@ class CommonPjRtBuffer : public PjRtBuffer {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     return device_buffer_.get();
   }
-
-  ScopedHold GetBufferWithHold(ScopedHold::Type type);
 
   mutable absl::Mutex mu_;
   PjRtFuture<>::Promise definition_promise_ ABSL_GUARDED_BY(mu_);

@@ -54,7 +54,6 @@ cc_library(
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph",
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
         "//xla/service:call_graph",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
     ],
 )
@@ -146,7 +145,6 @@ cc_library(
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
         "//xla/hlo/tools/hlo_diff/graph/utils:hlo_gumgraph_bfs",
         "//xla/hlo/tools/hlo_diff/graph/utils:hlo_gumgraph_dfs",
-        "//xla/service:hlo_value",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",

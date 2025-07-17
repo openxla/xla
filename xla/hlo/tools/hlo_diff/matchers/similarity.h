@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_SIMILARITY_H_
 #define XLA_HLO_TOOLS_HLO_DIFF_MATCHERS_SIMILARITY_H_
 
-#include "absl/base/nullability.h"
 #include "absl/functional/function_ref.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
@@ -53,7 +52,7 @@ double ParamPropertySimilarity(const HloInstructionNode* left,
 double ConstantPropertySimilarity(const HloInstructionNode* left,
                                   const HloInstructionNode* right);
 
-inline InstructionSimilarityFn MatchFnForOpcode(HloOpcode opcode) {
+inline InstructionSimilarityFn PropertySimilarityFnForOpcode(HloOpcode opcode) {
   switch (opcode) {
     case HloOpcode::kParameter:
       return ParamPropertySimilarity;

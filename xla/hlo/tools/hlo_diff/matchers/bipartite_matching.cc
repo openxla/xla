@@ -44,8 +44,11 @@ void MatchInstructionsWithMultipleCandidates(
     double max_match_score = 0.0;
     std::vector<const HloInstructionNode*> right_candidates;
     for (const HloInstructionNode* right : right_instructions) {
-      double similarity =
-          MatchFnForOpcode(left->instruction->opcode())(left, right);
+      double similarity = PropertySimilarityFnForOpcode(
+                              left->instruction->opcode())(left, right) +
+                          AncestorSubGraphLcsSimilarity(
+                              left, right, 20, 1, left_graph.GetNodeCount(),
+                              right_graph.GetNodeCount());
       if (similarity > max_match_score) {
         max_match_score = similarity;
         right_candidates.clear();
@@ -185,7 +188,7 @@ void MatchInstructionsByPosition(
 
 }  // namespace
 
-void MatchSameTypeInstructions(
+void MatchSameOpcodeInstructions(
     const HloGumgraph& left_graph, const HloGumgraph& right_graph,
     const std::vector<const HloInstructionNode*>& left_instructions,
     const std::vector<const HloInstructionNode*>& right_instructions,
@@ -250,9 +253,9 @@ void MatchInstructions(
     instructions_by_opcode[r->instruction->opcode()].second.push_back(r);
   }
   for (const auto& [opcode, instructions] : instructions_by_opcode) {
-    MatchSameTypeInstructions(left_graph, right_graph, instructions.first,
-                              instructions.second, mappings, matcher_type,
-                              map_by_position_mode);
+    MatchSameOpcodeInstructions(left_graph, right_graph, instructions.first,
+                                instructions.second, mappings, matcher_type,
+                                map_by_position_mode);
   }
 }
 

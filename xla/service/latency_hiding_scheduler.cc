@@ -2196,6 +2196,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       }
     }
   }
+
+  // Update the target defined states for the node before we release its
+  // successors.
+  scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
+      n->GetInstr(), &sched_state->sched_graph,
+      scheduling_context_->GetLatencyEstimator().get(), current_time);
+
   auto ready_time_cmp = [](const HloGraphNode* a, const HloGraphNode* b) {
     return a->GetReadyTime() > b->GetReadyTime();
   };
@@ -2283,9 +2290,6 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       sched_state->selective_resource_releasers.push_back(&edge.Target());
     }
   }
-  scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
-      n->GetInstr(), &sched_state->sched_graph,
-      scheduling_context_->GetLatencyEstimator().get(), current_time);
   ++sched_state->scheduled_count;
   for (auto& resource : n->GetResources()) {
     if (resource.second == ResourceUsageType::kResourceRelease) {
@@ -3255,8 +3259,6 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
   if (VLOG_IS_ON(1)) {
     // Log the statistics before scheduling. We batch the per-computation
     // statistics to speed up the calculation.
-    std::unique_ptr<HloAliasAnalysis> alias_analysis =
-        HloAliasAnalysis::Run(module).value();
     ModulePressureState pressure_state = ModulePressureState(
         module, scheduling_context_->GetAliasAnalysis().get(),
         scheduling_context_->GetShapeSizeBytes());

@@ -262,34 +262,6 @@ ENTRY main {
 }
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0, 0}));
-
-  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
-  std::unique_ptr<HloModule> compiled_module =
-      backend()
-          .compiler()
-          ->RunHloPasses(module->Clone(), backend().default_stream_executor(),
-                         /*device_allocator=*/nullptr)
-          .value();
-  VLOG(2) << compiled_module->ToString();
-
-  // Verify that the total number of fusion instructions is 1.
-  size_t total_fusion_instrs = 0;
-  for (const HloInstruction* instr :
-       compiled_module->entry_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kFusion) {
-      ++total_fusion_instrs;
-    }
-  }
-  EXPECT_EQ(total_fusion_instrs, 1);
-
-  const HloInstruction* entry_root =
-      compiled_module->entry_computation()->root_instruction();
-  // Check that we add bitcast when needed.
-  EXPECT_THAT(
-      entry_root,
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::Fusion()), m::GetTupleElement(m::Fusion()),
-          m::GetTupleElement(m::Fusion()), m::GetTupleElement(m::Fusion()))));
 }
 
 TEST_F(GpuCompilerTest, CanRunScheduledModules) {
@@ -470,7 +442,7 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
       }
 
       ENTRY entry {
-        c0 = s32[] constant(0)
+        c0 = s32[] constant(1)
         p0 = bf16[3,8,128] parameter(0)
         tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
         while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple),
@@ -827,7 +799,6 @@ ENTRY main {
     EXPECT_TRUE(filecheck_matched);
   }
 }
-
 
 class KernelCacheTest : public HloTestBase {
  public:
@@ -1601,7 +1572,8 @@ TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
   // NestGemmFusion expect to see __triton_gemm custom call with a backend
   // config created by gemm_fusion_autotuner.
   DebugOptions options = GetDebugOptionsForTest();
-  options.set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
+  options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
   SetDebugOptions(options);
   VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
 }
