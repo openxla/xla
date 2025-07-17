@@ -27,7 +27,6 @@ load(
     "make_copy_dir_rule",
     "make_copy_files_rule",
 )
-load("//third_party/gpus/sycl:sycl_dl_essential.bzl", "sycl_redist")
 
 _GCC_HOST_COMPILER_PATH = "GCC_HOST_COMPILER_PATH"
 _GCC_HOST_COMPILER_PREFIX = "GCC_HOST_COMPILER_PREFIX"
@@ -583,8 +582,7 @@ def _create_local_sycl_repository(repository_ctx):
     else:
         sycl_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
         sycl_defines["%{host_compiler_prefix}"] = gcc_host_compiler_prefix
-    sycl_defines["%{host_compiler_prefix}"] = host_compiler_prefix
-    sycl_defines["%{host_compiler_path}"] = "clang/bin/crosstool_wrapper_driver_sycl"
+	    
     sycl_defines["%{cpu_compiler}"] = str(cc)
     sycl_defines["%{linker_bin_path}"] = "/usr/bin"
 
