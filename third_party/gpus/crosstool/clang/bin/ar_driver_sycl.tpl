@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Creates a temporary working directory to extract .a files
-# Automatically detects whether an input is a regular object file or an archive
-# If the input file is a regular object file (.o), it is added directly to the final archive;
-# and if the input is an existing archive (.a), its contents are extracted and then included in the final archive. 
+# Creates a temporary working directory to extract contents from .a archive files.
+# Automatically detects whether each input is a regular object file (.o) or an archive (.a).
+# If the input is a regular object file (.o), it is included directly in the final archive.
+# If the input is an archive (.a), it is first unpacked, and its extracted object files are then added to the final archive. 
 
 # Create a temporary directory
 tmp_dir="$(mktemp -d -t tmp.XXXXXXXXXX)"
