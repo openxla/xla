@@ -471,6 +471,8 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@triton//:TritonDialects",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:human_readable_json",
     ],
 )
@@ -632,6 +634,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
