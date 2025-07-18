@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -35,19 +36,20 @@ limitations under the License.
 namespace xla::gpu {
 
 CollectiveStreamId GetCollectiveStreamId(bool is_async,
+                                         CollectiveStreamId stream_id,
                                          AsyncStreamKind stream_kind) {
-  // TODO(ezhulenev): This implementation does not look correct as stream IDs
-  // are not really unique. Figure out if it's the case and fix either the code
-  // or the documentation.
-  int64_t stream_id = static_cast<int64_t>(stream_kind);
-  return CollectiveStreamId(is_async ? stream_id + 1 : 0);
+  if (!is_async) return CollectiveStreamId(0);
+  // TODO: Remove this fallback once AsyncStreamId is used everywhere.
+  if (stream_id.value() == 0)
+    return CollectiveStreamId(static_cast<int64_t>(stream_kind) + 1);
+  return stream_id;
 }
 
 GpuCliqueKey::GpuCliqueKey(
     std::vector<GlobalDeviceId> devices, int64_t num_local_participants,
     CollectiveStreamId stream_id, AsyncStreamKind stream_kind,
     std::vector<std::vector<GlobalDeviceId>> participant_groups,
-    GlobalDeviceId root_device, std::vector<uint64_t> incarnations)
+    GlobalDeviceId root_device, std::vector<IncarnationId> incarnations)
     : CliqueKey(std::move(devices)),
       num_local_participants_(num_local_participants),
       stream_id_(stream_id),
@@ -119,7 +121,10 @@ std::string GpuCliqueKey::ToString() const {
       "num_local_participants=%lld; incarnations=[%s]",
       GlobalDeviceIdsToString(devices()), stream_id_.value(), group_string,
       root_device_.value(), num_local_participants_,
-      absl::StrJoin(incarnations_, ", "));
+      absl::StrJoin(incarnations_, ", ",
+                    [](std::string* out, IncarnationId id) {
+                      absl::StrAppend(out, id.value());
+                    }));
 }
 
 void GpuCliqueKey::HashValue(absl::HashState state) const {

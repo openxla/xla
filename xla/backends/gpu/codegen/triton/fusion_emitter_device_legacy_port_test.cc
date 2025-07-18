@@ -89,10 +89,14 @@ class TritonTest : public GpuCodegenTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
-    debug_options
-        .set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
-    // Disable autotuning by default, re-enable it on a per-test basis in order
-    // to avoid unnecessary slowness.
+    auto* emitter_opts =
+        debug_options
+            .mutable_xla_gpu_unsupported_generic_triton_emitter_features();
+    emitter_opts->Add(DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    emitter_opts->Add(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
+    emitter_opts->Add(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     debug_options.set_xla_gpu_autotune_level(0);
     return debug_options;
   }
@@ -164,6 +168,14 @@ class TritonGemmTest : public TritonTest {
     debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     // Always rewrite Gemms with Triton regardless of size.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
+    // TODO(b/393299275): remove when generic emitter is fully enabled.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     return debug_options;
   }
 
@@ -663,12 +675,14 @@ ENTRY r {
 })";
 
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: fusion(
-; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "__triton_nested_gemm_fusion"
+; CHECK: %[[p0:.*]] = f16[10,3,128]{2,0,1} parameter(0)
+; CHECK: %[[cv:.*]] = f32[10,3,128]{2,0,1} convert(%[[p0]])
+; CHECK: ROOT
+; CHECK-SAME: f32[3,10,128]{2,0,1} transpose(%[[cv]]), dimensions={1,0,2}
+; CHECK: %[[p0:.*]] = f16[10,3,128]{2,0,1} parameter(0)
+; CHECK: %[[fusion:.*]] = f32[3,10,128]{2,0,1} fusion(%[[p0]])
+; CHECK: ROOT
+; CHECK-SAME: f32[3,128,123]{2,1,0} dot(%[[fusion]],
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1290,7 +1304,8 @@ ENTRY e {
                           GetOptimizedModule(kHloText));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
+      GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()),
+                           m::Bitcast(m::Parameter()))
                      .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 }
 
@@ -1708,8 +1723,9 @@ ENTRY e {
   }
   EXPECT_THAT(
       instr,
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
-                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+      GmockMatch(
+          m::Fusion(m::Parameter(), m::Parameter(), m::Bitcast(m::Parameter()))
+              .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
 }
@@ -3147,47 +3163,6 @@ ENTRY e {
                           GetModuleAndNestedFusionMetadata(kHloText));
   EXPECT_TRUE(Run(std::move(module_and_metadata.module),
                   /*run_hlo_passes=*/false));
-}
-
-// Test PreventMmaV3LoopUnrolling pass in order to keep compile time low.
-// See b/344841434.
-// TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
-// moved to deviceless test file.
-TEST_F(TritonGemmTest, TestPreventMMAV3LoopUnrolling) {
-  if (GetCudaComputeCapability().major != se::CudaComputeCapability::kHopper) {
-    GTEST_SKIP() << "wgmma instruction is only available on Hopper";
-  }
-  constexpr absl::string_view kHloText = R"(
-gemm_fusion_dot {
-  p0 = f16[64,1024]{1,0} parameter(0)
-  p1 = f16[1024,32,32]{2,1,0} parameter(1)
-  bitcast = f16[1024,1024]{0,1} bitcast(p1)
-  ROOT dot = f16[64,1024]{1,0} dot(p0, bitcast),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-ENTRY e {
-  p0 = f16[64,1024]{1,0} parameter(0)
-  p1 = f16[1024,32,32]{2,1,0} parameter(1)
-  ROOT triton_gemm_fusion_dot = f16[64,1024]{1,0} fusion(p0, p1), kind=kCustom,
-    calls=gemm_fusion_dot,
-    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-      triton_gemm_config:
-        {"block_m":64,"block_n":32,"block_k":32,
-         "split_k":1,"num_stages":1,"num_warps":4,
-         "num_ctas":1}}}
-})";
-  TF_ASSERT_OK_AND_ASSIGN(ModuleAndNestedFusionMetadata module_and_metadata,
-                          GetModuleAndNestedFusionMetadata(kHloText));
-
-  CompileAndOptionallyVerifyPtx(std::move(module_and_metadata.module), R"(
-                                R"(
-CHECK: $L__BB0_1:
-CHECK-NEXT: // begin inline asm
-CHECK-NEXT: .pragma "nounroll";
-CHECK: wgmma
-)",
-                                /*run_optimization_passes=*/false);
 }
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be

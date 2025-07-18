@@ -553,6 +553,20 @@ xla_test(
 )
 
 xla_test(
+    name = "ragged_dot_test",
+    srcs = ["ragged_dot_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpu_codegen_test",
+        "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla/tests:test_utils",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "sorting_test",
     srcs = ["sorting_test.cc"],
     backends = ["gpu"],
@@ -615,7 +629,7 @@ lit_test_suite(
     ],
     default_tags = tf_gpu_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
-    tags = ["no-sycl"],
+    tags = ["no-oneapi"],
     tags_override = {
         "element_wise_row_vectorization.hlo": ["cuda-only"],
         "scatter_bf16.hlo": ["cuda-only"],

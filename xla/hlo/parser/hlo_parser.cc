@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -328,6 +329,7 @@ class HloParserImpl : public HloParser {
     kCollectiveDeviceList,
     kResultAccuracy,
     kOriginalValue,
+    kOriginalValueRecoveryTable,
   };
 
   struct AttrConfig {
@@ -584,7 +586,10 @@ class HloParserImpl : public HloParser {
   bool ParseToken(TokKind kind, const std::string& msg,
                   uint64_t lexer_skip_mask = kNoneMask);
   bool ParseUnsignedIntegerType(PrimitiveType* primitive_type);
+  bool ParseOriginalArray(OriginalArray& original_array);
   bool ParseOriginalValue(std::shared_ptr<OriginalValue>& original_value);
+  bool ParseOriginalValueRecoveryTable(
+      OriginalValueRecoveryTable& original_value_recovery_table);
 
   using AliasingData =
       absl::flat_hash_map<ShapeIndex, HloInputOutputAliasConfig::Alias>;
@@ -1103,6 +1108,7 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
   std::optional<FrontendAttributes> frontend_attributes;
   BoolList allow_spmd_sharding_propagation_to_parameters;
   BoolList allow_spmd_sharding_propagation_to_output;
+  std::optional<OriginalValueRecoveryTable> original_value_recovery_table;
 
   attrs["is_scheduled"] = {/*required=*/false, AttrTy::kBool, &is_scheduled};
   attrs["replica_count"] = {/*required=*/false, AttrTy::kInt64, &replica_count};
@@ -1125,6 +1131,9 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
   attrs["allow_spmd_sharding_propagation_to_output"] = {
       /*required=*/false, AttrTy::kBracedBoolListOrBool,
       &allow_spmd_sharding_propagation_to_output};
+  attrs["origin_recovery_table"] = {/*required=*/false,
+                                    AttrTy::kOriginalValueRecoveryTable,
+                                    &original_value_recovery_table};
 
   if (!parse_module_without_header) {
     if (lexer_.GetKind() != TokKind::kw_HloModule) {
@@ -1227,6 +1236,9 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
       }
     }
     module->buffer_donor_config() = buffer_donor_config;
+  }
+  if (original_value_recovery_table) {
+    module->set_original_value_recovery_table(*original_value_recovery_table);
   }
   DeduplicateOriginalValues(module);
 
@@ -5176,6 +5188,16 @@ bool HloParserImpl::ParseAttributeHelper(
             ->emplace(std::move(result));
         return true;
       }
+      case AttrTy::kOriginalValueRecoveryTable: {
+        OriginalValueRecoveryTable result;
+        if (!ParseOriginalValueRecoveryTable(result)) {
+          return false;
+        }
+        static_cast<optional<HloModule::OriginalValueRecoveryTable>*>(
+            attr_out_ptr)
+            ->emplace(std::move(result));
+        return true;
+      }
       case AttrTy::kMetadata: {
         OpMetadata result;
         if (!ParseMetadata(result)) {
@@ -6515,8 +6537,32 @@ bool HloParserImpl::ParsePaddingConfig(PaddingConfig* padding) {
   return true;
 }
 
-// original_tensor ::= '{' instruction_name [shape_index] '}'
-// original_value ::= '{' '('* original_tensor [','] ')'* | original_value '}'
+// original_array ::= '{' instruction_name [shape_index] '}'
+bool HloParserImpl::ParseOriginalArray(OriginalArray& original_array) {
+  VLOG(kDebugLevel) << "ParseOriginalArray";
+
+  if (!ParseToken(TokKind::kLbrace, "Expects '{'")) {
+    return false;
+  }
+
+  if (lexer_.GetKind() == TokKind::kString) {
+    if (!ParseString(&original_array.instruction_name)) {
+      return false;
+    }
+    if (lexer_.GetKind() == TokKind::kLbrace) {
+      if (!ParseShapeIndex(&original_array.shape_index)) {
+        return false;
+      }
+    }
+  }
+
+  if (!ParseToken(TokKind::kRbrace, "Expects '} at end of OriginalArray'")) {
+    return false;
+  }
+  return true;
+}
+
+// original_value ::= '{' '('* original_array [','] ')'* | original_value '}'
 bool HloParserImpl::ParseOriginalValue(
     std::shared_ptr<OriginalValue>& original_value) {
   VLOG(kDebugLevel) << "ParseOriginalValue";
@@ -6537,29 +6583,17 @@ bool HloParserImpl::ParseOriginalValue(
       lexer_.Lex();
       ++leaf_shape_index.back();
     } else if (lexer_.GetKind() == TokKind::kLbrace) {
-      lexer_.Lex();
-      if (lexer_.GetKind() != TokKind::kRbrace) {
-        std::string instruction_name;
-        ShapeIndex shape_index;
-        if (!ParseString(&instruction_name)) {
-          return false;
-        }
-        if (lexer_.GetKind() != TokKind::kRbrace) {
-          if (!ParseShapeIndex(&shape_index)) {
-            return false;
-          }
-        }
-        *original_value->mutable_element(leaf_shape_index) = {instruction_name,
-                                                              shape_index};
+      OriginalArray original_array;
+      if (!ParseOriginalArray(original_array)) {
+        return false;
+      }
+      if (!original_array.instruction_name.empty()) {
+        *original_value->mutable_element(leaf_shape_index) = original_array;
       } else {
         // The original value is not expected to have any leaf without values.
         // However we should not fail the execution here. This should
         // be done in HloVerifier instead.
         LOG(WARNING) << "Found an empty leaf node in an original value";
-      }
-      if (!ParseToken(TokKind::kRbrace,
-                      "Expects '} at end of each OriginalTensor'")) {
-        return false;
       }
     } else {
       return false;
@@ -6567,6 +6601,50 @@ bool HloParserImpl::ParseOriginalValue(
   }
 
   lexer_.Lex();
+  return true;
+}
+
+// OriginalValueRecoveryTable ::= '{' OriginalArray ':' OriginalArray ','
+//   HloModule | OriginalValueRecoveryTable '}'
+bool HloParserImpl::ParseOriginalValueRecoveryTable(
+    OriginalValueRecoveryTable& original_value_recovery_table) {
+  VLOG(kDebugLevel) << "ParseOriginalValueRecoveryTable";
+
+  if (!ParseToken(TokKind::kLbrace, "Expects '{'")) {
+    return false;
+  }
+
+  while (lexer_.GetKind() != TokKind::kRbrace) {
+    OriginalArray removed_original_array, replacing_original_array;
+    if (!ParseOriginalArray(removed_original_array)) {
+      return false;
+    }
+    std::string errmsg =
+        "Expected format: <original_array>: <original_array>, "
+        "<HloModule>";
+    if (!ParseToken(TokKind::kColon, errmsg)) {
+      return false;
+    }
+    if (!ParseOriginalArray(replacing_original_array)) {
+      return false;
+    }
+    if (!ParseToken(TokKind::kComma, errmsg)) {
+      return false;
+    }
+    std::string hlo_string;
+    if (!ParseString(&hlo_string)) {
+      return false;
+    }
+    auto recovery_module = ParseAndReturnUnverifiedModule(hlo_string);
+    if (!recovery_module.ok()) {
+      return false;
+    }
+    original_value_recovery_table[removed_original_array] = std::make_pair(
+        replacing_original_array, std::move(recovery_module.value()));
+  }
+
+  lexer_.Lex();
+
   return true;
 }
 

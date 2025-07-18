@@ -379,6 +379,28 @@ std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
   return chain;
 }
 
+void HloAsyncInstruction::UpdateChainShapes() {
+  if (opcode() == HloOpcode::kAsyncDone) {
+    return;
+  }
+
+  const Shape& async_update_shape = shape();
+  const Shape& async_done_shape = shape().tuple_shapes(1);
+  for (HloAsyncInstruction* current = async_chain_next_; current != nullptr;
+       current = current->async_chain_next_) {
+    switch (current->opcode()) {
+      case HloOpcode::kAsyncUpdate:
+        *current->mutable_shape() = async_update_shape;
+        break;
+      case HloOpcode::kAsyncDone:
+        *current->mutable_shape() = async_done_shape;
+        break;
+      default:
+        LOG(FATAL) << "Unexpected async opcode: " << current->opcode();
+    }
+  }
+}
+
 bool HloAsyncInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
@@ -405,6 +427,22 @@ HloAsyncStartInstruction::HloAsyncStartInstruction(
   CHECK(!async_computation->IsFusionComputation());
   AppendComputation(async_computation);
   HloAsyncStartInstruction::set_async_execution_thread(async_execution_thread);
+}
+
+HloInstruction* HloAsyncStartInstruction::AddCallOperand(
+    HloInstruction* new_operand) {
+  CHECK_EQ(operand_count(),
+           async_wrapped_computation()->parameter_instructions().size());
+  const int64_t param_no = operand_count();
+  std::string param_name = StrCat("param_", param_no);
+  HloInstruction* called_computation_parameter =
+      async_wrapped_computation()->AddParameter(HloInstruction::CreateParameter(
+          param_no, new_operand->shape(), param_name));
+  AppendOperand(new_operand);
+  mutable_shape()->mutable_tuple_shapes(0)->mutable_tuple_shapes()->push_back(
+      new_operand->shape());
+  UpdateChainShapes();
+  return called_computation_parameter;
 }
 
 void HloAsyncStartInstruction::set_async_execution_thread(
@@ -2049,9 +2087,6 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
   }
 
   if (clone != instruction_to_append) {
-    // Copy over the original value to the clone of a fused instruction.
-    clone->CopyOriginalValue(instruction_to_append,
-                             /*clone=*/false);
     VLOG(2) << "New clone:\n" << clone->ToString();
   }
 
@@ -2425,11 +2460,6 @@ void HloFusionInstruction::MergeFusionInstructionIntoMultiOutput(
     auto cloned_instruction =
         parent()->AddInstruction(fused_instruction->CloneWithNewOperands(
             fused_instruction->shape(), new_operands, /*suffix=*/"clone"));
-    // Copy over the original value to the clone of a fused instruction.
-    // This is necessary as the clone will be cloned again when the clone is
-    // fused in FuseInstructionIntoMultiOutput(). This can be skipped if we
-    // improve the code to only clone once as stated in the preceding comment.
-    cloned_instruction->CopyOriginalValue(fused_instruction, /*clone=*/true);
     unfused_instructions.push_back(cloned_instruction);
     InsertOrDie(&old_to_new, fused_instruction, cloned_instruction);
   }

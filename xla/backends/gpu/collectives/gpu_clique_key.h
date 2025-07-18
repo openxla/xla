@@ -50,7 +50,8 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
 // Assigns a unique ID to a stream for asynchronous or synchronous execution.
 // These IDs can be used, for example, to look up the NCCL communicator.
 CollectiveStreamId GetCollectiveStreamId(
-    bool is_async, AsyncStreamKind stream_kind = AsyncStreamKind::kCollective);
+    bool is_async, CollectiveStreamId stream_id = CollectiveStreamId(1),
+    AsyncStreamKind stream_kind = AsyncStreamKind::kCollective);
 
 // Clique key for identifying a particular collectives clique on a GPU backend.
 class GpuCliqueKey : public CliqueKey {
@@ -61,7 +62,7 @@ class GpuCliqueKey : public CliqueKey {
       AsyncStreamKind stream_kind = AsyncStreamKind::kCollective,
       std::vector<std::vector<GlobalDeviceId>> participant_groups = {},
       GlobalDeviceId root_device = GlobalDeviceId(-1),
-      std::vector<uint64_t> incarnations = {});
+      std::vector<IncarnationId> incarnations = {});
 
   GpuCliqueKey(const GpuCliqueKey&) = default;
   GpuCliqueKey& operator=(const GpuCliqueKey&) = default;
@@ -99,7 +100,7 @@ class GpuCliqueKey : public CliqueKey {
   bool is_local() const { return num_local_participants_ == devices().size(); }
 
   // Returns the incarnation ids of the participating processes.
-  absl::Span<const uint64_t> incarnations() const { return incarnations_; }
+  absl::Span<const IncarnationId> incarnations() const { return incarnations_; }
 
   std::string ToString() const final;
 
@@ -136,7 +137,7 @@ class GpuCliqueKey : public CliqueKey {
 
   GlobalDeviceId root_device_;
 
-  std::vector<uint64_t> incarnations_;
+  std::vector<IncarnationId> incarnations_;
 };
 
 }  // namespace xla::gpu

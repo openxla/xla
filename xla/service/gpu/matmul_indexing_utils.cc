@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/matmul_indexing_utils.h"
 
+#include <array>
 #include <cstdint>
 #include <iterator>
 #include <vector>
@@ -101,7 +102,14 @@ DotOperandDims::DotOperandDims(Shape shape,
                                     contracting_dims.end());
 }
 
-absl::StatusOr<DotOperandDims> DotOperandDims::FromDot(
+absl::StatusOr<std::array<DotOperandDims, 2>> DotOperandDims::FromDot(
+    const HloInstruction* dot) {
+  TF_ASSIGN_OR_RETURN(auto lhs_dims, FromDotOperand(dot, 0));
+  TF_ASSIGN_OR_RETURN(auto rhs_dims, FromDotOperand(dot, 1));
+  return std::array<DotOperandDims, 2>{lhs_dims, rhs_dims};
+}
+
+absl::StatusOr<DotOperandDims> DotOperandDims::FromDotOperand(
     const HloInstruction* dot, int operand_idx) {
   TF_RET_CHECK(operand_idx == 0 || operand_idx == 1);
   const Shape& shape = dot->operand(operand_idx)->shape();
@@ -231,6 +239,26 @@ absl::Status DotOperandDims::EraseDimensions(int64_t start, int64_t end) {
   }
   shape_ = ShapeUtil::FilterDimensions(
       [&](int64_t dim) { return dim < start || dim >= end; }, shape_);
+  return absl::OkStatus();
+}
+
+absl::Status DotOperandDims::InsertDimension(Category category, int64_t dim_idx,
+                                             int64_t dim_size) {
+  TF_RET_CHECK(dim_idx >= 0);
+  TF_RET_CHECK(dim_idx <= shape_.dimensions().size());
+  shape_ = ShapeUtil::InsertDimensionAtIndex(shape_, dim_idx, dim_size);
+  for (auto& dim_numbers : dim_numbers_) {
+    for (auto& dim : dim_numbers) {
+      if (dim >= dim_idx) {
+        ++dim;
+      }
+    }
+  }
+  // Insert before the first dimension with index >= dim_idx, to keep sorted
+  // dimensions list sorted.
+  auto iter = absl::c_find_if(dim_numbers_[category],
+                              [&](int64_t dim) { return dim >= dim_idx; });
+  dim_numbers_[category].insert(iter, dim_idx);
   return absl::OkStatus();
 }
 

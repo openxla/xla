@@ -88,7 +88,13 @@ IfrtIRCompileOptions::FromProto(const IfrtIrCompileOptionsProto& proto) {
   return std::make_unique<IfrtIRCompileOptions>(
       std::move(device_ids),
       absl::flat_hash_map<std::string, LoadedExecutableRef>(),
-      std::move(compile_options_overrides), proto.propagate_shardings());
+      std::move(compile_options_overrides), proto.propagate_shardings(),
+      proto.mlir_dump_to(), proto.mlir_dump_pass_re(),
+      proto.mlir_dump_func_re(), proto.mlir_enable_timing(),
+      proto.dot_graph_dump_to(),
+      proto.dot_graph_min_executable_peak_memory_bytes(),
+      proto.dot_graph_min_executable_flops(),
+      proto.dot_graph_min_per_device_transfer_size_bytes());
 }
 
 absl::StatusOr<IfrtIrCompileOptionsProto> IfrtIRCompileOptions::ToProto(
@@ -121,6 +127,16 @@ absl::StatusOr<IfrtIrCompileOptionsProto> IfrtIRCompileOptions::ToProto(
     }
   }
   proto.set_propagate_shardings(propagate_shardings);
+  proto.set_mlir_dump_to(mlir_dump_to);
+  proto.set_mlir_dump_pass_re(mlir_dump_pass_re);
+  proto.set_mlir_dump_func_re(mlir_dump_func_re);
+  proto.set_mlir_enable_timing(mlir_enable_timing);
+  proto.set_dot_graph_dump_to(dot_graph_dump_to);
+  proto.set_dot_graph_min_executable_peak_memory_bytes(
+      dot_graph_min_executable_peak_memory_bytes);
+  proto.set_dot_graph_min_executable_flops(dot_graph_min_executable_flops);
+  proto.set_dot_graph_min_per_device_transfer_size_bytes(
+      dot_graph_min_per_device_transfer_size_bytes);
   return proto;
 }
 

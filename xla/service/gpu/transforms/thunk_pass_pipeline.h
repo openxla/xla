@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
@@ -35,7 +34,7 @@ class ThunkPassInterface {
   virtual ~ThunkPassInterface() = default;
 
   virtual absl::StatusOr<bool> Run(
-      SequentialThunk* root_thunk, const HloModuleConfig& hlo_module_config,
+      SequentialThunk* root_thunk, const DebugOptions& debug_options,
       const se::DeviceDescription& device_info) = 0;
 
   virtual absl::string_view name() const = 0;
@@ -54,7 +53,7 @@ class ThunkPassPipeline : public ThunkPassInterface {
   // Runs all optimization passes on the given thunk sequence.
   // Returns true if any pass changed the thunk tree.
   absl::StatusOr<bool> Run(SequentialThunk* root_thunk,
-                           const HloModuleConfig& hlo_module_config,
+                           const DebugOptions& debug_options,
                            const se::DeviceDescription& device_info) override;
 
  private:

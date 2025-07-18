@@ -27,6 +27,7 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -291,8 +292,10 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
       executable->Execute({{buffer.get(), buffer.get()}}, /*options=*/{}));
 
   ASSERT_EQ(result.size(), 1);
-  ASSERT_EQ(result[0].size(), 1);
-  EXPECT_EQ(result[0][0]->GetReadyFuture().Await(), input_error);
+  ASSERT_EQ(result[0].size(), 2);
+  for (const auto& b : result[0]) {
+    EXPECT_EQ(b->GetReadyFuture().Await(), input_error);
+  }
 }
 
 // TODO(b/372735047): Fix and reenable.
@@ -1231,14 +1234,16 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
           if (auto* cc = std::get_if<se::CudaComputeCapability>(
                   &executor->GetDeviceDescription().gpu_compute_capability())) {
             if (cc->IsAtLeastHopper()) {
-              TF_ASSERT_OK_AND_ASSIGN(
-                  std::string fabric_info,
-                  GetDeviceFabricInfo(executor->device_ordinal()));
-              // Hopper devices have empty fabric info, MNNVL Blackwell devices
-              // have meaningful fabric info.
-              if (cc->IsHopper()) {
-                EXPECT_EQ(fabric_info,
-                          "00000000-0000-0000-0000-000000000000/0");
+              auto fabric_info =
+                  GetDeviceFabricInfo(executor->device_ordinal());
+              if (!fabric_info.ok()) {
+                // Only allow failures due to insufficient CUDA driver version.
+                EXPECT_THAT(
+                    fabric_info.status().message(),
+                    AnyOf(
+                        HasSubstr("Failed to initialize NVML library."),
+                        HasSubstr(
+                            "NVML library doesn't have required functions.")));
               }
             }
           }
@@ -1277,6 +1282,20 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
             ->description()
             .coords();
     EXPECT_EQ(coords[0], device_index);
+  }
+}
+
+TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  for (const auto& device : client->devices()) {
+    auto value = static_cast<PjRtStreamExecutorDevice*>(device)
+                     ->description()
+                     .Attributes()
+                     .find("shared_memory_per_block_optin")
+                     ->second;
+    int64_t shared_memory_per_block_optin = std::get<int64_t>(value);
+    EXPECT_GT(shared_memory_per_block_optin, 0);
   }
 }
 
@@ -1709,6 +1728,7 @@ TEST(StreamExecutorGpuClientTest, ExecutePinnedHostOutputTest) {
       auto memory_stats, executable->GetExecutable()->GetCompiledMemoryStats());
   EXPECT_EQ(memory_stats.output_size_in_bytes, 0);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 16);
+  EXPECT_GE(memory_stats.peak_memory_in_bytes, 0);
 }
 
 TEST(StreamExecutorGpuClientTest, ExecutePinnedHostOutputTupleTest) {

@@ -17,10 +17,13 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -38,11 +41,12 @@ namespace xla::cpu {
 namespace {
 
 struct XnnDotRewriteTestSpec {
+  std::string lib;
   std::string in_dtype;
   std::string out_dtype;
   std::string cpu_name;
   std::string features;
-  bool changed;
+  std::string fusion_mode;
 };
 
 class CpuDotLibraryTest
@@ -51,7 +55,8 @@ class CpuDotLibraryTest
  public:
   static std::string Name(
       const ::testing::TestParamInfo<XnnDotRewriteTestSpec>& info) {
-    return absl::StrCat(info.param.in_dtype, "_", info.param.out_dtype, "_",
+    return absl::StrCat(info.param.lib, "_", info.param.fusion_mode, "_",
+                        info.param.in_dtype, "_", info.param.out_dtype, "_",
                         info.param.cpu_name);
   }
 
@@ -60,6 +65,7 @@ class CpuDotLibraryTest
     HloOpcode fusion_root;
     int num_fusion_params;
     int num_instructions_in_fused_computation;
+    bool changed;
   };
 
   void RunTest(absl::string_view hlo_template, FusionProperties expected) {
@@ -78,11 +84,19 @@ class CpuDotLibraryTest
                             ParseAndReturnVerifiedModule(hlo_text));
 
     // Run the pass.
-    DotLibraryRewriterOptions options = {/*use_onednn=*/false,
-                                         /*use_xnnpack=*/true};
+    tsl::protobuf::RepeatedField<int> fusion_types;
+    fusion_types.Add(DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+    if (spec.fusion_mode == "greedy") {
+      fusion_types.Add(DebugOptions::LIBRARY_FUSION_TYPE_ELTWISE);
+    }
+    bool use_onednn = spec.lib == "onednn";
+    bool use_xnnpack = spec.lib == "xnn";
+    DotLibraryRewriterOptions options = {
+        use_onednn, use_xnnpack,
+        /*xnn_fusion_types=*/use_xnnpack ? &fusion_types : nullptr};
     DotLibraryRewriter rewriter(features.get(), options);
-    EXPECT_EQ(spec.changed, rewriter.Run(module.get()).value());
-    if (!spec.changed) {
+    EXPECT_EQ(expected.changed, rewriter.Run(module.get()).value());
+    if (!expected.changed) {
       return;  // No further checks if the module was not changed.
     }
     VLOG(3) << module->ToString();
@@ -107,7 +121,38 @@ class CpuDotLibraryTest
     EXPECT_EQ(fusion->fused_instructions_computation()->instruction_count(),
               expected.num_instructions_in_fused_computation);
   }
+
+  bool IsDotEnabledOnCPU() {
+    XnnDotRewriteTestSpec spec = GetParam();
+    bool bf16_dot_supported = absl::StrContains(spec.features, "+avx512bf16");
+    return spec.in_dtype != "bf16" || bf16_dot_supported;
+  }
 };
+
+TEST_P(CpuDotLibraryTest, AddMatMul) {
+  const absl::string_view hlo_template = R"(
+    HloModule matmul
+
+    ENTRY %main {
+      %a = $in_dtype[64,64] parameter(0)
+      %b = $in_dtype[64,64] parameter(1)
+      %weight = $in_dtype[64,262144] parameter(2)
+      %x = $in_dtype[64,64] add(%a, %b)
+      ROOT %dot = $out_dtype[64,262144]{1,0} dot(%x, %weight),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  XnnDotRewriteTestSpec spec = GetParam();
+  FusionProperties expected = {HloOpcode::kDot, 0, 0, false};
+  if (spec.fusion_mode == "greedy") {
+    expected = IsDotEnabledOnCPU()
+                   ? FusionProperties{HloOpcode::kDot, 3, 5, true}
+                   : FusionProperties{HloOpcode::kAdd, 2, 3, true};
+  } else if (IsDotEnabledOnCPU()) {
+    expected = FusionProperties{HloOpcode::kDot, 2, 3, true};
+  }
+  RunTest(hlo_template, expected);
+}
 
 TEST_P(CpuDotLibraryTest, MatMul) {
   const absl::string_view hlo_template = R"(
@@ -120,7 +165,7 @@ TEST_P(CpuDotLibraryTest, MatMul) {
                   lhs_contracting_dims={1}, rhs_contracting_dims={0}
     })";
 
-  RunTest(hlo_template, {HloOpcode::kDot, 2, 3});
+  RunTest(hlo_template, {HloOpcode::kDot, 2, 3, IsDotEnabledOnCPU()});
 }
 
 TEST_P(CpuDotLibraryTest, MatMulAndAdd) {
@@ -136,7 +181,15 @@ TEST_P(CpuDotLibraryTest, MatMulAndAdd) {
       ROOT %add = $out_dtype[64,262144]{1,0} add(%dot, %addend)
     })";
 
-  RunTest(hlo_template, {HloOpcode::kAdd, 3, 5});
+  FusionProperties expected = {HloOpcode::kAdd, 0, 0, false};
+  if (IsDotEnabledOnCPU()) {
+    // Dot and Add in the fusion.
+    expected = {HloOpcode::kAdd, 3, 5, true};
+  } else if (GetParam().fusion_mode == "greedy") {
+    // Only Add in the fusion.
+    expected = {HloOpcode::kAdd, 2, 3, true};
+  }
+  RunTest(hlo_template, expected);
 }
 
 TEST_P(CpuDotLibraryTest, MatMulAddSubMulSameInputs) {
@@ -154,7 +207,18 @@ TEST_P(CpuDotLibraryTest, MatMulAddSubMulSameInputs) {
       ROOT %mul = $out_dtype[64,262144]{1,0} multiply(%sub, %addend)
     })";
 
-  RunTest(hlo_template, {HloOpcode::kMultiply, 3, 7});
+  XnnDotRewriteTestSpec spec = GetParam();
+  FusionProperties expected = {HloOpcode::kMultiply, 0, 0, false};
+  if (IsDotEnabledOnCPU()) {
+    // {Dot, Add, Sub, Mul} for XNN, {Dot, Add} for oneDNN.
+    expected = spec.lib == "xnn"
+                   ? FusionProperties{HloOpcode::kMultiply, 3, 7, true}
+                   : FusionProperties{HloOpcode::kAdd, 3, 5, true};
+  } else if (spec.fusion_mode == "greedy") {
+    // Only Add, Sub, and Mul in the fusion.
+    expected = {HloOpcode::kMultiply, 2, 5, true};
+  }
+  RunTest(hlo_template, expected);
 }
 
 TEST_P(CpuDotLibraryTest, MatMulAddSubMulDifferentInputs) {
@@ -174,10 +238,21 @@ TEST_P(CpuDotLibraryTest, MatMulAddSubMulDifferentInputs) {
       ROOT %mul = $out_dtype[64,262144]{1,0} multiply(%sub, %multiplier)
     })";
 
-  RunTest(hlo_template, {HloOpcode::kMultiply, 5, 9});
+  XnnDotRewriteTestSpec spec = GetParam();
+  FusionProperties expected = {HloOpcode::kMultiply, 0, 0, false};
+  if (IsDotEnabledOnCPU()) {
+    // {Dot, Add, Sub, Mul} for XNN, {Dot, Add} for oneDNN.
+    expected = spec.lib == "xnn"
+                   ? FusionProperties{HloOpcode::kMultiply, 5, 9, true}
+                   : FusionProperties{HloOpcode::kAdd, 3, 5, true};
+  } else if (spec.fusion_mode == "greedy") {
+    // Only Add, Sub, and Mul in the fusion.
+    expected = {HloOpcode::kMultiply, 4, 7, true};
+  }
+  RunTest(hlo_template, expected);
 }
 
-TEST_P(CpuDotLibraryTest, MatMulAddSubMulSort) {
+TEST_P(CpuDotLibraryTest, MatMulAddMinExpSort) {
   const absl::string_view hlo_template = R"(
     HloModule matmul
 
@@ -191,20 +266,29 @@ TEST_P(CpuDotLibraryTest, MatMulAddSubMulSort) {
       %input = $in_dtype[64,64]{1,0} parameter(0)
       %weight = $in_dtype[64,262144]{1,0} parameter(1)
       %addend = $out_dtype[64,262144]{1,0} parameter(2)
-      %subtractor = $out_dtype[64,262144]{1,0} parameter(3)
-      %multiplier = $out_dtype[64,262144]{1,0} parameter(4)
-      %exponent = $out_dtype[64,262144]{1,0} parameter(5)
+      %threshold = $out_dtype[64,262144]{1,0} parameter(3)
       %dot = $out_dtype[64,262144]{1,0} dot(%input, %weight),
              lhs_contracting_dims={1}, rhs_contracting_dims={0}
       %add = $out_dtype[64,262144]{1,0} add(%dot, %addend)
-      %sub = $out_dtype[64,262144]{1,0} subtract(%add, %subtractor)
-      %mul = $out_dtype[64,262144]{1,0} multiply(%sub, %multiplier)
-      ROOT %sorted = $out_dtype[64,262144] sort(%mul),
+      %min = $out_dtype[64,262144]{1,0} minimum(%add, %threshold)
+      %exp = $out_dtype[64,262144]{1,0} exponential(%min)
+      ROOT %sorted = $out_dtype[64,262144] sort(%exp),
                      dimensions={0}, to_apply=compare
     })";
 
   // Sort is not supported by xnn_emitter and should not be in the fusion.
-  RunTest(hlo_template, {HloOpcode::kMultiply, 5, 9});
+  XnnDotRewriteTestSpec spec = GetParam();
+  FusionProperties expected = {HloOpcode::kExp, 0, 0, false};
+  if (IsDotEnabledOnCPU()) {
+    // {Dot, Add, Min, Exp} for XNN, {Dot, Add} for oneDNN.
+    expected = spec.lib == "xnn"
+                   ? FusionProperties{HloOpcode::kExp, 4, 8, true}
+                   : FusionProperties{HloOpcode::kAdd, 3, 5, true};
+  } else if (spec.fusion_mode == "greedy") {
+    // Only {Add, Min, Exp} in the fusion.
+    expected = {HloOpcode::kExp, 3, 6, true};
+  }
+  RunTest(hlo_template, expected);
 }
 
 TEST_P(CpuDotLibraryTest, DoNotFuseMultiOutputs) {
@@ -225,24 +309,59 @@ TEST_P(CpuDotLibraryTest, DoNotFuseMultiOutputs) {
       ROOT %mul = $out_dtype[64,262144]{1,0} multiply(%sub1, %sub2)
     })";
 
-  // `dot + add` fusion has 2 users, so we cannot fuse further.
-  RunTest(hlo_template, {HloOpcode::kAdd, 3, 5});
+  // Many cases will have multiple fusions. We only check the first one.
+  XnnDotRewriteTestSpec spec = GetParam();
+  FusionProperties expected = {HloOpcode::kAdd, 0, 0, false};
+  if (IsDotEnabledOnCPU()) {
+    // {Dot, Add} fusion has 2 users, so we cannot fuse further.
+    expected = {HloOpcode::kAdd, 3, 5, true};
+  } else if (spec.fusion_mode == "greedy") {
+    // Only {Add} in the fusion.
+    expected = {HloOpcode::kAdd, 2, 3, true};
+  }
+  RunTest(hlo_template, expected);
 }
 
 std::vector<XnnDotRewriteTestSpec> GetXnnDotRewriteTestSpecs() {
-  const std::string kZen3Features = "+avx,+avx2";
-  const std::string kSapphireRapidsFeatures =
-      "+avx512vnni,+avx512bf16,+amx-bf16,+amx-int8,+amx-tile,+amx-transpose";
-  return std::vector<XnnDotRewriteTestSpec>{
-      XnnDotRewriteTestSpec{"f32", "f32", "znver3", kZen3Features, true},
-      XnnDotRewriteTestSpec{"bf16", "f32", "znver3", kZen3Features, false},
-      XnnDotRewriteTestSpec{"f32", "f32", "sapphirerapids",
-                            kSapphireRapidsFeatures, true},
-      XnnDotRewriteTestSpec{"bf16", "f32", "sapphirerapids",
-                            kSapphireRapidsFeatures, true},
-      XnnDotRewriteTestSpec{"bf16", "bf16", "sapphirerapids",
-                            kSapphireRapidsFeatures, true},
+  // CPUs to test with.
+  absl::flat_hash_map<std::string, std::string> cpu_to_features = {
+      {"znver3", "+avx,+avx2"},
+      {"sapphirerapids",
+       "+avx512vnni,+avx512bf16,+amx-bf16,+amx-int8,+amx-tile,+amx-transpose"},
   };
+
+  // Input and output data types to test per each library + CPU combination.
+  using StrPair = std::pair<std::string, std::string>;
+  absl::flat_hash_map<StrPair, std::vector<StrPair>> dtype_map = {
+      {{"xnn", "znver3"}, {{"f32", "f32"}, {"bf16", "f32"}}},
+      {{"xnn", "sapphirerapids"},
+       {{"f32", "f32"}, {"bf16", "f32"}, {"bf16", "bf16"}}},
+      {{"onednn", "sapphirerapids"}, {{"f32", "f32"}}},
+  };
+
+  // Fusion modes to test for each library.
+  // We temporarily use XNN_GRAPH_FUSION_MODE_DISABLED to denote the dot fusion
+  // mode (starting fusion nodes with dots).
+  absl::flat_hash_map<std::string, std::vector<std::string>> fusion_modes = {
+      {"xnn", {"dot", "greedy"}},
+      {"onednn", {"dot"}},
+  };
+
+  std::vector<XnnDotRewriteTestSpec> specs;
+  for (auto& [lib_cpu, dtype_pairs] : dtype_map) {
+    auto& [lib, cpu] = lib_cpu;
+    for (auto& [in_dtype, out_dtype] : dtype_pairs) {
+      if (out_dtype == "bf16" && cpu == "znver3") {
+        continue;
+      }
+      std::string& features = cpu_to_features.at(cpu);
+      for (auto& fusion_mode : fusion_modes.at(lib)) {
+        specs.push_back(XnnDotRewriteTestSpec{lib, in_dtype, out_dtype, cpu,
+                                              features, fusion_mode});
+      }
+    }
+  }
+  return specs;
 }
 
 INSTANTIATE_TEST_SUITE_P(CpuDotLibraryTestSuite, CpuDotLibraryTest,

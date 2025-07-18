@@ -627,17 +627,16 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
       if (!allow_full_replication) {
         return *this;
       }
-      LOG(ERROR)
-          << "[spmd] Involuntary full rematerialization. The compiler was "
-             "not able to go from sharding "
-          << sharding().ToString(/*include_metadata=*/true) << " to "
-          << target.ToString(/*include_metadata=*/true)
-          << " without doing a full rematerialization of the tensor for HLO "
-             "operation: "
-          << hlo_->ToString()
-          << ". You probably want to enrich the sharding annotations to "
-             "prevent "
-             "this from happening.";
+      LOG(WARNING) << "[SPMD] Involuntary full rematerialization. The compiler "
+                      "cannot go from sharding "
+                   << sharding().ToString(/*include_metadata=*/true) << " to "
+                   << target.ToString(/*include_metadata=*/true)
+                   << " efficiently for HLO operation " << hlo_->ToString()
+                   << ". As the last resort, SPMD will replicate the tensor "
+                      "and then partition it to obtain the target sharding, "
+                      "which is inefficient. This issue will be fixed by "
+                      "Shardy with explicit collectives features enabled. "
+                      "Contact XLA or Shardy team for help.";
     }
     return Replicate().Reshard(target);
   }
@@ -5623,6 +5622,15 @@ absl::Status SpmdPartitioner::PreprocessSharding(
       if (hlo->HasSideEffectNoRecurse() && hlo->opcode() != HloOpcode::kRng &&
           (hlo->opcode() != HloOpcode::kCustomCall ||
            GetCustomCallPartitioner(hlo->custom_call_target()) == nullptr)) {
+        // TODO: b/432201708 - Remove this error once Shardy is stable in JAX.
+        if (hlo->opcode() == HloOpcode::kCustomCall) {
+          TF_RET_CHECK(hlo->custom_call_target().rfind("xla.sdy", 0) != 0)
+              << "This is a custom call named 'xla.sdy.*' which shouldn't "
+              << "appear in the XLA partitioner, please file a bug against the "
+              << "OpenXLA Shardy team. One of the possible bugs is your model "
+              << "was lowered targeting Shardy, but Shardy was then disabled "
+              << "in XLA.";
+        }
         TF_RET_CHECK(hlo->has_sharding())
             << "Side-effect HLO must have sharding: " << hlo->ToString();
         TF_RET_CHECK(!HasReplicatedSharding(hlo->sharding()) ||

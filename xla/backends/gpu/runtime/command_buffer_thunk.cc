@@ -66,6 +66,16 @@ CommandBufferThunk::CommandBufferThunk(
       enable_command_buffers_during_profiling_(
           enable_command_buffers_during_profiling),
       state_(std::make_shared<State>()) {
+  if (VLOG_IS_ON(5)) {
+    absl::StatusOr<std::string> graph = commands_.RenderExecutionGraph();
+    if (graph.ok()) {
+      VLOG(5) << "Rendered command buffer execution graph: " << *graph;
+    } else {
+      VLOG(5) << "Failed to render command buffer execution graph: "
+              << graph.status();
+    }
+  }
+
   // When we create a new command buffer thunk (which happens when we
   // instantiate a new Gpu executable) we evict command buffers for all
   // previously instantiated executables. If previously instantiated executable
@@ -231,7 +241,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   // the last command buffer execution.
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
-  if (!updated_allocs.empty()) {
+  if (!updated_allocs.empty() || commands_.force_update()) {
     VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
             << " by recoding command buffer cmd sequence after "
             << cmd_buffer->num_executions << " executions since last update"

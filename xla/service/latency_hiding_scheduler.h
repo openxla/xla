@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -159,6 +160,9 @@ struct SchedulerConfig {
   // If the above flag is also set, force the scheduler to provide maximum delay
   // to nodes at the stat of a scheduling group.
   bool aggressive_flexible_annotation_scheduling = false;
+  // If true, estimate the fragmentation size of the module by running the heap
+  // simulator.
+  bool estimate_fragmentation_size = false;
 };
 
 // Class used estimate latency between instructions and cost of HLOs.
@@ -329,13 +333,37 @@ class AsyncTracker {
   // Resets target defined states after scheduling a computation.
   virtual void ResetTargetDefinedStates() {}
 
+  const SchedulerConfig& GetConfig() const { return config_; }
+
+  // Clears the cache of per-computation resource maps. This is needed when,
+  // e.g., we modify the schedule of a computation, which could change the
+  // resource usage of the computation.
+  void InvalidateCache() { async_in_computation_cache_.clear(); }
+
+  // Similar to InvalidateCache(), but only invalidates the cache for the given
+  // computation.
+  void InvalidateCache(const HloComputation* computation) {
+    async_in_computation_cache_.erase(computation);
+  }
+
   explicit AsyncTracker(
       const SchedulerConfig& config,
       GetCanonicalAsyncOpFunc func = DefaultGetCanonicalAsyncOp)
       : get_canonical_async_op_(std::move(func)), config_(config) {}
 
  private:
+  // Returns the number of "occupy" type of resources used by the instructions
+  // in the given computation. Uses the scheduling information if available to
+  // obtain more accurate resource usage. If an instruction uses multiple
+  // instances of the same "occupy" type of resource, that number is respected
+  // and returned in the resulting map.
   const absl::flat_hash_map<int64_t, int64_t>& RecursivelyComputeResourceMap(
+      const HloComputation* computation) const;
+  // Similar as above, but uses scheduling information to obtain more accurate
+  // resource usage. Useful for non-fusion computations.
+  // REQUIRES: The computation must be scheduled.
+  const absl::flat_hash_map<int64_t, int64_t>&
+  RecursivelyComputeResourceMapForScheduledComputation(
       const HloComputation* computation) const;
 
   mutable absl::flat_hash_map<
@@ -387,17 +415,19 @@ class SchedulingContext {
   SchedulingContext(const HloModule* module,
                     std::shared_ptr<const LatencyEstimator> latency_estimator,
                     std::shared_ptr<AsyncTracker> async_tracker,
+                    const AliasInfo* alias_info,
                     const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes =
                         HloCostAnalysis::DefaultShapeSize)
       : latency_estimator_(std::move(latency_estimator)),
         async_tracker_(std::move(async_tracker)),
+        alias_info_(alias_info),
         shape_size_bytes_(shape_size_bytes),
         module_(module) {}
 
   std::shared_ptr<const HloAliasAnalysis> GetAliasAnalysis() const {
     // Lazy initialization of alias analysis on first use.
     if (alias_analysis_ == nullptr) {
-      alias_analysis_ = HloAliasAnalysis::Run(module_).value();
+      alias_analysis_ = HloAliasAnalysis::Run(module_, alias_info_).value();
     }
     return alias_analysis_;
   }
@@ -413,10 +443,13 @@ class SchedulingContext {
     return shape_size_bytes_;
   }
 
+  const AliasInfo* GetAliasInfo() const { return alias_info_; }
+
  private:
   mutable std::shared_ptr<const HloAliasAnalysis> alias_analysis_;
   std::shared_ptr<const LatencyEstimator> latency_estimator_;
   std::shared_ptr<AsyncTracker> async_tracker_;
+  const AliasInfo* alias_info_;
   const HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   const HloModule* module_;
 };
@@ -612,6 +645,10 @@ class HloGraphNode {
   void SetForceDelay(bool force_delay) { force_delay_ = force_delay; }
   bool GetForceEarly() const { return force_early_; }
   void SetForceEarly(bool force_early) { force_early_ = force_early; }
+  bool GetForceDelayAfterTarget() const { return force_delay_after_target_; }
+  void SetForceDelayAfterTarget(bool force_delay_after_target) {
+    force_delay_after_target_ = force_delay_after_target;
+  }
   bool GetValuableForSelectiveOverlap() const {
     return valuable_for_selective_overlap_;
   }
@@ -756,6 +793,8 @@ class HloGraphNode {
     absl::StrAppend(&result, "Graph Depth: ", graph_depth_, "\n");
     absl::StrAppend(&result, "Force Delay: ", force_delay_, "\n");
     absl::StrAppend(&result, "Force Early: ", force_early_, "\n");
+    absl::StrAppend(
+        &result, "Force Delay After Target: ", force_delay_after_target_, "\n");
     absl::StrAppend(&result, "Predecessors:\n");
     for (const HloEdge& e : predecessors_) {
       absl::StrAppend(&result, e.ToString());
@@ -795,12 +834,16 @@ class HloGraphNode {
   // The node should be added to the ready to be scheduled set when ready_time_
   // is less or equal to the current time in the schedule.
   TimeCost ready_time_ = std::numeric_limits<TimeCost>::max();
-  // Number of predecessor nodes this nodes depends on that haven't been
-  // scheduled yet.
-  int32_t indegree_ = 0;
-  // Number of successor nodes this nodes depends on that haven't been
-  // scheduled yet.
-  int32_t outdegree_ = 0;
+  // Non-extendable resources released by this node.
+  absl::InlinedVector<int64_t, 1> released_non_extendable_resources_;
+  // Shareable resources released by this node.
+  absl::InlinedVector<int64_t, 1> released_shareable_resources_;
+  // Shareable resources occupied by this node.
+  absl::InlinedVector<int64_t, 1> occupied_shareable_resources_;
+  // Recursive resources used by the node.
+  absl::flat_hash_map<int64_t, int64_t> recursive_resources_;
+  // AsyncResources used by the node.
+  ResourcesVector resources_;
   // Time cost of the execution of the operation of this nodes represent.
   TimeCost cost_ = 0.0;
   // Depth in latency terms of a node based on Async operation cost on the path.
@@ -810,39 +853,6 @@ class HloGraphNode {
   TimeCost depth_ = 0.0;
   // Depth in latency terms of node based on distance to the entry node.
   int64_t graph_depth_ = 0;
-  // AsyncResources used by the node.
-  ResourcesVector resources_;
-  // Does the node occupy any resource.
-  bool does_occupy_any_resource_ = false;
-  // Does the node release any resource.
-  bool does_release_any_resource_ = false;
-  // Recursive resources used by the node.
-  absl::flat_hash_map<int64_t, int64_t> recursive_resources_;
-  // Is the node a supported async done.
-  bool is_supported_async_done_ = false;
-  // Is the node a supported async start.
-  bool is_supported_async_start_ = false;
-  // Whether the instruction has an operand which is a supported async done.
-  bool has_operand_that_is_supported_async_done_ = false;
-  // Force the scheduling of the nodes with attribute set as late as possible.
-  bool force_delay_ = false;
-  // Force the scheduling of the nodes with attribute set as early as possible.
-  bool force_early_ = false;
-  // Whether this node has been scheduled or not yet.
-  bool scheduled_ = false;
-  // Non-extendable resources released by this node.
-  absl::InlinedVector<int64_t, 1> released_non_extendable_resources_;
-  // Shareable resources released by this node.
-  absl::InlinedVector<int64_t, 1> released_shareable_resources_;
-  // Shareable resources occupied by this node.
-  absl::InlinedVector<int64_t, 1> occupied_shareable_resources_;
-  // Whether this node can be overlapped with (can cover the latency/cost of)
-  // edges occupying selective resources.
-  bool valuable_for_selective_overlap_ = true;
-  // Whether this node releases a selective resource.
-  bool releases_selective_resource_ = false;
-  // Whether this node occupies a selective resource.
-  bool occupies_selective_resource_ = false;
   // Nums hops to closest selective resource occupier.
   int64_t num_hops_to_closest_selective_resource_occupier_ =
       std::numeric_limits<int64_t>::max();
@@ -853,6 +863,38 @@ class HloGraphNode {
   // a graph node having a higher preference value means it's scheduled
   // earlier. See ReadySetLt::operator()
   double preference_ = 0.0;
+  // Number of predecessor nodes this nodes depends on that haven't been
+  // scheduled yet.
+  int32_t indegree_ = 0;
+  // Number of successor nodes this nodes depends on that haven't been
+  // scheduled yet.
+  int32_t outdegree_ = 0;
+  // Does the node occupy any resource.
+  bool does_occupy_any_resource_ = false;
+  // Does the node release any resource.
+  bool does_release_any_resource_ = false;
+  // Is the node a supported async done.
+  bool is_supported_async_done_ = false;
+  // Is the node a supported async start.
+  bool is_supported_async_start_ = false;
+  // Whether the instruction has an operand which is a supported async done.
+  bool has_operand_that_is_supported_async_done_ = false;
+  // Force the scheduling of the nodes with attribute set as late as possible.
+  bool force_delay_ = false;
+  // Force the scheduling of the nodes with attribute set as early as possible.
+  bool force_early_ = false;
+  // Force the scheduling of the nodes with attribute as late as possible,
+  // but do it after evaluating the early target scheduling rule.
+  bool force_delay_after_target_ = false;
+  // Whether this node has been scheduled or not yet.
+  bool scheduled_ = false;
+  // Whether this node can be overlapped with (can cover the latency/cost of)
+  // edges occupying selective resources.
+  bool valuable_for_selective_overlap_ = true;
+  // Whether this node releases a selective resource.
+  bool releases_selective_resource_ = false;
+  // Whether this node occupies a selective resource.
+  bool occupies_selective_resource_ = false;
 };
 
 // Schedule graph that can be used to drive scheduling

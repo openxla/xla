@@ -253,13 +253,8 @@ class HloRunnerPjRtExecutable : public OpaqueExecutable {
 
 }  // namespace
 
-HloRunnerPjRt::HloRunnerPjRt(
-    std::unique_ptr<PjRtClient> pjrt_client,
-    DeviceShapeRepresentationFn device_shape_representation_fn,
-    DeviceShapeSizeFn device_shape_size_fn)
-    : pjrt_client_(std::move(pjrt_client)),
-      device_shape_representation_fn_(device_shape_representation_fn),
-      device_shape_size_fn_(device_shape_size_fn) {}
+HloRunnerPjRt::HloRunnerPjRt(std::unique_ptr<PjRtClient> pjrt_client)
+    : pjrt_client_(std::move(pjrt_client)) {}
 
 absl::StatusOr<CompileOptions> HloRunnerPjRt::GenerateDefaultCompileOptions(
     HloModule* module, bool run_hlo_passes) {
@@ -405,11 +400,10 @@ absl::StatusOr<Literal> HloRunnerPjRt::TransferLiteralsFromDevice(
 
 absl::StatusOr<Literal> HloRunnerPjRt::Execute(
     std::unique_ptr<HloModule> module,
-    absl::Span<const Literal* const> arguments, bool run_hlo_passes,
-    ExecutionProfile* profile) {
+    absl::Span<const Literal* const> arguments, bool run_hlo_passes) {
   TF_ASSIGN_OR_RETURN(const std::unique_ptr<OpaqueExecutable> executable,
                       CreateExecutable(std::move(module), run_hlo_passes));
-  return ExecuteWithExecutable(executable.get(), arguments, {});
+  return HloRunnerInterface::ExecuteWithExecutable(executable.get(), arguments);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -450,9 +444,10 @@ HloRunnerPjRt::ExecuteWithDeviceBuffers(
   return buffers;
 }
 
-absl::StatusOr<Literal> HloRunnerPjRt::ExecuteWithExecutable(
-    OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
-    ExecutionProfile* profile) {
+absl::StatusOr<std::vector<absl::StatusOr<Literal>>>
+HloRunnerPjRt::ExecuteWithExecutable(OpaqueExecutable* executable,
+                                     absl::Span<const Literal* const> arguments,
+                                     int64_t num_repeats) {
   TF_ASSIGN_OR_RETURN(HloRunnerPjRtExecutable* const wrapped_executable,
                       HloRunnerPjRtExecutable::TryUnwrap(*this, executable));
 
@@ -467,12 +462,21 @@ absl::StatusOr<Literal> HloRunnerPjRt::ExecuteWithExecutable(
       std::vector<std::unique_ptr<PjRtBuffer>> argument_handles,
       TransferLiteralsToDevice(
           module.entry_computation_layout().parameter_layouts(), arguments));
-  TF_ASSIGN_OR_RETURN(
-      std::vector<std::unique_ptr<PjRtBuffer>> output_buffers,
-      ExecuteWithDeviceBuffers(wrapped_executable, std::move(argument_handles),
-                               &execute_options));
-  return TransferLiteralsFromDevice(std::move(output_buffers),
-                                    execute_options.untuple_result);
+
+  std::vector<absl::StatusOr<Literal>> results;
+  results.reserve(num_repeats);
+  for (int64_t i = 0; i < num_repeats; ++i) {
+    absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> output_buffers =
+        ExecuteWithDeviceBuffers(wrapped_executable, argument_handles,
+                                 &execute_options);
+    if (!output_buffers.ok()) {
+      results.push_back(output_buffers.status());
+      continue;
+    }
+    results.push_back(TransferLiteralsFromDevice(
+        *std::move(output_buffers), execute_options.untuple_result));
+  }
+  return results;
 }
 
 absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
@@ -558,7 +562,7 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
     OpaqueExecutable* executable,
     const HloRunnerInterface::ReplicatedExecuteOptions& options,
-    DeviceAssignment* device_assignment, ExecutionProfile* profile) {
+    DeviceAssignment* device_assignment) {
   TF_ASSIGN_OR_RETURN(HloRunnerPjRtExecutable* const wrapped_executable,
                       HloRunnerPjRtExecutable::TryUnwrap(*this, executable));
 
@@ -810,7 +814,7 @@ absl::StatusOr<Literal> HloRunnerPjRt::TransferLiteralFromDevice(
   // Implementations of ToLiteralSync() do not support empty tuples. Since an
   // empty tuple literal is easy to construct, we do so here.
   if (const Shape& on_device_shape = buffer.on_device_shape();
-      on_device_shape.IsTuple() && on_device_shape.tuple_shapes_size() == 0) {
+      on_device_shape.IsTuple() && on_device_shape.tuple_shapes().size() == 0) {
     return LiteralUtil::MakeTuple({});
   }
   TF_ASSIGN_OR_RETURN(std::shared_ptr<Literal> literal, buffer.ToLiteralSync());
@@ -879,7 +883,7 @@ std::string MakeFilename(const HloModule& module, const bool run_hlo_passes) {
   // within PjRt itself since the environment is not easily accessed at this
   // level of abstraction.
   const tsl::Fprint128 module_fingerprint =
-      tsl::Fingerprint128(module.ToString(HloPrintOptions::Fingerprint()));
+      tsl::Fingerprint128(module.ToString(HloPrintOptions::Default()));
   const tsl::Fprint128 run_hlo_passes_fingerprint =
       tsl::Fingerprint128(run_hlo_passes ? "true" : "false");
   const tsl::Fprint128 fingerprint =

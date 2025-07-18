@@ -352,11 +352,14 @@ class PriorityFusionQueue {
       }
     }
 
-    block_level_parameters_cache_.erase(instruction);
-    for (const HloInstruction* operand : instruction->operands()) {
-      auto it = block_level_parameters_cache_.find(operand);
-      if (it != block_level_parameters_cache_.end()) {
-        it->second.erase(instruction);
+    {
+      absl::MutexLock lock(&block_level_parameters_cache_mutex_);
+      block_level_parameters_cache_.erase(instruction);
+      for (const HloInstruction* operand : instruction->operands()) {
+        auto it = block_level_parameters_cache_.find(operand);
+        if (it != block_level_parameters_cache_.end()) {
+          it->second.erase(instruction);
+        }
       }
     }
 
@@ -420,9 +423,12 @@ class PriorityFusionQueue {
       creates_multi_output_fusion =
           preferred_consumer_.contains(original_producer);
     }
-    fusion_deduplication_cache_.UpdateFusedInstructionId(
-        fusion, original_producer, original_consumer,
-        original_consumer_operand_index, creates_multi_output_fusion);
+    {
+      absl::MutexLock lock(&fusion_deduplication_cache_mutex_);
+      fusion_deduplication_cache_.UpdateFusedInstructionId(
+          fusion, original_producer, original_consumer,
+          original_consumer_operand_index, creates_multi_output_fusion);
+    }
 
     if (fusion_process_dump_) {
       auto* fusion_step =
@@ -514,6 +520,7 @@ class PriorityFusionQueue {
   // determine if a producer-consumer fusion is a Triton fusion.
   absl::flat_hash_map<const HloInstruction*, BlockLevelParameters>
   GetBlockLevelParametersMap(const HloInstruction* producer) {
+    absl::MutexLock lock(&block_level_parameters_cache_mutex_);
     auto it = block_level_parameters_cache_.find(producer);
     if (it == block_level_parameters_cache_.end()) {
       return {};
@@ -689,8 +696,17 @@ class PriorityFusionQueue {
   FusionDecision CanFuseTriton(HloInstruction* producer,
                                HloInstruction* consumer,
                                bool use_multi_output_fusion = false) {
-    if (!IsGenericTritonFusion(*producer) &&
-        !IsGenericTritonFusion(*consumer) && !triton_heroless_fusion_enabled_) {
+    if (!IsFusible(*producer)) {
+      return FusionDecision::Forbid("the producer is not fusible");
+    }
+
+    if (!IsFusible(*consumer)) {
+      return FusionDecision::Forbid("the consumer is not fusible");
+    }
+
+    if (!(IsGenericTritonFusion(*producer) ||
+          IsGenericTritonFusion(*consumer) ||
+          triton_heroless_fusion_enabled_)) {
       return FusionDecision::Forbid("triton heroless fusion is not enabled");
     }
 
@@ -813,11 +829,11 @@ class PriorityFusionQueue {
     // reductions, which suffer from limited emitter support.
     // TODO(b/312686229): Cost model should handle this.
     const auto& analysis = fusion_analysis_cache_.Get(*producer);
-    if (analysis.GetEmitterFusionKind() ==
+    if (analysis.emitter_fusion_kind() ==
         HloFusionAnalysis::EmitterFusionKind::kReduction) {
       const auto& analysis_fused =
           fusion_analysis_cache_.Get(*producer, *consumer);
-      if (analysis_fused.GetEmitterFusionKind() ==
+      if (analysis_fused.emitter_fusion_kind() ==
           HloFusionAnalysis::EmitterFusionKind::kLoop) {
         return FusionDecision::Forbid(
             "fusion into output of a reduce fusion would create a loop fusion");
@@ -1015,7 +1031,8 @@ class PriorityFusionQueue {
   GpuPerformanceModelCache gpu_performance_model_cache_;
   GpuPerformanceModel gpu_performance_model_;
 
-  FusionDeduplicationCache& fusion_deduplication_cache_;
+  FusionDeduplicationCache& fusion_deduplication_cache_
+      ABSL_GUARDED_BY(fusion_deduplication_cache_mutex_);
   absl::Mutex fusion_deduplication_cache_mutex_;
 
   // Caches result of can_fuse for a (producer, consumer) pair. A cache entry is
@@ -1031,12 +1048,14 @@ class PriorityFusionQueue {
   absl::flat_hash_map<
       const HloInstruction*,
       absl::flat_hash_map<const HloInstruction*, BlockLevelParameters>>
-      block_level_parameters_cache_;
+      block_level_parameters_cache_
+          ABSL_GUARDED_BY(block_level_parameters_cache_mutex_);
   absl::Mutex block_level_parameters_cache_mutex_;
 
   absl::flat_hash_map<FusionDeduplicationCache::FusionId,
                       TiledRunTimeDataOrError>
-      tiled_run_time_data_cache_;
+      tiled_run_time_data_cache_
+          ABSL_GUARDED_BY(tiled_run_time_data_cache_mutex_);
   absl::Mutex tiled_run_time_data_cache_mutex_;
 
   // Cache for `FusionFitsInBudget` to avoid recomputing expensive properties
@@ -1251,7 +1270,7 @@ HloInstruction::FusionKind PriorityFusion::ChooseKind(
   // matter but some passes downstream still query these instead of fusion
   // analysis.
   const auto& analysis = fusion_analysis_cache_.Get(*producer, *consumer);
-  switch (analysis.GetEmitterFusionKind()) {
+  switch (analysis.emitter_fusion_kind()) {
     case HloFusionAnalysis::EmitterFusionKind::kDynamicMemcpy:
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
       return HloInstruction::FusionKind::kLoop;

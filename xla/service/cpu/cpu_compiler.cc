@@ -478,8 +478,13 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     pipeline->AddPass<GatherSimplifier>();
   }
 
-  // Needs to happen after algebraic simplifier.
-  pipeline->AddPass<TreeReductionRewriter>();
+  if (module->config()
+          .debug_options()
+          .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+      DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY) {
+    // Needs to happen after algebraic simplifier.
+    pipeline->AddPass<TreeReductionRewriter>();
+  }
 
   // BatchNormExpander can create zero-sized ops, so zero-sized HLO
   // elimination has to come after that pass.
@@ -517,6 +522,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       module->config().debug_options().xla_cpu_use_fusion_emitters();
   bool use_shardy_partitioner = module->config().use_shardy_partitioner();
   bool is_onednn_compatible = false;
+  bool flatten_before_fusion = !options::FlattenAfterFusion(module->config());
+
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -545,7 +552,9 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
     AddHloVerifier(&sharding_removal_pipeline);
-    sharding_removal_pipeline.AddPass<FlattenCallGraph>();
+    if (flatten_before_fusion) {
+      sharding_removal_pipeline.AddPass<FlattenCallGraph>();
+    }
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
     // Run ShardyXLA without propagation, which enforces use-tuple-args.
@@ -571,7 +580,9 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // calling `DotDecomposer` early is okay.
   DotLibraryRewriterOptions options = {
       /*use_onednn=*/module->config().debug_options().xla_cpu_use_onednn(),
-      /*use_xnnpack=*/module->config().debug_options().xla_cpu_use_xnnpack()};
+      /*use_xnnpack=*/module->config().debug_options().xla_cpu_use_xnnpack(),
+      /*xnn_fusion_types=*/
+      &module->config().debug_options().xla_cpu_experimental_xnn_fusion_type()};
   if (options.use_onednn || options.use_xnnpack) {
     HloPassPipeline lib_pipeline("dot-library-passes");
     lib_pipeline.AddPass<DotDecomposer>();
@@ -805,9 +816,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // we can avoid running the loop condition computations.
   pipeline.AddPass<WhileLoopTripCountAnnotator>();
 
-  // Layout assignment uses alias analysis, which requires the call graph to be
-  // flattened.
-  pipeline.AddPass<FlattenCallGraph>();
+  if (flatten_before_fusion) {
+    pipeline.AddPass<FlattenCallGraph>();
+  }
+
   ChannelLayoutConstraints layout_constraints;
   pipeline.AddPass<CpuLayoutAssignment>(
       module->mutable_entry_computation_layout(), target_machine_features,
@@ -834,6 +846,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   const bool is_fusion_emitters =
       is_thunk_runtime && debug_options.xla_cpu_use_fusion_emitters();
   bool is_onednn_compatible = false;
+  bool flatten_after_fusion = options::FlattenAfterFusion(module->config());
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
   {
@@ -887,6 +900,11 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<FusionWrapper>();
   }
 
+  if (flatten_after_fusion) {
+    pipeline.AddPass<FlattenCallGraph>();
+    pipeline.AddPass<CallInliner>(/*single_call_site=*/true);
+  }
+
   // The LayoutAssignment pass may leave behind kCopy instructions which are
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   // Run this to a fixed point.
@@ -923,6 +941,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<ParallelTaskAssigner>(
         max_parallelism, ShapeSizeBytesFunction(), target_machine_features);
   }
+
   // Copy insertion should be performed immediately before IR emission to
   // avoid inserting unnecessary copies (later pass adds an instruction which
   // materializes the value) or missing a necessary copy (later pass removes
@@ -1841,9 +1860,9 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   std::unique_ptr<CpuExecutable> cpu_executable;
   TF_ASSIGN_OR_RETURN(cpu_executable, CompileCpuExecutable(std::move(module)));
 
+  AliasInfo alias_info;
   cpu_executable->set_debug_info(
-      cpu_executable->buffer_assignment().StatsString(
-          /*report_total_fragmentation=*/true));
+      cpu_executable->buffer_assignment().StatsString(&alias_info));
   VLOG(1) << "Compilation finished";
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
@@ -1983,17 +2002,19 @@ CpuCompiler::CompileAheadOfTimeLegacy(
     const CpuAotCompilationOptions& aot_options, const llvm::Triple& triple,
     const llvm::PICLevel::Level& pic_level,
     const llvm::PIELevel::Level& pie_level) {
-  TF_ASSIGN_OR_RETURN(HloSchedule schedule,
-                      ScheduleModule(module.get(), BufferSizeBytesFunction()));
+  AliasInfo alias_info;
+  TF_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleModule(module.get(), &alias_info, BufferSizeBytesFunction()));
 
   // Run buffer analysis on the HLO graph. This analysis figures out which
   // temporary buffers are required to run the computation.
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> assignment,
-      BufferAssigner::Run(module.get(),
-                          std::make_unique<SequentialHloOrdering>(schedule),
-                          BufferSizeBytesFunction(), memory_alignment,
-                          /*allocate_buffers_for_constants=*/true));
+      BufferAssigner::Run(
+          module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+          BufferSizeBytesFunction(), &alias_info, memory_alignment,
+          /*allocate_buffers_for_constants=*/true));
   // BufferAssignment::ToString() includes a header, so no need for us to
   // print one ourselves.
   if (DumpingEnabledForHloModule(*module)) {
@@ -2219,8 +2240,8 @@ CpuCompiler::CompileAheadOfTimeThunks(
   IrEmitter2 ir_emitter2(*module, llvm_module.get(), &nested_ir_emitter);
 
   ThunkEmitter::Options thunk_emitter_options = {
-      /*compile_copy_as_llvm_kernel=*/aot_options
-          .compile_copy_as_llvm_kernel()};
+      /*compile_copy_as_llvm_kernel=*/aot_options.compile_copy_as_llvm_kernel(),
+      /*is_aot_compilation=*/true};
   // Thunk emitter is responsible for building a Thunk sequence that will
   // resolved kernels in the compiled LLVM module and execute them together
   // with Thunks implemented as library calls (e.g. oneDNN or Eigen).
@@ -2556,11 +2577,11 @@ CpuExecutableAotCompilationResult::LoadExecutable(
   VLOG(2) << "Load XLA:CPU executable for module: " << module->name();
 
   // Recreate BufferAssignment from proto.
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<BufferAssignment> buffer_assignment,
-      BufferAssignment::FromProto(proto_.buffer_assignment(), module.get(),
-                                  compiler->BufferSizeBytesFunction(),
-                                  /*can_share_buffer=*/nullptr));
+  AliasInfo alias_info;
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> buffer_assignment,
+                      BufferAssignment::FromProto(
+                          proto_.buffer_assignment(), module.get(),
+                          compiler->BufferSizeBytesFunction(), &alias_info));
 
   const DebugOptions& debug_options = module->config().debug_options();
   VlogMaxIsa(debug_options.xla_cpu_max_isa());
@@ -2714,14 +2735,16 @@ CpuCompiler::LoadAotCompilationResult(
 
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
     const HloModule& hlo_module) const {
+  AliasInfo alias_info;
   // Select a memory scheduler optimized for concurrency vs minimal memory.
-  auto scheduler =
-      hlo_module.config()
-              .debug_options()
-              .xla_cpu_enable_concurrency_optimized_scheduler()
-          ? std::unique_ptr<ModuleSchedulerAlgorithm>(
-                std::make_unique<BFScheduler>(BufferSizeBytesFunction()))
-          : std::make_unique<DFSMemoryScheduler>(BufferSizeBytesFunction());
+  auto scheduler = hlo_module.config()
+                           .debug_options()
+                           .xla_cpu_enable_concurrency_optimized_scheduler()
+                       ? std::unique_ptr<ModuleSchedulerAlgorithm>(
+                             std::make_unique<BFScheduler>(
+                                 &alias_info, BufferSizeBytesFunction()))
+                       : std::make_unique<DFSMemoryScheduler>(
+                             &alias_info, BufferSizeBytesFunction());
 
   // Select an order for emitting the HLO instructions for each
   // computation. Using this sequence enables tighter buffer liveness analysis
@@ -2732,9 +2755,10 @@ absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
 absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
+  AliasInfo alias_info;
   return BufferAssigner::Run(
       &module, std::make_unique<SequentialHloOrdering>(module.schedule()),
-      BufferSizeBytesFunction(), memory_alignment,
+      BufferSizeBytesFunction(), &alias_info, memory_alignment,
       /*allocate_buffers_for_constants=*/true);
 }
 

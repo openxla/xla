@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -56,6 +57,7 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
@@ -846,8 +848,17 @@ std::optional<RotatedChainInfo> FindRotatedChainInfo(
     return std::nullopt;
   }
 
-  HloInstruction* first_part_start =
-      while_body->parameter_instruction(second_part_end_output_index);
+  HloInstruction* first_part_start = nullptr;
+  for (HloInstruction* user : while_body->parameter_instruction(0)->users()) {
+    if (Match(user, match::GetTupleElement(match::Parameter(0),
+                                           second_part_end_output_index))) {
+      first_part_start = user;
+      break;
+    }
+  }
+  if (first_part_start == nullptr) {
+    return std::nullopt;
+  }
   VLOG(2) << "FindRotatedChainInfo first_part_start: "
           << first_part_start->ToString();
 
@@ -1213,15 +1224,20 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
 
 absl::Status CopyInsertion::AddSpecialCaseCopies(
     HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    std::function<bool(const HloValue* value)>
+        should_add_target_specific_copies) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
-  return AddSpecialCaseCopies(*call_graph, execution_threads, module);
+  return AddSpecialCaseCopies(*call_graph, execution_threads, module,
+                              should_add_target_specific_copies);
 }
 
 absl::Status CopyInsertion::AddSpecialCaseCopies(
     const CallGraph& call_graph,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
-    HloModule* module) {
+    HloModule* module,
+    std::function<bool(const HloValue* value)>
+        should_add_target_specific_copies) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, alias_info_));
 
@@ -1256,13 +1272,21 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
   // cannot be done in place. Such aliasing can be created when some copies are
   // removed too aggressively by CopyRemoval.
   for (const HloValue* value : alias_analysis->dataflow_analysis().values()) {
-    HloBuffer& buffer = alias_analysis->GetBufferContainingValue(*value);
+    const HloBuffer& buffer = alias_analysis->GetBufferContainingValue(*value);
     if (buffer.values().size() > 1 && ValueIsReadOnly(*value)) {
       VLOG(2) << "Value " << value->ToShortString()
               << " is read only, but its buffer contains more than one value. "
                  "Copying.";
       add_index_to_copy(value->defining_instruction(), value->defining_index());
     }
+
+    if (should_add_target_specific_copies &&
+        should_add_target_specific_copies(value)) {
+      VLOG(2) << "Adding target specific copies for value "
+              << value->ToShortString();
+      add_index_to_copy(value->defining_instruction(), value->defining_index());
+    }
+
     for (const HloValue* value2 : buffer.values()) {
       // Find HloValues that share a position and use, which would cause the use
       // and operand to share buffers. Check if this is allowed and insert a
@@ -1284,7 +1308,7 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
                            use.operand_number),
                        /*operand_index=*/use.operand_index,
                        /*user=*/position.instruction,
-                       /*user_index=*/position.index)) {
+                       /*user_index=*/position.index, alias_info_)) {
             VLOG(2) << "Adding back copy: "
                     << use.instruction->operand(use.operand_number)->ToString()
                     << "@" << use.operand_index.ToString()
@@ -1397,7 +1421,7 @@ static int64_t GetNumExistingCopies(
 }
 
 absl::Status CopyInsertion::RemoveUnnecessaryCopies(
-    HloModule* module, bool check_live_range_ordering,
+    HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     bool insert_post_scheduling_control_dependencies) {
   XLA_VLOG_LINES(
@@ -1415,8 +1439,8 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, alias_info_));
-  CopyRemover copy_remover(*module, *alias_analysis, ordering.get(),
-                           check_live_range_ordering, execution_threads);
+  CopyRemover copy_remover(*module, *alias_analysis, alias_info_,
+                           ordering.get(), execution_threads);
   if (VLOG_IS_ON(3)) {
     LOG(INFO) << "Removing unnecessary copies in " << module->name();
     LOG(INFO) << "Buffer values, in dependency order: ";
@@ -1525,13 +1549,11 @@ absl::StatusOr<bool> CopyInsertion::Run(
   DumpHloModuleDuringPassIfEnabled(
       name(), "after adding copies to resolve interference", *module);
 
-  TF_RETURN_IF_ERROR(RemoveUnnecessaryCopies(module,
-                                             /*check_live_range_ordering=*/true,
-                                             execution_threads));
+  TF_RETURN_IF_ERROR(RemoveUnnecessaryCopies(module, execution_threads));
   DumpHloModuleDuringPassIfEnabled(name(), "after removing unnecessary copies",
                                    *module);
   TF_RETURN_IF_ERROR(
-      AddSpecialCaseCopies(*call_graph, execution_threads, module));
+      AddSpecialCaseCopies(*call_graph, execution_threads, module, nullptr));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 
