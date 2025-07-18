@@ -30,6 +30,7 @@ cc_library(
     hdrs = [
         "convolution_handler.h",
         "custom_call_handler.h",
+        "dot_handler.h",
         "spmd_partitioner.h",
         "spmd_partitioner_util.h",
     ],

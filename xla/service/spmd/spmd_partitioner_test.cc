@@ -16237,6 +16237,277 @@ ENTRY entry {
               op::Copy(op::Add(op::AllReduce(), op::AllReduce())));
 }
 
+TEST_P(SpmdPartitioningTest, MXCustomCall_BatchAndBatch) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[8,128,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]<=[8]}
+  lhs_scale = f8e8m0fnu[8,128,16] parameter(1), sharding={devices=[8,1,1]<=[8]}
+  rhs = f8e4m3fn[8,1024,512]{2,1,0} parameter(2), sharding={devices=[8,1,1]<=[8]}
+  rhs_scale = f8e8m0fnu[8,1024,16] parameter(3), sharding={devices=[8,1,1]<=[8]}
+  ROOT block_scaled_dot = f32[8,128,1024]{2,1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[1,8,1]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Reshape(op::Transpose(op::AllToAll(
+                  op::Reshape(op::CustomCall({"__op$block_scaled_dot"}))))));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_BatchAndNonContracting) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[8,128,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]<=[8]}
+  lhs_scale = f8e8m0fnu[8,128,16]{2,1,0} parameter(1), sharding={devices=[8,1,1]<=[8]}
+  rhs = f8e4m3fn[8,1024,512]{2,1,0} parameter(2), sharding={devices=[1,8,1]<=[8]}
+  rhs_scale = f8e8m0fnu[8,32,512]{2,1,0} parameter(3), sharding={devices=[1,8,1]<=[8]}
+  ROOT block_scaled_dot = f32[8,128,1024]{2,1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[8,1,1]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::CustomCall({"__op$block_scaled_dot"}, op::Parameter(0),
+                             op::Reshape(op::Transpose(op::AllToAll())),
+                             op::Parameter(1),
+                             op::Reshape(op::Transpose(op::AllToAll()))));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_ContractingAndContracting) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[128,512]{1,0} parameter(0), sharding={devices=[1,8]<=[8]}
+  lhs_scale = f8e8m0fnu[128,16]{1,0} parameter(1), sharding={devices=[1,8]<=[8]}
+  rhs = f8e4m3fn[1024,512]{1,0} parameter(2), sharding={devices=[1,8]<=[8]}
+  rhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(3), sharding={devices=[1,8]<=[8]}
+  ROOT block_scaled_dot = f32[128,1024]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[8,1]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::DynamicSlice(
+          op::AllReduce(op::CustomCall({"__op$block_scaled_dot"})),
+          op::Reshape(op::DynamicSlice(op::Constant(LiteralUtil::CreateR1<int>(
+                                           {0, 16, 32, 48, 64, 80, 96, 112})),
+                                       op::PartitionId())),
+          op::Constant(LiteralUtil::CreateR0<int>(0))));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_NonContractingAndContracting) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[128,512]{1,0} parameter(0), sharding={devices=[8,1]<=[8]}
+  lhs_scale = f8e8m0fnu[128,16]{1,0} parameter(1), sharding={devices=[8,1]<=[8]}
+  rhs = f8e4m3fn[1024,512]{1,0} parameter(2), sharding={devices=[1,8]<=[8]}
+  rhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(3), sharding={devices=[1,8]<=[8]}
+  ROOT block_scaled_dot = f32[128,1024]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[8,1]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::CustomCall({"__op$block_scaled_dot"}, op::Parameter(0),
+                     op::AllReduce(), op::Parameter(1), op::AllReduce()));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_ContractingAndReplicated) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[1024,512]{1,0} parameter(0), sharding={devices=[1,8]<=[8]}
+  lhs_scale = f8e4m3fn[1024,16]{1,0} parameter(1), sharding={devices=[1,8]<=[8]}
+  rhs = f8e4m3fn[128,512]{1,0} parameter(2), sharding={replicated}
+  rhs_scale = f8e8m0fnu[128,16]{1,0} parameter(3), sharding={replicated}
+  ROOT block_scaled_dot = f32[1024,128]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={replicated}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::AllReduce(op::CustomCall({"__op$block_scaled_dot"})));
+}
+
+TEST_P(SpmdPartitioningTest,
+       MXCustomCall_BatchNonContractingAndBatchNonContracting) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[8,1024,512]{2,1,0} parameter(0), sharding={devices=[4,2,1]7,6,5,4,3,2,1,0}
+  lhs_scale = f8e8m0fnu[8,1024,16]{2,1,0} parameter(1), sharding={devices=[4,2,1]7,6,5,4,3,2,1,0}
+  rhs = f8e4m3fn[8,128,512]{2,1,0} parameter(2), sharding={devices=[4,2,1]0,1,2,3,4,5,6,7}
+  rhs_scale = f8e8m0fnu[8,128,16]{2,1,0} parameter(3), sharding={devices=[4,2,1]0,1,2,3,4,5,6,7}
+  ROOT block_scaled_dot = f32[8,1024,128]{2,1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[4,2,1]0,1,2,3,4,5,6,7}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::CollectivePermute(op::CustomCall({"__op$block_scaled_dot"})));
+}
+
+TEST_P(SpmdPartitioningTest,
+       MXCustomCall_ContractingNonContractingAndContractingNonContracting0) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[1024,512]{1,0} parameter(0), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  lhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(1), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  rhs = f8e4m3fn[128,512]{1,0} parameter(2), sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+  rhs_scale = f8e8m0fnu[128,16] parameter(3), sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+  ROOT block_scaled_dot = f32[1024,128]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::CustomCall({"__op$block_scaled_dot"}, op::AllReduce(),
+                     op::AllReduce(), op::AllReduce(), op::AllReduce()));
+}
+
+TEST_P(SpmdPartitioningTest,
+       MXCustomCall_ContractingNonContractingAndContractingNonContracting1) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[1024,512]{1,0} parameter(0), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  lhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(1), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  rhs = f8e4m3fn[128,512]{1,0} parameter(2), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  rhs_scale = f8e8m0fnu[128,16]{1,0} parameter(3), sharding={devices=[4,2]0,1,2,3,4,5,6,7}
+  ROOT block_scaled_dot = f32[1024,128]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={replicated}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::AllReduce(op::CustomCall({"__op$block_scaled_dot"})));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_ReplicatedAndReplicated0) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[1024,512]{1,0} parameter(0), sharding={replicated}
+  lhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(1), sharding={replicated}
+  rhs = f8e4m3fn[128,512]{1,0} parameter(2), sharding={replicated}
+  rhs_scale = f8e8m0fnu[128,16]{1,0} parameter(3), sharding={replicated}
+  ROOT block_scaled_dot = f32[1024,128]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[2,1,4]0,1,2,3,4,5,6,7 last_tile_dim_replicate}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::CustomCall({"__op$block_scaled_dot"}, op::DynamicSlice(),
+                     op::Parameter(2), op::DynamicSlice(), op::Parameter(3)));
+}
+
+TEST_P(SpmdPartitioningTest, MXCustomCall_ReplicatedAndReplicated1) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  lhs = f8e4m3fn[1024,512]{1,0} parameter(0), sharding={replicated}
+  lhs_scale = f8e8m0fnu[1024,16]{1,0} parameter(1), sharding={replicated}
+  rhs = f8e4m3fn[128,512]{1,0} parameter(2), sharding={replicated}
+  rhs_scale = f8e8m0fnu[128,16]{1,0} parameter(3), sharding={replicated}
+  ROOT block_scaled_dot = f32[1024,128]{1,0} custom-call(lhs, rhs, lhs_scale, rhs_scale), custom_call_target="__op$block_scaled_dot", sharding={devices=[8,1]0,1,2,3,4,5,6,7}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/8,
+                           /*conv_halo_exchange_always_on_lhs=*/true,
+                           /*choose_faster_windowed_einsum=*/false,
+                           /*unroll_windowed_einsum=*/false,
+                           /*bidirectional_windowed_einsum=*/false,
+                           /*threshold_for_windowed_einsum_mib=*/0));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::CustomCall({"__op$block_scaled_dot"}, op::DynamicSlice(),
+                     op::Parameter(2), op::DynamicSlice(), op::Parameter(3)));
+}
+
 }  // namespace
 }  // namespace spmd
 }  // namespace xla
