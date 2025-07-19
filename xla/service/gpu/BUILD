@@ -344,8 +344,10 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        ":kernel_call",
         ":execution_stream_assignment",
         ":gpu_constants",
+        ":gpu_asm_opts_util",
         ":gpu_conv_runner",
         ":gpu_norm_runner",
         ":hlo_fusion_analysis",
@@ -427,6 +429,7 @@ cc_library(
         "//xla/service:name_uniquer",
         "//xla/service:platform_util",
         "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:ptx_custom_kernel",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:ir_array",
@@ -474,7 +477,9 @@ cc_library(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:human_readable_json",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_asm_compiler",
+    ]),
 )
 
 cc_library(
@@ -517,6 +522,30 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "kernel_call",
+    srcs = ["kernel_call.cc"],
+    hdrs = ["kernel_call.h"],
+    deps = [
+        ":launch_dimensions",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+    ],
+)
+
+xla_cc_test(
+    name = "kernel_call_test",
+    srcs = ["kernel_call_test.cc"],
+    deps = [
+        ":kernel_call",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
     ],
 )
 
