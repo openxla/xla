@@ -3713,14 +3713,14 @@ PjRtStreamExecutorClient::LoadSerializedExecutable(
                       DeserializeToLocalExecutable(serialized, options));
   return LoadInternal(/*unoptimized_hlo_module_proto=*/std::nullopt,
                       std::move(local_executables_and_options.first),
-                      local_executables_and_options.second);
+                      local_executables_and_options.second, /*dump=*/true);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::LoadInternal(
     std::optional<HloModuleProto> unoptimized_hlo_module_proto,
     std::vector<std::unique_ptr<LocalExecutable>> local_executables,
-    CompileOptions compile_options) {
+    CompileOptions compile_options, bool dump) {
   auto input_options = compile_options;
 
   TF_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
@@ -3738,6 +3738,35 @@ PjRtStreamExecutorClient::LoadInternal(
   const bool xla_gpu_dump_hlo_unoptimized_snapshots =
       ex_options.has_debug_options() &&
       ex_options.debug_options().xla_gpu_dump_hlo_unoptimized_snapshots();
+  // Override debug_options() with those explicitly passed in when
+  // deserializing. This allows options such as --xla_dump_to to be changed.
+  if (ex_options.has_debug_options()) {
+    for (std::unique_ptr<LocalExecutable>& local_executable :
+         local_executables) {
+      HloModule& hlo_module = local_executable->executable()->module();
+      if (std::string serialized_only_values = GetNonDefaultDebugOptions(
+              hlo_module.config().debug_options(), ex_options.debug_options());
+          !serialized_only_values.empty()) {
+        VLOG(1) << "Replacing serialized debug options:\n"
+                << serialized_only_values << "with passed debug options:\n"
+                << GetNonDefaultDebugOptions(
+                       ex_options.debug_options(),
+                       hlo_module.config().debug_options());
+      }
+      hlo_module.mutable_config().mutable_debug_options() =
+          ex_options.debug_options();
+    }
+  }
+  if (dump) {
+    for (std::unique_ptr<LocalExecutable>& local_executable :
+         local_executables) {
+      VLOG(1) << "Dumping deserialized executable";
+      // Does not quite match the naming convention of the dump during
+      // compilation, which includes a backend-specific prefix.
+      DumpHloModuleIfEnabled(local_executable->executable()->module(),
+                             kAfterOptimizationsDumpName);
+    }
+  }
 
   auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
       std::move(local_executables),
@@ -3770,7 +3799,8 @@ PjRtStreamExecutorClient::Load(std::unique_ptr<PjRtExecutable> executable,
   TF_ASSIGN_OR_RETURN(auto local_executables, se_executable->ConsumeExecutable(
                                                   client(), compile_options));
   return LoadInternal(se_executable->unoptimized_hlo_module_proto(),
-                      std::move(local_executables), compile_options);
+                      std::move(local_executables), compile_options,
+                      /*dump=*/false);
 }
 
 bool PjRtStreamExecutorClient::IsDmaMapped(const void* data_start,
