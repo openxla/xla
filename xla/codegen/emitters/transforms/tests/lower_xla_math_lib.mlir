@@ -36,7 +36,7 @@ module {
 
 // CHECK: func @exp_f64_vector
 // CHECK-NOT: math.exp %arg0 : vector<4xf64>
-// CHECK: @xla.exp.f64
+// CHECK: @xla.exp.v4f64
 
 // -----
 
