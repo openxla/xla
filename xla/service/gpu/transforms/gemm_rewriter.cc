@@ -459,14 +459,6 @@ HloInstruction *MaybeConstantFoldBias(HloInstruction *bias) {
   return bias;
 }
 
-auto Gemm(HloInstruction **instr) {
-  return m::CustomCall(instr, {kGemmCallTarget});
-}
-
-auto CublasLtMatmul(HloInstruction **instr) {
-  return m::CustomCall(instr, {kCublasLtMatmulCallTarget});
-}
-
 auto CublasLtMatmulF8(HloInstruction **instr) {
   return m::CustomCall(instr, {kCublasLtMatmulF8CallTarget});
 }
@@ -573,6 +565,48 @@ auto OptionalBitcast(HloInstruction **optional_bitcast, Pattern pattern) {
 // 4 requires steps 5 and 6, i.e. the computation of DAmax can be elided only
 // when the output of the GEMM is requested in FP8 format.
 class GemmRewriterVisitor : public DfsHloRewriteVisitor {
+  absl::Status ReplaceDotWithCustomFusion(HloInstruction *dot) {
+    HloComputation::Builder builder(absl::StrCat(dot->name(), "_computation"));
+    std::vector<HloInstruction *> fusion_inputs;
+    fusion_inputs.reserve(dot->operand_count());
+    for (int i = 0; i < dot->operand_count(); ++i) {
+      TF_ASSIGN_OR_RETURN(
+          HloInstruction * param,
+          builder.AddParameter(HloInstruction::CreateParameter(
+              i, dot->operand(i)->shape(), absl::StrCat("parameter_", i))));
+      fusion_inputs.push_back(param);
+    }
+    builder.AddInstruction(
+        dot->CloneWithNewOperands(dot->shape(), fusion_inputs));
+    HloComputation *computation =
+        dot->GetModule()->AddComputationAndUnifyNamesAndIds(builder.Build(),
+                                                            /*is_entry=*/false);
+    HloInstruction *fusion =
+        dot->parent()->AddInstruction(HloInstruction::CreateFusion(
+            computation->root_instruction()->shape(),
+            HloInstruction::FusionKind::kCustom, dot->operands(), computation));
+    fusion->set_metadata(dot->metadata());
+
+    TF_ASSIGN_OR_RETURN(auto gpu_config,
+                        fusion->backend_config<GpuBackendConfig>());
+    FusionBackendConfig &backend_config =
+        *gpu_config.mutable_fusion_backend_config();
+    backend_config.set_kind(std::string(kCuDnnFusionKind));
+    // cuDNN will always use cuBLAS for simple enough dot fusions at plan 0;
+    // skip autotuning for them by assigning plan index directly.
+    backend_config.mutable_cudnn_fusion_config()->set_plan_id(0);
+    TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
+
+    if (dot->IsRoot()) {
+      dot->parent()->set_root_instruction(fusion);
+      TF_RETURN_IF_ERROR(
+          dot->parent()->RemoveInstructionAndUnusedOperands(dot));
+      MarkAsChanged();
+      return absl::OkStatus();
+    }
+    return ReplaceInstruction(dot, fusion);
+  }
+
  public:
   explicit GemmRewriterVisitor(const se::GpuComputeCapability &gpu_version,
                                se::SemanticVersion toolkit_version,
@@ -642,6 +676,20 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     gemm_backend_config.set_lhs_stride(lhs_stride);
     gemm_backend_config.set_rhs_stride(rhs_stride);
 
+    // TODO: support all these
+    bool use_custom_fusion =
+        !is_lhs_vector && !is_rhs_vector &&
+        !((lhs->shape().element_type() == S8 ||
+           rhs->shape().element_type() == S8) &&
+          instr->shape().element_type() == F32) &&
+        absl::c_none_of(
+            std::vector<PrimitiveType>{F64, C64, C128},
+            [&](int x) { return x == instr->shape().element_type(); }) &&
+        gemm_backend_config.precision_config().algorithm() ==
+            PrecisionConfig::ALG_UNSET &&
+        absl::c_all_of(instr->precision_config().operand_precision(),
+                       [](int x) { return x == PrecisionConfig::DEFAULT; });
+
     switch (options_.dtype) {
       case GemmRewriterOptions::DType::kFp8Only: {
         // Rewrite FP8 GEMMs into a type-specific cublasLT Custom Call.
@@ -680,20 +728,26 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         if (gemm_backend_config.precision_config().algorithm() ==
             PrecisionConfig::ALG_DOT_BF16_BF16_F32) {
           TF_RETURN_IF_ERROR(TurnDotIntoConvertAndDotForBF16BF16F32(
-              instr, gemm_backend_config, gpu_backend_config));
+              instr, gemm_backend_config, gpu_backend_config,
+              use_custom_fusion));
         } else {
-          // Rewrite non-FP8 GEMMs into a cublas or cublasLT Custom Call.
-          TF_ASSIGN_OR_RETURN(
-              absl::string_view gemm_custom_call_target,
-              GetNonFp8GemmCustomCallTarget(*instr, gemm_backend_config));
-          const Shape &output_shape = instr->shape();
-          HloInstruction *gemm_call =
-              instr->AddInstruction(HloInstruction::CreateCustomCall(
-                  output_shape,
-                  {instr->mutable_operand(0), instr->mutable_operand(1)},
-                  gemm_custom_call_target));
-          TF_RETURN_IF_ERROR(gemm_call->set_backend_config(gpu_backend_config));
-          TF_RETURN_IF_ERROR(ReplaceInstruction(instr, gemm_call));
+          if (use_custom_fusion) {
+            TF_RETURN_IF_ERROR(ReplaceDotWithCustomFusion(instr));
+          } else {
+            // Rewrite non-FP8 GEMMs into a cublas or cublasLT Custom Call.
+            TF_ASSIGN_OR_RETURN(
+                absl::string_view gemm_custom_call_target,
+                GetNonFp8GemmCustomCallTarget(*instr, gemm_backend_config));
+            const Shape &output_shape = instr->shape();
+            HloInstruction *gemm_call =
+                instr->AddInstruction(HloInstruction::CreateCustomCall(
+                    output_shape,
+                    {instr->mutable_operand(0), instr->mutable_operand(1)},
+                    gemm_custom_call_target));
+            TF_RETURN_IF_ERROR(
+                gemm_call->set_backend_config(gpu_backend_config));
+            TF_RETURN_IF_ERROR(ReplaceInstruction(instr, gemm_call));
+          }
         }
       } break;
     };
@@ -702,7 +756,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
   absl::Status TurnDotIntoConvertAndDotForBF16BF16F32(
       HloInstruction *instr, GemmBackendConfig &gemm_backend_config,
-      GpuBackendConfig &gpu_backend_config) {
+      GpuBackendConfig &gpu_backend_config, bool use_custom_fusion) {
     auto lhs_shape = instr->operand(0)->shape();
     lhs_shape.set_element_type(BF16);
     auto lhs_convert = instr->mutable_operand(0)->AddInstruction(
@@ -711,6 +765,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     rhs_shape.set_element_type(BF16);
     auto rhs_convert = instr->mutable_operand(1)->AddInstruction(
         HloInstruction::CreateConvert(rhs_shape, instr->mutable_operand(1)));
+    if (use_custom_fusion) {
+      TF_RETURN_IF_ERROR(
+          instr->ReplaceOperandWithDifferentShape(0, lhs_convert));
+      TF_RETURN_IF_ERROR(
+          instr->ReplaceOperandWithDifferentShape(1, rhs_convert));
+      return ReplaceDotWithCustomFusion(instr);
+    }
     gemm_backend_config.mutable_precision_config()->clear_algorithm();
     TF_ASSIGN_OR_RETURN(
         absl::string_view gemm_custom_call_target,
