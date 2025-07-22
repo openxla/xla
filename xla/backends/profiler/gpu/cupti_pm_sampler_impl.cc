@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <thread>
 
+#include "absl/base/call_once.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
