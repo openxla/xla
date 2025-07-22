@@ -180,25 +180,28 @@ static absl::StatusOr<Command> Convert(
 static absl::StatusOr<Command> Convert(const AllReduceStartThunk& thunk,
                                        ResourceUseVector resources) {
   return std::make_unique<AllReduceCmd>(thunk.config(), thunk.reduction_kind(),
-                                        thunk.buffers(), resources);
+                                        thunk.buffers(), thunk.async_events(),
+                                        resources);
 }
 
 static absl::StatusOr<Command> Convert(const ReduceScatterStartThunk& thunk,
                                        ResourceUseVector resources) {
   return std::make_unique<ReduceScatterCmd>(
-      thunk.config(), thunk.reduction_kind(), thunk.buffers(), resources);
+      thunk.config(), thunk.reduction_kind(), thunk.buffers(),
+      thunk.async_events(), resources);
 }
 
 static absl::StatusOr<Command> Convert(const AllToAllStartThunk& thunk,
                                        ResourceUseVector resources) {
   return std::make_unique<AllToAllCmd>(
-      thunk.config(), thunk.has_split_dimension(), thunk.buffers(), resources);
+      thunk.config(), thunk.has_split_dimension(), thunk.buffers(),
+      thunk.async_events(), resources);
 }
 
 static absl::StatusOr<Command> Convert(const AllGatherStartThunk& thunk,
                                        ResourceUseVector resources) {
   return std::make_unique<AllGatherCmd>(thunk.config(), thunk.buffers(),
-                                        resources);
+                                        thunk.async_events(), resources);
 }
 
 static absl::StatusOr<Command> Convert(
@@ -332,19 +335,33 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
                             static_cast<const SequentialThunk&>(thunk).thunks(),
                             options);
 
-    // Thunks that simply wait for stream events are no-op in the command buffer
-    // context, as we convert async thunks to command dependency graph.
     case Thunk::Kind::kAllGatherDone:
     case Thunk::Kind::kAllReduceDone:
     case Thunk::Kind::kReduceScatterDone:
     case Thunk::Kind::kAllToAllDone:
+      if (options.synchronization_mode ==
+          CommandBufferCmdExecutor::SynchronizationMode::kLHS) {
+        return append(absl::StatusOr<Command>(std::make_unique<AsyncDoneCmd>(
+            thunk.execution_stream_id(),
+            static_cast<const CollectiveDoneThunk&>(thunk).async_events(),
+            resources)));
+      } else {
+        if (resources.empty()) {
+          return absl::OkStatus();
+        } else {
+          // If there control dependencies between these thunks, we will create
+          // an empty command act as dependency nodes.
+          return append(absl::StatusOr<Command>(std::make_unique<EmptyCmd>(
+              thunk.execution_stream_id(), resources)));
+        }
+      }
+
     case Thunk::Kind::kWaitForStreams:
       if (resources.empty()) {
         return absl::OkStatus();
       } else {
-        // If there control dependencies between these thunks, we will create an
-        // empty command act as dependency nodes.
-        VLOG(0) << "Add empty command for asyndone synchronization";
+        // If there control dependencies between these thunks, we will create
+        // an empty command act as dependency nodes.
         return append(
             absl::StatusOr<Command>(std::make_unique<EmptyCmd>(resources)));
       }

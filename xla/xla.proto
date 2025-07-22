@@ -694,8 +694,16 @@ message DebugOptions {
   // profiling and debugging.
   optional bool xla_gpu_generate_line_info = 349;
 
-  // Identify concurrent regions in GPU graphs and execute them concurrently.
-  optional bool xla_gpu_graph_enable_concurrent_region = 215;
+  // Command buffer scheduling mode. 
+  // SERIALIZE: Serialize all commands in a command buffer.
+  // CONCURRENT: Identify concurrent across operator through data conflicts.
+  // LHS: Uses the same latency hidden scheulding results.
+  enum CommandBufferSchedulingMode   {
+    SERIALIZE = 0;
+    CONCURRENT = 1;
+    LHS = 2;
+  }
+  optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode = 215;
 
   // This number determines how many moved instructions like fusion kernels are
   // required for a region to be captured as a function to be launched as a GPU
