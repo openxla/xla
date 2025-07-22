@@ -125,7 +125,6 @@ std::string DynamicSliceThunk::SliceDef::ToString() const {
   result += "}";
   return result;
 }
-};
 
 DynamicSliceThunk::DynamicSliceThunk(
     ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
