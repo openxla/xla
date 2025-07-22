@@ -132,7 +132,7 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
     std::vector<std::optional<std::vector<Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
-    std::vector<std::optional<hape>> sliced_shapes,
+    std::vector<std::optional<Shape>> sliced_shapes,
     std::vector<std::optional<uint64_t>> offset_byte_sizes,
     std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
         offset_as_function_of_indvar_metadata)
