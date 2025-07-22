@@ -93,6 +93,7 @@ namespace xla::gpu {
   V(kAllToAll, "AllToAllCmd")                                    \
   V(kAllGatherCmd, "AllGatherCmd")                               \
   V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")           \
+  V(kAsyncDone, "AsyncDone")                                       \
   V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")             \
   V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd")     \
   V(kUnknownCmd, "UnknownCmd") \
@@ -355,7 +356,11 @@ class CommandBufferCmdExecutor {
 
     // Relies on execution graph to insert dependencies between commands
     // that have buffer of resource conflicts, and building a DAG of commands.
-    kAutomatic
+    kConcurrent,
+
+    // Uses the same latency hidden scheduling results used in the thunk
+    // scheduling.
+    kLHS,
   };
 
   template <typename Sink>
@@ -364,8 +369,11 @@ class CommandBufferCmdExecutor {
       case SynchronizationMode::kSerialize:
         sink.Append("serialize");
         break;
-      case SynchronizationMode::kAutomatic:
-        sink.Append("automatic");
+      case SynchronizationMode::kConcurrent:
+        sink.Append("concurrent");
+        break;
+      case SynchronizationMode::kLHS:
+        sink.Append("lhs");
         break;
     }
   }
@@ -542,6 +550,23 @@ class EmptyCmd : public CommandBufferCmd {
  public:
   explicit EmptyCmd(ExecutionStreamId execution_stream_id,
                     ResourceUseVector resources = {});
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  BufferUseVector buffers() const override { return {}; }
+};
+
+//===----------------------------------------------------------------------===//
+// AsyncDoneCmd
+//===----------------------------------------------------------------------===//
+
+class AsyncDoneCmd : public CommandBufferCmd {
+ public:
+  explicit AsyncDoneCmd(ExecutionStreamId execution_stream_id,
+                        ResourceUseVector resources = {});
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

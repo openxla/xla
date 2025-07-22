@@ -351,14 +351,19 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
     case Thunk::Kind::kReduceScatterDone:
     case Thunk::Kind::kAllToAllDone:
     case Thunk::Kind::kWaitForStreams:
-      if (resources.empty()) {
-        return absl::OkStatus();
-      } else {
-        // If there control dependencies between these thunks, we will create an
-        // empty command act as dependency nodes.
-        VLOG(0) << "Add empty command for asyndone synchronization";
-        return append(absl::StatusOr<Command>(std::make_unique<EmptyCmd>(
+      if (options.synchronization_mode ==
+          CommandBufferCmdExecutor::SynchronizationMode::kLHS) {
+        return append(absl::StatusOr<Command>(std::make_unique<AsyncDoneCmd>(
             thunk.execution_stream_id(), resources)));
+      } else {
+        if (resources.empty()) {
+          return absl::OkStatus();
+        } else {
+          // If there control dependencies between these thunks, we will create
+          // an empty command act as dependency nodes.
+          return append(absl::StatusOr<Command>(std::make_unique<EmptyCmd>(
+              thunk.execution_stream_id(), resources)));
+        }
       }
 
     case Thunk::Kind::kCommandBuffer:

@@ -274,7 +274,7 @@ absl::StatusOr<CommandBufferCmdExecutor> CommandBufferCmdExecutor::Create(
   // In automatic synchronization mode construct an execution graph for the
   // sequence of commands and derive the structure of command dependencies
   // from the buffer use conflicts.
-  if (synchronization_mode == SynchronizationMode::kAutomatic) {
+  if (synchronization_mode == SynchronizationMode::kConcurrent) {
     auto operations = CreateCommandOperations(commands);
     TF_ASSIGN_OR_RETURN(execution_graph,
                         ExecutionGraph::Create<CommandOperation>(operations));
@@ -554,6 +554,26 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
          execution_graph_->in_edges(id)) {
       dependencies_ids.push_back(in_edge.id);
     }
+  } else if (synchronization_mode_ == SynchronizationMode::kLHS) {
+    CHECK(id < commands_.size());
+    auto is_async_start = [](const CommandBufferCmd* cmd) -> bool {
+      return cmd->command_type() == CommandBufferCmdType::kAllGatherCmd ||
+             cmd->command_type() == CommandBufferCmdType::kAllReduceCmd ||
+             cmd->command_type() == CommandBufferCmdType::kReduceScatter ||
+             cmd->command_type() == CommandBufferCmdType::kAllToAll;
+    };
+    if (commands_[id]->command_type() == CommandBufferCmdType::kAsyncDone) {
+      dependencies_ids.push_back(id - 1);
+    } else {
+      for (CommandId i = id - 1; i >= 0; --i) {
+        if (is_async_start(commands_[i].get())) {
+          continue;
+        } else {
+          dependencies_ids.push_back(i);
+          break;
+        }
+      }
+    }
   } else {
     dependencies_ids.push_back(id - 1);
   }
@@ -598,10 +618,10 @@ absl::StatusOr<std::string> CommandBufferCmdExecutor::RenderExecutionGraph() {
     return Unimplemented("No execution graph renderer registered");
   }
 
-  if (synchronization_mode_ != SynchronizationMode::kAutomatic) {
+  if (synchronization_mode_ != SynchronizationMode::kConcurrent) {
     return Unimplemented(
         "Execution graph rendering is only supported for "
-        "automatic synchronization mode");
+        "concurrent synchronization mode");
   }
 
   auto operations = CreateCommandOperations(commands_);
@@ -756,6 +776,29 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
       },
       [&](const se::CommandBuffer::Command* command) {
         // Empty command is not updatable.
+        return absl::OkStatus();
+      });
+}
+
+//===----------------------------------------------------------------------===//
+// AsyncDoneCmd
+//===----------------------------------------------------------------------===//
+
+AsyncDoneCmd::AsyncDoneCmd(ExecutionStreamId execution_stream_id,
+                           ResourceUseVector resources)
+    : CommandBufferCmd(CommandBufferCmdType::kAsyncDone, execution_stream_id,
+                       std::move(resources)) {}
+
+absl::StatusOr<const se::CommandBuffer::Command*> AsyncDoneCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  return Handle(
+      std::move(record_action),
+      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+        return command_buffer->CreateEmptyCmd(dependencies, priority());
+      },
+      [&](const se::CommandBuffer::Command* command) {
         return absl::OkStatus();
       });
 }
