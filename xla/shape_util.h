@@ -280,7 +280,8 @@ class ShapeUtil {
   // Returns true if the tuple tree shapes and leaf ranks are identical.
   // Leaf dimensions, element type, and layout are ignored. Tuple elements are
   // compared recursively for compatibility.
-  static bool CompatibleKind(const Shape& lhs, const Shape& rhs);
+  static bool CompatibleKind(const Shape& lhs, const Shape& rhs,
+                             bool ignore_buffer = false);
 
   // As Compatible, but allow one of lhs and rhs to be BF16 while the other
   // being F32. Tuple elements are compared recursively for compatibility.
@@ -766,7 +767,8 @@ class ShapeUtil {
   template <typename Fn>
   static absl::Status ForEachMutableSubshapeWithStatus(Shape* shape, Fn&& fn) {
     ShapeIndex index;
-    return ForEachMutableSubshapeWithStatusHelper(shape, fn, &index);
+    return ForEachMutableSubshapeWithStatusHelper(shape, std::forward<Fn>(fn),
+                                                  &index);
   }
 
   // Calls the given visitor function for each subshape of the given shape.
@@ -818,7 +820,8 @@ class ShapeUtil {
   static absl::Status ForEachMutableSubshapePostOrderWithStatus(Shape* shape,
                                                                 Fn&& fn) {
     ShapeIndex index;
-    return ForEachMutableSubshapePostOrderWithStatusHelper(shape, fn, &index);
+    return ForEachMutableSubshapePostOrderWithStatusHelper(
+        shape, std::forward<Fn>(fn), &index);
   }
 
   // Returns true if `shape` (which must be an array) with degenerate dimensions
@@ -1120,6 +1123,10 @@ class ShapeUtil {
       const Shape& shape,
       const ForEachParallelVisitorFunction& visitor_function);
 
+  // Returns true if the shape doesn't have any device-specific information,
+  // namely tiling and memory-space information.
+  static bool DeviceShapeIsHostShape(const Shape& shape);
+
   // Strips device-specific information, namely tiling and memory-space
   // information, from a shape.
   static Shape DeviceShapeToHostShape(Shape s);
@@ -1168,11 +1175,13 @@ class ShapeUtil {
   static absl::Status ForEachMutableSubshapeWithStatusHelper(
       Shape* shape, Fn&& fn, ShapeIndex* index) {
     TF_RETURN_IF_ERROR(fn(shape, *index));
-    if (shape->IsTuple()) {
-      for (int64_t i = 0; i < ShapeUtil::TupleElementCount(*shape); ++i) {
+    if (Shape::TupleState* tuple = shape->if_tuple_state()) {
+      Shape* tuple_shape = tuple->tuple_shapes.data();
+      int64_t tuple_count = tuple->tuple_shapes.size();
+      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
         index->push_back(i);
-        TF_RETURN_IF_ERROR(ForEachMutableSubshapeWithStatusHelper(
-            shape->mutable_tuple_shapes(i), fn, index));
+        TF_RETURN_IF_ERROR(
+            ForEachMutableSubshapeWithStatusHelper(tuple_shape, fn, index));
         index->pop_back();
       }
     }
@@ -1184,11 +1193,13 @@ class ShapeUtil {
   template <typename Fn>
   static absl::Status ForEachMutableSubshapePostOrderWithStatusHelper(
       Shape* shape, Fn&& fn, ShapeIndex* index) {
-    if (shape->IsTuple()) {
-      for (int64_t i = 0; i < ShapeUtil::TupleElementCount(*shape); ++i) {
+    if (Shape::TupleState* tuple = shape->if_tuple_state()) {
+      Shape* tuple_shape = tuple->tuple_shapes.data();
+      int64_t tuple_count = tuple->tuple_shapes.size();
+      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
         index->push_back(i);
         TF_RETURN_IF_ERROR(ForEachMutableSubshapePostOrderWithStatusHelper(
-            shape->mutable_tuple_shapes(i), fn, index));
+            tuple_shape, fn, index));
         index->pop_back();
       }
     }

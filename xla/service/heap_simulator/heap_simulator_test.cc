@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -121,7 +122,7 @@ TEST_F(MinimumMemoryForSequenceTest, MultiComputation) {
   TF_ASSERT_OK(schedule.Verify());
 
   std::unique_ptr<HloAliasAnalysis> alias_analysis =
-      HloAliasAnalysis::Run(module.get()).value();
+      HloAliasAnalysis::Run(module.get(), &alias_info_).value();
   EXPECT_EQ(25, HeapSimulator::MinimumMemoryForModule(schedule, *alias_analysis,
                                                       &alias_info_, size_fn)
                     .value());
@@ -234,7 +235,7 @@ TEST_F(MinimumMemoryForSequenceTest, SubcomputationAccounting) {
   };
 
   std::unique_ptr<HloAliasAnalysis> alias_analysis =
-      HloAliasAnalysis::Run(module.get()).value();
+      HloAliasAnalysis::Run(module.get(), &alias_info_).value();
 
   // HeapSimulator accounts for subcomputations. The output buffer is aliased,
   // so we don't double count.
@@ -334,7 +335,8 @@ class HeapSimulatorTracker {
   // simulation over the entire module.
   void RunWholeModule(
       const std::vector<HloInstruction*>& full_module_sequence) {
-    alias_analysis_ = HloAliasAnalysis::Run(module_.get()).value();
+    alias_analysis_ =
+        HloAliasAnalysis::Run(module_.get(), &alias_info_).value();
 
     // Construct the module sequence grouped by computation.
     HloSchedule schedule(module_.get());
@@ -995,7 +997,7 @@ TEST_F(HeapSimulatorTest, AsyncCallImplicitSharding) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
   TF_ASSERT_OK_AND_ASSIGN(auto alias_analysis,
-                          HloAliasAnalysis::Run(module.get()));
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
   auto size_fn = [](const BufferValue& buffer) -> int64_t {
     const Shape& shape = buffer.shape();
     if (!shape.IsArray()) {
@@ -1044,6 +1046,8 @@ class HeapAlgorithmTestBase : public ::testing::Test {
   const HloValue* buffer_i_;
 
  private:
+  friend class GlobalDecreasingSizeBestFitHeapBenchmark;
+
   // Create a dummy HloValue to pass to the heap algorithm.
   const HloValue* DummyBufferValue() {
     const HloValue::Id id = buffers_.size();
@@ -3822,6 +3826,40 @@ TEST_F(BreadthFirstMidpointIteratorTest, General1) {
 TEST_F(BreadthFirstMidpointIteratorTest, General2) {
   RunTest(0, 10, {5, 2, 8, 1, 4, 7, 10, 0, 3, 6, 9});
 }
+
+class GlobalDecreasingSizeBestFitHeapBenchmark : public HeapAlgorithmTestBase {
+ public:
+  void TestBody() override {}
+
+  void RunBenchmark(::testing::benchmark::State& state) {
+    const int n = state.range(0);
+    int alignment = state.range(1);
+    std::vector<const HloValue*> buffers;
+    for (int i = 0; i < n; i++) {
+      buffers.push_back(DummyBufferValue());
+    }
+    for (auto s : state) {
+      benchmark::DoNotOptimize(alignment);
+      GlobalDecreasingSizeBestFitHeap<HloValue> heap(alignment);
+      for (int i = 0; i < n; i++) {
+        heap.Alloc(buffers[i], i * 20);
+      }
+      for (int i = 0; i < n; i++) {
+        heap.Free(buffers[i], i * 20);
+      }
+      TF_ASSERT_OK_AND_ASSIGN(const HeapSimulator::Result<HloValue> result,
+                              heap.Finish());
+    }
+  }
+};
+
+static void BM_GlobalDecreasingSizeBestFitHeap(
+    ::testing::benchmark::State& state) {
+  GlobalDecreasingSizeBestFitHeapBenchmark bm;
+  bm.RunBenchmark(state);
+}
+BENCHMARK(BM_GlobalDecreasingSizeBestFitHeap)
+    ->ArgsProduct({{1, 4, 16, 64}, {1, 1024}});
 
 }  // namespace
 }  // namespace xla

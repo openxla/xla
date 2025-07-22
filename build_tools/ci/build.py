@@ -51,7 +51,6 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//xla/...",
     "//build_tools/...",
     "@tsl//tsl/...",
-    "-//xla/hlo/tools/hlo_diff/..."
 )
 _XLA_ONEAPI_TARGET_PATTERNS = (
     "//xla/stream_executor/sycl:stream_executor_sycl",
@@ -648,34 +647,6 @@ Build(
         color="yes",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-        [
-            "cp", "-r",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            f"{_GITHUB_WORKSPACE}/tensorflow/tensorflow/third_party",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla/third_party/",
-            "-maxdepth", "1", "-exec", "cp", "-r", "{}",
-            f"{_GITHUB_WORKSPACE}/tensorflow/tensorflow/third_party", ";",
-        ],
-    ),
 )
 
 Build(
@@ -705,32 +676,6 @@ Build(
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
     extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-        [
-            "cp", "-r",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            f"{_GITHUB_WORKSPACE}/tensorflow/tensorflow/third_party",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla/third_party/",
-            "-maxdepth", "1", "-exec", "cp", "-r", "{}",
-            f"{_GITHUB_WORKSPACE}/tensorflow/tensorflow/third_party", ";",
-        ],
         ["nvidia-smi"],
     ),
 )

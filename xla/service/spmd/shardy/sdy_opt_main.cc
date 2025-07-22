@@ -19,8 +19,7 @@ limitations under the License.
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/transforms/passes.h"
-#include "shardy/round_trip_import/pipelines.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
 #include "xla/service/spmd/shardy/extensions/mhlo_extensions.h"
 #include "xla/service/spmd/shardy/round_trip_common/export_named_computations.h"
@@ -52,7 +51,7 @@ int main(int argc, char** argv) {
   mlir::DialectRegistry dialects;
   mlir::sdy::registerAllDialects(dialects);
   mlir::func::registerAllExtensions(dialects);
-  dialects.insert<mlir::mhlo::MhloDialect>();
+  mlir::mhlo::registerAllMhloDialects(dialects);
   xla::sdy::registerMhloExtensions(dialects);
 
   // Register all SDY passes and pipelines.
@@ -84,9 +83,6 @@ int main(int argc, char** argv) {
   xla::sdy::registerSdyRoundTripShardMapImportPass();
   xla::sdy::registerSdyRoundTripImportPipeline();
   xla::sdy::registerSdyRoundTripTestingPipeline();
-
-  // Test SdyRoundTripImportPipeline cloned on Shardy Github.
-  mlir::sdy::registerSdyRoundTripImportPipeline();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "XLA SDY pass driver\n", dialects));

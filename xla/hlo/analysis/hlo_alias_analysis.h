@@ -42,11 +42,6 @@ class HloAliasAnalysis {
  public:
   // The callgraph of the given HloModule must be flattened
   // (xla::FlattenCallGraph) prior to running the analysis.
-  // TODO(b/424109294): Replace users of this function with the one below.
-  static absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> Run(
-      const HloModule* module);
-
-  // Same as above, but with AliasInfo instead of CanShareBuffer hook.
   static absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> Run(
       const HloModule* module, const AliasInfo* alias_info);
 
@@ -56,15 +51,9 @@ class HloAliasAnalysis {
   const HloBuffer& GetBufferContainingValue(const HloValue& value) const {
     return *value_to_buffer_.at(&value);
   }
-  HloBuffer& GetBufferContainingValue(const HloValue& value) {
-    return *value_to_buffer_.at(&value);
-  }
 
   // Return the HloBuffer with the given ID.
   const HloBuffer& GetBuffer(HloBuffer::Id buffer_id) const {
-    return buffers_.at(buffer_id);
-  }
-  HloBuffer& GetBuffer(HloBuffer::Id buffer_id) {
     return buffers_.at(buffer_id);
   }
 
@@ -72,8 +61,6 @@ class HloAliasAnalysis {
   // set at that position does not contain exactly one buffer.
   const HloBuffer& GetUniqueBufferAt(const HloInstruction* instruction,
                                      const ShapeIndex& index = {}) const;
-  HloBuffer& GetUniqueBufferAt(const HloInstruction* instruction,
-                               const ShapeIndex& index = {});
 
   // Compute the set of buffers at the given instruction and index and return as
   // a vector. This set is exactly the union of the buffers containing the

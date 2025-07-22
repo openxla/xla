@@ -31,35 +31,49 @@ limitations under the License.
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/TypeSize.h"
+#include "xla/codegen/math/intrinsic.h"
 #include "xla/codegen/math/simple_jit_runner.h"
 #include "xla/codegen/math/test_matchers.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::codegen::math {
 namespace {
 
 using ::testing::Eq;
+using ::xla::codegen::intrinsics::Ldexp;
+using ::xla::codegen::intrinsics::Type;
 
-JitRunner CreateJitRunnerWithLdexpF64(
-    std::function<llvm::Type*(llvm::LLVMContext&)> make_type) {
+JitRunner CreateJitRunnerWithLdexpF64(Type type) {
   auto context = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("test_module", *context);
   llvm::Function* ldexp_func =
-      CreateLdexpF64(module.get(), make_type(*context));
+      Ldexp::CreateDefinition(module.get(), type,
+                              Type(S32, type.vector_width()))
+          .value();
   ldexp_func->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*ldexp_func));
   return JitRunner(std::move(module), std::move(context));
 }
 
+TEST(LdexpTest, SclarIninsic) {
+  EXPECT_EQ(Ldexp::Name(Type::S(F64), Type::S(S32)), "xla.ldexp.f64.i32");
+}
+
+TEST(LdexpTest, VectorIninsic) {
+  EXPECT_EQ(Ldexp::Name(Type::V(F64, 4), Type::V(S32, 4)),
+            "xla.ldexp.v4f64.v4i32");
+}
+
 TEST(LdexpTest, EmitLdexpF64) {
-  JitRunner runner = CreateJitRunnerWithLdexpF64(llvm::Type::getDoubleTy);
-  auto fn = runner.GetScalarFn<double(double, int)>(LdexpF64FunctionName(1));
+  Type type = Type::S(F64);
+  JitRunner runner = CreateJitRunnerWithLdexpF64(type);
+  auto fn =
+      runner.GetScalarFn<double(double, int)>(Ldexp::Name(type, Type::S(S32)));
 
   double test_values[] = {1.0,
                           2.0,
@@ -90,8 +104,10 @@ TEST(LdexpTest, EmitLdexpF64) {
 }
 
 TEST(LdexpTest, ClampsExponent) {
-  JitRunner runner = CreateJitRunnerWithLdexpF64(llvm::Type::getDoubleTy);
-  auto* run = runner.GetScalarFn<double(double, int)>(LdexpF64FunctionName(1));
+  Type type = Type::S(F64);
+  JitRunner runner = CreateJitRunnerWithLdexpF64(type);
+  auto* run =
+      runner.GetScalarFn<double(double, int)>(Ldexp::Name(type, Type::S(S32)));
 
   EXPECT_THAT(run(2.0, 1e9), Eq(std::numeric_limits<double>::infinity()));
   EXPECT_THAT(run(std::numeric_limits<double>::min(), 2100),
@@ -100,13 +116,10 @@ TEST(LdexpTest, ClampsExponent) {
 }
 
 TEST(LdexpTest, EmitLdexpF64_Vector4) {
-  JitRunner runner =
-      CreateJitRunnerWithLdexpF64([](llvm::LLVMContext& context) {
-        return llvm::VectorType::get(llvm::Type::getDoubleTy(context),
-                                     llvm::ElementCount::getFixed(4));
-      });
-  auto run =
-      runner.GetVectorizedFn<4, double, double, int>(LdexpF64FunctionName(4));
+  Type type = Type::V(F64, 4);
+  JitRunner runner = CreateJitRunnerWithLdexpF64(type);
+  auto run = runner.GetVectorizedFn<4, double, double, int>(
+      Ldexp::Name(type, Type::V(S32, 4)));
 
   using DoubleArray4 = std::array<double, 4>;
   std::vector<DoubleArray4> test_values = {

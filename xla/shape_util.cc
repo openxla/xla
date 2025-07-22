@@ -420,8 +420,12 @@ ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
     }
     dims[i] = shape.dimensions(dim);
   }
-  TF_ASSIGN_OR_RETURN(Shape new_shape, MakeValidatedShapeWithDescendingLayout(
-                                           shape.element_type(), dims));
+  TF_ASSIGN_OR_RETURN(Shape new_shape,
+                      MakeValidatedShapeWithDescendingLayout(
+                          shape.array_or_buffer_element_type(), dims));
+  if (shape.IsBuffer()) {
+    TF_ASSIGN_OR_RETURN(new_shape, MakeValidatedBufferShape(new_shape));
+  }
   // Since the physical layout is kept the same, the tiles and element size are
   // the same also.
   if (shape.has_layout()) {
@@ -687,8 +691,7 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 
 /* static */ int64_t ShapeUtil::SubshapeCount(const Shape& shape) {
   int64_t n = 0;
-  ForEachSubshape(shape, [&](const Shape& literal_subshape,
-                             const ShapeIndex& index) { ++n; });
+  ForEachSubshape(shape, [&](const Shape&, const ShapeIndex&) { ++n; });
   return n;
 }
 
@@ -881,10 +884,13 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
       .IgnoreLayout()(lhs, rhs);
 }
 
-/* static */ bool ShapeUtil::CompatibleKind(const Shape& lhs,
-                                            const Shape& rhs) {
-  return Shape::Equal()
-      .IgnoreElementType()
+/* static */ bool ShapeUtil::CompatibleKind(const Shape& lhs, const Shape& rhs,
+                                            bool ignore_buffer) {
+  Shape::Equal equal;
+  if (ignore_buffer) {
+    equal.IgnoreBuffer();
+  }
+  return equal.IgnoreElementType()
       .IgnoreLayout()
       .IgnoreDimensions()
       .IgnoreDynamicDimension()(lhs, rhs);
@@ -934,11 +940,17 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(shape));
   if (shape.element_type() == TUPLE) {
     return ByteSizeOfTupleIndexTable(shape, pointer_size);
-  } else if (shape.IsArray()) {
+  }
+  if (shape.IsBuffer()) {
+    return ByteSizeOfElements(shape.buffer_shape());
+  }
+  if (shape.IsArray()) {
     return ByteSizeOfElements(shape);
-  } else if (shape.element_type() == TOKEN) {
+  }
+  if (shape.element_type() == TOKEN) {
     return 0;
-  } else if (shape.element_type() == OPAQUE_TYPE) {
+  }
+  if (shape.element_type() == OPAQUE_TYPE) {
     CHECK_GT(pointer_size, 0);
     return pointer_size;
   }
@@ -2137,15 +2149,32 @@ struct ParallelState {
   return shape;
 }
 
+bool ShapeUtil::DeviceShapeIsHostShape(const Shape& shape) {
+  bool is_host_shape = true;
+  ForEachSubshape(shape, [&](const Shape& subshape, const ShapeIndex&) {
+    if (subshape.IsArray() && subshape.has_layout()) {
+      const Layout& layout = subshape.layout();
+      is_host_shape &= layout.tiles().empty();
+      is_host_shape &= layout.memory_space() == Layout::kDefaultMemorySpace;
+      is_host_shape &= !layout.has_physical_shape();
+      is_host_shape &= layout.element_size_in_bits() == 0;
+      is_host_shape &= layout.tail_padding_alignment_in_elements() == 1;
+      is_host_shape &= layout.dynamic_shape_metadata_prefix_bytes() == 0;
+    }
+  });
+  return is_host_shape;
+}
+
 Shape ShapeUtil::DeviceShapeToHostShape(Shape s) {
   ForEachMutableSubshape(&s, [](Shape* subshape, const ShapeIndex& index) {
     if (subshape->IsArray() && subshape->has_layout()) {
-      subshape->mutable_layout()->clear_tiles();
-      subshape->mutable_layout()->set_memory_space(Layout::kDefaultMemorySpace);
-      subshape->mutable_layout()->clear_physical_shape();
-      subshape->mutable_layout()->set_element_size_in_bits(0);
-      subshape->mutable_layout()->set_tail_padding_alignment_in_elements(1);
-      subshape->mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(0);
+      Layout* layout = subshape->mutable_layout();
+      layout->clear_tiles();
+      layout->set_memory_space(Layout::kDefaultMemorySpace);
+      layout->clear_physical_shape();
+      layout->set_element_size_in_bits(0);
+      layout->set_tail_padding_alignment_in_elements(1);
+      layout->set_dynamic_shape_metadata_prefix_bytes(0);
     }
   });
   return s;

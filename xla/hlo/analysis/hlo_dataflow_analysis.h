@@ -104,9 +104,6 @@ class HloDataflowAnalysis {
   const HloValueSet& GetValueSet(const HloInstruction* instruction,
                                  const ShapeIndex& index = {}) const;
   const HloValueSet& GetValueSet(const HloPosition& position) const;
-  HloValueSet& GetValueSet(const HloPosition& position);
-  HloValueSet& GetValueSet(const HloInstruction* instruction,
-                           const ShapeIndex& index = {});
 
   // Returns the unique value in the HloValueSet at the given instruction and
   // shape index. CHECKs if the value set does not contain a exactly one value.
@@ -227,6 +224,10 @@ class HloDataflowAnalysis {
   // into the instruction (operands and cross-computation dataflow).
   bool UpdateInstructionValueSet(HloInstruction* instruction);
 
+  // Returns the HloValueSet for the given instruction at the given index.
+  HloValueSet& GetMutableValueSet(const HloInstruction* instruction,
+                                  const ShapeIndex& index = {});
+
   // Updates the value set for a particular instruction type. Returns whether
   // the instruction value set changed.
   bool UpdateBitcastValueSet(HloInstruction* bitcast);
@@ -318,26 +319,6 @@ class HloDataflowAnalysis {
   // An explicit graph holding phi values and edges.
   PhiGraph phi_graph_;
 };
-
-// Removes layers of tuple indirection introduced via 'tuple' and
-// 'get-tuple-element' instructions to more directly identify the source of the
-// given HLO value (identified by the given `ShapeIndex` into the output of the
-// given `HloInstruction`).
-//
-// e.g. for the following:
-//    %x = some-op(...)
-//    %foo = get-tuple-element(%x), index=0
-//    %bar = tuple(%y, %foo)
-//
-// ... FollowTupleIndirection(%bar, {1}) == {%x, {0}} (output 1 of 'bar' comes
-// from output 0 of %x).
-//
-// Note that all 'tuple' instructions are followed before all
-// 'get-tuple-element' instructions are followed. This is because it is assumed
-// that tupling a value and then extracting it from the tuple again will not
-// occur in properly-optimized IR.
-std::pair<const HloInstruction*, ShapeIndex> FollowTupleIndirection(
-    const HloInstruction* instruction, ShapeIndex operand_index);
 
 }  // namespace xla
 

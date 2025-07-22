@@ -76,12 +76,28 @@ class ReduceWindowRewriter : public HloModulePass {
                                    std::vector<HloInstruction*>& inputs,
                                    int64_t scan_length, int64_t last_dim);
 
-  // [x, y] -> [x, y/128, 128]
+  // [x, y] -> [x, y/base, base]
   int64_t ExpandToNewMajorDimension(HloComputation* hlo_computation,
                                     std::vector<HloInstruction*>& inputs,
                                     std::vector<HloInstruction*>& tiled_inputs,
                                     std::vector<Shape>& tiled_shapes,
                                     int64_t padded_length, int64_t last_dim);
+
+  // reduce_window ( [x, y/base, base] window [1, 1, base] )
+  HloInstruction* GenerateNewReduceWindowWithTiledInputs(
+      HloReduceWindowInstruction* reduce_window,
+      std::vector<HloInstruction*>& tiled_inputs,
+      std::vector<Shape>& tiled_shapes, bool forward_scan);
+
+  // Slice out the last (first if reverse scan) column.
+  // slices [x, y/base, base] -> [x, y/base, 1] slice {x, y/base}
+  // reshape [x, y/base, 1] -> [x, y/base]
+  void SliceOutLastColumn(HloComputation* hlo_computation,
+                          const Shape& subshape, HloInstruction* outer_shape,
+                          int64_t rank, int64_t last_dim, bool forward_scan,
+                          int64_t num_columns,
+                          std::vector<Shape>& column_shapes,
+                          std::vector<HloInstruction*>& last_cols);
 
   absl::Status ReplaceReduceWindowWithReshape(
       HloReduceWindowInstruction* reduce_window);

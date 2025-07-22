@@ -831,7 +831,6 @@ xla_test(
 xla_test(
     name = "scalar_computations_test",
     srcs = ["scalar_computations_test.cc"],
-    precompile_test = False,
     shard_count = 32,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -896,7 +895,6 @@ xla_test(
 xla_test(
     name = "array_elementwise_ops_test",
     srcs = ["array_elementwise_ops_test.cc"],
-    precompile_test = False,
     shard_count = 25,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -1172,6 +1170,7 @@ xla_test(
         "//xla/service",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
+        "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
@@ -1274,7 +1273,6 @@ xla_test(
 xla_test(
     name = "transpose_test",
     srcs = ["transpose_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -1572,7 +1570,6 @@ xla_test(
         # TODO(b/31436974): Fix msan failure. Failed on 2016-09-12.
         "cpu": ["nomsan"],
     },
-    precompile_test = False,
     shard_count = 30,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -1819,7 +1816,6 @@ xla_test(
     name = "dynamic_ops_test",
     timeout = "moderate",
     srcs = ["dynamic_ops_test.cc"],
-    precompile_test = False,
     shard_count = 4,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
@@ -2565,7 +2561,6 @@ xla_test(
 xla_test(
     name = "convert_test",
     srcs = ["convert_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -2855,7 +2850,6 @@ xla_test(
 xla_test(
     name = "floor_ceil_test",
     srcs = ["floor_ceil_test.cc"],
-    precompile_test = False,
     tags = [
         "test_migrated_to_hlo_runner_pjrt",
     ],
@@ -3092,6 +3086,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_runner",
+        "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -3707,5 +3702,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )

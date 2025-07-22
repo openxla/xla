@@ -501,10 +501,9 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     if (absl::Status status =
             module.entry_computation()->Accept(cost_analysis.get());
         !status.ok()) {
-      LOG(WARNING)
-          << "Cannot construct unified latency estimator, falling back "
-             "to T-shirt sizes. Reason: "
-          << status;
+      VLOG(1) << "Cannot construct unified latency estimator, falling back "
+                 "to T-shirt sizes. Reason: "
+              << status;
       return std::make_unique<GpuLatencyEstimator>(pointer_size);
     }
     auto sol_latency_estimator = SolLatencyEstimator::Create(
@@ -514,9 +513,9 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     if (sol_latency_estimator.ok()) {
       return std::move(*sol_latency_estimator);
     }
-    LOG(WARNING) << "Cannot construct unified latency estimator, falling back "
-                    "to T-shirt sizes. Reason: "
-                 << sol_latency_estimator.status();
+    VLOG(1) << "Cannot construct unified latency estimator, falling back "
+               "to T-shirt sizes. Reason: "
+            << sol_latency_estimator.status();
     return std::make_unique<GpuLatencyEstimator>(pointer_size);
   }
   return gpu_latency_estimator;
@@ -624,17 +623,17 @@ bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint,
     return true;
   }
   if (HasValidPGLEProfile(module, fingerprint)) {
-    LOG(WARNING)
-        << "Profile data detected but "
-           "`xla_gpu_enable_latency_hiding_scheduler` unset. To use it "
-           "compiler will run Latency Hiding Scheduler anyway.";
+    VLOG(1) << "Profile data detected but "
+               "`xla_gpu_enable_latency_hiding_scheduler` unset. To use it "
+               "compiler will run Latency Hiding Scheduler anyway.";
     return true;
   }
   return false;
 }
 
 absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
-    const HloModule* module, int64_t pointer_size, int64_t* peak_memory_bytes) {
+    const HloModule* module, const GpuAliasInfo* alias_info,
+    int64_t pointer_size, int64_t* peak_memory_bytes) {
   BufferValue::SizeFunction size_func =
       [pointer_size](const BufferValue& buffer) -> int64_t {
     const Shape& shape = buffer.shape();
@@ -644,9 +643,10 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     }
     return ShapeUtil::ByteSizeOf(shape, pointer_size);
   };
-  return ScheduleModule(module,
-                        DefaultMemoryScheduler(size_func, PostProcessSchedule),
-                        /*execution_threads=*/{}, peak_memory_bytes);
+  return ScheduleModule(
+      module,
+      DefaultMemoryScheduler(alias_info, size_func, PostProcessSchedule),
+      /*execution_threads=*/{}, peak_memory_bytes);
 }
 
 }  // end namespace
@@ -737,9 +737,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   TF_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  TF_ASSIGN_OR_RETURN(HloSchedule schedule,
-                      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size,
-                                                           &peak_memory_bytes));
+  TF_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =
