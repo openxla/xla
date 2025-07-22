@@ -221,6 +221,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 #include "xla/service/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
+#include "xla/service/gpu/transforms/futures_mode_async_wrapper.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
 #include "xla/service/gpu/transforms/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/transforms/gemm_fusion.h"
@@ -2782,6 +2783,7 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
                                                        gpu_device_info);
     }
   }
+  pipeline.AddPass<ExplicitControl>();
   return pipeline.Run(module).status();
 }
 
@@ -2855,6 +2857,14 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
   TF_RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
   HloPassPipeline main_pipeline("post-scheduling-passes");
+
+  // Pipeline for converting futures_mode calls into async pairs.
+  {
+    HloPassPipeline& pipeline =
+        main_pipeline.AddPass<HloPassPipeline>("futures-mode-wrapper");
+    pipeline.AddPass<FuturesModeAsyncWrapper>();
+  }
+
 
   // Pipeline for async -> sync conversion on for non-overlapped async ops.
   {
