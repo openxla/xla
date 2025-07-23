@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -50,7 +51,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/map_util.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
+#include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
@@ -177,6 +180,30 @@ GetNumResourcesNeededForAnnotationWithKeepOriginalOrderAttrs(
   }
   return max_resources_needed;
 }
+
+int64_t EstimateFragmentationSize(HloModule* module,
+                                  const HloAliasAnalysis& alias_analysis,
+                                  const AliasInfo* alias_info) {
+  // Run heap simulator on the whole module to estimate the fragmentation size.
+  auto algorithm = std::make_unique<GlobalDecreasingSizeBestFitHeap<HloValue>>(
+      /*alignment=*/1);
+  auto size_fn = [](const BufferValue& buffer) -> int64_t {
+    const Shape& shape = buffer.shape();
+    if (!shape.IsArray()) {
+      return 0;
+    }
+    return ShapeUtil::ByteSizeOf(shape);
+  };
+  auto result =
+      HeapSimulator::Run(std::move(algorithm), *module, module->schedule(),
+                         alias_analysis, alias_info, size_fn);
+  CHECK_OK(result.status());
+  int64_t fragmentation_size = result.value().fragmentation_size;
+  VLOG(3) << module->name() << ": Heap simulator estimated fragmentation size: "
+          << fragmentation_size;
+  return fragmentation_size > 0 ? fragmentation_size : 0;
+}
+
 }  // namespace
 
 CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
@@ -469,21 +496,17 @@ AsyncTracker::GetNumResourcesPerInstruction(const HloInstruction& instr) const {
   return num_resources_per_type;
 }
 
-// Returns the number of "occupy" type of resources used by the instructions in
-// the given computation. If there are multiple instructions in the computation
-// that have the exact same resource usages, it only counts one of them. For
-// example, if there are two non-overlapping async all-gathers in a while loop,
-// this will have 1 for all-gather in the returned map for the while
-// instruction. This is because there is no proof that those all-gathers will
-// overlap each other and over- counting such resources causes the while not
-// being scheduled due to the resource limits (checked in
-// scheduling_node_crosses_overlap_limit).
-//
-// If an instruction uses multiple instances of the same "occupy" type of
-// resource, that number is respected and returned in the resulting map.
 const absl::flat_hash_map<int64_t, int64_t>&
 AsyncTracker::RecursivelyComputeResourceMap(
     const HloComputation* computation) const {
+  // If the computation has a schedule, use the scheduled instruction order to
+  // estimate the resource usage. We schedule the computation in post-order, so
+  // it is guaranteed that all the callees are already scheduled before we
+  // schedule the caller.
+  auto& schedule = computation->parent()->schedule();
+  if (schedule.is_computation_scheduled(computation)) {
+    return RecursivelyComputeResourceMapForScheduledComputation(computation);
+  }
   auto& per_opcode_map = async_in_computation_cache_[computation];
   if (per_opcode_map != nullptr) {
     return *per_opcode_map;
@@ -516,6 +539,48 @@ AsyncTracker::RecursivelyComputeResourceMap(
     }
   }
   return *m;
+}
+
+const absl::flat_hash_map<int64_t, int64_t>&
+AsyncTracker::RecursivelyComputeResourceMapForScheduledComputation(
+    const HloComputation* computation) const {
+  auto& schedule = computation->parent()->schedule();
+  CHECK(schedule.is_computation_scheduled(computation));
+  auto& m = async_in_computation_cache_[computation];
+  if (m != nullptr) {
+    return *m;
+  }
+  m = std::make_unique<absl::flat_hash_map<int64_t, int64_t>>();
+  auto& res_map = *m;
+  auto& inst_sequence = schedule.sequence(computation).instructions();
+  // Traverse the sequence in reverse order and keep a running status of the
+  // resources being used.
+  absl::flat_hash_map<int64_t, int64_t> inflight_resource_usage;
+  for (auto it = inst_sequence.rbegin(); it != inst_sequence.rend(); ++it) {
+    const HloInstruction* inst = *it;
+    if (IsSupportedAsyncDone(*inst)) {
+      for (const auto& [type, _] : GetResourcesFromInstruction(*inst)) {
+        int64_t current_usage = ++inflight_resource_usage[type];
+        int64_t& max_usage = res_map[type];
+        max_usage = std::max(max_usage, current_usage);
+      }
+    } else if (IsSupportedAsyncStart(*inst)) {
+      for (const auto& resource : GetResourcesFromInstruction(*inst)) {
+        --inflight_resource_usage[resource.first];
+      }
+    }
+    for (const HloComputation* called_comp : inst->called_computations()) {
+      for (auto& called_per_opcode_pair :
+           RecursivelyComputeResourceMap(called_comp)) {
+        int64_t type = called_per_opcode_pair.first;
+        int64_t current_usage =
+            inflight_resource_usage[type] + called_per_opcode_pair.second;
+        int64_t& max_usage = res_map[type];
+        max_usage = std::max(max_usage, current_usage);
+      }
+    }
+  }
+  return res_map;
 }
 
 int64_t AsyncTracker::GetNumResourcesPerInstruction(
@@ -766,17 +831,17 @@ void ModulePressureState::InitializePressureStates() {
               process_computation(called_computation, tracker.live_buffers());
             }
           }
-          VLOG(10) << "Instruction: " << instruction->ToString();
-          VLOG(10) << "Pressure change: "
+          VLOG(15) << "Instruction: " << instruction->ToString();
+          VLOG(15) << "Pressure change: "
                    << tracker.MemoryPressureDifference(instruction).first;
-          VLOG(10) << "Current usage: " << tracker.memory_usage();
+          VLOG(15) << "Current usage: " << tracker.memory_usage();
           tracker.UpdateBuffers(instruction);
-          VLOG(10) << "Current usage after update: " << tracker.memory_usage();
-          VLOG(10) << "Current peak after update: "
+          VLOG(15) << "Current usage after update: " << tracker.memory_usage();
+          VLOG(15) << "Current peak after update: "
                    << tracker.pressure_state().memory_peak;
         }
-        VLOG(6) << "Pressure peak for " << computation->name() << ": "
-                << tracker.pressure_state().memory_peak;
+        VLOG(15) << "Pressure peak for " << computation->name() << ": "
+                 << tracker.pressure_state().memory_peak;
         UpdatePressureStateForComputation(computation,
                                           tracker.pressure_state());
       };
@@ -1215,6 +1280,13 @@ class ReadySetLt {
         return *value;
       }
     }
+    // Schedule according to ForceDelayAfterTarget when we executed the early
+    // target scheduling rule.
+    if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+            !a.node->GetForceDelayAfterTarget(), a,
+            !b.node->GetForceDelayAfterTarget(), b, "kForceDelayAfterTarget")) {
+      return *value;
+    }
     // Some heuristic that try to prioritize unlocking "done" instructions
     // so that we can perform overlap. More fancy heuristics can be used by
     // discovering the closest "done" to every instruction and prioritize
@@ -1544,6 +1616,8 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kShouldSkipNodeFunction});
+        VLOG(2) << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1555,6 +1629,8 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kAnnotationGroupNotReady});
+        VLOG(2) << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1565,6 +1641,8 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {ready_node, SkipNodeReason::kExceedsOverlapLimit});
+        VLOG(2) << SkipNodeReasonString(skipped_nodes_and_reasons.back().second)
+                << " node: " << ready_node->GetInstr().name();
       }
       continue;
     }
@@ -1928,7 +2006,7 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
       ++non_ready_instr;
       node->ClearAnnotation();
       if (config_.aggressive_flexible_annotation_scheduling) {
-        node->SetForceDelay(true);
+        node->SetForceDelayAfterTarget(true);
       }
       sched_state->nodes_holding_annotations.insert(node);
       continue;
@@ -2115,6 +2193,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       }
     }
   }
+
+  // Update the target defined states for the node before we release its
+  // successors.
+  scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
+      n->GetInstr(), &sched_state->sched_graph,
+      scheduling_context_->GetLatencyEstimator().get(), current_time);
+
   auto ready_time_cmp = [](const HloGraphNode* a, const HloGraphNode* b) {
     return a->GetReadyTime() > b->GetReadyTime();
   };
@@ -2202,9 +2287,6 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       sched_state->selective_resource_releasers.push_back(&edge.Target());
     }
   }
-  scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
-      n->GetInstr(), &sched_state->sched_graph,
-      scheduling_context_->GetLatencyEstimator().get(), current_time);
   ++sched_state->scheduled_count;
   for (auto& resource : n->GetResources()) {
     if (resource.second == ResourceUsageType::kResourceRelease) {
@@ -2661,9 +2743,19 @@ DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
   for (const HloInstruction* instr : instrs) {
     auto num_resources_needed_per_instr =
         sched_state.async_tracker->GetNumResourcesPerInstruction(*instr);
-    // The minimum number of resources needed for the annotation group is the
-    // maximum number of resources needed for any instruction in the group.
     for (const auto& [resource, usage] : num_resources_needed_per_instr) {
+      if (instr->opcode() == HloOpcode::kAsyncDone) {
+        // Special case: if a async-done op's matching start op is not in the
+        // same annotation group, then the live range of the resources used
+        // by this async-done op extends beyond this annotation group.
+        const HloInstruction* start = instr->operand(0);
+        if (std::find(instrs.begin(), instrs.end(), start) == instrs.end()) {
+          num_resources_needed[resource] += usage;
+          continue;
+        }
+      }
+      // The minimum number of resources needed for the annotation group is the
+      // maximum number of resources needed for any instruction in the group.
       num_resources_needed[resource] =
           std::max(num_resources_needed[resource], usage);
     }
@@ -3130,7 +3222,10 @@ LatencyHidingScheduler::ScheduleWithPreferences(
 
   ComputationScheduleInfo schedule_info;
   schedule_info.total_wasted_cycles = stats.GetTotalWastedCycles();
-  schedule_info.peak_memory = scheduler_core_->GetMemoryPeak();
+
+  // Return the peak memory of this computation instead of the whole module
+  // to allow heuristic to optimize this functions memory usage.
+  schedule_info.peak_memory = stats.memory_pressure_peak;
 
   return std::make_pair(new_schedule, schedule_info);
 }
@@ -3166,30 +3261,51 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
   if (computations_to_schedule_.empty()) {
     return false;
   }
-  absl::flat_hash_map<HloComputation*, std::vector<HloInstruction*>>
-      saved_schedules;
   TF_RETURN_IF_ERROR(scheduler_core_->InitializeScheduler(module));
   const auto& debug_options = xla::GetDebugOptionsFromFlags();
   if (debug_options.xla_dump_latency_hiding_schedule()) {
     TF_RETURN_IF_ERROR(scheduler_core_->CaptureScheduleProto());
   }
-
+  if (VLOG_IS_ON(1)) {
+    // Log the statistics before scheduling. We batch the per-computation
+    // statistics to speed up the calculation.
+    ModulePressureState pressure_state = ModulePressureState(
+        module, scheduling_context_->GetAliasAnalysis().get(),
+        scheduling_context_->GetShapeSizeBytes());
+    pressure_state.InitializePressureStates();
+    for (HloComputation* computation : computations_to_schedule_) {
+      VLOG(1) << "[" << name() << "] Statistics before scheduling:";
+      XLA_VLOG_LINES(1, LatencyHidingStatistics(
+                            computation, scheduling_context_, &pressure_state)
+                            .ToString());
+    }
+  }
   for (HloComputation* computation : computations_to_schedule_) {
     TF_ASSIGN_OR_RETURN(std::vector<HloInstruction*> new_schedule,
                         scheduler_core_->ScheduleComputation(computation));
     // Update target specific states that may include altering the computation.
     scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
         computation);
-    saved_schedules[computation] = std::move(new_schedule);
+    module->schedule().set_sequence(computation,
+                                    absl::MakeConstSpan(new_schedule));
     scheduling_context_->GetAsyncTracker()->ResetTargetDefinedStates();
+    scheduling_context_->GetAsyncTracker()->InvalidateCache(computation);
   }
+  int64_t fragmentation_size =
+      scheduling_context_->GetAsyncTracker()
+              ->GetConfig()
+              .estimate_fragmentation_size
+          ? EstimateFragmentationSize(module,
+                                      *scheduling_context_->GetAliasAnalysis(),
+                                      scheduling_context_->GetAliasInfo())
+          : 0;
   uint64_t initial_memory_limit = scheduler_core_->GetMemoryLimit();
-  for (int64_t iter = 0;
-       iter < scheduler_core_->GetRerunTimes() &&
-       scheduler_core_->GetMemoryPeak() > initial_memory_limit;
+  for (int64_t iter = 0; iter < scheduler_core_->GetRerunTimes() &&
+                         scheduler_core_->GetMemoryPeak() + fragmentation_size >
+                             initial_memory_limit;
        iter++) {
     LOG(INFO) << "LatencyHidingScheduler current memory usage: "
-              << scheduler_core_->GetMemoryPeak()
+              << scheduler_core_->GetMemoryPeak() + fragmentation_size
               << " bytes, does not fit in limit: "
               << scheduler_core_->GetMemoryLimit()
               << ". Setting the new limit to "
@@ -3201,32 +3317,26 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
                           scheduler_core_->ScheduleComputation(computation));
       scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
           computation);
-      saved_schedules[computation] = std::move(new_schedule);
+      module->schedule().set_sequence(computation,
+                                      absl::MakeConstSpan(new_schedule));
       scheduling_context_->GetAsyncTracker()->ResetTargetDefinedStates();
+      scheduling_context_->GetAsyncTracker()->InvalidateCache(computation);
     }
+    fragmentation_size =
+        scheduling_context_->GetAsyncTracker()
+                ->GetConfig()
+                .estimate_fragmentation_size
+            ? EstimateFragmentationSize(
+                  module, *scheduling_context_->GetAliasAnalysis(),
+                  scheduling_context_->GetAliasInfo())
+            : 0;
   }
   LOG(INFO) << "[" << name() << "]"
             << " LatencyHidingScheduler current memory usage: "
             << scheduler_core_->GetMemoryPeak()
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
   if (VLOG_IS_ON(1)) {
-    // Log the statistics before and after scheduling. We batch the
-    // per-computation statistics to speed up the calculation.
-    std::unique_ptr<HloAliasAnalysis> alias_analysis =
-        HloAliasAnalysis::Run(module).value();
-    ModulePressureState pressure_state = ModulePressureState(
-        module, scheduling_context_->GetAliasAnalysis().get(),
-        scheduling_context_->GetShapeSizeBytes());
-    pressure_state.InitializePressureStates();
-    for (HloComputation* computation : computations_to_schedule_) {
-      VLOG(1) << "[" << name() << "] Statistics before scheduling:";
-      XLA_VLOG_LINES(1, LatencyHidingStatistics(
-                            computation, scheduling_context_, &pressure_state)
-                            .ToString());
-      module->schedule().set_sequence(
-          computation, absl::MakeConstSpan(saved_schedules[computation]));
-    }
-    // Get the states after scheduling.
+    // Log the statistics after scheduling.
     ModulePressureState post_scheduling_pressure_state = ModulePressureState(
         module, scheduling_context_->GetAliasAnalysis().get(),
         scheduling_context_->GetShapeSizeBytes());
@@ -3237,11 +3347,6 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
                      LatencyHidingStatistics(computation, scheduling_context_,
                                              &post_scheduling_pressure_state)
                          .ToString());
-    }
-  } else {
-    for (HloComputation* computation : computations_to_schedule_) {
-      module->schedule().set_sequence(
-          computation, absl::MakeConstSpan(saved_schedules[computation]));
     }
   }
   if (debug_options.xla_dump_latency_hiding_schedule()) {

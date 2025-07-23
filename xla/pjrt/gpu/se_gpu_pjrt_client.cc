@@ -604,12 +604,14 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
     std::shared_ptr<KeyValueStoreInterface> kv_store,
     std::shared_ptr<DistributedRuntimeClient> distributed_client,
     bool abort_collectives_on_failure,
-    std::shared_ptr<const GpuTopology> gpu_topology)
+    std::shared_ptr<const GpuTopology> gpu_topology,
+    std::optional<int> num_nodes)
     : xla::PjRtStreamExecutorClient(
           platform_name, client, std::move(devices), process_index,
           /*memory_spaces=*/{},  // Initialized below.
           std::move(allocator), std::move(host_memory_allocator),
           should_stage_host_to_device_transfers, std::move(gpu_run_options)),
+      num_nodes_(num_nodes),
       topology_(xla::StreamExecutorGpuTopologyDescription(
           tsl::Fingerprint64(platform_name), platform_name,
           std::move(gpu_topology), GetAttrsForDevices(addressable_devices()),
@@ -682,6 +684,12 @@ std::optional<PjRtPluginAttributes> StreamExecutorGpuClient::plugin_attributes()
   return attrs;
 }
 
+void StreamExecutorGpuClient::UpdateGlobalProcessInfo(
+    absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+  // TODO: mwhittaker - Move the AbortOnFailure logic here.
+  LOG(WARNING) << "UpdateGlobalProcessInfo is not supported.";
+}
+
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const PjRtClient::ShapeSpec> shape_specs,
@@ -706,8 +714,10 @@ StreamExecutorGpuClient::GetLatestIncarnations() {
                       distributed_client_->GetCoordinationServiceAgent());
 
   // Get the latest incarnation for every task.
-  TF_ASSIGN_OR_RETURN(int num_tasks, topology_.ProcessCount());
-  std::vector<int> tasks(num_tasks);
+  if (!num_nodes_.has_value()) {
+    return FailedPrecondition("Unknown number of nodes");
+  }
+  std::vector<int> tasks(*num_nodes_);
   std::iota(tasks.begin(), tasks.end(), 0);
   TF_ASSIGN_OR_RETURN(std::vector<IncarnationId> task_incarnations,
                       agent->Incarnations(tasks));
@@ -1498,6 +1508,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     auto compute_capability = MakeComputeCapabilityString(desc.get());
     device_proto->set_compute_capability(compute_capability);
     device_proto->set_core_count(desc->core_count());
+    device_proto->set_shared_memory_per_block_optin(
+        desc->shared_memory_per_block_optin());
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
     if (std::stoi(compute_capability) >= 9) {
       auto fabric_info = GetDeviceFabricInfo(ordinal_and_device.first);
@@ -1574,7 +1586,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
           device_proto.global_device_id(), std::move(local_device),
           device_proto.name(), device_proto.vendor(),
           device_proto.compute_capability(), device_proto.core_count(),
-          node.node_id(), device_proto.slice_index());
+          device_proto.shared_memory_per_block_optin(), node.node_id(),
+          device_proto.slice_index());
       devices.push_back(std::move(device));
     }
   }
@@ -1618,31 +1631,17 @@ std::string MakeComputeCapabilityString(const se::DeviceDescription* desc) {
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state,
     std::string device_kind, std::string device_vendor,
-    std::string compute_capability, int core_count, int node_id,
-    int slice_index)
+    std::string compute_capability, int core_count,
+    int shared_memory_per_block_optin, int node_id, int slice_index)
     : PjRtStreamExecutorDevice(id, std::move(local_device_state),
                                /*process_index=*/node_id,
                                std::move(device_kind)),
       device_vendor_(std::move(device_vendor)),
       slice_index_(slice_index) {
-  std::array<int, 1> coords = {local_device_id().value()};
-  description().SetCoords(coords);
-  std::vector<int64_t> v_coords(description().coords().begin(),
-                                description().coords().end());
-
-  description().SetAttributes(
-      {{"coords", xla::PjRtDeviceAttribute(v_coords)},
-       {"device_vendor", device_vendor_},
-       {"slice_index", static_cast<int64_t>(slice_index)},
-       {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
-       {"core_count", static_cast<int64_t>(core_count)}});
-  description().SetToString(absl::StrFormat(
-      "StreamExecutorGpuDevice(device_kind=%s, id=%i, process_index=%i, "
-      "slice_index=%i))",
-      description().device_kind(), id, process_index(), slice_index));
-  description().SetDebugString(absl::StrFormat("%s_%i(process=%i,(%i))",
-                                               description().device_kind(), id,
-                                               process_index(), v_coords[0]));
+  StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
+      description(), local_device_id().value(), device_vendor_,
+      compute_capability, core_count,
+      static_cast<int64_t>(shared_memory_per_block_optin), slice_index);
 }
 
 int StreamExecutorGpuDevice::slice_index() const { return slice_index_; }
@@ -1748,7 +1747,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       options.node_id, std::move(allocator), std::move(host_memory_allocator),
       options.should_stage_host_to_device_transfers, std::move(gpu_run_options),
       std::move(kv_store), std::move(options.distributed_runtime_client),
-      options.abort_collectives_on_failure, std::move(gpu_topology)));
+      options.abort_collectives_on_failure, std::move(gpu_topology),
+      options.num_nodes));
 }
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
@@ -1761,7 +1761,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     auto device = std::make_unique<StreamExecutorGpuDevice>(
         ordinal_and_device.first, std::move(ordinal_and_device.second),
         desc.name(), desc.device_vendor(), MakeComputeCapabilityString(&desc),
-        desc.core_count(), node_id);
+        desc.core_count(), desc.shared_memory_per_block_optin(), node_id);
     devices.push_back(std::move(device));
   }
   return devices;

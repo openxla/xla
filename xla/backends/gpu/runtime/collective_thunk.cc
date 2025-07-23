@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -238,6 +239,13 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
     bool use_nccl) {
   GlobalDeviceId global_device_id = params.global_device_id;
+
+  if (params.device_assn == nullptr) {
+    return InvalidArgument(
+        "Device assignment is null, but must be specified when running a "
+        "collective thunk. If running multi-device HLO , make sure you're not "
+        "using a tool designed for only one device like run_hlo_module.");
+  }
 
   TF_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> participants,
@@ -537,13 +545,22 @@ std::string CollectiveThunk::GetDeviceString(
                          collective_params.local_device_ordinal);
 }
 
+std::optional<AsyncEventsUniqueId> CollectiveThunk::GetAsyncEventsUniqueId()
+    const {
+  if (!async_events_) {
+    return std::nullopt;
+  }
+  // We rely on the fact that the pointer to async_events_ is unique.
+  return absl::bit_cast<AsyncEventsUniqueId>(async_events_.get());
+}
+
 CollectiveDoneThunk::CollectiveDoneThunk(
     Thunk::Kind kind, ThunkInfo thunk_info,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     AsyncStreamKind async_stream_kind)
     : Thunk(kind, std::move(thunk_info)),
       async_events_(async_events),
-      async_stream_kind_(async_stream_kind) {}
+      stream_kind_(async_stream_kind) {}
 
 absl::Status CollectiveDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
@@ -565,4 +582,12 @@ absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
   return absl::OkStatus();
 }
 
+std::optional<AsyncEventsUniqueId> CollectiveDoneThunk::GetAsyncEventsUniqueId()
+    const {
+  if (!async_events_) {
+    return std::nullopt;
+  }
+  // We rely on the fact that the pointer to async_events_ is unique.
+  return absl::bit_cast<AsyncEventsUniqueId>(async_events_.get());
+}
 }  // namespace xla::gpu

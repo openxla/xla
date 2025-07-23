@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -254,6 +255,7 @@ void PjRtCApiClient::InitAttributes() {
   pjrt::LogFatalIfPjrtError(c_api_->PJRT_Plugin_Attributes(&args), c_api_);
   attributes_ =
       pjrt::ConvertFromPjRtNamedValueList(args.attributes, args.num_attributes);
+  attributes_["serialize_with_sdy"] = true;
 }
 
 int PjRtCApiClient::device_count() const { return devices_.size(); }
@@ -344,6 +346,51 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
   RETURN_STATUS_IF_PJRT_ERROR(
       c_api_->PJRT_Client_LookupAddressableDevice(&args), c_api_);
   return GetCppDevice(args.addressable_device);
+}
+
+void PjRtCApiClient::UpdateGlobalProcessInfo(
+    absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+  auto translate_state = [](tensorflow::CoordinatedTaskState state) {
+    switch (state) {
+      case tensorflow::CoordinatedTaskState::TASKSTATE_UNSPECIFIED:
+        return PJRT_ProcessState_kUnspecified;
+      case tensorflow::CoordinatedTaskState::TASKSTATE_UNINITIALIZED:
+        return PJRT_ProcessState_kUninitialized;
+      case tensorflow::CoordinatedTaskState::TASKSTATE_DISCONNECTED:
+        return PJRT_ProcessState_kDisconnected;
+      case tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED:
+        return PJRT_ProcessState_kConnected;
+      case tensorflow::CoordinatedTaskState::TASKSTATE_ERROR:
+        return PJRT_ProcessState_kError;
+      default:
+        LOG(FATAL) << "Unexpected CoordinatedTaskState " << state;
+        return PJRT_ProcessState_kUnspecified;
+    }
+  };
+
+  std::vector<PJRT_ProcessInfo> process_infos;
+  for (const tensorflow::CoordinatedTaskStateInfo& info : infos) {
+    PJRT_ProcessInfo process_info;
+    process_info.task_id = info.task().task_id();
+    process_info.incarnation_id = info.incarnation();
+    process_info.state = translate_state(info.state());
+    process_info.error_code = info.error_code();
+    process_info.error_message = info.error_message().data();
+    process_info.error_message_size = info.error_message().size();
+    process_infos.push_back(std::move(process_info));
+  }
+
+  PJRT_Client_UpdateGlobalProcessInfo_Args args;
+  args.struct_size = PJRT_Client_UpdateGlobalProcessInfo_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+  args.process_infos = process_infos.data();
+  args.num_process_infos = process_infos.size();
+  absl::Status status = pjrt::PjrtErrorToStatus(
+      c_api_->PJRT_Client_UpdateGlobalProcessInfo(&args), c_api_);
+  if (!status.ok()) {
+    LOG(FATAL) << "PJRT_Client_UpdateGlobalProcessInfo failed: " << status;
+  }
 }
 
 absl::Span<PjRtMemorySpace* const> PjRtCApiClient::memory_spaces() const {
@@ -465,6 +512,7 @@ PjRtCApiClient::CreateUninitializedBuffer(const Shape& shape,
   args.struct_size = PJRT_Client_CreateUninitializedBuffer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.client = c_client_.get();
+  args.device = nullptr;
 
   args.shape_dims = shape.dimensions().data();
   args.shape_num_dims = shape.dimensions().size();
@@ -1761,7 +1809,7 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     std::vector<PJRT_Buffer**>& c_output_lists,
     std::optional<std::vector<PJRT_Event*>>& device_complete_events,
     SendRecvCallbackData& callback_data,
-    std::vector<int64_t>& non_donatable_input_indices_storage) {
+    std::vector<int64_t>& non_donatable_input_indices_storage) const {
   bool using_host_callbacks =
       !options.send_callbacks.empty() || !options.recv_callbacks.empty();
   if (using_host_callbacks &&
@@ -1891,7 +1939,7 @@ absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtCApiLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
-    std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
+    std::optional<std::vector<PjRtFuture<>>>& returned_futures) const {
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
   std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
   std::vector<PJRT_Buffer**> c_output_lists;
@@ -1967,7 +2015,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   if (!options.send_callbacks.empty() || !options.recv_callbacks.empty()) {
     return absl::Status(absl::StatusCode::kUnimplemented,
                         "Send/recv callbacks not implemented for "
@@ -2021,7 +2069,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   return ExecuteWithSingleDevice(argument_handles, device, options,
                                  returned_future, fill_future);
 }
@@ -2030,7 +2078,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecutePortable(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   return ExecuteWithSingleDevice(argument_handles, device, options,
                                  returned_future, fill_future);
 }
@@ -2044,7 +2092,7 @@ void PjRtCApiLoadedExecutable::Delete() {
   pjrt::LogFatalIfPjrtError(c_api->PJRT_LoadedExecutable_Delete(&args), c_api);
 }
 
-bool PjRtCApiLoadedExecutable::IsDeleted() {
+bool PjRtCApiLoadedExecutable::IsDeleted() const {
   PJRT_LoadedExecutable_IsDeleted_Args args;
   args.struct_size = PJRT_LoadedExecutable_IsDeleted_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -2237,12 +2285,13 @@ absl::StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
 }
 
 PjRtFuture<> PjRtCApiBuffer::LazyToLiteral(
-    absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator) {
-  auto buffer = std::move(generator)();
-  if (!buffer.ok()) {
-    return PjRtFuture<>(buffer.status());
+    absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator) {
+  PjRtFuture<MutableLiteralBase*> future = std::move(generator)();
+  const absl::StatusOr<MutableLiteralBase*>& literal = future.Await();
+  if (!literal.ok()) {
+    return PjRtFuture<>(literal.status());
   }
-  return ToLiteral(buffer.value());
+  return ToLiteral(literal.value());
 }
 
 PjRtFuture<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
@@ -2334,7 +2383,7 @@ void PjRtCApiBuffer::Delete() {
   pjrt::LogFatalIfPjrtError(api->PJRT_Buffer_Delete(&args), api);
 }
 
-bool PjRtCApiBuffer::IsDeleted() {
+bool PjRtCApiBuffer::IsDeleted() const {
   PJRT_Buffer_IsDeleted_Args args;
   args.struct_size = PJRT_Buffer_IsDeleted_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -2732,6 +2781,21 @@ absl::StatusOr<std::unique_ptr<PjRtCompiler>> GetCApiCompiler(
     return Internal("PJRT C API is nullptr for %s", device_type);
   }
   return std::make_unique<PjRtCApiCompiler>(c_api);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtCompiler>> GetCApiCompiler() {
+  TF_ASSIGN_OR_RETURN(std::vector<std::string> device_types,
+                      pjrt::GetRegisteredPjrtApis());
+  if (device_types.empty()) {
+    return absl::FailedPreconditionError("PJRT_Api is not initialized.");
+  }
+  if (device_types.size() > 1) {
+    return absl::FailedPreconditionError(
+        "More than one device type registered. Please use "
+        "GetCApiCompiler(absl::string_view device_type) "
+        "instead.");
+  }
+  return GetCApiCompiler(device_types[0]);
 }
 
 }  // namespace xla

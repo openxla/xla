@@ -81,7 +81,6 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -102,6 +101,7 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -111,6 +111,7 @@ limitations under the License.
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
+#include "xla/pjrt/layout_mode.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/metrics.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -145,6 +146,11 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -291,6 +297,14 @@ PjRtStreamExecutorClient::PjRtStreamExecutorClient(
        owned_memory_spaces_) {
     memory_spaces_.push_back(memory_space.get());
   }
+}
+
+std::optional<PjRtPluginAttributes>
+PjRtStreamExecutorClient::plugin_attributes() const {
+  PjRtPluginAttributes attributes =
+      PjRtClient::plugin_attributes().value_or(PjRtPluginAttributes());
+  attributes.attributes["serialize_with_sdy"] = true;
+  return attributes;
 }
 
 absl::StatusOr<DeviceAssignment>
@@ -1403,15 +1417,17 @@ void PjRtStreamExecutorBuffer::ConvertUsageHold(
 }
 
 PjRtFuture<> PjRtStreamExecutorBuffer::LazyToLiteral(
-    absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator) {
+    absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator) {
   auto buffer = std::move(generator)();
-  if (!buffer.ok()) {
-    return PjRtFuture<>(buffer.status());
-  }
-  return ToLiteral(buffer.value());
+  return ToLiteralHelper(std::move(buffer));
 }
 
 PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
+  return ToLiteralHelper(PjRtFuture<MutableLiteralBase*>(literal));
+}
+
+PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteralHelper(
+    PjRtFuture<MutableLiteralBase*> literal) {
   VLOG(3) << "PjRtStreamExecutorBuffer::ToLiteral";
   if (IsEmptyTuple()) {
     return PjRtFuture<>(InvalidArgument("ToLiteral called on empty tuple"));
@@ -1449,53 +1465,76 @@ PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
   // to ToLiteral.
   device_buffer.ConvertUsageHold(stream, usage_event, /*reference_held=*/true);
 
-  std::shared_ptr<TransposePlan> transpose;
-  if (on_device_shape().IsArray()) {
-    xla::Layout literal_layout;
-    if (literal->shape().has_layout()) {
-      literal_layout = literal->shape().layout();
-    } else {
-      literal_layout = LayoutUtil::MakeDescendingLayout(
-          on_device_shape().dimensions().size());
-    }
+  auto literal_and_transpose_promise =
+      PjRtFuture<std::pair<MutableLiteralBase*,
+                           std::shared_ptr<TransposePlan>>>::CreatePromise();
+  PjRtFuture<std::pair<MutableLiteralBase*, std::shared_ptr<TransposePlan>>>
+      literal_and_transpose_future(literal_and_transpose_promise);
 
-    if (on_device_shape().layout() != literal_layout) {
-      absl::InlinedVector<int64_t, 4> byte_strides(
-          on_device_shape().dimensions().size());
-      absl::Status s = ShapeUtil::ByteStrides(on_device_shape(),
-                                              absl::MakeSpan(byte_strides));
-      if (!s.ok()) {
-        return PjRtFuture<>(s);
-      }
-      absl::Span<const int64_t> dims = on_device_shape().dimensions();
-      absl::InlinedVector<int64_t, 4> permutation(dims.size());
-      absl::c_reverse_copy(literal_layout.minor_to_major(),
-                           permutation.begin());
-      TransposePlan::Options options;
-      options.elem_size_in_bytes =
-          primitive_util::ByteWidth(on_device_shape().element_type());
-      options.dims = on_device_shape().dimensions();
-      options.permutation = permutation;
-      options.input_layout = TransposePlan::Striding{byte_strides};
-      {
-        absl::MutexLock lock(&client_->transpose_mu_);
-        absl::StatusOr<std::shared_ptr<TransposePlan>> t =
-            client_->transpose_cache_.GetOrCreate(options);
-        if (!t.ok()) {
-          return PjRtFuture<>(t.status());
+  literal.OnReady(
+      [client = client_, on_device_shape{on_device_shape_},
+       promise = std::move(literal_and_transpose_promise)](
+          const absl::StatusOr<MutableLiteralBase*>& value) mutable {
+        if (!value.ok()) {
+          promise.Set(value.status());
+          return;
         }
-        transpose = *std::move(t);
-      }
-    }
-  }
+
+        MutableLiteralBase* literal = *std::move(value);
+
+        std::shared_ptr<TransposePlan> transpose;
+        if (on_device_shape.IsArray()) {
+          xla::Layout literal_layout;
+          if (literal->shape().has_layout()) {
+            literal_layout = literal->shape().layout();
+          } else {
+            literal_layout = LayoutUtil::MakeDescendingLayout(
+                on_device_shape.dimensions().size());
+          }
+
+          if (on_device_shape.layout() != literal_layout) {
+            absl::InlinedVector<int64_t, 4> byte_strides(
+                on_device_shape.dimensions().size());
+            absl::Status s = ShapeUtil::ByteStrides(
+                on_device_shape, absl::MakeSpan(byte_strides));
+            if (!s.ok()) {
+              promise.Set(s);
+              return;
+            }
+            absl::Span<const int64_t> dims = on_device_shape.dimensions();
+            absl::InlinedVector<int64_t, 4> permutation(dims.size());
+            absl::c_reverse_copy(literal_layout.minor_to_major(),
+                                 permutation.begin());
+            TransposePlan::Options options;
+            options.elem_size_in_bytes =
+                primitive_util::ByteWidth(on_device_shape.element_type());
+            options.dims = on_device_shape.dimensions();
+            options.permutation = permutation;
+            options.input_layout = TransposePlan::Striding{byte_strides};
+            {
+              absl::MutexLock lock(&client->transpose_mu_);
+              absl::StatusOr<std::shared_ptr<TransposePlan>> t =
+                  client->transpose_cache_.GetOrCreate(options);
+              if (!t.ok()) {
+                promise.Set(t.status());
+                return;
+              }
+              transpose = *std::move(t);
+            }
+          }
+        }
+        promise.Set(std::make_pair(literal, std::move(transpose)));
+      });
 
   auto async_to_literal = [usage_event,
                            device_memory = std::move(device_memory),
                            definition_events = std::move(definition_events),
                            stream, device = device_,
                            transfer_manager = std::move(transfer_manager),
-                           on_device_shape{on_device_shape_}, literal,
-                           transpose, promise, local_device]() mutable {
+                           on_device_shape{on_device_shape_},
+                           literal_and_transpose =
+                               std::move(literal_and_transpose_future),
+                           promise, local_device]() mutable {
     absl::StatusOr<EventPool::Handle> event_or =
         local_device->event_pool().AllocateEvent(stream->parent());
     if (!event_or.ok()) {
@@ -1509,60 +1548,83 @@ PjRtFuture<> PjRtStreamExecutorBuffer::ToLiteral(MutableLiteralBase* literal) {
       return;
     }
 
-    WaitForBufferDefinitionEventsOnStream(absl::MakeSpan(definition_events),
-                                          stream);
-    ShapedBuffer shaped_buffer =
-        device_memory->AsShapedBuffer(device, on_device_shape);
+    literal_and_transpose.OnReady(
+        [usage_event = std::move(usage_event),
+         device_memory = std::move(device_memory),
+         definition_events = std::move(definition_events),
+         stream = std::move(stream), device,
+         transfer_manager = std::move(transfer_manager),
+         on_device_shape = std::move(on_device_shape),
+         promise = std::move(promise), local_device = std::move(local_device),
+         event_or = std::move(event_or)](
+            const absl::StatusOr<
+                std::pair<MutableLiteralBase*, std::shared_ptr<TransposePlan>>>&
+                value) mutable {
+          if (!value.ok()) {
+            promise.Set(value.status());
+            return;
+          }
 
-    GenericTransferManager::LiteralFromDeviceMetadata transfer_metadata;
-    // We never call device functions from the `done` callback.
-    transfer_metadata.callback_is_host_callback_safe = true;
+          auto [literal, transpose] = *std::move(value);
 
-    TransferManager::TransferMetadata* transfer_metadata_ptr =
-        (dynamic_cast<GenericTransferManager*>(transfer_manager) != nullptr)
-            ? &transfer_metadata
-            : nullptr;
+          WaitForBufferDefinitionEventsOnStream(
+              absl::MakeSpan(definition_events), stream);
 
-    if (transpose) {
-      // Copy the device buffer to a temporary literal with descending
-      // layout and transpose to the requested layout.
+          ShapedBuffer shaped_buffer =
+              device_memory->AsShapedBuffer(device, on_device_shape);
 
-      Shape stage_shape = literal->shape();
-      *stage_shape.mutable_layout() =
-          LayoutUtil::MakeDescendingLayout(stage_shape.dimensions().size());
-      auto staged = std::make_shared<Literal>(stage_shape);
+          GenericTransferManager::LiteralFromDeviceMetadata transfer_metadata;
+          // We never call device functions from the `done` callback.
+          transfer_metadata.callback_is_host_callback_safe = true;
 
-      transfer_manager->TransferLiteralFromDevice(
-          stream, shaped_buffer, staged.get(),
-          [transpose, promise, staged, literal](absl::Status status) mutable {
-            if (status.ok()) {
-              transpose->Execute(staged->untyped_data(),
-                                 literal->untyped_data());
-            }
-            promise.Set(std::move(status));
-          },
-          transfer_metadata_ptr);
-    } else {
-      transfer_manager->TransferLiteralFromDevice(
-          stream, shaped_buffer, literal,
-          [promise](absl::Status status) mutable {
-            promise.Set(std::move(status));
-          },
-          transfer_metadata_ptr);
-    }
+          TransferManager::TransferMetadata* transfer_metadata_ptr =
+              (dynamic_cast<GenericTransferManager*>(transfer_manager) !=
+               nullptr)
+                  ? &transfer_metadata
+                  : nullptr;
 
-    local_device->event_pool().ThenRecordEvent(stream, event_or.value());
-    usage_event->SetSequencingEvent(std::move(event_or).value(), stream);
+          if (transpose) {
+            // Copy the device buffer to a temporary literal with descending
+            // layout and transpose to the requested layout.
 
-    defined_status = local_device->ThenRelease(stream, device_memory);
-    if (!defined_status.ok()) {
-      promise.Set(defined_status);
-    }
+            Shape stage_shape = literal->shape();
+            *stage_shape.mutable_layout() = LayoutUtil::MakeDescendingLayout(
+                stage_shape.dimensions().size());
+            auto staged = std::make_shared<Literal>(stage_shape);
+
+            transfer_manager->TransferLiteralFromDevice(
+                stream, shaped_buffer, staged.get(),
+                [transpose = std::move(transpose), promise, staged,
+                 literal = std::move(literal)](absl::Status status) mutable {
+                  if (status.ok()) {
+                    transpose->Execute(staged->untyped_data(),
+                                       literal->untyped_data());
+                  }
+                  promise.Set(std::move(status));
+                },
+                transfer_metadata_ptr);
+          } else {
+            transfer_manager->TransferLiteralFromDevice(
+                stream, shaped_buffer, literal,
+                [promise](absl::Status status) mutable {
+                  promise.Set(std::move(status));
+                },
+                transfer_metadata_ptr);
+          }
+
+          local_device->event_pool().ThenRecordEvent(stream, event_or.value());
+          usage_event->SetSequencingEvent(std::move(event_or).value(), stream);
+
+          absl::Status defined_status =
+              local_device->ThenRelease(stream, device_memory);
+          if (!defined_status.ok()) {
+            promise.Set(defined_status);
+          }
+        });
   };
 
   first_definition_event->ExecuteOrAddToFutureTasks(
-      absl::StrFormat("async_to_literal_%p", literal),
-      std::move(async_to_literal));
+      "async_to_literal", std::move(async_to_literal));
 
   return PjRtFuture<>(
       std::move(promise),
@@ -2880,11 +2942,20 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
     std::vector<std::unique_ptr<PjRtBuffer>> outputs;
     TF_ASSIGN_OR_RETURN(auto hlo_modules, GetHloModules());
     for (const auto& hlo_module : hlo_modules) {
-      TF_ASSIGN_OR_RETURN(
-          auto error_buffer,
-          client_->CreateErrorBuffer(input_error, hlo_module->result_shape(),
-                                     memory_space));
-      outputs.push_back(std::move(error_buffer));
+      if (hlo_module->result_shape().IsTuple()) {
+        for (const Shape& shape : hlo_module->result_shape().tuple_shapes()) {
+          TF_ASSIGN_OR_RETURN(
+              auto error_buffer,
+              client_->CreateErrorBuffer(input_error, shape, memory_space));
+          outputs.push_back(std::move(error_buffer));
+        }
+      } else {
+        TF_ASSIGN_OR_RETURN(
+            auto error_buffer,
+            client_->CreateErrorBuffer(input_error, hlo_module->result_shape(),
+                                       memory_space));
+        outputs.push_back(std::move(error_buffer));
+      }
     }
     auto future = std::make_optional(PjRtFuture<>(input_error));
     return Result({std::move(future), /*buffers=*/std::move(outputs)});
@@ -2998,7 +3069,7 @@ absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtStreamExecutorLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
-    std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
+    std::optional<std::vector<PjRtFuture<>>>& returned_futures) const {
   if (device_assignment_ == nullptr) {
     return InvalidArgument("Execute expects a non-null device_assignment");
   }
@@ -3141,7 +3212,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtStreamExecutorLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   if (device_assignment_ == nullptr) {
     return InvalidArgument("ExecuteShard expects a non-null device_assignment");
   }
@@ -3170,7 +3241,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtStreamExecutorLoadedExecutable::ExecutePortable(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   if (device_assignment_ != nullptr) {
     return InvalidArgument("ExecutePortable gets a non-portable executable");
   }
@@ -3429,7 +3500,15 @@ PjRtStreamExecutorClient::CompileInternal(
       client()->Compile(computation, argument_layout_pointers,
                         options.executable_build_options));
 
-  return BuildPjRtExecutable(std::move(local_executables), input_options);
+  const bool xla_gpu_dump_hlo_unoptimized_snapshots =
+      options.executable_build_options.has_debug_options() &&
+      options.executable_build_options.debug_options()
+          .xla_gpu_dump_hlo_unoptimized_snapshots();
+
+  return BuildPjRtExecutable(xla_gpu_dump_hlo_unoptimized_snapshots
+                                 ? std::make_optional(computation.proto())
+                                 : std::nullopt,
+                             std::move(local_executables), input_options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -3476,12 +3555,11 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 PjRtStreamExecutorClient::Compile(mlir::ModuleOp module, CompileOptions options,
                                   bool lookup_addressable_devices) {
   XlaComputation xla_computation;
-  const ExecutableBuildOptions& exec_build_options =
-      options.executable_build_options;
+  ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false, exec_build_options.use_shardy_partitioner()));
+      /*return_tuple=*/false, &exec_build_options));
 
   // If the compile options specify argument layout, then let's
   // fall back to using the options to determine layouts.
@@ -3594,6 +3672,7 @@ absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 PjRtStreamExecutorClient::BuildPjRtExecutable(
+    std::optional<HloModuleProto> unoptimized_hlo_module_proto,
     std::vector<std::unique_ptr<LocalExecutable>> local_executables,
     CompileOptions compile_options) {
   if (local_executables.empty()) {
@@ -3614,9 +3693,9 @@ PjRtStreamExecutorClient::BuildPjRtExecutable(
   const std::string fingerprint = hlo_module.GetFingerprint128();
 
   return std::make_unique<StreamExecutorExecutable>(
-      std::move(compile_options), std::move(local_executables), client_,
-      num_replicas, num_partitions, name, fingerprint,
-      memory_spaces()[0]->kind());
+      std::move(compile_options), std::move(unoptimized_hlo_module_proto),
+      std::move(local_executables), client_, num_replicas, num_partitions, name,
+      fingerprint, memory_spaces()[0]->kind());
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -3627,7 +3706,8 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       auto local_executables_and_options,
       DeserializeToLocalExecutable(serialized, compile_options));
 
-  return BuildPjRtExecutable(std::move(local_executables_and_options.first),
+  return BuildPjRtExecutable(std::nullopt,
+                             std::move(local_executables_and_options.first),
                              local_executables_and_options.second);
 }
 
@@ -3679,12 +3759,14 @@ PjRtStreamExecutorClient::LoadSerializedExecutable(
     const LoadOptions& load_options) {
   TF_ASSIGN_OR_RETURN(auto local_executables_and_options,
                       DeserializeToLocalExecutable(serialized, options));
-  return LoadInternal(std::move(local_executables_and_options.first),
+  return LoadInternal(/*unoptimized_hlo_module_proto=*/std::nullopt,
+                      std::move(local_executables_and_options.first),
                       local_executables_and_options.second);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::LoadInternal(
+    std::optional<HloModuleProto> unoptimized_hlo_module_proto,
     std::vector<std::unique_ptr<LocalExecutable>> local_executables,
     CompileOptions compile_options) {
   auto input_options = compile_options;
@@ -3704,10 +3786,6 @@ PjRtStreamExecutorClient::LoadInternal(
   const bool xla_gpu_dump_hlo_unoptimized_snapshots =
       ex_options.has_debug_options() &&
       ex_options.debug_options().xla_gpu_dump_hlo_unoptimized_snapshots();
-  HloModuleProto hlo_module_proto;
-  if (xla_gpu_dump_hlo_unoptimized_snapshots) {
-    hlo_module_proto = local_executables[0]->executable()->module().ToProto();
-  }
 
   auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
       std::move(local_executables),
@@ -3718,9 +3796,10 @@ PjRtStreamExecutorClient::LoadInternal(
 
   TF_RETURN_IF_ERROR(
       executable->SetUpDonation(compile_options.parameter_is_tupled_arguments));
-  if (xla_gpu_dump_hlo_unoptimized_snapshots) {
+  if (xla_gpu_dump_hlo_unoptimized_snapshots &&
+      unoptimized_hlo_module_proto.has_value()) {
     executable->SetInputHloSnapshotBits(
-        std::move(hlo_module_proto),
+        std::move(*unoptimized_hlo_module_proto),
         compile_options.executable_build_options.debug_options());
   }
   return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));
@@ -3738,7 +3817,8 @@ PjRtStreamExecutorClient::Load(std::unique_ptr<PjRtExecutable> executable,
 
   TF_ASSIGN_OR_RETURN(auto local_executables, se_executable->ConsumeExecutable(
                                                   client(), compile_options));
-  return LoadInternal(std::move(local_executables), compile_options);
+  return LoadInternal(se_executable->unoptimized_hlo_module_proto(),
+                      std::move(local_executables), compile_options);
 }
 
 bool PjRtStreamExecutorClient::IsDmaMapped(const void* data_start,

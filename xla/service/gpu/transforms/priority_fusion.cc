@@ -696,8 +696,17 @@ class PriorityFusionQueue {
   FusionDecision CanFuseTriton(HloInstruction* producer,
                                HloInstruction* consumer,
                                bool use_multi_output_fusion = false) {
-    if (!IsGenericTritonFusion(*producer) &&
-        !IsGenericTritonFusion(*consumer) && !triton_heroless_fusion_enabled_) {
+    if (!IsFusible(*producer)) {
+      return FusionDecision::Forbid("the producer is not fusible");
+    }
+
+    if (!IsFusible(*consumer)) {
+      return FusionDecision::Forbid("the consumer is not fusible");
+    }
+
+    if (!(IsGenericTritonFusion(*producer) ||
+          IsGenericTritonFusion(*consumer) ||
+          triton_heroless_fusion_enabled_)) {
       return FusionDecision::Forbid("triton heroless fusion is not enabled");
     }
 
@@ -820,11 +829,11 @@ class PriorityFusionQueue {
     // reductions, which suffer from limited emitter support.
     // TODO(b/312686229): Cost model should handle this.
     const auto& analysis = fusion_analysis_cache_.Get(*producer);
-    if (analysis.GetEmitterFusionKind() ==
+    if (analysis.emitter_fusion_kind() ==
         HloFusionAnalysis::EmitterFusionKind::kReduction) {
       const auto& analysis_fused =
           fusion_analysis_cache_.Get(*producer, *consumer);
-      if (analysis_fused.GetEmitterFusionKind() ==
+      if (analysis_fused.emitter_fusion_kind() ==
           HloFusionAnalysis::EmitterFusionKind::kLoop) {
         return FusionDecision::Forbid(
             "fusion into output of a reduce fusion would create a loop fusion");
@@ -1261,7 +1270,7 @@ HloInstruction::FusionKind PriorityFusion::ChooseKind(
   // matter but some passes downstream still query these instead of fusion
   // analysis.
   const auto& analysis = fusion_analysis_cache_.Get(*producer, *consumer);
-  switch (analysis.GetEmitterFusionKind()) {
+  switch (analysis.emitter_fusion_kind()) {
     case HloFusionAnalysis::EmitterFusionKind::kDynamicMemcpy:
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
       return HloInstruction::FusionKind::kLoop;

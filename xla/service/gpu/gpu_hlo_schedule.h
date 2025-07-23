@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/service/gpu/alias_info.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/stream_executor/device_description.h"
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
@@ -38,6 +39,7 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module);
 
 struct ScheduleMetadata {
   uint64_t scheduler_mem_limit;
+  int64_t peak_memory_usage;
 };
 
 // Defines the scheduler config to be used by LHS.
@@ -53,14 +55,8 @@ uint64_t GetSchedulerMemoryLimit(const HloModule& module,
 // Determines the schedule of HLO instructions for a module run on the GPU.
 absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     HloModule* module, int64_t pointer_size,
-    const se::DeviceDescription& gpu_device_info);
-
-// Schedules a GPU module with `DefaultMemoryScheduler` and
-// `PostProcessSchedule` postprocessing. If `peak_memory_bytes` is not nullptr,
-// then the it will be set to peak memory usage in bytes.
-absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
-    const HloModule* module, int64_t pointer_size,
-    int64_t* peak_memory_bytes = nullptr);
+    const se::DeviceDescription& gpu_device_info,
+    const GpuAliasInfo* alias_info);
 
 HloInstructionSequence PostProcessSchedule(const HloInstructionSequence& input);
 

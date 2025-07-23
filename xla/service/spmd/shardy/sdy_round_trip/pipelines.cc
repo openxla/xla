@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/sdy_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardy_attrs.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/import_shardy_attrs.h"
-#include "xla/service/spmd/shardy/sdy_round_trip/remove_size_one_axes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/shard_map_export.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/shard_map_import.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_shardings.h"
@@ -58,7 +57,6 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
   addCommonPreImportPasses(pm, enableConstantImport);
   pm.addPass(createSdyRoundTripImportShardyAttrsPass());
   pm.addPass(createSdyRoundTripShardMapImportPass());
-  pm.addPass(createSdyRoundTripRemoveSizeOneAxesPass());
   addCommonPostImportPasses(pm);
 }
 
@@ -74,14 +72,14 @@ namespace {
 
 struct SdyRoundTripImportPipelineOptions
     : public PassPipelineOptions<SdyRoundTripImportPipelineOptions> {
-  Option<bool> enable_constant_import{*this, "enable-constant-import",
-                                      llvm::cl::desc("Enable constant import."),
-                                      llvm::cl::init(true)};
+  Option<bool> enableConstantImport{*this, "enable-constant-import",
+                                    llvm::cl::desc("Enable constant import."),
+                                    llvm::cl::init(true)};
 };
 
 void sdyRoundTripImportPipeline(
     mlir::OpPassManager& pm, const SdyRoundTripImportPipelineOptions& options) {
-  addSdyRoundTripImportPipeline(pm, options.enable_constant_import);
+  addSdyRoundTripImportPipeline(pm, options.enableConstantImport);
 }
 
 }  // namespace

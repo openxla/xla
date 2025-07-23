@@ -1,7 +1,4 @@
-load(
-    "//xla:xla.default.bzl",
-    "xla_cc_test",
-)
+load("//xla/tests:build_defs.bzl", "xla_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -54,9 +51,17 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "autotuner_test",
     srcs = ["autotuner_test.cc"],
+    backends = [
+        "a100",
+        "h100",
+        "b200",
+    ],
+    tags = [
+        "no_mac",
+    ],
     deps = [
         ":autotuner",
         ":codegen_backend",
@@ -82,7 +87,9 @@ cc_library(
     hdrs = ["profiler.h"],
     deps = [
         "//xla/service:executable",
+        "//xla/service:shaped_buffer",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
     ],
