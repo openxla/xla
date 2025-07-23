@@ -233,7 +233,8 @@ cc_library(
     deps = [
         ":cupti_collector",
         ":cupti_interface",
-        ":cupti_utils",
+        ":cupti_status",
+        "//xla/stream_executor/cuda:cuda_status",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -418,7 +419,7 @@ tsl_gpu_library(
 
 tsl_gpu_library(
     name = "cupti_utils",
-    srcs = if_cuda(["cupti_utils.cc", "cupti_utils.h"]),
+    srcs = if_cuda(["cupti_utils.cc"]),
     copts = tf_profiler_copts() + tsl_copts(),
     cuda_deps = [
         ":cupti_error_manager",
@@ -432,6 +433,17 @@ tsl_gpu_library(
     ],
     visibility = ["//visibility:public"],
     alwayslink = 1,
+)
+
+tsl_gpu_library(
+    name = "cupti_status",
+    srcs = ["cupti_status.cc"],
+    hdrs = ["cupti_status.h"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+      "@com_google_absl//absl/status",
+    ],
 )
 
 xla_test(

@@ -31,14 +31,10 @@ limitations under the License.
 // Note - bug fix for PM sampling added after 12.6.2
 #if CUPTI_API_VERSION >= 24
 #define CUPTI_PM_SAMPLING_SUPPORTED 1
-// Switch to constexpr instead of macro where possible
-inline constexpr bool kCuptiPmSamplingSupported = true;
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_pmsampling.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_host.h"
 #else
 #define CUPTI_PM_SAMPLING_SUPPORTED 0
-// Switch to constexpr instead of macro where possible
-inline constexpr bool kCuptiPmSamplingSupported = false;
 #endif
 
 namespace xla {

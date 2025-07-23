@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
-#include "xla/backends/profiler/gpu/cupti_utils.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 
@@ -70,11 +69,6 @@ class CuptiApiTracingDisabler {
   CuptiApiTracingDisabler() { internalCuCall++; }
   ~CuptiApiTracingDisabler() { internalCuCall--; }
 };
-
-inline void LogIfError(const absl::Status& status) {
-  if (status.ok()) return;
-  LOG(ERROR) << status.message();
-}
 
 // CUPTI_ERROR_INSUFFICIENT_PRIVILEGES is introduced at CUDA 10.1.
 #if CUDA_VERSION <= 10000
@@ -1019,6 +1013,8 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
     pm_sampler_ = CreatePmSampler(NumGpus(), option_->pm_sampler_options);
 
     TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
+
+    pm_sampling_enabled_ = true;
   }
 
   return status;
@@ -1028,6 +1024,8 @@ void CuptiTracer::Disable() {
   if (option_->pm_sampler_options.enable) {
     pm_sampler_->StopSampler().IgnoreError();
     pm_sampler_->Deinitialize().IgnoreError();
+
+    pm_sampling_enabled_ = false;
   }
 
   DisableApiTracing().IgnoreError();

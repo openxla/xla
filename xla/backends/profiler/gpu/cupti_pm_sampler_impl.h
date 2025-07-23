@@ -284,6 +284,12 @@ class CuptiPmSamplerImpl : public CuptiPmSampler {
 
   // Construct and initiailze
   CuptiPmSamplerImpl(size_t num_gpus, CuptiPmSamplerOptions& options) {
+    // Return success if no gpus are present
+    if (num_gpus < 1) {
+      LOG(INFO) << "(Profiling::PM Sampling) PM sampling enabled but no GPUs "
+                << "present, skipping initialization";
+      return;
+    }
     absl::Status status = Initialize(num_gpus, options);
     if (!status.ok()) {
       LOG(ERROR) << "Failed to initialize CuptiPmSamplerImpl: " << status;

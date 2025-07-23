@@ -52,39 +52,5 @@ CuptiInterface* GetCuptiInterface() {
   return cupti_interface;
 }
 
-absl::Status ToStatus(CUptiResult result) {
-  switch (result) {
-    case CUPTI_SUCCESS:
-      return absl::OkStatus();
-    case CUPTI_ERROR_INVALID_PARAMETER:
-      return absl::InvalidArgumentError("CUPTI invalid parameter");
-    case CUPTI_ERROR_INVALID_METRIC_NAME:
-      return absl::InvalidArgumentError("CUPTI invalid metric name");
-    case CUPTI_ERROR_NOT_INITIALIZED:
-      return absl::FailedPreconditionError("CUPTI not initialized");
-    case CUPTI_ERROR_INSUFFICIENT_PRIVILEGES:
-      return absl::PermissionDeniedError("CUPTI needs root access");
-    default:
-      {
-        const char* errstr = "";
-        cuptiGetResultString(result, &errstr);
-        errstr = errstr ? errstr : "<unknown>";
-        return absl::UnknownError(absl::StrCat("CUPTI error ", result, ": ", 
-            errstr));
-      }
-  }
-}
-
-absl::Status ToStatus(CUresult result) {
-  if (result == CUDA_SUCCESS) {
-    return absl::OkStatus();
-  }
-  const char* errstr = nullptr;
-  cuGetErrorName(result, &errstr);
-  errstr = errstr ? errstr : "<unknown>";
-  return absl::UnknownError(absl::StrCat("CUDA driver error ", result, ": ",
-      errstr));
-}
-
 }  // namespace profiler
 }  // namespace xla

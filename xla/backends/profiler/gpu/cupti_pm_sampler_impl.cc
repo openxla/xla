@@ -25,7 +25,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/errors.h"
-#include "xla/backends/profiler/gpu/cupti_utils.h"
+#include "xla/backends/profiler/gpu/cupti_status.h"
+#include "xla/stream_executor/cuda/cuda_status.h"
+
+using stream_executor::cuda::ToStatus;
 
 namespace xla {
 namespace profiler {
@@ -673,8 +676,9 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
         } else {
           if (VLOG_IS_ON(4)) {
             for (int j = 0; j < dev->GetEnabledMetrics().size(); j++) {
-              LOG(INFO) << "            " << dev->GetEnabledMetrics()[j] << "[" << i
-                        << "] = " << info.sampler_ranges[i].metric_values[j];
+              LOG(INFO) << "            " << dev->GetEnabledMetrics()[j]
+                        << "[" << i << "] = "
+                        << info.sampler_ranges[i].metric_values[j];
             }
           }
         }
@@ -799,9 +803,6 @@ absl::Status CuptiPmSamplerImpl::Initialize(size_t num_gpus,
   if (initialized_) {
     return absl::AlreadyExistsError("PM sampler already initialized");
   }
-
-  // OK to have no devices that support PM sampling
-  if (devices_.size() < 1) return absl::OkStatus();
 
   // Use absl cleanup to clear alloced memory on error
   // (Cancel before successful return)

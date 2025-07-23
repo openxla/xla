@@ -114,6 +114,9 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     GTEST_SKIP() << "PM Sampling not supported on this version of CUPTI";
   }
 
+  LOG(INFO) << "Starting PM Sampling test with CUPTI version "
+            << cupti_version;
+
   constexpr int kNumElements = 256 * 1024;
 
   CuptiTracerCollectorOptions collector_options;
@@ -173,6 +176,9 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSub) {
     LOG(INFO) << "Sampled " << total_fp64 << " fp64 instructions";
     double target = kNumElements * 4 * 2 / 32;
     EXPECT_THAT(total_fp64, DistanceFrom(target, Lt(target * 5 / 100)));
+  }
+  if (records_cycles > 0) {
+    LOG(INFO) << "Sampled " << total_cycles << " cycles";
   }
 }
 
