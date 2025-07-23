@@ -20,13 +20,32 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/parser/hlo_parser.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
-using BlockScalingRewriterTest = HloTestBase;
+class BlockScalingRewriterTest : public GpuCodegenTest {
+ protected:
+  const auto& device_desc() const {
+    return backend().default_stream_executor()->GetDeviceDescription();
+  }
+
+  const auto& GpuCapability() const {
+    return device_desc().gpu_compute_capability();
+  }
+
+  bool IsCuda() const {
+    return std::holds_alternative<stream_executor::CudaComputeCapability>(
+        GpuCapability());
+  }
+
+  bool IsRocm() const {
+    return std::holds_alternative<stream_executor::RocmComputeCapability>(
+        GpuCapability());
+  }
+};
 
 TEST_F(BlockScalingRewriterTest, ExpandQuantizeCustomCall) {
   constexpr absl::string_view hlo_string = R"(
@@ -38,7 +57,8 @@ ENTRY main {
       custom_call_target="__op$quantize"
 })";
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/false);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[input:%.+]] = f32[10,256]{1,0} parameter(0)
   CHECK: [[blocks:%.+]] = f32[10,8,32]{2,1,0} reshape([[input]])
@@ -68,7 +88,8 @@ ENTRY main {
       custom_call_target="__op$dequantize"
 })";
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/false);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[input:%.+]] = f8e4m3fn[10,256]{1,0} parameter(0)
   CHECK: [[input_cvt:%.+]] = f32[10,256]{1,0} convert([[input]])
@@ -93,7 +114,8 @@ ENTRY main {
       custom_call_target="__op$block_scaled_dot"
 })";
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/false);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[lhs_quant:%.+]] = f8e4m3fn[4,16,256]{2,1,0} parameter(0)
   CHECK: [[lhs_quant_cvt:%.+]] = f32[4,16,256]{2,1,0} convert([[lhs_quant]])
@@ -127,7 +149,8 @@ ENTRY main {
       custom_call_target="__op$block_scaled_dot"
 })";
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/false);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[lhs_quant:%.+]] = f8e4m3fn[16,256]{1,0} parameter(0)
   CHECK: [[lhs_quant_cvt:%.+]] = f16[16,256]{1,0} convert([[lhs_quant]])
@@ -154,10 +177,15 @@ ENTRY main {
   ROOT %dequantized = f32[256,256] custom-call(%values, %scales),
       custom_call_target="__op$dequantize"
 })";
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  HloModuleConfig config;
+  config.set_debug_options(debug_options);
   TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnUnverifiedModule(hlo_test));
+                          ParseAndReturnUnverifiedModule(hlo_test, config));
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/false);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/false);
   TF_ASSERT_OK_AND_ASSIGN(
       auto changed, pass.Run(test_module.get(), /*execution_threads=*/{}));
   EXPECT_TRUE(changed);
@@ -167,8 +195,8 @@ HloModule reference
 ENTRY main {
   ROOT %input = f32[256,256] parameter(0)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto reference_module,
-                          ParseAndReturnUnverifiedModule(hlo_reference));
+  TF_ASSERT_OK_AND_ASSIGN(auto reference_module, ParseAndReturnUnverifiedModule(
+                                                     hlo_reference, config));
 
   EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_module),
                                       std::move(reference_module),
@@ -176,7 +204,16 @@ ENTRY main {
                                       /*run_hlo_passes=*/false));
 }
 
-TEST_F(BlockScalingRewriterTest, CudnnScaledDotSimple) {
+class BlockScalingRewriterCudnnTest : public BlockScalingRewriterTest {
+ protected:
+  void SetUp() override {
+    if (!IsCuda()) { GTEST_SKIP(); }
+    auto cuda_cc = std::get<se::CudaComputeCapability>(GpuCapability());
+    if (!cuda_cc.IsAtLeastBlackwell()) { GTEST_SKIP(); }
+  };
+};
+
+TEST_F(BlockScalingRewriterCudnnTest, CudnnScaledDotSimple) {
   constexpr absl::string_view hlo_string = R"(
 HloModule test
 
@@ -188,8 +225,8 @@ ENTRY main {
   ROOT %result = f16[4,128,128] custom-call(%lhs, %rhs, %lhs_scale, %rhs_scale),
       custom_call_target="__op$block_scaled_dot"
 })";
-
-  BlockScalingRewriter pass(/*allow_cudnn=*/true);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/true,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[lhs:%.+]] = f8e4m3fn[4,128,128]{2,1,0} parameter(0)
   CHECK: [[rhs:%.+]] = f8e4m3fn[4,128,128]{2,1,0} parameter(1)
@@ -207,7 +244,7 @@ ENTRY main {
 })");
 }
 
-TEST_F(BlockScalingRewriterTest, CudnnScaledDotTransforms) {
+TEST_F(BlockScalingRewriterCudnnTest, CudnnScaledDotTransforms) {
   constexpr absl::string_view hlo_string = R"(
 HloModule test
 
@@ -220,7 +257,8 @@ ENTRY main {
       custom_call_target="__op$block_scaled_dot"
 })";
 
-  BlockScalingRewriter pass(/*allow_cudnn=*/true);
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/true,
+                            /*allow_hipblaslt=*/false);
   RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
   CHECK: [[lhs:%.+]] = f8e4m3fn[128,96]{1,0} parameter(0)
   CHECK: [[lhs_rs:%.+]] = f8e4m3fn[1,128,96]{2,1,0} reshape([[lhs]])
@@ -243,6 +281,63 @@ ENTRY main {
   CHECK: [[gte:%.+]] = f16[1,128,128]{2,1,0} get-tuple-element([[call]]), index=0
   CHECK: [[slice:%.+]] = f16[1,128,120]{2,1,0} slice([[gte]]), slice={[0:1], [0:128], [0:120]}
   CHECK: ROOT {{.+}} = f16[128,120]{1,0} reshape([[slice]])
+})");
+}
+
+class BlockScalingRewriterHipblasltTest : public BlockScalingRewriterTest {
+ protected:
+  void SetUp() override {
+    if (!IsRocm()) { GTEST_SKIP(); }
+    auto rocm_cc = std::get<se::RocmComputeCapability>(GpuCapability());
+    if (rocm_cc.gfx_version() != "gfx950") { GTEST_SKIP(); }
+  };
+};
+
+TEST_F(BlockScalingRewriterHipblasltTest, HipblasltScaledDot) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  %lhs = f8e4m3fn[32,256] parameter(0)
+  %rhs = f8e4m3fn[16,256] parameter(1)
+  %lhs_scale = f8e8m0fnu[32,8] parameter(2)
+  %rhs_scale = f8e8m0fnu[16,8] parameter(3)
+  ROOT %result = f16[32,16] custom-call(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      custom_call_target="__op$block_scaled_dot"
+})";
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/true);
+  RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
+  CHECK: [[lhs:%.+]] = f8e4m3fn[32,256]{1,0} parameter(0)
+  CHECK: [[rhs:%.+]] = f8e4m3fn[16,256]{1,0} parameter(1)
+  CHECK: [[lhs_scale:%.+]] = f8e8m0fnu[32,8]{1,0} parameter(2)
+  CHECK: [[rhs_scale:%.+]] = f8e8m0fnu[16,8]{1,0} parameter(3)
+  CHECK: [[custom_call:%.+]] = (f16[32,16]{1,0}, s8[67108864]{0}) custom-call([[lhs]], [[rhs]], [[lhs_scale]], [[rhs_scale]]), custom_call_target="__cublas$lt$matmul$mx"
+  CHECK: ROOT {{.+}} = f16[32,16]{1,0} get-tuple-element([[custom_call]]), index=0
+})");
+}
+
+TEST_F(BlockScalingRewriterHipblasltTest, HipblasltBatchedScaledDot) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  %lhs = f8e4m3fn[1,32,256] parameter(0)
+  %rhs = f8e4m3fn[1,16,256] parameter(1)
+  %lhs_scale = f8e8m0fnu[1,32,8] parameter(2)
+  %rhs_scale = f8e8m0fnu[1,16,8] parameter(3)
+  ROOT %result = f16[1,32,16] custom-call(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      custom_call_target="__op$block_scaled_dot"
+})";
+  BlockScalingRewriter pass(device_desc(), /*allow_cudnn=*/false,
+                            /*allow_hipblaslt=*/true);
+  RunAndFilecheckHloRewrite(hlo_string, std::move(pass), R"(
+  CHECK: [[lhs:%.+]] = f8e4m3fn[1,32,256]{2,1,0} parameter(0)
+  CHECK: [[rhs:%.+]] = f8e4m3fn[1,16,256]{2,1,0} parameter(1)
+  CHECK: [[lhs_scale:%.+]] = f8e8m0fnu[1,32,8]{2,1,0} parameter(2)
+  CHECK: [[rhs_scale:%.+]] = f8e8m0fnu[1,16,8]{2,1,0} parameter(3)
+  CHECK: [[custom_call:%.+]] = (f16[1,32,16]{2,1,0}, s8[67108864]{0}) custom-call([[lhs]], [[rhs]], [[lhs_scale]], [[rhs_scale]]), custom_call_target="__cublas$lt$matmul$mx"
+  CHECK: ROOT {{.+}} = f16[1,32,16]{2,1,0} get-tuple-element([[custom_call]]), index=0
 })");
 }
 
