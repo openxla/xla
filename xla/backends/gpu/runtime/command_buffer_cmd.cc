@@ -562,11 +562,44 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
              cmd->command_type() == CommandBufferCmdType::kReduceScatter ||
              cmd->command_type() == CommandBufferCmdType::kAllToAll;
     };
+
+    auto find_async_start_cmd_id =
+        [&](const AsyncDoneCmd* async_done_cmd) -> CommandId {
+      for (CommandId i = id - 1; i >= 0; --i) {
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())
+                    ->async_events() == async_done_cmd->async_events()) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
     if (commands_[id]->command_type() == CommandBufferCmdType::kAsyncDone) {
-      dependencies_ids.push_back(id - 1);
+      // Add dependency on the async start command.
+      auto async_start_cmd_id = find_async_start_cmd_id(
+          static_cast<const AsyncDoneCmd*>(commands_[id].get()));
+      CHECK_NE(async_start_cmd_id, -1);
+      dependencies_ids.push_back(async_start_cmd_id);
+
+      // Add dependency on the last command in async region.
+      for (CommandId i = id - 1; i >= 0; --i) {
+        if (std::find(dependencies_ids.begin(), dependencies_ids.end(),
+                      async_start_cmd_id) != dependencies_ids.end()) {
+          break;
+        }
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())->IsAsync()) {
+          continue;
+        } else {
+          dependencies_ids.push_back(i);
+          break;
+        }
+      }
     } else {
       for (CommandId i = id - 1; i >= 0; --i) {
-        if (is_async_start(commands_[i].get())) {
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())->IsAsync()) {
           continue;
         } else {
           dependencies_ids.push_back(i);
@@ -784,10 +817,13 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
 // AsyncDoneCmd
 //===----------------------------------------------------------------------===//
 
-AsyncDoneCmd::AsyncDoneCmd(ExecutionStreamId execution_stream_id,
-                           ResourceUseVector resources)
+AsyncDoneCmd::AsyncDoneCmd(
+    ExecutionStreamId execution_stream_id,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CommandBufferCmd(CommandBufferCmdType::kAsyncDone, execution_stream_id,
-                       std::move(resources)) {}
+                       std::move(resources)),
+      async_events_(std::move(async_events)) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> AsyncDoneCmd::Record(
     const Thunk::ExecuteParams& execute_params,
@@ -1700,14 +1736,15 @@ CommandBufferCmd::BufferUseVector CustomCallCmd::buffers() const {
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
-CollectiveCmd::CollectiveCmd(CommandBufferCmdType cmd_type,
-                             ExecutionStreamId execution_stream_id,
-                             ExecutionStreamId async_from_stream_id,
-                             CollectiveConfig config,
-                             ResourceUseVector resources)
+CollectiveCmd::CollectiveCmd(
+    CommandBufferCmdType cmd_type, ExecutionStreamId execution_stream_id,
+    ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CommandBufferCmd(cmd_type, execution_stream_id, std::move(resources)),
       async_from_stream_id_(async_from_stream_id),
-      config_(std::move(config)) {}
+      config_(std::move(config)),
+      async_events_(std::move(async_events)) {}
 
 absl::Status CollectiveCmd::Prepare(
     const Thunk::PrepareParams& params,
@@ -1751,15 +1788,16 @@ CollectiveCmd::RecordTracedCommand(
 // AllReduceCmd
 //===----------------------------------------------------------------------===//
 
-AllReduceCmd::AllReduceCmd(ExecutionStreamId execution_stream_id,
-                           ExecutionStreamId async_from_stream_id,
-                           CollectiveConfig config,
-                           ReductionKind reduction_kind,
-                           absl::Span<const CollectiveThunk::Buffer> buffers,
-                           ResourceUseVector resources)
+AllReduceCmd::AllReduceCmd(
+    ExecutionStreamId execution_stream_id,
+    ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+    ReductionKind reduction_kind,
+    absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllReduceCmd, execution_stream_id,
                     async_from_stream_id, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1821,10 +1859,11 @@ ReduceScatterCmd::ReduceScatterCmd(
     ExecutionStreamId async_from_stream_id, CollectiveConfig config,
     ReductionKind reduction_kind,
     absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kReduceScatter, execution_stream_id,
                     async_from_stream_id, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1882,14 +1921,15 @@ CommandBufferCmd::BufferUseVector ReduceScatterCmd::buffers() const {
 // AllToAllCmd
 //===----------------------------------------------------------------------===//
 
-AllToAllCmd::AllToAllCmd(ExecutionStreamId execution_stream_id,
-                         ExecutionStreamId async_from_stream_id,
-                         CollectiveConfig config, bool has_split_dimension,
-                         absl::Span<const CollectiveThunk::Buffer> buffers,
-                         ResourceUseVector resources)
+AllToAllCmd::AllToAllCmd(
+    ExecutionStreamId execution_stream_id,
+    ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+    bool has_split_dimension, absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllToAll, execution_stream_id,
                     async_from_stream_id, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       has_split_dimension_(has_split_dimension),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1945,14 +1985,15 @@ CommandBufferCmd::BufferUseVector AllToAllCmd::buffers() const {
 // AllGatherCmd
 //===----------------------------------------------------------------------===//
 
-AllGatherCmd::AllGatherCmd(ExecutionStreamId execution_stream_id,
-                           ExecutionStreamId async_from_stream_id,
-                           CollectiveConfig config,
-                           absl::Span<const CollectiveThunk::Buffer> buffers,
-                           ResourceUseVector resources)
+AllGatherCmd::AllGatherCmd(
+    ExecutionStreamId execution_stream_id,
+    ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+    absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllGatherCmd, execution_stream_id,
                     async_from_stream_id, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
@@ -2011,10 +2052,12 @@ CollectiveBroadcastCmd::CollectiveBroadcastCmd(
     ExecutionStreamId execution_stream_id,
     ExecutionStreamId async_from_stream_id, CollectiveConfig config,
     absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kCollectiveBroadcastCmd,
                     execution_stream_id, async_from_stream_id,
-                    std::move(config), std::move(resources)),
+                    std::move(config), std::move(async_events),
+                    std::move(resources)),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*>
