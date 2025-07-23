@@ -227,7 +227,6 @@ cc_library(
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph",
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
     ],
