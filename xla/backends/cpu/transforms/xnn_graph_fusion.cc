@@ -64,16 +64,25 @@ HloInstruction* XnnGraphFusion::Fuse(HloInstruction* producer,
   return fusion;
 }
 
-bool XnnGraphFusion::IsOpSupported(HloInstruction* instr) const {
-  switch (instr->opcode()) {
-    case HloOpcode::kAdd:
-    case HloOpcode::kSubtract:
-    case HloOpcode::kMultiply:
-      return true;
-    default:
-      return false;
+bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
+  if (!XnnDatatype(instr->shape().element_type()).ok()) {
+    return false;
   }
+
+  if (instr->IsElementwise()) {
+    switch (instr->operand_count()) {
+      case 1:
+        return XnnUnaryOperator(instr->opcode()).ok();
+      case 2:
+        return XnnBinaryOperator(instr->opcode()).ok();
+      default:
+        return false;
+    }
+  }
+
+  return false;
 }
+
 bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) const {
   if (instr->opcode() != HloOpcode::kFusion) {
     return false;

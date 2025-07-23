@@ -18,6 +18,7 @@ limitations under the License.
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <string>
@@ -2048,6 +2049,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
       "Whether to use memcpy for local p2p communication."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_use_inprocess_lld",
+                bool_setter_for(&DebugOptions::set_xla_gpu_use_inprocess_lld),
+                debug_options->xla_gpu_use_inprocess_lld(),
+                "Whether to use lld as a library for the linking."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotune_logs_to",
       string_setter_for(&DebugOptions::set_xla_gpu_dump_autotune_logs_to),
@@ -2378,13 +2384,15 @@ bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
   VLOG(2) << "Parsing flags from file: " << filename;
   // Read the file content
   std::string file_content;
-  absl::Status status = tsl::ReadFileToString(
-      tsl::Env::Default(), std::string(filename), &file_content);
-  if (!status.ok()) {
-    LOG(ERROR) << "Failed to read file: " << filename
-               << ", error: " << status.ToString();
+  std::ifstream file{std::string(filename)};
+  if (!file.is_open()) {
+    LOG(ERROR) << "Failed to open file: " << filename;
     return false;
   }
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  file_content = buffer.str();
+  file.close();
   DebugOptions new_debug_options;
   tsl::protobuf::TextFormat::Parser parser;
   tsl::protobuf::TextFormat::ParseInfoTree tree;

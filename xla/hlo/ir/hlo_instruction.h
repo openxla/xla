@@ -1133,6 +1133,15 @@ class HloInstruction {
       std::string opaque = "",
       CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
 
+  // Overload which constrains the layouts of the operand and result and apply a
+  // computation.
+  static std::unique_ptr<HloInstruction> CreateCustomCall(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* to_apply, absl::string_view custom_call_target,
+      absl::Span<const Shape> operand_shapes_with_layout,
+      std::string opaque = "",
+      CustomCallApiVersion api_version = API_VERSION_ORIGINAL);
+
   // Creates a tuple instruction with the given elements. This is a convenience
   // wrapper around CreateVariadic.
   static std::unique_ptr<HloInstruction> CreateTuple(
@@ -2098,9 +2107,6 @@ class HloInstruction {
   // Delegates to HloReshapeInstruction::inferred_dimension.
   int64_t inferred_dimension() const;
 
-  // Returns whether this instruction does a rank-2 transposition.
-  bool IsRank2Transpose() const;
-
   // Delegates to HloSliceInstruction::slice_start.
   int64_t slice_starts(int64_t dimension) const;
   const std::vector<int64_t>& slice_starts() const;
@@ -2435,7 +2441,7 @@ class HloInstruction {
   };
 
   // Change instruction's name to have a given suffix.
-  void AddSuffixToInstructionName(const absl::string_view suffix);
+  void AddSuffixToInstructionName(absl::string_view suffix);
 
  private:
   friend class HloComputation;

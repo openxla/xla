@@ -85,7 +85,8 @@ class CuptiApiTracingDisabler {
       if (status == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {                  \
         return absl::PermissionDeniedError("CUPTI needs root access");      \
       } else {                                                              \
-        return absl::UnknownError(absl::StrCat("CUPTI error ", errstr));    \
+        return absl::InternalError(                                         \
+            absl::StrCat("CUPTI call error: ", errstr));                    \
       }                                                                     \
     }                                                                       \
   } while (false)

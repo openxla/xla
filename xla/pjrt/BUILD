@@ -28,6 +28,7 @@ package_group(
         "//third_party/gxlang/...",
         "//third_party/openxla_pjrt_plugin/...",
         "//third_party/py/jax/...",
+        "//third_party/torch_tpu/...",
     ],
 )
 
@@ -453,10 +454,24 @@ xla_cc_test(
 
 cc_library(
     name = "pjrt_common",
+    srcs = ["pjrt_common.cc"],
     hdrs = ["pjrt_common.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "//xla/tsl/lib/gtl:int_type",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_common_test",
+    srcs = ["pjrt_common_test.cc"],
+    deps = [
+        ":pjrt_common",
+        "//xla/pjrt/proto:pjrt_value_type_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -707,6 +722,7 @@ cc_library(
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
+        "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -976,6 +992,7 @@ xla_cc_test(
         "//xla/hlo/parser:hlo_parser",
         "//xla/pjrt/c:pjrt_c_api_cpu_internal",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/service:computation_placer_hdr",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
@@ -1019,8 +1036,8 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -1122,10 +1139,13 @@ cc_library(
     hdrs = ["triton.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:cuda_root_path",
+        "@tsl//tsl/platform:path",
     ] + if_cuda_is_configured(
         [
             "@com_google_absl//absl/base",
@@ -1196,6 +1216,7 @@ cc_library(
         ":device_event",
         ":pjrt_client",
         ":pjrt_future",
+        "//xla:shape_util",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
