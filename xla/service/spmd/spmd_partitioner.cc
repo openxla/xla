@@ -2562,15 +2562,6 @@ absl::Status SpmdPartitioningVisitor::DefaultAction(HloInstruction* hlo) {
     return HandleElementwise(hlo);
   }
 
-  if (!hlo->sharding().IsTileMaximal()) {
-    VLOG(1) << "Not partitioned in SPMD mode (DefaultAction):"
-            << hlo->ToString();
-    for (int64_t i = 0; i < hlo->operand_count(); ++i) {
-      VLOG(1) << "  operand " << i
-              << " sharding:" << hlo->operand(i)->sharding().ToString();
-    }
-  }
-
   // The base sharding is a non-tuple sharding that is either assigned to a
   // specific device or replicated.
   const HloSharding base_sharding = [&]() {
@@ -3210,11 +3201,7 @@ absl::Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 }
 
 absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
-  // TODO(b/397731516). Add cache even though the sharding is maximal.
   const HloSharding& sharding = hlo->sharding();
-  if (sharding.IsTileMaximal()) {
-    return DefaultAction(hlo);
-  }
 
   const Shape& in_shape = hlo->operand(0)->shape();
   const Shape& out_shape = hlo->shape();
@@ -5622,6 +5609,15 @@ absl::Status SpmdPartitioner::PreprocessSharding(
       if (hlo->HasSideEffectNoRecurse() && hlo->opcode() != HloOpcode::kRng &&
           (hlo->opcode() != HloOpcode::kCustomCall ||
            GetCustomCallPartitioner(hlo->custom_call_target()) == nullptr)) {
+        // TODO: b/432201708 - Remove this error once Shardy is stable in JAX.
+        if (hlo->opcode() == HloOpcode::kCustomCall) {
+          TF_RET_CHECK(hlo->custom_call_target().rfind("xla.sdy", 0) != 0)
+              << "This is a custom call named 'xla.sdy.*' which shouldn't "
+              << "appear in the XLA partitioner, please file a bug against the "
+              << "OpenXLA Shardy team. One of the possible bugs is your model "
+              << "was lowered targeting Shardy, but Shardy was then disabled "
+              << "in XLA.";
+        }
         TF_RET_CHECK(hlo->has_sharding())
             << "Side-effect HLO must have sharding: " << hlo->ToString();
         TF_RET_CHECK(!HasReplicatedSharding(hlo->sharding()) ||

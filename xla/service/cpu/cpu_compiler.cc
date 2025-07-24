@@ -82,6 +82,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
@@ -224,6 +225,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -478,8 +480,13 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     pipeline->AddPass<GatherSimplifier>();
   }
 
-  // Needs to happen after algebraic simplifier.
-  pipeline->AddPass<TreeReductionRewriter>();
+  if (module->config()
+          .debug_options()
+          .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+      DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY) {
+    // Needs to happen after algebraic simplifier.
+    pipeline->AddPass<TreeReductionRewriter>();
+  }
 
   // BatchNormExpander can create zero-sized ops, so zero-sized HLO
   // elimination has to come after that pass.
@@ -575,7 +582,13 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // calling `DotDecomposer` early is okay.
   DotLibraryRewriterOptions options = {
       /*use_onednn=*/module->config().debug_options().xla_cpu_use_onednn(),
-      /*use_xnnpack=*/module->config().debug_options().xla_cpu_use_xnnpack()};
+      /*use_xnnpack=*/module->config().debug_options().xla_cpu_use_xnnpack(),
+      /*onednn_fusion_types=*/
+      &module->config()
+           .debug_options()
+           .xla_cpu_experimental_onednn_fusion_type(),
+      /*xnn_fusion_types=*/
+      &module->config().debug_options().xla_cpu_experimental_xnn_fusion_type()};
   if (options.use_onednn || options.use_xnnpack) {
     HloPassPipeline lib_pipeline("dot-library-passes");
     lib_pipeline.AddPass<DotDecomposer>();
@@ -981,9 +994,7 @@ absl::Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
 namespace {
 
 // Align buffers to XLA:CPU minimal alignment.
-int64_t memory_alignment(LogicalBuffer::Color) {
-  return cpu_function_runtime::MinAlign();
-}
+int64_t memory_alignment(LogicalBuffer::Color) { return MinAlign(); }
 
 llvm::TargetOptions CompilerTargetOptions(
     const HloModuleConfig& module_config) {
@@ -1492,12 +1503,14 @@ CpuCompiler::CompileCpuExecutable(std::unique_ptr<HloModule> module) {
   // Dump computation proto state and buffer assignment for
   // GetCompiledMemoryStats results.
   auto with_hlo_proto = [&](std::unique_ptr<CpuExecutable> cpu_executable) {
-    auto hlo_proto = std::make_unique<HloProto>();
-    *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
-    *hlo_proto->mutable_buffer_assignment() =
-        cpu_executable->buffer_assignment().ToProto();
-    StripPayloadFromLiteralProto(*hlo_proto);
-    cpu_executable->set_hlo_proto(std::move(hlo_proto));
+    if (embed_ir_in_executable) {
+      auto hlo_proto = std::make_unique<HloProto>();
+      *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
+      *hlo_proto->mutable_buffer_assignment() =
+          cpu_executable->buffer_assignment().ToProto();
+      StripPayloadFromLiteralProto(*hlo_proto);
+      cpu_executable->set_hlo_proto(std::move(hlo_proto));
+    }
     return cpu_executable;
   };
 
@@ -2423,12 +2436,14 @@ CpuCompiler::CompileAheadOfTimeThunks(
   // Dump computation proto state and buffer assignment for
   // GetCompiledMemoryStats results.
   auto with_hlo_proto = [&](std::unique_ptr<CpuExecutable> cpu_executable) {
-    auto hlo_proto = std::make_unique<HloProto>();
-    *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
-    *hlo_proto->mutable_buffer_assignment() =
-        cpu_executable->buffer_assignment().ToProto();
-    StripPayloadFromLiteralProto(*hlo_proto);
-    cpu_executable->set_hlo_proto(std::move(hlo_proto));
+    if (embed_ir_in_executable) {
+      auto hlo_proto = std::make_unique<HloProto>();
+      *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
+      *hlo_proto->mutable_buffer_assignment() =
+          cpu_executable->buffer_assignment().ToProto();
+      StripPayloadFromLiteralProto(*hlo_proto);
+      cpu_executable->set_hlo_proto(std::move(hlo_proto));
+    }
     return cpu_executable;
   };
 

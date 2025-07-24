@@ -17,31 +17,37 @@ limitations under the License.
 #define XLA_CODEGEN_MATH_FPTRUNC_H_
 
 #include <cstdint>
-#include <string>
+#include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 #include "xla/codegen/math/intrinsic.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla::codegen {
+namespace xla::codegen::intrinsics {
 
 // XLA intrinsic for truncating floating point values (scalars and vectors).
-class Intrinsic::FpTrunc {
+class FpTrunc : public Intrinsic<FpTrunc> {
  public:
-  static std::string Name(Type from, Type to);
-
-  static llvm::Function* GetOrInsertDeclaration(llvm::Module* module,
-                                                PrimitiveType from,
-                                                PrimitiveType to);
+  static constexpr absl::string_view kName = "fptrunc";
+  static constexpr bool kLastArgIsReturnType = true;
+  static constexpr int8_t kNumArgs = 2;  // Second arg is the return type.
+  static std::vector<std::vector<Type>> SupportedVectorTypes() {
+    return {
+        {Type::S(xla::F32), Type::S(xla::BF16)},
+        {Type::V(xla::F32, 2), Type::V(xla::BF16, 2)},
+        {Type::V(xla::F32, 4), Type::V(xla::BF16, 4)},
+        {Type::V(xla::F32, 8), Type::V(xla::BF16, 8)},
+    };
+  }
 
   static absl::StatusOr<llvm::Function*> CreateDefinition(llvm::Module* module,
-                                                          PrimitiveType from,
-                                                          PrimitiveType to,
-                                                          int64_t vector_width);
+                                                          Type from, Type to);
 };
 
-}  // namespace xla::codegen
+}  // namespace xla::codegen::intrinsics
 
 #endif  // XLA_CODEGEN_MATH_FPTRUNC_H_

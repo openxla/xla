@@ -344,8 +344,9 @@ absl::Status runShardingPropagation(HloModule* hloModule,
 
   mlir::PassManager pm(mlirModule->getContext());
   pm.enableVerifier(enableVerifier);
-  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
-                                               "sdy_module_before_xla_import"));
+  int dumpIndex = 0;
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "input_module",
+                                               dumpIndex++));
 
   if (importMhloShardings) {
     auto spanToArrayRef = [](absl::Span<const bool> span) {
@@ -367,10 +368,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // since the TOAST cost model cannot account for split axes or padding.
   options.dumpDirectory = shardyDir;
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
-  mlir::sdy::addPropagationPipeline(pm, options);
+  mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
   addStablehloExportPipeline(pm);
-  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
-                                               "sdy_module_after_xla_export"));
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
+                                               dumpIndex++));
   tsl::StatusScopedDiagnosticHandler diagnosticHandler(
       mlirModule->getContext());
   return diagnosticHandler.consumeStatus(pm.run(mlirModule));
@@ -426,6 +427,13 @@ absl::StatusOr<bool> ShardyXLA::Run(
                                               defaultOptions, name()));
   }
 
+  // TODO(b/431836696): Remove once issue is fixed.
+  if (useTupleArgs) {
+    mlirModule.get()->removeAttr(
+        "mhlo.xla_entry_computation_parameter_layouts");
+    mlirModule.get()->removeAttr("mhlo.xla_entry_computation_parameter_tiles");
+  }
+
   // StableHlo -> HLO
   HloProto hloProto;
   TF_RETURN_IF_ERROR(ConvertStablehloWithManyArgsToHloProto(
@@ -456,7 +464,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.
   removeFrontendAttributes(
-      hloModule, {kUseTupleArgs, kImportMhloShardings, kMeshesRoundTripAttr});
+      hloModule, {kUseTupleArgs, kImportMhloShardings, kMeshesRoundTripAttr,
+                  kInTupleShardings, kOutTupleShardings});
 
   return true;
 }

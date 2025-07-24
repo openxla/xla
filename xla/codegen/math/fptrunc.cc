@@ -15,11 +15,10 @@ limitations under the License.
 
 #include "xla/codegen/math/fptrunc.h"
 
-#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/log/check.h"
-#include "absl/strings/str_cat.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -31,36 +30,24 @@ limitations under the License.
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
 #include "xla/codegen/math/intrinsic.h"
-#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
-namespace xla::codegen {
-
-std::string Intrinsic::FpTrunc::Name(Type from, Type to) {
-  return absl::StrCat("xla.fptrunc.", from.name(), ".to.", to.name());
-}
-
-llvm::Function* Intrinsic::FpTrunc::GetOrInsertDeclaration(llvm::Module* module,
-                                                           PrimitiveType from,
-                                                           PrimitiveType to) {
-  auto* from_type = llvm_ir::PrimitiveTypeToIrType(from, module->getContext());
-  auto* to_type = llvm_ir::PrimitiveTypeToIrType(to, module->getContext());
-  auto* function_type = llvm::FunctionType::get(to_type, {from_type}, false);
-  return llvm::cast<llvm::Function>(
-      module->getOrInsertFunction(Name(Scalar{from}, Scalar{to}), function_type)
-          .getCallee());
-}
-
+namespace xla::codegen::intrinsics {
 // Truncates an f32 value (scalar or vector) to bf16 with correct rounding.
-static llvm::Function* TruncateF32ToBf16(llvm::Module* module,
-                                         int64_t vector_width) {
+static llvm::Function* TruncateF32ToBf16(llvm::Module* module, Type from,
+                                         Type to) {
   llvm::LLVMContext& context = module->getContext();
   llvm::IRBuilder<> builder(context);
+  DCHECK_EQ(from.element_type(), F32);
+  DCHECK_EQ(to.element_type(), BF16);
 
-  // Wraps a scalar type into a vector type if vector_width > 1.
+  // Wraps a scalar type into a vector type if we are building a vector
+  // intrinsic declaration.
   auto vec = [&](llvm::Type* scalar_type) -> llvm::Type* {
-    if (vector_width > 1) {
-      return llvm::VectorType::get(scalar_type, vector_width, false);
+    if (from.vector_width()) {
+      return llvm::VectorType::get(scalar_type, *from.vector_width(), false);
     }
     return scalar_type;
   };
@@ -72,15 +59,8 @@ static llvm::Function* TruncateF32ToBf16(llvm::Module* module,
 
   llvm::FunctionType* function_type =
       llvm::FunctionType::get(bf16_type, {f32_type}, false);
-
-  Intrinsic::Type from =
-      vector_width > 1 ? Intrinsic::V(F32, vector_width) : Intrinsic::S(F32);
-  Intrinsic::Type to =
-      vector_width > 1 ? Intrinsic::V(BF16, vector_width) : Intrinsic::S(BF16);
   llvm::Function* func = llvm::dyn_cast<llvm::Function>(
-      module
-          ->getOrInsertFunction(Intrinsic::FpTrunc::Name(from, to),
-                                function_type)
+      module->getOrInsertFunction(FpTrunc::Name(from, to), function_type)
           .getCallee());
 
   llvm::Argument* arg = func->getArg(0);
@@ -117,15 +97,16 @@ static llvm::Function* TruncateF32ToBf16(llvm::Module* module,
   return func;
 }
 
-absl::StatusOr<llvm::Function*> Intrinsic::FpTrunc::CreateDefinition(
-    llvm::Module* module, PrimitiveType from, PrimitiveType to,
-    int64_t vector_width) {
-  if (from == F32 && to == BF16) {
-    return TruncateF32ToBf16(module, vector_width);
+absl::StatusOr<llvm::Function*> FpTrunc::CreateDefinition(llvm::Module* module,
+                                                          Type from, Type to) {
+  TF_RETURN_IF_ERROR(Type::VerifySameWidth(from, to));
+
+  if (from.element_type() == F32 && to.element_type() == BF16) {
+    return TruncateF32ToBf16(module, from, to);
   }
 
-  return Internal("Unsupported fptrunc conversion: from=%s to=%s",
-                  ScalarName(from), ScalarName(to));
+  return Internal("Unsupported fptrunc conversion: from=%s to=%s", from.name(),
+                  to.name());
 }
 
-}  // namespace xla::codegen
+}  // namespace xla::codegen::intrinsics

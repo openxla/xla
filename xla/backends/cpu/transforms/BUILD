@@ -35,8 +35,8 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -62,11 +62,14 @@ cc_library(
     name = "library_matcher",
     hdrs = ["library_matcher.h"],
     deps = [
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -81,6 +84,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -95,6 +99,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 

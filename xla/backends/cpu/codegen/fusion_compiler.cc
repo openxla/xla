@@ -136,8 +136,9 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   // opportunities for LICM. This would not be necessary if LICM also moved
   // instructions over ifs.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<mlir::func::FuncOp>(
-      emitters::CreateVectorizeLoadsAndStoresPass(/*target_type=*/"cpu"));
+  // TODO(willfroom): Re-enable vectorization once b/431961172 is fixed.
+  // pm.addNestedPass<mlir::func::FuncOp>(
+  //     emitters::CreateVectorizeLoadsAndStoresPass(/*target_type=*/"cpu"));
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<mlir::func::FuncOp>(
@@ -171,8 +172,8 @@ static void AddLoweringPasses(mlir::OpPassManager& pm, int32_t vector_width,
   pm.addPass(mlir::createSymbolDCEPass());
   pm.addPass(mlir::createCSEPass());
 
-  pm.addPass(cpu::CreateExpandFloatOpsPass());
-  pm.addPass(emitters::CreateExpandFloatOpsPass());
+  pm.addNestedPass<mlir::func::FuncOp>(cpu::CreateExpandFloatOpsPass());
+  pm.addPass(emitters::CreateExpandFloatOpsPass(/*aproximate_tanh=*/false));
   pm.addPass(emitters::CreateEraseDeadFunctionsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createInlinerPass());

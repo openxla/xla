@@ -83,7 +83,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/service/gpu/transforms/cudnn_simplify_padding.h"
 #include "xla/service/gpu/transforms/cudnn_vectorize_convolutions.h"
-#include "xla/service/gpu/transforms/dot_sparsity_rewriter.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_module_config.h"
@@ -262,7 +261,7 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const TargetConfig& gpu_target_config,
-    tsl::thread::ThreadPool* thread_pool) {
+    const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool) {
   // This needs to run before GemmRewriter, which is part of
   // OptimizeHloPostLayoutAssignment().
   auto cuda_compute_capability = std::get<se::CudaComputeCapability>(
@@ -281,7 +280,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
       /*allow_cudnn=*/cuda_compute_capability.IsAtLeastBlackwell() &&
       gpu_target_config.dnn_version_info >= se::dnn::VersionInfo(9, 7));
   pre_pipeline.AddPass<DotDimensionMerger>();
-  pre_pipeline.AddPass<DotSparsityRewriter>();
 
   if (!hlo_module->config()
            .debug_options()
@@ -302,7 +300,8 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   TF_RETURN_IF_ERROR(pre_pipeline.Run(hlo_module).status());
 
   TF_RETURN_IF_ERROR(GpuCompiler::OptimizeHloPostLayoutAssignment(
-      hlo_module, stream_exec, options, gpu_target_config, thread_pool));
+      hlo_module, stream_exec, options, gpu_target_config, alias_info,
+      thread_pool));
 
   HloPassPipeline post_pipeline("nvptx post-layout_assignment part 2");
 

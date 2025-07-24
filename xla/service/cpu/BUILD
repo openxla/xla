@@ -219,6 +219,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:alignment",
         "//xla/backends/cpu:constant_allocation",
         "//xla/backends/cpu:xnn_fusion",
         "//xla/backends/cpu/codegen:compiled_function_library",
@@ -338,6 +339,7 @@ cc_library(
         "//xla/stream_executor/host:host_platform_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
@@ -458,6 +460,7 @@ cc_library(
         ":cpu_aot_compilation_result",
         ":executable_proto_cc",
         "//xla:util",
+        "//xla/backends/cpu:alignment",
         "//xla/backends/cpu/codegen:ir_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
@@ -472,6 +475,7 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/host:host_platform_id",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
@@ -687,6 +691,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:setround",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -696,6 +701,8 @@ cc_library(
     hdrs = ["elemental_math_emitter.h"],
     deps = [
         "//xla:xla_data_proto_cc",
+        "//xla/codegen/math:erf",
+        "//xla/codegen/math:intrinsic",
         "//xla/service/llvm_ir:math_ops",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -1981,6 +1988,8 @@ cc_library(
     hdrs = ["elemental_ir_emitter.h"],
     deps = [
         ":elemental_math_emitter",
+        "//xla/codegen/math:exp",
+        "//xla/codegen/math:intrinsic",
         "//xla/hlo/ir:hlo",
         "//xla/service:elemental_ir_emitter",
         "//xla/service/llvm_ir:llvm_util",
