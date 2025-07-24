@@ -1114,6 +1114,40 @@ CommandBufferCmd::BufferUseVector Memset32Cmd::buffers() const {
 }
 
 //===----------------------------------------------------------------------===//
+// ChildCmd
+//===----------------------------------------------------------------------===//
+
+ChildCmd::ChildCmd(ExecutionStreamId execution_stream_id,
+                   CommandBufferCmdExecutor child_commands,
+                   ResourceUseVector resources)
+    : CommandBufferCmd(CommandBufferCmdType::kChildCmd, execution_stream_id,
+                       std::move(resources)),
+      child_commands_(std::move(child_commands)) {}
+
+bool ChildCmd::requires_initialization() {
+  return child_commands_.requires_initialization();
+}
+
+bool ChildCmd::force_update() { return child_commands_.force_update(); }
+
+CommandBufferCmd::BufferUseVector ChildCmd::buffers() const {
+  return child_commands_.buffers();
+}
+
+absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params,
+                                  StateManager& state) {
+  return child_commands_.Initialize(params, state);
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  return child_commands_.Record(execute_params, record_params, record_action,
+                                command_buffer);
+}
+
+//===----------------------------------------------------------------------===//
 // CaseCmd
 //===----------------------------------------------------------------------===//
 

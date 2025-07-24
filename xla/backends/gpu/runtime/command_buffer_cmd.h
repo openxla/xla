@@ -699,6 +699,34 @@ class Memset32Cmd : public CommandBufferCmd {
 };
 
 //===----------------------------------------------------------------------===//
+// ChildCmd
+//===----------------------------------------------------------------------===//
+
+class ChildCmd : public CommandBufferCmd {
+ public:
+  ChildCmd(ExecutionStreamId execution_stream_id,
+           CommandBufferCmdExecutor child_commands,
+           ResourceUseVector resources = {});
+
+  absl::Status Initialize(const Thunk::InitializeParams& params,
+                          StateManager& state) override;
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  bool requires_initialization() override;
+
+  bool force_update() override;
+
+  BufferUseVector buffers() const override;
+
+ private:
+  CommandBufferCmdExecutor child_commands_;
+};
+
+//===----------------------------------------------------------------------===//
 // CaseCmd
 //===----------------------------------------------------------------------===//
 
