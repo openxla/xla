@@ -135,9 +135,6 @@ def find_sycl_include_path(repository_ctx, sycl_config):
         clang_install_dir = repository_ctx.execute([clang_path, "-print-resource-dir"])
         clang_install_dir_opt = "--sysroot=" + str(repository_ctx.path(clang_install_dir.stdout.strip()).dirname)
         cmd_out = repository_ctx.execute([
-<<<<<<< HEAD
-            bin_path, icpx_extra, clang_install_dir_opt, "-xc++", "-E", "-v", "/dev/null", "-o", "/dev/null"
-=======
             bin_path,
             icpx_extra,
             clang_install_dir_opt,
@@ -147,17 +144,12 @@ def find_sycl_include_path(repository_ctx, sycl_config):
             "/dev/null",
             "-o",
             "/dev/null",
->>>>>>> upstream/main
         ])
     else:
         gcc_path = repository_ctx.which("gcc")
         gcc_install_dir = repository_ctx.execute([gcc_path, "-print-libgcc-file-name"])
         gcc_install_dir_opt = "--gcc-install-dir=" + str(repository_ctx.path(gcc_install_dir.stdout.strip()).dirname)
         cmd_out = repository_ctx.execute([
-<<<<<<< HEAD
-            bin_path, icpx_extra, gcc_install_dir_opt, "-xc++", "-E", "-v", "/dev/null", "-o", "/dev/null"
-	])
-=======
             bin_path,
             icpx_extra,
             gcc_install_dir_opt,
@@ -168,7 +160,6 @@ def find_sycl_include_path(repository_ctx, sycl_config):
             "-o",
             "/dev/null",
         ])
->>>>>>> upstream/main
 
     outlist = cmd_out.stderr.split("\n")
     real_base_path = str(repository_ctx.path(base_path).realpath).strip()
@@ -459,7 +450,6 @@ def _download_and_extract_archive(repository_ctx, archive_info, distribution_pat
         )
 
     repository_ctx.report_progress("oneAPI Basekit archive extracted and installed.")
-
 
 def _create_local_sycl_repository(repository_ctx):
     tpl_paths = {labelname: _tpl_path(repository_ctx, labelname) for labelname in [
