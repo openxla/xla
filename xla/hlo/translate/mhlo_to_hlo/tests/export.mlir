@@ -19,7 +19,7 @@ func.func @main(%arg0: tensor<2xi1>) -> tensor<2xi1> {
 
 // CHECK:  ENTRY
 // CHECK:  %[[ARG:.*]] = pred[2] parameter(0)
-// CHECK:  ROOT %[[RESULT:.*]] = pred[2] xor(%[[ARG]], %[[ARG]])
+// CHECK:  ROOT %[[RESULT:.*]] = pred[2] add(%[[ARG]], %[[ARG]])
 
 // -----
 
@@ -3185,4 +3185,15 @@ func.func @main(%input0: tensor<16x16xf32>, %input1: tensor<16x16xi32>) {
     "mhlo.return"(%7) : (tensor<i1>) -> ()
   }) {dimension = 1 : i64, is_stable = true} : (tensor<16x16xf32>, tensor<16x16xi32>) -> (tensor<16x16xf32>, tensor<16x16xi32>)
   func.return
+}
+
+// -----
+// CHECK: HloModule
+// CHECK: ENTRY
+// CHECK: %[[ARG0:.*]] = f32[192] parameter(0)
+// CHECK: ROOT %[[RESULT:.*]] = f32[1,17,17,192] broadcast(%[[ARG0]]), dimensions={3}, origin={{[{][{]}}"broadcast.2342"{{[}][}]}}
+
+func.func @main(%arg0: tensor<192xf32>) -> tensor<1x17x17x192xf32> {
+  %0 = "mhlo.broadcast_in_dim"(%arg0) <{broadcast_dimensions = dense<3> : tensor<1xi64>}> {mhlo.original_value = "{{\22broadcast.2342\22}}"} : (tensor<192xf32>) -> tensor<1x17x17x192xf32>
+  return %0 : tensor<1x17x17x192xf32>
 }

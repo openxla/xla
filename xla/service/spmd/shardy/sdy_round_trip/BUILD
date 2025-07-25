@@ -57,6 +57,7 @@ cc_library(
     deps = [
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
@@ -143,5 +144,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@shardy//shardy/dialect/sdy/transforms/import:passes",
     ],
 )

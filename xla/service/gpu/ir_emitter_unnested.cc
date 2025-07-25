@@ -184,7 +184,9 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/platform.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla {
@@ -1144,7 +1146,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
             operands.push_back(std::nullopt);
             return absl::OkStatus();
           }
-          if (!subshape.IsArrayOrBuffer()) {
+          if (!subshape.IsArray()) {
             return absl::OkStatus();
           }
           TF_ASSIGN_OR_RETURN(auto slice,
@@ -1161,7 +1163,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
           results.push_back(std::nullopt);
           return absl::OkStatus();
         }
-        if (!subshape.IsArrayOrBuffer()) {
+        if (!subshape.IsArray()) {
           return absl::OkStatus();
         }
         TF_ASSIGN_OR_RETURN(auto slice, GetAllocationSliceForHlo(instr, index));
@@ -1183,17 +1185,18 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   // For information about this calling convention, see
   // xla/g3doc/custom_call.md.
   switch (instr->api_version()) {
-    case CustomCallApiVersion::API_VERSION_ORIGINAL:
-#ifdef PLATFORM_GOOGLE
-      LOG(FATAL)
-#else
-      LOG(ERROR)
-#endif
-          << "Custom call API version `API_VERSION_ORIGINAL` is "
-             "not supported "
-             "by XLA:GPU. Prefer "
-             "https://docs.jax.dev/en/latest/ffi.html. It "
-             "will be fully removed in November 2025.";
+    case CustomCallApiVersion::API_VERSION_ORIGINAL: {
+      constexpr absl::string_view kErrorMessage =
+          "Custom call API version `API_VERSION_ORIGINAL` is "
+          "not supported "
+          "by XLA:GPU. Prefer "
+          "https://docs.jax.dev/en/latest/ffi.html. It "
+          "will be fully removed in November 2025.";
+      if constexpr (tsl::kIsOpenSource) {
+        LOG(ERROR) << kErrorMessage;
+      } else {
+        LOG(FATAL) << kErrorMessage;
+      }
 
       custom_call_target = [call_target](stream_executor::Stream* stream,
                                          void** buffers, const char* opaque,
@@ -1204,6 +1207,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
             opaque_len);
       };
       break;
+    }
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
       custom_call_target = [call_target](stream_executor::Stream* stream,
@@ -1685,7 +1689,9 @@ absl::Status IrEmitterUnnested::EmitWhile(const HloInstruction* instr) {
                       instr->backend_config<xla::WhileLoopBackendConfig>());
 
   std::optional<int64_t> trip_count = std::nullopt;
-  if (config.has_known_trip_count()) trip_count = config.known_trip_count().n();
+  if (config.has_known_trip_count()) {
+    trip_count = config.known_trip_count().n();
+  }
 
   TF_ASSIGN_OR_RETURN(
       auto thunk,
@@ -1783,10 +1789,32 @@ absl::Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
   // sorting/comparison loop if the comparisons happen within a
   // small block of the array. To make this work, we collect all
   // consecutive masks that are smaller than our chosen power of 2
-  // tile size, and pass them to SortInPlace. Each thread then
+  // tile size, and pass them to SortInPlace. Each block then
   // processes one tile of data.
 
-  const uint64_t kTileSize = std::min(2048ULL, 1ULL << num_stages);
+  const uint64_t kUnrollFactor = 2;
+  // Determine the total element size of all sort operands. We need to choose a
+  // tile size such that we have enough shared memory to store a tile of
+  // elements from each operand.
+  uint64_t total_element_size = 0;
+  for (int64_t i = 0; i < sort->operand_count(); ++i) {
+    total_element_size += ShapeUtil::ByteSizeOfPrimitiveType(
+        sort->operand(i)->shape().element_type());
+  }
+  const uint64_t kMaxSharedMemoryPerBlock =
+      ir_emitter_context_->gpu_device_info().shared_memory_per_block();
+  uint64_t max_tile_size_fitting_into_shared_memory =
+      kMaxSharedMemoryPerBlock / total_element_size;
+  const uint64_t kMaxThreadsPerBlock =
+      ir_emitter_context_->gpu_device_info().threads_per_block_limit();
+  // Choose the tile size based on actual amount of elements to sort, the amount
+  // of shared memory avaiable, and the maximum number of threads per block.
+  uint64_t tile_size =
+      std::min(std::min(kMaxThreadsPerBlock * kUnrollFactor,
+                        max_tile_size_fitting_into_shared_memory),
+               uint64_t{1} << num_stages);
+  // The tile size needs to be a power of 2.
+  tile_size = uint64_t{1} << Log2Floor(tile_size);
 
   // If we cannot combine several xor masks together, we don't use
   // tiling, so we calculate the standard launch dimensions for the
@@ -1795,54 +1823,33 @@ absl::Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
   // because each iteration compares one pair of elements.
   Shape standard_iteration_shape = keys_shape;
   uint64_t standard_num_iterations_in_sort_dim = 1ULL << (num_stages - 1);
-  standard_iteration_shape.set_dimensions(dimension_to_sort,
-                                          standard_num_iterations_in_sort_dim);
+  standard_iteration_shape.set_dimensions(
+      dimension_to_sort,
+      CeilOfRatio(standard_num_iterations_in_sort_dim, kUnrollFactor));
 
   LaunchDimensions standard_launch_dimensions = CalculateLaunchDimensions(
       standard_iteration_shape, ir_emitter_context_->gpu_device_info());
 
   // Calculate the launch dimensions for the case where we use
   // tiling. We split the dimension that should be sorted into tiles
-  // of size 'kTileSize'. This means we first need to round
+  // of size 'tile_size'. This means we first need to round
   // 'dimension_to_sort_bound' up to be a multiple of the tile size.
-  int64_t rounded_bound = RoundUpTo(dimension_to_sort_bound, kTileSize);
+  uint64_t rounded_bound = RoundUpTo(dimension_to_sort_bound, tile_size);
   Shape iteration_shape = keys_shape;
 
   // We iterate through the element pairs that should be compared.
-  uint64_t num_iterations_in_sort_dim = rounded_bound / 2;
+  uint64_t num_iterations_in_sort_dim =
+      CeilOfRatio(rounded_bound, kUnrollFactor);
   iteration_shape.set_dimensions(dimension_to_sort, num_iterations_in_sort_dim);
   uint64_t num_iterations = ShapeUtil::ElementsIn(iteration_shape);
 
-  // For correctness reasons we need exactly 'kTileSize' / 2 many
+  // For correctness reasons we need exactly `tile_size` / `kUnrollFactor` many
   // threads per block. Each thread is responsible for copying
-  // exactly two adjacent elements into shared memory, and then does
-  // a comparison of two possibly different elements taken from
-  // shared memory.
-  const uint64_t kThreadsPerBlock = kTileSize / 2;
-
-  // Check whether we should use any tiling. We might not be able to
-  // use it if we have not enough threads, or not enough shared
+  // exactly `kUnrollFactor` many adjacent elements into shared memory, and then
+  // does `kUnrollFactor` / 2 many comparisons of two elements taken from shared
   // memory.
-  int64_t total_shared_memory_needed = 0;
-  for (int64_t i = 0; i < sort->operand_count(); ++i) {
-    total_shared_memory_needed +=
-        kTileSize * ShapeUtil::ByteSizeOfPrimitiveType(
-                        sort->operand(i)->shape().element_type());
-  }
-  bool no_tiling =
-      kThreadsPerBlock >
-          ir_emitter_context_->gpu_device_info().threads_per_block_limit() ||
-      total_shared_memory_needed >
-          ir_emitter_context_->gpu_device_info().shared_memory_per_block();
-  VLOG(2) << absl::StreamFormat(
-      "%s %s use tiling. No tiling if any of the following is "
-      "true: "
-      "kThreadsPerBlock=%d > threads_per_block_limit=%d, "
-      "total_shared_memory_needed=%d > shared_memory_per_block=%d",
-      op_name, (no_tiling ? "won't" : "will"), kThreadsPerBlock,
-      ir_emitter_context_->gpu_device_info().threads_per_block_limit(),
-      total_shared_memory_needed,
-      ir_emitter_context_->gpu_device_info().shared_memory_per_block());
+  const uint64_t kThreadsPerBlock =
+      std::max(uint64_t{1}, tile_size / kUnrollFactor);
 
   uint64_t num_blocks = CeilOfRatio(num_iterations, kThreadsPerBlock);
   LaunchDimensions tiled_launch_dimensions(num_blocks, kThreadsPerBlock);
@@ -1867,7 +1874,7 @@ absl::Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
         launch_dimensions,
         xor_masks.size() > 1 ? num_iterations_in_sort_dim
                              : standard_num_iterations_in_sort_dim,
-        kTileSize,
+        tile_size, kUnrollFactor,
         [&](absl::Span<llvm::Value* const> operands, llvm::Value* output) {
           return CallNestedComputation(&b_, *ir_emitter_context_, *comparator,
                                        operands, output);
@@ -1882,7 +1889,7 @@ absl::Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
       } else {
         xor_mask = 1LL << mask;
       }
-      if (xor_mask >= kTileSize || no_tiling) {
+      if (xor_mask >= tile_size) {
         if (!xor_masks.empty()) {
           TF_RETURN_IF_ERROR(emit_kernel(xor_masks));
           xor_masks.clear();
@@ -2336,7 +2343,9 @@ absl::Status IrEmitterUnnested::EmitCollectiveAsyncDone(
 
   // Can be null if no start thunk was created (e.g. if the start op
   // is degenerate), in which case there's nothing to do here.
-  if (!async_events_it->second) return absl::OkStatus();
+  if (!async_events_it->second) {
+    return absl::OkStatus();
+  }
 
   AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
   if (is_send_recv) {
@@ -2365,7 +2374,9 @@ absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
 
   // Can be null if no start thunk was created (e.g. if the start op is
   // degenerate), in which case there's nothing to do here.
-  if (!async_events_it->second) return absl::OkStatus();
+  if (!async_events_it->second) {
+    return absl::OkStatus();
+  }
 
   AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
   if (is_send_recv) {
@@ -2615,7 +2626,9 @@ absl::Status IrEmitterUnnested::EmitTargetElementLoop(
 static absl::flat_hash_map<std::string, std::string> ConvertFrontendAttributes(
     const FrontendAttributes& attrs) {
   absl::flat_hash_map<std::string, std::string> result;
-  for (auto& [k, v] : attrs.map()) result[k] = v;
+  for (auto& [k, v] : attrs.map()) {
+    result[k] = v;
+  }
   return result;
 }
 
@@ -2792,9 +2805,8 @@ absl::Status IrEmitterUnnested::EmitSendDoneThunk(
   if (!instr->is_host_transfer()) {
     if (IsNvshmemCollective(instr)) {
       return EmitNvshmemAsyncDone(Thunk::kNvshmemSendDone, instr);
-    } else {
-      return EmitCollectiveAsyncDone(Thunk::kSendDone, instr);
     }
+    return EmitCollectiveAsyncDone(Thunk::kSendDone, instr);
   }
 
   if (!instr->channel_id().has_value()) {
@@ -2892,9 +2904,8 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   if (!instr->is_host_transfer()) {
     if (IsNvshmemCollective(instr)) {
       return EmitNvshmemAsyncDone(Thunk::kNvshmemRecvDone, instr);
-    } else {
-      return EmitCollectiveAsyncDone(Thunk::kRecvDone, instr);
     }
+    return EmitCollectiveAsyncDone(Thunk::kRecvDone, instr);
   }
   if (!instr->channel_id().has_value()) {
     return absl::InternalError(
@@ -3203,9 +3214,10 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
 absl::Status IrEmitterUnnested::EmitHloComputation(
     const HloComputation* computation) {
   const HloSchedule& schedule = computation->parent()->schedule();
-  if (!schedule.is_computation_scheduled(computation))
+  if (!schedule.is_computation_scheduled(computation)) {
     return Internal("Sequence not found for computation: %s",
                     computation->name());
+  }
 
   const HloInstructionSequence& sequence = schedule.sequence(computation);
   absl::flat_hash_map<const HloInstruction*, Thunk*> instr_to_thunk;

@@ -408,6 +408,7 @@ cc_library(
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:triton_fusion_analysis",
+        "//xla/service/gpu/model:symbolic_tile_analysis",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
@@ -631,6 +632,10 @@ xla_test(
     deps = [
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -641,6 +646,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:path",
     ],
@@ -648,11 +654,12 @@ xla_test(
 
 xla_test(
     name = "dot_algorithms_test",
-    srcs = if_gpu_is_configured(["dot_algorithms_test.cc"]),
+    srcs = ["dot_algorithms_test.cc"],
     backend_args = if_google(
         {
-            "h100": ["--heap_check="],
+            "b200": ["--heap_check="],
             "a100": ["--heap_check="],
+            "h100": ["--heap_check="],
         },
         {},
     ),
@@ -713,11 +720,12 @@ xla_test(
 # TODO(b/393299275): Remove this target once the legacy emitter is removed.
 xla_test(
     name = "dot_algorithms_legacy_test",
-    srcs = if_gpu_is_configured(["dot_algorithms_legacy_test.cc"]),
+    srcs = ["dot_algorithms_legacy_test.cc"],
     backend_args = if_google(
         {
-            "h100": ["--heap_check="],
+            "b200": ["--heap_check="],
             "a100": ["--heap_check="],
+            "h100": ["--heap_check="],
         },
         {},
     ),

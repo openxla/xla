@@ -505,6 +505,7 @@ xla_cc_test(
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/hash:hash_testing",
@@ -1036,6 +1037,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/utility",
     ],
 )
 
@@ -1205,7 +1207,9 @@ cc_library(
             "//xla/tsl/util:command_line_flags",
             "@com_google_absl//absl/algorithm:container",
             "@com_google_absl//absl/base",
+            "@com_google_absl//absl/base:no_destructor",
             "@com_google_absl//absl/container:flat_hash_map",
+            "@com_google_absl//absl/container:flat_hash_set",
             "@com_google_absl//absl/container:node_hash_map",
             "@com_google_absl//absl/log",
             "@com_google_absl//absl/log:check",

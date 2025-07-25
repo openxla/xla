@@ -91,6 +91,10 @@ cc_library(
     name = "abstract_tracked_device_buffer",
     srcs = ["abstract_tracked_device_buffer.cc"],
     hdrs = ["abstract_tracked_device_buffer.h"],
+    visibility = [
+        "//third_party/torch_tpu/pjrt:__pkg__",
+        "//xla:internal",
+    ],
     deps = [
         ":device_event",
         ":pjrt_client",
@@ -120,6 +124,10 @@ cc_library(
         "common_pjrt_client.h",
         "host_to_device_transfer_manager.h",
     ],
+    visibility = internal_visibility([
+        ":friends",
+        "//third_party/torch_tpu:__pkg__",
+    ]),
     deps = [
         ":abstract_tracked_device_buffer",
         ":async_work_runner",
@@ -309,6 +317,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/base",
@@ -374,6 +383,7 @@ cc_library(
     deps = [
         ":pjrt_common",
         ":pjrt_layout",
+        "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -725,8 +735,8 @@ cc_library(
     hdrs = ["mlir_to_hlo.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
-        "//xla:debug_options_flags",
         "//xla:util",
+        "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/translate:stablehlo",
         "//xla/mlir/utils:error_util",
@@ -737,6 +747,9 @@ cc_library(
         "//xla/service/spmd/shardy:utils",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -750,6 +763,7 @@ cc_library(
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
+        "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
         "@shardy//shardy/dialect/sdy/ir:dialect",
@@ -761,7 +775,6 @@ cc_library(
         "@stablehlo//:stablehlo_portable_api",
         "@stablehlo//:stablehlo_serialization",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

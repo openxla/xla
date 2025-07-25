@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -101,6 +100,9 @@ absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
     *kernel_proto->mutable_cluster_dim() = cluster_dim_->ToProto();
   }
   kernel_proto->set_shmem_bytes(shmem_bytes_);
+  if (tma_metadata_.has_value()) {
+    *kernel_proto->mutable_tma_metadata() = tma_metadata_->ToProto();
+  }
   return proto;
 }
 
@@ -131,9 +133,16 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
     arguments.push_back(emitters::KernelArgument{Shape{}, slice, written});
   }
 
-  return std::make_unique<KernelThunk>(thunk_info, proto.kernel_name(),
-                                       arguments, launch_dimensions,
-                                       cluster_dim, proto.shmem_bytes());
+  std::optional<stream_executor::gpu::TmaMetadata> tma_metadata;
+  if (proto.has_tma_metadata()) {
+    TF_ASSIGN_OR_RETURN(
+        tma_metadata,
+        stream_executor::gpu::TmaMetadata::FromProto(proto.tma_metadata()));
+  }
+
+  return std::make_unique<KernelThunk>(
+      thunk_info, proto.kernel_name(), arguments, launch_dimensions,
+      cluster_dim, proto.shmem_bytes(), tma_metadata);
 }
 
 absl::Status KernelThunk::Initialize(const InitializeParams& params) {
@@ -212,7 +221,8 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       kernel_args;
   stream_executor::gpu::TmaMetadata tma_metadata =
       tma_metadata_.value_or(stream_executor::gpu::TmaMetadata{});
-  for (const auto& [idx, arg] : llvm::enumerate(args_)) {
+  for (int idx = 0; idx < args_.size(); ++idx) {
+    const BufferAllocation::Slice& arg = args_[idx];
     se::DeviceMemoryBase buf = params.buffer_allocations->GetDeviceAddress(arg);
     VLOG(3) << "  Arg: alloc #" << arg.index() << ", offset: " << arg.offset()
             << ": " << buf.opaque() << " (" << buf.size() << "B)";
@@ -223,7 +233,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       stream_executor::gpu::TmaDescriptor tma_desc = it->second;
       TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
                           executor->CreateTensorMap(tma_desc, buf.opaque()));
-      VLOG(3) << "  Using TensorMap for arg #" << arg.index() << ": "
+      VLOG(3) << "  Using TensorMap for arg #" << idx << ": "
               << tma_desc.ToString();
       kernel_args.push_back(std::move(tensor_map));
     } else {

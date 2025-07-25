@@ -1285,6 +1285,20 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  for (const auto& device : client->devices()) {
+    auto value = static_cast<PjRtStreamExecutorDevice*>(device)
+                     ->description()
+                     .Attributes()
+                     .find("shared_memory_per_block_optin")
+                     ->second;
+    int64_t shared_memory_per_block_optin = std::get<int64_t>(value);
+    EXPECT_GT(shared_memory_per_block_optin, 0);
+  }
+}
+
 TEST(StreamExecutorGpuClientTest, GetTopologyDescriptionWithGlobalDevicesTest) {
   const int num_nodes = 4;
   GpuClientOptions options;
@@ -2630,7 +2644,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
     TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation,
                                             /*use_tuple_args=*/false,
                                             /*return_tuple=*/false,
-                                            /*use_shardy=*/false));
+                                            /*exec_build_options=*/nullptr));
     TF_ASSIGN_OR_RETURN(executable,
                         client->CompileAndLoad(computation, compile_options));
   } else {

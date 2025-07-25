@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/iterator_util.h"
@@ -843,7 +844,7 @@ class HloModule {
         std::unique_ptr<HloModule> recovery_module);
   };
 
-  const OriginalValueRecoveryTable& original_value_recovery_table() {
+  const OriginalValueRecoveryTable& original_value_recovery_table() const {
     return original_value_recovery_table_;
   }
   OriginalValueRecoveryTable& mutable_original_value_recovery_table() {

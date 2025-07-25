@@ -33,6 +33,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:matmul_indexing_utils",
         "//xla/service/gpu/model:constraint_expression",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -83,12 +84,14 @@ cc_library(
     hdrs = ["tiling_space.h"],
     deps = [
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
     ],
 )

@@ -135,15 +135,40 @@ def find_sycl_include_path(repository_ctx, sycl_config):
         clang_install_dir = repository_ctx.execute([clang_path, "-print-resource-dir"])
         clang_install_dir_opt = "--sysroot=" + str(repository_ctx.path(clang_install_dir.stdout.strip()).dirname)
         cmd_out = repository_ctx.execute([
+<<<<<<< HEAD
             bin_path, icpx_extra, clang_install_dir_opt, "-xc++", "-E", "-v", "/dev/null", "-o", "/dev/null"
+=======
+            bin_path,
+            icpx_extra,
+            clang_install_dir_opt,
+            "-xc++",
+            "-E",
+            "-v",
+            "/dev/null",
+            "-o",
+            "/dev/null",
+>>>>>>> upstream/main
         ])
     else:
         gcc_path = repository_ctx.which("gcc")
         gcc_install_dir = repository_ctx.execute([gcc_path, "-print-libgcc-file-name"])
         gcc_install_dir_opt = "--gcc-install-dir=" + str(repository_ctx.path(gcc_install_dir.stdout.strip()).dirname)
         cmd_out = repository_ctx.execute([
+<<<<<<< HEAD
             bin_path, icpx_extra, gcc_install_dir_opt, "-xc++", "-E", "-v", "/dev/null", "-o", "/dev/null"
 	])
+=======
+            bin_path,
+            icpx_extra,
+            gcc_install_dir_opt,
+            "-xc++",
+            "-E",
+            "-v",
+            "/dev/null",
+            "-o",
+            "/dev/null",
+        ])
+>>>>>>> upstream/main
 
     outlist = cmd_out.stderr.split("\n")
     real_base_path = str(repository_ctx.path(base_path).realpath).strip()
@@ -443,6 +468,7 @@ def _create_local_sycl_repository(repository_ctx):
         "crosstool:BUILD.sycl",
         "crosstool:sycl_cc_toolchain_config.bzl",
         "crosstool:clang/bin/crosstool_wrapper_driver_sycl",
+        "crosstool:clang/bin/ar_driver_sycl",
     ]}
 
     bash_bin = get_bash_bin(repository_ctx)
@@ -565,6 +591,7 @@ def _create_local_sycl_repository(repository_ctx):
         tpl_paths["sycl:BUILD"],
         repository_dict,
     )
+
     # Set up crosstool/
     is_icpx_and_clang = _use_icpx_and_clang(repository_ctx)
     cc = find_cc(repository_ctx)
@@ -583,6 +610,7 @@ def _create_local_sycl_repository(repository_ctx):
         sycl_defines["%{extra_no_canonical_prefixes_flags}"] = "\"-fno-canonical-system-headers\""
         sycl_defines["%{host_compiler_prefix}"] = gcc_host_compiler_prefix
 
+    sycl_defines["%{ar_path}"] = "clang/bin/ar_driver_sycl"
     sycl_defines["%{cpu_compiler}"] = str(cc)
     sycl_defines["%{linker_bin_path}"] = "/usr/bin"
 
@@ -617,6 +645,11 @@ def _create_local_sycl_repository(repository_ctx):
     repository_ctx.template(
         "crosstool/clang/bin/crosstool_wrapper_driver_sycl",
         tpl_paths["crosstool:clang/bin/crosstool_wrapper_driver_sycl"],
+        sycl_defines,
+    )
+    repository_ctx.template(
+        "crosstool/clang/bin/ar_driver_sycl",
+        tpl_paths["crosstool:clang/bin/ar_driver_sycl"],
         sycl_defines,
     )
 
