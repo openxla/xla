@@ -57,7 +57,7 @@ TEST_F(MemcopyAsyncWrapperTest, SimpleSliceIsWrapped) {
   absl::StatusOr<bool> filecheck_result = RunFileCheck(module->ToString({}), R"(
   // CHECK: ENTRY %main {{.*}}
   // CHECK: %[[PARAM:.*]] = f32[200]{0} parameter(0)
-  // CHECK: %fusion-start = {{.*}} fusion-start(%[[PARAM]]), kind=kLoop, calls=%dynamic_slice.clone
+  // CHECK: %fusion-start = {{.*}} fusion-start(%[[PARAM]]), async_execution_thread="parallel", kind=kLoop, calls=%dynamic_slice.clone
   // CHECK: ROOT %fusion-done = f32[100]{0} fusion-done(%fusion-start)
   )");
   TF_ASSERT_OK(filecheck_result.status());
