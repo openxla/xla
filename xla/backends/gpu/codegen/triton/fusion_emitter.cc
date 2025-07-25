@@ -717,13 +717,6 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values);
 
-bool UseGenericTritonEmitterForGemms(const HloInstruction* hlo) {
-  return hlo->GetModule()
-      ->config()
-      .debug_options()
-      .xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms();
-}
-
 // Returns the number of iterations of the loop over the contracting
 // dimension of matrix multiplication.
 absl::StatusOr<int64_t> GetDotLoopIterationCount(
@@ -1454,21 +1447,8 @@ absl::StatusOr<ScalarOrTensor> EmitScope(
 }
 }  // namespace
 
-namespace {
+namespace ir_emitter_triton_internal {
 
-using ::xla::gpu::ir_emitter_triton_internal::DumpTritonIR;
-
-// Given a tiling specification for a fusion and an annotated fusion, derives a
-// tiling for the annotated fusion.
-//
-// Note that the tiling extracted here is voluntarily not checked against the
-// specification, which means that it could be invalid. This should only be the
-// case, though, if this logic gets stale, or if the fusion does not contain
-// the required annotations. Checking constraints is not cheap, so we left it up
-// to the caller to decide when to check the constraints.
-//
-// TODO(b/421837868): this belongs near/in `BlockLevelParameters`, but we start
-// with this here in order to allow an incremental replacement.
 absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
     const HloFusionInstruction* fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis,
@@ -1521,6 +1501,12 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
   return Tiling(std::move(tile_mapping));
 }
 
+}  // namespace ir_emitter_triton_internal
+
+namespace {
+
+using ::xla::gpu::ir_emitter_triton_internal::DumpTritonIR;
+
 // Generate Triton IR inside 'fn', using the given block_level_parameters.
 // TODO(b/421837868): `BlockLevelParameters` should hold all the necessary
 // tiling information.
@@ -1549,9 +1535,10 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
 
   // TODO(b/421837868): unify the logic to extract tiling parameters with
   // `BlockLevelParameters`.
-  TF_ASSIGN_OR_RETURN(Tiling tiling,
-                      TilingFromAnnotatedFusion(fusion, symbolic_tile_analysis,
-                                                block_level_parameters));
+  TF_ASSIGN_OR_RETURN(
+      Tiling tiling,
+      ir_emitter_triton_internal::TilingFromAnnotatedFusion(
+          fusion, symbolic_tile_analysis, block_level_parameters));
 
   // TODO(b/372454662): Decide which root to use. Currently, we only support
   // "simple" multi-output fusions that have just one root without users. This
@@ -1685,7 +1672,7 @@ absl::Status CreateInternalError(absl::string_view message,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void AppendFuncArgType(absl::Span<const int64_t> dims,
                        absl::string_view fusion_kind, Type ir_type,
                        SmallVector<Type>& fn_arg_types) {
@@ -1701,7 +1688,7 @@ void AppendFuncArgType(absl::Span<const int64_t> dims,
 
 // Only needed for the new emitter since we are using func.func instead of
 // tt.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void AppendFuncResultType(absl::string_view fusion_kind,
                           absl::Span<const int64_t> dims, Type ir_type,
                           SmallVector<Type>& fn_result_types) {
@@ -1713,7 +1700,7 @@ void AppendFuncResultType(absl::string_view fusion_kind,
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
                                        absl::string_view fn_name,
                                        absl::string_view fusion_kind,
@@ -1734,7 +1721,7 @@ mlir::FunctionOpInterface CreateFuncOp(EmitterLocOpBuilder& b,
 }
 
 // Legacy emitter works with tt.return. New emitter works with func.return.
-// TODO(393299275): Remove legacy optionality once migration is complete.
+// TODO(b/393299275): Remove legacy optionality once migration is complete.
 void EmitReturnOp(EmitterLocOpBuilder& b, absl::string_view fusion_kind,
                   SmallVector<Value> insert_results) {
   if (fusion_kind == kTritonGemmFusionKind) {
@@ -1763,10 +1750,10 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
             idx, "tt.tma_descriptor")) {
       TF_ASSIGN_OR_RETURN(
           auto tma_desc,
-          Create2DTmaDescriptor(attr.getGlobalShape(), attr.getTileShape(),
-                                attr.getTileStrides(), attr.getLayout(),
-                                attr.getElementByteSize(),
-                                attr.getSwizzleMode().getValue()));
+          CreateTmaDescriptor(attr.getGlobalShape(), attr.getTileShape(),
+                              attr.getTileStrides(), attr.getLayout(),
+                              attr.getElementByteSize(),
+                              attr.getSwizzleMode().getValue()));
       tma_metadata.arg_index_to_tma_info.insert({idx, tma_desc});
     }
   }
@@ -1837,12 +1824,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
 
   SmallVector<Value> insert_results;
   if (fusion_kind == kTritonGemmFusionKind) {
-    // If the generic Triton emitter is enabled, we should never go through the
-    // legacy MatMul emitter.
-    if (UseGenericTritonEmitterForGemms(fusion)) {
-      return absl::FailedPreconditionError(
-          "The generic Triton emitter is enabled, but the legacy MatMul "
-          "emitter is being used.");
+    if (absl::c_contains(
+            fusion->GetModule()
+                ->config()
+                .debug_options()
+                .xla_gpu_unsupported_generic_triton_emitter_features(),
+            DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM)) {
+      return Internal("Legacy GEMM emitter is disabled.");
     }
     TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
                                   block_level_parameters));
@@ -1997,8 +1985,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                             /*shouldPrintAfterPass=*/print_always,
                             /*printModuleScope=*/true,
                             /*printAfterOnlyOnChange=*/false,
-                            /*printAfterOnlyOnFailure=*/true, *log_stream,
-                            /*opPrintingFlags=*/{});
+                            /*printAfterOnlyOnFailure=*/true, *log_stream);
       }
     } else {
       LOG(ERROR)
@@ -2008,9 +1995,12 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
   }
 
+  if (is_xla_fusion) {
+    pm.addPass(mlir::triton::xla::CreateInt4ToPackedInt4RewritePass());
+  }
+
   pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass(
-      device_info,
-      hlo_config.debug_options().xla_gpu_experimental_enable_triton_tma()));
+      device_info, block_level_parameters.is_tma_allowed));
 
   // Lower affine expressions into arithmetic ops.
   pm.addPass(mlir::createLowerAffinePass());
@@ -2031,7 +2021,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
   if (!CreateTritonPipeline(&pm, arch_name, num_warps, num_ctas, num_stages,
-                            cluster_info, is_xla_fusion)
+                            cluster_info)
            .ok()) {
     return Internal("Failed to create Triton pipeline.");
   }

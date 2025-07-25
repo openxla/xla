@@ -15,10 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_client.h"
 
-#include <tuple>
-
-#define EIGEN_USE_THREADS
-
 #include <algorithm>
 #include <cfenv>  // NOLINT
 #include <cstddef>
@@ -29,6 +25,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -46,7 +43,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/array.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
@@ -56,6 +52,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_executor.h"
+#include "xla/backends/cpu/runtime/xfeed_manager.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/debug_options_flags.h"
@@ -69,6 +66,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/cpu/abstract_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_async_execution_tracker.h"
 #include "xla/pjrt/cpu/cpu_device.h"
@@ -103,7 +101,6 @@ limitations under the License.
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
-#include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/dump.h"
@@ -136,25 +133,11 @@ limitations under the License.
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
 
+#define EIGEN_USE_THREADS
+#include "unsupported/Eigen/CXX11/Tensor"
+
 namespace xla {
 namespace {
-
-// Converts the shape used to represent the host buffer to the shape used to
-// represent the on-device buffer.
-Shape HostShapeToOnDeviceShape(const Shape& shape) {
-  // AbstractCpuBuffer packs sub-byte non-pred types. The on-device shape
-  // should reflect this so that our memory allocation and overflow checks are
-  // correct.
-  if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
-    Shape on_device_shape = shape;
-    on_device_shape.mutable_layout()->set_element_size_in_bits(
-        primitive_util::BitWidth(shape.element_type()));
-    return on_device_shape;
-  }
-
-  // Otherwise, return the shape as-is.
-  return shape;
-}
 
 void EnqueueWork(tsl::thread::ThreadPool* pool,
                  absl::AnyInvocable<void() &&> callee) {
@@ -318,17 +301,17 @@ PjRtCpuClient::PjRtCpuClient(
       memory_spaces_.push_back(cpu_device_memory_space.get());
       owned_memory_spaces_.push_back(std::move(cpu_device_memory_space));
 
-      auto unpinned_memory_space =
-          std::make_unique<UnpinnedHostMemorySpace>(id * 3 + 1, device);
-      cpu_device->AttachMemorySpace(unpinned_memory_space.get());
-      memory_spaces_.push_back(unpinned_memory_space.get());
-      owned_memory_spaces_.push_back(std::move(unpinned_memory_space));
-
       auto pinned_memory_space =
-          std::make_unique<PinnedHostMemorySpace>(id * 3 + 2, device);
+          std::make_unique<PinnedHostMemorySpace>(id * 3 + 1, device);
       cpu_device->AttachMemorySpace(pinned_memory_space.get());
       memory_spaces_.push_back(pinned_memory_space.get());
       owned_memory_spaces_.push_back(std::move(pinned_memory_space));
+
+      auto unpinned_memory_space =
+          std::make_unique<UnpinnedHostMemorySpace>(id * 3 + 2, device);
+      cpu_device->AttachMemorySpace(unpinned_memory_space.get());
+      memory_spaces_.push_back(unpinned_memory_space.get());
+      owned_memory_spaces_.push_back(std::move(unpinned_memory_space));
     }
   }
   VLOG(1) << "PjRtCpuClient created.";
@@ -501,13 +484,6 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
   auto cpu_executable_ptr =
       tsl::down_cast<cpu::CpuExecutable*>(executable.get());
 
-  // `buffer_table[result_slice.index()]` points to result buffer:
-  // If output is a tuple, it points to the buffer index table.
-  // If output is a non-tuple, it points to the buffer itself.
-  TF_ASSIGN_OR_RETURN(
-      const BufferAllocation::Slice result_slice,
-      cpu_executable_ptr->buffer_assignment().GetUniqueTopLevelOutputSlice());
-
   // `result_buffer_indices` has the buffer allocation indices that make up the
   // output buffer (could be tuple).
   TF_ASSIGN_OR_RETURN(
@@ -548,8 +524,7 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
   auto cpu_executable = std::make_unique<PjRtCpuExecutable>(
       num_replicas, num_partitions, std::move(device_assignment),
       compile_options.parameter_is_tupled_arguments, std::move(input_options),
-      std::move(executable), result_slice.index(),
-      std::move(result_buffer_indices),
+      std::move(executable), std::move(result_buffer_indices),
       std::move(addressable_device_logical_ids), std::move(addressable_devices),
       this);
   TF_RETURN_IF_ERROR(cpu_executable->SetUpDonation(
@@ -664,12 +639,11 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCpuClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
   XlaComputation xla_computation;
-  const ExecutableBuildOptions& exec_build_options =
-      options.executable_build_options;
+  ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false, exec_build_options.use_shardy_partitioner()));
+      /*return_tuple=*/false, &exec_build_options));
 
   if (options.argument_layouts) {
     return CompileAndLoad(xla_computation, options);
@@ -862,19 +836,6 @@ PjRtCpuClient::CompileInternal(
   auto cpu_executable_ptr =
       tsl::down_cast<cpu::CpuExecutable*>(cpu_executable.get());
 
-  if (cpu_executable_ptr->has_compute_function()) {
-    LOG(INFO) << "DEPRECATED: Non thunk XLA:CPU runtime will be removed soon. "
-                 "Please use the new thunk based runtime by setting the flag "
-                 "--xla_cpu_use_thunk_runtime to true.";
-  }
-
-  // `buffer_table[result_slice.index()]` points to result buffer:
-  // If output is a tuple, it points to the buffer index table.
-  // If output is a non-tuple, it points to the buffer itself.
-  TF_ASSIGN_OR_RETURN(
-      const BufferAllocation::Slice result_slice,
-      cpu_executable_ptr->buffer_assignment().GetUniqueTopLevelOutputSlice());
-
   // `result_buffer_indices` has the buffer allocation indices that make up the
   // output buffer (could be tuple).
   TF_ASSIGN_OR_RETURN(
@@ -885,8 +846,7 @@ PjRtCpuClient::CompileInternal(
   auto executable = std::make_unique<PjRtCpuExecutable>(
       num_replicas, num_partitions, std::move(device_assignment),
       options.parameter_is_tupled_arguments, std::move(input_options),
-      std::move(cpu_executable), result_slice.index(),
-      std::move(result_buffer_indices),
+      std::move(cpu_executable), std::move(result_buffer_indices),
       std::move(addressable_device_logical_ids), std::move(addressable_devices),
       this);
   TF_RETURN_IF_ERROR(
@@ -920,14 +880,13 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
   // regardless of whether the definition event is an error.
   TF_ASSIGN_OR_RETURN(auto buffer,
                       CpuDeviceMemory::Allocate(ShapeUtil::ByteSizeOf(shape)));
-  return std::make_unique<PjRtCpuBuffer>(
+  return std::make_unique<CommonPjRtBufferImpl>(
       shape,
       std::make_unique<TrackedCpuDeviceBuffer>(
           /*owns_buffers=*/true, std::move(buffer),
           absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4>{
               tsl::AsyncValueRef<CpuEvent>(
                   tsl::MakeErrorAsyncValueRef(std::move(error)))}),
-      this, tsl::down_cast<PjRtCpuDevice*>(device),
       *device->default_memory_space());
 }
 
@@ -970,6 +929,23 @@ absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> PjRtCpuClient::LinearizeInto(
       ->CopyFromLiteral(literal, layout, async_work_runner());
 }
 
+absl::StatusOr<CompiledMemoryStats> PjRtCpuExecutable::GetCompiledMemoryStats()
+    const {
+  auto cpu_executable_ptr =
+      tsl::down_cast<cpu::CpuExecutable*>(cpu_executable_.get());
+  const auto& buffer_assignment = cpu_executable_ptr->buffer_assignment();
+  auto proto = buffer_assignment.ToProto();
+
+  CompiledMemoryStats memory_stats = CompiledMemoryStats();
+  memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
+  memory_stats.serialized_buffer_assignment = proto.SerializeAsString();
+  memory_stats.PopulateBufferStatsFromAllocations(
+      cpu_executable_->GetAllocations());
+  TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(proto));
+  memory_stats.peak_memory_in_bytes = peak_memory;
+  return memory_stats;
+}
+
 absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
                          tsl::RCReference<PjRtDeviceEvent>>>
 PjRtCpuClient::CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
@@ -993,14 +969,12 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
     definition_events.push_back(
         tsl::down_cast<CpuTrackedDeviceEvent*>(ev.get())->event());
   }
-  return std::unique_ptr<PjRtBuffer>(std::make_unique<PjRtCpuBuffer>(
+  return std::unique_ptr<PjRtBuffer>(std::make_unique<CommonPjRtBufferImpl>(
       on_device_shape,
       std::make_unique<TrackedCpuDeviceBuffer>(
           /*owns_buffers=*/raw_buffer_is_mutable,
           tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())->buffer(),
           std::move(definition_events)),
-      this,
-      tsl::down_cast<PjRtCpuDevice*>(raw_buffer->memory_space()->devices()[0]),
       raw_buffer->memory_space()));
 }
 
@@ -1025,15 +999,6 @@ absl::StatusOr<xla::Shape> PjRtCpuClient::MakeDefaultShapeForMemorySpace(
   return MakeDefaultCpuBufferShape(std::move(shape), layout);
 }
 
-PjRtCpuBuffer::PjRtCpuBuffer(
-    Shape on_device_shape,
-    std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-    PjRtCpuClient* client, PjRtCpuDevice* device, PjRtMemorySpace* memory_space)
-    : AbstractCpuBuffer(std::move(on_device_shape),
-                        std::move(tracked_device_buffer), memory_space),
-      client_(client),
-      device_(device) {}
-
 static std::vector<tsl::RCReference<tsl::AsyncValue>> CopyAsyncValues(
     absl::Span<const tsl::RCReference<tsl::AsyncValue>> events) {
   std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
@@ -1044,56 +1009,11 @@ static std::vector<tsl::RCReference<tsl::AsyncValue>> CopyAsyncValues(
   return avs;
 }
 
-PjRtFuture<> PjRtCpuBuffer::CopyRawToHost(void* dst, int64_t offset,
-                                          int64_t transfer_size) {
-  return CopyRawToHostHelper(dst, offset, transfer_size,
-                             client()->async_work_runner());
-}
-
-PjRtFuture<> PjRtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
-  return ToLiteralHelper(literal, client()->async_work_runner());
-}
-
-PjRtFuture<> PjRtCpuBuffer::LazyToLiteral(
-    absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator) {
-  auto buffer = std::move(generator)();
-  if (!buffer.ok()) {
-    return PjRtFuture<>(buffer.status());
-  }
-  return ToLiteralHelper(buffer.value(), client()->async_work_runner());
-}
-
-absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuBuffer::CopyToMemorySpace(
-    PjRtMemorySpace* dst_memory_space) {
-  CHECK_EQ(dst_memory_space->devices().size(), 1);
-  PjRtDevice* dst_device = dst_memory_space->devices().front();
-  tsl::profiler::TraceMe traceme("PjRtCpuBuffer::CopyToDevice");
-
-  // Copying across PjRtClients involves a copy through the host.
-  if (dst_device->client() != client_) {
-    return CopyToDeviceAcrossClients(dst_device);
-  }
-
-  if (!dst_device->IsAddressable()) {
-    return InvalidArgument("Cannot copy array to non-addressable device %s",
-                           dst_device->DebugString());
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-      CopyToDeviceHelper(client()->async_work_runner()));
-
-  return std::unique_ptr<PjRtBuffer>(std::make_unique<PjRtCpuBuffer>(
-      on_device_shape_, std::move(tracked_device_buffer), client(),
-      tsl::down_cast<PjRtCpuDevice*>(dst_device), dst_memory_space));
-}
-
 PjRtCpuExecutable::PjRtCpuExecutable(
     int num_replicas, int num_partitions,
     std::shared_ptr<DeviceAssignment> device_assignment,
     bool parameter_is_tupled_arguments, CompileOptions compile_options,
     std::unique_ptr<Executable> cpu_executable,
-    BufferAllocation::Index result_buffer_index,
     absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
     std::vector<LogicalDeviceIds> addressable_device_logical_ids,
     std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client)
@@ -1104,7 +1024,6 @@ PjRtCpuExecutable::PjRtCpuExecutable(
       parameter_is_tupled_arguments_(parameter_is_tupled_arguments),
       compile_options_(std::move(compile_options)),
       cpu_executable_(std::move(cpu_executable)),
-      result_buffer_index_(result_buffer_index),
       result_buffer_indices_(std::move(result_buffer_indices)),
       addressable_device_logical_ids_(
           std::move(addressable_device_logical_ids)),
@@ -1153,7 +1072,7 @@ PjRtCpuExecutable::PjRtCpuExecutable(
 
 void PjRtCpuExecutable::Delete() {}
 
-bool PjRtCpuExecutable::IsDeleted() { return false; }
+bool PjRtCpuExecutable::IsDeleted() const { return false; }
 
 absl::Status PjRtCpuExecutable::SetUpDonation(bool tuple_inputs) {
   TF_ASSIGN_OR_RETURN(parameters_that_must_be_donated_,
@@ -1361,7 +1280,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options,
     PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
-    bool fill_future, PjRtCpuDevice* device) {
+    bool fill_future, PjRtCpuDevice* device) const {
   tsl::profiler::TraceMe traceme("PjRtCpuExecutable::ExecuteHelper");
 
   std::shared_ptr<DeviceAssignment> device_assignment;
@@ -1402,8 +1321,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
   // there was an error.
   auto execute_event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
   MarkEventReadyOnExit ready_on_exit(execute_event);
+  auto execute_usage_event = tsl::MakeRef<CpuTrackedDeviceEvent>(execute_event);
 
-  absl::InlinedVector<PjRtCpuBuffer::ScopedHold, 4> donation_transactions;
+  absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4> donation_transactions;
 
   absl::InlinedVector<std::pair<bool, TrackedCpuDeviceBuffer*>, 4>
       tracked_buffers;
@@ -1423,7 +1343,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
   donation_clashes.reserve(argument_handles.size());
   for (int i = 0; i < argument_handles.size(); ++i) {
     PjRtBuffer* handle = argument_handles[i];
-    auto* cpu_buffer = tsl::down_cast<PjRtCpuBuffer*>(handle);
+    auto* cpu_buffer = tsl::down_cast<CommonPjRtBuffer*>(handle);
     if (cpu_buffer->device() != device) {
       return InvalidArgument(
           "Buffer passed to Execute() as argument %d to replica %d is on "
@@ -1440,33 +1360,42 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           cpu_buffer, donation_clashes, must_donate, i, replica, partition));
       if (must_donate) {
         ++donate_it;
-        PjRtCpuBuffer::ScopedHold donation_transaction =
-            cpu_buffer->AcquireDonation();
+        CommonPjRtBuffer::ScopedHold donation_transaction =
+            cpu_buffer->GetBufferWithHold(
+                CommonPjRtBuffer::ScopedHold::kDonation);
         // On CPU, we allow donation to succeed by introducing a copy. This was
         // added when enabling buffer donation on CPU since it turned out that a
         // number of users were holding external references to buffers that were
         // supposed to be donated. We may wish to tighten those semantics in the
         // future.
         if (donation_transaction.ok()) {
+          tracked_buffer = tensorflow::down_cast<TrackedCpuDeviceBuffer*>(
+              donation_transaction.buffer());
           // After acquiring the buffer for donation, we retrieve the dependent
           // usage events. Note that we don't need any locking here as
           // AcquireDonation() is supposed to synchronize with other usages.
-          for (const auto& ev : donation_transaction->UsageEvents()) {
+          for (const auto& ev : tracked_buffer->UsageEvents()) {
             if (!ev.IsAvailable()) {
               input_deps.push_back(ev.CopyRCRef());
             }
           }
-          tracked_buffer = donation_transaction.buffer();
           tracked_buffers.emplace_back(/*can_donate=*/true, tracked_buffer);
           donation_transactions.push_back(std::move(donation_transaction));
           return absl::OkStatus();
         }
       }
-      tracked_buffer = cpu_buffer->AcquireUsage(execute_event);
-      if (!tracked_buffer)
-        return InvalidArgument(
-            "Invalid buffer passed: buffer has been deleted or donated.");
-      tracked_buffers.emplace_back(/*can_donate=*/false, tracked_buffer);
+      {
+        CommonPjRtBuffer::ScopedHold usage_transaction =
+            cpu_buffer->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+        if (!usage_transaction.ok()) {
+          return InvalidArgument(
+              "Invalid buffer passed: buffer has been deleted or donated.");
+        }
+        tracked_buffer = tensorflow::down_cast<TrackedCpuDeviceBuffer*>(
+            usage_transaction.buffer());
+        usage_transaction.ConvertUsageHold(execute_usage_event);
+        tracked_buffers.emplace_back(/*can_donate=*/false, tracked_buffer);
+      }
       return absl::OkStatus();
     };
     TF_RETURN_IF_ERROR(get_buffer(i));
@@ -1572,7 +1501,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
   } else {
     // This is a non-parallel computation. Add the last enqueue event as a
     // dependency with any error cleared.
-    auto last_enqueue_event = client_->GetLastEnqueueEvent();
+    auto last_enqueue_event = device->stream_event_map()->GetLastEnqueueEvent(
+        options.execution_stream_id);
     if (!last_enqueue_event.IsAvailable()) {
       auto last_enqueue_done_event =
           tsl::MakeUnconstructedAsyncValueRef<CpuEvent>();
@@ -1606,31 +1536,20 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     tsl::port::ScopedFlushDenormal flush;
     tsl::port::ScopedSetRound round(FE_TONEAREST);
 
-    // Execution status for XLA:CPU "classic" runtime or thunks.
-    XlaCustomCallStatus compute_function_status;
+    // Execution status for XLA:CPU thunk runtime.
     tsl::AsyncValueRef<cpu::Thunk::ExecuteEvent> thunks_execute_event;
 
     // Immediately allocate memory and prepare for computation.
     buffer_alloc.Allocate();
     buffer_alloc_and_copy.AllocateAndCopy();
-    std::vector<void*> buffer_pointers;
-    buffer_pointers.reserve(buffer_table.size());
     for (const auto& buffer_info : buffer_table) {
       CHECK(buffer_info.buffer.IsAvailable());
       if (buffer_info.buffer.IsError()) {
         return buffer_info.buffer.GetError();
       }
-      buffer_pointers.push_back(buffer_info.buffer->untyped_data());
     }
-    void* result_buffer = buffer_pointers[result_buffer_index_];
 
-    if (cpu_executable->has_compute_function()) {
-      // Call jit-compiled function implementing XLA executable.
-      cpu_executable->compute_function()(result_buffer, &run_options, nullptr,
-                                         buffer_pointers.data(),
-                                         &compute_function_status, nullptr);
-
-    } else if (cpu_executable->has_thunks()) {
+    if (cpu_executable->has_thunks()) {
       // Call interpreted thunk sequence implementing XLA executable.
       absl::InlinedVector<MaybeOwningDeviceMemory, 8> buffer_device_mem;
       buffer_device_mem.reserve(buffer_table.size());
@@ -1656,7 +1575,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
       cpu::Thunk::ExecuteParams execute_params = {
           cpu_executable->function_library(),
           &allocations,
-          cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
+          cpu::GetXfeedManager(run_options.device_ordinal()),
           run_options.intra_op_thread_pool(),
           &task_runner,
           &collective_params,
@@ -1669,20 +1588,14 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
       tsl::BlockUntilReady(thunks_execute_event);
 
     } else {
-      return Internal("CpuExecutable has no compute function or thunks.");
+      return Internal("CpuExecutable has no thunks.");
     }
 
     for (auto& donation_transaction : donation_transactions) {
       std::move(donation_transaction).ConfirmDonation();
     }
 
-    // Forward errors (if any) after executing compute function or thunks.
-    if (cpu_executable->has_compute_function()) {
-      if (auto error_message =
-              xla::CustomCallStatusGetMessage(&compute_function_status)) {
-        return Internal("Generated function failed: %s", *error_message);
-      }
-    } else if (thunks_execute_event.IsError()) {
+    if (thunks_execute_event.IsError()) {
       return thunks_execute_event.GetError();
     }
 
@@ -1700,7 +1613,14 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     } else {
       // This is a non-parallel computation. Set the execute event as the new
       // last enqueue event.
-      client_->SetLastEnqueueEvent(execute_event.CopyRef());
+      auto* stream_event_map = device->stream_event_map();
+      stream_event_map->SetLastEnqueueEvent(options.execution_stream_id,
+                                            execute_event.CopyRef());
+      execute_event.AndThen([stream_event_map,
+                             execution_stream_id = options.execution_stream_id,
+                             self = execute_event.AsPtr()]() {
+        stream_event_map->Clear(execution_stream_id, self);
+      });
     }
     std::vector<tsl::RCReference<tsl::AsyncValue>> input_deps_avs_copy =
         CopyAsyncValues(input_deps);
@@ -1711,7 +1631,6 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
         client()->pjrt_client_thread_pool(), input_deps,
         [cpu_executable, buffer_alloc = std::move(buffer_alloc),
          buffer_alloc_and_copy = std::move(buffer_alloc_and_copy),
-         result_buffer_index = result_buffer_index_,
          buffer_table = std::move(buffer_table),
          run_options = std::move(run_options),
          cpu_executable_copy = cpu_executable_,
@@ -1743,9 +1662,6 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           tsl::port::ScopedFlushDenormal flush;
           tsl::port::ScopedSetRound round(FE_TONEAREST);
 
-          // Prepare for computation.
-          std::vector<void*> buffer_pointers;
-          buffer_pointers.reserve(buffer_table.size());
           for (const auto& buffer_info : buffer_table) {
             CHECK(buffer_info.buffer.IsAvailable());
             if (buffer_info.buffer.IsError()) {
@@ -1754,26 +1670,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                            buffer_info.buffer.GetError().message()));
               return;
             }
-            buffer_pointers.push_back(buffer_info.buffer->untyped_data());
           }
-          void* result_buffer = buffer_pointers[result_buffer_index];
-
           absl::Status status;
-
-          if (cpu_executable->has_compute_function()) {
-            // Call jit-compiled function implementing XLA executable.
-            XlaCustomCallStatus compute_function_status;
-
-            cpu_executable->compute_function()(
-                result_buffer, &run_options, nullptr, buffer_pointers.data(),
-                &compute_function_status, nullptr);
-            if (auto error_message =
-                    xla::CustomCallStatusGetMessage(&compute_function_status)) {
-              status =
-                  Internal("Generated function failed: %s", *error_message);
-            }
-
-          } else if (cpu_executable->has_thunks()) {
+          if (cpu_executable->has_thunks()) {
             // Call interpreted thunk sequence implementing XLA executable.
             absl::InlinedVector<MaybeOwningDeviceMemory, 8> buffer_device_mem;
             buffer_device_mem.reserve(buffer_table.size());
@@ -1800,7 +1699,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
               cpu::Thunk::ExecuteParams execute_params = {
                   cpu_executable->function_library(),
                   &allocations,
-                  cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
+                  cpu::GetXfeedManager(run_options.device_ordinal()),
                   run_options.intra_op_thread_pool(),
                   &task_runner,
                   &*collective_params,
@@ -1820,8 +1719,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
             }
 
           } else {
-            status =
-                Internal("CpuExecutable has no compute function or thunks.");
+            status = Internal("CpuExecutable has no thunks.");
           }
 
           for (auto& donation_transaction : donation_transactions) {
@@ -1852,9 +1750,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
               result_buffers_info[i].owns_buffer,
               std::move(result_buffers_info[i].buffer),
               result_buffers_info[i].buffer_size, std::move(definition_events));
-      auto leaf_buffer = std::make_unique<PjRtCpuBuffer>(
+      auto leaf_buffer = std::make_unique<CommonPjRtBufferImpl>(
           result_shape.tuple_shapes(i), std::move(leaf_tracked_device_buffer),
-          client_, device, *device->default_memory_space());
+          *device->default_memory_space());
       res.push_back(std::move(leaf_buffer));
     }
   } else {
@@ -1865,8 +1763,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
         std::move(result_buffers_info[0].buffer),
         result_buffers_info[0].buffer_size,
         /*definition_event=*/execute_event);
-    auto output_buffer = std::make_unique<PjRtCpuBuffer>(
-        result_shape, std::move(tracked_device_buffer), client_, device,
+    auto output_buffer = std::make_unique<CommonPjRtBufferImpl>(
+        result_shape, std::move(tracked_device_buffer),
         *device->default_memory_space());
     res.push_back(std::move(output_buffer));
   }
@@ -1924,7 +1822,7 @@ absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtCpuExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
-    std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
+    std::optional<std::vector<PjRtFuture<>>>& returned_futures) const {
   RunId run_id(options.launch_id);
   tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::Execute",
                                           tsl::profiler::ContextType::kPjRt,
@@ -2050,7 +1948,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCpuExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   RunId run_id(options.launch_id);
   tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::ExecuteSharded",
                                           tsl::profiler::ContextType::kPjRt,
@@ -2091,7 +1989,7 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCpuExecutable::ExecutePortable(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
-    bool fill_future) {
+    bool fill_future) const {
   RunId run_id(options.launch_id);
   tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::ExecutePortable",
                                           tsl::profiler::ContextType::kPjRt,

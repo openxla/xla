@@ -216,6 +216,11 @@ CUptiResult CuptiWrapper::GetStreamIdEx(CUcontext context, CUstream stream,
     CUpti_PmSampling_GetCounterDataInfo_Params* params);
 [[gnu::weak]] CUptiResult cuptiPmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* params);
+#else
+// Disabled warnings (required because CUPTI declares non-weak functions which
+// then cause -Wtautological-pointer-compare to fail in the above code)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-pointer-compare"
 #endif  // !CUPTI_PM_SAMPLING_SUPPORTED
 
 // Profiler Host APIs
@@ -614,6 +619,12 @@ CUptiResult CuptiWrapper::PmSamplingCounterDataGetSampleInfo(
     return CUPTI_ERROR_NOT_SUPPORTED;
   }
 }
+
+// Restore disabled warnings (required because CUPTI declares non-weak functions
+// which then cause -Wtautological-pointer-compare to fail in the above code)
+#if CUPTI_PM_SAMPLING_SUPPORTED
+#pragma clang diagnostic pop
+#endif
 
 CUptiResult CuptiWrapper::DeviceGetChipName(CUpti_Device_GetChipName_Params*
     params) {

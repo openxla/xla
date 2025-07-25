@@ -1,7 +1,4 @@
-load(
-    "//xla:xla.default.bzl",
-    "xla_cc_test",
-)
+load("//xla/tests:build_defs.bzl", "xla_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -22,7 +19,6 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
-        "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -39,7 +35,7 @@ cc_library(
         ":profiler",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -50,13 +46,22 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:fingerprint",
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "autotuner_test",
     srcs = ["autotuner_test.cc"],
+    backends = [
+        "a100",
+        "h100",
+        "b200",
+    ],
+    tags = [
+        "no_mac",
+    ],
     deps = [
         ":autotuner",
         ":codegen_backend",
@@ -66,7 +71,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:executable",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
@@ -82,7 +87,9 @@ cc_library(
     hdrs = ["profiler.h"],
     deps = [
         "//xla/service:executable",
+        "//xla/service:shaped_buffer",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
     ],

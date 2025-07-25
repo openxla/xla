@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
@@ -78,7 +79,7 @@ class SymbolicTiledHloInstruction {
 
   // Returns a string representation of the instruction. Used only for error
   // messages and debugging.
-  std::string ToString() const;
+  std::string ToString(absl::string_view field_separator = "\n\t") const;
 
  private:
   // Pointer to the original HLO instruction.

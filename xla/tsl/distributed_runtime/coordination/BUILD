@@ -58,6 +58,7 @@ cc_library(
         ":coordination_service_error_util",
         ":key_value_store",
         "//xla/tsl/distributed_runtime:call_options",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status",
         "//xla/tsl/protobuf:coordination_config_proto_cc",
@@ -68,6 +69,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -129,6 +131,7 @@ cc_library(
     hdrs = ["coordination_service_agent.h"],
     deps = [
         ":coordination_client",
+        ":coordination_service",
         ":coordination_service_error_util",
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/framework:cancellation",
@@ -154,7 +157,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:random",
-        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 

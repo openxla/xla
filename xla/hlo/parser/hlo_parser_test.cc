@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -1542,6 +1543,34 @@ ENTRY %test (v1: f32[], v2: f32[3], v3: f32[2,3]) -> ((f32[], f32[3]), f32[2,3])
   %tuple = (f32[], f32[3]{0}) tuple(f32[] %v1, f32[3]{0} %v2), origin={({"v1"}, {"v2"})}
   %v3 = f32[2,3]{1,0} parameter(2), origin={{"v3"}}
   ROOT %nested_tuple = ((f32[], f32[3]{0}), f32[2,3]{1,0}) tuple((f32[], f32[3]{0}) %tuple, f32[2,3]{1,0} %v3), origin={(({"v1"}, {"v2"}), {"v3"})}
+}
+
+)"
+},
+
+{
+"OriginalValueRecoveryTable",
+R"(HloModule test, entry_computation_layout={(f32[192]{0})->f32[1,17,17,192]{3,2,1,0}}, origin_recovery_table={
+  {"broadcast.2340"} : {"reshape.2341"},
+  "
+    ENTRY %recovery_computation.3 (p.1: f32[1,192]) -> f32[1,1,1,192] {
+      %p.1 = f32[1,192]{1,0} parameter(0)
+      ROOT %reshape.2 = f32[1,1,1,192]{3,2,1,0} reshape(%p.1)
+    }
+  "
+  {"reshape.2341"} : {"placeholder_reshape.201"},
+  "
+    ENTRY %recovery_computation.3 (p.1: f32[192]) -> f32[1,192] {
+      %p.1 = f32[192]{0} parameter(0)
+      ROOT %reshape.2 = f32[1,192]{1,0} reshape(%p.1)
+    }
+  "
+}
+
+
+ENTRY %main (Arg_0: f32[192]) -> f32[1,17,17,192] {
+  %Arg_0 = f32[192]{0} parameter(0)
+  ROOT %broadcast.2342 = f32[1,17,17,192]{3,2,1,0} broadcast(f32[192]{0} %Arg_0), dimensions={3}, origin={{"broadcast.2342"}}
 }
 
 )"
@@ -5684,6 +5713,31 @@ ENTRY %test {
                   "origin={(({}, {\"v2\"}), {\"v3\"})}");
 }
 
+TEST_F(HloParserTest, DeduplicateOriginalValues) {
+  const std::string hlo_string =
+      R"(HloModule test, entry_computation_layout={(s32[])->s32[]}
+
+%fused_computation (param_0: s32[]) -> s32[] {
+  %param_0 = s32[] parameter(0)
+  %constant = s32[] constant(32)
+  ROOT %add = s32[] add(%param_0, %constant), origin={{"concatenate"}}
+}
+
+ENTRY %test (Arg_0: s32[]) -> s32[] {
+  %Arg_0 = s32[] parameter(0), origin={{"Arg_0"}}
+  ROOT %pad_add_fusion = s32[] fusion(%Arg_0), kind=kLoop, calls=%fused_computation, origin={{"concatenate"}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto fusion_inst = static_cast<HloFusionInstruction*>(
+      module->entry_computation()->root_instruction());
+
+  ASSERT_EQ(
+      fusion_inst->original_value(),
+      fusion_inst->called_computation()->root_instruction()->original_value());
+}
+
 TEST_F(HloParserTest, TranscendentalAccuracyMode) {
   constexpr absl::string_view hlo_string = R"(
   HloModule exponential_hw
@@ -5898,6 +5952,35 @@ TEST_F(HloParserTest, ParseBufferArray) {
   ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
       << "expected: " << ShapeUtil::HumanString(expected)
       << "actual:   " << ShapeUtil::HumanString(actual);
+}
+
+TEST_F(HloParserTest, AllReduceWithMode) {
+  // The mode attribute is parsed but ignored for now. Test it makes no
+  // difference whether the attribute is present.
+  const char* const hlo_template = R"(
+HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  input = f32[8]{0} parameter(0)
+  ROOT ar = f32[8]{0} all-reduce(input), %s replica_groups={}, to_apply=add
+}
+)";
+  const std::string hlo_with_mode =
+      absl::StrFormat(hlo_template, "mode=cross_replica,");
+  const std::string hlo_without_mode = absl::StrFormat(hlo_template, "");
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module_with_mode,
+                          ParseAndReturnVerifiedModule(hlo_with_mode));
+  TF_ASSERT_OK_AND_ASSIGN(auto module_without_mode,
+                          ParseAndReturnVerifiedModule(hlo_without_mode));
+  EXPECT_EQ(*module_with_mode->entry_computation(),
+            *module_without_mode->entry_computation());
 }
 
 }  // namespace

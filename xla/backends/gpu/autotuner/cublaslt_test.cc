@@ -28,8 +28,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/compiler.h"
-#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/blas.h"
@@ -107,17 +105,14 @@ class CublasLtBackendTest : public HloHardwareIndependentTestBase {
  protected:
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
-  Compiler::TargetConfig target_config_;
   CublasLtBackend backend_;
 
   CublasLtBackendTest()
-      : target_config_([]() {
-          se::GpuTargetConfigProto target_config_proto;
-          *target_config_proto.mutable_gpu_device_info() =
-              TestGpuDeviceInfo().CudaOrRocmDeviceInfo().ToGpuProto();
-          return Compiler::TargetConfig(target_config_proto);
-        }()),
-        backend_(&target_config_, &debug_options_, &compiler_) {}
+      : backend_(PlatformUtil::GetDefaultPlatform()
+                     .value()
+                     ->ExecutorForDevice(0)
+                     .value(),
+                 &debug_options_, &compiler_) {}
 
   CublasLtBackendConfig ExpectedDefaultAlgorithm() {
     auto config = AutotuneResult::GemmKey();
@@ -134,12 +129,9 @@ TEST_F(CublasLtBackendTest, GetSupportedConfigs) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
 
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          *hlo_module->entry_computation()->root_instruction()->operand(0),
-          stream_executor);
+          *hlo_module->entry_computation()->root_instruction()->operand(0));
   EXPECT_THAT(configs, IsOkAndHolds(testing::SizeIs(testing::Gt(0))));
 }
 
@@ -148,12 +140,9 @@ TEST_F(CublasLtBackendTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kUnsupportedHlo));
 
-  se::StreamExecutor* stream_executor =
-      PlatformUtil::GetDefaultPlatform().value()->ExecutorForDevice(0).value();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
-          *hlo_module->entry_computation()->root_instruction(),
-          stream_executor);
+          *hlo_module->entry_computation()->root_instruction());
   EXPECT_THAT(configs, IsOkAndHolds(testing::SizeIs(0)));
 }
 

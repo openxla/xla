@@ -52,12 +52,14 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/lockable.h"
 #include "xla/service/rendezvous.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/hash.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -201,7 +203,8 @@ static absl::StatusOr<bool> EnablePeerAccess(
   std::vector<se::StreamExecutor*> devices;
   devices.reserve(ranks.size());
   for (int64_t i = 0; i < ranks.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(auto device, GpuCollectives::TryCast(ranks[i].device));
+    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
+    TF_RET_CHECK(device != nullptr);
     devices.push_back(device->stream_executor());
   }
 
@@ -583,8 +586,10 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
   GpuCollectives::Config config;
   config.split_share = true;
   config.max_nchannels = max_nchannels;
-  config.blocking_communicators = true;
-  config.async_execution = false;
+  config.blocking_communicators =
+      xla::GetDebugOptionsFromFlags().xla_gpu_nccl_blocking_communicators();
+  config.async_execution =
+      xla::GetDebugOptionsFromFlags().xla_gpu_nccl_async_execution();
 
   if (enable_nccl_comm_splitting) {
     for (auto& [acquired_clique_key, acquired_clique] : acquired_cliques) {
@@ -605,19 +610,22 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
 // Returns true if key contains any of the provided incarnations.
 bool CliqueKeyContainsIncarnation(
     const GpuCliqueKey& key,
-    const absl::flat_hash_set<uint64_t>& incarnations) {
+    const absl::flat_hash_set<IncarnationId>& incarnations) {
   return absl::c_any_of(key.incarnations(),
-                        [&incarnations](uint64_t incarnation) {
+                        [&incarnations](IncarnationId incarnation) {
                           return incarnations.contains(incarnation);
                         });
 }
 
 absl::Status AbortCliquesWithIncarnations(
-    absl::Span<const uint64_t> incarnations) {
+    absl::Span<const IncarnationId> incarnations) {
   VLOG(1) << "Aborting GPU cliques for incarnations "
-          << absl::StrJoin(incarnations, ", ");
-  const absl::flat_hash_set<uint64_t> incarnation_set(incarnations.begin(),
-                                                      incarnations.end());
+          << absl::StrJoin(incarnations, ", ",
+                           [](std::string* out, IncarnationId i) {
+                             absl::StrAppend(out, i.value());
+                           });
+  const absl::flat_hash_set<IncarnationId> incarnation_set(incarnations.begin(),
+                                                           incarnations.end());
   ProcessGpuCliques& cliques = GetProcessGpuCliques();
   absl::MutexLock lock(&cliques.mu);
   absl::Status result;

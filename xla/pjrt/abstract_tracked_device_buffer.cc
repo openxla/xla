@@ -263,7 +263,7 @@ std::unique_ptr<AbstractTrackedDeviceBuffer> CommonPjRtBuffer::ReleaseBuffer() {
   return buffer;
 }
 
-bool CommonPjRtBuffer::IsDeleted() {
+bool CommonPjRtBuffer::IsDeleted() const {
   absl::MutexLock lock(&mu_);
   return device_buffer_ == nullptr;
 }
@@ -293,6 +293,16 @@ absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
           device_buffer.buffer()->GetAsyncValueDefinitionEvents()));
   device_buffer.ConvertUsageHold(std::move(device_event));
   return absl::OkStatus();
+}
+
+CommonPjRtBuffer::ScopedHold CommonPjRtBuffer::GetBufferWithHold(
+    ScopedHold::Type type) {
+  absl::MutexLock lock(&mu_);
+  // Ensure that at most one donation hold can be in progress at a time.
+  WaitForOutstandingDonationHold();
+  ScopedHold hold(this, type);
+  AcquireHoldLocked(&hold);
+  return hold;
 }
 
 }  // namespace xla

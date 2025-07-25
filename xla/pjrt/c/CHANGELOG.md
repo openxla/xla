@@ -1,10 +1,23 @@
 # PJRT C API changelog
 
-## 0.70
+## 0.73
+
+* Added `PJRT_Client_UpdateGlobalProcessInfo`.
+
+## 0.72
+
+* Added `peak_memory_in_bytes` to `CompiledMemoryStats`.
+
+## 0.71
 
 *   Added `overridden_serialized_compile_options` and
     `overridden_serialized_compile_options_size` fields to
     `PJRT_Executable_DeserializeAndLoad_Args`.
+
+## 0.70
+
+* Sharding ops may appear directly in the payload (previously they were
+  serialized in `custom_calls`).
 
 ## 0.69
 

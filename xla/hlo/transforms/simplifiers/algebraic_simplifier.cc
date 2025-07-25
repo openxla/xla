@@ -3543,8 +3543,12 @@ AlgebraicSimplifierVisitor::RewriteAsMultiplyDotWithZeroLhsContractingDim(
   }
   auto new_instruction = HloInstruction::CreateBinary(
       dot->shape(), HloOpcode::kMultiply, new_lhs, new_rhs);
-  dot->SetupDerivedInstruction(new_lhs);
-  dot->SetupDerivedInstruction(new_rhs);
+  if (new_lhs != lhs) {
+    dot->SetupDerivedInstruction(new_lhs);
+  }
+  if (new_rhs != rhs) {
+    dot->SetupDerivedInstruction(new_rhs);
+  }
   dot->SetupDerivedInstruction(new_instruction.get());
   return ReplaceWithNewInstruction(dot, std::move(new_instruction));
 }
@@ -4780,13 +4784,15 @@ absl::Status AlgebraicSimplifierVisitor::HandleMultiply(
 
   // 0*RHS => 0. Only applies for integral types for correct NaN-handling.
   if (IsAll(lhs, 0) &&
-      primitive_util::IsIntegralType(multiply->shape().element_type()) &&
+      (options_.enable_fast_math() ||
+       primitive_util::IsIntegralType(multiply->shape().element_type())) &&
       ReplaceInstructionIfCompatible(multiply, lhs)) {
     return absl::OkStatus();
   }
   // LHS*0 => 0
   if (IsAll(rhs, 0) &&
-      primitive_util::IsIntegralType(multiply->shape().element_type()) &&
+      (options_.enable_fast_math() ||
+       primitive_util::IsIntegralType(multiply->shape().element_type())) &&
       ReplaceInstructionIfCompatible(multiply, rhs)) {
     return absl::OkStatus();
   }
@@ -5127,7 +5133,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleOptimizationBarrier(
         continue;
       }
       if (operand->operand(i)->user_count() > 1 ||
-          operand->operand(i) == computation_->root_instruction()) {
+          operand->operand(i) == computation_->root_instruction() ||
+          operand->operand(i)->HasSideEffect()) {
         used_elements[i] = true;
       }
     }

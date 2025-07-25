@@ -19,8 +19,10 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/nullability.h"
@@ -81,6 +83,11 @@ namespace gpu {
 //     usually by adding a stream wait.
 //
 TSL_LIB_GTL_DEFINE_INT_TYPE(ExecutionStreamId, uint64_t);
+
+// Unique identifier for async events. The same identifier is expected to be
+// shared between a pair of StartThunk and corresponding DoneThunk. It is used
+// to collect async regions for a CommandBufferThunk.
+TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t)
 
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
@@ -152,6 +159,8 @@ class Thunk {
     kGemm,
     kGroupDone,
     kGroupStart,
+    kHostExecuteDone,
+    kHostExecuteStart,
     kHostRecv,
     kHostRecvDone,
     kHostSend,
@@ -161,9 +170,15 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
+    kNvshmemAllReduceDone,
+    kNvshmemAllReduceStart,
     kNvshmemCollectivePermute,
     kNvshmemCollectivePermuteDone,
     kNvshmemCollectivePermuteStart,
+    kNvshmemRecv,
+    kNvshmemRecvDone,
+    kNvshmemSend,
+    kNvshmemSendDone,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
@@ -209,6 +224,9 @@ class Thunk {
     std::string profile_annotation;
 
     ExecutionStreamId execution_stream_id = kDefaultExecutionStreamId;
+
+    // Serializes a ThunkInfo to a ThunkInfoProto.
+    ThunkInfoProto ToProto() const;
   };
 
   //===--------------------------------------------------------------------===//
@@ -293,10 +311,12 @@ class Thunk {
     const DeviceAssignment* device_assn;
     const GlobalDeviceIdMap* global_device_id_map;
     const CliqueIdCallback* nccl_clique_id_callback;
-    const absl::flat_hash_map<GlobalDeviceId, uint64_t>* incarnations;
+    const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations;
 
     int64_t collective_max_nchannels;
     int64_t p2p_max_nchannels;
+
+    bool need_barrier = false;
 
    private:
     CollectiveExecuteParams(
@@ -306,7 +326,7 @@ class Thunk {
         const DeviceAssignment* device_assn,
         const GlobalDeviceIdMap* global_device_id_map,
         const CliqueIdCallback* nccl_clique_id_callback,
-        const absl::flat_hash_map<GlobalDeviceId, uint64_t>* incarnations,
+        const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
         int64_t collective_max_nchannels, int64_t p2p_max_nchannels);
   };
 
@@ -414,6 +434,8 @@ class Thunk {
 
     bool mock_collectives = false;
 
+    int64_t execution_id = 0;
+
    private:
     friend class CommandBufferThunk;
 
@@ -427,22 +449,23 @@ class Thunk {
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
-                  bool mock_collectives = false);
+                  bool mock_collectives = false, int64_t execution_id = 0);
   };
 
   //===--------------------------------------------------------------------===//
 
   Thunk(Kind kind, ThunkInfo thunk_info)
-      : kind_(kind),
-        profile_annotation_(thunk_info.profile_annotation),
-        execution_stream_id_(thunk_info.execution_stream_id) {}
+      : kind_(kind), thunk_info_(std::move(thunk_info)) {}
   virtual ~Thunk() = default;
   Thunk(const Thunk&) = delete;
   Thunk& operator=(const Thunk&) = delete;
 
   virtual std::string ToString(int indent) const { return ""; }
   Kind kind() const { return kind_; }
-  absl::string_view profile_annotation() const { return profile_annotation_; }
+  absl::string_view profile_annotation() const {
+    return thunk_info_.profile_annotation;
+  }
+  const ThunkInfo& thunk_info() const { return thunk_info_; }
 
   // Prepares thunk for execution.
   //
@@ -473,9 +496,11 @@ class Thunk {
 
   static absl::string_view KindToString(Thunk::Kind kind);
 
-  ExecutionStreamId execution_stream_id() const { return execution_stream_id_; }
+  ExecutionStreamId execution_stream_id() const {
+    return thunk_info_.execution_stream_id;
+  }
   void set_execution_stream_id(ExecutionStreamId execution_stream_id) {
-    execution_stream_id_ = execution_stream_id;
+    thunk_info_.execution_stream_id = execution_stream_id;
   }
 
   static absl::StatusOr<se::Stream*> GetStreamForExecution(
@@ -518,10 +543,32 @@ class Thunk {
       absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
           const ThunkProto&) const>;
 
+  void add_control_predecessor(const Thunk* control_predecessor) {
+    control_predecessors_.push_back(control_predecessor);
+  }
+
+  std::vector<const Thunk*> control_predecessors() const {
+    return control_predecessors_;
+  }
+
+  virtual std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const {
+    return std::nullopt;
+  }
+
+  virtual bool IsAsyncStart() const { return false; }
+
+  virtual bool IsAsyncDone() const { return false; }
+
  private:
   Kind kind_;
-  std::string profile_annotation_;
-  ExecutionStreamId execution_stream_id_;
+  ThunkInfo thunk_info_;
+
+  // The list of control predecessors of the thunk.
+  // Thunk needs to maintain the control dependency information because
+  // when it is executed by command buffer, and command buffer may execute the
+  // sequence in concurrent mode, and we should make sure that it does not
+  // violate the control dependency in the original computation.
+  std::vector<const Thunk*> control_predecessors_;
 };
 
 // A sequence of thunks.

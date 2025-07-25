@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
+#include "absl/base/casts.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/gpu/gpu_test_kernel_traits.h"
@@ -26,7 +27,7 @@ limitations under the License.
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     AddI32KernelCuda, stream_executor::gpu::internal::AddI32Kernel,
     stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {
-      return stream_executor::MultiKernelLoaderSpec::CreateInProcessSymbolSpec(
+      return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
           absl::bit_cast<void*>(&stream_executor::gpu::AddI32),
 
           "AddI32", arity);
@@ -35,7 +36,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     MulI32KernelCuda, stream_executor::gpu::internal::MulI32Kernel,
     stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {
-      return stream_executor::MultiKernelLoaderSpec::CreateInProcessSymbolSpec(
+      return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
           absl::bit_cast<void*>(&stream_executor::gpu::MulI32),
 
           "MulI32", arity);
@@ -44,7 +45,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     IncAndCmpKernelCuda, stream_executor::gpu::internal::IncAndCmpKernel,
     stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {
-      return stream_executor::MultiKernelLoaderSpec::CreateInProcessSymbolSpec(
+      return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
           absl::bit_cast<void*>(&stream_executor::gpu::IncAndCmp),
 
           "IncAndCmp", arity);
@@ -53,7 +54,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     AddI32Ptrs3KernelCuda, stream_executor::gpu::internal::AddI32Ptrs3Kernel,
     stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {
-      return stream_executor::MultiKernelLoaderSpec::CreateInProcessSymbolSpec(
+      return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
           absl::bit_cast<void*>(&stream_executor::gpu::AddI32Ptrs3),
           "AddI32Ptrs3", arity,
           [&](const stream_executor::Kernel& kernel,
@@ -76,7 +77,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     CopyKernelCuda, stream_executor::gpu::internal::CopyKernel,
     stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {
-      return stream_executor::MultiKernelLoaderSpec::CreateInProcessSymbolSpec(
+      return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
           absl::bit_cast<void*>(&stream_executor::gpu::CopyKernel),
 
           "CopyKernel", arity);

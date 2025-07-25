@@ -126,6 +126,7 @@ cc_library(
         ":gpu_collectives",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
+        "//xla:status_macros",
         "//xla:types",
         "//xla:util",
         "//xla/core/collectives",
@@ -154,6 +155,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:hash",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -167,7 +169,6 @@ cc_library(
         ":gpu_communicator",
         "//xla:executable_run_options",
         "//xla:shape_util",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
@@ -234,7 +235,7 @@ cc_library(
         ]),
     tags = [
         "gpu",
-        "no-sycl",
+        "no-oneapi",
     ],
     visibility = ["//visibility:private"],
     deps = [
@@ -262,7 +263,7 @@ cc_library(
         ]),
     tags = [
         "gpu",
-        "no-sycl",
+        "no-oneapi",
     ],
     visibility = ["//visibility:private"],
     deps = [
@@ -328,7 +329,7 @@ cc_library(
     ]),
     tags = [
         "gpu",
-        "no-sycl",
+        "no-oneapi",
     ],
     visibility = ["//visibility:private"],
     deps = [
@@ -400,7 +401,6 @@ cc_library(
     deps = [
         ":gpu_collectives",
         "//xla:shape_util",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
@@ -415,7 +415,6 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
@@ -450,7 +449,7 @@ xla_test(
         # go/chloroxylenol-faq#how-do-i-stop-chloroxylenol-from-running-my-test
         # go/cuda#memorysanitizer
         "nomsan",
-        "no-sycl",
+        "no-oneapi",
     ],
     visibility = ["//visibility:private"],
     deps = [

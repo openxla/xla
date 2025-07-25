@@ -51,6 +51,36 @@ class AbstractTrackedDeviceBuffer {
 
   // Only to be called by ScopedHold to mark a successful donation.
   virtual void ConfirmDonation() = 0;
+
+  // Asynchronously frees all memory.
+  virtual void Delete(PjRtMemorySpace* memory_space) = 0;
+
+  // Clones an abstract buffer with an additional control dependency.
+  virtual absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+  CloneWithControlDependency(PjRtMemorySpace* memory_space,
+                             PjRtFuture<> dependency) {
+    return absl::UnimplementedError(
+        "DonateWithControlDependency is not supported.");
+  }
+
+  // Populates a future::promise when all the definition events are complete.
+  virtual PjRtFuture<>::Promise GetReadyFuturePromise(
+      PjRtMemorySpace* memory_space) {
+    auto promise = PjRtFuture<>::CreatePromise();
+    promise.Set(absl::UnimplementedError(
+        absl::StrCat("GetReadyFuturePromise not supported for ",
+                     memory_space->DebugString())));
+    return promise;
+  }
+
+  // Waits for all usage and definition events to complete synchronously
+  // and returns the status.
+  virtual absl::Status BlockForOperationsToComplete(
+      PjRtMemorySpace* memory_space) {
+    return absl::UnimplementedError(
+        absl::StrCat("BlockForOperationsToComplete not supported for ",
+                     memory_space->DebugString()));
+  }
 };
 
 class CommonPjRtBuffer : public PjRtBuffer {
@@ -184,7 +214,7 @@ class CommonPjRtBuffer : public PjRtBuffer {
     std::unique_ptr<AbstractTrackedDeviceBuffer> buffer_;
   };
 
-  bool IsDeleted() override;
+  bool IsDeleted() const override;
 
   absl::Status AcquireScopedRawBuffer(
       absl::AnyInvocable<absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>(
@@ -193,6 +223,8 @@ class CommonPjRtBuffer : public PjRtBuffer {
                                  definition_events) &&>
           scoped_acquire,
       const char* caller_name = "AcquireScopedRawBuffer");
+
+  ScopedHold GetBufferWithHold(ScopedHold::Type type);
 
  protected:
   CommonPjRtBuffer(std::unique_ptr<AbstractTrackedDeviceBuffer> device_buffer,

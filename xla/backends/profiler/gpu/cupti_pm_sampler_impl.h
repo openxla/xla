@@ -229,8 +229,8 @@ class CuptiPmSamplerDecodeThread {
     ThreadState::kInitialized;
 
   // Tell thread to change state
-  void ChangeState(ThreadState state) {
-    absl::MutexLock lock(&state_mutex_);
+  void ChangeState(ThreadState state) ABSL_LOCKS_EXCLUDED(state_mutex_) {
+    absl::WriterMutexLock lock(&state_mutex_);
     next_state_ = state;
     stateChangeNotifier_.SignalAll();
   }
@@ -241,27 +241,25 @@ class CuptiPmSamplerDecodeThread {
     stateChangeNotifier_.SignalAll();
   }
 
-  void AwaitState(ThreadState state) {
-    absl::MutexLock lock(&state_mutex_);
+  // Compare state
+  bool CurrentStateIs(ThreadState state) ABSL_LOCKS_EXCLUDED(state_mutex_) {
+    absl::ReaderMutexLock lock(&state_mutex_);
+    return current_state_ == state;
+  }
+
+  bool NextStateIs(ThreadState state) ABSL_LOCKS_EXCLUDED(state_mutex_) {
+    absl::ReaderMutexLock lock(&state_mutex_);
+    return next_state_ == state;
+  }
+
+  void AwaitState(ThreadState state) ABSL_LOCKS_EXCLUDED(state_mutex_) {
+    absl::ReaderMutexLock lock(&state_mutex_);
     auto equals = [this, state] {
+      state_mutex_.AssertReaderHeld();
       return current_state_ == state;
     };
     state_mutex_.Await(absl::Condition(&equals));
   }
-
-  // Absl has no RAII way to release and then regain a lock, so implement here
-  // (Needed to release lock around long decode loop)
-  class MutexUnlock {
-   public:
-    explicit MutexUnlock(absl::Mutex* mu) ABSL_UNLOCK_FUNCTION() : mu_(mu) {
-      mu_->Unlock();
-    }
-
-    ~MutexUnlock() ABSL_EXCLUSIVE_LOCK_FUNCTION(mu_) { mu_->Lock(); }
-
-   private:
-    absl::Mutex* mu_;
-  };
 
   // Thread handle
   std::unique_ptr<std::thread> thread_;

@@ -18,30 +18,79 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla::gpu {
 
-// A map from tile IDs, sizes and runtime variables to tile's offsets, sizes
-// and strides.
+// A map from tile IDs, sizes and runtime variables to tile's offsets, sizes,
+// strides and upper bounds. Offsets-sizes-strides define what slice to extract,
+// upper bounds define masking, i.e. if the tile attempts to extract elements
+// with the indices outside of the bounds, the tile will be masked.
 //
-// (tile IDs) [tile sizes] {runtime variables} -> (offsets, sizes, strides)
-// tile IDs correspond to the dimension variables of the `tile_map`.
-// tile sizes and RT vars correspond to the symbol variables of the
-// `tile_map`.
-struct ExperimentalSymbolicTile {
+// (tile IDs) [tile sizes] {runtime variables} ->
+//     offsets [offsets_]  sizes [sizes_] strides [strides_]
+//     upper bounds [upper_bounds_]
+//
+// tile IDs correspond to the dimension variables of the affine expressions;
+// tile sizes and RT vars correspond to the symbol variables.
+//
+// The masking condition of the upper bound can be written as:
+// dimension_index < upper_bounds[i](tile IDs)
+//
+// In most of the cases, the upper bounds will coincide with the shape of the
+// tensor from which the tile is extracted.
+//
+// One example when upper bound does not match the shape is a reshape:
+// output = s32[2, 17] reshape (s32[34] input)
+//
+// If we propagate the `output` tile with the ts0 == 1,
+//
+// (tid0, tid1)[ts1] -> offsets [tid0, tid1 * ts1] sizes [1, ts1] strides [1, 1]
+//              upper bounds [2, 17]
+//
+// to the `input` we will get a stricter upper bound
+//
+// (tid0, tid1)[ts1] -> offsets [17 * tid0 + tid1 * ts1] sizes [ts1] strides [1]
+//              upper bounds [17 * tid0]
+struct DimTile {
+  mlir::AffineExpr offset;
+  mlir::AffineExpr size;
+  mlir::AffineExpr stride;
+  mlir::AffineExpr upper_bound;
+};
+
+class ExperimentalSymbolicTile {
+ public:
+  ExperimentalSymbolicTile(mlir::MLIRContext* mlir_context,
+                           int64_t num_tile_ids, int64_t num_rt_vars,
+                           llvm::SmallVector<DimTile> one_dim_tiles);
+
+  ExperimentalSymbolicTile(mlir::MLIRContext* mlir_context,
+                           int64_t num_tile_ids, int64_t num_rt_vars,
+                           llvm::ArrayRef<mlir::AffineExpr> offsets,
+                           llvm::ArrayRef<mlir::AffineExpr> sizes,
+                           llvm::ArrayRef<mlir::AffineExpr> strides,
+                           llvm::ArrayRef<mlir::AffineExpr> upper_bounds);
+
   std::string ToString() const;
 
-  mlir::AffineMap offset_map() const;
-  mlir::AffineMap size_map() const;
-  mlir::AffineMap stride_map() const;
+  llvm::SmallVector<mlir::AffineExpr> offsets() const;
+  llvm::SmallVector<mlir::AffineExpr> sizes() const;
+  llvm::SmallVector<mlir::AffineExpr> strides() const;
+  llvm::SmallVector<mlir::AffineExpr> upper_bounds() const;
+  llvm::SmallVector<DimTile> one_dim_tiles() const { return one_dim_tiles_; }
 
-  int64_t num_tids() const { return tile_map.getNumDims(); }
-  int64_t num_result_dims() const { return tile_map.getNumResults() / 3; }
-  int64_t num_rt_vars() const { return rt_vars.size(); }
+  int64_t num_tile_ids() const { return num_tile_ids_; }
+  int64_t num_result_dims() const { return offsets().size(); }
+  int64_t num_rt_vars() const { return num_rt_vars_; }
+
+  mlir::MLIRContext* mlir_context() const { return mlir_context_; }
 
   // This allows GUnit to print the tile.
   template <typename Sink>
@@ -49,8 +98,11 @@ struct ExperimentalSymbolicTile {
     sink.Append(tile.ToString());
   }
 
-  mlir::AffineMap tile_map;
-  std::vector<const HloInstruction*> rt_vars;
+ private:
+  mlir::MLIRContext* mlir_context_;
+  int64_t num_tile_ids_;
+  int64_t num_rt_vars_;
+  llvm::SmallVector<DimTile> one_dim_tiles_;
 };
 
 }  // namespace xla::gpu

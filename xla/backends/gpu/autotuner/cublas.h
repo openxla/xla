@@ -46,28 +46,18 @@ namespace gpu {
 
 class CublasBackend : public GpuCodegenBackend {
  public:
-  explicit CublasBackend(const Compiler::TargetConfig* target_config,
+  explicit CublasBackend(stream_executor::StreamExecutor* stream_executor,
                          const DebugOptions* debug_options, Compiler* compiler)
-      : GpuCodegenBackend("Cublas", target_config, debug_options, compiler) {}
+      : GpuCodegenBackend("Cublas", stream_executor, debug_options, compiler) {}
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-  GetSupportedConfigs(
-      const HloInstruction& instr,
-      stream_executor::StreamExecutor* stream_executor) override;
+  GetSupportedConfigs(const HloInstruction& instr) override;
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
       const HloInstruction& instr) override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
-
- private:
-  absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
-      std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) override {
-    // No additional passes needed for cublas.
-    return hlo_module;
-  }
 };
 
 }  // namespace gpu

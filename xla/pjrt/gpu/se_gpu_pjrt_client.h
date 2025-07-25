@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
 namespace xla {
@@ -65,7 +66,8 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
                           std::unique_ptr<LocalDeviceState> local_device_state,
                           std::string device_kind, std::string device_vendor,
                           std::string compute_capability, int core_count,
-                          int node_id, int slice_index = 0);
+                          int shared_memory_per_block_optin, int node_id,
+                          int slice_index = 0);
 
   int slice_index() const;
 
@@ -105,7 +107,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::shared_ptr<KeyValueStoreInterface> kv_store,
       std::shared_ptr<DistributedRuntimeClient> distributed_client,
       bool abort_collectives_on_failure,
-      std::shared_ptr<const GpuTopology> gpu_topology);
+      std::shared_ptr<const GpuTopology> gpu_topology,
+      std::optional<int> num_nodes);
 
   std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
       const override {
@@ -118,6 +121,11 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       int num_replicas, int num_partitions) const override;
 
   absl::string_view platform_version() const override;
+
+  std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+
+  void UpdateGlobalProcessInfo(
+      absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) override;
 
   using PjRtStreamExecutorClient::CreateBuffersForAsyncHostToDevice;
   absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -173,9 +181,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       ExecutableRunOptions run_options) override;
 
  private:
-  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, uint64_t>>
+  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
   GetLatestIncarnations();
 
+  std::optional<int> num_nodes_;
   xla::StreamExecutorGpuTopologyDescription topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
   std::shared_ptr<DistributedRuntimeClient> distributed_client_;

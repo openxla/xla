@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,7 @@ limitations under the License.
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -58,6 +60,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -78,6 +81,10 @@ class AlgorithmTest : public GpuCodegenTest {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
+    // TODO(b/393299275): remove when the flag is enabled by default.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
     return debug_options;
   }
 
@@ -201,9 +208,10 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::Eq("wrapped_convert"),
+                                    ::testing::Eq("wrapped_convert_1"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
@@ -295,13 +303,19 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("nvjet"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      ASSERT_EQ(kernel_names.size(), 1);
-      EXPECT_THAT(kernel_names[0], ::testing::Eq("loop_convert_fusion_1"));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(kernel_names,
@@ -351,13 +365,21 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("nvjet"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      ASSERT_EQ(kernel_names.size(), 1);
-      EXPECT_THAT(kernel_names[0], ::testing::Eq("loop_convert_fusion_1"));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(
@@ -408,18 +430,27 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names,
+                  ::testing::UnorderedElementsAre(
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
+                      ::testing::HasSubstr("tf32gemm")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      EXPECT_THAT(kernel_names, ::testing::Contains(::testing::HasSubstr(
-                                    "bitcast_convert_subtract")));
+      EXPECT_THAT(kernel_names,
+                  ::testing::UnorderedElementsAre(
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
+                      ::testing::HasSubstr("cutlass_80")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(kernel_names,
                   ::testing::UnorderedElementsAre(
                       ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
                       ::testing::HasSubstr("tf32f32")));
       break;
     default:
@@ -655,7 +686,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -678,7 +709,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -702,7 +733,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
   )";
   constexpr absl::string_view kPattern = R"(
     CHECK: algorithm=dot_tf32_tf32_f32
-    CHECK: "kind":"__triton_gemm","triton_gemm_config"
+    CHECK: "kind":"__triton_nested_gemm_fusion"
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
@@ -726,7 +757,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -752,7 +783,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -937,7 +968,8 @@ class NumericTestsForBlas : public BlasAlgorithmTest,
     return absl::StrFormat(kHloTextTemplate, HloModuleTestName(), algorithm_);
   }
 
-  static constexpr absl::string_view kPattern = R"(CHECK: __cublas$gemm)";
+  static constexpr absl::string_view kCheckTritionNestedGemm =
+      R"(CHECK: __cublas$gemm)";
 
   static constexpr absl::string_view kReferenceHloText = R"(
     HloModule %s
@@ -1003,7 +1035,8 @@ class NumericTestsForTriton : public TritonAlgorithmTest,
     return absl::StrFormat(kHloTextTemplate, HloModuleTestName(), algorithm_);
   }
 
-  static constexpr absl::string_view kPattern = R"(CHECK: __triton_gemm)";
+  static constexpr absl::string_view kPattern =
+      R"(CHECK: __triton_nested_gemm_fusion)";
 
  private:
   static constexpr absl::string_view kHloTextTemplate = R"(
@@ -1034,7 +1067,8 @@ TEST_P(NumericTestsForBlas, Infinity) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1052,7 +1086,8 @@ TEST_P(NumericTestsForBlas, NaN) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1070,7 +1105,8 @@ TEST_P(NumericTestsForBlas, InputsWithLargeExponent) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1090,7 +1126,8 @@ TEST_P(NumericTestsForBlas, PrecisionCheck) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1440,7 +1477,7 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
   auto m = 128;
   auto n = 128;
   auto k = 128;
-  auto run = [&](std::string backend, absl::string_view pattern,
+  auto run = [&](std::string backend,
                  const DebugOptions& options) -> absl::StatusOr<bool> {
     auto test_name = absl::StrReplaceAll(TestName(), {{"/", "_"}});
     auto module_name = absl::StrCat(test_name, "_", backend, "_", m, "_", kMaxK,
@@ -1459,10 +1496,10 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
     if (!Run(std::move(module.value()), false)) {
       return absl::InternalError("failed to run module");
     }
-    return absl::StrContains(module_text, pattern);
+    return absl::StrContains(module_text, kTritonNestedGemmFusionKind);
   };
 
-  auto result_or_status = run("triton", kTritonGemmPattern, triton_options_);
+  auto result_or_status = run("triton", triton_options_);
   switch (GetParam()) {
     case PC::ALG_UNSET:
     case PC::ALG_DOT_TF32_TF32_F32:
@@ -1491,8 +1528,10 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
 // non-negative.
 void MakeNonNegative(std::vector<Literal>& fake_arguments) {
   for (Literal& literal : fake_arguments) {
-    literal.MutableEachCell<float>([](absl::Span<const int64_t> indices,
-                                      float value) { return std::abs(value); });
+    absl::Span<float> data = literal.data<float>();
+    for (int i = 0; i < data.size(); ++i) {
+      data[i] = std::abs(data[i]);
+    }
   }
 }
 
@@ -1563,7 +1602,8 @@ double GetMaxRelErrorForSmallContractingDim(Backend backend,
       {PC::ALG_DOT_BF16_BF16_F32_X3, 7.9e-6},
       {PC::ALG_DOT_BF16_BF16_F32_X6, 1.3e-7},
       {PC::ALG_DOT_BF16_BF16_F32_X9, 1.2e-7},
-      {PC::ALG_DOT_TF32_TF32_F32_X3, 5e-7}};
+      {PC::ALG_DOT_TF32_TF32_F32_X3, 5e-7},
+      {PC::ALG_DOT_F32_F32_F32, 2e-07}};
 
   const absl::flat_hash_map<PC::Algorithm, double> kMaxMeanRelErrorBlas = {
       {PC::ALG_DOT_BF16_BF16_F32, 3.3e-3},
@@ -1571,7 +1611,8 @@ double GetMaxRelErrorForSmallContractingDim(Backend backend,
       {PC::ALG_DOT_BF16_BF16_F32_X3, 2.4e-5},
       {PC::ALG_DOT_TF32_TF32_F32_X3, 5e-7},
       {PC::ALG_DOT_BF16_BF16_F32_X6, 1.6e-7},
-      {PC::ALG_DOT_BF16_BF16_F32_X9, 6e-8}};
+      {PC::ALG_DOT_BF16_BF16_F32_X9, 6e-8},
+      {PC::ALG_DOT_F32_F32_F32, 2e-07}};
   if (backend == Backend::kTriton) {
     auto max_rel_error_it = kMaxMeanRelErrorTriton.find(algorithm);
     CHECK(max_rel_error_it != kMaxMeanRelErrorTriton.end());
@@ -1597,46 +1638,73 @@ INSTANTIATE_TEST_SUITE_P(
          PC::ALG_DOT_TF32_TF32_F32_X3, PC::ALG_DOT_F64_F64_F64, PC::ALG_UNSET}),
     AlgorithmTestParamToString);
 
+template <typename... Args>
+void Log(absl::string_view name, const absl::FormatSpec<Args...>& format,
+         const Args&... args) {
+  std::cerr << "stats: " << name << " " << absl::StrFormat(format, args...)
+            << "\n";
+}
+
+double CalculateStdDev(absl::Span<const double> values, double mean) {
+  double sum = 0.0;
+  for (int i = 0; i < values.size(); ++i) {
+    sum += (values[i] - mean) * (values[i] - mean);
+  }
+  return std::sqrt(sum / values.size());
+}
+
 template <typename T>
-void PrintHistogram(absl::string_view name, absl::Span<T> values,
-                    const std::vector<double>& expected_values) {
-  // Build the histogram of the relative differences.
+std::vector<double> CalculateRelErrors(absl::Span<T> values,
+                                       const std::vector<double>& ref_values) {
   std::vector<double> rel_errors;
   rel_errors.reserve(values.size());
   for (int i = 0; i < values.size(); ++i) {
-    double rel_difference =
-        ((double)values[i] - expected_values[i]) / std::abs(expected_values[i]);
-    rel_errors.push_back(rel_difference);
+    double value = values[i];
+    double ref_value = ref_values[i];
+    double rel_error = (value - ref_value) / ref_value;
+    rel_errors.push_back(rel_error);
   }
+  return rel_errors;
+}
+
+template <typename T>
+void PrintStats(absl::string_view name, absl::Span<T> values,
+                const std::vector<double>& expected_values) {
+  // Build the histogram of the relative differences.
+  std::vector<double> rel_errors = CalculateRelErrors(values, expected_values);
   double max_rel_error =
       *std::max_element(rel_errors.begin(), rel_errors.end());
   double min_rel_error =
       *std::min_element(rel_errors.begin(), rel_errors.end());
   double rel_error_range = max_rel_error - min_rel_error;
-  constexpr int kNumBins = 40;
-  double bin_width = rel_error_range / kNumBins;
-  std::vector<int> histogram(kNumBins, 0);
-  double rel_error_sum = 0.0;
+  double rel_error_sum =
+      std::accumulate(rel_errors.begin(), rel_errors.end(), 0.0);
+  double mean_rel_error = rel_error_sum / rel_errors.size();
+  double std_dev_rel_error = CalculateStdDev(rel_errors, mean_rel_error);
+
+  int num_bins = std::ceil(std::log2(values.size() + 1));
+  double bin_width = rel_error_range / num_bins;
+  std::vector<int> histogram(num_bins, 0);
+  int samples_count = rel_errors.size();
   for (int i = 0; i < rel_errors.size(); ++i) {
-    rel_error_sum += rel_errors[i];
     int bin = static_cast<int>((rel_errors[i] - min_rel_error) / bin_width);
-    if (bin >= kNumBins) {
-      bin = kNumBins - 1;
+    if (bin >= num_bins) {
+      bin = num_bins - 1;
     }
     histogram[bin]++;
   }
-  int samples_count = values.size();
-  int bar_width = 200;
+  int max_bin_size = *std::max_element(histogram.begin(), histogram.end());
+  constexpr int kMaxBarHeight = 100;
   int64_t samples = 0;
-  double mean_rel_error = rel_error_sum / values.size();
   bool median_found = false;
   std::tuple<int, double, double> median_bin;
-  for (int i = 0; i < kNumBins; ++i) {
+  for (int i = 0; i < num_bins; ++i) {
     samples += histogram[i];
     double bin_start = min_rel_error + i * bin_width;
     double bin_end = min_rel_error + (i + 1) * bin_width;
+    int bar_size = histogram[i] * kMaxBarHeight / max_bin_size;
     std::string bar =
-        std::string(histogram[i] * bar_width / samples_count, '*');
+        absl::StrCat(std::string(bar_size, '*'), " ", bar_size, " ");
     if (!median_found && samples >= samples_count / 2) {
       median_bin = std::make_tuple(i, bin_start, bin_end);
       median_found = true;
@@ -1653,23 +1721,17 @@ void PrintHistogram(absl::string_view name, absl::Span<T> values,
                         histogram[i], bar.c_str());
     std::cerr << "hist: " << line;
   }
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat("min rel error, %1.3e\n", min_rel_error);
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat("max rel error, %1.3e\n", max_rel_error);
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat(
-                   "max abs rel error, %1.3e\n",
-                   std::max(std::abs(min_rel_error), std::abs(max_rel_error)));
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat("rel error range, %1.3e\n",
-                               max_rel_error - min_rel_error);
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat("median bin, %d [%1.3e - %1.3e)\n",
-                               std::get<0>(median_bin), std::get<1>(median_bin),
-                               std::get<2>(median_bin));
-  std::cerr << "stats: " << name << " "
-            << absl::StrFormat("mean rel error, %1.3e\n", mean_rel_error);
+  double max_abs_rel_error =
+      std::max(std::abs(min_rel_error), std::abs(max_rel_error));
+  Log(name, "min(rel_errors), %1.3e", min_rel_error);
+  Log(name, "max(rel_errors), %1.3e", max_rel_error);
+  Log(name, "max(abs(rel_errors)), %1.3e", max_abs_rel_error);
+  Log(name, "mean(rel_errors), %1.3e", mean_rel_error);
+  Log(name, "std_dev(rel_errors), %1.3e", std_dev_rel_error);
+  Log(name, "CV(rel_errors) = %1.3f", std_dev_rel_error / mean_rel_error);
+  Log(name, "range(rel_errors), %1.3e", rel_error_range);
+  Log(name, "median bin, %d [%1.3e - %1.3e)", std::get<0>(median_bin),
+      std::get<1>(median_bin), std::get<2>(median_bin));
 }
 
 class PrecisionTests
@@ -1722,6 +1784,7 @@ class PrecisionTests
     TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text));
     auto debug_options = module->config().debug_options();
+    debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     if (backend == Backend::kTriton) {
       debug_options.set_xla_gpu_enable_triton_gemm(true);
       debug_options.set_xla_gpu_cublas_fallback(false);
@@ -1786,6 +1849,22 @@ TEST_P(PrecisionTests, PrecisionCheck) {
 
   PC::Algorithm algorithm = std::get<0>(GetParam());
   Backend backend = std::get<1>(GetParam());
+  if (backend == Backend::kBlas && algorithm == PC::ALG_DOT_F32_F32_F32) {
+    auto desc = device_desc();
+    std::cerr << "platform version: " << desc.platform_version();
+    std::cerr << "driver version: " << desc.driver_version();
+    std::cerr << "runtime version: " << desc.runtime_version();
+    std::cerr << "compile_time_toolkit_version: "
+              << desc.compile_time_toolkit_version();
+    std::cerr << "Name: " << desc.name();
+    EXPECT_THAT(absl::string_view(getenv("CUBLAS_EMULATE_SINGLE_PRECISION")),
+                ::testing::Eq("1"))
+        << "For F32 precision and BLAS, we want to test single precision "
+           "emulation with BF16x9 cublas algorithm. It was introduced in "
+           "cublas 12.9.";
+    EXPECT_THAT(absl::string_view(getenv("CUBLAS_EMULATION_STRATEGY")),
+                ::testing::Eq("performant"));
+  }
   // Use small contracting dimensions to avoid false-negatives due to changing
   // contracting dimension tiling factors.
   constexpr int kLhsOuterDim = 1024;
@@ -1817,16 +1896,17 @@ TEST_P(PrecisionTests, PrecisionCheck) {
   std::vector<uint64_t> profile_times;
   profile_times.reserve(100);
   for (int i = 0; i < 100; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(Literal test_result,
-                            test_runner().ExecuteWithExecutable(
-                                executable.get(), fake_arguments, &profile));
+    TF_ASSERT_OK_AND_ASSIGN(
+        Literal test_result,
+        test_runner_as_hlo_runner().ExecuteWithExecutableAndProfile(
+            executable.get(), fake_argument_ptrs, &profile));
     profile_times.push_back(profile.compute_time_ns());
   }
   auto min_time = *std::min_element(profile_times.begin(), profile_times.end());
   std::cerr << "\n";
   auto name =
       absl::StrCat(BackendToString(backend), "_", AlgorithmToString(algorithm));
-  PrintHistogram(name, test_result.data<float>(), ref_result);
+  PrintStats(name, test_result.data<float>(), ref_result);
   std::cerr << "stats: " << name << " min execution time, " << min_time
             << "ns\n";
   std::cerr << "stats: \n";
@@ -1835,11 +1915,84 @@ TEST_P(PrecisionTests, PrecisionCheck) {
                   GetMaxRelErrorForSmallContractingDim(backend, algorithm))));
 }
 
+TEST_P(PrecisionTests, CheckPrecisionDegradationAlongKDimension) {
+  // The goal of this test is to show the precision degradation along the
+  // contracting dimension. We want to check how much the relative error
+  // increases as we increase the size of the contracting dimension.
+  if (!VLOG_IS_ON(1)) {
+    GTEST_SKIP()
+        << "Precision degradation is only tested with vlog level > 0.\n"
+        << "To run the test, set --v=1 and rerun the test.\n"
+        << "The test is quite slow and produces output for manual inspection.";
+  }
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Precision tests is unknown for ROCM.";
+  }
+  Backend backend = std::get<1>(GetParam());
+  if (backend == Backend::kBlas) {
+    GTEST_SKIP() << "Precision degradation is only tested for Triton.";
+  }
+  PC::Algorithm algorithm = std::get<0>(GetParam());
+  // Use small m and n and go over a range of k.
+  constexpr int kMSize = 32;
+  constexpr int kNSize = 32;
+  constexpr int kMinKSize = 64;
+  constexpr int kMaxKSize = 1024 * 1024;
+  CSVWriter csv_writer;
+  csv_writer.appendRow<std::string>(
+      {"iterations_along_k", "max(abs(rel_errors))", "std_dev(rel_errors)"});
+  for (int k = kMinKSize; k <= kMaxKSize; k *= 2) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> test_module,
+        GetSimpleDotModule(kMSize, kNSize, k, algorithm, backend));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> fake_arguments,
+        MakeFakeArguments(test_module.get(), /*pseudo_random=*/
+                          true,
+                          /*use_large_range=*/false,
+                          /*treat_gte_as_data_formatting=*/false,
+                          /*max_bits_of_precision=*/23));
+    // Ensure there are no negative arguments to avoid unbounded relative errors
+    // due to subtracting two similarly large numbers.
+    MakeNonNegative(fake_arguments);
+    std::vector<const Literal*> fake_argument_ptrs =
+        GetLiteralPointers(fake_arguments);
+    std::vector<double> ref_result =
+        RunReferenceDot(fake_argument_ptrs, kMSize, kNSize, k);
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto executable,
+        test_runner().CreateExecutable(std::move(test_module), false));
+    TF_ASSERT_OK_AND_ASSIGN(
+        Literal test_result,
+        test_runner().ExecuteWithExecutable(executable.get(), fake_arguments));
+    std::vector<double> rel_errors =
+        CalculateRelErrors(test_result.data<float>(), ref_result);
+    double max_rel_error =
+        *std::max_element(rel_errors.begin(), rel_errors.end());
+    double min_rel_error =
+        *std::min_element(rel_errors.begin(), rel_errors.end());
+    double max_abs_rel_error =
+        std::max(std::abs(min_rel_error), std::abs(max_rel_error));
+    double mean_rel_error =
+        std::accumulate(rel_errors.begin(), rel_errors.end(), 0.0) /
+        rel_errors.size();
+    double std_dev_rel_error = CalculateStdDev(rel_errors, mean_rel_error);
+    csv_writer.nextRow();
+    csv_writer.appendValue(k / kMinKSize);
+    csv_writer.appendValue(absl::StrFormat("%1.3e", max_abs_rel_error));
+    csv_writer.appendValue(absl::StrFormat("%1.3e", std_dev_rel_error));
+  }
+  auto name =
+      absl::StrCat(BackendToString(backend), "_", AlgorithmToString(algorithm));
+  std::cerr << csv_writer.GetResult(name);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     PrecisionTests, PrecisionTests,
     Combine(Values(PC::ALG_DOT_TF32_TF32_F32, PC::ALG_DOT_TF32_TF32_F32_X3,
                    PC::ALG_DOT_BF16_BF16_F32, PC::ALG_DOT_BF16_BF16_F32_X3,
-                   PC::ALG_DOT_BF16_BF16_F32_X6, PC::ALG_DOT_BF16_BF16_F32_X9),
+                   PC::ALG_DOT_BF16_BF16_F32_X6, PC::ALG_DOT_BF16_BF16_F32_X9,
+                   PC::ALG_DOT_F32_F32_F32),
             Values(Backend::kTriton, Backend::kBlas)),
     AlgorithmAndBackendTestParamToString);
 

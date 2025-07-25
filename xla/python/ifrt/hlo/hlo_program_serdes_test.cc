@@ -75,8 +75,7 @@ module {
         xla::ParseMlirModuleString(kMlirModuleStr, *context));
     auto program =
         std::make_unique<HloProgram>(std::move(context), std::move(module));
-    auto options = std::make_unique<SerializeOptions>();
-    options->version = version();
+    auto options = std::make_unique<SerializeOptions>(version());
     TF_ASSERT_OK_AND_ASSIGN(serialized,
                             Serialize(*program, std::move(options)));
   }
@@ -87,7 +86,7 @@ module {
 
   // Verify that the deserialized program has no MHLO ops.
   bool has_unsupported_dialect = false;
-  xla_program->mlir_module->walk([&](mlir::Operation *op) {
+  xla_program->mlir_module()->walk([&](mlir::Operation *op) {
     if (!llvm::isa<mlir::BuiltinDialect, mlir::func::FuncDialect,
                    mlir::stablehlo::StablehloDialect>(op->getDialect())) {
       LOG(ERROR) << "Found an op with an unsupported dialect: "
@@ -116,8 +115,7 @@ module {
         xla::ParseMlirModuleString(kMlirModuleStr, *context));
     auto program =
         std::make_unique<HloProgram>(std::move(context), std::move(module));
-    auto options = std::make_unique<SerializeOptions>();
-    options->version = version();
+    auto options = std::make_unique<SerializeOptions>(version());
     EXPECT_THAT(Serialize(*program, std::move(options)),
                 StatusIs(Not(absl::StatusCode::kOk),
                          HasSubstr("Failed to serialize StableHLO")));
@@ -140,8 +138,7 @@ module {
         xla::ParseMlirModuleString(kMlirModuleStr, *context));
     auto program =
         std::make_unique<HloProgram>(std::move(context), std::move(module));
-    auto options = std::make_unique<SerializeOptions>();
-    options->version = version();
+    auto options = std::make_unique<SerializeOptions>(version());
     TF_ASSERT_OK_AND_ASSIGN(serialized,
                             Serialize(*program, std::move(options)));
   }

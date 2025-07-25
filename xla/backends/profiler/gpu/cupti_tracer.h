@@ -20,7 +20,6 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
-#include <thread>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -93,6 +92,11 @@ class CuptiTracer {
   absl::Status Enable(const CuptiTracerOptions& option,
                       CuptiTraceCollector* collector);
   void Disable();
+
+  // Creates default CUPTI callback IDs to avoid empty set and enabling all
+  // callbacks for CUPTI overhead optimization.
+  static std::vector<CUpti_driver_api_trace_cbid_enum>
+  CreateDefaultCallbackIds();
 
   // Control threads could periodically call this function to flush the
   // collected events to the collector. Note that this function will lock the

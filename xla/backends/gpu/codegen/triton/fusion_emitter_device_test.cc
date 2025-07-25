@@ -17,6 +17,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -56,9 +57,11 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -93,7 +96,112 @@ class TmaParameterizedTritonEmitterTest
 };
 
 INSTANTIATE_TEST_SUITE_P(TmaParameterizedTritonEmitterTestSuite,
-                         TmaParameterizedTritonEmitterTest, ::testing::Bool());
+                         TmaParameterizedTritonEmitterTest, ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "tma_allowed" : "tma_disabled";
+                         });
+
+struct TmaAndDotLayoutTestParams {
+  std::vector<int64_t> lhs_layout;
+  std::vector<int64_t> rhs_layout;
+  std::vector<int64_t> out_layout;
+  bool enable_tma;
+};
+
+class TmaAndLayoutParameterizedTritonEmitterTest
+    : public TritonEmitterTest,
+      public ::testing::WithParamInterface<TmaAndDotLayoutTestParams> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = TritonEmitterTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_triton_tma(
+        GetParam().enable_tma);
+    return debug_options;
+  }
+};
+
+std::string TmaAndDotLayoutTestParamsToString(
+    const ::testing::TestParamInfo<TmaAndDotLayoutTestParams>& data) {
+  return absl::StrCat("lhs_", absl::StrJoin(data.param.lhs_layout, "_"),
+                      "_rhs_", absl::StrJoin(data.param.rhs_layout, "_"),
+                      "_out_", absl::StrJoin(data.param.out_layout, "_"),
+                      data.param.enable_tma ? "_tma" : "");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    TmaAndLayoutParameterizedTritonEmitterTestSuite,
+    TmaAndLayoutParameterizedTritonEmitterTest,
+    ::testing::ValuesIn({
+        TmaAndDotLayoutTestParams{{2, 1, 0}, {2, 1, 0}, {2, 1, 0}, false},
+        TmaAndDotLayoutTestParams{{2, 1, 0}, {2, 1, 0}, {2, 1, 0}, true},
+        TmaAndDotLayoutTestParams{{0, 2, 1}, {2, 0, 1}, {2, 1, 0}, false},
+        TmaAndDotLayoutTestParams{{0, 2, 1}, {2, 0, 1}, {2, 1, 0}, true},
+        TmaAndDotLayoutTestParams{{2, 1, 0}, {2, 1, 0}, {1, 0, 2}, false},
+        TmaAndDotLayoutTestParams{{2, 1, 0}, {2, 1, 0}, {1, 0, 2}, true},
+        TmaAndDotLayoutTestParams{{2, 0, 1}, {0, 1, 2}, {2, 0, 1}, false},
+        TmaAndDotLayoutTestParams{{2, 0, 1}, {0, 1, 2}, {2, 0, 1}, true},
+    }),
+    TmaAndDotLayoutTestParamsToString);
+
+TEST_P(TmaAndLayoutParameterizedTritonEmitterTest, Dot) {
+  const std::string hlo_text = absl::Substitute(
+      R"(
+flhs {
+  flhs.p0 = f32[32,16,256]{$0} parameter(0)
+  ROOT lhs.root = f32[32,16,256]{$0} negate(flhs.p0)
+}
+
+frhs {
+  frhs.p0 = f32[256,16,512]{$1} parameter(0)
+  ROOT frhs.root = f32[256,16,512]{$1} abs(frhs.p0)
+}
+
+fdot {
+  fdot.p0 = f32[32,16,256]{$0} parameter(0)
+  fdot.p1 = f32[256,16,512]{$1} parameter(1)
+  fdot.lhs = f32[32,16,256]{$0} fusion(fdot.p0), kind=kCustom, calls=flhs, backend_config={
+    "fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "1", "32"]}],
+        "is_tma_allowed":$3
+    }
+  }
+}
+
+fdot.rhs = f32[256,16,512]{$1} fusion(fdot.p1), kind=kCustom, calls=frhs, backend_config={
+  "fusion_backend_config":{
+    "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+      "output_tiles":[{"sizes":["32", "1", "64"]}],
+      "is_tma_allowed":$3
+    }
+  }
+}
+
+ROOT fdot.root = f32[16,32,512]{$2} dot(fdot.lhs, fdot.rhs),
+  lhs_contracting_dims={2}, rhs_contracting_dims={0}, lhs_batch_dims={1}, rhs_batch_dims={1},
+  algorithm=dot_f32_f32_f32
+}
+
+ENTRY entry {
+  entry.p0 = f32[32,16,256]{$0} parameter(0)
+  entry.p1 = f32[256,16,512]{$1} parameter(1)
+  ROOT fusion = f32[16,32,512]{$2} fusion(entry.p0, entry.p1),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1", "16", "64"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1",
+          "is_tma_allowed":$3}}}
+})",
+      absl::StrJoin(GetParam().lhs_layout, ","),
+      absl::StrJoin(GetParam().rhs_layout, ","),
+      absl::StrJoin(GetParam().out_layout, ","), GetParam().enable_tma);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
 
 // TODO(bchetioui): turn this into a general binary elementwise test.
 TEST_F(TritonEmitterTest, MinimumIsEmittedCorrectly) {
@@ -1372,7 +1480,7 @@ ENTRY entry_computation {
 // Parameterized to make sure that slices are also handled correctly when TMA is
 // enabled.
 TEST_P(TmaParameterizedTritonEmitterTest, TestSliceWithTileThatNeedsMasking) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 HloModule m
 
 fused_computation {
@@ -1390,35 +1498,44 @@ ENTRY entry_computation {
         "output_tiles":[{"sizes":["8","4"]}],
         "num_warps":"1",
         "num_ctas":"1",
-        "num_stages":"1"}}}
+        "num_stages":"1",
+        "is_tma_allowed":"$0"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 // Parameterized to make sure that tile strides are handled correctly when TMA
 // is enabled.
 TEST_P(TmaParameterizedTritonEmitterTest, TestSliceWithNonMinorDimStrides) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 HloModule m
 
 fused_computation {
-  p = f32[128,32] parameter(0)
-  ROOT slice = f32[12,16] slice(p), slice={[102:126:2], [16:32]}
+  p = f32[128,64,32] parameter(0)
+  ROOT slice = f32[12,16,16] slice(p), slice={[102:126:2], [6:38:2], [16:32]}
 }
 
 ENTRY entry_computation {
-  p = f32[128,32] parameter(0)
-  ROOT fusion = f32[12,16] fusion(p), kind=kCustom, calls=fused_computation,
+  p = f32[128,64,32] parameter(0)
+  ROOT fusion = f32[12,16,16] fusion(p), kind=kCustom, calls=fused_computation,
     backend_config={
       "fusion_backend_config":{
       "kind":"__triton",
       "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["4","4"]}],
+        "output_tiles":[{"sizes":["4","2","4"]}],
         "num_warps":"1",
         "num_ctas":"1",
-        "num_stages":"1"}}}
+        "num_stages":"1",
+        "is_tma_allowed":"$0"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguous) {
@@ -1450,7 +1567,7 @@ ENTRY entry_computation {
 
 TEST_P(TmaParameterizedTritonEmitterTest,
        TestSlice2DWithTileElementsNotAllContiguous) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 HloModule m
 
 fused_computation {
@@ -1471,9 +1588,14 @@ ENTRY entry_computation {
         "output_tiles":[{"sizes":["2","8"]}],
         "num_warps":"1",
         "num_ctas":"1",
-        "num_stages":"1"}}}
+        "num_stages":"1",
+        "is_tma_allowed":"$0"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguousUnaligned) {
@@ -1507,7 +1629,7 @@ ENTRY entry_computation {
 // also invokes TritonXlaExtractInsertPass to check TTIR.
 TEST_P(TmaParameterizedTritonEmitterTest,
        TestSlice2DWithTileElementsNotAllContiguousUnaligned) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 HloModule m
 
 fused_computation {
@@ -1525,59 +1647,71 @@ ENTRY entry_computation {
           "output_tiles":[{"sizes":["2","8"]}],
           "num_warps":"1",
           "num_ctas":"1",
-          "num_stages":"1"}}}
+          "num_stages":"1",
+          "is_tma_allowed":"$0"}}}
 })";
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
-TEST_F(TritonEmitterTest, ReshapeIntoBroadcastIsLoweredCorrectly) {
-  constexpr absl::string_view kHloText = R"(
+// Parameterized to test TMA with various dimensionalities for loads/stores.
+TEST_P(TmaParameterizedTritonEmitterTest,
+       ReshapeIntoBroadcastIsLoweredCorrectly) {
+  constexpr absl::string_view kHloTextTemplate = R"(
 triton_computation {
   param_0 = f32[128,256]{1,0} parameter(0)
   reshape = f32[64,2,256]{2,1,0} reshape(param_0)
-  ROOT broadcast = f32[64,2,256,2]{3,2,1,0} broadcast(reshape), dimensions={0,1,2}
+  ROOT broadcast = f32[64,2,256,16]{3,2,1,0} broadcast(reshape), dimensions={0,1,2}
 }
 
 ENTRY main {
   param_0 = f32[128,256]{1,0} parameter(0)
-  ROOT triton_fusion = f32[64,2,256,2]{3,2,1,0} fusion(param_0), kind=kCustom,
+  ROOT triton_fusion = f32[64,2,256,16]{3,2,1,0} fusion(param_0), kind=kCustom,
     calls=triton_computation, backend_config={
       "fusion_backend_config":{
         "kind":"__triton",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["2","2","2","2"]}],
+          "output_tiles":[{"sizes":["2","2","4","4"]}],
           "num_warps":"1",
           "num_ctas":"1",
-          "num_stages":"1"}}}
+          "num_stages":"1",
+          "is_tma_allowed":"$0"}}}
 })";
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrAndFileCheck(this, hlo_text, "triton_computation", R"(
 CHECK: tt.reshape
 )"));
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, HighPad1DIsLoweredCorrectly) {
   constexpr absl::string_view kHloText = R"(
-    triton_computation {
-      param_0 = f32[17]{0} parameter(0)
-      c1 = f32[] constant(1)
-      ROOT pad = f32[49]{0} pad(param_0, c1), padding=0_32
-    }
+triton_computation {
+  param_0 = f32[17]{0} parameter(0)
+  c1 = f32[] constant(1)
+  ROOT pad = f32[49]{0} pad(param_0, c1), padding=0_32
+}
 
-    ENTRY main {
-      param_0 = f32[17]{0} parameter(0)
-      ROOT triton_fusion = f32[49]{0} fusion(param_0), kind=kCustom,
-        calls=triton_computation, backend_config={
-          "fusion_backend_config":{
-            "kind":"__triton_nested_gemm_fusion",
-            "block_level_fusion_config":{
-              "output_tiles":[{"sizes":["32"]}],
-              "num_warps":"1",
-              "num_ctas":"1",
-              "num_stages":"1"}}}
-    })";
+ENTRY main {
+  param_0 = f32[17]{0} parameter(0)
+  ROOT triton_fusion = f32[49]{0} fusion(param_0), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["32"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "triton_computation",
                                           R"(
 // #xla.indexing_map<"(pid_0) -> (pid_0 * 32), domain: pid_0 in [0, 1]
@@ -1605,24 +1739,24 @@ TEST_F(TritonEmitterTest, HighPad1DIsLoweredCorrectly) {
 
 TEST_F(TritonEmitterTest, HighPad2DIsLoweredCorrectly) {
   constexpr absl::string_view kHloText = R"(
-    triton_computation {
-      param_0 = f32[17,137]{1,0} parameter(0)
-      c1 = f32[] constant(1)
-      ROOT pad = f32[32,138]{1,0} pad(param_0, c1), padding=0_15x0_1
-    }
+triton_computation {
+  param_0 = f32[17,137]{1,0} parameter(0)
+  c1 = f32[] constant(1)
+  ROOT pad = f32[32,138]{1,0} pad(param_0, c1), padding=0_15x0_1
+}
 
-    ENTRY main {
-      param_0 = f32[17,137]{1,0} parameter(0)
-      ROOT triton_fusion = f32[32,138]{1,0} fusion(param_0), kind=kCustom,
-        calls=triton_computation, backend_config={
-          "fusion_backend_config":{
-            "kind":"__triton_nested_gemm_fusion",
-            "block_level_fusion_config":{
-              "output_tiles":[{"sizes":["32","16"]}],
-              "num_warps":"1",
-              "num_ctas":"1",
-              "num_stages":"1"}}}
-    })";
+ENTRY main {
+  param_0 = f32[17,137]{1,0} parameter(0)
+  ROOT triton_fusion = f32[32,138]{1,0} fusion(param_0), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["32","16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "triton_computation",
                                           R"(
 // CHECK: triton_xla.extract {{.*}} : tensor<17x137xf32> to tensor<32x16xf32>
@@ -1670,59 +1804,67 @@ CHECK: tt.reshape
 
 TEST_P(TmaParameterizedTritonEmitterTest,
        SimpleBitcastNormalizedLayoutIsLoweredCorrectly) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 triton_computation {
-  p = s16[16,64]{1,0} parameter(0)
-  ROOT bitcast = s16[16,64] bitcast(p)
+  p = s16[16,32,64]{2,1,0} parameter(0)
+  ROOT bitcast = s16[16,32,64] bitcast(p)
 }
 
 ENTRY entry_computation {
-  p = s16[16,64]{1,0} parameter(0)
-  ROOT fusion = s16[16,64] fusion(p), kind=kCustom, calls=triton_computation,
+  p = s16[16,32,64]{2,1,0} parameter(0)
+  ROOT fusion = s16[16,32,64] fusion(p), kind=kCustom, calls=triton_computation,
     backend_config={
-    "fusion_backend_config":{
+      "fusion_backend_config":{
       "kind":"__triton",
       "block_level_fusion_config":{
-      "output_tiles":[{"sizes":["16","32"]}],
+      "output_tiles":[{"sizes":["16","16","32"]}],
       "num_warps":"1",
       "num_ctas":"1",
-      "num_stages":"1"}}}
+      "num_stages":"1",
+      "is_tma_allowed":"$0"}}}
 })";
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 // Parameterized the test to make sure that non-canonical layouts are handled
 // correctly when TMA is enabled.
 TEST_P(TmaParameterizedTritonEmitterTest,
        SimpleBitcastNonNormalizedInputLayoutIsLoweredCorrectly) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 triton_computation {
-  p = s32[64,16]{0,1} parameter(0)
-  ROOT bitcast = s32[16,64] bitcast(p)
+  p = s32[64,32,16]{0,1,2} parameter(0)
+  ROOT bitcast = s32[16,32,64] bitcast(p)
 }
 
 ENTRY entry_computation {
-  p = s32[64,16]{0,1} parameter(0)
-  ROOT fusion = s32[16,64] fusion(p), kind=kCustom, calls=triton_computation,
+  p = s32[64,32,16]{0,1,2} parameter(0)
+  ROOT fusion = s32[16,32,64] fusion(p), kind=kCustom, calls=triton_computation,
     backend_config={
     "fusion_backend_config":{
       "kind":"__triton",
       "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16","32"]}],
+        "output_tiles":[{"sizes":["16","16","32"]}],
         "num_warps":"1",
         "num_ctas":"1",
-        "num_stages":"1"}}}
+        "num_stages":"1",
+        "is_tma_allowed":"$0"}}}
 })";
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 // Parameterized the test to make sure that non-canonical layouts are handled
 // correctly when TMA is enabled.
 TEST_P(TmaParameterizedTritonEmitterTest,
        SimpleBitcastNonNormalizedOutputLayoutIsLoweredCorrectly) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 triton_computation {
 p = s32[64,16] parameter(0)
 ROOT bitcast = s32[16,64]{0,1} bitcast(p)
@@ -1738,10 +1880,14 @@ backend_config={
    "output_tiles":[{"sizes":["16","32"]}],
    "num_warps":"1",
    "num_ctas":"1",
-   "num_stages":"1"}}}
+   "num_stages":"1",
+   "is_tma_allowed":"$0"}}}
 })";
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 // When TMA is enabled, it is important to test this in an end-to-end fashion.
@@ -1749,7 +1895,7 @@ backend_config={
 // See tensorflow/compiler/xla/backends/gpu/codegen/triton/tma_utils.cc.
 TEST_P(TmaParameterizedTritonEmitterTest,
        ContiguousDimensionExceedsSwizzleLimitIsLoweredCorrectly) {
-  constexpr absl::string_view kHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 triton_computation {
 p = s32[16,128] parameter(0)
 ROOT bitcast = s32[16,128] bitcast(p)
@@ -1765,10 +1911,14 @@ backend_config={
  "output_tiles":[{"sizes":["16","64"]}],
  "num_warps":"1",
  "num_ctas":"1",
- "num_stages":"1"}}}
+ "num_stages":"1",
+ "is_tma_allowed":"$0"}}}
 })";
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, BitcastNormalizedLayoutsIsLoweredCorrectly) {
@@ -2444,39 +2594,43 @@ CHECK:     triton_xla.insert
 }
 
 TEST_P(TmaParameterizedTritonEmitterTest, BroadcastWorksCorrectly) {
-  constexpr absl::string_view kTritonHloText = R"(
+  constexpr absl::string_view kHloTextTemplate = R"(
 computation {
-  p0 = s32[256]{0} parameter(0)
-  ROOT broadcast = s32[2,256]{1,0} broadcast(p0), dimensions={1}
+  p0 = s32[234]{0} parameter(0)
+  ROOT broadcast = s32[2,234]{1,0} broadcast(p0), dimensions={1}
 }
 
 ENTRY entry_computation {
-  p0 = s32[256]{0} parameter(0)
-  ROOT fusion = s32[2,256]{1,0} fusion(p0), kind=kCustom,
+  p0 = s32[234]{0} parameter(0)
+  ROOT fusion = s32[2,234]{1,0} fusion(p0), kind=kCustom,
     calls=computation,
     backend_config={
     "fusion_backend_config":{
       "kind":"__triton",
       "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["2","256"]}],
+        "output_tiles":[{"sizes":["2","128"]}],
         "num_warps":"1",
         "num_ctas":"1",
-        "num_stages":"1"}}}
+        "num_stages":"1",
+        "is_tma_allowed":"$0"}}}
 })";
+
+  const bool is_tma_allowed = GetParam();
+  std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
 
   constexpr absl::string_view kEmittersHloText = R"(
 computation {
-  p0 = s32[256]{0} parameter(0)
-  ROOT broadcast = s32[2,256]{1,0} broadcast(p0), dimensions={1}
+  p0 = s32[234]{0} parameter(0)
+  ROOT broadcast = s32[2,234]{1,0} broadcast(p0), dimensions={1}
 }
 
 ENTRY entry_computation {
-  p0 = s32[256]{0} parameter(0)
-  ROOT fusion = s32[2,256]{1,0} fusion(p0), kind=kCustom, calls=computation
+  p0 = s32[234]{0} parameter(0)
+  ROOT fusion = s32[2,234]{1,0} fusion(p0), kind=kCustom, calls=computation
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_module,
-                          ParseAndReturnVerifiedModule(kTritonHloText));
+                          ParseAndReturnVerifiedModule(hlo_text));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> emitters_module,
                           ParseAndReturnVerifiedModule(kEmittersHloText));
 
@@ -2617,6 +2771,33 @@ ENTRY entry_computation {
       RunAndCompareNoHloPasses(std::move(module), {&literal}, kExactMatch));
 }
 
+TEST_P(TmaParameterizedTritonEmitterTest, ConvertS4ToS8For2D) {
+  constexpr absl::string_view kHloTextTemplate = R"(
+computation {
+  p0 = s4[64,64] parameter(0)
+  ROOT convert = s8[64,64] convert(p0)
+}
+
+ENTRY entry_computation {
+  p0 = s4[64,64] parameter(0)
+  ROOT fusion = s8[64,64] fusion(p0), kind=kCustom,
+    calls=computation,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["32", "32"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1",
+          "is_tma_allowed":"$0"}}}
+})";
+
+  const bool is_tma_allowed = GetParam();
+  std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
+}
+
 TEST_F(TritonEmitterTest, SingleTileDotWithNestedFusionsIsEmittedCorrectly) {
   // Simplest case when everything fits into one tile that is useful for
   // debugging. This also tests support for empty nested fusions.
@@ -2676,31 +2857,33 @@ CHECK: tt.dot {{.*}} -> tensor<16x16xf32>
 // Parameterized as a sanity check to make sure dots work with TMA.
 TEST_P(TmaParameterizedTritonEmitterTest,
        DotWithNestedFusionsIsEmittedCorrectly) {
-  const std::string kHloText = R"(
+  const std::string kHloTextTemplate = R"(
 flhs {
-  flhs.p0 = f32[32,256] parameter(0)
-  ROOT lhs.root = f32[32,256] negate(flhs.p0)
+  flhs.p0 = f32[32,123] parameter(0)
+  ROOT lhs.root = f32[32,123] negate(flhs.p0)
 }
 
 frhs {
-  frhs.p0 = f32[256,512] parameter(0)
-  ROOT frhs.root = f32[256,512] abs(frhs.p0)
+  frhs.p0 = f32[123,512] parameter(0)
+  ROOT frhs.root = f32[123,512] abs(frhs.p0)
 }
 
 fdot {
-  fdot.p0 = f32[32,256] parameter(0)
-  fdot.p1 = f32[256,512] parameter(1)
-  fdot.lhs = f32[32,256] fusion(fdot.p0), kind=kCustom, calls=flhs, backend_config={
+  fdot.p0 = f32[32,123] parameter(0)
+  fdot.p1 = f32[123,512] parameter(1)
+  fdot.lhs = f32[32,123] fusion(fdot.p0), kind=kCustom, calls=flhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "32"]}]
+        "output_tiles":[{"sizes":["16", "32"]}],
+        "is_tma_allowed":"$0"
       }
     }
   }
-  fdot.rhs = f32[256,512]{1,0} fusion(fdot.p1), kind=kCustom, calls=frhs, backend_config={
+  fdot.rhs = f32[123,512]{1,0} fusion(fdot.p1), kind=kCustom, calls=frhs, backend_config={
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["32", "64"]}]
+        "output_tiles":[{"sizes":["32", "64"]}],
+        "is_tma_allowed":"$0"
       }
     }
   }
@@ -2710,8 +2893,8 @@ fdot {
 }
 
 ENTRY entry {
-  entry.p0 = f32[32,256] parameter(0)
-  entry.p1 = f32[256,512] parameter(1)
+  entry.p0 = f32[32,123] parameter(0)
+  entry.p1 = f32[123,512] parameter(1)
   ROOT fusion = f32[32,512] fusion(entry.p0, entry.p1),
     kind=kCustom, calls=fdot, backend_config={
       "fusion_backend_config":{
@@ -2720,16 +2903,20 @@ ENTRY entry {
           "output_tiles":[{"sizes":["16", "64"]}],
           "num_warps":"1",
           "num_ctas":"1",
-          "num_stages":"1"}}}
+          "num_stages":"1",
+          "is_tma_allowed":"$0"}}}
 })";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fdot", R"(
-CHECK:      func.func @triton_fn(%[[ARG0:[A-Za-z0-9_]*]]: tensor<32x256xf32>
-CHECK-SAME:                    %[[ARG1:[A-Za-z0-9_]*]]: tensor<256x512xf32>
+
+  const bool is_tma_allowed = GetParam();
+  std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, hlo_text, "fdot", R"(
+CHECK:      func.func @triton_fn(%[[ARG0:[A-Za-z0-9_]*]]: tensor<32x123xf32>
+CHECK-SAME:                    %[[ARG1:[A-Za-z0-9_]*]]: tensor<123x512xf32>
 CHECK-SAME:                    %[[ARG2:[A-Za-z0-9_]*]]: tensor<32x512xf32>
 CHECK-DAG:  %[[C0:.*]] = arith.constant 0 : i64
-CHECK-DAG:  %[[C8:.*]] = arith.constant 8 : i64
+CHECK-DAG:  %[[C4:.*]] = arith.constant 4 : i64
 CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : i64
-CHECK:      {{.*}} = scf.for {{.*}} = %[[C0]] to %[[C8]] step %[[C1]]
+CHECK:      {{.*}} = scf.for {{.*}} = %[[C0]] to %[[C4]] step %[[C1]]
 CHECK-SAME: iter_args({{.*}}) -> (tensor<16x64xf32>)  : i64 {
 CHECK-DAG:  triton_xla.extract %[[ARG0]]
 CHECK-DAG:  triton_xla.extract %[[ARG1]]
@@ -2740,7 +2927,7 @@ CHECK:      scf.yield {{.*}} : tensor<16x64xf32>
 CHECK-COUNT-1: triton_xla.insert
 )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(
-      kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+      hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
 TEST_F(TritonEmitterTest, MaskedDotIsEmittedCorrectly) {
@@ -3137,33 +3324,33 @@ TEST_P(TmaParameterizedTritonEmitterTest, DotFromBroadcastIsEmittedCorrectly) {
   // TODO(b/393299275): add a deviceless test to run the whole pipeline as
   // other passes might change the module but we are starting from a fixed
   // state.
-  const std::string kHloText = R"(
+  const std::string kHloTextTemplate = R"(
 HloModule module
 
-flhs (parameter_0: f32[264]) -> f32[264,128] {
-  parameter_0 = f32[264]{0} parameter(0)
-  ROOT flhs.1 = f32[264,128]{1,0} broadcast(parameter_0), dimensions={0}
+flhs (parameter_0: f32[256]) -> f32[256,128] {
+  parameter_0 = f32[256]{0} parameter(0)
+  ROOT flhs.1 = f32[256,128]{1,0} broadcast(parameter_0), dimensions={0}
 }
 
 frhs (parameter_0.1: f32[128,32]) -> f32[128,32] {
   ROOT parameter_0.1 = f32[128,32]{1,0} parameter(0)
 }
 
-triton_dot (p0: f32[264], p1: f32[128,32]) -> f32[264,32] {
-  p0 = f32[264]{0} parameter(0)
-  lhs = f32[264,128]{1,0} fusion(p0), kind=kCustom, calls=flhs, backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"1","output_tiles":[{"sizes":["32","16"]}]}}}
+triton_dot (p0: f32[256], p1: f32[128,32]) -> f32[256,32] {
+  p0 = f32[256]{0} parameter(0)
+  lhs = f32[256,128]{1,0} fusion(p0), kind=kCustom, calls=flhs, backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"1", "is_tma_allowed":"$0", "output_tiles":[{"sizes":["32","16"]}]}}}
   p1 = f32[128,32]{1,0} parameter(1)
-  rhs = f32[128,32]{1,0} fusion(p1), kind=kCustom, calls=frhs, backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"1","output_tiles":[{"sizes":["16","16"]}]}}}
-  ROOT result = f32[264,32]{1,0} dot(lhs, rhs),
+  rhs = f32[128,32]{1,0} fusion(p1), kind=kCustom, calls=frhs, backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"1", "is_tma_allowed":"$0", "output_tiles":[{"sizes":["16","16"]}]}}}
+  ROOT result = f32[256,32]{1,0} dot(lhs, rhs),
     lhs_contracting_dims={1}, rhs_contracting_dims={0},
     algorithm=dot_f32_f32_f32
 }
 
-ENTRY e (p0.1: f32[11,1,24,1], p1.1: f32[128,32]) -> f32[264,32] {
+ENTRY e (p0.1: f32[11,1,24,1], p1.1: f32[128,32]) -> f32[256,32] {
   p0.1 = f32[11,1,24,1]{3,2,1,0} parameter(0)
-  bitcast = f32[264]{0} bitcast(p0.1)
+  bitcast = f32[256]{0} bitcast(p0.1)
   p1.1 = f32[128,32]{1,0} parameter(1)
-  ROOT result.1 = f32[264,32]{1,0} fusion(bitcast, p1.1), kind=kCustom,
+  ROOT result.1 = f32[256,32]{1,0} fusion(bitcast, p1.1), kind=kCustom,
     calls=triton_dot, backend_config={
       "fusion_backend_config":{
         "kind":"__triton_nested_gemm_fusion",
@@ -3171,11 +3358,16 @@ ENTRY e (p0.1: f32[11,1,24,1], p1.1: f32[128,32]) -> f32[264,32] {
           "output_tiles":[{"sizes":["32","16"]}],
           "num_warps":"1",
           "num_stages":"1",
-          "num_ctas":"1"}}}
+          "num_ctas":"1",
+          "is_tma_allowed":"$0"}}}
 }
 )";
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
-      kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+      hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
 // The template is parametrized by the type of the lhs/rhs, the type of the
@@ -3481,27 +3673,14 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::ValuesIn(AllXlaDataTypes())),
     DotUnsetAlgorithmEmitterTest::ParamToString);
 
-TEST_F(TritonEmitterTest, CheckRocmWarpSize) {
+TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   if (std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
     GTEST_SKIP() << "Warp size is always 32 on CUDA";
   }
 
-  constexpr absl::string_view kHloText = R"(
-  %gemm_fusion___computation.clone {
-    %parameter_0 = f16[30,30]{1,0} parameter(0)
-    %parameter_1 = s8[30,30]{1,0} parameter(1)
-    %cp1.1 = f16[30,30]{1,0} convert(%parameter_1)
-    ROOT %_.1 = f16[30,30]{1,0} dot(%parameter_0, %cp1.1), lhs_contracting_dims={0}, rhs_contracting_dims={1}
-  }
-
-  ENTRY %entry_computation {
-    %p1 = s8[30,30]{1,0} parameter(1)
-    %p0 = f16[30,30]{1,0} parameter(0)
-    ROOT %gemm_fusion__ = f16[30,30]{1,0} fusion(%p0, %p1), kind=kCustom, calls=%gemm_fusion___computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"256","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}},"force_earliest_schedule":false,"reification_cost":[]}
-  })";
-
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
-                          ParseAndReturnVerifiedModule(kHloText));
+                          ParseAndReturnVerifiedModule(GetDotAlgorithmHlo(
+                              F16, F16, PrecisionConfig::ALG_UNSET)));
 
   std::string output_directory;
   if (!tsl::io::GetTestUndeclaredOutputsDir(&output_directory)) {

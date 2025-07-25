@@ -597,7 +597,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
     VLOG(2) << "(Profiling::PM Sampling) Top of decode loop";
 
     // If next state is not enabled, do one more pass
-    if (next_state_ != ThreadState::kEnabled) {
+    if (!NextStateIs(ThreadState::kEnabled)) {
       if (!final_pass) {
         final_pass = true;
       } else {
@@ -760,7 +760,10 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
   // Control loop for decode thread
   do {
     // Wait for signal to change state.  Releases lock during wait
-    auto stateChanged = [this] { return current_state_ != next_state_; };
+    auto stateChanged = [this] {
+      state_mutex_.AssertReaderHeld();
+      return current_state_ != next_state_;
+    };
     state_mutex_.Await(absl::Condition(&stateChanged));
 
     switch (next_state_) {
@@ -773,9 +776,11 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
       case ThreadState::kEnabled:
         StateIs(ThreadState::kEnabled);
         {
-          // Release lock but regain before returning to control loop
-          MutexUnlock unlock(&state_mutex_);
+          // Release lock for expensive decode call, but regain before returning
+          // to control loop
+          state_mutex_.Unlock();
           DecodeUntilDisabled();
+          state_mutex_.Lock();
         }
         // Returns when Disabled has been requested
         StateIs(ThreadState::kDisabled);

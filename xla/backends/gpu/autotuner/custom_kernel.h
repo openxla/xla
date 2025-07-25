@@ -34,29 +34,19 @@ namespace gpu {
 // A codegen backend for custom kernels.
 class CustomKernelBackend : public GpuCodegenBackend {
  public:
-  explicit CustomKernelBackend(const Compiler::TargetConfig* target_config,
+  explicit CustomKernelBackend(stream_executor::StreamExecutor* stream_executor,
                                const DebugOptions* debug_options,
                                Compiler* compiler)
-      : GpuCodegenBackend("Cublas", target_config, debug_options, compiler) {}
+      : GpuCodegenBackend("Cublas", stream_executor, debug_options, compiler) {}
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-  GetSupportedConfigs(
-      const HloInstruction& instr,
-      stream_executor::StreamExecutor* stream_executor) override;
+  GetSupportedConfigs(const HloInstruction& instr) override;
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
       const HloInstruction& instr) override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
-
- private:
-  absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
-      std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) override {
-    return absl::InvalidArgumentError(
-        "CustomKernelBackend doesn't support wrapping in a module.");
-  }
 };
 
 }  // namespace gpu

@@ -499,6 +499,7 @@ xla_cc_test(
     srcs = ["gpu_blas_lt_test.cc"],
     deps = [
         ":gpu_blas_lt",
+        ":gpu_blas_lt_proto_cc",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor:blas",
         "//xla/tsl/platform:statusor",
@@ -524,7 +525,7 @@ cc_library(
     linkstatic = True,
     tags = [
         "gpu",
-        "no-sycl",
+        "no-oneapi",
     ],
     deps = [
         ":gpu_kernel_registry",
@@ -745,13 +746,20 @@ xla_test(
     ],
 )
 
+tf_proto_library(
+    name = "tma_metadata_proto",
+    srcs = ["tma_metadata.proto"],
+)
+
 cc_library(
     name = "tma_metadata",
     srcs = ["tma_metadata.cc"],
     hdrs = ["tma_metadata.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     deps = [
+        ":tma_metadata_proto_cc",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -771,8 +779,12 @@ xla_cc_test(
     deps = [
         ":tma_metadata",
         "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -852,7 +864,6 @@ cc_library(
     hdrs = ["all_reduce_kernel.h"],
     deps = [
         "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -895,6 +906,32 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "elf_section_extraction",
+    srcs = ["elf_section_extraction.cc"],
+    hdrs = ["elf_section_extraction.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "elf_section_extraction_test",
+    srcs = ["elf_section_extraction_test.cc"],
+    deps = [
+        ":elf_section_extraction",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

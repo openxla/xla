@@ -26,13 +26,14 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Module.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
@@ -116,9 +117,101 @@ limitations under the License.
 
 namespace xla::cpu {
 
+namespace {
+
+bool ShouldDisableLoopUnrollingForReduce(const HloInstruction* instruction) {
+  bool disable_loop_unrolling = true;
+  auto* reduce = Cast<HloReduceInstruction>(instruction);
+  auto reduce_dimensions = reduce->dimensions();
+  // All inputs have the same shape.
+  auto reduce_input_shape = reduce->inputs()[0]->shape();
+  auto reduce_input_rank = reduce_input_shape.dimensions().size();
+
+  // If reduce happens over outer dimensions we turn on loop unrolling.
+  for (auto it = reduce_dimensions.rbegin(); it != reduce_dimensions.rend();
+       ++it) {
+    if (*it != --reduce_input_rank) {
+      disable_loop_unrolling = false;
+      break;
+    }
+  }
+
+  return disable_loop_unrolling;
+}
+
+bool ShouldDisableLoopUnrollingForReduceWindow(
+    const HloInstruction* instruction,
+    const TargetMachineFeatures& target_machine_features) {
+  bool disable_loop_unrolling = true;
+  auto* reduce_window = Cast<HloReduceWindowInstruction>(instruction);
+
+  auto max_simd_width_bytes = [&]() -> std::optional<int> {
+    auto features = target_machine_features.get_target_feature_string();
+    constexpr int kAvx512 = 512;
+    constexpr int kAvx = 256;
+    constexpr int kSse = 128;
+    constexpr int kBitsInByte = 8;
+    if (absl::StrContains(features, "+avx512")) {
+      return kAvx512 / kBitsInByte;
+    }
+    if (absl::StrContains(features, "+avx")) {
+      return kAvx / kBitsInByte;
+    }
+    if (absl::StrContains(features, "+sse")) {
+      return kSse / kBitsInByte;
+    }
+    return std::nullopt;
+  }();
+
+  std::vector<int64_t> strides;
+  strides.reserve(reduce_window->window().dimensions_size());
+
+  for (const auto& dim : reduce_window->window().dimensions()) {
+    strides.push_back(dim.stride());
+  }
+
+  auto input_type = reduce_window->inputs()[0]->shape().element_type();
+  // If the innermost stride is lesser than the size of the vectorization
+  // for the given platform we turn on loop unrolling.
+  if (max_simd_width_bytes.has_value() &&
+      *max_simd_width_bytes >
+          strides.back() * ShapeUtil::ByteSizeOfPrimitiveType(input_type)) {
+    disable_loop_unrolling = false;
+  }
+
+  return disable_loop_unrolling;
+}
+
+absl::Status HandleReduceAndReduceWindowElementalKernelCompilationOptions(
+    const HloInstruction* instruction, llvm::Module& llvm_module,
+    const TargetMachineFeatures& target_machine_features) {
+  bool disable_loop_unrolling = true;
+
+  if (instruction->opcode() == HloOpcode::kReduce) {
+    disable_loop_unrolling = ShouldDisableLoopUnrollingForReduce(instruction);
+  } else if (instruction->opcode() == HloOpcode::kReduceWindow) {
+    disable_loop_unrolling = ShouldDisableLoopUnrollingForReduceWindow(
+        instruction, target_machine_features);
+  } else {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported HLO instruction: ", instruction->ToString()));
+  }
+
+  LlvmKernelOptions llvm_kernel_options;
+  llvm_kernel_options.set_disable_loop_unrolling(disable_loop_unrolling);
+  SetXlaCpuBackendOptions(llvm_module, llvm_kernel_options);
+
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 static FusionCompiler FusionCompilerFactory(const HloModule& hlo_module) {
+  const DebugOptions& debug_options = hlo_module.config().debug_options();
   FusionCompiler::Options options{
-      hlo_module.config().debug_options().xla_cpu_prefer_vector_width()};
+      debug_options.xla_cpu_prefer_vector_width(),
+      debug_options.xla_cpu_emitter_verification_level(),
+      debug_options.xla_cpu_enable_fast_min_max()};
 
   FusionCompiler::CompilationHooks hooks;
   if (DumpingEnabledForHloModule(hlo_module)) {
@@ -155,7 +248,8 @@ ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
       options_(options),
       communicator_resource_(
           Resource::Create(Resource::kCollectiveCommunicator)),
-      fusion_compiler_(FusionCompilerFactory(hlo_module)) {}
+      fusion_compiler_(FusionCompilerFactory(hlo_module)),
+      mlir_context_(FusionCompiler::CreateContext()) {}
 
 static Thunk::Info ThunkInfo(const HloInstruction* instruction) {
   const HloModule* module = instruction->GetModule();
@@ -741,6 +835,17 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitElementalKernelThunk(
   kernels_.push_back(
       {kernel_spec.name(), std::move(kernel_source).thread_safe_module()});
 
+  // AOT compiled kernels get linked together, so we aren't allowed to change
+  // module flags as that will break linking.
+  if (!options_.is_aot_compilation &&
+      (instruction->opcode() == HloOpcode::kReduce ||
+       instruction->opcode() == HloOpcode::kReduceWindow)) {
+    TF_RETURN_IF_ERROR(
+        HandleReduceAndReduceWindowElementalKernelCompilationOptions(
+            instruction, *kernels_.back().module.getModuleUnlocked(),
+            target_machine_features_));
+  }
+
   return MakeKernelThunkSequence(
       instruction, std::move(kernel_spec),
       /*min_alignment=*/cpu_function_runtime::MinAlign());
@@ -789,11 +894,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
       options::UseExperimentalLoopFusion(hlo_module_config_) &&
       fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop &&
       fusion->fused_expression_root()->opcode() != HloOpcode::kDot) {
-    std::unique_ptr<mlir::MLIRContext> context =
-        FusionCompiler::CreateContext();
+    bool use_unique_c_name =
+        hlo_module_config_.debug_options()
+            .xla_cpu_generate_unique_c_style_kernel_entry_points();
     TF_ASSIGN_OR_RETURN(
         MlirKernelDefinition kernel_definition,
-        EmitFusionKernel(*context, *fusion, &buffer_assignment_));
+        EmitFusionKernel(*mlir_context_, *fusion, &buffer_assignment_,
+                         use_unique_c_name));
 
     auto [kernel_spec, kernel_source] =
         std::move(kernel_definition).ReleaseStorage();
@@ -851,8 +958,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitInfeedThunk(
   auto* infeed = Cast<HloInfeedInstruction>(instruction);
   const Shape& infeed_shape = infeed->infeed_shape();
 
-  // Collect buffer allocation slices corresponding to data buffers produced by
-  // the infeed instruction;
+  // Collect buffer allocation slices corresponding to data buffers produced
+  // by the infeed instruction;
   std::vector<InfeedThunk::InfeedBuffer> infeed_buffers;
   for (auto& infeed_leaf : ShapeUtil::GetLeafShapes(infeed_shape)) {
     infeed_leaf.index.push_front(0);  // prepend infeed tuple index
@@ -882,8 +989,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOutfeedThunk(
   auto* outfeed = Cast<HloOutfeedInstruction>(instruction);
   const Shape& outfeed_shape = outfeed->outfeed_shape();
 
-  // Collect buffer allocation slices corresponding to data buffers fed into the
-  // outfeed instruction as first operand.
+  // Collect buffer allocation slices corresponding to data buffers fed into
+  // the outfeed instruction as first operand.
   std::vector<OutfeedThunk::OutfeedBuffer> outfeed_buffers;
   for (auto& outfeed_leaf : ShapeUtil::GetLeafShapes(outfeed_shape)) {
     TF_ASSIGN_OR_RETURN(
@@ -1000,13 +1107,20 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       // Decide whether to use XNNPACK or Eigen.
       bool use_xnn = hlo_module_config_.debug_options().xla_cpu_use_xnnpack();
       if (use_xnn) {
-        TF_ASSIGN_OR_RETURN(use_xnn,
-                            IsXnnDotSupported(dnums, lhs->shape(), rhs->shape(),
-                                              instruction->shape()));
+        TF_ASSIGN_OR_RETURN(
+            use_xnn, IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
+                                         instruction->shape()));
       }
 
       if (use_xnn) {
-        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction)};
+        const bool use_slinky =
+            instruction->GetModule()
+                ->config()
+                .debug_options()
+                .xla_cpu_experimental_xnn_graph_fusion_mode() ==
+            DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY;
+        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction),
+                                        use_slinky};
         bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(rhs);
         return ThunkSequence::Of<XnnDotThunk>(
             std::move(options), ThunkInfo(instruction), dnums, lhs_slice,
@@ -1377,7 +1491,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitXnnFusionThunk(
   // Construct XNNPACK subgraph builder from the fusion computation.
   TF_ASSIGN_OR_RETURN(auto builder, EmitXnnFusionBuilder(computation));
 
-  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation)};
+  const bool use_slinky = instruction->GetModule()
+                              ->config()
+                              .debug_options()
+                              .xla_cpu_experimental_xnn_graph_fusion_mode() ==
+                          DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY;
+  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation),
+                                     use_slinky};
   return ThunkSequence::Of<XnnFusionThunk>(
       std::move(options), ThunkInfo(instruction), std::move(arguments),
       std::move(results),

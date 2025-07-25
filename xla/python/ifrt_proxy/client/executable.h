@@ -44,6 +44,7 @@
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
@@ -71,6 +72,7 @@ class LoadedExecutable final
   absl::string_view name() const override;
   absl::StatusOr<std::optional<std::string>> Fingerprint() const override;
   absl::StatusOr<std::string> Serialize() const override;
+  xla::ifrt::UserContextRef user_context() const override { return {}; }
   Future<> GetReadyFuture() const override;
 
   int num_devices() const override;
@@ -125,11 +127,11 @@ class LoadedExecutable final
     absl::StatusOr<std::vector<int>> donatable_input_indices;
 
     std::optional<absl::flat_hash_set<int>> donatable_input_indices_set;
-  };
 
-  void PollLoadedHostCallback(
-      uint64_t handle,
-      tsl::RCReference<xla::ifrt::LoadedHostCallback> loaded_host_callback);
+    absl::StatusOr<CompiledMemoryStats> compiled_memory_stats;
+
+    int64_t size_of_generated_code_in_bytes;
+  };
 
   xla::ifrt::Client* client_;
   std::shared_ptr<RpcHelper> rpc_helper_;

@@ -156,7 +156,8 @@ OperandLayoutConstraint::OperandLayoutConstraint(
       operand_no_(operand_no) {
   CHECK(shape_layout.LayoutIsSet());
   CHECK(ShapeUtil::CompatibleKind(shape_layout.shape(),
-                                  instruction->operand(operand_no)->shape()))
+                                  instruction->operand(operand_no)->shape(),
+                                  /*ignore_buffer=*/true))
       << shape_layout.shape() << " is not compatible with "
       << instruction->operand(operand_no)->shape() << " (for operand "
       << operand_no << " of instruction " << instruction->ToString() << ")";
@@ -1135,7 +1136,8 @@ absl::StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
     TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
         shape_with_layout, tuple_copy->mutable_shape()));
     return tuple_copy;
-  } else if (instruction->shape().IsArray()) {
+  }
+  if (instruction->shape().IsArray()) {
     HloInstruction* copy =
         instruction->parent()->AddInstruction(HloInstruction::CreateUnary(
             instruction->shape(), HloOpcode::kCopy, instruction));
@@ -1146,10 +1148,10 @@ absl::StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
         shape_with_layout, copy->mutable_shape()));
 
     return copy;
-  } else {
+  }
+
     return FailedPrecondition(
         "Can only copy array and tuple shaped instructions");
-  }
 }
 
 // Creates a copy of the given operand if the operand's layout does not match
@@ -1264,6 +1266,7 @@ absl::Status LayoutAssignment::CheckLayouts(
               for (const LogicalBuffer* buffer : buffers) {
                 if (!Shape::Equal()
                          .IgnoreDynamicDimension()
+                         .IgnoreBuffer()
                          .MinorToMajorOnlyInLayout()(instruction_subshape,
                                                      buffer->shape())) {
                   return Internal(
@@ -1707,6 +1710,33 @@ bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo) {
 
 }  // namespace
 
+absl::Status LayoutAssignment::PropagateOperandConstraintToResultForCustomCall(
+    const HloInstruction* user,
+    const OperandLayoutConstraint& operand_constraint) {
+  int64_t operand_no = operand_constraint.operand_no();
+  for (const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>&
+           output_operand_pair : user->output_operand_aliasing()) {
+    if (output_operand_pair.second.first != operand_no) {
+      continue;
+    }
+    ShapeIndex shape_index = output_operand_pair.first;
+    if (!points_to_analysis_->InstructionDefinesBufferAtIndex(user,
+                                                              shape_index)) {
+      return absl::OkStatus();
+    }
+    TF_ASSIGN_OR_RETURN(
+        const LogicalBuffer* buffer,
+        points_to_analysis_->GetBufferDefinedAt(user, shape_index));
+
+    return SetBufferLayout(
+        operand_constraint.shape_layout().layout(), *buffer,
+        /*mandatory=*/OperandLayoutAlwaysPropagateForward(user),
+        /*dfs=*/InstructionShouldPropagateDepthFirst(*user),
+        operand_constraint.priority());
+  }
+  return absl::OkStatus();
+}
+
 absl::Status LayoutAssignment::PropagateOperandConstraint(
     const OperandLayoutConstraint& operand_constraint,
     LayoutConstraints* constraints) {
@@ -1723,6 +1753,13 @@ absl::Status LayoutAssignment::PropagateOperandConstraint(
       constraints, operand_constraint.priority(),
       operand_constraint.instruction()));
 
+  const HloInstruction* user = operand_constraint.instruction();
+  if (user->opcode() == HloOpcode::kCustomCall) {
+    TF_RETURN_IF_ERROR(PropagateOperandConstraintToResultForCustomCall(
+        user, operand_constraint));
+  }
+  // CustomCall that can't change layout, such as TopK, are handled below.
+
   // For array-shaped operands and user instructions try to pick a minimum cost
   // layout. For example, if the operand of an elementwise instruction is
   // constrained to a certain layout we want the output of the instruction to
@@ -1733,7 +1770,6 @@ absl::Status LayoutAssignment::PropagateOperandConstraint(
   // the information that non-layout-changing instructions should have the same
   // layout for the operands with the same ranks.
   const HloInstruction* operand = operand_constraint.operand();
-  const HloInstruction* user = operand_constraint.instruction();
   if (!operand->shape().IsArray() || IsLayoutConstrainedCollective(user)) {
     return absl::OkStatus();
   }
@@ -2229,7 +2265,7 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
         if (subshape->IsArray()) {
           const Shape& result_shape =
               ShapeUtil::GetSubshape(result_layout.shape(), index);
-          if (result_shape.layout().tiles_size() != 0) {
+          if (result_shape.layout().tiles().size() != 0) {
             subshape->mutable_layout()->mutable_tiles()->assign(
                 result_shape.layout().tiles().begin(),
                 result_shape.layout().tiles().end());

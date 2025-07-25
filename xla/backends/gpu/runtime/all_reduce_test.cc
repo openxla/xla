@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -25,15 +26,23 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/service/platform_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_handle.h"
+#include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -48,23 +57,34 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::stream_executor::gpu::AllReduceStrategy;
+using ::testing::HasSubstr;
+using ::tsl::testing::StatusIs;
+
 se::StreamExecutor* GetGpuExecutor(int64_t device_ordinal) {
   auto* platform =
       se::PlatformManager::PlatformWithName(se::GpuPlatformName()).value();
   return platform->ExecutorForDevice(device_ordinal).value();
 }
 
-class AllReduceKernelTest : public ::testing::Test {
+struct TestParams {
+  AllReduceStrategy all_reduce_strategy;
+  int64_t num_elements;
+};
+
+class AllReduceKernelTest : public ::testing::Test,
+                            public ::testing::WithParamInterface<TestParams> {
  public:
+  AllReduceKernelTest() : params_(GetParam()) {}
+
   template <typename T>
-  static absl::StatusOr<std::vector<Array<T>>> RunKernel(
+  absl::StatusOr<std::vector<Array<T>>> RunKernel(
       const std::vector<se::StreamExecutor*>& executors,
       const std::vector<Array<T>>& input_data, ReductionKind reduction_kind) {
-    constexpr LaunchDimensions kLaunchDimensions{
-        /*block_x_count=*/8,
-        /*thread_x_count_per_block=*/512};
+    const int64_t num_ranks = input_data.size();
+    const LaunchDimensions launch_dimensions = AllReduceLaunchDimensions(
+        input_data[0].num_elements(), num_ranks, params_.all_reduce_strategy);
 
-    int64_t num_ranks = input_data.size();
     int64_t num_elements = input_data[0].num_elements();
 
     TF_RETURN_IF_ERROR(executors[0]->EnablePeerAccessTo(executors[1]));
@@ -91,7 +111,7 @@ class AllReduceKernelTest : public ::testing::Test {
 
       signal_flags_buffers.emplace_back(
           executor, executor->AllocateArray<uint32_t>(
-                        num_ranks * kLaunchDimensions.num_blocks()));
+                        num_ranks * launch_dimensions.num_blocks()));
       TF_RET_CHECK(!signal_flags_buffers[i].memory().is_null());
 
       TF_RETURN_IF_ERROR(executor->SynchronousMemZero(
@@ -113,9 +133,11 @@ class AllReduceKernelTest : public ::testing::Test {
     for (int i = 0; i < num_ranks; ++i) {
       auto active_context = executors[i]->Activate();
       TF_RETURN_IF_ERROR(RunAllReduceKernel(
-          streams[i].get(), kLaunchDimensions,
+          streams[i].get(), launch_dimensions,
           primitive_util::NativeToPrimitiveType<T>(),
-          /*reduction_kind=*/reduction_kind, remote_input_buffers_span,
+          /*reduction_kind=*/reduction_kind,
+          /*all_reduce_strategy=*/params_.all_reduce_strategy,
+          /*remote_input_buffers=*/remote_input_buffers_span,
           // Memory is aliased for both input and output (similar to what nccl
           // would do).
           /*local_input_buffer=*/local_input_buffers[i].memory(),
@@ -143,11 +165,15 @@ class AllReduceKernelTest : public ::testing::Test {
 
     return results;
   }
+
+  int64_t num_elements() const { return params_.num_elements; }
+
+ private:
+  TestParams params_;
 };
 
-TEST_F(AllReduceKernelTest, KernelTestAddF32) {
+TEST_P(AllReduceKernelTest, KernelTestAddF32) {
   constexpr int64_t kNumRanks = 2;
-  constexpr int64_t kNumElements = 128000;
 
   std::vector<se::StreamExecutor*> executors = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};
@@ -156,11 +182,11 @@ TEST_F(AllReduceKernelTest, KernelTestAddF32) {
     GTEST_SKIP() << "Test requires direct peer memory access between devices.";
   }
 
-  Array<float> expected_output({kNumElements});
+  Array<float> expected_output({num_elements()});
   std::vector<Array<float>> inputs;
 
   for (int i = 0; i < kNumRanks; ++i) {
-    Array<float> input_data({kNumElements});
+    Array<float> input_data({num_elements()});
     input_data.FillRandom(0.0f, 10.0f, /*seed=*/i);
 
     expected_output.Each([&](absl::Span<const int64_t> indices, float* val) {
@@ -178,9 +204,8 @@ TEST_F(AllReduceKernelTest, KernelTestAddF32) {
   }
 }
 
-TEST_F(AllReduceKernelTest, KernelTestAddBF16) {
+TEST_P(AllReduceKernelTest, KernelTestAddBF16) {
   constexpr int64_t kNumRanks = 2;
-  constexpr int64_t kNumElements = 128000;
 
   std::vector<se::StreamExecutor*> executors = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};
@@ -189,11 +214,11 @@ TEST_F(AllReduceKernelTest, KernelTestAddBF16) {
     GTEST_SKIP() << "Test requires direct peer memory access between devices.";
   }
 
-  Array<bfloat16> expected_output({kNumElements});
+  Array<bfloat16> expected_output({num_elements()});
   std::vector<Array<bfloat16>> inputs;
 
   for (int i = 0; i < kNumRanks; ++i) {
-    Array<bfloat16> input_data({kNumElements});
+    Array<bfloat16> input_data({num_elements()});
     input_data.FillRandom(static_cast<bfloat16>(0.0f),
                           static_cast<bfloat16>(10.0f), /*seed=*/i);
 
@@ -212,9 +237,8 @@ TEST_F(AllReduceKernelTest, KernelTestAddBF16) {
   }
 }
 
-TEST_F(AllReduceKernelTest, KernelTestOrPred) {
+TEST_P(AllReduceKernelTest, KernelTestOrPred) {
   constexpr int64_t kNumRanks = 2;
-  constexpr int64_t kNumElements = 128000;
 
   std::vector<se::StreamExecutor*> executors = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};
@@ -223,11 +247,11 @@ TEST_F(AllReduceKernelTest, KernelTestOrPred) {
     GTEST_SKIP() << "Test requires direct peer memory access between devices.";
   }
 
-  Array<bool> expected_output({kNumElements});
+  Array<bool> expected_output({num_elements()});
   std::vector<Array<bool>> inputs;
 
   for (int i = 0; i < kNumRanks; ++i) {
-    Array<bool> input_data({kNumElements});
+    Array<bool> input_data({num_elements()});
     input_data.FillRandomBool(/*seed=*/i);
 
     expected_output.Each([&](absl::Span<const int64_t> indices, bool* val) {
@@ -247,10 +271,8 @@ TEST_F(AllReduceKernelTest, KernelTestOrPred) {
   }
 }
 
-TEST_F(AllReduceKernelTest, KernelTestAddPred_Unsupported) {
+TEST_P(AllReduceKernelTest, KernelTestAddPred_Unsupported) {
   constexpr int64_t kNumRanks = 2;
-  constexpr int64_t kNumElements = 128000;
-
   std::vector<se::StreamExecutor*> executors = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};
 
@@ -258,14 +280,61 @@ TEST_F(AllReduceKernelTest, KernelTestAddPred_Unsupported) {
     GTEST_SKIP() << "Test requires direct peer memory access between devices.";
   }
 
-  Array<bool> expected_output({kNumElements});
-  std::vector<Array<bool>> inputs(kNumRanks, Array<bool>({kNumElements}));
+  Array<bool> expected_output({num_elements()});
+  std::vector<Array<bool>> inputs(kNumRanks, Array<bool>({num_elements()}));
 
   auto results = RunKernel<bool>(executors, inputs, ReductionKind::SUM);
   EXPECT_THAT(results.status(),
               ::tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument));
   EXPECT_THAT(results.status().message(),
               ::testing::HasSubstr("AllReduce kernel is not supported"));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllReduceKernelTest, AllReduceKernelTest,
+    ::testing::ConvertGenerator(
+        ::testing::Combine(::testing::Values(AllReduceStrategy::kOneShot,
+                                             AllReduceStrategy::kTwoShot),
+                           ::testing::Values(128000, 124000)),
+        [](const std::tuple<AllReduceStrategy, int64_t>& params) {
+          return TestParams{std::get<0>(params), std::get<1>(params)};
+        }),
+    [](const ::testing::TestParamInfo<TestParams>& info) {
+      return absl::StrFormat("%v_%d", info.param.all_reduce_strategy,
+                             info.param.num_elements);
+    });
+
+class AllReduceHloTest : public HloHardwareIndependentTestBase {};
+
+TEST_F(AllReduceHloTest, NullDeviceAssnWithHloRunner) {
+  // xla::HloRunner passes a null device assignment to the XLA executable.
+  // Test this returns an error gracefully.
+  const char* const hlo_string = R"(
+    HloModule module, replica_count=2
+
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    ENTRY test {
+      param = f32[1024] parameter(0)
+      ROOT result = f32[1024] all-reduce(param), to_apply=add, replica_groups={{0,1}}
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloRunner runner(PlatformUtil::GetDefaultPlatform().value());
+  Literal input = LiteralUtil::CreateR1<float>(std::vector<float>(1, 2));
+
+  EXPECT_THAT(
+      runner.Execute(std::move(module), {std::move(input)}),
+      StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr("Device assignment is null, but must be specified when "
+                    "running a collective thunk.")));
 }
 
 }  // namespace

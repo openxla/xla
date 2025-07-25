@@ -28,6 +28,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -323,6 +324,12 @@ class XlaBuilder {
   // Sets an OpSharding that will be attached to all instructions until cleared.
   void SetSharding(const OpSharding& sharding) { sharding_ = sharding; }
 
+  // Sets an OriginalValueProto that will be attached to all instructions until
+  // cleared.
+  void SetOriginalValue(const OriginalValueProto& original_value) {
+    original_value_ = original_value;
+  }
+
   // Sets the FrontendAttributes that will be added to all instructions until
   // cleared.
   //
@@ -356,6 +363,9 @@ class XlaBuilder {
   // Clears the sharding. Ops will be sharded according to the default placement
   // policy.
   void ClearSharding() { sharding_ = std::nullopt; }
+
+  // Clears the original value.
+  void ClearOriginalValue() { original_value_ = std::nullopt; }
 
   // Returns the OpSharding that will be attached to all instructions.
   const std::optional<OpSharding>& sharding() const { return sharding_; }
@@ -454,7 +464,7 @@ class XlaBuilder {
   absl::StatusOr<Shape> GetShape(XlaOp op) const;
 
   // Returns the shape of the given op.
-  virtual absl::StatusOr<const Shape*> GetShapePtr(XlaOp op) const;
+  virtual absl::StatusOr<const Shape* absl_nonnull> GetShapePtr(XlaOp op) const;
 
   // Returns the OpSharding of the given op. If "op" has no sharding, return
   // std::nullopt.
@@ -1246,7 +1256,7 @@ class XlaBuilder {
   std::deque<HloInstructionProto> instructions_;
   // A cache for the HloInstructionProto shapes, to avoid recreating Shape
   // objects from protos and to support the GetShapePtr() API.
-  std::vector<std::unique_ptr<Shape>> instruction_shapes_;
+  std::vector<absl_nonnull std::unique_ptr<Shape>> instruction_shapes_;
 
   // Dynamic parameter configuration of this computation.
   DynamicParameterBinding dynamic_parameter_binding_;
@@ -1303,6 +1313,9 @@ class XlaBuilder {
   // Sharding for this operator. This is structured as a "model"-like operation,
   // in order to simplify client code, similar to metadata_.
   std::optional<OpSharding> sharding_;
+
+  // The original value for this operator.
+  std::optional<OriginalValueProto> original_value_;
 
   // Mode bit that indicates whether to die when a first error is encountered.
   bool die_immediately_on_error_ = false;
@@ -1924,6 +1937,31 @@ class XlaScopedShardingAssignment {
     }
   }
 
+  xla::XlaBuilder* const builder_;
+  std::optional<OpSharding> prev_sharding_;
+};
+
+// RAII-style object: sets the current original value assignment in builder on
+// construction, and resets on destruction.
+class XlaScopedOriginalValueAssignment {
+ public:
+  XlaScopedOriginalValueAssignment(
+      xla::XlaBuilder* builder,
+      std::optional<OriginalValueProto> original_value_proto)
+      : builder_(builder) {
+    if (original_value_proto.has_value()) {
+      builder_->SetOriginalValue(original_value_proto.value());
+    }
+  }
+
+  XlaScopedOriginalValueAssignment(const XlaScopedOriginalValueAssignment&) =
+      delete;
+  XlaScopedOriginalValueAssignment& operator=(
+      const XlaScopedOriginalValueAssignment&) = delete;
+
+  ~XlaScopedOriginalValueAssignment() { builder_->ClearOriginalValue(); }
+
+ private:
   xla::XlaBuilder* const builder_;
   std::optional<OpSharding> prev_sharding_;
 };

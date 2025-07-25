@@ -60,6 +60,9 @@ void HandleRecords(PmSamples* samples) {
   // Validate some samples were recorded
   EXPECT_GT(samples->GetNumSamples(), 0);
 
+  LOG(INFO) << "PM Sampling buffer flushed with "
+            << samples->GetNumSamples() << " samples";
+
   // Validate we have the expected metrics
   const std::vector<std::string>& metrics = samples->GetMetrics();
   const std::vector<SamplerRange>& sampler_ranges = samples->GetSamplerRanges();
@@ -72,8 +75,8 @@ void HandleRecords(PmSamples* samples) {
   if (skip_first) {
     skip_first = false;
   } else {
-    EXPECT_GT(ns_per_sample, 500000.0 * 0.95);
-    EXPECT_LT(ns_per_sample, 500000.0 * 1.05);
+    EXPECT_GT(ns_per_sample, 500000.0 * 0.9);
+    EXPECT_LT(ns_per_sample, 500000.0 * 1.1);
   }
 
   for (int i = 0; i < metrics.size(); i++) {

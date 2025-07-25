@@ -39,6 +39,9 @@ struct AllReduceConfig {
   ReductionKind reduction_kind;
 };
 
+template <typename HloInstType>
+AllReduceConfig GetAllReduceConfigInst(HloInstType* inst);
+
 // Thunk that performs a NCCL-based All-Reduce or Reduce-Scatter among CUDA
 // GPU-based replicas.
 class AllReduceReduceScatterThunkBase : public CollectiveThunk {
@@ -76,10 +79,6 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
   static CollectiveOpGroupMode GetGroupMode(
       const HloAllReduceInstruction* inst);
 
-  absl::StatusOr<bool> ShouldUseOneShotAllReduceKernel(
-      const GpuCliqueKey& clique_key,
-      const CollectiveCliques* collective_cliques);
-
   absl::Status Prepare(const PrepareParams& params,
                        ResourceRequestsInterface& resource_requests) override;
   absl::Status Initialize(const InitializeParams& params) override;
@@ -90,7 +89,6 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
                                      CommunicatorHandle comm) override;
 
  private:
-  bool one_shot_kernel_enabled_ = false;
   CollectiveKernelThunk collective_kernel_thunk_;
 };
 
@@ -122,13 +120,11 @@ class ReduceScatterStartThunk : public AllReduceReduceScatterThunkBase {
 
 // -----------------------------------------------------------------------------
 
-absl::Status RunAllReduce(GpuCollectives* collectives,
-                          ReductionKind reduction_kind,
+absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator* comm);
 
-absl::Status RunReduceScatter(GpuCollectives* collectives,
-                              ReductionKind reduction_kind,
+absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator* comm);
 

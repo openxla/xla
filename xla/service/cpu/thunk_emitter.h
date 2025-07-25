@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
@@ -59,6 +59,10 @@ class ThunkEmitter {
     // Whether to compile copy as LLVM kernel. This is used to avoid
     // dependencies on pjrt/transpose for tfcompiled models.
     bool compile_copy_as_llvm_kernel;
+    // Wheter the thunk emitter is used for AOT compilation. AOT compiled
+    // kernels get linked together and might have to respect certain
+    // restrictions, such as having the same module flags.
+    bool is_aot_compilation;
   };
 
   struct EmittedKernel {
@@ -70,8 +74,8 @@ class ThunkEmitter {
                const BufferAssignment& buffer_assignment,
                const TargetMachineFeatures& target_machine_features,
                const HloModule& hlo_module,
-               const Options& options = {
-                   /*compile_copy_as_llvm_kernel=*/false});
+               const Options& options = {/*compile_copy_as_llvm_kernel=*/false,
+                                         /*is_aot_compilation=*/false});
 
   // Emits HLO module entry computation as a sequence of thunks.
   absl::StatusOr<ThunkSequence> EmitEntryComputation(const HloModule& module);
@@ -256,6 +260,7 @@ class ThunkEmitter {
   std::vector<EmittedKernel> kernels_;
 
   FusionCompiler fusion_compiler_;
+  std::unique_ptr<mlir::MLIRContext> mlir_context_;
 };
 
 }  // namespace xla::cpu

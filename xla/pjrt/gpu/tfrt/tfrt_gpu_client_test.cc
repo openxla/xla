@@ -472,12 +472,14 @@ TEST(TfrtGpuClientTest, AcquireDonation) {
 
   // Create TfrtGpuBuffer.
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
+  TfrtGpuClient* tfrt_client =
+      tensorflow::down_cast<TfrtGpuClient*>(client.get());
   TfrtGpuDevice* device =
       tensorflow::down_cast<TfrtGpuDevice*>(client->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
-      GpuDeviceMemory::Allocate(device->allocator(),
+      GpuDeviceMemory::Allocate(tfrt_client->allocator(),
                                 device->local_device_id().value(),
                                 size_in_bytes));
   auto buffer_async_value_ref =
@@ -489,8 +491,7 @@ TEST(TfrtGpuClientTest, AcquireDonation) {
       tsl::MakeAvailableAsyncValueRef<GpuEvent>());
   auto memory_space = device->default_memory_space().value();
   auto tfrt_buffer = std::make_unique<TfrtGpuBuffer>(
-      on_device_shape, std::move(tracked_device_buffer),
-      tensorflow::down_cast<TfrtGpuClient*>(client.get()), device,
+      on_device_shape, std::move(tracked_device_buffer), tfrt_client, device,
       memory_space);
 
   auto donation_transaction =
@@ -691,19 +692,29 @@ TEST(TfrtGpuClientTest, ToLiteralAsync) {
   std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
 
   absl::Mutex mu;
-  auto literal = std::make_shared<Literal>(
-      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
   bool got_literal = false;
 
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
-    absl::MutexLock l(&mu);
-    TF_ASSERT_OK(s);
-    got_literal = true;
-  });
+  Shape host_shape =
+      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape());
+  auto literal_promise = PjRtFuture<MutableLiteralBase*>::CreatePromise();
+
+  // Literal is not ready.
+  buffer
+      ->LazyToLiteral(
+          [&]() { return PjRtFuture<MutableLiteralBase*>(literal_promise); })
+      .OnReady([&](absl::Status s) {
+        absl::MutexLock l(&mu);
+        TF_ASSERT_OK(s);
+        got_literal = true;
+      });
   buffer.reset();
+
+  // Make the literal ready.
+  auto literal = std::make_shared<Literal>(host_shape);
+  literal_promise.Set(literal.get());
 
   {
     absl::MutexLock l(&mu);
@@ -739,18 +750,26 @@ TEST(TfrtGpuClientTest, ToLiteralAsyncWithNonCompactLayout) {
           client->addressable_devices()[0]->memory_spaces()[0]));
   std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
 
-  absl::Notification n;
-  auto literal = std::make_shared<Literal>(
-      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
-
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
-    TF_ASSERT_OK(s);
-    n.Notify();
-  });
+  Shape host_shape =
+      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape());
+  auto literal_promise = PjRtFuture<MutableLiteralBase*>::CreatePromise();
+
+  absl::Notification n;
+  buffer
+      ->LazyToLiteral(
+          [&]() { return PjRtFuture<MutableLiteralBase*>(literal_promise); })
+      .OnReady([&](absl::Status s) {
+        TF_ASSERT_OK(s);
+        n.Notify();
+      });
   buffer.reset();
+
+  // Make the literal ready.
+  auto literal = std::make_shared<Literal>(host_shape);
+  literal_promise.Set(literal.get());
 
   n.WaitForNotification();
 

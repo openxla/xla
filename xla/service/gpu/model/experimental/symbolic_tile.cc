@@ -17,8 +17,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <utility>
 
-#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -29,14 +29,13 @@ limitations under the License.
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla::gpu {
 namespace {
 
+using ::llvm::ArrayRef;
 using ::llvm::SmallVector;
 using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 
 SmallVector<std::string> GetVarNames(int64_t num_vars, llvm::StringRef prefix) {
   SmallVector<std::string> var_names;
@@ -47,13 +46,34 @@ SmallVector<std::string> GetVarNames(int64_t num_vars, llvm::StringRef prefix) {
   return var_names;
 }
 
-std::string ToStringImpl(AffineMap affine_map,
-                         absl::Span<const HloInstruction* const> rt_vars,
-                         absl::Span<const std::string> tid_names,
-                         absl::Span<const std::string> ts_names,
-                         absl::Span<const std::string> rt_names) {
-  CHECK_EQ(tid_names.size(), affine_map.getNumDims());
-  CHECK_EQ(ts_names.size() + rt_names.size(), affine_map.getNumSymbols());
+}  // namespace
+
+ExperimentalSymbolicTile::ExperimentalSymbolicTile(
+    mlir::MLIRContext* mlir_context, int64_t num_tile_ids, int64_t num_rt_vars,
+    ArrayRef<AffineExpr> offsets, ArrayRef<AffineExpr> sizes,
+    ArrayRef<AffineExpr> strides, ArrayRef<AffineExpr> upper_bounds)
+    : mlir_context_(mlir_context),
+      num_tile_ids_(num_tile_ids),
+      num_rt_vars_(num_rt_vars) {
+  one_dim_tiles_.reserve(offsets.size());
+  for (auto [offset, size, stride, upper_bound] :
+       llvm::zip(offsets, sizes, strides, upper_bounds)) {
+    one_dim_tiles_.push_back(DimTile{offset, size, stride, upper_bound});
+  }
+}
+
+ExperimentalSymbolicTile::ExperimentalSymbolicTile(
+    mlir::MLIRContext* mlir_context, int64_t num_tile_ids, int64_t num_rt_vars,
+    llvm::SmallVector<DimTile> one_dim_tiles)
+    : mlir_context_(mlir_context),
+      num_tile_ids_(num_tile_ids),
+      num_rt_vars_(num_rt_vars),
+      one_dim_tiles_(std::move(one_dim_tiles)) {}
+
+std::string ExperimentalSymbolicTile::ToString() const {
+  auto tid_names = GetVarNames(num_tile_ids(), "tid_");
+  auto ts_names = GetVarNames(num_tile_ids(), "ts_");
+  auto rt_names = GetVarNames(num_rt_vars(), "rt_");
 
   std::string s;
   llvm::raw_string_ostream ss(s);
@@ -70,51 +90,56 @@ std::string ToStringImpl(AffineMap affine_map,
   symbol_names.reserve(ts_names.size() + rt_names.size());
   symbol_names.append(ts_names.begin(), ts_names.end());
   symbol_names.append(rt_names.begin(), rt_names.end());
-  int64_t num_tiled_results = affine_map.getNumResults() / 3;
-  auto map_results = affine_map.getResults();
   auto print_expr = [&](AffineExpr expr) {
     ss << ::xla::ToString(expr, tid_names, symbol_names);
   };
   // Print offsets.
-  ss << " -> [";
-  llvm::interleaveComma(map_results.take_front(num_tiled_results), ss,
-                        print_expr);
-  ss << "] [";
-  llvm::interleaveComma(
-      map_results.drop_front(num_tiled_results).take_front(num_tiled_results),
-      ss, print_expr);
-  ss << "] [";
-  llvm::interleaveComma(map_results.take_back(num_tiled_results), ss,
-                        print_expr);
+  ss << " -> offsets [";
+  llvm::interleaveComma(offsets(), ss, print_expr);
+  ss << "] sizes [";
+  llvm::interleaveComma(sizes(), ss, print_expr);
+  ss << "] strides [";
+  llvm::interleaveComma(strides(), ss, print_expr);
+  ss << "] upper bounds [";
+  llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
-  for (const auto& [hlo, rt_var_name] : llvm::zip(rt_vars, rt_names)) {
-    ss << " " << rt_var_name << ": " << (hlo ? hlo->ToString() : "nullptr")
-       << "\n";
-  }
   return s;
 }
 
-}  // namespace
-
-std::string ExperimentalSymbolicTile::ToString() const {
-  return ToStringImpl(tile_map, rt_vars, GetVarNames(num_tids(), "tid_"),
-                      GetVarNames(num_tids(), "ts_"),
-                      GetVarNames(num_rt_vars(), "rt_"));
+SmallVector<mlir::AffineExpr> ExperimentalSymbolicTile::offsets() const {
+  SmallVector<mlir::AffineExpr> offsets;
+  offsets.reserve(offsets.size());
+  for (const DimTile& one_dim_tile : one_dim_tiles_) {
+    offsets.push_back(one_dim_tile.offset);
+  }
+  return offsets;
 }
 
-AffineMap ExperimentalSymbolicTile::offset_map() const {
-  int64_t num_dims = tile_map.getNumResults();
-  return tile_map.getSliceMap(0, num_dims);
+SmallVector<mlir::AffineExpr> ExperimentalSymbolicTile::sizes() const {
+  SmallVector<mlir::AffineExpr> sizes;
+  sizes.reserve(sizes.size());
+  for (const DimTile& one_dim_tile : one_dim_tiles_) {
+    sizes.push_back(one_dim_tile.size);
+  }
+  return sizes;
 }
 
-AffineMap ExperimentalSymbolicTile::size_map() const {
-  int64_t num_dims = tile_map.getNumResults();
-  return tile_map.getSliceMap(num_dims, num_dims);
+SmallVector<mlir::AffineExpr> ExperimentalSymbolicTile::strides() const {
+  SmallVector<mlir::AffineExpr> strides;
+  strides.reserve(strides.size());
+  for (const DimTile& one_dim_tile : one_dim_tiles_) {
+    strides.push_back(one_dim_tile.stride);
+  }
+  return strides;
 }
 
-AffineMap ExperimentalSymbolicTile::stride_map() const {
-  int64_t num_dims = tile_map.getNumResults();
-  return tile_map.getSliceMap(2 * num_dims, num_dims);
+SmallVector<mlir::AffineExpr> ExperimentalSymbolicTile::upper_bounds() const {
+  SmallVector<mlir::AffineExpr> upper_bounds;
+  upper_bounds.reserve(upper_bounds.size());
+  for (const DimTile& one_dim_tile : one_dim_tiles_) {
+    upper_bounds.push_back(one_dim_tile.upper_bound);
+  }
+  return upper_bounds;
 }
 
 }  // namespace xla::gpu

@@ -24,6 +24,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,8 +37,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -49,7 +50,8 @@ class HloLiveRangeTest : public HloHardwareIndependentTestBase {
   ~HloLiveRangeTest() override {}
 
   void Analyze(const HloSchedule& schedule) {
-    alias_analysis_ = HloAliasAnalysis::Run(module_.get()).value();
+    alias_analysis_ =
+        HloAliasAnalysis::Run(module_.get(), &alias_info_).value();
     hlo_live_range_ = HloLiveRange::Run(schedule, *alias_analysis_,
                                         module_->entry_computation())
                           .value();
@@ -91,6 +93,7 @@ class HloLiveRangeTest : public HloHardwareIndependentTestBase {
           << "] = " << inst_and_time.first->name() << ")";
     }
   }
+  AliasInfo alias_info_;
 };
 
 TEST_F(HloLiveRangeTest, Multiply) {
@@ -390,7 +393,7 @@ ENTRY %While {
   const int32_t num_runs = 20;
   std::vector<std::unique_ptr<HloLiveRange>> hlo_live_ranges;
   std::unique_ptr<HloAliasAnalysis> alias_analysis =
-      HloAliasAnalysis::Run(module_.get()).value();
+      HloAliasAnalysis::Run(module_.get(), &alias_info_).value();
 
   for (int i = 0; i < num_runs; ++i) {
     hlo_live_ranges.push_back(HloLiveRange::Run(schedule, *alias_analysis,
@@ -456,7 +459,7 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   CheckSchedule();
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> aa,
-                          HloAliasAnalysis::Run(module_.get()));
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> hlo_live_range,
                           HloLiveRange::Run(module_->schedule(), *aa,
@@ -502,7 +505,7 @@ TEST_F(HloLiveRangeTest, Call) {
   TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> aa,
-                          HloAliasAnalysis::Run(module_.get()));
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> hlo_live_range,
                           HloLiveRange::Run(module_->schedule(), *aa,
@@ -552,6 +555,11 @@ TEST_F(HloLiveRangeTest, ToString) {
     multiply{}: 16 bytes (cumulative: 16 bytes)
     paramA{}: 16 bytes (cumulative: 32 bytes)
     paramX{}: 16 bytes (cumulative: 48 bytes)
+  Stack trace breakdown for peak usage: 48 bytes
+    ToString (100.0%, total: 48 bytes, current: 0 bytes, remaining: 48 bytes)
+      ├── multiply (33.3%, total: 16 bytes, current: 16 bytes, remaining: 32 bytes)
+      ├── paramA (33.3%, total: 16 bytes, current: 16 bytes, remaining: 16 bytes)
+      └── paramX (33.3%, total: 16 bytes, current: 16 bytes, remaining: 0 bytes)
 )";
   EXPECT_EQ(hlo_live_range_->ToString(), expected_string);
 }
@@ -596,6 +604,12 @@ TEST_F(HloLiveRangeTest, ToStringTuple) {
     constant{1}: 16 bytes (cumulative: 32 bytes)
     paramA{}: 16 bytes (cumulative: 48 bytes)
     constant{0}: 4 bytes (cumulative: 52 bytes)
+  Stack trace breakdown for peak usage: 52 bytes
+    ToStringTuple (100.0%, total: 52 bytes, current: 0 bytes, remaining: 52 bytes)
+      ├── constant (30.8%, total: 16 bytes, current: 16 bytes, remaining: 36 bytes)
+      ├── constant{1} (30.8%, total: 16 bytes, current: 16 bytes, remaining: 20 bytes)
+      ├── paramA (30.8%, total: 16 bytes, current: 16 bytes, remaining: 4 bytes)
+      └── constant{0} (7.7%, total: 4 bytes, current: 4 bytes, remaining: 0 bytes)
 )";
   EXPECT_EQ(hlo_live_range_->ToString(), expected_string);
 }

@@ -43,7 +43,10 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/command_line_flags.h"
+#include "xla/xla.pb.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/platform/init_main.h"
 
 namespace {
@@ -86,9 +89,8 @@ absl::Status Autotune(HloModule& module) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
                       xla::Compiler::GetForPlatform(platform));
   se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
-  Compiler::TargetConfig target_config(stream_executor);
   DebugOptions debug_options = GetDebugOptionsFromFlags();
-  auto backends = gpu::GetAllGpuCodegenBackends(&target_config, &debug_options,
+  auto backends = gpu::GetAllGpuCodegenBackends(stream_executor, &debug_options,
                                                 compiler.get());
 
   auto profiler = gpu::GpuProfiler::Create(stream_executor, ProfileOptions());
@@ -96,9 +98,13 @@ absl::Status Autotune(HloModule& module) {
     return absl::InternalError("Failed to create profiler");
   }
 
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Autotuner> autotuner,
-                      Autotuner::Create(std::move(backends), stream_executor,
-                                        std::move(profiler), AutotuneConfig()));
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuner",
+                                      tsl::port::MaxParallelism());
+
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<Autotuner> autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler),
+                        AutotuneConfig(), &thread_pool));
 
   // TODO: b/407494793 - Expand the filter to include more instructions.
   auto should_autotune = [](const HloInstruction& instruction) -> bool {

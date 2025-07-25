@@ -143,10 +143,11 @@ char PjRtCompatibleArray::ID = 0;
 char PjRtArray::ID = 0;
 
 MemoryKind MakeMemoryKindFromPjRtBuffer(PjRtBuffer* pjrt_buffer) {
-  if (pjrt_buffer->memory_space() == nullptr) {
+  PjRtMemorySpace* memory_space = pjrt_buffer->memory_space();
+  if (memory_space == nullptr) {
     return MemoryKind();
   }
-  return MemoryKind(pjrt_buffer->memory_space()->kind());
+  return MemoryKind(memory_space->kind());
 }
 
 absl::StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
@@ -479,7 +480,6 @@ absl::StatusOr<ArrayRef> PjRtArray::Copy(
     } else {
       PjRtCompatibleDevice* pjrt_device =
           llvm::dyn_cast<PjRtCompatibleDevice>(new_sharding_devices[i]);
-      new_client = llvm::dyn_cast<PjRtCompatibleClient>(pjrt_device->client());
       if (!pjrt_device) {
         return InvalidArgument(
             "The destination device is owned by a non-PjRt-compatible client. "
@@ -487,6 +487,7 @@ absl::StatusOr<ArrayRef> PjRtArray::Copy(
             "first fetched to the host and then sent to the destination "
             "device.");
       }
+      new_client = llvm::dyn_cast<PjRtCompatibleClient>(pjrt_device->client());
       if (!pjrt_device->IsAddressable()) {
         return InvalidArgument("Cannot copy array to non-addressable device %s",
                                pjrt_device->DebugString());
@@ -522,9 +523,11 @@ absl::StatusOr<ArrayRef> PjRtArray::Copy(
   }
   return std::visit(
       [this, new_client, &new_sharding, &buffers](const auto& shape) {
+        std::shared_ptr<const xla::PjRtLayout> buffer_layout =
+            buffers[0]->layout();
         return PjRtArray::Create(new_client, dtype_, shape,
                                  std::move(new_sharding), std::move(buffers),
-                                 layout_);
+                                 std::move(buffer_layout));
       },
       shape_);
 }
@@ -562,7 +565,8 @@ bool PjRtArray::IsDeleted() const {
 
 std::string PjRtArray::DebugString() const {
   DCHECK(this);
-  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout_ptr = layout();
+  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout_ptr =
+      pjrt_layout();
   std::string layout_str =
       layout_ptr.ok() ? (*layout_ptr)->ToString() : "<unknown>";
 
@@ -573,7 +577,7 @@ std::string PjRtArray::DebugString() const {
       sharding_->DebugString(), layout_str);
 }
 
-absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> PjRtArray::layout()
+absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> PjRtArray::pjrt_layout()
     const {
 #ifndef NDEBUG
   for (int i = 1; i < pjrt_buffers_.size(); ++i) {

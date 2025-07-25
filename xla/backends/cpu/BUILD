@@ -1,3 +1,4 @@
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/backends/cpu:package_groups.bzl", "xla_cpu_backend_access")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
@@ -29,6 +30,7 @@ filegroup(
 cc_library(
     name = "alignment",
     hdrs = ["alignment.h"],
+    visibility = internal_visibility([":friends"]),
     deps = ["@eigen_archive//:eigen3"],
 )
 
@@ -39,6 +41,7 @@ onednn_graph_cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":onednn_fusion",
+        ":onednn_fusion_graph",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -56,6 +59,16 @@ onednn_graph_cc_library(
 )
 
 onednn_graph_cc_library(
+    name = "onednn_fusion_graph",
+    srcs = [],
+    hdrs = ["onednn_fusion_graph.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "@onednn//:mkl_dnn",
+    ],
+)
+
+cc_library(
     name = "onednn_fusion",
     srcs = ["onednn_fusion.cc"],
     hdrs = ["onednn_fusion.h"],
@@ -66,7 +79,6 @@ onednn_graph_cc_library(
         "//xla/backends/cpu/runtime:dot_lib",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@onednn//:mkl_dnn",
     ],
 )
 
@@ -94,6 +106,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -108,12 +121,29 @@ cc_library(
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/runtime:dot_lib",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
         "//xla/tsl/platform:statusor",
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "xnn_fusion_test",
+    srcs = ["xnn_fusion_test.cc"],
+    deps = [
+        ":xnn_fusion",
+        "//xla/hlo/ir:hlo",
+        "@XNNPACK",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

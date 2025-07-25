@@ -78,18 +78,26 @@ std::unique_ptr<GpuProfiler> GpuProfiler::Create(
       std::move(stream.value()), options));
 }
 
-absl::StatusOr<std::vector<ProfileResult>>
+absl::StatusOr<std::vector<absl::StatusOr<ProfileResult>>>
 GpuProfiler::ProfileWithSharedBuffers(
     std::vector<std::unique_ptr<Executable>> executables) {
-  std::vector<ProfileResult> results;
+  std::vector<absl::StatusOr<ProfileResult>> results;
   if (executables.empty()) {
     return results;
   }
-  TF_ASSIGN_OR_RETURN(RedzoneBuffers buffers,
-                      CreateInputBuffers(executables[0].get()));
+  TF_ASSIGN_OR_RETURN(
+      RedzoneBuffers buffers,
+      RedzoneBuffers::FromComputation(
+          *executables[0]->module().entry_computation(), allocator_.get(),
+          stream_.get(), RedzoneBuffers::BuffersToCreate::kAllInputsAllOutputs,
+          options_.should_init_buffers,
+          /*should_check_correctness=*/true, options_.redzone_padding_bytes));
   for (auto& executable : executables) {
-    TF_ASSIGN_OR_RETURN(ProfileResult result,
-                        ProfileInternal(executable.get(), buffers));
+    absl::StatusOr<ProfileResult> result =
+        ProfileInternal(executable.get(), buffers);
+    if (!result.ok()) {
+      VLOG(1) << "Failed to profile executable: " << result.status();
+    }
     results.push_back(std::move(result));
   }
   return results;
@@ -115,9 +123,14 @@ absl::StatusOr<ProfileResult> GpuProfiler::ProfileInternal(
       CreateExecutionInputsFromBuffers(buffers.input_buffers(),
                                        buffers.input_shapes());
 
-  TF_RETURN_IF_ERROR(
-      Execute(executable, std::move(execution_inputs), &profile).status());
+  TF_ASSIGN_OR_RETURN(
+      ExecutionOutput execution_output,
+      Execute(executable, std::move(execution_inputs), &profile));
 
+  if (options_.should_populate_output_buffer) {
+    return ProfileResult{absl::Nanoseconds(profile.compute_time_ns()),
+                         execution_output.Commit().ConsumeResult()};
+  }
   return ProfileResult{absl::Nanoseconds(profile.compute_time_ns())};
 }
 
@@ -137,17 +150,6 @@ absl::StatusOr<ExecutionOutput> GpuProfiler::Execute(
   ServiceExecutableRunOptions service_run_options(run_options);
   return executable->ExecuteAsyncOnStreamWrapper(&service_run_options,
                                                  std::move(inputs));
-}
-
-absl::StatusOr<RedzoneBuffers> GpuProfiler::CreateInputBuffers(
-    const Executable* executable) {
-  const HloInstruction* root_instr =
-      executable->module().entry_computation()->root_instruction();
-  return RedzoneBuffers::FromInstruction(
-      *root_instr, allocator_.get(), stream_.get(),
-      RedzoneBuffers::BuffersToCreate::kAllInputsAllOutputs,
-      options_.should_init_buffers, /*should_check_correctness=*/true,
-      options_.redzone_padding_bytes);
 }
 
 }  // namespace gpu

@@ -24,17 +24,25 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
-// Returns true if the all-reduce kernel is supported for the given number of
-// inputs, elements, element type and reduction kind.
-bool IsAllReduceKernelSupported(int64_t num_inputs, int64_t num_elements,
+// Returns the launch dimensions for the all-reduce kernel.
+// The launch dimensions are determined by the number of elements and the
+// the all-reduce strategy.
+LaunchDimensions AllReduceLaunchDimensions(int64_t elements, int64_t num_ranks,
+                                           se::gpu::AllReduceStrategy strategy);
+
+// Returns true if the all-reduce kernel is supported for the given number
+// of inputs, elements, element type and reduction kind.
+bool IsAllReduceKernelSupported(int64_t num_ranks, int64_t num_elements,
                                 PrimitiveType element_type,
-                                ReductionKind reduction_kind);
+                                ReductionKind reduction_kind,
+                                se::gpu::AllReduceStrategy all_reduce_strategy);
 
 // Performs element-wise addition of all input buffers and stores the result in
 // the output buffer.
@@ -70,6 +78,7 @@ absl::Status RunAllReduceKernel(
     const LaunchDimensions& launch_dimensions,                    //
     PrimitiveType element_type,                                   //
     ReductionKind reduction_kind,                                 //
+    se::gpu::AllReduceStrategy all_reduce_strategy,               //
     absl::Span<const se::DeviceMemoryBase> remote_input_buffers,  //
     se::DeviceMemoryBase local_input_buffer,                      //
     se::DeviceMemoryBase output_buffer,                           //
