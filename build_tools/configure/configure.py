@@ -214,8 +214,6 @@ class CudaCompiler(ArgparseableEnum):
 class RocmCompiler(ArgparseableEnum):
   HIPCC = enum.auto()
 
-class SyclCompiler(ArgparseableEnum):
-  ICPX = enum.auto()
 
 class SyclCompiler(ArgparseableEnum):
   ICPX = enum.auto()
@@ -417,12 +415,12 @@ class XLAConfigOptions:
       build_and_test_tag_filters.append("-no-oneapi")
 
       compiler_pair = self.sycl_compiler, self.host_compiler
-      
+
       if compiler_pair == (SyclCompiler.ICPX, HostCompiler.CLANG):
-          rc.append("build --config sycl")
-          rc.append("build --config icpx_clang")
+        rc.append("build --config sycl")
+        rc.append("build --config icpx_clang")
       elif compiler_pair == (SyclCompiler.ICPX, HostCompiler.GCC):
-          rc.append("build --config sycl")
+        rc.append("build --config sycl")
       else:
         raise NotImplementedError(" Sycl with host compiler not supported")
 
