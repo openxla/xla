@@ -417,7 +417,6 @@ class XLAConfigOptions:
       build_and_test_tag_filters.append("-no-oneapi")
 
       compiler_pair = self.sycl_compiler, self.host_compiler
-<<<<<<< HEAD
       
       if compiler_pair == (SyclCompiler.ICPX, HostCompiler.CLANG):
           rc.append("build --config sycl")
