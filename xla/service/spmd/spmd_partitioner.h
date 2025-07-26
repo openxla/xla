@@ -473,8 +473,6 @@ class PartitionedHlo {
   };
   PartitionedHlo(HloInstruction* hlo, Shape base_shape, PartitioningState state)
       : hlo_(hlo), base_shape_(base_shape), state_(std::move(state)) {
-    CHECK(hlo->has_sharding())
-        << "PartitionedHlo is missing sharding:" << hlo->ToString();
   }
 
   PartitionedHlo(PartitionedHlo&& other) = default;
@@ -529,8 +527,14 @@ class PartitionedHlo {
   // Returns the sharding of the SPMD instruction.
   const HloSharding& sharding() const { return hlo_->sharding(); }
 
-  // Returns the SPMD instruction's number of dimensions.
-  int64_t num_dimensions() const { return base_shape_.dimensions().size(); }
+  void set_sharding(const HloSharding& sharding) {
+    hlo_->set_sharding(sharding);
+  }
+
+  // Returns the rank of the SPMD instruction.
+  const int64_t num_dimensions() const {
+    return base_shape_.dimensions().size();
+  }
 
   // Original full shape of the data.
   const Shape& base_shape() const { return base_shape_; }
@@ -610,6 +614,85 @@ class PartitionedHlo {
   PartitioningState state_;
 };
 
+// Groups two identically sharded PartitionedHlo instructions describing the
+// operand and scale tensors in OCP microscaling (MX) formats used in
+// block-scaled dots. See
+// https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf.
+class PartitionedHloMX {
+ public:
+  class MXShapes {
+   public:
+    MXShapes(Shape operand_shape, Shape scale_shape)
+        : mx_shapes_(std::make_pair(operand_shape, scale_shape)) {};
+
+    int dimensions_size() const { return mx_shapes_.first.dimensions_size(); }
+
+    operator std::pair<Shape, Shape>() const { return mx_shapes_; }
+
+    operator Shape() const { return mx_shapes_.first; }
+
+   private:
+    std::pair<Shape, Shape> mx_shapes_;
+  };
+
+  PartitionedHloMX(PartitionedHlo operand, PartitionedHlo scale)
+      : operand_(operand.hlo(), operand.base_shape(), operand.state()),
+        scale_(scale.hlo(), scale.base_shape(), scale.state()) {
+    CHECK_EQ(operand.sharding(), scale.sharding())
+        << "Operand and scale must be identically sharded.";
+  };
+
+  PartitionedHlo operand() const { return operand_; }
+
+  PartitionedHlo scale() const { return scale_; }
+
+  const HloSharding& sharding() const { return operand_.sharding(); }
+
+  void set_sharding(const HloSharding& sharding) {
+    operand_.set_sharding(sharding);
+    scale_.set_sharding(sharding);
+  }
+
+  const MXShapes base_shape() const {
+    return MXShapes(operand_.base_shape(), scale_.base_shape());
+  }
+
+  const PartitionedHlo::PartitioningState& state() const {
+    return operand_.state();
+  }
+
+  // Returns the operand instruction.
+  HloInstruction* hlo() const { return operand_.hlo(); }
+
+  PartitionedHloMX Replicate() const {
+    return PartitionedHloMX(operand_.Replicate(), scale_.Replicate());
+  }
+
+  PartitionedHloMX Reshard(const HloSharding& target) const {
+    return PartitionedHloMX(operand_.Reshard(target), scale_.Reshard(target));
+  }
+
+  PartitionedHloMX PadWithZero(
+      absl::Span<const int64_t> left_padded_dims = {},
+      absl::Span<const int64_t> skipped_dims = {}) const {
+    return PartitionedHloMX(
+        operand_.PadWithZero(left_padded_dims, skipped_dims),
+        scale_.PadWithZero(left_padded_dims, skipped_dims));
+  }
+
+  PartitionedHloMX PadWithZeroOnSpecifiedDims(
+      absl::Span<const int64_t> dims,
+      absl::Span<const int64_t> left_padded_dims = {}) const {
+    return PartitionedHloMX(
+        operand_.PadWithZeroOnSpecifiedDims(dims, left_padded_dims),
+        scale_.PadWithZeroOnSpecifiedDims(dims, left_padded_dims));
+  }
+
+ private:
+  PartitionedHlo operand_;
+  PartitionedHlo scale_;
+};
+
 class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
  public:
   SpmdPartitioningVisitor(
@@ -663,13 +746,11 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandleWhile(HloInstruction* hlo) override;
 
   // Implementation of dot partitioning given DotGeneralDimsMapping.
+  template <typename CreateShardedFunctor>
   absl::Status HandleDotHelper(
       HloInstruction* hlo,
       const dot_as_convolution_util::DotConvolutionDimsInfo& dims_mapping,
-      absl::FunctionRef<absl::StatusOr<HloInstruction*>(
-          HloInstruction*, HloInstruction*, SpmdBuilder*,
-          const Window& conv_window)>
-          create_sharded_dot);
+      CreateShardedFunctor& create_sharded_dot);
 
   // Common handle for elementwise HLOs.
   absl::Status HandleElementwise(HloInstruction* hlo);
