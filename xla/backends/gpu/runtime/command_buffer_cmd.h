@@ -1159,6 +1159,9 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
+      std::optional<
+          const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
+          offset_as_function_of_indvar_metadata = std::nullopt,
       ResourceUseVector resources = {});
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
@@ -1174,6 +1177,8 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
       se::CommandBuffer* command_buffer) override;
 
   BufferUseVector buffers() const override;
+
+  bool force_update() override { return true; }
 
   bool requires_initialization() override;
 
@@ -1200,6 +1205,13 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
   // command sequences.
   absl::flat_hash_map<int64_t, std::optional<BufferAllocation::Slice>>
       embeded_to_origin_slice_map_;
+
+  // This structure holds the metadata for offset computations on host. It
+  // stores a single induction variable initialization module, its update module
+  // and the offsets that are a function of the induction variable.
+  std::optional<
+      const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
+      offset_as_function_of_indvar_metadata_;
 };
 
 //===----------------------------------------------------------------------===//

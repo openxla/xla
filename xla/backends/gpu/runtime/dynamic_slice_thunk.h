@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -130,6 +131,7 @@ class DynamicSliceThunk : public Thunk {
     std::optional<Shape> orig_shape;
     std::optional<Shape> sliced_shape;
     std::optional<uint64_t> offset_byte_size;
+    std::string ToString() const;
   };
 
   const SequentialThunk* get_embedded_thunk() const {
@@ -162,6 +164,15 @@ class DynamicSliceThunk : public Thunk {
   }
 
   void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
+
+  std::optional<const OffsetAsFunctionOfIndvarModulesMetadata*>
+  get_offset_function() const {
+    if (offset_as_function_of_indvar_metadata_.has_value()) {
+      return &offset_as_function_of_indvar_metadata_.value();
+    } else {
+      return std::nullopt;
+    }
+  }
 
  private:
   std::unique_ptr<SequentialThunk> embedded_thunk_;

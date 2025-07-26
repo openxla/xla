@@ -153,6 +153,9 @@ class HloModule {
       const std::string& suffix = "clone",
       std::optional<const HloModuleConfig> config = std::nullopt) const;
 
+  void Clone(const std::string& suffix, HloCloneContext* context,
+             std::optional<const HloModuleConfig> config = std::nullopt) const;
+
   // Performs a deep clone of the computation, by recursively cloning all
   // the called computations as well. If the clone context is specified, it
   // will be populated with the cloned object mappings.
