@@ -59,7 +59,8 @@ absl::StatusOr<bool> AsyncWrapper::Run(
         TF_RETURN_IF_ERROR(
             computation
                 ->CreateAsyncInstructions(instruction,
-                                          {ShapeUtil::MakeScalarShape(U32)})
+                                          {ShapeUtil::MakeScalarShape(U32)},
+					  "parallel")
                 .status());
         changed = true;
         continue;
