@@ -2452,6 +2452,7 @@ bool PjRtCApiBuffer::IsOnCpu() const {
 }
 
 PJRT_Event* PjRtCApiBuffer::GetReadyEvent() {
+  absl::MutexLock lock(&mu_);
   if (readiness_event_ == nullptr) {
     const PJRT_Api* api = pjrt_c_api();
     PJRT_Buffer_ReadyEvent_Args args;
@@ -2492,6 +2493,7 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 }
 
 PjRtFuture<> PjRtCApiBuffer::GetReadyFuture() {
+  absl::MutexLock lock(&mu_);
   if (readiness_promise_ == nullptr) {
     readiness_promise_ =
         std::make_shared<PjRtFuture<>::Promise>(PjRtFuture<>::CreatePromise());
