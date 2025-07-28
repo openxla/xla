@@ -325,6 +325,195 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
   api_->PJRT_ExecuteContext_Destroy(&destroy_args);
 }
 
+// Helper functions for FFI handler tests
+static void TestUntypedHandler(void* result, void** args) {
+  // Simple test handler that just sets a known value
+  *static_cast<int*>(result) = 12345;
+}
+
+static xla::ffi::Error TestTypedHandler() {
+  return xla::ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER(kTestTypedHandler, TestTypedHandler, xla::ffi::Ffi::Bind());
+
+TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerUntyped) {
+  const PJRT_FFI_Extension* ffi_extension =
+      pjrt::FindExtension<PJRT_FFI_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
+  ASSERT_NE(ffi_extension, nullptr);
+
+  std::string target_name = "test_untyped_handler";
+#ifdef TENSORFLOW_USE_ROCM
+  std::string platform_name = "rocm";
+#else
+  std::string platform_name = "cuda";
+#endif
+
+  PJRT_FFI_Register_Handler_Args register_args;
+  register_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  register_args.target_name = target_name.c_str();
+  register_args.target_name_size = target_name.size();
+  register_args.api_version = 0;  // Untyped API
+  register_args.handler = reinterpret_cast<void*>(&TestUntypedHandler);
+  register_args.platform_name = platform_name.c_str();
+  register_args.platform_name_size = platform_name.size();
+  register_args.traits = static_cast<PJRT_FFI_Handler_TraitsBits>(0);
+
+  PJRT_Error* error = ffi_extension->register_handler(&register_args);
+  EXPECT_EQ(error, nullptr);
+
+  // Verify the handler was registered by checking the custom call registry
+  auto* registry = xla::CustomCallTargetRegistry::Global();
+  void* registered_handler = registry->Lookup(target_name, platform_name);
+  EXPECT_EQ(registered_handler, reinterpret_cast<void*>(&TestUntypedHandler));
+}
+
+TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerTyped) {
+  const PJRT_FFI_Extension* ffi_extension =
+      pjrt::FindExtension<PJRT_FFI_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
+  ASSERT_NE(ffi_extension, nullptr);
+
+  std::string target_name = "test_typed_handler";
+#ifdef TENSORFLOW_USE_ROCM
+  std::string platform_name = "rocm";
+#else
+  std::string platform_name = "cuda";
+#endif
+
+  PJRT_FFI_Register_Handler_Args register_args;
+  register_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  register_args.target_name = target_name.c_str();
+  register_args.target_name_size = target_name.size();
+  register_args.api_version = 1;  // Typed API
+  register_args.handler = reinterpret_cast<void*>(kTestTypedHandler);
+  register_args.platform_name = platform_name.c_str();
+  register_args.platform_name_size = platform_name.size();
+  register_args.traits = PJRT_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE;
+
+  PJRT_Error* error = ffi_extension->register_handler(&register_args);
+  EXPECT_EQ(error, nullptr);
+
+  // Verify the handler was registered by checking the FFI registry
+  auto registration = xla::ffi::FindHandler(target_name, platform_name);
+  EXPECT_EQ(reinterpret_cast<void*>(registration->bundle.execute), kTestTypedHandler);
+}
+
+TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerUnsupportedApiVersion) {
+  const PJRT_FFI_Extension* ffi_extension =
+      pjrt::FindExtension<PJRT_FFI_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
+  ASSERT_NE(ffi_extension, nullptr);
+
+  std::string target_name = "test_unsupported_handler";
+#ifdef TENSORFLOW_USE_ROCM
+  std::string platform_name = "rocm";
+#else
+  std::string platform_name = "cuda";
+#endif
+
+  PJRT_FFI_Register_Handler_Args register_args;
+  register_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  register_args.target_name = target_name.c_str();
+  register_args.target_name_size = target_name.size();
+  register_args.api_version = 999;  // Unsupported API version
+  register_args.handler = reinterpret_cast<void*>(&TestUntypedHandler);
+  register_args.platform_name = platform_name.c_str();
+  register_args.platform_name_size = platform_name.size();
+  register_args.traits = static_cast<PJRT_FFI_Handler_TraitsBits>(0);
+
+  PJRT_Error* error = ffi_extension->register_handler(&register_args);
+  ASSERT_NE(error, nullptr);
+  EXPECT_THAT(error->status.message(), HasSubstr("API version 999 not supported"));
+  
+  // Clean up the error
+  PJRT_Error_Destroy_Args destroy_args;
+  destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+  destroy_args.extension_start = nullptr;
+  destroy_args.error = error;
+  api_->PJRT_Error_Destroy(&destroy_args);
+}
+
+TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerWithDifferentPlatforms) {
+  const PJRT_FFI_Extension* ffi_extension =
+      pjrt::FindExtension<PJRT_FFI_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
+  ASSERT_NE(ffi_extension, nullptr);
+
+  std::string target_name = "test_multi_platform_handler";
+  
+  // Register for CUDA platform
+  std::string cuda_platform = "cuda";
+  PJRT_FFI_Register_Handler_Args cuda_args;
+  cuda_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  cuda_args.target_name = target_name.c_str();
+  cuda_args.target_name_size = target_name.size();
+  cuda_args.api_version = 0;
+  cuda_args.handler = reinterpret_cast<void*>(&TestUntypedHandler);
+  cuda_args.platform_name = cuda_platform.c_str();
+  cuda_args.platform_name_size = cuda_platform.size();
+  cuda_args.traits = static_cast<PJRT_FFI_Handler_TraitsBits>(0);
+
+  PJRT_Error* cuda_error = ffi_extension->register_handler(&cuda_args);
+  EXPECT_EQ(cuda_error, nullptr);
+
+  // Register for ROCM platform
+  std::string rocm_platform = "rocm";
+  PJRT_FFI_Register_Handler_Args rocm_args;
+  rocm_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  rocm_args.target_name = target_name.c_str();
+  rocm_args.target_name_size = target_name.size();
+  rocm_args.api_version = 0;
+  rocm_args.handler = reinterpret_cast<void*>(&TestUntypedHandler);
+  rocm_args.platform_name = rocm_platform.c_str();
+  rocm_args.platform_name_size = rocm_platform.size();
+  rocm_args.traits = static_cast<PJRT_FFI_Handler_TraitsBits>(0);
+
+  PJRT_Error* rocm_error = ffi_extension->register_handler(&rocm_args);
+  EXPECT_EQ(rocm_error, nullptr);
+
+  // Verify both registrations
+  auto* registry = xla::CustomCallTargetRegistry::Global();
+  void* cuda_handler = registry->Lookup(target_name, cuda_platform);
+  void* rocm_handler = registry->Lookup(target_name, rocm_platform);
+  EXPECT_EQ(cuda_handler, reinterpret_cast<void*>(&TestUntypedHandler));
+  EXPECT_EQ(rocm_handler, reinterpret_cast<void*>(&TestUntypedHandler));
+}
+
+TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerNullHandler) {
+  const PJRT_FFI_Extension* ffi_extension =
+      pjrt::FindExtension<PJRT_FFI_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
+  ASSERT_NE(ffi_extension, nullptr);
+
+  std::string target_name = "test_null_handler";
+#ifdef TENSORFLOW_USE_ROCM
+  std::string platform_name = "rocm";
+#else
+  std::string platform_name = "cuda";
+#endif
+
+  PJRT_FFI_Register_Handler_Args register_args;
+  register_args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  register_args.target_name = target_name.c_str();
+  register_args.target_name_size = target_name.size();
+  register_args.api_version = 0;
+  register_args.handler = nullptr;  // Null handler
+  register_args.platform_name = platform_name.c_str();
+  register_args.platform_name_size = platform_name.size();
+  register_args.traits = static_cast<PJRT_FFI_Handler_TraitsBits>(0);
+
+  // Should succeed (the registry accepts null handlers)
+  PJRT_Error* error = ffi_extension->register_handler(&register_args);
+  EXPECT_EQ(error, nullptr);
+
+  // Verify null handler was registered
+  auto* registry = xla::CustomCallTargetRegistry::Global();
+  void* registered_handler = registry->Lookup(target_name, platform_name);
+  EXPECT_EQ(registered_handler, nullptr);
+}
+
 TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
   size_t dma_size = 1024 * 1024;
   size_t alignment = 1024 * 1024;
