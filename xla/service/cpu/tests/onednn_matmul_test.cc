@@ -1795,7 +1795,7 @@ TEST_F(MatmulTest, SimpleTestF16WithBiasAndAddFusion) {
   const std::string matmul_module_str =
       CreateMatmulBiasAddAndAddModuleText("f16", "f16");
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_str_);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_sum_str_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithAddFusion_2) {
