@@ -32,8 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/scoped_gpu_graph_exec.h"
-#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -51,9 +49,11 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   ~RocmCommandBuffer() override;
 
  private:
-  RocmCommandBuffer(Mode mode, StreamExecutor* parent, hipGraph_t graph,
-                    bool is_owned_graph)
-      : GpuCommandBuffer(mode, parent),
+  RocmCommandBuffer(Mode mode, StreamExecutor* executor, CommandBuffer* parent,
+                    hipGraph_t graph, bool is_owned_graph)
+      : GpuCommandBuffer(mode, executor),
+        executor_(executor),
+        parent_(parent),
         graph_(graph),
         is_owned_graph_(is_owned_graph) {}
 
@@ -157,21 +157,15 @@ class RocmCommandBuffer : public GpuCommandBuffer {
 
   absl::Status InstantiateGraph() override;
 
-  using ScopedRocmGraphExec = ScopedGraphExec<hipGraphExec_t>;
-  std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
-      GpuCommandBuffer* nested_cmd_buffer) override;
-
   absl::Status CheckCanBeUpdated() override;
 
   static_assert(std::is_pointer_v<hipGraph_t>, "hipGraph_t must be a pointer");
   static_assert(std::is_pointer_v<hipGraphExec_t>,
                 "hipGraphExec_t must be a pointer");
 
-  hipGraph_t graph_ = nullptr;  // owned if `is_owned_graph_`
-  bool is_owned_graph_ = true;  // ownership of `graph_`
-
-  hipGraphExec_t exec_ = nullptr;    // owned if `is_owned_graph_exec_`
-  bool is_owned_graph_exec_ = true;  // ownership of `is_owned_graph_exec_`
+  hipGraph_t graph_ = nullptr;
+  bool is_owned_graph_ = true;
+  hipGraphExec_t exec_ = nullptr;
 };
 
 }  // namespace stream_executor::gpu

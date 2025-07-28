@@ -73,6 +73,7 @@ namespace xla::gpu {
 // clang-format off
 #define COMMAND_BUFFER_CMD_LIST(V)                               \
   V(kEmptyCmd, "EmptyCmd")                                       \
+  V(kChildCmd, "ChildCmd")                                       \
   V(kTracedCommandBufferCmd, "TracedCommandBufferCmd")           \
   V(kComputationIdCmd, "ComputationIdCmd")                       \
   V(kLaunchCmd, "LaunchCmd")                                     \
@@ -724,6 +725,7 @@ class ChildCmd : public CommandBufferCmd {
 
  private:
   CommandBufferCmdExecutor child_commands_;
+  std::unique_ptr<se::CommandBuffer> child_command_buffer_;
 };
 
 //===----------------------------------------------------------------------===//

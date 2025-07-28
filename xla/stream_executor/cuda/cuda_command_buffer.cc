@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -147,11 +146,11 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
-    Mode mode, StreamExecutor* parent, CudaContext* cuda_context) {
+    Mode mode, StreamExecutor* executor, CudaCommandBuffer* parent,
+    CudaContext* cuda_context) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
-  return std::unique_ptr<CudaCommandBuffer>(
-      new CudaCommandBuffer(mode, parent, cuda_context, graph,
-                            /*is_owned_graph=*/true));
+  return std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
+      mode, executor, parent, cuda_context, graph, /*is_owned_graph=*/true));
 }
 
 //===----------------------------------------------------------------------===//
@@ -166,7 +165,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetWhileConditionNode(
                         cuda::GetSetWhileConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_while_condition_kernel_,
-        SetWhileConditionKernel::FactoryType::Create(parent_, spec));
+        SetWhileConditionKernel::FactoryType::Create(executor_, spec));
   }
 
   auto kernel_args = PackKernelArgs(set_while_condition_kernel_,
@@ -219,7 +218,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetCaseConditionNode(
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetSetCaseConditionKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(
         set_case_condition_kernel_,
-        SetCaseConditionKernel::FactoryType::Create(parent_, spec));
+        SetCaseConditionKernel::FactoryType::Create(executor_, spec));
   }
 
   auto kernel_args = PackCaseConditionKernelArgs(
@@ -249,7 +248,7 @@ CudaCommandBuffer::GetNoOpKernel() {
   if (!noop_kernel_) {
     TF_ASSIGN_OR_RETURN(auto spec, cuda::GetNoOpKernelLoaderSpec());
     TF_ASSIGN_OR_RETURN(noop_kernel_,
-                        NoOpKernel::FactoryType::Create(parent_, spec));
+                        NoOpKernel::FactoryType::Create(executor_, spec));
   }
   return &noop_kernel_;
 }
@@ -294,7 +293,7 @@ CudaCommandBuffer::CreateConditionalNode(
   return GraphConditionalNodeHandle{
       FromCudaGraphHandle(node_handle),
       std::unique_ptr<CudaCommandBuffer>(
-          new CudaCommandBuffer(Mode::kNested, parent_, cuda_context_,
+          new CudaCommandBuffer(Mode::kNested, executor_, this, cuda_context_,
                                 cu_params.conditional.phGraph_out[0],
                                 /*is_owned_graph=*/false))};
 #else
@@ -336,7 +335,7 @@ absl::Status CudaCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
                                                  BitPattern bit_pattern,
                                                  size_t num_elements) {
   VLOG(2) << "Set memset node params " << node_handle << " in graph executable "
-          << exec_ << "; dst: " << destination.opaque()
+          << exec() << "; dst: " << destination.opaque()
           << "; bit_pattern: " << bit_pattern.ToString()
           << "; num_elements: " << num_elements
           << "; context: " << cuda_context_->context();
@@ -350,7 +349,7 @@ absl::Status CudaCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
   params.width = num_elements;
 
   return cuda::ToStatus(
-      cuGraphExecMemsetNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
+      cuGraphExecMemsetNodeSetParams(exec(), ToCudaGraphHandle(node_handle),
                                      &params, cuda_context_->context()),
       "Failed to set memset node params");
 }
@@ -386,7 +385,7 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
     GraphNodeHandle node_handle, DeviceMemoryBase destination,
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Set memcpy d2d node params " << node_handle
-          << " in graph executable " << exec_
+          << " in graph executable " << exec()
           << "; dst: " << destination.opaque() << "; src: " << source.opaque()
           << "; size: " << size << "; context: " << cuda_context_->context();
 
@@ -398,9 +397,8 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
   params.WidthInBytes = size;
   params.Height = 1;
   params.Depth = 1;
-
   return cuda::ToStatus(
-      cuGraphExecMemcpyNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
+      cuGraphExecMemcpyNodeSetParams(exec(), ToCudaGraphHandle(node_handle),
                                      &params, cuda_context_->context()),
       "Failed to set memcpy d2d node params");
 }
@@ -420,14 +418,15 @@ absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
       ToCudaGraphHandle(node_handle), &child_graph)));
   TF_RETURN_IF_ERROR(dnn_graph.PopulateOrUpdateRawCommandBuffer(
       stream, operands, child_graph, true));
-  return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
-                            exec_, ToCudaGraphHandle(node_handle), child_graph),
-                        "Failed to set CUDA graph child node params");
+  return cuda::ToStatus(
+      cuGraphExecChildGraphNodeSetParams(exec(), ToCudaGraphHandle(node_handle),
+                                         child_graph),
+      "Failed to set CUDA graph child node params");
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
-    absl::Span<const GraphNodeHandle> dependencies,
-    const CommandBuffer& nested) {
+    absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
+  static_cast<CudaCommandBuffer&>(nested).parent_ = this;
   CUgraph child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
@@ -440,7 +439,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
       cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
                                child_graph),
       "Failed to create a child graph node and add it to a CUDA graph"));
-
+  VLOG(5) << "CreateChildNode: " << reinterpret_cast<const void*>(&node_handle);
   return FromCudaGraphHandle(node_handle);
 }
 
@@ -449,11 +448,14 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
   CUgraph child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Set child node params " << node_handle << " in graph executable "
-          << exec_ << "to params contained in " << child_graph;
+          << exec() << " to params contained in " << child_graph;
 
-  return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
-                            exec_, ToCudaGraphHandle(node_handle), child_graph),
-                        "Failed to set CUDA graph child node params");
+  CUgraphExec exec_update = exec();
+  CHECK(exec_update != nullptr) << "exec is nullptr";
+  return cuda::ToStatus(
+      cuGraphExecChildGraphNodeSetParams(
+          exec_update, ToCudaGraphHandle(node_handle), child_graph),
+      "Failed to set CUDA graph child node params");
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
@@ -520,7 +522,7 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   VLOG(2) << "Set kernel node params " << node_handle << " in graph executable "
-          << exec_ << "; kernel: " << kernel.name() << "; gdx: " << blocks.x
+          << exec() << "; kernel: " << kernel.name() << "; gdx: " << blocks.x
           << " gdy: " << blocks.y << " gdz: " << blocks.z
           << " bdx: " << threads.x << " bdy: " << threads.y
           << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes;
@@ -548,9 +550,8 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
                            shared_mem_bytes),
         "Failed to set shared memory size"));
   }
-
   return cuda::ToStatus(cuGraphExecKernelNodeSetParams(
-                            exec_, ToCudaGraphHandle(node_handle), &params),
+                            exec(), ToCudaGraphHandle(node_handle), &params),
                         "Failed to set CUDA graph kernel node params");
 }
 
@@ -576,7 +577,7 @@ absl::Status CudaCommandBuffer::Trace(
       "StreamBeginCaptureToGraph is not implemented for CUDA below version "
       "12.3. Therefore tracing is not supported.");
 #else
-  if (parent_->GetDeviceDescription().driver_version() <
+  if (executor_->GetDeviceDescription().driver_version() <
       SemanticVersion{12, 3, 0}) {
     return absl::UnimplementedError(
         "StreamBeginCaptureToGraph is not implemented for CUDA below version "
@@ -638,11 +639,11 @@ absl::Status CudaCommandBuffer::Trace(
 }
 
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
-  VLOG(3) << "Launch command buffer executable graph " << exec_
+  VLOG(3) << "Launch command buffer executable graph " << exec()
           << " on a stream: " << stream;
   return cuda::ToStatus(
-      cuGraphLaunch(exec_, absl::bit_cast<CUstream>(
-                               stream->platform_specific_handle().stream)),
+      cuGraphLaunch(exec(), absl::bit_cast<CUstream>(
+                                stream->platform_specific_handle().stream)),
       "Failed to launch CUDA graph");
 }
 
@@ -680,7 +681,7 @@ absl::Status CudaCommandBuffer::SetPriority(StreamPriority priority) {
 }
 
 absl::Status CudaCommandBuffer::PrepareFinalization() {
-  if (parent_->GetDeviceDescription().driver_version() <
+  if (executor_->GetDeviceDescription().driver_version() <
       SemanticVersion{12, 8, 0}) {
     // For CUDA < 12080, cuda graph conditional node does not support
     // empty body graph.
@@ -735,12 +736,14 @@ absl::Status CudaCommandBuffer::WriteGraphToDotFile(absl::string_view path) {
 absl::Status CudaCommandBuffer::InstantiateGraph() {
   // If we get a "resource exhausted error" we retry instantiating Gpu graph
   // one more time after releasing unused device memory allocated for graphs.
+  CHECK(parent_ == nullptr)
+      << "InstantiateGraph should be called on the root command buffer";
   auto instantiated = GraphInstantiate(&exec_, graph_);
   if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
     LOG(WARNING) << "Retry CUDA graph instantiation after OOM error";
     CUdevice device;
     TF_RETURN_IF_ERROR(
-        cuda::ToStatus(cuDeviceGet(&device, parent_->device_ordinal()),
+        cuda::ToStatus(cuDeviceGet(&device, executor_->device_ordinal()),
                        "Failed call to cuDeviceGet"));
     TF_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGraphMemTrim(device),
                                       "Failed to trim device graph memory"));
@@ -752,25 +755,8 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
   return absl::OkStatus();
 }
 
-std::unique_ptr<ScopedUpdateMode> CudaCommandBuffer::ActivateUpdateMode(
-    GpuCommandBuffer* nested_cmd_buffer) {
-  auto nested_cuda_cmd_buffer =
-      static_cast<CudaCommandBuffer*>(nested_cmd_buffer);
-
-  auto scoped_graph_exec = std::make_unique<ScopedCudaGraphExec>(
-      &nested_cuda_cmd_buffer->exec_,
-      &nested_cuda_cmd_buffer->is_owned_graph_exec_);
-
-  // We need to store the graph exec handle in the nested command buffer.
-  // The scoped_graph_exec will restore the old state once we are done.
-  nested_cuda_cmd_buffer->exec_ = exec_;
-  nested_cuda_cmd_buffer->is_owned_graph_exec_ = false;
-
-  return std::move(scoped_graph_exec);
-}
-
 CudaCommandBuffer::~CudaCommandBuffer() {
-  if (exec_ != nullptr && is_owned_graph_exec_) {
+  if (exec_ != nullptr) {
     auto exec_num = NotifyExecDestroyed();
     VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
             << "(remaining alive executable graphs: " << exec_num << ")";
@@ -790,7 +776,7 @@ CudaCommandBuffer::~CudaCommandBuffer() {
 }
 
 absl::Status CudaCommandBuffer::CheckCanBeUpdated() {
-  if (exec_ == nullptr) {
+  if (exec() == nullptr) {
     return absl::InternalError(
         "Command buffer has to have a graph executable to be updated.");
   }

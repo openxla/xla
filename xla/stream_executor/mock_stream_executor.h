@@ -94,7 +94,8 @@ class MockStreamExecutor : public StreamExecutor {
   MOCK_METHOD(fft::FftSupport*, AsFft, (), (override));
   MOCK_METHOD(dnn::DnnSupport*, AsDnn, (), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<CommandBuffer>>,
-              CreateCommandBuffer, (CommandBuffer::Mode mode), (override));
+              CreateCommandBuffer,
+              (CommandBuffer::Mode mode, CommandBuffer* parent), (override));
   MOCK_METHOD(std::optional<AllocatorStats>, GetAllocatorStats, (), (override));
   MOCK_METHOD(bool, ClearAllocatorStats, (), (override));
   MOCK_METHOD(absl::Status, FlushCompilationCache, (), (override));

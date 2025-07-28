@@ -495,6 +495,7 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
 
     // Skip updating command if it doesn't use any of the updated allocations.
     if (skip_command_update(id)) {
+      VLOG(3) << "Skip updating command " << command->ToString();
       ++num_skipped_command_updates;
       continue;
     }
@@ -1131,20 +1132,37 @@ bool ChildCmd::requires_initialization() {
 bool ChildCmd::force_update() { return child_commands_.force_update(); }
 
 CommandBufferCmd::BufferUseVector ChildCmd::buffers() const {
-  return child_commands_.buffers();
+  return {child_commands_.buffers().begin(), child_commands_.buffers().end()};
 }
 
 absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params,
                                   StateManager& state) {
-  return child_commands_.Initialize(params, state);
+  TF_RETURN_IF_ERROR(child_commands_.Initialize(params, state));
+  if (child_command_buffer_ == nullptr) {
+    TF_ASSIGN_OR_RETURN(child_command_buffer_,
+                        params.stream->parent()->CreateCommandBuffer(
+                            se::CommandBuffer::Mode::kNested));
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
     const Thunk::ExecuteParams& execute_params,
     const RecordParams& record_params, RecordAction record_action,
     se::CommandBuffer* command_buffer) {
-  return child_commands_.Record(execute_params, record_params, record_action,
-                                command_buffer);
+  VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
+  TF_RETURN_IF_ERROR(child_commands_.Record(execute_params, record_params,
+                                            child_command_buffer_.get()));
+  return Handle(
+      std::move(record_action),
+      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+        return command_buffer->CreateNestedCommand(*child_command_buffer_,
+                                                   dependencies);
+      },
+      [&](const se::CommandBuffer::Command* command) {
+        return command_buffer->UpdateNestedCommand(command,
+                                                   *child_command_buffer_);
+      });
 }
 
 //===----------------------------------------------------------------------===//
@@ -2261,7 +2279,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
   // create ephemeral command buffers at run time.
   auto nested_command_buffer =
       execute_params.stream->parent()
-          ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested)
+          ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested,
+                                command_buffer)
           .value();
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, record_params,
                                                nested_command_buffer.get()));

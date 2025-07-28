@@ -197,8 +197,8 @@ TEST(GpuCommandBufferTest, LaunchNestedCommandBuffer) {
   // Create a command buffer with a single kernel launch.
   TF_ASSERT_OK_AND_ASSIGN(auto primary_cmd,
                           executor->CreateCommandBuffer(primary));
-  TF_ASSERT_OK_AND_ASSIGN(auto nested_cmd,
-                          executor->CreateCommandBuffer(nested));
+  TF_ASSERT_OK_AND_ASSIGN(auto nested_cmd, executor->CreateCommandBuffer(
+                                               nested, primary_cmd.get()));
   TF_ASSERT_OK(
       nested_cmd->CreateLaunch(add, ThreadDim(), BlockDim(4), {}, a, b, c));
   TF_ASSERT_OK_AND_ASSIGN(auto* nested_command,
@@ -220,7 +220,7 @@ TEST(GpuCommandBufferTest, LaunchNestedCommandBuffer) {
 
   // Update command buffer to write into `d` buffer by creating a new nested
   // command buffer.
-  nested_cmd = executor->CreateCommandBuffer(nested).value();
+  nested_cmd = executor->CreateCommandBuffer(nested, primary_cmd.get()).value();
   TF_ASSERT_OK(
       nested_cmd->CreateLaunch(add, ThreadDim(), BlockDim(4), {}, a, b, d));
   TF_ASSERT_OK(primary_cmd->Update());

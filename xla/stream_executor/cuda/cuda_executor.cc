@@ -1271,9 +1271,11 @@ absl::StatusOr<std::unique_ptr<Stream>> CudaExecutor::CreateStream(
 }
 
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
-CudaExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
+CudaExecutor::CreateCommandBuffer(CommandBuffer::Mode mode,
+                                  CommandBuffer* parent) {
   VLOG(2) << "Create CUDA command buffer (CUDA graph)";
-  return CudaCommandBuffer::Create(mode, this, cuda_context_);
+  return CudaCommandBuffer::Create(
+      mode, this, static_cast<CudaCommandBuffer*>(parent), cuda_context_);
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
