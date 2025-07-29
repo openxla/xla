@@ -77,8 +77,7 @@ struct PJRT_FFI_Register_Handler_Args {
   size_t struct_size;
   const char* target_name;
   size_t target_name_size;
-  int api_version;  // 0 for an untyped call, 1 -- for typed
-  void* handler;
+  void* handler;  // XLA_FFI_Handler* for typed FFI calls
   const char* platform_name;
   size_t platform_name_size;
   PJRT_FFI_Handler_TraitsBits traits;
@@ -86,6 +85,7 @@ struct PJRT_FFI_Register_Handler_Args {
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_FFI_Register_Handler_Args, traits);
 
 // Registers an FFI call handler for a specific platform.
+// Only supports typed FFI handlers (XLA_FFI_Handler*).
 typedef PJRT_Error* PJRT_FFI_Register_Handler(
     PJRT_FFI_Register_Handler_Args* args);
 

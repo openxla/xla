@@ -16,7 +16,6 @@ limitations under the License.
 #include <string>
 
 #include "absl/status/status.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/execution_context.h"
@@ -26,7 +25,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
-#include "xla/service/custom_call_target_registry.h"
 
 namespace pjrt {
 
@@ -79,22 +77,19 @@ static PJRT_Error* PJRT_FFI_Register_Handler(
       PJRT_FFI_Register_Handler_Args_STRUCT_SIZE, args->struct_size));
   std::string target_name(args->target_name, args->target_name_size);
   std::string platform_name(args->platform_name, args->platform_name_size);
-  switch (args->api_version) {
-    case 0:
-      xla::CustomCallTargetRegistry::Global()->Register(
-          target_name, args->handler, platform_name);
-      return nullptr;
-    case 1:
-      xla::ffi::Ffi::RegisterStaticHandler(
-          xla::ffi::GetXlaFfiApi(), target_name, platform_name,
-          reinterpret_cast<XLA_FFI_Handler*>(args->handler), static_cast<XLA_FFI_Handler_TraitsBits>(args->traits));
-      return nullptr;
-    default:
-      return new PJRT_Error{absl::UnimplementedError(
-          absl::StrFormat("API version %d not supported for PJRT GPU plugin. "
-                          "Supported versions are 0 and 1.",
-                          args->api_version))};
+  
+  // Validate that handler is not null
+  if (args->handler == nullptr) {
+    return new PJRT_Error{absl::InvalidArgumentError(
+        "FFI handler cannot be null")};
   }
+  
+  // Only support typed FFI handlers
+  xla::ffi::Ffi::RegisterStaticHandler(
+      xla::ffi::GetXlaFfiApi(), target_name, platform_name,
+      reinterpret_cast<XLA_FFI_Handler*>(args->handler), 
+      static_cast<XLA_FFI_Handler_TraitsBits>(args->traits));
+  return nullptr;
 }
 
 PJRT_FFI_Extension CreateFfiExtension(PJRT_Extension_Base* next) {
