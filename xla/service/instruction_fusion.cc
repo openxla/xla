@@ -797,8 +797,31 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
     // fusions.
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
   }
+  // if (fusion_instruction->name().starts_with("broadcast_multiply_fusion.1"))
+  // {
+  //   LOG(INFO) << "fusion_instruction: " << fusion_instruction->ToString();
+  //   // LOG(INFO) << "computation: " << computation->ToString();
+  //   LOG(INFO) << "computation->execution_thread(): "
+  //             << computation->execution_thread();
+  //   LOG(INFO) << "BEFORE fusion_instruction ->called_computations(): [";
+  //   for (const HloComputation* called_computation :
+  //        fusion_instruction->called_computations()) {
+  //     LOG(INFO) << "  " << called_computation->ToString();
+  //   }
+  //   LOG(INFO) << "]";
+  // }
   fusion_instruction->set_called_computations_execution_thread(
       computation->execution_thread());
+
+  // if (fusion_instruction->name().starts_with("broadcast_multiply_fusion.1"))
+  // {
+  //   LOG(INFO) << "AFTER fusion_instruction ->called_computations(): [";
+  //   for (const HloComputation* called_computation :
+  //        fusion_instruction->called_computations()) {
+  //     LOG(INFO) << "  " << called_computation->ToString();
+  //   }
+  //   LOG(INFO) << "]";
+  // }
   return fusion_instruction;
 }
 
