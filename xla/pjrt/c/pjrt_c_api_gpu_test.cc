@@ -326,11 +326,10 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
 }
 
 // Helper functions for FFI handler tests
-static xla::ffi::Error TestTypedHandler() {
-  return xla::ffi::Error::Success();
-}
+static xla::ffi::Error TestTypedHandler() { return xla::ffi::Error::Success(); }
 
-XLA_FFI_DEFINE_HANDLER(kTestTypedHandler, TestTypedHandler, xla::ffi::Ffi::Bind());
+XLA_FFI_DEFINE_HANDLER(kTestTypedHandler, TestTypedHandler,
+                       xla::ffi::Ffi::Bind());
 
 TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerTyped) {
   const PJRT_FFI_Extension* ffi_extension =
@@ -359,7 +358,8 @@ TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerTyped) {
 
   // Verify the handler was registered by checking the FFI registry
   auto registration = xla::ffi::FindHandler(target_name, platform_name);
-  EXPECT_EQ(reinterpret_cast<void*>(registration->bundle.execute), kTestTypedHandler);
+  EXPECT_EQ(reinterpret_cast<void*>(registration->bundle.execute),
+            kTestTypedHandler);
 }
 
 TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerNullHandler) {
@@ -388,7 +388,7 @@ TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerNullHandler) {
   PJRT_Error* error = ffi_extension->register_handler(&register_args);
   ASSERT_NE(error, nullptr);
   EXPECT_THAT(error->status.message(), HasSubstr("FFI handler cannot be null"));
-  
+
   // Clean up the error
   PJRT_Error_Destroy_Args destroy_args;
   destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
@@ -404,7 +404,7 @@ TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerWithDifferentPlatforms) {
   ASSERT_NE(ffi_extension, nullptr);
 
   std::string target_name = "test_multi_platform_handler";
-  
+
   // Register for CUDA platform
   std::string cuda_platform = "cuda";
   PJRT_FFI_Register_Handler_Args cuda_args;
@@ -436,8 +436,10 @@ TEST_F(PjrtCApiGpuTest, FFIRegisterHandlerWithDifferentPlatforms) {
   // Verify both registrations
   auto cuda_registration = xla::ffi::FindHandler(target_name, cuda_platform);
   auto rocm_registration = xla::ffi::FindHandler(target_name, rocm_platform);
-  EXPECT_EQ(reinterpret_cast<void*>(cuda_registration->bundle.execute), kTestTypedHandler);
-  EXPECT_EQ(reinterpret_cast<void*>(rocm_registration->bundle.execute), kTestTypedHandler);
+  EXPECT_EQ(reinterpret_cast<void*>(cuda_registration->bundle.execute),
+            kTestTypedHandler);
+  EXPECT_EQ(reinterpret_cast<void*>(rocm_registration->bundle.execute),
+            kTestTypedHandler);
 }
 
 TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {

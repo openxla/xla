@@ -77,17 +77,17 @@ static PJRT_Error* PJRT_FFI_Register_Handler(
       PJRT_FFI_Register_Handler_Args_STRUCT_SIZE, args->struct_size));
   std::string target_name(args->target_name, args->target_name_size);
   std::string platform_name(args->platform_name, args->platform_name_size);
-  
+
   // Validate that handler is not null
   if (args->handler == nullptr) {
-    return new PJRT_Error{absl::InvalidArgumentError(
-        "FFI handler cannot be null")};
+    return new PJRT_Error{
+        absl::InvalidArgumentError("FFI handler cannot be null")};
   }
-  
+
   // Only support typed FFI handlers
   xla::ffi::Ffi::RegisterStaticHandler(
       xla::ffi::GetXlaFfiApi(), target_name, platform_name,
-      reinterpret_cast<XLA_FFI_Handler*>(args->handler), 
+      reinterpret_cast<XLA_FFI_Handler*>(args->handler),
       static_cast<XLA_FFI_Handler_TraitsBits>(args->traits));
   return nullptr;
 }
