@@ -264,6 +264,8 @@ class WrapEntryWithCallFrame
 
     op->setAttr("xla.cpu.is_wrapped", mlir::UnitAttr::get(context));
     op.setPrivate();
+    op->setAttr("llvm.linkage", mlir::LLVM::LinkageAttr::get(
+                                    context, mlir::LLVM::Linkage::Internal));
 
     return mlir::success();
   }
