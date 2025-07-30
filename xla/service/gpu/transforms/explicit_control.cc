@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/transforms/futures_mode_async_wrapper.h"
+#include "xla/service/gpu/transforms/explicit_control.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -42,11 +42,12 @@ absl::StatusOr<bool> ExplicitControl::Run(
     absl::flat_hash_map<std::string, HloInstruction*> control_map;    
     for (HloInstruction* instr : comp->instructions()) {
       if(instr->frontend_attributes().map().contains("wait_tag")) {
-        control_map["wait_tag"] = instr;
+	auto key = instr->frontend_attributes().map().at("wait_tag");
+        control_map[key] = instr;
       }
       if(instr->frontend_attributes().map().contains("wait_for")) {
-	auto key = instr->frontend_attributes().map()["wait_for"];
-        instr->AddControlDependencyTo(control_map[key]);
+	auto key = instr->frontend_attributes().map().at("wait_for");
+        control_map[key]->AddControlDependencyTo(instr);
 	changed = true;
       }
     }
