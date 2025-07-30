@@ -219,8 +219,7 @@ absl::StatusOr<GlobalTopologyProto> BuildGlobalTopology(
   }
 
   if (assign_global_device_ids) {
-    absl::flat_hash_map<int, absl::flat_hash_set<DeviceProto*>>
-        slice_id_to_devices;
+    std::map<int, std::set<DeviceProto*>> slice_id_to_devices;
     for (LocalTopologyProto& local : local_topologies) {
       for (DeviceProto& device : *local.mutable_devices()) {
         slice_id_to_devices[device.slice_index()].insert(&device);
