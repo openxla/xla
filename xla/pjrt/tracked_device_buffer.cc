@@ -26,7 +26,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/algorithm/container.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -62,11 +61,15 @@ void BufferSequencingEvent::SetSequencingEvent(EventPool::Handle event,
     streams_defined_on_.push_back(stream);
     sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
   }
-  defined_status_.emplace(absl::OkStatus());
+  this->ExecuteFutureTasks();
 }
 
 bool BufferSequencingEvent::EventHasBeenRecorded() const {
   return event_.event() != nullptr;
+}
+
+bool BufferSequencingEvent::IsDefinedNoLock() const {
+  return defined_status_.IsConcrete();
 }
 
 uint64_t BufferSequencingEvent::sequence_number() const {
@@ -114,7 +117,7 @@ bool BufferSequencingEvent::IsPredeterminedErrorOrDefinedOn(
   // IsDefined would be true for both a defined buffer and an error buffer.
   // Can't use BufferSequencingEvent::EventHasBeenRecorded here since that's
   // only true for a non-error buffer(i.e. defined buffer).
-  mu_.Await(absl::Condition(this, &BufferSequencingEvent::IsDefined));
+  mu_.Await(absl::Condition(this, &BufferSequencingEvent::IsDefinedNoLock));
 
   if (defined_status_.IsConcrete() && !defined_status_.get().ok()) {
     // IsPredeterminedError
@@ -143,21 +146,45 @@ void BufferSequencingEvent::ExecuteOrAddToFutureTasks(
   tsl::profiler::TraceMeProducer producer(
       "BufferSequencingEvent::ExecuteOrAddToFutureTasks",
       tsl::profiler::ContextType::kPjRt);
-
-  auto traced_task = [task = std::move(task),
-                      context_id = producer.GetContextId()]() {
+  uint64_t context_id = producer.GetContextId();
+  auto wrapped_task = [task = std::move(task), context_id]() {
     tsl::profiler::TraceMeConsumer consumer("BufferSequencingEvent::Execute",
                                             tsl::profiler::ContextType::kPjRt,
                                             context_id);
     task();
   };
+  {
+    absl::MutexLock lock(&mu_);
+    if (!defined_status_.IsConcrete()) {
+      on_ready_tasks_callback_[task_name] = std::move(wrapped_task);
+      return;
+    }
+    // Release the lock to avoid deadlock, in the case where the
+    // thread_pool_->Schedule() executes wrapped_task inline.
+    // This is rare but could happen. The callbacks could potentially try to
+    // acquire the mutex of this BufferSequencingEvent.
+  }
+  thread_pool_->Schedule(std::move(wrapped_task));
+}
 
-  // Execute the `task` when definition event becomes available. If it's already
-  // available, the task will be executed immediately.
-  defined_status_.AndThen(
-      [this, traced_task = std::move(traced_task)]() mutable {
-        thread_pool_->Schedule(std::move(traced_task));
-      });
+void BufferSequencingEvent::ExecuteFutureTasks() {
+  absl::flat_hash_map<std::string, std::function<void()>>
+      on_ready_tasks_callback;
+  {
+    absl::MutexLock lock(&mu_);
+    on_ready_tasks_callback = std::move(on_ready_tasks_callback_);
+    // Release the lock to avoid deadlock, in the case where the
+    // thread_pool_->Schedule() executes call_all_task_callbacks inline.
+    // This is rare but could happen. The callbacks could potentially try to
+    // acquire the mutex of this BufferSequencingEvent.
+  }
+  auto call_all_task_callbacks = [on_ready_tasks_callback =
+                                      std::move(on_ready_tasks_callback)]() {
+    for (auto& [task_name, task_callback] : on_ready_tasks_callback) {
+      task_callback();
+    }
+  };
+  thread_pool_->Schedule(std::move(call_all_task_callbacks));
 }
 
 ShapedBuffer RawSEDeviceMemory::AsShapedBuffer(
