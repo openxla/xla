@@ -44,6 +44,9 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloModule* module, HloInstru
 
   HloComputation* computation = instr->parent();
   auto original_attributes = instr->frontend_attributes();
+  instr->DropAllControlDeps();
+  start_call_instr->DropAllControlDeps(); 
+  
   // First, create our async start/done pair and replace the tagged "_async_start" kCall op. 
   TF_ASSIGN_OR_RETURN(
       HloInstruction * done,
@@ -53,7 +56,7 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloModule* module, HloInstru
           /*replace=*/true));
   // Next, we fold the async_done instruction into the tagged instruction.
   // This call should always be an identity operator.
-  TF_ASSIGN_OR_RETURN(bool check, computation->ReplaceInstruction(instr, done, true, true, true));
+  TF_ASSIGN_OR_RETURN(bool check, computation->ReplaceInstruction(instr, done, true, false));
   
   // Replace the original attributes after creating the async pair.
   done->set_frontend_attributes(original_attributes);

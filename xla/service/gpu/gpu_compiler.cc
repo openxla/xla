@@ -216,6 +216,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/double_buffer_loop_unrolling.h"
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
+#include "xla/service/gpu/transforms/explicit_control.h"
 #include "xla/service/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
 #include "xla/service/gpu/transforms/futures_mode_async_wrapper.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
@@ -2841,11 +2842,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   HloPassPipeline main_pipeline("post-scheduling-passes");
 
   // Pipeline for converting futures_mode calls into async pairs.
-  {
-    HloPassPipeline& pipeline =
-        main_pipeline.AddPass<HloPassPipeline>("futures-mode-wrapper");
-    pipeline.AddPass<FuturesModeAsyncWrapper>();
-  }
 
 
   // Pipeline for async -> sync conversion on for non-overlapped async ops.
@@ -2880,6 +2876,12 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloPassPipeline& pipeline =
         main_pipeline.AddPass<HloPassPipeline>("fusion-wrapper");
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
+  }
+  
+  {
+    HloPassPipeline& pipeline =
+        main_pipeline.AddPass<HloPassPipeline>("futures-mode-wrapper");
+    pipeline.AddPass<FuturesModeAsyncWrapper>();
   }
 
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
