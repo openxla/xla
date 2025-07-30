@@ -120,6 +120,8 @@ class NanoValue : public llvm::RTTIExtends<Self, Base> {
   // Called by subclasses to get access to client() without having to cast.
   NanoIfrtClient* nano_client() const { return client_; }
 
+  ifrt::UserContextRef user_context() const override { return {}; }
+
   // All nano values are immediately ready.
   ifrt::Future<> GetReadyFuture() const override { return Ready(); }
 
@@ -766,8 +768,9 @@ class NanoExecutable final
       return InvalidArgument("NanoRT requires an HloProgram");
     }
     XlaComputation computation;
-    TF_RETURN_IF_ERROR(MlirToXlaComputation(xla_program->mlir_module(),
-                                            computation, false, true, false));
+    TF_RETURN_IF_ERROR(MlirToXlaComputation(
+        xla_program->mlir_module(), computation, /*use_tuple_args=*/false,
+        /*return_tuple=*/true, /*exec_build_options=*/nullptr));
     TF_ASSIGN_OR_RETURN(auto nano_executable,
                         client->nano_client()->Compile(computation));
 
@@ -859,6 +862,8 @@ class NanoExecutable final
   absl::StatusOr<std::string> Serialize() const override {
     return absl::UnimplementedError("Serialize is not implemented.");
   }
+
+  ifrt::UserContextRef user_context() const override { return {}; }
 
   ifrt::Future<> GetReadyFuture() const override { return Ready(); }
 

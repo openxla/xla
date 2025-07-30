@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace op = xla::testing::opcode_matchers;
@@ -170,6 +171,26 @@ ENTRY entry {
   %param.0 = f32[2,3] parameter(0)
   %broadcast.0 = f32[4,3,2] broadcast(f32[2,3] %param.0), dimensions={2,1}
   ROOT result = f32[4,3,2] add(f32[4,3,2] %broadcast.0, f32[4,3,2] %broadcast.0)
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  SetFusionMode(module.get(),
+                DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, XnnGraphFusion().Run(module.get()));
+  ASSERT_FALSE(changed);
+}
+
+TEST_F(XnnGraphFusionTest, SkipRootWideningConvert) {
+  std::string hlo_string = R"(
+HloModule SkipRootWideningConvert
+
+ENTRY entry {
+  %param.0 = f32[4] parameter(0)
+  %to_bf16.0 = bf16[4] convert(f32[4] %param.0)
+  ROOT result = f32[4] convert(bf16[4] %to_bf16.0)
 }
 
 )";

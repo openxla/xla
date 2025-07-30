@@ -52,6 +52,28 @@ TEST_F(RaggedDotRewriterTest, DontDoAnythingIfNoRaggedDot) {
   EXPECT_FALSE(changed);
 }
 
+TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = bf16[64,9]{1,0} parameter(0)
+    p1 = bf16[2,9,8]{2,1,0} parameter(1)
+    p2 = s64[2]{0} parameter(2)
+    ROOT ragged-dot = bf16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(module_string));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RaggedDotRewriter().Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
 TEST_F(RaggedDotRewriterTest, RaggedNonContracting) {
   absl::string_view module_string = R"(
   HloModule module
@@ -128,6 +150,36 @@ TEST_F(RaggedDotRewriterTest, RaggedContracting) {
   // CHECK: ROOT [[dot:%[^ ]+]] = f32[3,11,7]{2,1,0}
   // CHECK-SAME: lhs_batch_dims={0}, lhs_contracting_dims={2},
   // CHECK-SAME: rhs_batch_dims={0}, rhs_contracting_dims={1}
+  )");
+}
+
+TEST_F(RaggedDotRewriterTest, RaggedContractingWithBatchDims) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[2,11,5]{2,1,0} parameter(0)
+    p1 = f32[2,5,7]{2,1,0} parameter(1)
+    p2 = s32[2,3]{1,0} parameter(2)
+    ROOT ragged-dot = f32[3,2,11,7]{3,2,1,0} ragged-dot(p0, p1, p2),
+                                      lhs_contracting_dims={2},
+                                      rhs_contracting_dims={1},
+                                      lhs_batch_dims={0},
+                                      rhs_batch_dims={0},
+                                      lhs_ragged_dims={2}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(module_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RaggedDotRewriter().Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::Dot(op::Transpose(op::Select()), op::Transpose(op::Select())));
+  RunAndFilecheckHloRewrite(module_string, RaggedDotRewriter(), R"(
+  // CHECK: ROOT [[dot:%[^ ]+]] = f32[3,2,11,7]{3,2,1,0}
+  // CHECK-SAME: lhs_batch_dims={0,1}, lhs_contracting_dims={3},
+  // CHECK-SAME: rhs_batch_dims={0,1}, rhs_contracting_dims={2}
   )");
 }
 

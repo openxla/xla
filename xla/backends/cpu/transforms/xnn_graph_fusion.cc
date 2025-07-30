@@ -23,18 +23,31 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/cpu/xnn_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace cpu {
+
+namespace {
+
+bool IsWideningConvert(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kConvert &&
+         primitive_util::BitWidth(instr->operand(0)->shape().element_type()) <
+             primitive_util::BitWidth(instr->shape().element_type());
+}
+
+}  // namespace
 
 FusionDecision XnnGraphFusion::ShouldFuse(HloInstruction* consumer,
                                           int64_t operand_index) {
@@ -45,6 +58,14 @@ FusionDecision XnnGraphFusion::ShouldFuse(HloInstruction* consumer,
   if (consumer->opcode() == HloOpcode::kBroadcast) {
     return FusionDecision::Forbid(
         "Do not start growing fusions from broadcasts");
+  }
+
+  if (IsWideningConvert(consumer)) {
+    // We don't want to start a fusion with a widening convert, because that
+    // makes the buffer the fusion writes to bigger, and it would be better to
+    // fuse the convert into the consumer of the convert.
+    return FusionDecision::Forbid(
+        "Do not start growing fusions from widening converts");
   }
 
   HloInstruction* producer = consumer->mutable_operand(operand_index);
@@ -93,7 +114,7 @@ std::vector<HloComputation*> XnnGraphFusion::GetNonFusionComputations(
   return non_fusion_computations;
 }
 
-bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
+bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) {
   if (!IsLayoutSupportedByXnn(instr->shape())) {
     return false;
   }
@@ -127,7 +148,7 @@ bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) const {
   }
 }
 
-bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) const {
+bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) {
   if (instr->opcode() != HloOpcode::kFusion) {
     return false;
   }

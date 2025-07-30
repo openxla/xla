@@ -43,6 +43,10 @@ struct OriginalArray {
            lhs.shape_index == rhs.shape_index;
   }
 
+  friend bool operator!=(const OriginalArray& lhs, const OriginalArray& rhs) {
+    return !(lhs == rhs);
+  }
+
   template <typename H>
   friend H AbslHashValue(H h, const OriginalArray& original_array) {
     return H::combine(std::move(h), original_array.instruction_name,
@@ -84,14 +88,11 @@ struct OriginalValuePointer {
     // Compares nodes.
     for (auto& leaf : lhs.original_value->leaves()) {
       xla::ShapeIndex index = leaf.first;
-      std::optional<xla::OriginalArray> lhs_original_array = leaf.second;
-      std::optional<xla::OriginalArray> rhs_original_array =
+      std::optional<const xla::OriginalArray> lhs_original_array = leaf.second;
+      std::optional<const xla::OriginalArray> rhs_original_array =
           rhs.original_value->element(index);
       if (!lhs_original_array.has_value() || !rhs_original_array.has_value() ||
-          (lhs_original_array->instruction_name !=
-           rhs_original_array->instruction_name) ||
-          (lhs_original_array->shape_index !=
-           rhs_original_array->shape_index)) {
+          *lhs_original_array != *rhs_original_array) {
         return false;
       }
     }

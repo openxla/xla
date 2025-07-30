@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/gtl/value_or_die.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "xla/tsl/platform/env.h"
@@ -98,13 +99,16 @@ namespace {
 
 namespace m = ::xla::match;
 
+using ::testing::AssertionResult;
 using ::testing::EndsWith;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsSupersetOf;
 using ::testing::Matches;
 using ::testing::Not;
 using ::testing::StartsWith;
 using ::testing::TempDir;
+using ::tsl::gtl::ValueOrDie;
 
 class GpuCompilerTest : public HloTestBase {
  public:
@@ -162,6 +166,74 @@ ENTRY main {
                         /*is_autotuning_compilation=*/false})
           .value();
   EXPECT_EQ(GetCompiledProgramsCount(), before + 1);
+}
+
+TEST_F(GpuCompilerTest, CatchCollectiveDeadlocksPostScheduling) {
+  constexpr absl::string_view kHloText = R"(
+HloModule test, is_scheduled=true
+
+ENTRY test_computation {
+  c0 = u32[] constant(0)
+  c1 = u32[] constant(1)
+  replica = u32[] replica-id()
+  a = u32[] add(c1, replica)
+  send-data = u32[2] broadcast(a), dimensions={}
+
+  after-all.0 = token[] after-all()
+  recv.0 = (u32[2], u32[], token[]) recv(after-all.0), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{1,0}}",
+      _xla_send_recv_pipeline="1"
+    }
+  send.0 = (u32[2], u32[], token[]) send(send-data, after-all.0),
+    channel_id=0, frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{1,0}}",
+      _xla_send_recv_pipeline="1"
+    }
+
+  after-all.1 = token[] after-all()
+  recv.1 = (u32[2], u32[], token[]) recv(after-all.1), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{0,1}, {1,0}}"
+    }
+  send.1 = (u32[2], u32[], token[]) send(send-data, after-all.1),
+    channel_id=0, frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{0,1}, {1,0}}"
+    }
+
+  recv-done.0 = (u32[2], token[]) recv-done(recv.0), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_pipeline="1"
+    }
+  recv-data.0 = u32[2] get-tuple-element(recv-done.0), index=0
+  recv-done.1 = (u32[2], token[]) recv-done(recv.1), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_pipeline="0"
+    }
+  recv-data.1 = u32[2] get-tuple-element(recv-done.1), index=0
+
+  compare0 = pred[] compare(replica, c0), direction=EQ
+  compare = pred[2] broadcast(compare0), dimensions={}
+  recv-data = u32[2] select(compare, recv-data.0, recv-data.1)
+
+  send-done.0 = token[] send-done(send.0), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_pipeline="1"
+    }
+  send-done.1 = token[] send-done(send.1), channel_id=0,
+  frontend_attributes={
+      _xla_send_recv_pipeline="0"
+    }
+  c1b = u32[2] broadcast(c1), dimensions={}
+  ROOT result = u32[2] add(c1b, recv-data)
+}
+)";
+  AssertionResult run_result =
+      Run(std::move(ValueOrDie(ParseAndReturnVerifiedModule(kHloText))),
+          /*run_hlo_passes=*/true);
+  EXPECT_THAT(run_result.failure_message(),
+              HasSubstr("Expected send and recv instructions to have "
+                        "non-cyclical source-target pairs"));
 }
 
 TEST_F(GpuCompilerTest, RecordsStreamzStackTrace) {
@@ -262,34 +334,6 @@ ENTRY main {
 }
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0, 0}));
-
-  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
-  std::unique_ptr<HloModule> compiled_module =
-      backend()
-          .compiler()
-          ->RunHloPasses(module->Clone(), backend().default_stream_executor(),
-                         /*device_allocator=*/nullptr)
-          .value();
-  VLOG(2) << compiled_module->ToString();
-
-  // Verify that the total number of fusion instructions is 1.
-  size_t total_fusion_instrs = 0;
-  for (const HloInstruction* instr :
-       compiled_module->entry_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kFusion) {
-      ++total_fusion_instrs;
-    }
-  }
-  EXPECT_EQ(total_fusion_instrs, 1);
-
-  const HloInstruction* entry_root =
-      compiled_module->entry_computation()->root_instruction();
-  // Check that we add bitcast when needed.
-  EXPECT_THAT(
-      entry_root,
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::Fusion()), m::GetTupleElement(m::Fusion()),
-          m::GetTupleElement(m::Fusion()), m::GetTupleElement(m::Fusion()))));
 }
 
 TEST_F(GpuCompilerTest, CanRunScheduledModules) {
@@ -470,7 +514,7 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
       }
 
       ENTRY entry {
-        c0 = s32[] constant(0)
+        c0 = s32[] constant(1)
         p0 = bf16[3,8,128] parameter(0)
         tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
         while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple),
@@ -827,7 +871,6 @@ ENTRY main {
     EXPECT_TRUE(filecheck_matched);
   }
 }
-
 
 class KernelCacheTest : public HloTestBase {
  public:
@@ -1601,7 +1644,8 @@ TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
   // NestGemmFusion expect to see __triton_gemm custom call with a backend
   // config created by gemm_fusion_autotuner.
   DebugOptions options = GetDebugOptionsForTest();
-  options.set_xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms(true);
+  options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
   SetDebugOptions(options);
   VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
 }
@@ -1931,6 +1975,44 @@ TEST_F(GpuCompilerTest, CompilingAndCollectingMetadata) {
     EXPECT_LE(pass_metadata.start_timestamp_usec(),
               pass_metadata.end_timestamp_usec());
   }
+}
+
+TEST_F(GpuCompilerTest, CommandBufferConversionPassRuns) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  a = f32[2,2] parameter(0)
+  b = f32[2,2] parameter(1)
+  ROOT dot = f32[2,2] dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  auto hlo_module = ParseAndReturnVerifiedModule(hlo_text).value();
+
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+
+  hlo_module->mutable_config().set_debug_options(debug_options);
+
+  std::unique_ptr<Executable> executable =
+      backend()
+          .compiler()
+          ->RunBackend(std::move(hlo_module),
+                       backend().default_stream_executor(),
+                       {/*device_allocator=*/nullptr,
+                        /*thread_pool=*/nullptr,
+                        /*layout_canonicalization_callback=*/{},
+                        /*is_autotuning_compilation=*/false})
+          .value();
+  std::unique_ptr<GpuExecutable> gpu_exec(
+      static_cast<GpuExecutable*>(executable.release()));
+  const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
+  ASSERT_EQ(thunks.size(), 1);
+  EXPECT_EQ(thunks[0]->kind(), Thunk::Kind::kCommandBuffer);
 }
 
 }  // namespace

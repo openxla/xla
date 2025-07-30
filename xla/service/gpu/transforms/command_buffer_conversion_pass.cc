@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,8 +35,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
+#include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -114,22 +118,144 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
     Thunk::Kind kind) {
   switch (kind) {
     case Thunk::kCopy:
+    case Thunk::kKernel:
       return DebugOptions::FUSION;
+    case Thunk::kWhile:
+      return DebugOptions::WHILE;
+    case Thunk::kConditional:
+      return DebugOptions::CONDITIONAL;
     case Thunk::kGemm:
       return DebugOptions::CUBLAS;
+    case Thunk::kAllGatherStart:
+    case Thunk::kAllReduceStart:
+    case Thunk::kReduceScatterStart:
+    case Thunk::kAllToAllStart:
+    case Thunk::kCollectiveBroadcastStart:
+    case Thunk::kCollectivePermuteStart:
+    case Thunk::kRaggedAllToAllStart:
+    case Thunk::kRecv:
+    case Thunk::kSend:
+      return DebugOptions::COLLECTIVES;
     default:
       return std::nullopt;
   }
 }
 
-absl::StatusOr<bool> IsConvertible(const Thunk& thunk,
-                                   const CommandBufferConfig& config) {
-  auto cmd_type = GetCommandBufferCmdType(thunk.kind());
-  if (!cmd_type.has_value()) {
-    return absl::InvalidArgumentError(
-        "Thunk kind is not supported for command buffer conversion.");
+bool AllThunksInSequentialThunkAreConvertible(
+    SequentialThunk* seq_thunk, const CommandBufferConfig& config);
+
+size_t CheckAsyncRegion(absl::Span<std::unique_ptr<Thunk>> thunks,
+                        const CommandBufferConfig& config);
+
+bool IsConvertible(const Thunk* thunk, const CommandBufferConfig& config) {
+  if (thunk->IsAsyncDone()) {
+    return true;
   }
-  return config.enabled_commands.contains(*cmd_type);
+  auto cmd_type = GetCommandBufferCmdType(thunk->kind());
+  if (!cmd_type.has_value() || !config.enabled_commands.contains(*cmd_type)) {
+    return false;  // Thunk kind is not supported for command buffer conversion.
+  }
+  // We only convert WhileThunk if all of its thunks are convertible.
+  if (thunk->kind() == Thunk::kWhile) {
+    const auto* while_thunk = static_cast<const WhileThunk*>(thunk);
+    return AllThunksInSequentialThunkAreConvertible(
+               while_thunk->body_thunk_sequence(), config) &&
+           AllThunksInSequentialThunkAreConvertible(
+               while_thunk->condition_thunk_sequence(), config);
+  }
+  // We only convert ConditionalThunk if all of its thunks in all branches are
+  // convertible.
+  if (thunk->kind() == Thunk::kConditional) {
+    const auto* conditional_thunk = static_cast<const ConditionalThunk*>(thunk);
+    for (const auto& branch : conditional_thunk->branch_thunks()) {
+      if (!AllThunksInSequentialThunkAreConvertible(branch.get(), config)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return true;
+}
+
+bool AllThunksInSequentialThunkAreConvertible(
+    SequentialThunk* seq_thunk, const CommandBufferConfig& config) {
+  for (size_t i = 0; i < seq_thunk->thunks().size(); ++i) {
+    auto& thunk = seq_thunk->thunks()[i];
+    if (!IsConvertible(thunk.get(), config)) {
+      return false;
+    }
+    if (thunk->IsAsyncStart()) {
+      size_t region_size = CheckAsyncRegion(
+          absl::MakeSpan(seq_thunk->thunks()).subspan(i), config);
+      if (region_size == 0) {
+        return false;
+      }
+      i += region_size - 1;
+    }
+  }
+  return true;
+}
+
+// Collect the sequence of thunks that contains the async start and its
+// corresponding done thunk. If there is another start thunk
+// between the original start and done, we may potentially extend the sequence
+// to include its corresponding done thunk. For example, if we call this
+// function on async-start_a in the following sequence:
+//
+// async_start_a
+// async_start_b
+// async_done_a
+// async_done_b
+//
+// The returned sequence will contain async_done_b. So that all async pairs
+// are captured by the same command buffer.
+
+// Returns the size of the shortest non-empty sequence of thunks that form a
+// valid async region.
+size_t CheckAsyncRegion(absl::Span<std::unique_ptr<Thunk>> thunks,
+                        const CommandBufferConfig& config) {
+  absl::flat_hash_set<AsyncEventsUniqueId> unpaired_ids_of_async_starts;
+
+  for (size_t i = 0; i < thunks.size(); ++i) {
+    auto& thunk = thunks[i];
+
+    // Check if thunk is convertible
+    if (!IsConvertible(thunk.get(), config)) {
+      return 0;  // All thunks in the region must be convertible.
+    }
+
+    // Check if it is async start thunk
+    if (thunk->IsAsyncStart() && thunk->GetAsyncEventsUniqueId().has_value()) {
+      unpaired_ids_of_async_starts.insert(
+          thunk->GetAsyncEventsUniqueId().value());
+    }
+
+    // Check if it is async done thunk
+    if (thunk->IsAsyncDone() && thunk->GetAsyncEventsUniqueId().has_value()) {
+      auto it = unpaired_ids_of_async_starts.find(
+          thunk->GetAsyncEventsUniqueId().value());
+      if (it == unpaired_ids_of_async_starts.end()) {
+        return 0;  // We found an async end for an event, whose async
+                   // start is not part of the region
+      }
+      unpaired_ids_of_async_starts.erase(it);
+    }
+
+    if (unpaired_ids_of_async_starts.empty()) {
+      return i + 1;  // We found pairs to all open async events and all thunks
+                     // in between are convertible
+    }
+  }
+  return 0;  // error didn't find an end for some start
+}
+
+// Returns the shortest non-empty sequence of thunks that form a valid async
+// region as a span. If no such region is found, an empty span is returned.
+absl::Span<std::unique_ptr<Thunk>> CollectAndCheckAsyncRegion(
+    absl::Span<std::unique_ptr<Thunk>> thunks,
+    const CommandBufferConfig& config) {
+  return thunks.subspan(0, CheckAsyncRegion(thunks, config));
 }
 
 }  // namespace
@@ -167,7 +293,15 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
   std::vector<std::unique_ptr<Thunk>> new_thunks;
 
   auto flush_command_buffer = [&]() -> absl::Status {
-    if (current_command_buffer_thunks.empty()) {
+    // If we don't have enough thunks to form a command buffer, we just add
+    // them to the new thunks sequence as is.
+    if (current_command_buffer_thunks.size() <
+        std::max(1, debug_options.xla_gpu_graph_min_graph_size())) {
+      new_thunks.insert(
+          new_thunks.end(),
+          std::make_move_iterator(current_command_buffer_thunks.begin()),
+          std::make_move_iterator(current_command_buffer_thunks.end()));
+      current_command_buffer_thunks.clear();
       return absl::OkStatus();
     }
 
@@ -179,15 +313,38 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
            !cmd_buffer_thunk->thunks()->thunks().empty());
     new_thunks.push_back(std::move(cmd_buffer_thunk));
     changed = true;
+    current_command_buffer_thunks.clear();
     return absl::OkStatus();
   };
 
   // TODO(aliia): use post order here
   auto& original_thunks = root_thunk_ptr->thunks();
 
-  for (auto& thunk : original_thunks) {
-    TF_ASSIGN_OR_RETURN(bool is_convertible, IsConvertible(*thunk, config));
-    if (is_convertible) {
+  for (size_t i = 0; i < original_thunks.size(); ++i) {
+    auto& thunk = original_thunks[i];
+
+    // We always have to capture both corresponding start and done events in the
+    // same command buffer.
+    if (thunk->IsAsyncStart()) {
+      // Collect and check async region
+      absl::Span<std::unique_ptr<Thunk>> region = CollectAndCheckAsyncRegion(
+          absl::MakeSpan(original_thunks).subspan(i), config);
+
+      if (!region.empty()) {
+        // If a valid region is found, add the whole region to the current
+        // sequence and continue processing.
+        current_command_buffer_thunks.insert(
+            current_command_buffer_thunks.end(),
+            std::make_move_iterator(region.begin()),
+            std::make_move_iterator(region.end()));
+        i += region.size() - 1;
+        continue;
+      }
+    } else if (IsConvertible(thunk.get(), config) && !thunk->IsAsyncDone()) {
+      // Check if thunk is convertible and not an async done: async done thunks
+      // can be only added to the current_command_buffer_thunks as part of a
+      // valid async regions.
+
       current_command_buffer_thunks.push_back(std::move(thunk));
       continue;
     }

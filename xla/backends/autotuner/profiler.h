@@ -17,26 +17,38 @@ limitations under the License.
 #define XLA_BACKENDS_AUTOTUNER_PROFILER_H_
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "xla/service/executable.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 
 struct ProfileOptions {
   // Padding around the buffers to check for out-of-bounds reads/writes.
-  int redzone_padding_bytes;
+  int redzone_padding_bytes = 0;
   // Whether to initialize the buffers with random data or leave them
   // uninitialized.
-  bool should_init_buffers;
+  bool should_init_buffers = false;
+  // Whether to populate the output_buffer in the ProfileResult with the result
+  // of the execution. This is to avoid data copies if the caller doesn't need
+  // the output buffer.
+  bool should_populate_output_buffer = false;
 };
 
 struct ProfileResult {
-  absl::Duration duration;
+  absl::Duration duration = absl::ZeroDuration();
+  std::optional<ScopedShapedBuffer> output_buffer = std::nullopt;
+};
+
+struct InputBuffers {
+  virtual ~InputBuffers() = default;
 };
 
 // Interface to run and profile XLA compiled executables for autotuning.
@@ -47,18 +59,40 @@ class Profiler {
   // Profiles a single executable.
   virtual absl::StatusOr<ProfileResult> Profile(
       std::unique_ptr<Executable> executable) {
-    std::vector<std::unique_ptr<Executable>> executables;
-    executables.push_back(std::move(executable));
-    TF_ASSIGN_OR_RETURN(std::vector<ProfileResult> results,
-                        ProfileWithSharedBuffers(std::move(executables)));
-    return results[0];
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<InputBuffers> buffers,
+                        CreateInputBuffers(executable.get()));
+    return Profile(executable.get(), *buffers);
   }
 
   // Profiles multiple executables with shared buffers. This guarantees that
   // the provided executables have same arguments. This is important for
   // autotuning as we run same instruction with different configs.
-  virtual absl::StatusOr<std::vector<ProfileResult>> ProfileWithSharedBuffers(
-      std::vector<std::unique_ptr<Executable>> executables) = 0;
+  // Note that an executable can still fail during runtime even if it compiled
+  // successfully, which is why the return type is a vector of StatusOr.
+  virtual absl::StatusOr<std::vector<absl::StatusOr<ProfileResult>>>
+  ProfileWithSharedBuffers(
+      std::vector<std::unique_ptr<Executable>> executables) {
+    std::vector<absl::StatusOr<ProfileResult>> results;
+    if (executables.empty()) {
+      return results;
+    }
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<InputBuffers> buffers,
+                        CreateInputBuffers(executables[0].get()));
+    for (auto& executable : executables) {
+      results.push_back(Profile(executable.get(), *buffers));
+    }
+    return results;
+  }
+
+  // Creates Input buffers for a given executable on the device. The buffers
+  // are created with the same shape as the input parameters of the executable.
+  virtual absl::StatusOr<std::unique_ptr<InputBuffers>> CreateInputBuffers(
+      const Executable* executable) = 0;
+
+  // Profiles a single executable with the provided buffers. The buffers
+  // must be created by calling CreateInputBuffers from the same profiler.
+  virtual absl::StatusOr<ProfileResult> Profile(
+      Executable* executable, const InputBuffers& buffers) = 0;
 };
 }  // namespace xla
 

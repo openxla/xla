@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -52,6 +53,8 @@ class CpuTrackedDeviceEventPromise : public PjRtDeviceEventPromise {
   void Set(tsl::RCReference<PjRtDeviceEvent> event) override;
 
   void SetError(absl::Status s) override { av_->SetError(std::move(s)); }
+
+  void SetReady() override;
 
   tsl::RCReference<tsl::IndirectAsyncValue>& av() { return av_; }
 

@@ -15,11 +15,12 @@ package_group(
 
 gentbl_cc_library(
     name = "passes_inc_gen",
-    tbl_outs = {"passes.h.inc": [
-        "-gen-pass-decls",
-        "-name=TritonXlaTransforms",
-        "-attrdefs-dialect=triton_xla",
-    ]},
+    tbl_outs = {
+        "passes.h.inc": [
+            "-gen-pass-decls",
+            "-name=TritonXlaTransforms",
+        ],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     visibility = ["//visibility:private"],
@@ -32,9 +33,9 @@ cc_library(
         "extract_tma_info_pass.cc",
         "generalize_kernel_signature.cc",
         "int4_passes.cc",
-        "prevent_mmav3_loop_unrolling_pass.cc",
         "round_f32_to_tf32_for_tf32_dot_pass.cc",
         "triton_xla_extract_insert_to_triton_pass.cc",
+        "triton_xla_squeeze_dims_pass.cc",
     ],
     hdrs = ["passes.h"],
     deps = [
@@ -54,6 +55,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ArithDialect",
@@ -68,8 +70,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:ViewLikeInterface",
         "@triton//:TritonDialects",
-        "@triton//:TritonGPUTransforms",
     ],
 )

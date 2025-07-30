@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -77,7 +78,7 @@ absl::Status GemmThunk::Initialize(const InitializeParams& params) {
 
 absl::StatusOr<ThunkProto> GemmThunk::ToProto() const {
   ThunkProto proto;
-  TF_ASSIGN_OR_RETURN(*proto.mutable_thunk_info(), GetThunkInfoProto());
+  *proto.mutable_thunk_info() = thunk_info().ToProto();
 
   auto* gemm_thunk_proto = proto.mutable_gemm_thunk();
   *gemm_thunk_proto->mutable_gemm_config() = config_.ToProto();

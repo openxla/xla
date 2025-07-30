@@ -75,10 +75,15 @@ class MockCodegenBackend : public CodegenBackend {
 
 class MockProfiler : public Profiler {
  public:
-  MOCK_METHOD(absl::StatusOr<std::vector<ProfileResult>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<absl::StatusOr<ProfileResult>>>,
               ProfileWithSharedBuffers,
               (std::vector<std::unique_ptr<Executable>> executables),
               (override));
+  MOCK_METHOD(absl::StatusOr<ProfileResult>, Profile,
+              (Executable * executable, const InputBuffers& buffers),
+              (override));
+  MOCK_METHOD(absl::StatusOr<std::unique_ptr<InputBuffers>>, CreateInputBuffers,
+              (const Executable* executable), (override));
 };
 
 using ::testing::_;
@@ -107,9 +112,12 @@ absl::StatusOr<std::unique_ptr<Autotuner>> SetupAutotunerWithExpectations(
       .Times(count);
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers)
-      .WillOnce(Return(
-          std::vector<ProfileResult>{{absl::Seconds(1)}, {absl::Seconds(1)}}));
+  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
+    std::vector<absl::StatusOr<ProfileResult>> results;
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
+    return results;
+  }()));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -163,7 +171,7 @@ TEST_F(AutotunerTest, AutotuneButNoValidConfigs) {
 
   auto profiler = std::make_unique<MockProfiler>();
   EXPECT_CALL(*profiler, ProfileWithSharedBuffers(testing::IsEmpty()))
-      .WillOnce(Return(std::vector<ProfileResult>()));
+      .WillOnce(Return(std::vector<absl::StatusOr<ProfileResult>>()));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -192,10 +200,12 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigAndSkipsInvalidConfig) {
       .Times(1);
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers)
-      .WillOnce(Return(
-          std::vector<ProfileResult>{{absl::Seconds(2)}, {absl::Seconds(1)}}));
-
+  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
+    std::vector<absl::StatusOr<ProfileResult>> results;
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(2)}));
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
+    return results;
+  }()));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
   TF_ASSERT_OK_AND_ASSIGN(
@@ -220,9 +230,12 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
       .Times(1);
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers)
-      .WillOnce(Return(
-          std::vector<ProfileResult>{{absl::Seconds(2)}, {absl::Seconds(1)}}));
+  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
+    std::vector<absl::StatusOr<ProfileResult>> results;
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(2)}));
+    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
+    return results;
+  }()));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));

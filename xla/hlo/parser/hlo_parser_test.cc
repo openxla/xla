@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -1553,16 +1554,16 @@ R"(HloModule test, entry_computation_layout={(f32[192]{0})->f32[1,17,17,192]{3,2
   {"broadcast.2340"} : {"reshape.2341"},
   "
     ENTRY %recovery_computation.3 (p.1: f32[1,192]) -> f32[1,1,1,192] {
-    %p.1 = f32[1,192]{1,0} parameter(0)
-    ROOT %reshape.2 = f32[1,1,1,192]{3,2,1,0} reshape(%p.1)
-  }
+      %p.1 = f32[1,192]{1,0} parameter(0)
+      ROOT %reshape.2 = f32[1,1,1,192]{3,2,1,0} reshape(%p.1)
+    }
   "
   {"reshape.2341"} : {"placeholder_reshape.201"},
   "
     ENTRY %recovery_computation.3 (p.1: f32[192]) -> f32[1,192] {
-    %p.1 = f32[192]{0} parameter(0)
-    ROOT %reshape.2 = f32[1,192]{1,0} reshape(%p.1)
-  }
+      %p.1 = f32[192]{0} parameter(0)
+      ROOT %reshape.2 = f32[1,192]{1,0} reshape(%p.1)
+    }
   "
 }
 
@@ -5951,6 +5952,35 @@ TEST_F(HloParserTest, ParseBufferArray) {
   ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
       << "expected: " << ShapeUtil::HumanString(expected)
       << "actual:   " << ShapeUtil::HumanString(actual);
+}
+
+TEST_F(HloParserTest, AllReduceWithMode) {
+  // The mode attribute is parsed but ignored for now. Test it makes no
+  // difference whether the attribute is present.
+  const char* const hlo_template = R"(
+HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  input = f32[8]{0} parameter(0)
+  ROOT ar = f32[8]{0} all-reduce(input), %s replica_groups={}, to_apply=add
+}
+)";
+  const std::string hlo_with_mode =
+      absl::StrFormat(hlo_template, "mode=cross_replica,");
+  const std::string hlo_without_mode = absl::StrFormat(hlo_template, "");
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module_with_mode,
+                          ParseAndReturnVerifiedModule(hlo_with_mode));
+  TF_ASSERT_OK_AND_ASSIGN(auto module_without_mode,
+                          ParseAndReturnVerifiedModule(hlo_without_mode));
+  EXPECT_EQ(*module_with_mode->entry_computation(),
+            *module_without_mode->entry_computation());
 }
 
 }  // namespace

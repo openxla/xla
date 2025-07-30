@@ -207,8 +207,11 @@ absl::Status HandleReduceAndReduceWindowElementalKernelCompilationOptions(
 }  // namespace
 
 static FusionCompiler FusionCompilerFactory(const HloModule& hlo_module) {
+  const DebugOptions& debug_options = hlo_module.config().debug_options();
   FusionCompiler::Options options{
-      hlo_module.config().debug_options().xla_cpu_prefer_vector_width()};
+      debug_options.xla_cpu_prefer_vector_width(),
+      debug_options.xla_cpu_emitter_verification_level(),
+      debug_options.xla_cpu_enable_fast_min_max()};
 
   FusionCompiler::CompilationHooks hooks;
   if (DumpingEnabledForHloModule(hlo_module)) {
@@ -700,9 +703,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCallThunk(
     kernels_.push_back(
         {kernel_spec.name(), std::move(kernel_source).thread_safe_module()});
 
-    return MakeKernelThunkSequence(
-        instruction, std::move(kernel_spec),
-        /*min_alignment=*/cpu_function_runtime::MinAlign());
+    return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                   /*min_alignment=*/MinAlign());
   } else {
     TF_ASSIGN_OR_RETURN(
         ThunkSequence called_sequence,
@@ -733,9 +735,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
                             backend_config.llvm_kernel_options());
   }
 
-  return MakeKernelThunkSequence(
-      instruction, std::move(kernel_spec),
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                 /*min_alignment=*/MinAlign());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGetDimensionSizeThunk(
@@ -843,9 +844,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitElementalKernelThunk(
             target_machine_features_));
   }
 
-  return MakeKernelThunkSequence(
-      instruction, std::move(kernel_spec),
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                 /*min_alignment=*/MinAlign());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitPadKernelThunk(
@@ -854,9 +854,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitPadKernelThunk(
   TF_ASSIGN_OR_RETURN(auto kernel, ir_emitter_.EmitPadHostKernel(padInstr));
   TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(padInstr));
 
-  return MakeKernelThunkSequence(
-      padInstr, buffers, kernel,
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  return MakeKernelThunkSequence(padInstr, buffers, kernel,
+                                 /*min_alignment=*/MinAlign());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
@@ -880,9 +879,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
     kernels_.push_back({kernel_spec.name(),
                         std::move(llvm_ir_kernel_source).thread_safe_module()});
 
-    return MakeKernelThunkSequence(
-        instruction, std::move(kernel_spec),
-        /*min_alignment=*/cpu_function_runtime::MinAlign());
+    return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                   /*min_alignment=*/MinAlign());
   }
 
   // We currently only support loop fusion & the dot implementation is currently
@@ -891,9 +889,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
       options::UseExperimentalLoopFusion(hlo_module_config_) &&
       fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop &&
       fusion->fused_expression_root()->opcode() != HloOpcode::kDot) {
+    bool use_unique_c_name =
+        hlo_module_config_.debug_options()
+            .xla_cpu_generate_unique_c_style_kernel_entry_points();
     TF_ASSIGN_OR_RETURN(
         MlirKernelDefinition kernel_definition,
-        EmitFusionKernel(*mlir_context_, *fusion, &buffer_assignment_));
+        EmitFusionKernel(*mlir_context_, *fusion, &buffer_assignment_,
+                         use_unique_c_name));
 
     auto [kernel_spec, kernel_source] =
         std::move(kernel_definition).ReleaseStorage();
@@ -904,17 +906,15 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
     kernels_.push_back({kernel_spec.name(),
                         std::move(llvm_ir_kernel_source).thread_safe_module()});
 
-    return MakeKernelThunkSequence(
-        instruction, std::move(kernel_spec),
-        /*min_alignment=*/cpu_function_runtime::MinAlign());
+    return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                   /*min_alignment=*/MinAlign());
   }
 
   TF_ASSIGN_OR_RETURN(auto kernel, ir_emitter_.EmitFusionHostKernel(fusion));
   TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
 
-  return MakeKernelThunkSequence(
-      instruction, buffers, kernel,
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  return MakeKernelThunkSequence(instruction, buffers, kernel,
+                                 /*min_alignment=*/MinAlign());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReductionKernelThunk(
@@ -1083,9 +1083,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       kernels_.push_back(
           {kernel_spec.name(), std::move(kernel_source).thread_safe_module()});
 
-      return MakeKernelThunkSequence(
-          instruction, std::move(kernel_spec),
-          /*min_alignment=*/cpu_function_runtime::MinAlign());
+      return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
+                                     /*min_alignment=*/MinAlign());
     }
 
     // Emit DotThunk implementing dot instruction as a library call.
@@ -1102,11 +1101,19 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       if (use_xnn) {
         TF_ASSIGN_OR_RETURN(
             use_xnn, IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
-                                         instruction->shape()));
+                                         instruction->shape(),
+                                         &target_machine_features_));
       }
 
       if (use_xnn) {
-        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction)};
+        const bool use_slinky =
+            instruction->GetModule()
+                ->config()
+                .debug_options()
+                .xla_cpu_experimental_xnn_graph_fusion_mode() ==
+            DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY;
+        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction),
+                                        use_slinky};
         bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(rhs);
         return ThunkSequence::Of<XnnDotThunk>(
             std::move(options), ThunkInfo(instruction), dnums, lhs_slice,
@@ -1292,9 +1299,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamicThunk(
                       ir_emitter_.EmitSliceToDynamicHostKernel(instruction));
   TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
 
-  return MakeKernelThunkSequence(
-      instruction, buffers, kernel,
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  return MakeKernelThunkSequence(instruction, buffers, kernel,
+                                 /*min_alignment=*/MinAlign());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceThunk(
@@ -1477,7 +1483,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitXnnFusionThunk(
   // Construct XNNPACK subgraph builder from the fusion computation.
   TF_ASSIGN_OR_RETURN(auto builder, EmitXnnFusionBuilder(computation));
 
-  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation)};
+  const bool use_slinky = instruction->GetModule()
+                              ->config()
+                              .debug_options()
+                              .xla_cpu_experimental_xnn_graph_fusion_mode() ==
+                          DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY;
+  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation),
+                                     use_slinky};
   return ThunkSequence::Of<XnnFusionThunk>(
       std::move(options), ThunkInfo(instruction), std::move(arguments),
       std::move(results),

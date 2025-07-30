@@ -322,8 +322,8 @@ Value GetLinearIndex(ValueRange indices, mlir::ImplicitLocOpBuilder& b) {
 
 std::tuple<Value, Value> GetI4IndexAndNibble(Value linear_index,
                                              mlir::ImplicitLocOpBuilder& b) {
-  Value zero = b.create<mlir::arith::ConstantIntOp>(0, linear_index.getType());
-  Value one = b.create<mlir::arith::ConstantIntOp>(1, linear_index.getType());
+  Value zero = b.create<mlir::arith::ConstantIntOp>(linear_index.getType(), 0);
+  Value one = b.create<mlir::arith::ConstantIntOp>(linear_index.getType(), 1);
   Value is_low_nibble = b.create<mlir::arith::CmpIOp>(
       mlir::arith::CmpIPredicate::eq, zero,
       b.create<mlir::arith::AndIOp>(linear_index, one));
@@ -389,7 +389,7 @@ struct RewriteTensorExtract : OpRewritePattern<mlir::tensor::ExtractOp> {
 
     if (is_low_nibble) {
       auto high_value = b.create<mlir::arith::ShRUIOp>(
-          load, b.create<mlir::arith::ConstantIntOp>(4, load.getType()));
+          load, b.create<mlir::arith::ConstantIntOp>(load.getType(), 4));
       load = b.create<mlir::arith::TruncIOp>(
           rewriter.getI4Type(),
           b.create<mlir::arith::SelectOp>(is_low_nibble, load, high_value));
@@ -429,7 +429,7 @@ struct RewriteTransferRead : OpRewritePattern<vector::TransferReadOp> {
         gep_element_type.getIntOrFloatBitWidth() == 4) {
       linear_index = b.create<arith::ShRUIOp>(
           linear_index,
-          b.create<arith::ConstantIntOp>(1, linear_index.getType()));
+          b.create<arith::ConstantIntOp>(linear_index.getType(), 1));
     }
     auto gep = CreateGep(source, linear_index, b);
 
@@ -438,6 +438,13 @@ struct RewriteTransferRead : OpRewritePattern<vector::TransferReadOp> {
     auto load = b.create<ml::LoadOp>(llvm_vector_type, gep);
     if (auto alignment = GetAlignmentFromArg(op.getSource(), op.getIndices())) {
       load.setAlignment(*alignment);
+    } else {
+      auto data_layout = mlir::DataLayout::closest(op);
+      // TODO(willfroom): We should really just use getTypeABIAlignment here,
+      // but this requires passing through the full data layout for the target
+      // machine.
+      load.setAlignment(
+          data_layout.getTypePreferredAlignment(gep_element_type));
     }
     auto loaded = load.getResult();
 
@@ -504,17 +511,17 @@ struct RewriteTensorInsert : OpRewritePattern<mlir::tensor::InsertOp> {
       Value low_updated = body_builder.create<mlir::arith::OrIOp>(
           body_builder.create<mlir::arith::AndIOp>(
               current_value,
-              body_builder.create<mlir::arith::ConstantIntOp>(0xf0, ty)),
+              body_builder.create<mlir::arith::ConstantIntOp>(ty, 0xf0)),
           body_builder.create<mlir::arith::AndIOp>(
               scalar_value,
-              body_builder.create<mlir::arith::ConstantIntOp>(0x0f, ty)));
+              body_builder.create<mlir::arith::ConstantIntOp>(ty, 0x0f)));
       Value high_updated = body_builder.create<mlir::arith::OrIOp>(
           body_builder.create<mlir::arith::AndIOp>(
               current_value,
-              body_builder.create<mlir::arith::ConstantIntOp>(0x0f, ty)),
+              body_builder.create<mlir::arith::ConstantIntOp>(ty, 0x0f)),
           body_builder.create<mlir::arith::ShLIOp>(
               scalar_value,
-              body_builder.create<mlir::arith::ConstantIntOp>(4, ty)));
+              body_builder.create<mlir::arith::ConstantIntOp>(ty, 4)));
       Value new_value = body_builder.create<mlir::arith::SelectOp>(
           is_low_nibble, low_updated, high_updated);
       body_builder.create<scf::YieldOp>(new_value);
@@ -572,7 +579,7 @@ struct RewriteTransferWrite : OpRewritePattern<vector::TransferWriteOp> {
         vector_element_type.getIntOrFloatBitWidth() == 4) {
       linear_index = b.create<arith::ShRUIOp>(
           linear_index,
-          b.create<arith::ConstantIntOp>(1, linear_index.getType()));
+          b.create<arith::ConstantIntOp>(linear_index.getType(), 1));
     }
     auto gep = CreateGep(tensor_dest, linear_index, b);
 
@@ -580,7 +587,17 @@ struct RewriteTransferWrite : OpRewritePattern<vector::TransferWriteOp> {
     auto llvm_type = converter.convertType(vector_value.getType());
     vector_value = b.create<UnrealizedConversionCastOp>(llvm_type, vector_value)
                        .getResult(0);
-    b.create<ml::StoreOp>(vector_value, gep);
+    auto store = b.create<ml::StoreOp>(vector_value, gep);
+    if (auto alignment = GetAlignmentFromArg(op.getSource(), op.getIndices())) {
+      store.setAlignment(*alignment);
+    } else {
+      auto data_layout = mlir::DataLayout::closest(op);
+      // TODO(willfroom): We should really just use getTypeABIAlignment here,
+      // but this requires passing through the full data layout for the target
+      // machine.
+      store.setAlignment(
+          data_layout.getTypePreferredAlignment(vector_element_type));
+    }
 
     rewriter.replaceOp(op, mlir::ValueRange{op.getSource()});
     return success();

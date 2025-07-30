@@ -8,6 +8,14 @@ workspace(name = "xla")
 # E.g. we can not retrieve a new repository with http_archive and then load()
 # a macro from that repository in the same file.
 
+load(":workspace4.bzl", "xla_workspace4")
+
+xla_workspace4()
+
+load(":workspace3.bzl", "xla_workspace3")
+
+xla_workspace3()
+
 # Initialize hermetic Python
 load("//third_party/py:python_init_rules.bzl", "python_init_rules")
 
@@ -33,14 +41,6 @@ load("@pypi//:requirements.bzl", "install_deps")
 
 install_deps()
 
-load(":workspace4.bzl", "xla_workspace4")
-
-xla_workspace4()
-
-load(":workspace3.bzl", "xla_workspace3")
-
-xla_workspace3()
-
 load(":workspace2.bzl", "xla_workspace2")
 
 xla_workspace2()
@@ -52,6 +52,17 @@ xla_workspace1()
 load(":workspace0.bzl", "xla_workspace0")
 
 xla_workspace0()
+
+load(
+    "@rules_ml_toolchain//cc_toolchain/deps:cc_toolchain_deps.bzl",
+    "cc_toolchain_deps",
+)
+
+cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64")
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64_cuda")
 
 load(
     "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
@@ -119,21 +130,3 @@ load(
 nvshmem_redist_init_repository(
     nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
 )
-
-load(
-    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_configure.bzl",
-    "nvshmem_configure",
-)
-
-nvshmem_configure(name = "local_config_nvshmem")
-
-load(
-    "@rules_ml_toolchain//cc_toolchain/deps:cc_toolchain_deps.bzl",
-    "cc_toolchain_deps",
-)
-
-cc_toolchain_deps()
-
-register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64")
-
-register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64_cuda")

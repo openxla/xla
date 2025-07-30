@@ -28,10 +28,7 @@ cc_library(
     name = "emitter_loc_op_builder",
     srcs = ["emitter_loc_op_builder.cc"],
     hdrs = ["emitter_loc_op_builder.h"],
-    visibility = [
-        "//xla/backends:__subpackages__",
-        "//xla/codegen/emitters/transforms:__pkg__",
-    ],
+    visibility = ["//xla/backends:__subpackages__"],
     deps = [
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -172,8 +169,11 @@ cc_library(
     hdrs = ["ir_emission_utils.h"],
     deps = [
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
     ],
 )
 
@@ -183,15 +183,21 @@ cc_library(
     hdrs = ["math_lib.h"],
     deps = [
         "//xla:xla_data_proto_cc",
+        "//xla/codegen/math:erf",
         "//xla/codegen/math:exp",
+        "//xla/codegen/math:fptrunc",
+        "//xla/codegen/math:intrinsic",
         "//xla/codegen/math:ldexp",
+        "//xla/codegen/math:log1p",
         "//xla/codegen/math:string_interner",
         "//xla/codegen/math:vec_name_mangler",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:IPO",

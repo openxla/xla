@@ -161,7 +161,6 @@ struct HlosAndRequirements {
 HloInstruction& FuseDot(const HloDotInstruction& dot,
                         const HloInstruction& fused_lhs,
                         const HloInstruction& fused_rhs,
-                        std::optional<const HloInstruction*> fused_meta,
                         HloComputation::Builder& builder  // append
 ) {
   VLOG(3) << "Fusing " << dot.ToString();
@@ -169,9 +168,6 @@ HloInstruction& FuseDot(const HloDotInstruction& dot,
   std::vector<HloInstruction*> hlo_new_operands = {
       const_cast<HloInstruction*>(&fused_lhs),
       const_cast<HloInstruction*>(&fused_rhs)};
-  if (fused_meta.has_value()) {
-    hlo_new_operands.push_back(const_cast<HloInstruction*>(fused_meta.value()));
-  }
   return *builder.AddInstruction(
       dot.CloneWithNewOperands(dot.shape(), hlo_new_operands));
 }
@@ -686,16 +682,8 @@ absl::StatusOr<Decision> CreateDotFusion(
   TF_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
                       FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
                                      builder, fusion_inputs));
-  std::optional<const HloInstruction*> meta_hlo;
-  if (dot.sparse_operands()) {
-    TF_ASSIGN_OR_RETURN(HlosAndRequirements meta_hlos_and_reqs,
-                        FuseDotOperand(dot, /*operand_index=*/2, gpu_version,
-                                       builder, fusion_inputs));
-    meta_hlo.emplace(meta_hlos_and_reqs.fused_hlo);
-  }
-  HloInstruction& fused_dot =
-      FuseDot(dot, *lhs_hlos_and_reqs.fused_hlo, *rhs_hlos_and_reqs.fused_hlo,
-              meta_hlo, builder);
+  HloInstruction& fused_dot = FuseDot(dot, *lhs_hlos_and_reqs.fused_hlo,
+                                      *rhs_hlos_and_reqs.fused_hlo, builder);
   // For now the RHS doesn't support splits, so it also doesn't impose any
   // requirements.
   HlosAndRequirements fused_output_and_reqs =
@@ -738,8 +726,7 @@ absl::StatusOr<Decision> CreateDotFusion(
       algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32 ||
       algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3 ||
       algorithm == PrecisionConfig::ALG_DOT_F32_F32_F32 ||
-      dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any() ||
-      dot.sparse_operands()) {
+      dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any()) {
     return Decision::Allow();
   }
 
@@ -834,6 +821,41 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, dot_fusion));
     }
     XLA_VLOG_LINES(5, computation->ToString(HloPrintOptions::ShortParsable()));
+    return absl::OkStatus();
+  }
+
+  absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override {
+    HloComputation::Builder builder(
+        absl::StrCat("ragged_fusion_", ragged_dot->name(), "_computation"));
+
+    std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(ragged_dot->operand_count());
+    for (int i = 0; i < ragged_dot->operand_count(); ++i) {
+      new_operands.push_back(builder.AddInstruction(
+          HloInstruction::CreateParameter(i, ragged_dot->operand(i)->shape(),
+                                          absl::StrCat("parameter_", i))));
+    }
+    builder.AddInstruction(
+        ragged_dot->CloneWithNewOperands(ragged_dot->shape(), new_operands));
+
+    HloComputation* computation =
+        ragged_dot->GetModule()->AddComputationAndUnifyNamesAndIds(
+            builder.Build(),
+            /*is_entry=*/false);
+    HloInstruction* dot_fusion = ragged_dot->parent()->AddInstruction(
+        HloInstruction::CreateFusion(computation->root_instruction()->shape(),
+                                     HloInstruction::FusionKind::kCustom,
+                                     ragged_dot->operands(), computation));
+
+    TF_ASSIGN_OR_RETURN(auto gpu_config,
+                        dot_fusion->backend_config<GpuBackendConfig>());
+    FusionBackendConfig& backend_config =
+        *gpu_config.mutable_fusion_backend_config();
+    backend_config.set_kind("__triton_ragged_dot");
+    TF_RETURN_IF_ERROR(dot_fusion->set_backend_config(gpu_config));
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(ragged_dot, dot_fusion));
+    MarkAsChanged();
     return absl::OkStatus();
   }
 
