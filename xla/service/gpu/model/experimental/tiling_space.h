@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/shape.h"
 
 namespace xla::gpu {
 
@@ -87,12 +88,15 @@ class TilingSpace {
   const RTVarInfo& GetRTVarInfo(const HloInstruction& hlo,
                                 int64_t operand_id) const;
 
- private:
-  void AppendDimension(const HloInstruction& hlo, int64_t dim_position,
-                       int64_t dim_size, DimensionSemantics dim_type);
-  void AppendRTVar(const HloInstruction& hlo, int64_t operand_id,
-                   const HloInstruction& rt_var, int64_t upper_bound);
+  int64_t num_dimensions() const { return dimensions_.size(); }
+  int64_t num_rt_vars() const { return rt_vars_.size(); }
 
+  void AppendDimension(const HloInstruction* hlo, int64_t dim_position,
+                       int64_t dim_size, DimensionSemantics dim_type);
+  void AppendRTVar(const HloInstruction* hlo, int64_t operand_id,
+                   const HloInstruction* rt_var, int64_t upper_bound);
+
+ private:
   void ProcessDot(const HloInstruction& hlo);
   void ProcessReduce(const HloInstruction& hlo);
   void ProcessDynamicSlice(const HloInstruction& hlo);
@@ -111,6 +115,10 @@ class TilingSpace {
   // The deque is used to guarantee the pointer stability.
   std::deque<RTVarInfo> rt_vars_;
 };
+
+// If the shape is a tuple, return the shape at the given index.
+// Otherwise, return the shape itself.
+const Shape& GetFirstShape(const HloInstruction* instr, int64_t index = 0);
 
 }  // namespace xla::gpu
 

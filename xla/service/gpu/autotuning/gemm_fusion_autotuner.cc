@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/split_k_gemm_rewriter.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -85,6 +84,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -920,6 +920,27 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
             std::get<TritonGemmConfig>(config), config_.GetDeviceDescription(),
             fusion, opts, allow_filtering_kernels_spilling_registers);
       });
+      if (executable_or.ok()) {
+        return executable_or;
+      }
+      // If we failed to compile with a specific config we generally should
+      // not ignore it unless we are running with an exhaustive tiling search
+      // that can produce unsupported configs.
+      if (absl::c_contains(
+              debug_options_
+                  .xla_gpu_unsupported_generic_triton_emitter_features(),
+              DebugOptions::
+                  GENERIC_TRITON_EMITTER_MUST_ACCEPT_ALL_AUTOTUNER_CONFIGS)) {
+        return executable_or;
+      }
+
+      if (debug_options_.xla_gpu_exhaustive_tiling_search()) {
+        VLOG(1)
+            << "TritonGemmAutotuneExtractor failed and config will be ignored: "
+            << executable_or.status();
+        return nullptr;
+      }
+
       return executable_or;
     }
 

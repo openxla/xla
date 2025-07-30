@@ -1365,12 +1365,10 @@ class TotalOrderTest : public ClientLibraryTestRunnerMixin<
     if constexpr (std::numeric_limits<T>::has_infinity) {
       values.push_back(std::numeric_limits<T>::infinity());
     }
-#if defined(XLA_TEST_BACKEND_CPU) || defined(XLA_TEST_BACKEND_GPU) || \
-    defined(XLA_TEST_BACKEND_INTERPRETER)
-    if constexpr (std::numeric_limits<T>::has_quiet_NaN) {
+    if (test::DeviceTypeIsOneOf({test::kCpu, test::kGpu, test::kInterpreter}) &&
+        std::numeric_limits<T>::has_quiet_NaN) {
       values.push_back(Eigen::numext::abs(std::numeric_limits<T>::quiet_NaN()));
     }
-#endif
     AddNegativeValuesMaybeRemoveZero(values);
     std::vector<T> lhs_data;
     std::vector<T> rhs_data;
@@ -1414,6 +1412,16 @@ class TotalOrderTest : public ClientLibraryTestRunnerMixin<
 
     this->ComputeAndCompareR1<bool>(&builder, results, {});
   }
+
+ protected:
+  void SetUp() override {
+    if ((std::is_same_v<T, tsl::float4_e2m1fn> ||
+         std::is_same_v<T, tsl::float8_e8m0fnu>) &&
+        test::DeviceTypeIs(test::kTpu)) {
+      // TODO(b/385004399): Run tests on these types on TPU.
+      GTEST_SKIP();
+    }
+  }
 };
 
 using Types =
@@ -1429,10 +1437,7 @@ using Types =
 #if !defined(XLA_BACKEND_DOES_NOT_SUPPORT_FLOAT64)
                      double,
 #endif
-#if !defined(XLA_TEST_BACKEND_TPU)
-                     // TODO(b/385004399): Run tests on these types on TPU.
                      tsl::float4_e2m1fn, tsl::float8_e8m0fnu,
-#endif
                      float>;
 
 TYPED_TEST_SUITE(TotalOrderTest, Types);

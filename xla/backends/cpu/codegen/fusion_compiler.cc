@@ -102,6 +102,13 @@ static std::unique_ptr<::mlir::Pass> CreateConvertMathToLLVMPass() {
   return mlir::createConvertMathToLLVMPass(options);
 }
 
+static std::unique_ptr<::mlir::Pass> CreateInlinerAndCsePass() {
+  return mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
+    // CSE after inlining because inlining can introduce duplicates.
+    pm.addPass(mlir::createCSEPass());
+  });
+}
+
 static void AddXlaOpsOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<mlir::func::FuncOp>(emitters::CreateSimplifyArithPass());
   pm.addPass(CreateAddReductionFastMathFlagsPass());
@@ -116,10 +123,7 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm,
                                         int32_t vector_width) {
   pm.addNestedPass<mlir::func::FuncOp>(CreateLowerXlaSharedPass());
   pm.addNestedPass<mlir::func::FuncOp>(emitters::CreateLowerXlaToScfPass());
-  pm.addPass(mlir::createInlinerPass({}, [&](mlir::OpPassManager& pm) {
-    // CSE after inlining because inlining can introduce duplicates.
-    pm.addPass(mlir::createCSEPass());
-  }));
+  pm.addPass(CreateInlinerAndCsePass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<mlir::func::FuncOp>(
@@ -136,8 +140,9 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   // opportunities for LICM. This would not be necessary if LICM also moved
   // instructions over ifs.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-  pm.addNestedPass<mlir::func::FuncOp>(
-      emitters::CreateVectorizeLoadsAndStoresPass(/*target_type=*/"cpu"));
+  // TODO(willfroom): Re-enable vectorization once b/431961172 is fixed.
+  // pm.addNestedPass<mlir::func::FuncOp>(
+  //     emitters::CreateVectorizeLoadsAndStoresPass(/*target_type=*/"cpu"));
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<mlir::func::FuncOp>(
@@ -172,16 +177,16 @@ static void AddLoweringPasses(mlir::OpPassManager& pm, int32_t vector_width,
   pm.addPass(mlir::createCSEPass());
 
   pm.addNestedPass<mlir::func::FuncOp>(cpu::CreateExpandFloatOpsPass());
-  pm.addPass(emitters::CreateExpandFloatOpsPass());
+  pm.addPass(emitters::CreateExpandFloatOpsPass(/*aproximate_tanh=*/false));
   pm.addPass(emitters::CreateEraseDeadFunctionsPass());
   pm.addPass(mlir::createLowerAffinePass());
-  pm.addPass(mlir::createInlinerPass());
+  pm.addPass(CreateInlinerAndCsePass());
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(emitters::CreateLowerXlaMathLibPass());
   pm.addNestedPass<mlir::func::FuncOp>(CreateConvertMathToLLVMPass());
   pm.addPass(emitters::CreateLowerToLLVMPass(/*target_type=*/"cpu"));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-  pm.addPass(mlir::createInlinerPass());
+  pm.addPass(CreateInlinerAndCsePass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
 }
@@ -199,6 +204,20 @@ static int GetLlvmFunctionDefCount(mlir::ModuleOp m) {
 
 absl::StatusOr<std::unique_ptr<llvm::Module>> FusionCompiler::Compile(
     llvm::LLVMContext& llvm_context, mlir::ModuleOp mlir_module) {
+  auto get_module_op_count = [&mlir_module]() {
+    // Count the number of leaf ops, i.e those without a sub-region.
+    int64_t count = 0;
+    mlir_module.walk([&count](mlir::Operation* op) {
+      if (op->getNumRegions() == 0) {
+        count++;
+      }
+    });
+    return count;
+  };
+  VLOG(1) << "Compiling MLIR module: "
+          << absl::string_view(mlir_module.getName().value_or("Unknown"))
+          << ", with " << get_module_op_count() << " operations.";
+
   mlir::PassManager optimization_pass_manager(mlir_module.getContext());
 
   if (hooks_.pre_optimization) {
