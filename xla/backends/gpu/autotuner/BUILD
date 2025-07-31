@@ -1,5 +1,4 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_binary")
 load("//xla/tests:build_defs.bzl", "xla_test")
 
@@ -609,13 +608,16 @@ xla_test(
 xla_cc_binary(
     name = "autotuner_main",
     srcs = ["autotuner_main.cc"],
-    tags = ["gpu"],
+    tags = [
+        "gpu",
+    ],
     deps = [
         ":factory",
         ":gpu_profiler",
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner",
+        "//xla/backends/autotuner:autotune_config",
         "//xla/backends/autotuner:profiler",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -629,6 +631,7 @@ xla_cc_binary(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
