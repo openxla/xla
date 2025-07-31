@@ -7,7 +7,7 @@ These rules have to be outside of mkl/build_defs.bzl, otherwise we would have cy
 
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
-load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api")
+load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api", "mkl_deps")
 
 visibility(DEFAULT_LOAD_VISIBILITY)
 
@@ -16,13 +16,13 @@ def onednn_graph_cc_library(srcs = [], hdrs = [], deps = [], **kwargs):
     native.cc_library(
         srcs = if_graph_api(srcs),
         hdrs = if_graph_api(hdrs),
-        deps = if_graph_api(deps),
+        deps = if_graph_api(deps) + mkl_deps(),
         **kwargs
     )
 
 def onednn_graph_cc_test(
         srcs = [],
-        deps = [],
+        deps = [] + mkl_deps(),
         **kwargs):
     """xla_cc_test rule that has empty src and deps if not building with Graph API."""
     xla_cc_test(
