@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/model/experimental/tiling_space.h"
 
 #include <cstdint>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -24,34 +25,44 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/gpu/model/experimental/symbolic_tile.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla::gpu {
+namespace xla::gpu::experimental {
+namespace {
 
-void TilingSpace::AppendDimension(const HloInstruction& hlo,
+std::string HloPtrToString(const HloInstruction* hlo) {
+  return hlo == nullptr ? "nullptr" : hlo->ToString();
+}
+
+}  // namespace
+
+void TilingSpace::AppendDimension(const HloInstruction* hlo,
                                   int64_t dim_position, int64_t dim_size,
                                   DimensionSemantics dim_type) {
   dimensions_.push_back(DimensionInfo{static_cast<ID>(dimensions_.size()),
-                                      dim_size, dim_type, &hlo, dim_position});
-  hlo_to_dimension_[std::make_pair(&hlo, dim_position)] = &dimensions_.back();
+                                      dim_size, dim_type, hlo, dim_position});
+  hlo_to_dimension_[std::make_pair(hlo, dim_position)] = &dimensions_.back();
 }
 
-void TilingSpace::AppendRTVar(const HloInstruction& hlo, int64_t operand_id,
-                              const HloInstruction& rt_var,
+void TilingSpace::AppendRTVar(const HloInstruction* hlo, int64_t operand_id,
+                              const HloInstruction* rt_var,
                               int64_t upper_bound) {
   rt_vars_.push_back(RTVarInfo{
       static_cast<ID>(rt_vars_.size()),
       Interval{0, upper_bound},
-      &rt_var,
+      rt_var,
   });
-  hlo_to_rt_var_[std::make_pair(&hlo, operand_id)] = &rt_vars_.back();
+  hlo_to_rt_var_[std::make_pair(hlo, operand_id)] = &rt_vars_.back();
 }
 
 // Add dot contraction dimensions in the order of contracting dimensions.
@@ -62,7 +73,7 @@ void TilingSpace::ProcessDot(const HloInstruction& hlo) {
   int64_t output_rank = dot->shape().dimensions().size();
   for (auto [index, contracting_dim_id] :
        llvm::enumerate(dim_numbers.lhs_contracting_dimensions())) {
-    AppendDimension(hlo, output_rank + index,
+    AppendDimension(&hlo, output_rank + index,
                     lhs_shape.dimensions(contracting_dim_id),
                     DimensionSemantics::kSequential);
   }
@@ -74,7 +85,7 @@ void TilingSpace::ProcessReduce(const HloInstruction& hlo) {
   const Shape& input_shape = reduce->operand(0)->shape();
   int64_t output_rank = GetFirstShape(reduce).dimensions().size();
   for (auto [index, reduction_dim_id] : llvm::enumerate(reduce->dimensions())) {
-    AppendDimension(hlo, output_rank + index,
+    AppendDimension(&hlo, output_rank + index,
                     input_shape.dimensions(reduction_dim_id),
                     DimensionSemantics::kSequential);
   }
@@ -89,7 +100,7 @@ void TilingSpace::ProcessDynamicSlice(const HloInstruction& hlo) {
 
   const Shape& input_shape = ds->operand(0)->shape();
   for (auto [dim, slice_size] : llvm::enumerate(ds->dynamic_slice_sizes())) {
-    AppendRTVar(hlo, dim + first_index_num, *ds->operand(dim + first_index_num),
+    AppendRTVar(&hlo, dim + first_index_num, ds->operand(dim + first_index_num),
                 input_shape.dimensions(dim) - slice_size);
   }
 }
@@ -108,14 +119,18 @@ std::string TilingSpace::ToString() const {
        << (dim.type == DimensionSemantics::kParallel ? "parallel"
                                                      : "sequential")
        << " size: " << dim.dimension_size << " dim ID:" << dim.dim_position
-       << " hlo: " << dim.hlo->ToString() << "\n";
+       << " hlo: " << HloPtrToString(dim.hlo) << "\n";
   }
   if (!rt_vars_.empty()) {
     ss << "Runtime variables:\n";
     for (const auto& rt_var : rt_vars_) {
       ss << rt_var.id << " bounds: " << rt_var.bounds
-         << " hlo: " << rt_var.hlo->ToString() << "\n";
+         << " hlo: " << HloPtrToString(rt_var.hlo) << "\n";
     }
+  }
+  ss << "Root tiles:\n";
+  for (const auto& [index, tile] : llvm::enumerate(tiled_roots_)) {
+    ss << index << " root tile: " << tile.ToString() << "\n";
   }
   return ss.str();
 }
@@ -136,8 +151,10 @@ const TilingSpace::RTVarInfo& TilingSpace::GetRTVarInfo(
   return *it->second;
 }
 
-TilingSpace TilingSpace::Create(const HloFusionAdaptor& fusion) {
-  TilingSpace tiling_space;
+std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
+                                                 mlir::MLIRContext* ctx) {
+  auto tiling_space = std::make_unique<TilingSpace>();
+  tiling_space->mlir_context_ = ctx;
   auto roots = fusion.GetRoots();
   for (const HloInstructionAdaptor& root : roots) {
     const Shape& root_shape = root.shape();
@@ -146,23 +163,34 @@ TilingSpace TilingSpace::Create(const HloFusionAdaptor& fusion) {
     }
     absl::Span<const int64_t> dims =
         GetFirstShape(&root.instruction()).dimensions();
+    llvm::SmallVector<DimTile> dim_tiles;
+    dim_tiles.reserve(dims.size());
     for (auto [index, dim] : llvm::enumerate(dims)) {
-      tiling_space.AppendDimension(root.instruction(), index, dim,
-                                   DimensionSemantics::kParallel);
+      tiling_space->AppendDimension(&root.instruction(), index, dim,
+                                    DimensionSemantics::kParallel);
+      dim_tiles.push_back(GetDefaultDimTile(index, dim, ctx));
     }
+    SymbolicTile tile{*tiling_space, std::move(dim_tiles)};
+    if (root_shape.IsTuple()) {
+      for (int64_t i = 0, e = root_shape.tuple_shapes().size(); i < e; ++i) {
+        tiling_space->tiled_roots_.push_back(tile);
+      }
+      continue;
+    }
+    tiling_space->tiled_roots_.push_back(std::move(tile));
   }
   // Iterator in reversed post-order (use-before-def).
   auto post_order = fusion.MakeInstructionPostOrder();
   for (auto it = post_order.rbegin(); it != post_order.rend(); ++it) {
     switch (it->instruction().opcode()) {
       case HloOpcode::kDot:
-        tiling_space.ProcessDot(it->instruction());
+        tiling_space->ProcessDot(it->instruction());
         break;
       case HloOpcode::kReduce:
-        tiling_space.ProcessReduce(it->instruction());
+        tiling_space->ProcessReduce(it->instruction());
         break;
       case HloOpcode::kDynamicSlice:
-        tiling_space.ProcessDynamicSlice(it->instruction());
+        tiling_space->ProcessDynamicSlice(it->instruction());
         break;
       default:
         break;
@@ -171,4 +199,4 @@ TilingSpace TilingSpace::Create(const HloFusionAdaptor& fusion) {
   return tiling_space;
 }
 
-}  // namespace xla::gpu
+}  // namespace xla::gpu::experimental

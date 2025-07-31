@@ -183,9 +183,6 @@ Shape getFlattenedShape(const Shape& shape) {
 // parameter.
 ComputationLayout getFlattenedComputationLayout(
     const ComputationLayout& computationLayout, bool useTupleArgs) {
-  if (!computationLayout.AnyLayoutSet()) {
-    return computationLayout;
-  }
   // Flatten the result layout.
   ComputationLayout flattenedComputationLayout = ComputationLayout(
       ShapeLayout(getFlattenedShape(computationLayout.result_shape())));
@@ -300,11 +297,8 @@ std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
                                      absl::string_view passName,
                                      bool isShardyVerbose) {
   std::string shardyDir = debugOptions.xla_dump_to();
-  std::string regex = debugOptions.xla_dump_hlo_pass_re();
-  if (shardyDir.empty()) {
-    return "";
-  }
-  if (isShardyVerbose) {
+  absl::string_view regex = debugOptions.xla_dump_hlo_pass_re();
+  if (shardyDir.empty() || isShardyVerbose) {
     return shardyDir;
   }
   if (regex.empty() || !RE2::PartialMatch(passName, regex)) {
@@ -337,11 +331,12 @@ absl::Status runShardingPropagation(HloModule* hloModule,
     }
   }
 
+  if (isShardyVerbose) {
+    options.debugPropagationEdgeSharding = true;
+    options.debugShardingOrigins = true;
+  }
+
   if (!shardyDir.empty()) {
-    if (isShardyVerbose) {
-      options.debugPropagationEdgeSharding = true;
-      options.debugShardingOrigins = true;
-    }
     shardyDir =
         tsl::io::JoinPath(shardyDir, "shardy", uniqueModuleName(*hloModule));
     LOG(INFO) << "Using Shardy output directory: " << shardyDir;
@@ -380,6 +375,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // since the TOAST cost model cannot account for split axes or padding.
   options.dumpDirectory = shardyDir;
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
+  options.enableAutoPartitioning = hloModule->use_auto_spmd_partitioning();
   mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
   addStablehloExportPipeline(pm);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
