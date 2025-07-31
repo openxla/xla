@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -323,28 +322,43 @@ static absl::Status CheckReplicaGroups(HloInstruction* hlo,
                                        CollectiveOpGroupMode group_mode,
                                        bool uniform_replica_group_size = true) {
   if (!hlo->replica_groups().empty()) {
-    absl::flat_hash_set<int64_t> replicas_seen;
+    size_t n = 0;
     for (const ReplicaGroup& g : hlo->replica_groups()) {
-      if (g.replica_ids().empty()) {
+      const size_t size = g.replica_ids_size();
+      if (size == 0) {
         return Internal("Instruction cannot have an empty replica group: %s",
                         hlo->ToString());
       }
+      n += size;
+    }
+    std::vector<bool> seen_replica_ids(n, false);
+    for (const ReplicaGroup& g : hlo->replica_groups()) {
       for (int64_t i : g.replica_ids()) {
-        if (!replicas_seen.insert(i).second) {
+        if (i < 0 || i >= n) {
+          return Internal(
+              "Replica %d is out of range (should be in [0, %d) range) in "
+              "instruction's replica-groups: %s",
+              i, n, hlo->ToString());
+        }
+        if (seen_replica_ids[i]) {
           return Internal(
               "Replica %d is repeated in instruction's replica-groups: %s", i,
               hlo->ToString());
         }
+        seen_replica_ids[i] = true;
       }
     }
-    size_t n = replicas_seen.size();
+    // If we come here then it is guaranteed that we have seen all replicas from
+    // 0 to n-1. This is because we calculate the `n` in the first pass and then
+    // on the second pass we only add to `seen_replica_ids` iff we see a replica
+    // id in the range [0, n) for the first time. So, there is no need to check
+    // that all `seen_replica_ids` values are true.
+#ifndef NDEBUG
     for (int64_t i = 0; i < n; ++i) {
-      if (!replicas_seen.count(i)) {
-        return Internal(
-            "Replica %d is not named in instruction's replica-groups: %s", i,
-            hlo->ToString());
-      }
+      CHECK(seen_replica_ids[i])
+          << "Programming error: seen_replica_ids[" << i << "] is false!";
     }
+#endif  // NDEBUG
 
     // replica-groups have numbers [0, n). This n should be either replica or
     // partition count, or their product. In some cases, replica and/or
@@ -390,21 +404,6 @@ static absl::Status CheckReplicaGroups(HloInstruction* hlo,
         << "Replica groups must be specified in flattened-id mode";
   }
 
-  return absl::OkStatus();
-}
-
-static absl::Status CheckCollectiveOpGroupMode(HloInstruction* hlo) {
-  HloAllReduceInstructionBase* ar = Cast<HloAllReduceInstructionBase>(hlo);
-  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                      GetCollectiveOpGroupMode(ar->channel_id().has_value(),
-                                               ar->use_global_device_ids()));
-  TF_RET_CHECK(ar->collective_op_group_mode() == group_mode)
-      << "Instruction has mode="
-      << CollectiveOpGroupModeToString(ar->collective_op_group_mode())
-      << " but should be " << CollectiveOpGroupModeToString(group_mode)
-      << " because use_global_device_ids=" << ar->use_global_device_ids()
-      << " and channel_id is "
-      << (ar->channel_id().has_value() ? "present" : "absent");
   return absl::OkStatus();
 }
 
@@ -488,10 +487,11 @@ absl::Status ShapeVerifier::HandleAllGatherDone(HloInstruction* hlo) {
 
 absl::Status ShapeVerifier::HandleAllReduce(HloInstruction* hlo) {
   auto ar = Cast<HloAllReduceInstruction>(hlo);
-  TF_RETURN_IF_ERROR(CheckCollectiveOpGroupMode(ar));
-
-  TF_RETURN_IF_ERROR(CheckReplicaGroups(ar, ar->collective_op_group_mode(),
-                                        /*uniform_replica_group_size=*/false));
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(ar->channel_id().has_value(),
+                                               ar->use_global_device_ids()));
+  TF_RETURN_IF_ERROR(
+      CheckReplicaGroups(ar, group_mode, /*uniform_replica_group_size=*/false));
 
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {
@@ -502,8 +502,10 @@ absl::Status ShapeVerifier::HandleAllReduce(HloInstruction* hlo) {
 
 absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
   auto ars = Cast<HloReduceScatterInstruction>(hlo);
-  TF_RETURN_IF_ERROR(CheckCollectiveOpGroupMode(ars));
-  TF_RETURN_IF_ERROR(CheckReplicaGroups(ars, ars->collective_op_group_mode()));
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(ars->channel_id().has_value(),
+                                               ars->use_global_device_ids()));
+  TF_RETURN_IF_ERROR(CheckReplicaGroups(ars, group_mode));
   TF_RET_CHECK(ars->scatter_dimension() >= 0);
   TF_RET_CHECK(ars->operand_count() >= 1);
 
@@ -524,7 +526,7 @@ absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
   int64_t shard_count =
       CeilOfRatio(ars->operand(0)->shape().dimensions(ars->scatter_dimension()),
                   output0_shape.dimensions(ars->scatter_dimension()));
-  int64_t subgroup_size = GetSubgroupSize(ars, ars->collective_op_group_mode());
+  int64_t subgroup_size = GetSubgroupSize(ars, group_mode);
   // If replica and partition count is not explicitly set, it will have a
   // default value of 1, in which case the subgroup_size will be 1 as well. Skip
   // these verification checks in that case.
@@ -543,9 +545,11 @@ absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
 
 absl::Status ShapeVerifier::HandleAllReduceStart(HloInstruction* hlo) {
   auto ar = Cast<HloAllReduceInstruction>(hlo);
-  TF_RETURN_IF_ERROR(CheckCollectiveOpGroupMode(ar));
-  TF_RETURN_IF_ERROR(CheckReplicaGroups(ar, ar->collective_op_group_mode(),
-                                        /*uniform_replica_group_size=*/false));
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(ar->channel_id().has_value(),
+                                               ar->use_global_device_ids()));
+  TF_RETURN_IF_ERROR(
+      CheckReplicaGroups(ar, group_mode, /*uniform_replica_group_size=*/false));
 
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {

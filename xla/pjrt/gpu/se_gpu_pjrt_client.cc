@@ -684,6 +684,12 @@ std::optional<PjRtPluginAttributes> StreamExecutorGpuClient::plugin_attributes()
   return attrs;
 }
 
+void StreamExecutorGpuClient::UpdateGlobalProcessInfo(
+    absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+  // TODO: mwhittaker - Move the AbortOnFailure logic here.
+  LOG(WARNING) << "UpdateGlobalProcessInfo is not supported.";
+}
+
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const PjRtClient::ShapeSpec> shape_specs,
@@ -1502,6 +1508,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     auto compute_capability = MakeComputeCapabilityString(desc.get());
     device_proto->set_compute_capability(compute_capability);
     device_proto->set_core_count(desc->core_count());
+    device_proto->set_shared_memory_per_block_optin(
+        desc->shared_memory_per_block_optin());
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 12040
     if (std::stoi(compute_capability) >= 9) {
       auto fabric_info = GetDeviceFabricInfo(ordinal_and_device.first);
@@ -1578,7 +1586,9 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
           device_proto.global_device_id(), std::move(local_device),
           device_proto.name(), device_proto.vendor(),
           device_proto.compute_capability(), device_proto.core_count(),
-          node.node_id(), device_proto.slice_index());
+          device_proto.shared_memory_per_block_optin(),
+          device_proto.local_device_ordinal(), node.node_id(),
+          device_proto.slice_index());
       devices.push_back(std::move(device));
     }
   }
@@ -1622,31 +1632,17 @@ std::string MakeComputeCapabilityString(const se::DeviceDescription* desc) {
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state,
     std::string device_kind, std::string device_vendor,
-    std::string compute_capability, int core_count, int node_id,
+    std::string compute_capability, int core_count,
+    int shared_memory_per_block_optin, int local_device_id, int node_id,
     int slice_index)
-    : PjRtStreamExecutorDevice(id, std::move(local_device_state),
-                               /*process_index=*/node_id,
-                               std::move(device_kind)),
+    : PjRtStreamExecutorDevice(
+          id, std::move(local_device_state), local_device_id,
+          /*process_index=*/node_id, slice_index, std::move(device_kind)),
       device_vendor_(std::move(device_vendor)),
       slice_index_(slice_index) {
-  std::array<int, 1> coords = {local_device_id().value()};
-  description().SetCoords(coords);
-  std::vector<int64_t> v_coords(description().coords().begin(),
-                                description().coords().end());
-
-  description().SetAttributes(
-      {{"coords", xla::PjRtDeviceAttribute(v_coords)},
-       {"device_vendor", device_vendor_},
-       {"slice_index", static_cast<int64_t>(slice_index)},
-       {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
-       {"core_count", static_cast<int64_t>(core_count)}});
-  description().SetToString(absl::StrFormat(
-      "StreamExecutorGpuDevice(device_kind=%s, id=%i, process_index=%i, "
-      "slice_index=%i))",
-      description().device_kind(), id, process_index(), slice_index));
-  description().SetDebugString(absl::StrFormat("%s_%i(process=%i,(%i))",
-                                               description().device_kind(), id,
-                                               process_index(), v_coords[0]));
+  StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
+      description(), device_vendor_, compute_capability, core_count,
+      static_cast<int64_t>(shared_memory_per_block_optin), slice_index);
 }
 
 int StreamExecutorGpuDevice::slice_index() const { return slice_index_; }
@@ -1766,7 +1762,8 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     auto device = std::make_unique<StreamExecutorGpuDevice>(
         ordinal_and_device.first, std::move(ordinal_and_device.second),
         desc.name(), desc.device_vendor(), MakeComputeCapabilityString(&desc),
-        desc.core_count(), node_id);
+        desc.core_count(), desc.shared_memory_per_block_optin(),
+        ordinal_and_device.second->local_device_id().value(), node_id);
     devices.push_back(std::move(device));
   }
   return devices;

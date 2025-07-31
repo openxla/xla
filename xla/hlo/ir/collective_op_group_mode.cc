@@ -28,19 +28,14 @@ namespace {
 struct CollectiveOpGroupModeInfo {
   CollectiveOpGroupMode mode;
   absl::string_view name;
-  CollectiveOpGroupModeProto proto;
 };
 
 const CollectiveOpGroupModeInfo kGroupModeInfos[] = {
-    {CollectiveOpGroupMode::kCrossReplica, "cross_replica",
-     CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_REPLICA},
-    {CollectiveOpGroupMode::kCrossPartition, "cross_partition",
-     CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_PARTITION},
+    {CollectiveOpGroupMode::kCrossReplica, "cross_replica"},
+    {CollectiveOpGroupMode::kCrossPartition, "cross_partition"},
     {CollectiveOpGroupMode::kCrossReplicaAndPartition,
-     "cross_replica_and_partition",
-     CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_REPLICA_AND_PARTITION},
-    {CollectiveOpGroupMode::kFlattenedID, "flattened_id",
-     CollectiveOpGroupModeProto::COLLECTIVE_MODE_FLATTENED_ID},
+     "cross_replica_and_partition"},
+    {CollectiveOpGroupMode::kFlattenedID, "flattened_id"},
 };
 
 }  // namespace
@@ -64,28 +59,6 @@ absl::StatusOr<CollectiveOpGroupMode> StringToCollectiveOpGroupMode(
     }
   }
   return InvalidArgument("Invalid collective op group mode: %s", name);
-}
-
-CollectiveOpGroupModeProto CollectiveOpGroupModeToProto(
-    CollectiveOpGroupMode group_mode) {
-  for (const CollectiveOpGroupModeInfo& info : kGroupModeInfos) {
-    if (info.mode == group_mode) {
-      return info.proto;
-    }
-  }
-  CHECK(false) << "Unknown collective op group mode: "
-               << static_cast<int>(group_mode);
-}
-
-absl::StatusOr<CollectiveOpGroupMode> CollectiveOpGroupModeFromProto(
-    CollectiveOpGroupModeProto proto) {
-  for (const CollectiveOpGroupModeInfo& info : kGroupModeInfos) {
-    if (info.proto == proto) {
-      return info.mode;
-    }
-  }
-  return InvalidArgument("Invalid collective op group mode proto: %s",
-                         CollectiveOpGroupModeProto_Name(proto));
 }
 
 // Returns the group formation mode implied by (a) whether the operation has

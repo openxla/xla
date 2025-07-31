@@ -56,6 +56,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -529,6 +532,12 @@ class PjRtClient {
   virtual absl::StatusOr<PjRtDevice*> LookupAddressableDevice(
       PjRtLocalDeviceId local_device_id) const {
     return Unimplemented("LookupAddressableDevice is not supported.");
+  }
+
+  // Updates the client with information about all global processes.
+  virtual void UpdateGlobalProcessInfo(
+      absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+    LOG(WARNING) << "UpdateGlobalProcessInfo is not supported.";
   }
 
   // Return all memory spaces owned by the client.
@@ -1071,8 +1080,7 @@ class PjRtBuffer {
   // might be done eagerly, but it is guaranteed to be earlier than when the
   // returned future becomes ready.
   virtual PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&>
-          generator) = 0;
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator) = 0;
 
   // Synchronous overload of ToLiteral, as a convenience.
   absl::Status ToLiteralSync(MutableLiteralBase* literal) {
@@ -1122,9 +1130,10 @@ class PjRtBuffer {
   // layout.
   absl::StatusOr<std::shared_ptr<Literal>> ToLiteralSync() {
     TF_ASSIGN_OR_RETURN(Shape host_shape, HostShape());
-    auto literal = std::make_shared<Literal>(host_shape);
-    TF_RETURN_IF_ERROR(ToLiteralSync(literal.get()));
-    return literal;
+    TF_ASSIGN_OR_RETURN(auto literal, Literal::Make(host_shape));
+    auto shared_literal = std::make_shared<Literal>(std::move(literal));
+    TF_RETURN_IF_ERROR(ToLiteralSync(shared_literal.get()));
+    return shared_literal;
   }
 
   // Returns the number of bytes of the buffer storage on the device.

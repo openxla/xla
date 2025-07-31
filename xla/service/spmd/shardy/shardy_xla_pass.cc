@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -182,9 +183,6 @@ Shape getFlattenedShape(const Shape& shape) {
 // parameter.
 ComputationLayout getFlattenedComputationLayout(
     const ComputationLayout& computationLayout, bool useTupleArgs) {
-  if (!computationLayout.AnyLayoutSet()) {
-    return computationLayout;
-  }
   // Flatten the result layout.
   ComputationLayout flattenedComputationLayout = ComputationLayout(
       ShapeLayout(getFlattenedShape(computationLayout.result_shape())));
@@ -296,13 +294,14 @@ void removeFrontendAttributes(HloModule* hloModule,
 }
 
 std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
-                                     absl::string_view passName) {
+                                     absl::string_view passName,
+                                     bool isShardyVerbose) {
   std::string shardyDir = debugOptions.xla_dump_to();
-  if (shardyDir.empty()) {
-    return "";
+  absl::string_view regex = debugOptions.xla_dump_hlo_pass_re();
+  if (shardyDir.empty() || isShardyVerbose) {
+    return shardyDir;
   }
-  if (debugOptions.xla_dump_hlo_pass_re().empty() ||
-      !RE2::PartialMatch(passName, debugOptions.xla_dump_hlo_pass_re())) {
+  if (regex.empty() || !RE2::PartialMatch(passName, regex)) {
     return "";
   }
   return shardyDir;
@@ -316,7 +315,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   LOG(INFO) << "Using Shardy for XLA SPMD propagation.";
 
   const DebugOptions& debugOptions = hloModule->config().debug_options();
-  std::string shardyDir = getShardyDirIfShouldDump(debugOptions, passName);
+  bool isShardyVerbose =
+      absl::StrContains(debugOptions.xla_dump_hlo_pass_re(), kShardyVerbose);
+  std::string shardyDir =
+      getShardyDirIfShouldDump(debugOptions, passName, isShardyVerbose);
 
   if (shardyDir == "sponge") {
     shardyDir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
@@ -327,6 +329,11 @@ absl::Status runShardingPropagation(HloModule* hloModule,
       LOG(INFO) << "Shardy dump directory is sponge on undeclared outputs dir: "
                 << shardyDir;
     }
+  }
+
+  if (isShardyVerbose) {
+    options.debugPropagationEdgeSharding = true;
+    options.debugShardingOrigins = true;
   }
 
   if (!shardyDir.empty()) {
@@ -344,8 +351,9 @@ absl::Status runShardingPropagation(HloModule* hloModule,
 
   mlir::PassManager pm(mlirModule->getContext());
   pm.enableVerifier(enableVerifier);
-  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
-                                               "sdy_module_before_xla_import"));
+  int dumpIndex = 0;
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "input_module",
+                                               dumpIndex++));
 
   if (importMhloShardings) {
     auto spanToArrayRef = [](absl::Span<const bool> span) {
@@ -367,10 +375,11 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // since the TOAST cost model cannot account for split axes or padding.
   options.dumpDirectory = shardyDir;
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
-  mlir::sdy::addPropagationPipeline(pm, options);
+  options.enableAutoPartitioning = hloModule->use_auto_spmd_partitioning();
+  mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
   addStablehloExportPipeline(pm);
-  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
-                                               "sdy_module_after_xla_export"));
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
+                                               dumpIndex++));
   tsl::StatusScopedDiagnosticHandler diagnosticHandler(
       mlirModule->getContext());
   return diagnosticHandler.consumeStatus(pm.run(mlirModule));
@@ -463,7 +472,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.
   removeFrontendAttributes(
-      hloModule, {kUseTupleArgs, kImportMhloShardings, kMeshesRoundTripAttr});
+      hloModule, {kUseTupleArgs, kImportMhloShardings, kMeshesRoundTripAttr,
+                  kInTupleShardings, kOutTupleShardings});
 
   return true;
 }

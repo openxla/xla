@@ -1234,13 +1234,16 @@ TEST(StreamExecutorGpuClientTest, GetDeviceFabricInfo) {
           if (auto* cc = std::get_if<se::CudaComputeCapability>(
                   &executor->GetDeviceDescription().gpu_compute_capability())) {
             if (cc->IsAtLeastHopper()) {
-              absl::StatusOr<std::string> fabric_info =
+              auto fabric_info =
                   GetDeviceFabricInfo(executor->device_ordinal());
-              // Hopper devices have empty fabric info, MNNVL Blackwell devices
-              // have meaningful fabric info.
-              if (cc->IsHopper() && fabric_info.ok()) {
-                EXPECT_EQ(fabric_info.value(),
-                          "00000000-0000-0000-0000-000000000000/0");
+              if (!fabric_info.ok()) {
+                // Only allow failures due to insufficient CUDA driver version.
+                EXPECT_THAT(
+                    fabric_info.status().message(),
+                    AnyOf(
+                        HasSubstr("Failed to initialize NVML library."),
+                        HasSubstr(
+                            "NVML library doesn't have required functions.")));
               }
             }
           }
@@ -1279,6 +1282,20 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
             ->description()
             .coords();
     EXPECT_EQ(coords[0], device_index);
+  }
+}
+
+TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  for (const auto& device : client->devices()) {
+    auto value = static_cast<PjRtStreamExecutorDevice*>(device)
+                     ->description()
+                     .Attributes()
+                     .find("shared_memory_per_block_optin")
+                     ->second;
+    int64_t shared_memory_per_block_optin = std::get<int64_t>(value);
+    EXPECT_GT(shared_memory_per_block_optin, 0);
   }
 }
 
@@ -2627,7 +2644,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
     TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation,
                                             /*use_tuple_args=*/false,
                                             /*return_tuple=*/false,
-                                            /*use_shardy=*/false));
+                                            /*exec_build_options=*/nullptr));
     TF_ASSIGN_OR_RETURN(executable,
                         client->CompileAndLoad(computation, compile_options));
   } else {

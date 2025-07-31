@@ -59,8 +59,6 @@ cc_library(
     ],
     deps = [
         ":backend_config",
-        ":collective_op_group_mode",
-        ":hlo_op_metadata",
         ":hlo_sharding",
         ":ptrvec",
         ":tile_assignment",
@@ -382,7 +380,6 @@ cc_library(
     hdrs = ["collective_op_group_mode.h"],
     deps = [
         "//xla:util",
-        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",

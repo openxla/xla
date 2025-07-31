@@ -31,15 +31,14 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/mlir/utils:type_util",
         "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -48,6 +47,7 @@ xla_cc_test(
     srcs = ["intrinsic_test.cc"],
     deps = [
         ":intrinsic",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:status_matchers",
         "@com_google_googletest//:gtest_main",
@@ -60,19 +60,14 @@ cc_library(
     hdrs = ["fptrunc.h"],
     deps = [
         ":intrinsic",
-        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -82,6 +77,7 @@ xla_cc_test(
     deps = [
         ":fptrunc",
         ":intrinsic",
+        "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -92,7 +88,9 @@ cc_library(
     hdrs = ["ldexp.h"],
     deps = [
         ":intrinsic",
+        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Core",  # buildcleaner: keep
         "@llvm-project//llvm:Support",
@@ -108,9 +106,9 @@ xla_cc_test(
         ":ldexp",
         ":simple_jit_runner",
         ":test_matchers",
+        "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -203,6 +201,7 @@ cc_library(
     hdrs = ["math_compiler_lib.h"],
     deps = [
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:IPO",
@@ -235,8 +234,9 @@ cc_library(
     deps = [
         ":intrinsic",
         ":ldexp",
-        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",  # buildcleaner: keep
@@ -272,9 +272,11 @@ xla_cc_test(
     name = "log1p_test",
     srcs = ["log1p_test.cc"],
     deps = [
+        ":intrinsic",
         ":log1p",
         ":simple_jit_runner",
         ":test_matchers",
+        "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:ir_headers",
@@ -290,9 +292,9 @@ xla_cc_test(
         ":ldexp",
         ":simple_jit_runner",
         ":test_matchers",
+        "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -325,6 +327,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
@@ -336,6 +339,7 @@ xla_cc_test(
     srcs = ["erf_test.cc"],
     deps = [
         ":erf",
+        ":intrinsic",
         ":simple_jit_runner",
         ":test_matchers",
         "@com_google_googletest//:gtest_main",
@@ -353,7 +357,7 @@ xla_cc_test(
         ":simple_jit_runner",
         ":test_matchers",
         "//xla:shape_util",
-        "//xla/service/llvm_ir:llvm_util",
+        "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:Support",
@@ -373,10 +377,8 @@ xla_cc_test(
         ":simple_jit_runner",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
     ],
 )

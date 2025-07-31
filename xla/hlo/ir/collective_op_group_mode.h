@@ -20,7 +20,6 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -69,12 +68,6 @@ absl::string_view CollectiveOpGroupModeToString(
 
 absl::StatusOr<CollectiveOpGroupMode> StringToCollectiveOpGroupMode(
     absl::string_view name);
-
-CollectiveOpGroupModeProto CollectiveOpGroupModeToProto(
-    CollectiveOpGroupMode group_mode);
-
-absl::StatusOr<CollectiveOpGroupMode> CollectiveOpGroupModeFromProto(
-    CollectiveOpGroupModeProto proto);
 
 // Returns the group formation mode implied by (a) whether the operation has
 // channel_id and (b) if it has use_global_device_ids and if yes, its value.

@@ -52,40 +52,6 @@ TEST(CollectiveOpGroupModeTest, FromString) {
             CollectiveOpGroupMode::kFlattenedID);
 }
 
-TEST(CollectiveOpGroupModeTest, ToProto) {
-  EXPECT_EQ(CollectiveOpGroupModeToProto(CollectiveOpGroupMode::kCrossReplica),
-            CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_REPLICA);
-  EXPECT_EQ(
-      CollectiveOpGroupModeToProto(CollectiveOpGroupMode::kCrossPartition),
-      CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_PARTITION);
-  EXPECT_EQ(
-      CollectiveOpGroupModeToProto(
-          CollectiveOpGroupMode::kCrossReplicaAndPartition),
-      CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_REPLICA_AND_PARTITION);
-  EXPECT_EQ(CollectiveOpGroupModeToProto(CollectiveOpGroupMode::kFlattenedID),
-            CollectiveOpGroupModeProto::COLLECTIVE_MODE_FLATTENED_ID);
-}
-
-TEST(CollectiveOpGroupModeTest, FromProto) {
-  EXPECT_EQ(CollectiveOpGroupModeFromProto(
-                CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_REPLICA)
-                .value(),
-            CollectiveOpGroupMode::kCrossReplica);
-  EXPECT_EQ(CollectiveOpGroupModeFromProto(
-                CollectiveOpGroupModeProto::COLLECTIVE_MODE_CROSS_PARTITION)
-                .value(),
-            CollectiveOpGroupMode::kCrossPartition);
-  EXPECT_EQ(CollectiveOpGroupModeFromProto(
-                CollectiveOpGroupModeProto::
-                    COLLECTIVE_MODE_CROSS_REPLICA_AND_PARTITION)
-                .value(),
-            CollectiveOpGroupMode::kCrossReplicaAndPartition);
-  EXPECT_EQ(CollectiveOpGroupModeFromProto(
-                CollectiveOpGroupModeProto::COLLECTIVE_MODE_FLATTENED_ID)
-                .value(),
-            CollectiveOpGroupMode::kFlattenedID);
-}
-
 // Tests for GetCollectOpGroupMode
 namespace GetCollectiveOpGroupModeTest {
 struct TestCase {

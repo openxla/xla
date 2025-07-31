@@ -14,5 +14,7 @@ those to this list.
 """
 
 temporary_patch_list = [
+    "//third_party/triton:temporary/fix_test_core_h100_target.patch",
+    "//third_party/triton:temporary/speed_up_int4_unpacking.patch",
     # Add new patches just above this line
 ]

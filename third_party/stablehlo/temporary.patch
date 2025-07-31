@@ -1,6 +1,71 @@
+diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
+--- stablehlo/BUILD.bazel
++++ stablehlo/BUILD.bazel
+@@ -842,6 +842,7 @@
+     "stablehlo/integrations/c/StablehloDialect.cpp",
+     "stablehlo/integrations/c/StablehloDialectApi.cpp",
+     "stablehlo/integrations/c/StablehloTypes.cpp",
++    "stablehlo/integrations/c/InterpreterDialect.cpp",
+ ]
+ 
+ STABLEHLO_DIALECT_CAPI_HEADERS = [
+@@ -849,6 +850,7 @@
+     "stablehlo/integrations/c/StablehloDialect.h",
+     "stablehlo/integrations/c/StablehloDialectApi.h",
+     "stablehlo/integrations/c/StablehloTypes.h",
++    "stablehlo/integrations/c/InterpreterDialect.h",
+ ]
+ 
+ cc_library(
+@@ -857,6 +859,7 @@
+     hdrs = STABLEHLO_DIALECT_CAPI_HEADERS,
+     strip_include_prefix = ".",
+     deps = [
++        ":interpreter_ops",
+         ":stablehlo_ops",
+         ":stablehlo_portable_api",
+         ":stablehlo_serialization",
+@@ -885,6 +888,7 @@
+     hdrs = STABLEHLO_DIALECT_CAPI_HEADERS,
+     strip_include_prefix = ".",
+     deps = [
++        ":interpreter_ops",
+         ":stablehlo_ops",
+         ":stablehlo_portable_api",
+         ":stablehlo_serialization",
+@@ -909,6 +913,7 @@
+     "stablehlo/integrations/c/StablehloDialectApi.h",
+     "stablehlo/integrations/c/StablehloUnifiedApi.h",
+     "stablehlo/integrations/c/StablehloTypes.h",
++    "stablehlo/integrations/c/InterpreterDialect.h",
+ ]
+ 
+ cc_library(
 diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h b/stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
 --- stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
 +++ stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
+@@ -206,8 +206,8 @@
+ struct MapStablehloOpToScalarOpImpl<StdScalarOp> {
+   Value operator()(Location loc, ArrayRef<Type> resultTypes,
+                    ArrayRef<Type> /*argTypes*/, ValueRange args, OpBuilder *b) {
+-    return b->template create<StdScalarOp>(loc, resultTypes, args,
+-                                           std::nullopt);
++    return b->template create<StdScalarOp>(
++        loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+   }
+ };
+ 
+@@ -217,8 +217,8 @@
+                    ArrayRef<Type> argTypes, ValueRange args, OpBuilder *b) {
+     Type elementType = getElementTypeOrSelf(argTypes.front());
+     if (SupportedType{}(elementType)) {
+-      return b->template create<StdScalarOp>(loc, resultTypes, args,
+-                                             std::nullopt);
++      return b->template create<StdScalarOp>(
++          loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+     }
+     return MapStablehloOpToScalarOpImpl<Args...>{}(loc, resultTypes, argTypes,
+                                                    args, b);
 @@ -499,7 +499,7 @@
    expBitsMask = ((expBitsMask << srcExponentBits) - 1) << srcMantissaBits;
  
@@ -19,6 +84,80 @@ diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToSca
      Value highestMantissaMaskVal = createConstant(lastMantissaBitMask);
      Value baseRoundingBiasVal = createConstant(baseRoundingBias);
      Value xLastMantissaBit = b.create<arith::ShRUIOp>(
+@@ -692,23 +692,23 @@
+   if (IsUnsignedIntegerType{}(sourceType) &&
+       mlir::arith::UIToFPOp::areCastCompatible(convertedSourceType,
+                                                targetType)) {
+-    return b->create<mlir::arith::UIToFPOp>(loc, resultTypes, args,
+-                                            std::nullopt);
++    return b->create<mlir::arith::UIToFPOp>(
++        loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+   }
+   if (mlir::arith::SIToFPOp::areCastCompatible(sourceType, targetType)) {
+-    return b->create<mlir::arith::SIToFPOp>(loc, resultTypes, args,
+-                                            std::nullopt);
++    return b->create<mlir::arith::SIToFPOp>(
++        loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+   }
+   if (isa<FloatType>(sourceType) && isa<FloatType>(targetType)) {
+     auto src = cast<FloatType>(sourceType);
+     auto res = cast<FloatType>(targetType);
+     if (src.getWidth() > res.getWidth()) {
+-      return b->create<mlir::arith::TruncFOp>(loc, resultTypes, args,
+-                                              std::nullopt);
++      return b->create<mlir::arith::TruncFOp>(
++          loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+     }
+     if (src.getWidth() < res.getWidth()) {
+-      return b->create<mlir::arith::ExtFOp>(loc, resultTypes, args,
+-                                            std::nullopt);
++      return b->create<mlir::arith::ExtFOp>(
++          loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+     }
+     // There's no direct conversion between different 16 bit floating point
+     // types, so go through 32 bit float.
+@@ -740,17 +740,17 @@
+     auto src = cast<IntegerType>(sourceType);
+     auto res = cast<IntegerType>(targetType);
+     if (src.getWidth() > res.getWidth()) {
+-      return b->create<mlir::arith::TruncIOp>(loc, resultTypes, args,
+-                                              std::nullopt);
++      return b->create<mlir::arith::TruncIOp>(
++          loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+     }
+     if (src.getWidth() < res.getWidth()) {
+       // Special case boolean values, so they get casted to `1` instead of `-1`.
+       if (IsUnsignedIntegerType{}(src)) {
+-        return b->create<mlir::arith::ExtUIOp>(loc, resultTypes, args,
+-                                               std::nullopt);
++        return b->create<mlir::arith::ExtUIOp>(
++            loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+       }
+-      return b->create<mlir::arith::ExtSIOp>(loc, resultTypes, args,
+-                                             std::nullopt);
++      return b->create<mlir::arith::ExtSIOp>(
++          loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+     }
+     // No conversion is needed for the same width integers
+     return args.front();
+@@ -758,13 +758,13 @@
+   if (targetType.isUnsignedInteger() &&
+       mlir::arith::FPToUIOp::areCastCompatible(convertedSourceType,
+                                                targetType)) {
+-    return b->create<mlir::arith::FPToUIOp>(loc, resultTypes, args,
+-                                            std::nullopt);
++    return b->create<mlir::arith::FPToUIOp>(
++        loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+   }
+   if (mlir::arith::FPToSIOp::areCastCompatible(convertedSourceType,
+                                                targetType)) {
+-    return b->create<mlir::arith::FPToSIOp>(loc, resultTypes, args,
+-                                            std::nullopt);
++    return b->create<mlir::arith::FPToSIOp>(
++        loc, resultTypes, args, mlir::ArrayRef<mlir::NamedAttribute>());
+   }
+   if (isa<ComplexType>(targetType)) {
+     Type targetElementType = cast<ComplexType>(targetType).getElementType();
 diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
 --- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
 +++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
@@ -59,9 +198,67 @@ diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.cpp b/stablehlo/stablehl
    p.printRegion(cond, /*printEntryBlockArgs=*/false);
    p << " do ";
    p.printRegion(body, /*printEntryBlockArgs=*/false);
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -2201,14 +2201,14 @@
+   locs.reserve(numValues);
+   for (auto i : inputs) {
+     auto iType = cast<ShapedType>(i.getType());
+-    blockArgTypes.push_back(iType.cloneWith(
+-        llvm::ArrayRef<int64_t>(std::nullopt), iType.getElementType()));
++    blockArgTypes.push_back(
++        iType.cloneWith(llvm::ArrayRef<int64_t>(), iType.getElementType()));
+     locs.push_back(i.getLoc());
+   }
+   for (auto i : init_values) {
+     auto iType = cast<ShapedType>(i.getType());
+-    blockArgTypes.push_back(iType.cloneWith(
+-        llvm::ArrayRef<int64_t>(std::nullopt), iType.getElementType()));
++    blockArgTypes.push_back(
++        iType.cloneWith(llvm::ArrayRef<int64_t>(), iType.getElementType()));
+     locs.push_back(i.getLoc());
+   }
+ 
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
+--- stablehlo/stablehlo/dialect/StablehloOps.td
++++ stablehlo/stablehlo/dialect/StablehloOps.td
+@@ -1245,11 +1245,6 @@
+   );
+ 
+   let results = (outs HLO_Token);
+-  let builders = [
+-    OpBuilder<(ins
+-      "::mlir::Type":$result_type, "::mlir::Value":$operand,
+-      "::mlir::DenseIntElementsAttr":$source_target_pairs,
+-      "::mlir::stablehlo::ChannelHandleAttr":$channel_handle)>];
+ }
+ 
+ def StableHLO_RecvOp : StableHLO_Op<"recv", [
+@@ -1279,11 +1274,6 @@
+     DefaultValuedOptionalAttr<BoolAttr, "false">:$is_host_transfer, /*recv_i4*/
+     OptionalAttr<I64ElementsAttr>:$source_target_pairs /*recv_i5*/
+   );
+-  let builders = [
+-    OpBuilder<(ins
+-      "::mlir::Type":$result_type, "::mlir::Value":$operand,
+-      "::mlir::DenseIntElementsAttr":$source_target_pairs,
+-      "::mlir::stablehlo::ChannelHandleAttr":$channel_handle)>];
+ 
+   let results = (outs Variadic<HLO_StaticShapeTensorOrPerAxisQuantizedTensorOrToken>);
+   let hasVerifier = 1;
 diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
 --- stablehlo/stablehlo/dialect/TypeInference.cpp
 +++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -1147,7 +1147,7 @@
+       *paddingOrErr,
+       /*lhsDilation=*/baseDilations.value_or(SmallVector<int64_t, 0>{}),
+       /*rhsDilation=*/windowDilations.value_or(SmallVector<int64_t, 0>{}),
+-      /*windowReversal=*/std::nullopt, location);
++      /*windowReversal=*/{}, location);
+   if (failed(windowOrErr)) return failure();
+ 
+   windowDims.append(windowDimensions.begin(), windowDimensions.end());
 @@ -2248,6 +2248,22 @@
    return success();
  }
@@ -142,6 +339,536 @@ diff --ruN a/stablehlo/stablehlo/dialect/Version.cpp b/stablehlo/stablehlo/diale
      case CompatibilityRequirement::WEEK_12:
        return Version(1, 10, 3);  // WEEK_12 ANCHOR: DO NOT MODIFY
      case CompatibilityRequirement::MAX:
+diff --ruN a/stablehlo/stablehlo/integrations/c/CMakeLists.txt b/stablehlo/stablehlo/integrations/c/CMakeLists.txt
+--- stablehlo/stablehlo/integrations/c/CMakeLists.txt
++++ stablehlo/stablehlo/integrations/c/CMakeLists.txt
+@@ -38,6 +38,7 @@
+   StablehloTypes.cpp
+   StablehloDialectApi.cpp
+   StablehloUnifiedApi.cpp
++  InterpretDialect.cpp
+ 
+   LINK_LIBS PUBLIC
+   MLIRCAPIIR
+@@ -50,6 +51,7 @@
+   StablehloReferenceConfiguration
+   StablehloSerialization
+   Version
++  InterpreterOps
+ )
+ 
+ add_mlir_public_c_api_library(VhloCAPI
+diff --ruN a/stablehlo/stablehlo/integrations/c/InterpreterDialect.cpp b/stablehlo/stablehlo/integrations/c/InterpreterDialect.cpp
+--- stablehlo/stablehlo/integrations/c/InterpreterDialect.cpp
++++ stablehlo/stablehlo/integrations/c/InterpreterDialect.cpp
+@@ -0,0 +1,20 @@
++/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
++   Copyright 2022 The StableHLO Authors.
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++    http://www.apache.org/licenses/LICENSE-2.0
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#include "stablehlo/integrations/c/InterpreterDialect.h"
++
++#include "mlir/CAPI/Registration.h"
++#include "stablehlo/reference/InterpreterOps.h"
++
++MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(
++    Interpreter, interpreter, mlir::stablehlo::interpreter::InterpreterDialect)
+diff --ruN a/stablehlo/stablehlo/integrations/c/InterpreterDialect.h b/stablehlo/stablehlo/integrations/c/InterpreterDialect.h
+--- stablehlo/stablehlo/integrations/c/InterpreterDialect.h
++++ stablehlo/stablehlo/integrations/c/InterpreterDialect.h
+@@ -0,0 +1,30 @@
++/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
++   Copyright 2022 The StableHLO Authors.
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++    http://www.apache.org/licenses/LICENSE-2.0
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#ifndef STABLEHLO_INTEGRATIONS_C_INTERPRETER_DIALECT_H
++#define STABLEHLO_INTEGRATIONS_C_INTERPRETER_DIALECT_H
++
++#include "mlir-c/IR.h"
++#include "mlir-c/RegisterEverything.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Interpreter, interpreter);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif  // STABLEHLO_INTEGRATIONS_C_INTERPRETER_DIALECT_H
+diff --ruN a/stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.cpp b/stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.cpp
+--- stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.cpp
++++ stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.cpp
+@@ -32,13 +32,16 @@
+ #include "stablehlo/reference/Configuration.h"
+ 
+ MlirAttribute stablehloEvalModule(MlirModule module, int nArgs,
+-                                  MlirAttribute const *args, int *errorCode) {
++                                  MlirAttribute const *args,
++                                  const char* const probeInstrumentationDir,
++                                  int *errorCode) {
+   std::vector<mlir::DenseElementsAttr> inputs;
+   inputs.reserve(nArgs);
+   for (int i = 0; i < nArgs; ++i) {
+     inputs.push_back(llvm::cast<mlir::DenseElementsAttr>(unwrap(args[i])));
+   }
+   mlir::stablehlo::InterpreterConfiguration config;
++  config.probeInstrumentationDir = probeInstrumentationDir;
+   mlir::FailureOr<llvm::SmallVector<mlir::DenseElementsAttr>> results =
+       mlir::stablehlo::evalModule(unwrap(module), inputs, config);
+   if (mlir::failed(results)) {
+diff --ruN a/stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.h b/stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.h
+--- stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.h
++++ stablehlo/stablehlo/integrations/c/StablehloUnifiedApi.h
+@@ -26,10 +26,9 @@
+ // Entrypoint for calling the StableHLO reference interpreter.
+ // Returns an array attribute of dense element attributes for results.
+ // Sets error code to non-zero on failure.
+-MLIR_CAPI_EXPORTED MlirAttribute stablehloEvalModule(MlirModule module,
+-                                                     int nArgs,
+-                                                     MlirAttribute const* args,
+-                                                     int* errorCode);
++MLIR_CAPI_EXPORTED MlirAttribute
++stablehloEvalModule(MlirModule module, int nArgs, MlirAttribute const* args,
++                    const char* probeInstrumentationDir, int* errorCode);
+ 
+ #ifdef __cplusplus
+ }
+diff --ruN a/stablehlo/stablehlo/integrations/python/StablehloApi.cpp b/stablehlo/stablehlo/integrations/python/StablehloApi.cpp
+--- stablehlo/stablehlo/integrations/python/StablehloApi.cpp
++++ stablehlo/stablehlo/integrations/python/StablehloApi.cpp
+@@ -146,8 +146,9 @@
+   //
+   m.def(
+       "eval_module",
+-      [](MlirModule module,
+-         std::vector<MlirAttribute> &args) -> std::vector<MlirAttribute> {
++      [](MlirModule module, std::vector<MlirAttribute> &args,
++         const std::string &probe_instrumentation_dir)
++          -> std::vector<MlirAttribute> {
+         for (auto arg : args) {
+           if (!mlirAttributeIsADenseElements(arg)) {
+             throw nb::value_error("input args must be DenseElementsAttr");
+@@ -156,7 +157,8 @@
+ 
+         int errorCode(0);
+         MlirAttribute resultArrayAttr =
+-            stablehloEvalModule(module, args.size(), args.data(), &errorCode);
++            stablehloEvalModule(module, args.size(), args.data(),
++                                probe_instrumentation_dir.c_str(), &errorCode);
+ 
+         if (errorCode != 0) {
+           throw nb::value_error("interpreter failed");
+@@ -168,7 +170,8 @@
+         }
+         return pyResults;
+       },
+-      nb::arg("module"), nb::arg("args"));
++      nb::arg("module"), nb::arg("args"),
++      nb::arg("probe_instrumentation_dir") = "");
+ }
+ 
+ void AddPortableApi(nb::module_ &m) {
+diff --ruN a/stablehlo/stablehlo/integrations/python/StablehloModule.cpp b/stablehlo/stablehlo/integrations/python/StablehloModule.cpp
+--- stablehlo/stablehlo/integrations/python/StablehloModule.cpp
++++ stablehlo/stablehlo/integrations/python/StablehloModule.cpp
+@@ -19,6 +19,7 @@
+ #include "nanobind/nanobind.h"
+ #include "nanobind/stl/string.h"
+ #include "nanobind/stl/vector.h"
++#include "stablehlo/integrations/c/InterpreterDialect.h"
+ #include "stablehlo/integrations/c/StablehloAttributes.h"
+ #include "stablehlo/integrations/c/StablehloDialect.h"
+ #include "stablehlo/integrations/c/StablehloPasses.h"
+@@ -59,6 +60,17 @@
+       "register_dialect",
+       [](MlirContext context, bool load) {
+         MlirDialectHandle dialect = mlirGetDialectHandle__stablehlo__();
++        mlirDialectHandleRegisterDialect(dialect, context);
++        if (load) {
++          mlirDialectHandleLoadDialect(dialect, context);
++        }
++      },
++      nb::arg("context"), nb::arg("load") = true);
++
++  m.def(
++      "register_interpreter_dialect",
++      [](MlirContext context, bool load) {
++        MlirDialectHandle dialect = mlirGetDialectHandle__interpreter__();
+         mlirDialectHandleRegisterDialect(dialect, context);
+         if (load) {
+           mlirDialectHandleLoadDialect(dialect, context);
+diff --ruN a/stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td b/stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
+--- stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
++++ stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
+@@ -0,0 +1,22 @@
++/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
++   Copyright 2022 The StableHLO Authors.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#ifndef STABLEHLO_INTEGRATIONS_PYTHON_INTERPRETER_OPS
++#define STABLEHLO_INTEGRATIONS_PYTHON_INTERPRETER_OPS
++
++include "third_party/stablehlo/stablehlo/reference/InterpreterOps.h"
++
++#endif
+diff --ruN a/stablehlo/stablehlo/integrations/python/tests/stablehlo.py b/stablehlo/stablehlo/integrations/python/tests/stablehlo.py
+--- stablehlo/stablehlo/integrations/python/tests/stablehlo.py
++++ stablehlo/stablehlo/integrations/python/tests/stablehlo.py
+@@ -18,7 +18,12 @@
+ # pylint: disable=wildcard-import,undefined-variable
+ 
+ import io
++import os
+ import re
++import tempfile
++
++from jax.interpreters import mlir
++import jax.numpy as jnp
+ from mlir import ir
+ from mlir import passmanager as pm
+ from mlir.dialects import stablehlo
+@@ -28,6 +33,7 @@
+ def run(f):
+   with ir.Context() as context:
+     stablehlo.register_dialect(context)
++    stablehlo.register_interpreter_dialect(context)
+     f()
+   return f
+ 
+@@ -44,7 +50,7 @@
+ def test_comparison_direction_attr():
+   attr = stablehlo.ComparisonDirectionAttr.get("EQ")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<comparison_direction EQ>")
++  assert str(attr) == "#stablehlo<comparison_direction EQ>"
+   assert attr.value == "EQ"
+ 
+ 
+@@ -52,7 +58,7 @@
+ def test_comparison_type_attr():
+   attr = stablehlo.ComparisonTypeAttr.get("FLOAT")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<comparison_type FLOAT>")
++  assert str(attr) == "#stablehlo<comparison_type FLOAT>"
+   assert attr.value == "FLOAT"
+ 
+ 
+@@ -67,9 +73,11 @@
+       kernel_spatial_dimensions=[2, 3],
+       output_batch_dimension=0,
+       output_feature_dimension=1,
+-      output_spatial_dimensions=[2, 3])
+-  assert str(attr) == ("#stablehlo.conv<[b, f, 0, 1, 2]x[i, o, 0, 1]->"
+-                       "[b, f, 0, 1]>")
++      output_spatial_dimensions=[2, 3],
++  )
++  assert str(attr) == (
++      "#stablehlo.conv<[b, f, 0, 1, 2]x[i, o, 0, 1]->[b, f, 0, 1]>"
++  )
+   assert attr is not None
+   assert attr.input_batch_dimension == 0
+   assert attr.input_feature_dimension == 1
+@@ -92,13 +100,16 @@
+       lhs_component_count=1,
+       rhs_component_count=1,
+       num_primitive_operations=3,
+-      allow_imprecise_accumulation=False)
+-  assert attr is not None
+-  assert str(attr) == ("#stablehlo.dot_algorithm<lhs_precision_type = bf16, "
+-                       "rhs_precision_type = bf16, accumulation_type = f32, "
+-                       "lhs_component_count = 1, rhs_component_count = 1, "
+-                       "num_primitive_operations = 3, "
+-                       "allow_imprecise_accumulation = false>")
++      allow_imprecise_accumulation=False,
++  )
++  assert attr is not None
++  assert str(attr) == (
++      "#stablehlo.dot_algorithm<lhs_precision_type = bf16, "
++      "rhs_precision_type = bf16, accumulation_type = f32, "
++      "lhs_component_count = 1, rhs_component_count = 1, "
++      "num_primitive_operations = 3, "
++      "allow_imprecise_accumulation = false>"
++  )
+   assert isinstance(attr.lhs_precision_type, ir.BF16Type)
+   assert isinstance(attr.rhs_precision_type, ir.BF16Type)
+   assert isinstance(attr.accumulation_type, ir.F32Type)
+@@ -114,12 +125,15 @@
+       lhs_batching_dimensions=[0, 1],
+       rhs_batching_dimensions=[2, 3],
+       lhs_contracting_dimensions=[4, 5],
+-      rhs_contracting_dimensions=[6, 7])
+-  assert attr is not None
+-  assert str(attr) == ("#stablehlo.dot<lhs_batching_dimensions = [0, 1], "
+-                       "rhs_batching_dimensions = [2, 3], "
+-                       "lhs_contracting_dimensions = [4, 5], "
+-                       "rhs_contracting_dimensions = [6, 7]>")
++      rhs_contracting_dimensions=[6, 7],
++  )
++  assert attr is not None
++  assert str(attr) == (
++      "#stablehlo.dot<lhs_batching_dimensions = [0, 1], "
++      "rhs_batching_dimensions = [2, 3], "
++      "lhs_contracting_dimensions = [4, 5], "
++      "rhs_contracting_dimensions = [6, 7]>"
++  )
+   assert attr.lhs_batching_dimensions == [0, 1]
+   assert attr.rhs_batching_dimensions == [2, 3]
+   assert attr.lhs_contracting_dimensions == [4, 5]
+@@ -130,7 +144,7 @@
+ def test_fft_type_attr():
+   attr = stablehlo.FftTypeAttr.get("FFT")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<fft_type FFT>")
++  assert str(attr) == "#stablehlo<fft_type FFT>"
+   assert attr.value == "FFT"
+ 
+ 
+@@ -164,13 +178,14 @@
+ @run
+ def test_output_operand_alias():
+   attr = stablehlo.OutputOperandAlias.get(
+-      output_tuple_indices=[0],
+-      operand_index=0,
+-      operand_tuple_indices=[1])
+-  assert attr is not None
+-  assert str(attr) == ("#stablehlo.output_operand_alias<output_tuple_indices = [0], "
+-                       "operand_index = 0, "
+-                       "operand_tuple_indices = [1]>")
++      output_tuple_indices=[0], operand_index=0, operand_tuple_indices=[1]
++  )
++  assert attr is not None
++  assert str(attr) == (
++      "#stablehlo.output_operand_alias<output_tuple_indices = [0], "
++      "operand_index = 0, "
++      "operand_tuple_indices = [1]>"
++  )
+   assert attr.output_tuple_indices == [0]
+   assert attr.operand_index == 0
+   assert attr.operand_tuple_indices == [1]
+@@ -180,7 +195,7 @@
+ def test_precision_attr():
+   attr = stablehlo.PrecisionAttr.get("DEFAULT")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<precision DEFAULT>")
++  assert str(attr) == "#stablehlo<precision DEFAULT>"
+   assert attr.value == "DEFAULT"
+ 
+ 
+@@ -188,7 +203,7 @@
+ def test_rng_algorithm_attr():
+   attr = stablehlo.RngAlgorithmAttr.get("DEFAULT")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<rng_algorithm DEFAULT>")
++  assert str(attr) == "#stablehlo<rng_algorithm DEFAULT>"
+   assert attr.value == "DEFAULT"
+ 
+ 
+@@ -196,7 +211,7 @@
+ def test_rng_distribution_attr():
+   attr = stablehlo.RngDistributionAttr.get("UNIFORM")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<rng_distribution UNIFORM>")
++  assert str(attr) == "#stablehlo<rng_distribution UNIFORM>"
+   assert attr.value == "UNIFORM"
+ 
+ 
+@@ -231,7 +246,7 @@
+ def test_transpose_attr():
+   attr = stablehlo.TransposeAttr.get("TRANSPOSE")
+   assert attr is not None
+-  assert str(attr) == ("#stablehlo<transpose TRANSPOSE>")
++  assert str(attr) == "#stablehlo<transpose TRANSPOSE>"
+   assert attr.value == "TRANSPOSE"
+ 
+ 
+@@ -293,24 +308,32 @@
+ }}
+ """
+ 
++_ASM_FORMAT_WITH_PROBE = r"""
++func.func @test(%arg0: tensor<{0}>) -> tensor<{0}> {{
++  %0 = stablehlo.add %arg0, %arg0 : (tensor<{0}>, tensor<{0}>) -> tensor<{0}>
++  %1 = interpreter.probe %0, probe_id = "probe0" : tensor<{0}>
++  func.return %1 : tensor<{0}>
++}}
++"""
++
+ 
+ @run
+ def test_reference_api():
+   # Formatted as (tensor_type, np_value)
+   # Program runs arg + arg, which is used for expected value
+   tests = [
+-    # No numpy types for f8 - skipping fp8 tests
+-    ("f16", np.asarray(1, np.float16)),
+-    ("f32", np.asarray(2, np.float32)),
+-    ("f64", np.asarray(3, np.double)),
+-    ("1xi8", np.asarray([4], np.int8)),
+-    ("1xi16", np.asarray([5], np.int16)),
+-    ("1xi32", np.asarray([-6], np.int32)),
+-    # Numpy's uint treated as int by DenseElementsAttr, skipping np.uint tests
+-    ("2x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2,2)),
+-    ("2x1x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2,1,2)),
+-    ("?x?xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2,2)),
+-    ("?x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2,2)),
++      # No numpy types for f8 - skipping fp8 tests
++      ("f16", np.asarray(1, np.float16)),
++      ("f32", np.asarray(2, np.float32)),
++      ("f64", np.asarray(3, np.double)),
++      ("1xi8", np.asarray([4], np.int8)),
++      ("1xi16", np.asarray([5], np.int16)),
++      ("1xi32", np.asarray([-6], np.int32)),
++      # Numpy's uint treated as int by DenseElementsAttr, skipping np.uint tests
++      ("2x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2, 2)),
++      ("2x1x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2, 1, 2)),
++      ("?x?xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2, 2)),
++      ("?x2xf16", np.asarray([1, 2, 3, 4], np.float16).reshape(2, 2)),
+   ]
+   for test in tests:
+     tensor_type, arg = test
+@@ -390,20 +413,65 @@
+ 
+ @run
+ def test_result_accuracy_attr_default():
+-  attr = stablehlo.ResultAccuracyAttr.get(atol=0, rtol=0, ulps=0, mode="DEFAULT")
++  attr = stablehlo.ResultAccuracyAttr.get(
++      atol=0, rtol=0, ulps=0, mode="DEFAULT"
++  )
+   assert attr is not None
+   assert attr.mode == "DEFAULT"
+   assert attr.atol == 0
+   assert attr.rtol == 0
+   assert attr.ulps == 0
+ 
++
+ @run
+ def test_result_accuracy_attr_tolerance():
+-  attr = stablehlo.ResultAccuracyAttr.get(atol=1e-5, rtol=1.0,
+-                                          ulps=2, mode="TOLERANCE")
++  attr = stablehlo.ResultAccuracyAttr.get(
++      atol=1e-5, rtol=1.0, ulps=2, mode="TOLERANCE"
++  )
+   assert attr is not None
+   assert attr.mode == "TOLERANCE"
+   assert attr.atol == 1e-5
+   assert attr.rtol == 1.0
+   assert attr.ulps == 2
+ 
++
++def _run_probe_test(tensor_type, arg):
++  """Helper to run a probe test and verify output files."""
++  test_tmpdir_base = os.environ.get("TEST_TMPDIR")
++  with tempfile.TemporaryDirectory(dir=test_tmpdir_base) as tmpdir:
++    m = ir.Module.parse(_ASM_FORMAT_WITH_PROBE.format(tensor_type))
++
++    # bfloat16 requires special handling for DenseElementsAttr creation
++    if arg.dtype == jnp.bfloat16:
++      element_type = mlir.dtype_to_ir_type(arg.dtype)
++      shaped_type = ir.RankedTensorType.get(
++          arg.shape, element_type, loc=ir.Location.unknown(context=ir.Context())
++      )
++      args = [ir.DenseElementsAttr.get(arg, type=shaped_type)]
++    else:
++      args = [ir.DenseElementsAttr.get(arg)]
++
++    # Call eval_module, directing probe outputs to the temporary directory.
++    stablehlo.eval_module(m, args, probe_instrumentation_dir=tmpdir)
++
++    # Verify that the expected probe files were created. The interpreter names
++    # probe files probe1.npy, probe2.npy, etc. The `probe_id` is used as
++    # metadata in `index.csv`.
++    probe_file = os.path.join(tmpdir, "probe1.npy")
++    metadata_file = os.path.join(tmpdir, "index.csv")
++    assert os.path.exists(probe_file), f"Probe file not found: {probe_file}"
++    assert os.path.exists(
++        metadata_file
++    ), f"Metadata file not found: {metadata_file}"
++
++
++@run
++def test_reference_api_with_probe():
++  """Tests that probe files are created in the specified directory."""
++  _run_probe_test("f32", np.asarray(2, np.float32))
++
++
++@run
++def test_reference_api_with_probe_bf16():
++  """Tests that probe files are created for bf16 tensors."""
++  _run_probe_test("bf16", np.asarray(2, jnp.bfloat16))
+diff --ruN a/stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp b/stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
+--- stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
++++ stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
+@@ -43,7 +43,7 @@
+   InterpreterInstrumentWithProbePass(
+       const InterpreterInstrumentWithProbePassOptions& opts)
+       : InterpreterInstrumentWithProbePassBase<
+-            InterpreterInstrumentWithProbePass>(opts){};
++            InterpreterInstrumentWithProbePass>(opts) {};
+   void runOnOperation() override;
+ 
+  private:
+@@ -122,7 +122,16 @@
+ }
+ 
+ bool InterpreterInstrumentWithProbePass::shouldProbeValue(Value value) const {
+-  return isa<TensorType>(value.getType());
++  // Check if the value's type is a RankedTensorType.
++  auto tensorType = dyn_cast<RankedTensorType>(value.getType());
++  if (!tensorType) return false;
++
++  // Check if the RankedTensorType has a static shape.
++  if (!tensorType.hasStaticShape()) return false;
++
++  Type elementType = tensorType.getElementType();
++
++  return elementType.isIntOrFloat() || isa<ComplexType>(elementType);
+ }
+ 
+ }  // namespace
+diff --ruN a/stablehlo/stablehlo/reference/NumPy.cpp b/stablehlo/stablehlo/reference/NumPy.cpp
+--- stablehlo/stablehlo/reference/NumPy.cpp
++++ stablehlo/stablehlo/reference/NumPy.cpp
+@@ -319,6 +319,7 @@
+   if (type.isF16()) return Functor<uint16_t>()(std::forward<Args>(args)...);
+   if (type.isF32()) return Functor<float>()(std::forward<Args>(args)...);
+   if (type.isF64()) return Functor<double>()(std::forward<Args>(args)...);
++  if (type.isBF16()) return Functor<uint16_t>()(std::forward<Args>(args)...);
+   if (auto complexTy = dyn_cast<ComplexType>(type)) {
+     auto complexElemTy = complexTy.getElementType();
+ 
 diff --ruN a/stablehlo/stablehlo/tests/infer_stablehlo.mlir b/stablehlo/stablehlo/tests/infer_stablehlo.mlir
 --- stablehlo/stablehlo/tests/infer_stablehlo.mlir
 +++ stablehlo/stablehlo/tests/infer_stablehlo.mlir
@@ -161,4 +888,778 @@ diff --ruN a/stablehlo/stablehlo/tests/infer_stablehlo.mlir b/stablehlo/stablehl
  // CHECK-LABEL: func @dot_general_c12
  // CHECK-SAME: (%[[ARG0:.*]]: tensor<?x?x?xf32>, %[[ARG1:.*]]: tensor<?x?x?xf32>
  func.func @dot_general_c12(%arg0: tensor<?x?x?xf32>, %arg1: tensor<?x?x?xf32>) -> tensor<3xindex> {
+diff --ruN a/stablehlo/stablehlo/tests/interpret/probe.mlir b/stablehlo/stablehlo/tests/interpret/probe.mlir
+--- stablehlo/stablehlo/tests/interpret/probe.mlir
++++ stablehlo/stablehlo/tests/interpret/probe.mlir
+@@ -43,6 +43,17 @@
+   %2 = stablehlo.add %0, %1 : tensor<3xf64>
+   %3 = interpreter.probe %2, probe_id = "probe_f64" : tensor<3xf64>
+   check.expect_serialized_eq %3, probe_id = "probe_f64" : tensor<3xf64>
++  func.return
++}
++
++// -----
++
++func.func @probe_bf16() {
++  %0 = stablehlo.constant dense<[1.0, 2.5, -3.0]> : tensor<3xbf16>
++  %1 = stablehlo.constant dense<[0.5, 1.5, 0.0]> : tensor<3xbf16>
++  %2 = stablehlo.add %0, %1 : tensor<3xbf16>
++  %3 = interpreter.probe %2, probe_id = "probe_bf16" : tensor<3xbf16>
++  check.expect_serialized_eq %3, probe_id = "probe_bf16" : tensor<3xbf16>
+   func.return
+ }
+ 
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
+@@ -246,6 +246,9 @@
+ 
+ // -----
+ 
++////////
++// ConvertOp
++
+ // CHECK-LABEL: func @eval_convert_f32_to_i64
+ func.func @eval_convert_f32_to_i64() -> tensor<2xi64> {
+   // CHECK-NOT: stablehlo.convert
+@@ -254,6 +257,42 @@
+   %0 = stablehlo.constant dense<[1.0, 2.0]> : tensor<2xf32>
+   %1 = stablehlo.convert %0 : (tensor<2xf32>) -> tensor<2xi64>
+   func.return %1 : tensor<2xi64>
++}
++
++// CHECK-LABEL: func @eval_convert_bool_f32
++func.func @eval_convert_bool_f32() -> tensor<2xf32> {
++  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[0.000000e+00, 1.000000e+00]> : tensor<2xf32>
++  %cst = stablehlo.constant dense<[0, 1]> : tensor<2xi1>
++  %0 = stablehlo.convert %cst : (tensor<2xi1>) -> tensor<2xf32>
++  // CHECK-NEXT: return [[CST]]
++  func.return %0 : tensor<2xf32>
++}
++
++// CHECK-LABEL: func @eval_convert_bool_i32
++func.func @eval_convert_bool_i32() -> tensor<2xi32> {
++  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[0, 1]> : tensor<2xi32>
++  %cst = stablehlo.constant dense<[0, 1]> : tensor<2xi1>
++  %0 = stablehlo.convert %cst : (tensor<2xi1>) -> tensor<2xi32>
++  // CHECK-NEXT: return [[CST]]
++  func.return %0 : tensor<2xi32>
++}
++
++// CHECK-LABEL: func @eval_convert_i32_bool
++func.func @eval_convert_i32_bool() -> tensor<3xi1> {
++  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[false, true, true]> : tensor<3xi1>
++  %cst = stablehlo.constant dense<[0, 1, 10]> : tensor<3xi32>
++  %0 = stablehlo.convert %cst : (tensor<3xi32>) -> tensor<3xi1>
++  // CHECK-NEXT: return [[CST]]
++  func.return %0 : tensor<3xi1>
++}
++
++// CHECK-LABEL: func @eval_convert_f32_bool
++func.func @eval_convert_f32_bool() -> tensor<4xi1> {
++  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[true, false, true, true]> : tensor<4xi1>
++  %cst = stablehlo.constant dense<[-1.0, 0.0, 1.0, 10.0]> : tensor<4xf32>
++  %0 = stablehlo.convert %cst : (tensor<4xf32>) -> tensor<4xi1>
++  // CHECK-NEXT: return [[CST]]
++  func.return %0 : tensor<4xi1>
+ }
+ 
+ // -----
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
+@@ -1,4 +1,4 @@
+-// RUN: stablehlo-opt --interpreter-instrument-with-probe="useDebugInfo=true" --split-input-file --verify-diagnostics %s | FileCheck %s
++// RUN: stablehlo-opt --allow-unregistered-dialect --interpreter-instrument-with-probe="useDebugInfo=true" --split-input-file --verify-diagnostics %s | FileCheck %s
+ 
+ // CHECK-LABEL: func @instrument_basic_no_location
+ func.func @instrument_basic_no_location(%arg0: tensor<1x2xi32>, %arg1: tensor<1x2xi32>) -> tensor<1x2xi32> {
+@@ -98,3 +98,14 @@
+ 
+   func.return %results1 : tensor<i64>
+ }
++
++// -----
++
++// CHECK-LABEL: func @test_string_type
++func.func @test_string_type() -> tensor<!tf_type.string> {
++  // CHECK: "tf.Const"
++  // CHECK-NOT: interpreter.probe
++  // CHECK-NEXT: return
++  %0 = "tf.Const"() {value = dense<"hello"> : tensor<!tf_type.string>} : () -> tensor<!tf_type.string>
++  return %0 : tensor<!tf_type.string>
++}
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
+@@ -19,7 +19,8 @@
+ 
+ // -----
+ 
+-// expected-error@-3{{must have no more than one function or a `main` function to clearly identify which function will be refined}}
++// expected-error@+1{{must have no more than one function or a `main` function to clearly identify which function will be refined}}
++module {
+ func.func @error_too_many_functions(%arg0: tensor<f32>) -> tensor<f32> {
+   %0 = func.call @helper(%arg0) : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+@@ -27,6 +28,7 @@
+ 
+ func.func private @helper(%arg0: tensor<f32>) -> tensor<f32> {
+   return %arg0 : tensor<f32>
++}
+ }
+ 
+ // -----
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
+@@ -1,6 +1,7 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=0.16.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @reduce_with_promotable_types(%arg0: tensor<4x4xf32>, %arg1 : tensor<f32>)
+     -> (tensor<4xf64>) {
+ 
+@@ -15,10 +16,12 @@
+ 
+   func.return %0: tensor<4xf64>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @all_reduce_with_promotable_types(%operand: tensor<f32>) -> tensor<f64> {
+ 
+   // expected-error @+1 {{failed to legalize operation 'vhlo.all_reduce_v2' that was explicitly marked illegal}}
+@@ -33,10 +36,12 @@
+ 
+   func.return %result : tensor<f64>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @reduce_scatter_with_promotable_types(%data: tensor<4x16xf32>) -> tensor<4x4xf64> {
+ 
+   // expected-error @+1 {{failed to legalize operation 'vhlo.reduce_scatter_v1' that was explicitly marked illegal}}
+@@ -50,10 +55,12 @@
+       use_global_device_ids} : (tensor<4x16xf32>) -> tensor<4x4xf64>
+   func.return %0 : tensor<4x4xf64>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @reduce_window_with_promotable_types(%arg0: tensor<4x2xf32>,
+     %arg1: tensor<4x2xf32>, %init0: tensor<f32>, %init1: tensor<f32>) ->
+     (tensor<2x2xf64>, tensor<2x2xf32>) {
+@@ -73,10 +80,12 @@
+               (tensor<2x2xf64>, tensor<2x2xf32>)
+   func.return %0#0, %0#1 : tensor<2x2xf64>, tensor<2x2xf32>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @scatter_with_promotable_types(%input_tensor: tensor<200x100x300xf32>,
+     %scatter_indices: tensor<10x2xi32>, %updates: tensor<10x300xf32>) ->
+       tensor<200x100x300xf64> {
+@@ -99,10 +108,12 @@
+       tensor<200x100x300xf64>
+   func.return %0 : tensor<200x100x300xf64>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
++// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
++module {
+ func.func @select_and_scatter_with_promotable_types(
+     %arg0: tensor<10x24x24x64xf32>,
+     %arg1: tensor<10x12x12x64xf32>) -> () {
+@@ -127,3 +138,4 @@
+         tensor<10x24x24x64xf64>
+   func.return
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
+@@ -1,17 +1,21 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=0.9.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.9.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v0.9.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_fp8_E5M2FNUZ(%arg0: tensor<f8E5M2FNUZ>) -> tensor<f8E5M2FNUZ> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E5M2FNUZ>
+   func.return %0 : tensor<f8E5M2FNUZ>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v0.9.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v0.9.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_fp8_E4M3FNUZ(%arg0: tensor<f8E4M3FNUZ>) -> tensor<f8E4M3FNUZ> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E4M3FNUZ>
+   func.return %0 : tensor<f8E4M3FNUZ>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
+@@ -1,6 +1,7 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.11.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.11.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.11.0}}
++module {
+ func.func public @send_op(%arg0: tensor<f32>, %arg1: !stablehlo.token) -> !stablehlo.token {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.send_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.send"(%arg0, %arg1) {
+@@ -10,10 +11,12 @@
+   } : (tensor<f32>, !stablehlo.token) -> !stablehlo.token
+   func.return %0 : !stablehlo.token
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.11.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.11.0}}
++module {
+ func.func public @recv_op(%arg0: !stablehlo.token) -> (tensor<f32>, !stablehlo.token) {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.recv_v2' that was explicitly marked illegal}}
+   %0:2 = "stablehlo.recv"(%arg0) {
+@@ -23,3 +26,4 @@
+   } : (!stablehlo.token) -> (tensor<f32>, !stablehlo.token)
+   func.return %0#0, %0#1 : tensor<f32>, !stablehlo.token
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
+@@ -1,17 +1,21 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.1.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.1.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.1.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_i2(%arg0: tensor<i2>) -> tensor<i2> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<i2>
+   func.return %0 : tensor<i2>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.1.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.1.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_ui2(%arg0: tensor<ui2>) -> tensor<ui2> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<ui2>
+   func.return %0 : tensor<ui2>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
+@@ -1,6 +1,7 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.2.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.2.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.2.0}}
++module {
+ func.func @custom_call_dictionary_attr(%arg0: tensor<f32>) -> tensor<f32> {
+ // expected-error @+1 {{failed to legalize operation 'vhlo.custom_call_v1' that was explicitly marked illegal}}
+ %0 = "stablehlo.custom_call"(%arg0) {
+@@ -10,10 +11,12 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.2.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.2.0}}
++module {
+ func.func @custom_call_dictionary_attr(%arg0: tensor<f32>) -> tensor<f32> {
+ // expected-error @+1 {{failed to legalize operation 'vhlo.custom_call_v1' that was explicitly marked illegal}}
+ %0 = "stablehlo.custom_call"(%arg0) {
+@@ -22,3 +25,4 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
+@@ -1,6 +1,7 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.4.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
++module {
+ func.func @all_reduce_variadic(%arg0: tensor<f32>, %arg1: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.all_reduce_v2' that was explicitly marked illegal}}
+   %0:2 = "stablehlo.all_reduce"(%arg0, %arg1) ({
+@@ -12,10 +13,12 @@
+   } : (tensor<f32>, tensor<f32>) -> (tensor<f32>, tensor<f32>)
+   func.return %0#0, %0#1 : tensor<f32>, tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
++module {
+ func.func @all_gather_variadic(%arg0: tensor<16x8xf32>, %arg1: tensor<16x8xf32>) -> (tensor<16x16xf32>, tensor<16x16xf32>) {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.all_gather_v2' that was explicitly marked illegal}}
+   %0:2 = "stablehlo.all_gather"(%arg0, %arg1) {
+@@ -24,10 +27,12 @@
+   } : (tensor<16x8xf32>, tensor<16x8xf32>) -> (tensor<16x16xf32>, tensor<16x16xf32>)
+   func.return %0#0, %0#1 : tensor<16x16xf32>, tensor<16x16xf32>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
++module {
+ func.func @all_to_all_variadic(%arg0: tensor<4x16xf32>, %arg1: tensor<5x16xf32>) -> (tensor<16x4xf32>, tensor<20x4xf32>) {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.all_to_all_v2' that was explicitly marked illegal}}
+   %0:2 = "stablehlo.all_to_all"(%arg0, %arg1) {
+@@ -39,3 +44,4 @@
+   } : (tensor<4x16xf32>, tensor<5x16xf32>) -> (tensor<16x4xf32>, tensor<20x4xf32>)
+   func.return %0#0, %0#1 : tensor<16x4xf32>, tensor<20x4xf32>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
+@@ -1,6 +1,7 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.5.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.5.0}}
++module {
+ func.func @dot_general_algorithm(%arg0: tensor<2x2x2xi64>, %arg1: tensor<2x2x2xi64>) -> tensor<2x2x2xi64> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.dot_general_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.dot_general"(%arg0, %arg1) <{
+@@ -9,19 +10,24 @@
+     algorithm = #stablehlo.dot_algorithm<lhs_precision_type = tf32, rhs_precision_type = tf32, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = 1, allow_imprecise_accumulation = false>
+   }> : (tensor<2x2x2xi64>, tensor<2x2x2xi64>) -> tensor<2x2x2xi64>  return %0 : tensor<2x2x2xi64>
+ }
+-
+-// -----
+-
+-// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
+-func.func @none_type() attributes {stablehlo.attr = none } {
+-  return
+ }
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.5.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
++func.func @none_type() attributes {stablehlo.attr = none } {
++  return
++}
++}
++
++// -----
++
++// expected-error @+2 {{failed to convert VHLO to v1.5.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @tf32_type() attributes {stablehlo.attr = tf32 } {
+   return
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
+@@ -1,17 +1,21 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.6.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.6.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.6.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f8E4M3(%arg0: tensor<f8E4M3>) -> tensor<f8E4M3> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E4M3>
+   func.return %0 : tensor<f8E4M3>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.6.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.6.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f8E3M4(%arg0: tensor<f8E3M4>) -> tensor<f8E3M4> {
+   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E3M4>
+   func.return %0 : tensor<f8E3M4>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
+@@ -1,35 +1,43 @@
+ // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.7.0' --verify-diagnostics --split-input-file %s
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f4E2M1FN(%arg0: tensor<f4E2M1FN>, %arg1: tensor<f4E2M1FN>) -> tensor<f4E2M1FN> {
+   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f4E2M1FN>, tensor<f4E2M1FN>) -> tensor<f4E2M1FN>
+   func.return %0 : tensor<f4E2M1FN>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f6E2M3FN(%arg0: tensor<f6E2M3FN>, %arg1: tensor<f6E2M3FN>) -> tensor<f6E2M3FN> {
+   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f6E2M3FN>, tensor<f6E2M3FN>) -> tensor<f6E2M3FN>
+   func.return %0 : tensor<f6E2M3FN>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f6E3M2FN(%arg0: tensor<f6E3M2FN>, %arg1: tensor<f6E3M2FN>) -> tensor<f6E3M2FN> {
+   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f6E3M2FN>, tensor<f6E3M2FN>) -> tensor<f6E3M2FN>
+   func.return %0 : tensor<f6E3M2FN>
+ }
++}
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
+-// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
++// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
++module {
+ func.func @type_f8E8M0FNU(%arg0: tensor<f8E8M0FNU>, %arg1: tensor<f8E8M0FNU>) -> tensor<f8E8M0FNU> {
+   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f8E8M0FNU>, tensor<f8E8M0FNU>) -> tensor<f8E8M0FNU>
+   func.return %0 : tensor<f8E8M0FNU>
+ }
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
+@@ -11,7 +11,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.8.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.8.0}}
++module {
+ func.func @attr_result_accuracy_highest(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.exponential_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.exponential"(%arg0) {
+@@ -19,4 +20,5 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
+@@ -11,7 +11,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @cbrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.cbrt_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.cbrt"(%arg0) {
+@@ -19,6 +20,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -32,7 +34,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @cosine_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.cosine_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.cosine"(%arg0) {
+@@ -40,6 +43,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -53,7 +57,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @exponential_minus_one_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.exponential_minus_one_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.exponential_minus_one"(%arg0) {
+@@ -61,6 +66,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -74,7 +80,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @log_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.log_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.log"(%arg0) {
+@@ -82,6 +89,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -95,7 +103,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @log_plus_one_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.log_plus_one_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.log_plus_one"(%arg0) {
+@@ -103,6 +112,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -116,7 +126,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @logistic_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.logistic_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.logistic"(%arg0) {
+@@ -124,6 +135,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -137,7 +149,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @rsqrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.rsqrt_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.rsqrt"(%arg0) {
+@@ -145,6 +158,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -158,7 +172,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @sine_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.sine_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.sine"(%arg0) {
+@@ -166,6 +181,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -179,7 +195,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @sqrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.sqrt_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.sqrt"(%arg0) {
+@@ -187,6 +204,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -200,7 +218,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @tan_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.tan_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.tan"(%arg0) {
+@@ -208,6 +227,7 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
++}
+ 
+ // -----
+ 
+@@ -221,7 +241,8 @@
+ 
+ // -----
+ 
+-// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
++// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
++module {
+ func.func @tanh_invalid(%arg0: tensor<f32>) -> tensor<f32> {
+   // expected-error @+1 {{failed to legalize operation 'vhlo.tanh_v2' that was explicitly marked illegal}}
+   %0 = "stablehlo.tanh"(%arg0) {
+@@ -229,4 +250,5 @@
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
+-
++}
++
+diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
+--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
+@@ -200,8 +200,11 @@
+   auto newType = getElementTypeOrSelf(resultType);
+   size_t newBitWidth = newType.getIntOrFloatBitWidth();
+ 
+-  bool isOldTypeUnsigned = oldType.isInteger(1) || oldType.isUnsignedInteger();
+-  bool isNewTypeUnsigned = newType.isInteger(1) || newType.isUnsignedInteger();
++  bool isOldTypeUnsigned =
++      oldType.isSignlessInteger(1) || oldType.isUnsignedInteger();
++  bool isNewTypeUnsigned =
++      newType.isSignlessInteger(1) || newType.isUnsignedInteger();
++  bool isNewTypeBoolean = newType.isSignlessInteger(1);
+ 
+   if (isa<FloatType>(oldType)) {
+     if (auto newFloatType = dyn_cast<FloatType>(newType)) {
+@@ -217,6 +220,16 @@
+                                           llvm::RoundingMode::NearestTiesToEven,
+                                           &losesInfo);
+             return newValue;
++          });
++    }
++
++    // Float -> Boolean
++    if (isNewTypeBoolean) {
++      return foldConvertHelper<FloatAttr, IntegerAttr>(
++          rewriter, op, elements, resultType,
++          [newBitWidth](const APFloat& operand, bool& /*castStatus*/) {
++            APInt resVal(1, operand.isZero() ? 0 : 1);
++            return resVal.sextOrTrunc(newBitWidth);
+           });
+     }
+ 
+@@ -249,6 +262,16 @@
+           apf.convertFromAPInt(operand, !isOldTypeUnsigned,
+                                APFloat::rmNearestTiesToEven);
+           return apf;
++        });
++  }
++
++  // Int -> Boolean
++  if (isNewTypeBoolean) {
++    return foldConvertHelper<IntegerAttr, IntegerAttr>(
++        rewriter, op, elements, resultType,
++        [newBitWidth](const APInt& operand, bool& /*castStatus*/) {
++          APInt resVal(1, operand.isZero() ? 0 : 1);
++          return resVal.sextOrTrunc(newBitWidth);
+         });
+   }
+ 
 

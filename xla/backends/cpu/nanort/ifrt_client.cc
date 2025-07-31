@@ -113,12 +113,15 @@ ifrt::Future<> Ready(absl::Status status = absl::OkStatus()) {
 template <typename Self, typename Base>
 class NanoValue : public llvm::RTTIExtends<Self, Base> {
  public:
-  explicit NanoValue(NanoIfrtClient* client) : client_(client) {}
+  explicit NanoValue(NanoIfrtClient* client)
+      : client_(client), user_context_(ifrt::UserContextScope::current()) {}
 
   ifrt::Client* client() const override { return client_; }
 
   // Called by subclasses to get access to client() without having to cast.
   NanoIfrtClient* nano_client() const { return client_; }
+
+  ifrt::UserContextRef user_context() const override { return user_context_; }
 
   // All nano values are immediately ready.
   ifrt::Future<> GetReadyFuture() const override { return Ready(); }
@@ -131,7 +134,7 @@ class NanoValue : public llvm::RTTIExtends<Self, Base> {
   // deleted. Meant to be called with TF_RETURN_IF_ERROR at the top of
   // relevant methods.
   absl::Status ValidateNotDeleted() const {
-    if (IsDeleted()) {
+    if (ABSL_PREDICT_FALSE(IsDeleted())) {
       return absl::FailedPreconditionError("Tried to access a deleted value.");
     }
     return absl::OkStatus();
@@ -139,6 +142,7 @@ class NanoValue : public llvm::RTTIExtends<Self, Base> {
 
  private:
   NanoIfrtClient* client_;
+  const ifrt::UserContextRef user_context_;
 };
 
 // Array implementation.
@@ -189,7 +193,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
     DataPtr data_ptr;
 
     bool layout_compatible = LayoutCompatible(dtype, shape, byte_strides);
-    bool aligned = reinterpret_cast<uintptr_t>(data) % Align() == 0;
+    bool aligned = reinterpret_cast<uintptr_t>(data) % MinAlign() == 0;
 
     if (!layout_compatible || !aligned) {
       // Input is not aligned, or has a weird layout, so we need to copy it.
@@ -636,14 +640,14 @@ class ShardedNanoArray final : public NanoValue<ShardedNanoArray, ifrt::Array> {
   absl::StatusOr<tsl::RCReference<NanoArray>> Assemble(
       ifrt::ShardingRef sharding) {
     TF_ASSIGN_OR_RETURN(auto index_domains, sharding->IndexDomains(shape()));
-    if (index_domains.size() != shards_.size()) {
+    if (ABSL_PREDICT_FALSE(index_domains.size() != shards_.size())) {
       return absl::FailedPreconditionError(
           absl::StrCat("Number of index domains ", index_domains.size(),
                        " not equal to number of arrays ", shards_.size()));
     }
 
     for (int i = 0; i < index_domains.size(); ++i) {
-      if (index_domains[i].shape() != shards_[i]->shape()) {
+      if (ABSL_PREDICT_FALSE(index_domains[i].shape() != shards_[i]->shape())) {
         return absl::FailedPreconditionError(absl::StrCat(
             "Index domain ", index_domains[i].shape().DebugString(),
             " not equal to array shape ", shards_[i]->shape().DebugString()));
@@ -766,8 +770,9 @@ class NanoExecutable final
       return InvalidArgument("NanoRT requires an HloProgram");
     }
     XlaComputation computation;
-    TF_RETURN_IF_ERROR(MlirToXlaComputation(xla_program->mlir_module(),
-                                            computation, false, true, false));
+    TF_RETURN_IF_ERROR(MlirToXlaComputation(
+        xla_program->mlir_module(), computation, /*use_tuple_args=*/false,
+        /*return_tuple=*/true, /*exec_build_options=*/nullptr));
     TF_ASSIGN_OR_RETURN(auto nano_executable,
                         client->nano_client()->Compile(computation));
 
@@ -859,6 +864,8 @@ class NanoExecutable final
   absl::StatusOr<std::string> Serialize() const override {
     return absl::UnimplementedError("Serialize is not implemented.");
   }
+
+  ifrt::UserContextRef user_context() const override { return {}; }
 
   ifrt::Future<> GetReadyFuture() const override { return Ready(); }
 
@@ -969,7 +976,7 @@ class NanoExecutable final
       for (const auto dim : sharding.tile_assignment_dimensions()) {
         num_tiles *= dim;
       }
-      if (num_tiles > client->devices().size()) {
+      if (ABSL_PREDICT_FALSE(num_tiles > client->devices().size())) {
         return absl::InvalidArgumentError(absl::StrFormat(
             "Sharding has %d tiles, but only %d devices are available.",
             num_tiles, client->devices().size()));
@@ -1226,9 +1233,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
     const void* data, ifrt::DType dtype, ifrt::Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides,
     ifrt::ShardingRef sharding, HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer,
-    tsl::RCReference<ifrt::UserContext> user_context) {
-  // Currently the `user_context` parameter is ignored.
+    std::function<void()> on_done_with_host_buffer) {
   bool make_copy = false;
   switch (semantics) {
     case HostBufferSemantics::kImmutableUntilTransferCompletes:
@@ -1249,15 +1254,12 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
 absl::StatusOr<std::vector<ifrt::ArrayRef>>
 NanoIfrtClient::MakeArraysFromHostBufferShards(
     absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
-    HostBufferSemantics semantics,
-    tsl::RCReference<ifrt::UserContext> user_context) {
-  return ifrt::ClientMakeArraysFromHostBufferShards(this, specs, semantics,
-                                                    std::move(user_context));
+    HostBufferSemantics semantics) {
+  return ifrt::ClientMakeArraysFromHostBufferShards(this, specs, semantics);
 }
 
 absl::StatusOr<std::vector<ifrt::ArrayRef>> NanoIfrtClient::MakeErrorArrays(
-    const absl::Status& error, absl::Span<const ifrt::ArraySpec> array_specs,
-    tsl::RCReference<ifrt::UserContext> user_context) {
+    const absl::Status& error, absl::Span<const ifrt::ArraySpec> array_specs) {
   return absl::UnimplementedError(
       "NanoIfrtClient does not support MakeErrorArrays.");
 }
@@ -1376,12 +1378,13 @@ absl::Span<ifrt::Device* const> NanoIfrtClient::GetAllDevices() const {
 absl::StatusOr<ifrt::DeviceAssignment>
 NanoIfrtClient::GetDefaultDeviceAssignment(int num_replicas,
                                            int num_partitions) const {
-  if (num_replicas < 1 || num_partitions < 1) {
+  if (ABSL_PREDICT_FALSE(num_replicas < 1 || num_partitions < 1)) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Requested device assignment is invalid: %d replicas, "
                         "%d partitions",
                         num_replicas, num_partitions));
-  } else if (num_replicas * num_partitions > devices_.size()) {
+  }
+  if (ABSL_PREDICT_FALSE(num_replicas * num_partitions > devices_.size())) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Requested device assignment is too large for the number of devices "
         "available: %d vs. %d",
@@ -1399,7 +1402,8 @@ absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupDevice(
 
 absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupAddressableDevice(
     int local_hardware_id) const {
-  if (local_hardware_id < 0 || local_hardware_id >= devices_.size()) {
+  if (ABSL_PREDICT_FALSE(local_hardware_id < 0 ||
+                         local_hardware_id >= devices_.size())) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Device id %d is out of range [0, %d)",
                         local_hardware_id, devices_.size()));
@@ -1407,8 +1411,11 @@ absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupAddressableDevice(
   return devices_[local_hardware_id];
 }
 
-ifrt::DeviceListRef NanoIfrtClient::MakeDeviceList(
+absl::StatusOr<ifrt::DeviceListRef> NanoIfrtClient::MakeDeviceList(
     absl::Span<ifrt::Device* const> devices) const {
+  if (ABSL_PREDICT_TRUE(devices.size() == 1)) {
+    return single_device_lists_[devices[0]->Id().value()];
+  }
   return ifrt::BasicDeviceList::Create(devices);
 }
 
@@ -1433,10 +1440,13 @@ NanoIfrtClient::NanoIfrtClient(int32_t num_devices)
       memory_(std::make_unique<NanoMemory>(this)) {
   owned_devices_.reserve(num_devices);
   devices_.reserve(num_devices);
+  single_device_lists_.reserve(num_devices);
   for (int i = 0; i < num_devices; ++i) {
     owned_devices_.push_back(
         std::make_unique<NanoDevice>(this, ifrt::DeviceId(i), memory_.get()));
     devices_.push_back(owned_devices_.back().get());
+    single_device_lists_.push_back(ifrt::BasicDeviceList::Create(
+        absl::MakeConstSpan(&devices_.back(), 1)));
   }
 }
 

@@ -417,6 +417,7 @@ cc_library(
     ]),
     deps = [
         ":ifrt",
+        ":user_context",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
@@ -429,6 +430,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -466,6 +468,7 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
+        ":user_context",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
@@ -1095,6 +1098,22 @@ cc_library(
     ]),
     deps = [
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "user_context_test",
+    srcs = ["user_context_test.cc"],
+    deps = [
+        ":user_context",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
 )

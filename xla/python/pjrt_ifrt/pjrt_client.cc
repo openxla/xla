@@ -354,6 +354,8 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
       // further device ID remapping before IFRT devices are materialized.
       device.set_global_device_id(ifrt_device_id.value());
       device.set_device_kind(
+          // OSS requires explicit string conversion
+          // NOLINTNEXTLINE(*-redundant-string-conversions)
           std::string(pjrt_client->addressable_devices()[0]->device_kind()));
 
       // TODO(hyeontaek): Take optional device->slice_index mapping in
@@ -363,8 +365,11 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
         device.set_to_string("NonAddressable");
         device.set_debug_string("NonAddressable");
       } else {
+        // OSS requires explicit string conversion
+        // NOLINTBEGIN(*-redundant-string-conversions)
         device.set_to_string(std::string(pjrt_device->ToString()));
         device.set_debug_string(std::string(pjrt_device->DebugString()));
+        // NOLINTEND(*-redundant-string-conversions)
         SerializePjRtDeviceAttributes(pjrt_device->Attributes(), device);
       }
     }
@@ -400,10 +405,13 @@ LocalTopologyProto MakeLocalTopologyFromPjRtClient(
     DeviceProto& device_proto = *local_topology_proto.add_devices();
     device_proto.set_global_device_id(device->global_device_id().value());
     device_proto.set_local_device_ordinal(device->local_device_id().value());
+    // OSS requires explicit string conversion
+    // NOLINTBEGIN(*-redundant-string-conversions)
     device_proto.set_device_kind(
         std::string(device->description().device_kind()));
     device_proto.set_to_string(std::string(device->ToString()));
     device_proto.set_debug_string(std::string(device->DebugString()));
+    // NOLINTEND(*-redundant-string-conversions)
     SerializePjRtDeviceAttributes(device->Attributes(), device_proto);
   }
 
@@ -904,7 +912,7 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
   return LookupPjRtDevice(pjrt_device);
 }
 
-DeviceListRef PjRtClient::MakeDeviceList(
+absl::StatusOr<DeviceListRef> PjRtClient::MakeDeviceList(
     absl::Span<Device* const> devices) const {
   return xla::ifrt::BasicDeviceList::Create(devices);
 }
@@ -929,9 +937,7 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
     const void* data, DType dtype, Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     Client::HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer,
-    tsl::RCReference<UserContext> user_context) {
-  // Currently the `user_context` parameter is ignored.
+    std::function<void()> on_done_with_host_buffer) {
   DCHECK(this);
   if (dtype.kind() == DType::kString) {
     return MakeStringArrayFromHostBuffer(this, data, dtype, shape, byte_strides,
@@ -1022,14 +1028,12 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
 absl::StatusOr<std::vector<ArrayRef>>
 PjRtClient::MakeArraysFromHostBufferShards(
     absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
-    HostBufferSemantics semantics, tsl::RCReference<UserContext> user_context) {
-  return ClientMakeArraysFromHostBufferShards(this, specs, semantics,
-                                              std::move(user_context));
+    HostBufferSemantics semantics) {
+  return ClientMakeArraysFromHostBufferShards(this, specs, semantics);
 }
 
 absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
-    const absl::Status& error, absl::Span<const ArraySpec> array_specs,
-    tsl::RCReference<UserContext> user_context) {
+    const absl::Status& error, absl::Span<const ArraySpec> array_specs) {
   if (error.ok()) {
     return absl::InvalidArgumentError("Error status must not be OK");
   }

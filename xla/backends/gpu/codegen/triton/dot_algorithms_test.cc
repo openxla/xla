@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -80,6 +81,10 @@ class AlgorithmTest : public GpuCodegenTest {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
+    // TODO(b/393299275): remove when the flag is enabled by default.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
     return debug_options;
   }
 
@@ -203,9 +208,10 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::Eq("wrapped_convert"),
+                                    ::testing::Eq("wrapped_convert_1"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
@@ -297,13 +303,19 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("nvjet"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      ASSERT_EQ(kernel_names.size(), 1);
-      EXPECT_THAT(kernel_names[0], ::testing::Eq("loop_convert_fusion_1"));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(kernel_names,
@@ -353,13 +365,21 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("nvjet"),
+                                    ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      ASSERT_EQ(kernel_names.size(), 1);
-      EXPECT_THAT(kernel_names[0], ::testing::Eq("loop_convert_fusion_1"));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(
@@ -410,18 +430,27 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      GTEST_SKIP()
-          << "CudaComputeCapabilities::kBlackwell has the kernel name: "
-          << kernel_names[0];
+      EXPECT_THAT(kernel_names,
+                  ::testing::UnorderedElementsAre(
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
+                      ::testing::HasSubstr("tf32gemm")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      EXPECT_THAT(kernel_names, ::testing::Contains(::testing::HasSubstr(
-                                    "bitcast_convert_subtract")));
+      EXPECT_THAT(kernel_names,
+                  ::testing::UnorderedElementsAre(
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
+                      ::testing::HasSubstr("cutlass_80")));
       break;
     case CudaComputeCapabilities::kHopper:
       EXPECT_THAT(kernel_names,
                   ::testing::UnorderedElementsAre(
                       ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("bitcast_convert_subtract"),
+                      ::testing::HasSubstr("loop_select_fusion"),
                       ::testing::HasSubstr("tf32f32")));
       break;
     default:
@@ -657,7 +686,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -680,7 +709,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -704,7 +733,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
   )";
   constexpr absl::string_view kPattern = R"(
     CHECK: algorithm=dot_tf32_tf32_f32
-    CHECK: "kind":"__triton_gemm","triton_gemm_config"
+    CHECK: "kind":"__triton_nested_gemm_fusion"
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
@@ -728,7 +757,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -754,7 +783,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
     }
   )";
   constexpr absl::string_view kPattern =
-      R"(CHECK: "kind":"__triton_gemm","triton_gemm_config")";
+      R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
@@ -939,7 +968,8 @@ class NumericTestsForBlas : public BlasAlgorithmTest,
     return absl::StrFormat(kHloTextTemplate, HloModuleTestName(), algorithm_);
   }
 
-  static constexpr absl::string_view kPattern = R"(CHECK: __cublas$gemm)";
+  static constexpr absl::string_view kCheckTritionNestedGemm =
+      R"(CHECK: __cublas$gemm)";
 
   static constexpr absl::string_view kReferenceHloText = R"(
     HloModule %s
@@ -1005,7 +1035,8 @@ class NumericTestsForTriton : public TritonAlgorithmTest,
     return absl::StrFormat(kHloTextTemplate, HloModuleTestName(), algorithm_);
   }
 
-  static constexpr absl::string_view kPattern = R"(CHECK: __triton_gemm)";
+  static constexpr absl::string_view kPattern =
+      R"(CHECK: __triton_nested_gemm_fusion)";
 
  private:
   static constexpr absl::string_view kHloTextTemplate = R"(
@@ -1036,7 +1067,8 @@ TEST_P(NumericTestsForBlas, Infinity) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1054,7 +1086,8 @@ TEST_P(NumericTestsForBlas, NaN) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1072,7 +1105,8 @@ TEST_P(NumericTestsForBlas, InputsWithLargeExponent) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1092,7 +1126,8 @@ TEST_P(NumericTestsForBlas, PrecisionCheck) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  TF_ASSERT_OK_AND_ASSIGN(auto ok,
+                          RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1442,7 +1477,7 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
   auto m = 128;
   auto n = 128;
   auto k = 128;
-  auto run = [&](std::string backend, absl::string_view pattern,
+  auto run = [&](std::string backend,
                  const DebugOptions& options) -> absl::StatusOr<bool> {
     auto test_name = absl::StrReplaceAll(TestName(), {{"/", "_"}});
     auto module_name = absl::StrCat(test_name, "_", backend, "_", m, "_", kMaxK,
@@ -1461,10 +1496,10 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
     if (!Run(std::move(module.value()), false)) {
       return absl::InternalError("failed to run module");
     }
-    return absl::StrContains(module_text, pattern);
+    return absl::StrContains(module_text, kTritonNestedGemmFusionKind);
   };
 
-  auto result_or_status = run("triton", kTritonGemmPattern, triton_options_);
+  auto result_or_status = run("triton", triton_options_);
   switch (GetParam()) {
     case PC::ALG_UNSET:
     case PC::ALG_DOT_TF32_TF32_F32:
