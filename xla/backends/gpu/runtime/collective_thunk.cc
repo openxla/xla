@@ -58,6 +58,8 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -240,6 +242,13 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     bool use_nccl) {
   GlobalDeviceId global_device_id = params.global_device_id;
 
+  if (params.device_assn == nullptr) {
+    return InvalidArgument(
+        "Device assignment is null, but must be specified when running a "
+        "collective thunk. If running multi-device HLO , make sure you're not "
+        "using a tool designed for only one device like run_hlo_module.");
+  }
+
   TF_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> participants,
       GetParticipatingDevices(global_device_id, *params.device_assn,
@@ -278,8 +287,9 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   absl::c_sort(incarnations);
 
   return GpuCliqueKey(std::move(participants), num_local_participants,
-                      kNoStreamId, stream_kind, std::move(participant_groups),
-                      GlobalDeviceId(-1), incarnations);
+                      xla::gpu::IsP2PStreamKind(stream_kind),
+                      std::move(participant_groups), GlobalDeviceId(-1),
+                      incarnations);
 }
 
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(

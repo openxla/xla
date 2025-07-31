@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -66,7 +67,9 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
                           std::unique_ptr<LocalDeviceState> local_device_state,
                           std::string device_kind, std::string device_vendor,
                           std::string compute_capability, int core_count,
-                          int node_id, int slice_index = 0);
+                          int shared_memory_per_block_optin,
+                          int local_device_id, int node_id,
+                          int slice_index = 0);
 
   int slice_index() const;
 
@@ -122,6 +125,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::string_view platform_version() const override;
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+
+  void UpdateGlobalProcessInfo(
+      absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) override;
 
   using PjRtStreamExecutorClient::CreateBuffersForAsyncHostToDevice;
   absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>

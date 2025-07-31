@@ -81,7 +81,7 @@ class TfPjRtBuffer : public PjRtBuffer {
     return wrapped_->ToLiteral(literal);
   }
   PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator)
       override {
     return wrapped_->LazyToLiteral(std::move(generator));
   }
@@ -158,17 +158,20 @@ class TfPjRtExecutable : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures) override;
+      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
+      const override;
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   void Delete() override { return wrapped_->Delete(); }
   bool IsDeleted() const override { return wrapped_->IsDeleted(); }

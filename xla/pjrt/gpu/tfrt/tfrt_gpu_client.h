@@ -150,7 +150,7 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   PjRtClient* client() const override;
 
-  bool IsAddressable() const override { return local_device_id_ != -1; }
+  bool IsAddressable() const override { return executor_ != nullptr; }
 
   int id() const override { return id_; }
 
@@ -431,6 +431,7 @@ class TfrtGpuClient final : public PjRtClient {
       CompileOptions options, bool lookup_addressable_devices);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> BuildPjRtExecutable(
+      std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
       CompileOptions compile_options);
 
@@ -533,7 +534,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
 
   PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator)
       override;
 
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
@@ -665,6 +666,8 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   std::unique_ptr<TrackedGpuDeviceBuffer> ReleaseBufferLocked()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
+  PjRtFuture<> ToLiteralHelper(PjRtFuture<MutableLiteralBase*> literal);
+
   TfrtGpuClient* client_;
   const Shape on_device_shape_;
   TfrtGpuDevice* const device_;
@@ -751,19 +754,22 @@ class TfrtGpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures) override;
+      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
+      const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   void Delete() override { executables_.clear(); }
 
@@ -800,7 +806,7 @@ class TfrtGpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const ExecuteOptions& options, bool fill_future,
-      TfrtGpuDevice* device = nullptr);
+      TfrtGpuDevice* device = nullptr) const;
 
   // Create shared pointers so we can free them after the execution: with
   // asynchronous execution, the process being executed can outlive the

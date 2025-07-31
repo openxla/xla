@@ -30,29 +30,44 @@ limitations under the License.
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/TypeSize.h"
+#include "xla/codegen/math/intrinsic.h"
 #include "xla/codegen/math/ldexp.h"
 #include "xla/codegen/math/simple_jit_runner.h"
 #include "xla/codegen/math/test_matchers.h"
+#include "xla/xla_data.pb.h"
 
-namespace xla::codegen::math {
+namespace xla::codegen::intrinsics {
+using ::xla::codegen::math::JitRunner;
+using ::xla::codegen::math::NearUlps;
+
 namespace {
-
-JitRunner CreateJitRunnerWithExpF64(
-    std::function<llvm::Type*(llvm::LLVMContext&)> make_type) {
+JitRunner CreateJitRunnerWithExpF64(Type type) {
   auto context = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("test_module", *context);
   llvm::Function* ldexp_func =
-      CreateLdexpF64(module.get(), make_type(*context));
+      Ldexp::CreateDefinition(module.get(), type,
+                              Type(S32, type.vector_width()))
+          .value();
   ldexp_func->setLinkage(llvm::Function::ExternalLinkage);
-  llvm::Function* exp_func = CreateExpF64(module.get(), make_type(*context));
+  llvm::Function* exp_func = Exp::CreateDefinition(module.get(), type).value();
   exp_func->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*exp_func));
   return JitRunner(std::move(module), std::move(context));
 }
 
+TEST(ExpTest, SclarIninsic) {
+  EXPECT_EQ(Exp::Name(Type::S(F32)), "xla.exp.f32");
+  EXPECT_EQ(Exp::Name(Type::S(F64)), "xla.exp.f64");
+}
+
+TEST(ExpTest, VectorIninsic) {
+  EXPECT_EQ(Exp::Name(Type::V(F32, 4)), "xla.exp.v4f32");
+  EXPECT_EQ(Exp::Name(Type::V(F64, 8)), "xla.exp.v8f64");
+}
+
 TEST(ExpTest, EmitExpF64) {
-  JitRunner jit = CreateJitRunnerWithExpF64(llvm::Type::getDoubleTy);
+  Type type = Type::S(F64);
+  JitRunner jit = CreateJitRunnerWithExpF64(type);
   double vals[] = {0,
                    -1,
                    -100,
@@ -61,7 +76,7 @@ TEST(ExpTest, EmitExpF64) {
                    -706,
                    std::numeric_limits<double>::infinity(),
                    std::numeric_limits<double>::quiet_NaN()};
-  auto* fn = jit.GetScalarFn<double(double)>(ExpF64FunctionName(1));
+  auto* fn = jit.GetScalarFn<double(double)>(Exp::Name(type));
   for (double val : vals) {
     double actual = fn(val);
     double expected = std::exp(val);
@@ -71,11 +86,9 @@ TEST(ExpTest, EmitExpF64) {
 
 TEST(ExpTest, EmitExpF64_Vector4) {
   // The jit runner must outlive the compiled function.
-  JitRunner jit = CreateJitRunnerWithExpF64([](llvm::LLVMContext& context) {
-    return llvm::VectorType::get(llvm::Type::getDoubleTy(context),
-                                 llvm::ElementCount::getFixed(4));
-  });
-  auto fn = jit.GetVectorizedFn<4, double, double>(ExpF64FunctionName(4));
+  Type type = Type::V(F64, 4);
+  JitRunner jit = CreateJitRunnerWithExpF64(type);
+  auto fn = jit.GetVectorizedFn<4, double, double>(Exp::Name(type));
   const size_t kN = 4;
   std::array<double, kN> vals = {-100, 100, 708, -706.1};
   std::array<double, kN> actuals = fn(vals);
@@ -87,4 +100,4 @@ TEST(ExpTest, EmitExpF64_Vector4) {
 }
 
 }  // namespace
-}  // namespace xla::codegen::math
+}  // namespace xla::codegen::intrinsics

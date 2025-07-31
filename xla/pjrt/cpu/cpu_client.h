@@ -174,6 +174,8 @@ class PjRtCpuClient final : public CommonPjRtClient {
     return eigen_intraop_device_.get();
   }
 
+  bool IsOnCpu(PjRtMemorySpace* memory_space) override { return true; }
+
   // Returns a pair of async events:
   // - async event that signals the completion of the last collective launch
   // - count down event that must be signalled when each rank completes
@@ -311,41 +313,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   std::function<void(HloModuleConfig&)> customize_hlo_module_config_;
 };
 
-class PjRtCpuBuffer final : public AbstractCpuBuffer {
- public:
-  PjRtCpuBuffer(Shape on_device_shape,
-                std::unique_ptr<TrackedCpuDeviceBuffer> tracked_device_buffer,
-                PjRtCpuClient* client, PjRtCpuDevice* device,
-                PjRtMemorySpace* memory_space);
-
-  PjRtCpuBuffer(const PjRtCpuBuffer&) = delete;
-  PjRtCpuBuffer(PjRtCpuBuffer&&) = delete;
-  PjRtCpuBuffer& operator=(const PjRtCpuBuffer&) = delete;
-  PjRtCpuBuffer& operator=(PjRtCpuBuffer&&) = delete;
-
-  PjRtMemorySpace* memory_space() const override { return memory_space_; }
-  PjRtCpuDevice* device() const override { return device_; }
-  PjRtCpuClient* client() const override { return client_; }
-
-  PjRtFuture<> CopyRawToHost(void* dst, int64_t offset,
-                             int64_t transfer_size) override;
-
-  using PjRtBuffer::ToLiteralSync;
-  PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
-  PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
-      override;
-
-  absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
-      PjRtMemorySpace* dst_memory_space) override;
-
- private:
-  absl::string_view buffer_name() const override { return "PjRtCpuBuffer"; }
-
-  PjRtCpuClient* client_;
-  PjRtCpuDevice* const device_;
-};
-
 class PjRtCpuExecutable final : public PjRtLoadedExecutable {
  public:
   PjRtCpuExecutable(
@@ -397,40 +364,28 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
     return Unimplemented("GetOutputMemoryKinds is not supported.");
   }
 
-  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
-    CompiledMemoryStats memory_stats = CompiledMemoryStats();
-    memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
-    const BufferAssignmentProto* proto =
-        cpu_executable_->buffer_assignment_proto();
-    if (!proto) {
-      return tsl::errors::FailedPrecondition(
-          "cpu_executable_ has no buffer_assignment_proto.");
-    }
-    memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-    memory_stats.PopulateBufferStatsFromAllocations(
-        cpu_executable_->GetAllocations());
-    TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
-    memory_stats.peak_memory_in_bytes = peak_memory;
-    return memory_stats;
-  }
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
   using PjRtLoadedExecutable::Execute;
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures) override;
+      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
+      const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   void Delete() override;
 
@@ -467,7 +422,7 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const RunId& run_id, const ExecuteOptions& options,
       PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
-      bool fill_future, PjRtCpuDevice* device = nullptr);
+      bool fill_future, PjRtCpuDevice* device = nullptr) const;
 
   PjRtCpuClient* client_;
 

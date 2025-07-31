@@ -98,15 +98,19 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
   PjRtStreamExecutorDevice(int id,
                            std::unique_ptr<LocalDeviceState> local_device_state,
-                           int process_index, std::string device_kind)
-      : description_(id, process_index, std::move(device_kind)),
-        local_device_id_(local_device_state
-                             ? local_device_state->local_device_id()
-                             : PjRtLocalDeviceId(-1)),
+                           int local_device_id, int process_index,
+                           int slice_index, std::string device_kind)
+      : local_device_id_(local_device_id),
         local_hardware_id_(local_device_state
                                ? local_device_state->local_hardware_id()
                                : PjRtLocalHardwareId(-1)),
-        local_device_state_(std::move(local_device_state)) {}
+        local_device_state_(std::move(local_device_state)),
+        description_(id, local_device_id_.value(), process_index, slice_index,
+                     std::move(device_kind)) {
+    if (local_device_state_ != nullptr) {
+      CHECK_EQ(local_device_state_->local_device_id(), local_device_id_);
+    }
+  }
   ~PjRtStreamExecutorDevice() override = default;
 
   // Must set client exactly once.
@@ -135,7 +139,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   PjRtClient* client() const override { return client_; }
 
-  bool IsAddressable() const override { return local_device_id_ != -1; }
+  bool IsAddressable() const override { return local_device_state_ != nullptr; }
 
   PjRtLocalDeviceId local_device_id() const override {
     return local_device_id_;
@@ -182,10 +186,10 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   }
 
  private:
-  PjRtStreamExecutorDeviceDescription description_;
   const PjRtLocalDeviceId local_device_id_;
   const PjRtLocalHardwareId local_hardware_id_;
   const std::unique_ptr<LocalDeviceState> local_device_state_;
+  PjRtStreamExecutorDeviceDescription description_;
   PjRtClient* client_ = nullptr;
   absl::InlinedVector<PjRtMemorySpace*, 1> memory_spaces_;
   absl::flat_hash_map<int, PjRtMemorySpace*> memory_spaces_by_id_;
@@ -445,6 +449,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
       CompileOptions options, bool lookup_addressable_devices);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> BuildPjRtExecutable(
+      std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
       CompileOptions compile_options);
 
@@ -454,6 +459,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
                                std::optional<CompileOptions> options);
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
+      std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
       CompileOptions compile_options);
 
@@ -582,7 +588,7 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
   using PjRtBuffer::ToLiteralSync;
   PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
   PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator)
       override;
 
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
@@ -670,6 +676,8 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
                      const TrackedDeviceBuffer& src_device_buffer);
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToDeviceMemorySpace(
       PjRtDevice* dst_device, PjRtMemorySpace* dst_memory_space = nullptr);
+
+  PjRtFuture<> ToLiteralHelper(PjRtFuture<MutableLiteralBase*> literal);
 
   PjRtStreamExecutorClient* const client_;
   const Shape on_device_shape_;
@@ -775,19 +783,22 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures) override;
+      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
+      const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
       const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future, bool fill_future) override;
+      std::optional<PjRtFuture<>>& returned_future,
+      bool fill_future) const override;
 
   void Delete() override { executables_.clear(); }
 

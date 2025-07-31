@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -360,6 +361,12 @@ class BufferIntervalTree {
   // Remove the interval from the tree. Returns true if the chunk is removed.
   bool Remove(int64_t start, int64_t end, const Chunk& chunk);
 
+  // Apply fn to the nodes that overlap with the given time interval. It is
+  // guaranteed that fn is called for non-null nodes.
+  void ApplyToNodesOverlappingInTime(
+      int64_t start, int64_t end,
+      absl::FunctionRef<void(const BufferIntervalTreeNode*)> fn) const;
+
   // Returns the number of allocated chunks that overlap with the given time
   // interval.
   int NumChunksOverlappingInTime(int64_t start, int64_t end) const;
@@ -455,7 +462,7 @@ class SliceTimePermutationIterator {
   enum class Ty : std::int8_t {
     // Include all valid permutations
     kAll,
-    // Only include perferred valid permutations. Heap simulator is trying to
+    // Only include preferred valid permutations. Heap simulator is trying to
     // optimize fitting allocations into a grid of (heap) space by time. The
     // preferred permutation iterator only allows the following triagular
     // shapes:

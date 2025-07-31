@@ -435,8 +435,8 @@ TEST_F(MemorySpaceAssignmentTest, PinnedDefaultMemorySpace) {
 }
 
 // A simple case where the synchronous copy is actually redundant, because its
-// operand ends up getting prefetched and the its output is only used once, so
-// we remove the sync copy.
+// operand ends up getting prefetched and its output is only used once, so we
+// remove the sync copy.
 TEST_F(MemorySpaceAssignmentTest,
        SyncCopyReplacementRedundantCopyAfterPrefetch) {
   absl::string_view hlo_string = R"(
@@ -519,7 +519,7 @@ ENTRY entry {
   EXPECT_GT(negate9_time, copy_done_time);
 }
 
-// This is a case where we p0_copy uses and and p0 uses after copy(p0) are not
+// This is a case where we p0_copy uses and p0 uses after copy(p0) are not
 // allowed to use the same async CopyAllocation. While p0 can be prefetched at
 // p0_copy, but we may clobber the data if we use the same async copy used for
 // prefetching to replace the sync copy p0_copy. The pattern here is that the
@@ -701,7 +701,7 @@ TEST_F(MemorySpaceAssignmentTest,
   // itself which pushes earliest_prefetch_time to right before the
   // dynamic-slice. We test two cases with min_prefetch_interval = 2 and 1: Case
   // 1 - min_prefetch_interval = 2:
-  //   The dynamic slice is NOT replaced by an async. This is beacause we
+  //   The dynamic slice is NOT replaced by an async. This is because we
   //   require at least 2 instructions to be overlapped (including the
   //   dynamic-slice).
   AssignMemorySpace(module.get(), options, /*max_prefetch_interval=*/10,
@@ -1664,7 +1664,7 @@ ENTRY entry {
     VLOG(2) << i << " " << sequence.instructions()[i]->ToString();
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                          HloAliasAnalysis::Run(module.get()));
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> live_range,
                           HloLiveRange::Run(module->schedule(), *alias_analysis,
                                             module->entry_computation()));
@@ -1720,7 +1720,7 @@ ENTRY entry {
     VLOG(2) << i << " " << sequence.instructions()[i]->ToString();
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                          HloAliasAnalysis::Run(module.get()));
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> live_range,
                           HloLiveRange::Run(module->schedule(), *alias_analysis,
                                             module->entry_computation()));
@@ -1801,7 +1801,7 @@ ENTRY entry {
     VLOG(2) << i << " " << sequence.instructions()[i]->ToString();
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                          HloAliasAnalysis::Run(module.get()));
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloLiveRange> live_range,
                           HloLiveRange::Run(module->schedule(), *alias_analysis,
                                             module->entry_computation()));
@@ -6510,7 +6510,7 @@ TEST_F(MemorySpaceAssignmentTest, EvictionsShouldntBeDelayed) {
   AssignMemorySpaceUsingCostAnalysis(module.get());
 
   TF_ASSERT_OK_AND_ASSIGN(auto alias_analysis,
-                          HloAliasAnalysis::Run(module.get()));
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_live_range,
                           HloLiveRange::Run(module->schedule(), *alias_analysis,
                                             module->entry_computation()));
@@ -12848,10 +12848,10 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
     return nullptr;
   }
 
-  static absl::StatusOr<std::vector<int>> GetSliceStartIndicies(
+  static absl::StatusOr<std::vector<int>> GetSliceStartIndices(
       const std::vector<HloInstruction*>& schedule,
       const HloInstruction* concat_bitcast) {
-    std::vector<int> indicies;
+    std::vector<int> indices;
 
     if (!IsConcatBitcast(concat_bitcast)) {
       return InvalidArgumentStrCat(concat_bitcast->name(),
@@ -12874,10 +12874,10 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
           int schedule_index,
           FindScheduleIndexOfInstruction(schedule, async_slice_start->name(),
                                          InstructionClass::kRelatedSliceStart));
-      indicies.push_back(schedule_index);
+      indices.push_back(schedule_index);
     }
 
-    return indicies;
+    return indices;
   }
 
   // REQUIRES:
@@ -13752,7 +13752,8 @@ ENTRY main {
   });
 
   // Check the aliasing.
-  auto alias_analysis = HloAliasAnalysis::Run(module.get()).value();
+  auto alias_analysis =
+      HloAliasAnalysis::Run(module.get(), &alias_info_).value();
   VLOG(2) << alias_analysis->ToString();
   const HloBuffer& concat_bitcast_buffer =
       alias_analysis->GetUniqueBufferAt(concat_bitcast);
@@ -14158,9 +14159,9 @@ ENTRY main {
           .sequence(module_and_assignments1.module->entry_computation())
           .instructions();
   TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<int> start_indicies,
-      GetSliceStartIndicies(entry_schedule1, root1->operand(1)->operand(0)));
-  ASSERT_EQ(start_indicies.size(), 2);
+      std::vector<int> start_indices,
+      GetSliceStartIndices(entry_schedule1, root1->operand(1)->operand(0)));
+  ASSERT_EQ(start_indices.size(), 2);
   TF_ASSERT_OK_AND_ASSIGN(
       int first_while,
       FindScheduleIndexOfInstruction(
@@ -14173,9 +14174,9 @@ ENTRY main {
           SlicedPrefetchTest::InstructionClass::kUnrelatedNonCopy));
   EXPECT_TRUE(
       absl::c_is_sorted<std::vector<int>>(
-          {start_indicies[0], first_while, start_indicies[1], second_while}) ||
+          {start_indices[0], first_while, start_indices[1], second_while}) ||
       absl::c_is_sorted<std::vector<int>>(
-          {start_indicies[1], first_while, start_indicies[0], second_while}));
+          {start_indices[1], first_while, start_indices[0], second_while}));
 
   // In this case, more time elapses during the first while loop than the
   // second. This should push us to use a normal prefetch, rather than slicing,
@@ -14640,6 +14641,48 @@ TEST_F(MemorySpaceAssignmentTest, TestColoringMultipleOperands) {
             kAlternateMemorySpace);
   EXPECT_EQ(add_after_msa->operand(1)->shape().layout().memory_space(),
             kAlternateMemorySpace);
+}
+
+TEST_F(MemorySpaceAssignmentTest,
+       ScopedAllocationAccountingWhenInstructionsAreRemoved) {
+  absl::string_view hlo_string = R"(
+  HloModule DoIt_S64_10_0_5_1.3, is_scheduled=true
+
+  ENTRY %DoIt_S64_10_0_5_1.3 (p0.1: (u32[10], u32[10])) -> (u32[5], u32[5]) {
+    %p0.1 = (u32[10]{0:T(128)}, u32[10]{0:T(128)}) parameter(0)
+    %get-tuple-element.1 = u32[10]{0:T(128)} get-tuple-element((u32[10]{0:T(128)}, u32[10]{0:T(128)}) %p0.1), index=1
+    %bitcast.1 = u32[5]{0:T(128)} bitcast(u32[10]{0:T(128)} %get-tuple-element.1)
+    %get-tuple-element = u32[10]{0:T(128)} get-tuple-element((u32[10]{0:T(128)}, u32[10]{0:T(128)}) %p0.1), index=0
+    %bitcast = u32[5]{0:T(128)} bitcast(u32[10]{0:T(128)} %get-tuple-element)
+    %tuple.1 = (u32[5]{0:T(128)}, u32[5]{0:T(128)}) tuple(u32[5]{0:T(128)} %bitcast, u32[5]{0:T(128)} %bitcast.1)
+    %tuple.3 = ((u32[5]{0:T(128)}, u32[5]{0:T(128)}), (u32[5]{0:T(128)}, u32[5]{0:T(128)})) tuple(%tuple.1, %tuple.1)
+    %get-tuple-element.4 = u32[5]{0:T(128)} get-tuple-element((u32[5]{0:T(128)}, u32[5]{0:T(128)}) %tuple.1), index=0
+    %get-tuple-element.5 = (u32[5]{0:T(128)}, u32[5]{0:T(128)}) get-tuple-element(%tuple.3), index=0
+    %get-tuple-element.6 = u32[5]{0:T(128)} get-tuple-element((u32[5]{0:T(128)}, u32[5]{0:T(128)}) %get-tuple-element.5), index=1
+    %copy.2 = u32[5]{0:T(128)} copy(u32[5]{0:T(128)} %get-tuple-element.4)
+    %copy.3 = u32[5]{0:T(128)} copy(u32[5]{0:T(128)} %get-tuple-element.6)
+    ROOT %tuple.2 = (u32[5]{0:T(128)}, u32[5]{0:T(128)}) tuple(u32[5]{0:T(128)} %copy.2, u32[5]{0:T(128)} %copy.3)
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.reserved_scoped_memory_fn =
+      [&](const HloInstruction* instruction,
+          const absl::flat_hash_set<std::pair<int, ShapeIndex>>
+              operands_in_alternate_memory,
+          const absl::flat_hash_set<ShapeIndex> outputs_in_alternate_memory) {
+        return 10;
+      };
+  std::unique_ptr<PresetAssignments> preset_assignments =
+      AssignMemorySpace(module.get(), options);
+  EXPECT_THAT(preset_assignments->scoped_allocation_chunks(),
+              ::testing::Each(::testing::ResultOf(
+                  "instruction->name()",
+                  [](const auto& pair) { return pair.first->name(); },
+                  ::testing::AllOf(::testing::Not("bitcast"),
+                                   ::testing::Not("bitcast.1")))));
 }
 
 }  // namespace

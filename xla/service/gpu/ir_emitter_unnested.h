@@ -158,8 +158,20 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCollectiveAsyncDone(Thunk::Kind kind,
                                        const HloInstruction* instr);
 
+  template <typename NvshmemAllReduceThunkType,
+            typename HloAllReduceInstruction>
+  absl::Status EmitNvshmemThunk(Thunk::Kind kind,
+                                const HloInstruction* async_start,
+                                const HloAllReduceInstruction* inst,
+                                std::optional<bool> use_global_device_ids);
+
   absl::Status EmitNvshmemAsyncDone(Thunk::Kind kind,
                                     const HloInstruction* instr);
+
+  template <typename HloInstType>
+  absl::Status EmitDegeneratedCollectiveThunk(
+      std::vector<CollectiveThunk::Buffer>& buffers,
+      const HloInstruction* async_start, const HloInstType* inst);
 
   template <typename ThunkType>
   absl::Status EmitReplicaOrPartitionId(const HloInstruction* instr);
@@ -304,12 +316,8 @@ class IrEmitterUnnested : public IrEmitter {
   //   ```
   absl::Status EmitSliceToDynamic(const HloCustomCallInstruction* instr);
 
-  absl::StatusOr<std::pair<std::vector<llvm_ir::IrArray> /*inputs*/,
-                           std::vector<llvm_ir::IrArray> /*outputs*/>>
-  BuildKernelThunkForNonFusionOp(
-      const HloInstruction* instr,
-      absl::Span<const HloInstruction* const> needed_operands,
-      const LaunchDimensions& launch_dimensions);
+  absl::StatusOr<std::vector<llvm_ir::IrArray>> BuildKernelThunkForNonFusionOp(
+      const HloInstruction* instr, const LaunchDimensions& launch_dimensions);
 
   // Returns a WhileThunk that invokes thunk sequences for 'condition' and
   // 'body' sub-computations of while instruction.
