@@ -45,7 +45,7 @@ Flag                                                          | Description     
 | :---- | :---- | :----- |
 | `xla_dump_to` | String (filepath) | The folder where pre-optimization HLO files and other artifacts will be placed (see [XLA Tools](https://openxla.org/xla/tools)). |
 
-#### TPU XLA flags
+### TPU XLA flags
 | Flag | Type | Notes |
 | :---- | :---- | :----- |
 | `xla_tpu_enable_data_parallel_all_reduce_opt` | Boolean (true/false) | Optimization to increase overlap opportunities for DCN (data center networking) all-reduces used for data parallel sharding. |
