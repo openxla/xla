@@ -71,9 +71,11 @@ class RocmComputeCapability {
 
   bool gfx9_mi200() const { return gfx_version() == "gfx90a"; }
 
-  bool gfx9_mi300_series() const {
-    return gfx_version() == "gfx942" || gfx_version() == "gfx950";
-  }
+  bool gfx9_mi300() const { return gfx_version() == "gfx942"; }
+
+  bool gfx9_mi350() const { return gfx_version() == "gfx950"; }
+
+  bool gfx9_mi300_series() const { return gfx9_mi300() || gfx9_mi350(); }
 
   bool gfx9_mi100_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx942",
@@ -127,9 +129,11 @@ class RocmComputeCapability {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
   }
 
-  bool has_ocp_fp8_support() const { return gfx1200() || gfx1201() || gfx_version() == "gfx950"; }
+  bool has_ocp_fp8_support() const {
+    return gfx1200() || gfx1201() || gfx9_mi350();
+  }
 
-  bool has_nanoo_fp8_support() const { return gfx_version() == "gfx942"; }
+  bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
 
   std::string ToString() const { return gcn_arch_name(); }
 
