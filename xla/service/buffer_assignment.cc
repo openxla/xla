@@ -1954,8 +1954,8 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
                   get_heap_algorithm(alignment), *private_stack_computation,
                   *instruction_sequence, assignment->alias_analysis(),
                   alias_info_, assignment->buffer_size_, &schedule, options));
-          std::ignore = AssignBuffersFromHeapSimulator(
-              result, assignment, color, isolation_options);
+          TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
+              result, assignment, color, isolation_options));
         }
       } else {
         options.buffers_to_assign = &color_map[color];
@@ -1965,8 +1965,8 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
                                assignment->module(), schedule,
                                assignment->alias_analysis(), alias_info_,
                                assignment->buffer_size_, options));
-        std::ignore = AssignBuffersFromHeapSimulator(result, assignment, color,
-                                                     isolation_options);
+        TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
+            result, assignment, color, isolation_options));
       }
     }
   } else {
@@ -1999,8 +1999,8 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
                                *instruction_sequence,
                                assignment->alias_analysis(), alias_info_,
                                assignment->buffer_size_, options));
-        std::ignore = AssignBuffersFromHeapSimulator(result, assignment, color,
-                                                     isolation_options);
+        TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
+            result, assignment, color, isolation_options));
       }
     }
   }
@@ -2347,8 +2347,8 @@ BufferAssigner::CreateAssignment(
     private_stack_colors.insert(color);
   }
 
-  std::ignore = assignment->CombineTempAllocations(private_stack_colors,
-                                                   temp_buffer_color);
+  TF_RETURN_IF_ERROR(assignment->CombineTempAllocations(private_stack_colors,
+                                                        temp_buffer_color));
 
   XLA_VLOG_LINES(2, assignment->ToString());
   assignment->ComputeSummaryStats();
