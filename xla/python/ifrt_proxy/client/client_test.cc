@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -30,6 +31,7 @@
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
@@ -288,7 +290,7 @@ TEST_P(ClientTest, Init) {
   EXPECT_EQ(memory0->Id(), 0);
   EXPECT_EQ(memory0->Kind().memory_kind(), "mock");
   EXPECT_THAT(memory0->Devices(), UnorderedElementsAre(device0));
-  EXPECT_THAT(device0->DefaultMemory(), IsOkAndHolds(memory0));
+  EXPECT_THAT(device0->DefaultMemory(), absl_testing::IsOkAndHolds(memory0));
 
   TF_ASSERT_OK_AND_ASSIGN(auto* const device1,
                           client_->LookupDevice(DeviceId(1)));
@@ -302,7 +304,7 @@ TEST_P(ClientTest, Init) {
   EXPECT_EQ(memory1->Id(), 1);
   EXPECT_EQ(memory1->Kind().memory_kind(), "mock");
   EXPECT_THAT(memory1->Devices(), UnorderedElementsAre(device1));
-  EXPECT_THAT(device1->DefaultMemory(), IsOkAndHolds(memory1));
+  EXPECT_THAT(device1->DefaultMemory(), absl_testing::IsOkAndHolds(memory1));
 
   EXPECT_THAT(client_->addressable_devices(), ElementsAre(device1));
 }
@@ -351,7 +353,7 @@ TEST_P(ClientTest, GetDefaultLayoutFailure) {
 
   EXPECT_THAT(client_->GetDefaultLayout(DType(DType::kF64), {1, 2, 3}, device_,
                                         MemoryKind("mock")),
-              Not(IsOk()));
+              Not(absl_testing::IsOk()));
 }
 
 TEST_P(ClientTest, CopyArraysDefaultLayoutSuccess) {
@@ -377,10 +379,11 @@ TEST_P(ClientTest, CopyArraysDefaultLayoutSuccess) {
       .WillRepeatedly(MockClientSessionReturnResponse(IfrtResponse()));
 
   std::vector<tsl::RCReference<xla::ifrt::Array>> arrays = {array0, array1};
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                          client_->MakeDeviceList({device_}));
   TF_ASSERT_OK_AND_ASSIGN(
       auto copied_arrays,
-      client_->CopyArrays(absl::MakeSpan(arrays),
-                          client_->MakeDeviceList({device_}),
+      client_->CopyArrays(absl::MakeSpan(arrays), std::move(device_list),
                           MemoryKind("mock"), ArrayCopySemantics::kAlwaysCopy));
   ASSERT_THAT(copied_arrays, SizeIs(2));
   EXPECT_EQ(llvm::cast<Array>(copied_arrays[0].get())->custom_layout(),
@@ -412,10 +415,11 @@ TEST_P(ClientTest, CopyArraysCustomLayoutSuccess) {
       .WillRepeatedly(MockClientSessionReturnResponse(IfrtResponse()));
 
   std::vector<tsl::RCReference<xla::ifrt::Array>> arrays = {array0, array1};
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                          client_->MakeDeviceList({device_}));
   TF_ASSERT_OK_AND_ASSIGN(
       auto copied_arrays,
-      client_->CopyArrays(absl::MakeSpan(arrays),
-                          client_->MakeDeviceList({device_}),
+      client_->CopyArrays(absl::MakeSpan(arrays), std::move(device_list),
                           MemoryKind("mock"), ArrayCopySemantics::kAlwaysCopy));
   ASSERT_THAT(copied_arrays, SizeIs(2));
   EXPECT_EQ(
@@ -464,7 +468,8 @@ TEST_P(ClientTest, GetDefaultDeviceAssignmentFailure) {
       .WillOnce(Return(Future<ClientSession::Response>(
           absl::InternalError("injected from test"))));
 
-  EXPECT_THAT(client_->GetDefaultDeviceAssignment(1, 3), Not(IsOk()));
+  EXPECT_THAT(client_->GetDefaultDeviceAssignment(1, 3),
+              Not(absl_testing::IsOk()));
 }
 #endif
 

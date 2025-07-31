@@ -62,6 +62,25 @@ class AbstractTrackedDeviceBuffer {
     return absl::UnimplementedError(
         "DonateWithControlDependency is not supported.");
   }
+
+  // Populates a future::promise when all the definition events are complete.
+  virtual PjRtFuture<>::Promise GetReadyFuturePromise(
+      PjRtMemorySpace* memory_space) {
+    auto promise = PjRtFuture<>::CreatePromise();
+    promise.Set(absl::UnimplementedError(
+        absl::StrCat("GetReadyFuturePromise not supported for ",
+                     memory_space->DebugString())));
+    return promise;
+  }
+
+  // Waits for all usage and definition events to complete synchronously
+  // and returns the status.
+  virtual absl::Status BlockForOperationsToComplete(
+      PjRtMemorySpace* memory_space) {
+    return absl::UnimplementedError(
+        absl::StrCat("BlockForOperationsToComplete not supported for ",
+                     memory_space->DebugString()));
+  }
 };
 
 class CommonPjRtBuffer : public PjRtBuffer {

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
@@ -105,6 +106,10 @@ class KernelThunk : public Thunk {
   }
   // The shared memory required by the kernel.
   int64_t shmem_bytes() const { return shmem_bytes_; }
+
+  const std::optional<stream_executor::gpu::TmaMetadata>& tma_metadata() const {
+    return tma_metadata_;
+  }
 
  private:
   // Buffer slices passed to the kernel as arguments.

@@ -98,15 +98,19 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
   PjRtStreamExecutorDevice(int id,
                            std::unique_ptr<LocalDeviceState> local_device_state,
-                           int process_index, std::string device_kind)
-      : description_(id, process_index, std::move(device_kind)),
-        local_device_id_(local_device_state
-                             ? local_device_state->local_device_id()
-                             : PjRtLocalDeviceId(-1)),
+                           int local_device_id, int process_index,
+                           int slice_index, std::string device_kind)
+      : local_device_id_(local_device_id),
         local_hardware_id_(local_device_state
                                ? local_device_state->local_hardware_id()
                                : PjRtLocalHardwareId(-1)),
-        local_device_state_(std::move(local_device_state)) {}
+        local_device_state_(std::move(local_device_state)),
+        description_(id, local_device_id_.value(), process_index, slice_index,
+                     std::move(device_kind)) {
+    if (local_device_state_ != nullptr) {
+      CHECK_EQ(local_device_state_->local_device_id(), local_device_id_);
+    }
+  }
   ~PjRtStreamExecutorDevice() override = default;
 
   // Must set client exactly once.
@@ -135,7 +139,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   PjRtClient* client() const override { return client_; }
 
-  bool IsAddressable() const override { return local_device_id_ != -1; }
+  bool IsAddressable() const override { return local_device_state_ != nullptr; }
 
   PjRtLocalDeviceId local_device_id() const override {
     return local_device_id_;
@@ -182,10 +186,10 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   }
 
  private:
-  PjRtStreamExecutorDeviceDescription description_;
   const PjRtLocalDeviceId local_device_id_;
   const PjRtLocalHardwareId local_hardware_id_;
   const std::unique_ptr<LocalDeviceState> local_device_state_;
+  PjRtStreamExecutorDeviceDescription description_;
   PjRtClient* client_ = nullptr;
   absl::InlinedVector<PjRtMemorySpace*, 1> memory_spaces_;
   absl::flat_hash_map<int, PjRtMemorySpace*> memory_spaces_by_id_;
@@ -584,7 +588,7 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
   using PjRtBuffer::ToLiteralSync;
   PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
   PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator)
       override;
 
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
@@ -672,6 +676,8 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
                      const TrackedDeviceBuffer& src_device_buffer);
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToDeviceMemorySpace(
       PjRtDevice* dst_device, PjRtMemorySpace* dst_memory_space = nullptr);
+
+  PjRtFuture<> ToLiteralHelper(PjRtFuture<MutableLiteralBase*> literal);
 
   PjRtStreamExecutorClient* const client_;
   const Shape on_device_shape_;

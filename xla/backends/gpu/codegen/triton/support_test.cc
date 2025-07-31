@@ -265,11 +265,12 @@ class TritonSupportTest : public TritonSupportTestBase {
     };
 
     if (IsTritonSupportedInstruction(ti.Instruction(), cc)) {
-      EXPECT_THAT(run_triton_codegen(), IsOk()) << ti.Module()->ToString();
+      EXPECT_THAT(run_triton_codegen(), absl_testing::IsOk())
+          << ti.Module()->ToString();
       return;
     }
     if (failure_mode == ExpectedFailMode::kFail) {
-      EXPECT_THAT(run_triton_codegen(), Not(IsOk()));
+      EXPECT_THAT(run_triton_codegen(), Not(absl_testing::IsOk()));
       return;
     }
     EXPECT_DEATH(
@@ -2330,11 +2331,18 @@ ENTRY triton_computation {
 )",
                        primitive_util::LowercasePrimitiveTypeName(data_type),
                        AlgorithmToString(algorithm));
+  // TODO(b/433240828): triton fails on this combinations but only in debug
+  // mode. Also, maybe update the test to fail gracefully in case of crashes.
+  if (algorithm == PrecisionConfig::ALG_DOT_F64_F64_F64 &&
+      primitive_util::BitWidth(data_type) < 32) {
+    GTEST_SKIP()
+        << "b/433240828: Triton fails on this combination in debug mode.";
+  }
+
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(hlo_text, F32, HloOpcode::kDot,
                                      /* use_nested_gemm_fusions=*/true));
-
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
   if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, F8E4M3, S8},
                             data_type)) {

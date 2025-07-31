@@ -150,7 +150,7 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   PjRtClient* client() const override;
 
-  bool IsAddressable() const override { return local_device_id_ != -1; }
+  bool IsAddressable() const override { return executor_ != nullptr; }
 
   int id() const override { return id_; }
 
@@ -534,7 +534,7 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   PjRtFuture<> ToLiteral(MutableLiteralBase* literal) override;
 
   PjRtFuture<> LazyToLiteral(
-      absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator)
+      absl::AnyInvocable<PjRtFuture<MutableLiteralBase*>() &&> generator)
       override;
 
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
@@ -665,6 +665,8 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   // Releases the device buffer by returning a unique_ptr of it.
   std::unique_ptr<TrackedGpuDeviceBuffer> ReleaseBufferLocked()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  PjRtFuture<> ToLiteralHelper(PjRtFuture<MutableLiteralBase*> literal);
 
   TfrtGpuClient* client_;
   const Shape on_device_shape_;
