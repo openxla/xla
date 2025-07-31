@@ -87,9 +87,10 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
       return false;
     }
     // cuBLAS doesn't support minor batch dimension.
-    if (absl::c_any_of(dims.Indices(DotOperandDims::kBatch), [&](int64_t dim) {
-          return dim == dims.shape().dimensions().size() - 1;
-        })) {
+    if (absl::c_any_of(dims.DimensionIndices(DotOperandDims::kBatch),
+                       [&](int64_t dim) {
+                         return dim == dims.shape().dimensions().size() - 1;
+                       })) {
       return false;
     }
     // cuBLAS supports up to one non-contracting dimension.

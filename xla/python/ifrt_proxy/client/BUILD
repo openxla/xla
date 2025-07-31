@@ -604,8 +604,6 @@ ifrt_proxy_cc_test(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 

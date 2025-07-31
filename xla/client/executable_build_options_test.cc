@@ -105,7 +105,7 @@ TEST(ExecutableBuildOptionsTest, SerializationFailsOnNonSerializableFields) {
                                  1};
     options.set_compile_thread_pool(&pool);
     EXPECT_THAT(options.ToProto(),
-                tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument));
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
   }
   {
     ExecutableBuildOptions options;
@@ -115,7 +115,7 @@ TEST(ExecutableBuildOptionsTest, SerializationFailsOnNonSerializableFields) {
           return std::make_pair(std::vector<Shape>(), Shape());
         });
     EXPECT_THAT(options.ToProto(),
-                tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument));
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
   }
 }
 

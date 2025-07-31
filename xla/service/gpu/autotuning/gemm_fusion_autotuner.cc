@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -842,17 +843,8 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       debug_options_.xla_gpu_enable_split_k_autotuning();
 
   // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
-  auto is_tma_enabled_for_device =
-      [](const stream_executor::DeviceDescription& device_info) {
-        bool is_cuda =
-            std::holds_alternative<stream_executor::CudaComputeCapability>(
-                device_info.gpu_compute_capability());
-        return is_cuda &&
-               device_info.cuda_compute_capability().IsAtLeastHopper();
-      };
   bool autotune_tma = debug_options_.xla_gpu_experimental_enable_triton_tma() &&
-                      is_tma_enabled_for_device(config_.GetDeviceDescription());
-
+                      IsTmaEnabledForDevice(config_.GetDeviceDescription());
   TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(), &dot);
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -920,27 +912,6 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
             std::get<TritonGemmConfig>(config), config_.GetDeviceDescription(),
             fusion, opts, allow_filtering_kernels_spilling_registers);
       });
-      if (executable_or.ok()) {
-        return executable_or;
-      }
-      // If we failed to compile with a specific config we generally should
-      // not ignore it unless we are running with an exhaustive tiling search
-      // that can produce unsupported configs.
-      if (absl::c_contains(
-              debug_options_
-                  .xla_gpu_unsupported_generic_triton_emitter_features(),
-              DebugOptions::
-                  GENERIC_TRITON_EMITTER_MUST_ACCEPT_ALL_AUTOTUNER_CONFIGS)) {
-        return executable_or;
-      }
-
-      if (debug_options_.xla_gpu_exhaustive_tiling_search()) {
-        VLOG(1)
-            << "TritonGemmAutotuneExtractor failed and config will be ignored: "
-            << executable_or.status();
-        return nullptr;
-      }
-
       return executable_or;
     }
 
@@ -1014,6 +985,8 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
           if (*executable != nullptr) {
             absl::MutexLock lock(&results_mu);
             results[fusion].push_back({config, std::move(*executable)});
+          } else {
+            VLOG(10) << "no executable for config: " << ConfigToString(config);
           }
           counter.DecrementCount();
         });
@@ -1156,7 +1129,9 @@ absl::StatusOr<AutotuneResult> GemmFusionAutotunerImpl::MeasurePerformance(
   // is set and reference executable was compiled.
   if (reference_buffer.has_value()) {
     TF_ASSIGN_OR_RETURN(bool rz_ok, CheckRedZones(rz_buffers, res));
-    if (!rz_ok) return res;
+    if (!rz_ok) {
+      return res;
+    }
 
     TF_RETURN_IF_ERROR(CompareBuffers(fusion, *reference_buffer,
                                       profiling_output.output, res));
@@ -1172,7 +1147,8 @@ absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
     return absl::StrFormat("XlaAutotunerMeasurement:#hlo_op=%s#",
                            fusion.name());
   });
-  VLOG(2) << "Profiling " << fusion.name() << ".";
+  VLOG(2) << absl::StrCat("Profiling ", fusion.name(), " with ",
+                          candidates.size(), " candidate configs.");
   std::vector<AutotuneResult> results;
   std::optional<ScopedShapedBuffer> reference_buffer;
   for (int i = 0; i < candidates.size(); ++i) {
@@ -1229,7 +1205,6 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
   tsl::profiler::TraceMe traceme("Autotune");
   TF_ASSIGN_OR_RETURN(auto executable_sets,
                       CompileAll(compile_util, gemm_config_sets));
-
   // Sort the candidates to make their execution order well-defined for each
   // fusion.
   for (auto& [unused, candidates] : executable_sets) {

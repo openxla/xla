@@ -183,9 +183,6 @@ Shape getFlattenedShape(const Shape& shape) {
 // parameter.
 ComputationLayout getFlattenedComputationLayout(
     const ComputationLayout& computationLayout, bool useTupleArgs) {
-  if (!computationLayout.AnyLayoutSet()) {
-    return computationLayout;
-  }
   // Flatten the result layout.
   ComputationLayout flattenedComputationLayout = ComputationLayout(
       ShapeLayout(getFlattenedShape(computationLayout.result_shape())));
@@ -378,6 +375,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // since the TOAST cost model cannot account for split axes or padding.
   options.dumpDirectory = shardyDir;
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
+  options.enableAutoPartitioning = hloModule->use_auto_spmd_partitioning();
   mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
   addStablehloExportPipeline(pm);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
