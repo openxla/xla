@@ -1057,6 +1057,10 @@ class CollectiveCmd : public CommandBufferCmd {
     return async_events_;
   }
 
+  bool IsP2PCollective() {
+    return false;
+  }
+
  protected:
   const CollectiveConfig& config() const { return config_; }
 

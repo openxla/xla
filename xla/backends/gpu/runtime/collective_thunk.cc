@@ -244,7 +244,7 @@ CollectiveThunk::CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
+    CollectiveOpGroupMode group_mode, bool is_p2p,
     bool use_nccl) {
   GlobalDeviceId global_device_id = params.global_device_id;
 
@@ -293,7 +293,7 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   absl::c_sort(incarnations);
 
   return GpuCliqueKey(std::move(participants), num_local_participants,
-                      xla::gpu::IsP2PStreamKind(stream_kind),
+                      is_p2p,
                       std::move(participant_groups), GlobalDeviceId(-1),
                       incarnations);
 }
@@ -305,17 +305,17 @@ absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
                       CollectiveThunk::GetGpuCollectives(params));
   return GetGpuCliqueKey(collectives, params, collective_config.replica_groups,
                          collective_config.group_mode,
-                         AsyncStreamKind::kCollective, use_nccl);
+                         false, use_nccl);
 }
 
 absl::StatusOr<CommunicatorHandle> GetComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind) {
+    CollectiveOpGroupMode group_mode, bool is_p2p) {
   TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
                       GetGpuCliqueKey(collectives, params, replica_groups,
-                                      group_mode, stream_kind));
+                                      group_mode, is_p2p));
 
   std::optional<RankId> rank = clique_key.rank(params.global_device_id);
   TF_ASSIGN_OR_RETURN(Communicator * comm,
@@ -416,7 +416,7 @@ absl::Status CollectiveThunk::Prepare(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(collectives, *params.collective_params,
                       config().replica_groups, config().group_mode,
-                      GetAsyncStreamKind()));
+                      IsP2PCollective()));
   return resource_requests.AddClique(clique_key);
 }
 
@@ -431,21 +431,20 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(1) << absl::StreamFormat(
       "[%d] Starting %s %s.", params.stream->parent()->device_ordinal(),
       IsAsync() ? "async" : "sync", Thunk::KindToString(kind()));
-  AsyncStreamKind stream_kind = GetAsyncStreamKind();
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *params.collective_params,
               *params.collective_cliques, config().replica_groups,
-              config().group_mode, stream_kind));
+              config().group_mode, IsP2PCollective()));
   se::StreamExecutor* executor = params.stream->parent();
-  int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
 
   bool is_first_rendezvous_needed = false;
   if (IsAsync()) {
-    // Launch collective operation on an async stream.
-    se::Stream& async_stream =
-        *params.collective_params->async_streams.at(async_stream_idx);
+    TF_ASSIGN_OR_RETURN(
+      se::Stream* stream_ptr,
+      GetStreamForExecution(Thunk::execution_stream_id(), params));
+    se::Stream& async_stream = *stream_ptr;
 
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
@@ -510,13 +509,12 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
 absl::StatusOr<std::vector<Communicator*>> CollectiveThunk::GetCommunicators(
     const ExecuteParams& params) const {
-  AsyncStreamKind stream_kind = GetAsyncStreamKind();
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *params.collective_params,
               *params.collective_cliques, config().replica_groups,
-              config().group_mode, stream_kind));
+              config().group_mode, IsP2PCollective()));
   return std::vector<Communicator*>{comm_handle.comm};
 }
 

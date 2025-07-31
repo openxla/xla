@@ -62,6 +62,10 @@ class NvshmemCollectiveThunk : public Thunk {
   std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
 
   bool IsAsyncStart() const override { return async_events_ != nullptr; }
+  bool IsP2PCollective() const { 
+    //TODO(chaserileyroberts): Why?? From above, this is what is expected, but nvmshmem is always p2p.
+    return GetAsyncStreamKind() != AsyncStreamKind::kCollective;
+  }
 
  protected:
   virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,

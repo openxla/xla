@@ -221,6 +221,9 @@ class CollectiveThunk : public Thunk {
   virtual AsyncStreamKind GetAsyncStreamKind() const { return stream_kind_; }
   virtual CollectiveStreamId GetAsyncStreamId() const { return stream_id_; }
   bool IsAsync() const { return async_events_ != nullptr; }
+  bool IsP2PCollective() const {
+    return GetAsyncStreamKind() != AsyncStreamKind::kCollective;
+  }
 
  private:
   const AsyncStreamKind stream_kind_;
@@ -318,7 +321,7 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
+    CollectiveOpGroupMode group_mode, bool is_p2p,
     bool use_nccl = true);
 
 // Helper over GetGpuCliqueKey that builds key for AsyncStreamKind::kCollective.
@@ -331,7 +334,7 @@ absl::StatusOr<CommunicatorHandle> GetComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind);
+    CollectiveOpGroupMode group_mode, bool is_p2p);
 
 struct DeviceBufferPair {
   PrimitiveType element_type;

@@ -97,7 +97,7 @@ absl::Status NvshmemCollectiveThunk::Prepare(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(collectives, *params.collective_params,
                       config().replica_groups, config().group_mode,
-                      GetAsyncStreamKind(), /*use_nccl= */ false));
+                      IsP2PCollective(), /*use_nccl= */ false));
   return resource_requests.AddClique(clique_key);
 }
 
