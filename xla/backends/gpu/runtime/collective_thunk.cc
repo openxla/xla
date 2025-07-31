@@ -58,6 +58,8 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -285,8 +287,9 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   absl::c_sort(incarnations);
 
   return GpuCliqueKey(std::move(participants), num_local_participants,
-                      kNoStreamId, stream_kind, std::move(participant_groups),
-                      GlobalDeviceId(-1), incarnations);
+                      xla::gpu::IsP2PStreamKind(stream_kind),
+                      std::move(participant_groups), GlobalDeviceId(-1),
+                      incarnations);
 }
 
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(

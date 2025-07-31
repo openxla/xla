@@ -6431,11 +6431,12 @@ bool HloParserImpl::ParseShape(Shape* result,
     if (!ParseLayout(&layout)) {
       return false;
     }
-    if (layout.minor_to_major_size() != result->dimensions().size()) {
+    if (layout.minor_to_major().size() != result->dimensions().size()) {
       return Error(
           lexer_.GetLoc(),
           StrFormat("Dimensions size is %ld, but minor to major size is %ld.",
-                    result->dimensions().size(), layout.minor_to_major_size()));
+                    result->dimensions().size(),
+                    layout.minor_to_major().size()));
     }
     if (layout.has_physical_shape()) {
       return Error(
@@ -6652,8 +6653,8 @@ bool HloParserImpl::ParseOriginalValueRecoveryTable(
   }
 
   while (lexer_.GetKind() != TokKind::kRbrace) {
-    OriginalArray removed_original_array, replacing_original_array;
-    if (!ParseOriginalArray(removed_original_array)) {
+    OriginalArray replaced_original_array, replacing_original_array;
+    if (!ParseOriginalArray(replaced_original_array)) {
       return false;
     }
     std::string errmsg =
@@ -6676,7 +6677,7 @@ bool HloParserImpl::ParseOriginalValueRecoveryTable(
     if (!recovery_module.ok()) {
       return false;
     }
-    original_value_recovery_table[removed_original_array] = std::make_pair(
+    original_value_recovery_table[replaced_original_array] = std::make_pair(
         replacing_original_array, std::move(recovery_module.value()));
   }
 
@@ -6692,6 +6693,9 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   optional<std::string> op_name;
   optional<std::string> source_file;
   optional<int32_t> source_line;
+  optional<int32_t> source_end_line;
+  optional<int32_t> source_column;
+  optional<int32_t> source_end_column;
   optional<std::vector<int64_t>> profile_type;
   optional<std::string> deduplicated_name;
   optional<std::string> scheduling_name;
@@ -6699,6 +6703,11 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   attrs["op_name"] = {/*required=*/false, AttrTy::kString, &op_name};
   attrs["source_file"] = {/*required=*/false, AttrTy::kString, &source_file};
   attrs["source_line"] = {/*required=*/false, AttrTy::kInt32, &source_line};
+  attrs["source_end_line"] = {/*required=*/false, AttrTy::kInt32,
+                              &source_end_line};
+  attrs["source_column"] = {/*required=*/false, AttrTy::kInt32, &source_column};
+  attrs["source_end_column"] = {/*required=*/false, AttrTy::kInt32,
+                                &source_end_column};
   attrs["profile_type"] = {/*required=*/false, AttrTy::kBracedInt64List,
                            &profile_type};
   attrs["deduplicated_name"] = {/*required=*/false, AttrTy::kString,
@@ -6719,6 +6728,15 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   }
   if (source_line) {
     metadata.set_source_line(*source_line);
+  }
+  if (source_end_line) {
+    metadata.set_source_end_line(*source_end_line);
+  }
+  if (source_column) {
+    metadata.set_source_column(*source_column);
+  }
+  if (source_end_column) {
+    metadata.set_source_end_column(*source_end_column);
   }
   if (profile_type) {
     for (const auto& type : *profile_type) {

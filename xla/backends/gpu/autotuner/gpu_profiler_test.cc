@@ -109,16 +109,18 @@ TEST_F(GpuProfilerTest, ProfileWithSharedBuffers) {
   EXPECT_EQ(profiles.size(), 2);
   TF_ASSERT_OK(profiles[0].status());
   TF_ASSERT_OK(profiles[1].status());
-  EXPECT_THAT(profiles,
-              ElementsAre(IsOkAndHolds(Field(&ProfileResult::duration,
-                                             absl::Nanoseconds(1000))),
-                          IsOkAndHolds(Field(&ProfileResult::duration,
-                                             absl::Nanoseconds(2000)))));
-  EXPECT_THAT(profiles,
-              ElementsAre(IsOkAndHolds(Field(&ProfileResult::output_buffer,
-                                             Eq(std::nullopt))),
-                          IsOkAndHolds(Field(&ProfileResult::output_buffer,
-                                             Eq(std::nullopt)))));
+  EXPECT_THAT(
+      profiles,
+      ElementsAre(absl_testing::IsOkAndHolds(
+                      Field(&ProfileResult::duration, absl::Nanoseconds(1000))),
+                  absl_testing::IsOkAndHolds(Field(&ProfileResult::duration,
+                                                   absl::Nanoseconds(2000)))));
+  EXPECT_THAT(
+      profiles,
+      ElementsAre(absl_testing::IsOkAndHolds(
+                      Field(&ProfileResult::output_buffer, Eq(std::nullopt))),
+                  absl_testing::IsOkAndHolds(
+                      Field(&ProfileResult::output_buffer, Eq(std::nullopt)))));
 }
 
 TEST_F(GpuProfilerTest, ProfileWithSharedBuffersWithOutputBuffer) {
@@ -138,7 +140,7 @@ TEST_F(GpuProfilerTest, ProfileWithSharedBuffersWithOutputBuffer) {
   auto profiler = GpuProfiler::Create(stream_exec_, ProfileOptions());
   TF_ASSERT_OK_AND_ASSIGN(auto profiles, profiler->ProfileWithSharedBuffers(
                                              std::move(executables)));
-  EXPECT_THAT(profiles, ElementsAre(IsOkAndHolds(Field(
+  EXPECT_THAT(profiles, ElementsAre(absl_testing::IsOkAndHolds(Field(
                             &ProfileResult::output_buffer, Eq(std::nullopt)))));
 }
 
@@ -164,10 +166,31 @@ TEST_F(GpuProfilerTest, FailingExecutablesReturnStatus) {
   TF_ASSERT_OK(profiles[0].status());
   EXPECT_FALSE(profiles[1].ok());
   TF_ASSERT_OK(profiles[2].status());
-  EXPECT_THAT(profiles[0], IsOkAndHolds(Field(&ProfileResult::duration,
-                                              absl::Nanoseconds(1000))));
-  EXPECT_THAT(profiles[2], IsOkAndHolds(Field(&ProfileResult::duration,
-                                              absl::Nanoseconds(3000))));
+  EXPECT_THAT(profiles[0],
+              absl_testing::IsOkAndHolds(
+                  Field(&ProfileResult::duration, absl::Nanoseconds(1000))));
+  EXPECT_THAT(profiles[2],
+              absl_testing::IsOkAndHolds(
+                  Field(&ProfileResult::duration, absl::Nanoseconds(3000))));
+}
+
+TEST_F(GpuProfilerTest, CreateInputBuffersAndProfile) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule module
+    ENTRY main {
+      ROOT c = s32[] constant(1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  MockExecutable mock_executable(module, 1000);
+
+  auto profiler = GpuProfiler::Create(stream_exec_, ProfileOptions());
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                          profiler->CreateInputBuffers(&mock_executable));
+  TF_ASSERT_OK_AND_ASSIGN(ProfileResult profile,
+                          profiler->Profile(&mock_executable, *buffers));
+  EXPECT_EQ(profile.duration, absl::Nanoseconds(1000));
 }
 
 }  // namespace

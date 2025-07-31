@@ -635,8 +635,8 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
                    << ". As the last resort, SPMD will replicate the tensor "
                       "and then partition it to obtain the target sharding, "
                       "which is inefficient. This issue will be fixed by "
-                      "Shardy with explicit collectives features enabled. "
-                      "Contact XLA or Shardy team for help.";
+                      "Shardy partitioner in the future, which is tracked in "
+                      "b/433785288. Contact Shardy or XLA team for help.";
     }
     return Replicate().Reshard(target);
   }
@@ -2250,6 +2250,10 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
         return std::nullopt;
       }
     }
+
+    // SplitReshapeHelper and MergeReshapeHelper may change the base shape. We
+    // need to recover it.
+    reshaped.set_base_shape(base_shape());
     return reshaped;
   }
   if (auto intermediate_target =

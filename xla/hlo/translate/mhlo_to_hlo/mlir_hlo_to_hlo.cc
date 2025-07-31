@@ -896,23 +896,6 @@ static std::optional<xla::OpSharding> CreateOpShardingFromAttribute(
   return xla::ConvertSharding(shardingAttr.getValue());
 }
 
-// Returns an OriginalValueProto from the "original_value" attribute of the op.
-// Returns std::nullopt if the op doesn't have the attribute.
-static std::optional<xla::OriginalValueProto> CreateOriginalValueFromOp(
-    mlir::Operation* op) {
-  auto original_value_attr =
-      op->getAttrOfType<mlir::StringAttr>(kOriginalValueAttr);
-  if (!original_value_attr) {
-    return std::nullopt;
-  }
-  mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(op);
-  if (failed(shape_or)) {
-    return std::nullopt;
-  }
-  return xla::ConvertOriginalValue(original_value_attr.getValue(),
-                                   shape_or.value());
-}
-
 // Returns a FrontendAttributes proto from the "frontend_attributes" attribute
 // of the op. An empty FrontendAttributes proto is returned if an op does not
 // have frontend attributes.
@@ -2541,7 +2524,8 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
       auto name = attr.getName();
       return name == kCallTargetName || name == kBackendConfig ||
              name == kApiVersion || name == kCalledComputations ||
-             name == kHasSideEffect || name == kShardingAttr;
+             name == kHasSideEffect || name == kShardingAttr ||
+             name == kFrontendAttributesAttr;
     };
     for (const auto& attr : op->getAttrs()) {
       if (!isSupportedAttrName(attr))
@@ -2625,7 +2609,25 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
   }
 
   xla::XlaOp custom_call;
-  if (op.getCalledComputations().size() == 1) {
+  if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
+      op.getResultLayouts()) {
+    mlir::func::FuncOp callee = ctx.converter->LookUpSymbol(
+        mlir::cast<FlatSymbolRefAttr>(op.getCalledComputations()[0]));
+    if (failed(ctx.converter->RunOnFunction(callee))) {
+      return failure();
+    }
+    xla::XlaComputationId computation =
+        ctx.converter->GetLoweredComputation(callee);
+    auto operand_shapes_with_layout = ConvertTypesToShapesWithLayout(
+        op.getOperandTypes(), op.getOperandLayouts().value());
+    SetLayout(result_shape, op.getResultLayouts().value());
+
+    custom_call = xla::CustomCallWithComputationAndLayouts(
+        ctx.builder, call_target_name, args, computation, result_shape,
+        operand_shapes_with_layout, backend_config, op.getHasSideEffect(),
+        output_operand_aliasing, literal_ptr, custom_call_schedule,
+        *xla_api_version);
+  } else if (op.getCalledComputations().size() == 1) {
     mlir::func::FuncOp callee = ctx.converter->LookUpSymbol(
         mlir::cast<FlatSymbolRefAttr>(op.getCalledComputations()[0]));
     if (failed(ctx.converter->RunOnFunction(callee))) return failure();
@@ -5319,33 +5321,6 @@ LogicalResult ConvertInfeedtLayout(mlir::Operation* op,
   return success();
 }
 
-// MHLO and XLA HLO disagree on the meaning of addition of `pred` / `i1`, so
-// there has to be a special case somewhere to account for the difference.  To
-// get the expected behavior of an `AddOp` on `i1`, we have to use `xor`.  Since
-// the majority of the conversion is generated code, we just sidestep it here
-// for this single case, and inline the code to emit an `xor`.
-LogicalResult ExportXlaOperatorWrapped(mlir::Operation* inst,
-                                       OpLoweringContext ctx) {
-  auto op = dyn_cast<mlir::mhlo::AddOp>(inst);
-  if (op && mlir::cast<mlir::TensorType>(op.getResult().getType())
-                .getElementType()
-                .isSignlessInteger(1)) {
-    auto& value_map = *ctx.values;
-    auto result = op.getResult();
-    xla::XlaOp xla_arg_0;
-    if (failed(GetXlaOp(op.getLhs(), value_map, &xla_arg_0, op)))
-      return mlir::failure();
-    xla::XlaOp xla_arg_1;
-    if (failed(GetXlaOp(op.getRhs(), value_map, &xla_arg_1, op)))
-      return mlir::failure();
-    auto xla_result = xla::Xor(Unwrap(xla_arg_0), Unwrap(xla_arg_1));
-    value_map[result] = xla_result;
-    return mlir::success();
-  }
-
-  return ExportXlaOperator(inst, ctx);
-}
-
 LogicalResult ConvertToHloModule::PropagateLayouts(
     const MlirToHloConversionOptions& options, mlir::Operation* inst,
     xla::XlaOp xla_op) {
@@ -5702,9 +5677,8 @@ LogicalResult ConvertToHloModule::Lower(
 
   *return_value = xla::XlaOp();
 
-  if (succeeded(ExportXlaOperatorWrapped(
-          inst,
-          {value_lowering, this, builder, &stack_frame_indexes_builder_}))) {
+  if (succeeded(ExportXlaOperator(inst, {value_lowering, this, builder,
+                                         &stack_frame_indexes_builder_}))) {
     if (inst->getNumResults() == 1) {
       auto iter = value_lowering->find(inst->getResult(0));
       if (iter == value_lowering->end()) {
@@ -6404,6 +6378,21 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
   options.use_tuple_args = use_tuple_args;
   options.return_tuple = return_tuple;
   return ConvertMlirHloToHlo(module, hlo_proto, options);
+}
+
+std::optional<xla::OriginalValueProto> CreateOriginalValueFromOp(
+    mlir::Operation* op) {
+  auto original_value_attr =
+      op->getAttrOfType<mlir::StringAttr>(kOriginalValueAttr);
+  if (!original_value_attr) {
+    return std::nullopt;
+  }
+  mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(op);
+  if (failed(shape_or)) {
+    return std::nullopt;
+  }
+  return xla::ConvertOriginalValue(original_value_attr.getValue(),
+                                   shape_or.value());
 }
 
 }  // namespace mlir
