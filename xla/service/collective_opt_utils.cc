@@ -78,7 +78,6 @@ std::optional<int64_t> GetScalarInt64Value(const HloInstruction* constant) {
   return constant->literal().GetIntegralAsS64(multi_index);
 }
 
-
 // Computes an index into a lookup table for a given device
 // ID (partition-id/replica-id/flattened-id) recursively.
 // This function resolves an index value that may be computed directly from a
