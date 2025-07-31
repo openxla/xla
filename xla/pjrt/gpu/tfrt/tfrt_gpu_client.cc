@@ -2094,11 +2094,6 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
       HostMemoryAllocator::OwnedPtr staging_buffer;
       staging_buffer = copy_to_staging_buffer(data);
 
-      // Call on_done_with_host_buffer to release the data buffer.
-      if (on_done_with_host_buffer) {
-        std::move(on_done_with_host_buffer)();
-      }
-
       // Copy the data from the staging buffer to GPU.
       EnqueueWork(blocking_thread_pool_.get(),
                   [h2d_do_copy(std::move(h2d_do_copy)),
