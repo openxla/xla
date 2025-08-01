@@ -94,9 +94,20 @@ class RocmComputeCapability {
 
   bool gfx11() const { return gfx_version().find("gfx11"); }
 
-  bool gfx1200() const { return gfx_version() == "gfx1200"; }
+  bool gfx11_discrete() const {
+    static constexpr absl::string_view kList[] = {"gfx1100", "gfx1101"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
 
-  bool gfx1201() const { return gfx_version() == "gfx1201"; }
+  bool gfx11_apu() const {
+    static constexpr absl::string_view kList[] = {"gfx1103", "gfx1150", "gfx1151"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+
+  bool gfx12_discrete() const {
+    static constexpr absl::string_view kList[] = {"gfx1200", "gfx1201"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
 
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
@@ -122,15 +133,17 @@ class RocmComputeCapability {
   }
 
   bool has_hipblaslt() const {
-    return gfx9_mi200_or_later() || gfx1200() || gfx1201();
-  }
+    return gfx9_mi200_or_later()    || \
+           gfx11_discrete()         || \
+           gfx11_apu()              || \
+           gfx12_discrete();  }
 
   bool has_fp8_support() const {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
   }
 
   bool has_ocp_fp8_support() const {
-    return gfx1200() || gfx1201() || gfx9_mi350();
+    return gfx12_discrete() || gfx9_mi350();
   }
 
   bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
@@ -159,7 +172,11 @@ class RocmComputeCapability {
       "gfx950",  
       "gfx1030",  // RX68xx / RX69xx
       "gfx1100",  // RX7900
-      "gfx1101", "gfx1200", "gfx1201",
+      "gfx1101",  // RX7700 / RX7800
+      "gfx1103",
+      "gfx1150", 
+      "gfx1151",
+      "gfx1200", "gfx1201",
   };
 };
 
