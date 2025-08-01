@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -598,10 +598,6 @@ const HloInstruction& FindNonTrivialHero(const HloInstruction& instr) {
   auto fusion_adaptor = HloFusionAdaptor::ForComputation(instr.parent());
   HloInstructionAdaptor instr_adaptor(instr, fusion_adaptor.get());
   return FindNonTrivialHero(instr_adaptor).instruction();
-}
-
-void VLogModule(int level, const llvm::Module& module) {
-  XLA_VLOG_LINES(level, llvm_ir::DumpToString(&module));
 }
 
 void VerifyModule(const llvm::Module& module) {

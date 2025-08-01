@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -296,13 +297,14 @@ void removeFrontendAttributes(HloModule* hloModule,
 }
 
 std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
-                                     absl::string_view passName) {
+                                     absl::string_view passName,
+                                     bool isShardyVerbose) {
   std::string shardyDir = debugOptions.xla_dump_to();
-  if (shardyDir.empty()) {
-    return "";
+  absl::string_view regex = debugOptions.xla_dump_hlo_pass_re();
+  if (shardyDir.empty() || isShardyVerbose) {
+    return shardyDir;
   }
-  if (debugOptions.xla_dump_hlo_pass_re().empty() ||
-      !RE2::PartialMatch(passName, debugOptions.xla_dump_hlo_pass_re())) {
+  if (regex.empty() || !RE2::PartialMatch(passName, regex)) {
     return "";
   }
   return shardyDir;
@@ -316,7 +318,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   LOG(INFO) << "Using Shardy for XLA SPMD propagation.";
 
   const DebugOptions& debugOptions = hloModule->config().debug_options();
-  std::string shardyDir = getShardyDirIfShouldDump(debugOptions, passName);
+  bool isShardyVerbose =
+      absl::StrContains(debugOptions.xla_dump_hlo_pass_re(), kShardyVerbose);
+  std::string shardyDir =
+      getShardyDirIfShouldDump(debugOptions, passName, isShardyVerbose);
 
   if (shardyDir == "sponge") {
     shardyDir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
@@ -327,6 +332,11 @@ absl::Status runShardingPropagation(HloModule* hloModule,
       LOG(INFO) << "Shardy dump directory is sponge on undeclared outputs dir: "
                 << shardyDir;
     }
+  }
+
+  if (isShardyVerbose) {
+    options.debugPropagationEdgeSharding = true;
+    options.debugShardingOrigins = true;
   }
 
   if (!shardyDir.empty()) {

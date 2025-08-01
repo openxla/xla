@@ -21,12 +21,11 @@ limitations under the License.
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
-#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/model/experimental/tiling_space.h"
 
-namespace xla::gpu {
+namespace xla::gpu::experimental {
 
 // A map from tile IDs, sizes and runtime variables to tile's offsets, sizes,
 // strides and upper bounds. Offsets-sizes-strides define what slice to extract,
@@ -59,24 +58,24 @@ namespace xla::gpu {
 // (tid0, tid1)[ts1] -> offsets [17 * tid0 + tid1 * ts1] sizes [ts1] strides [1]
 //              upper bounds [17 * tid0]
 struct DimTile {
+  bool operator==(const DimTile& other) const;
+
   mlir::AffineExpr offset;
   mlir::AffineExpr size;
   mlir::AffineExpr stride;
   mlir::AffineExpr upper_bound;
 };
 
-class ExperimentalSymbolicTile {
+class SymbolicTile {
  public:
-  ExperimentalSymbolicTile(mlir::MLIRContext* mlir_context,
-                           int64_t num_tile_ids, int64_t num_rt_vars,
-                           llvm::SmallVector<DimTile> one_dim_tiles);
+  SymbolicTile(mlir::MLIRContext* mlir_context, const TilingSpace& tiling_space,
+               llvm::SmallVector<DimTile> dim_tiles);
 
-  ExperimentalSymbolicTile(mlir::MLIRContext* mlir_context,
-                           int64_t num_tile_ids, int64_t num_rt_vars,
-                           llvm::ArrayRef<mlir::AffineExpr> offsets,
-                           llvm::ArrayRef<mlir::AffineExpr> sizes,
-                           llvm::ArrayRef<mlir::AffineExpr> strides,
-                           llvm::ArrayRef<mlir::AffineExpr> upper_bounds);
+  SymbolicTile(mlir::MLIRContext* mlir_context, const TilingSpace& tiling_space,
+               llvm::ArrayRef<mlir::AffineExpr> offsets,
+               llvm::ArrayRef<mlir::AffineExpr> sizes,
+               llvm::ArrayRef<mlir::AffineExpr> strides,
+               llvm::ArrayRef<mlir::AffineExpr> upper_bounds);
 
   std::string ToString() const;
 
@@ -84,27 +83,26 @@ class ExperimentalSymbolicTile {
   llvm::SmallVector<mlir::AffineExpr> sizes() const;
   llvm::SmallVector<mlir::AffineExpr> strides() const;
   llvm::SmallVector<mlir::AffineExpr> upper_bounds() const;
-  llvm::SmallVector<DimTile> one_dim_tiles() const { return one_dim_tiles_; }
+  llvm::SmallVector<DimTile> dim_tiles() const { return dim_tiles_; }
+  int64_t num_dim_tiles() const { return dim_tiles_.size(); }
 
-  int64_t num_tile_ids() const { return num_tile_ids_; }
-  int64_t num_result_dims() const { return offsets().size(); }
-  int64_t num_rt_vars() const { return num_rt_vars_; }
-
+  const TilingSpace& tiling_space() const { return *tiling_space_; }
   mlir::MLIRContext* mlir_context() const { return mlir_context_; }
+
+  bool operator==(const SymbolicTile& other) const;
 
   // This allows GUnit to print the tile.
   template <typename Sink>
-  friend void AbslStringify(Sink& sink, const ExperimentalSymbolicTile& tile) {
+  friend void AbslStringify(Sink& sink, const SymbolicTile& tile) {
     sink.Append(tile.ToString());
   }
 
  private:
   mlir::MLIRContext* mlir_context_;
-  int64_t num_tile_ids_;
-  int64_t num_rt_vars_;
-  llvm::SmallVector<DimTile> one_dim_tiles_;
+  const TilingSpace* tiling_space_;
+  llvm::SmallVector<DimTile> dim_tiles_;
 };
 
-}  // namespace xla::gpu
+}  // namespace xla::gpu::experimental
 
 #endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_H_

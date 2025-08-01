@@ -569,6 +569,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -586,8 +587,11 @@ xla_test(
         "//xla/service:executable",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
@@ -604,6 +608,7 @@ xla_cc_binary(
         ":factory",
         ":gpu_profiler",
         "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
         "//xla/backends/autotuner",
         "//xla/backends/autotuner:profiler",
         "//xla/hlo/ir:hlo",

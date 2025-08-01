@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/shape_util.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
-#include "xla/tsl/platform/macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -76,8 +75,8 @@ using ShapeIndexView = absl::Span<const int64_t>;
 // For indexing into array shapes, the index is always trivially empty, ie {}.
 struct ShapeIndex : public absl::InlinedVector<int64_t, 2> {
   using InlinedVector::InlinedVector;
-  TF_ATTRIBUTE_NOINLINE ShapeIndex() = default;
 
+  ShapeIndex() = default;
   explicit ShapeIndex(ShapeIndexView view)
       : ShapeIndex(view.begin(), view.end()) {}
 
@@ -1170,11 +1169,12 @@ class ShapeUtil {
     if (Shape::TupleState* tuple = shape->if_tuple_state()) {
       Shape* tuple_shape = tuple->tuple_shapes.data();
       int64_t tuple_count = tuple->tuple_shapes.size();
-      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
-        index->push_back(i);
+      index->push_back(0);
+      for (int64_t i = 0; i < tuple_count;
+           ++i, ++tuple_shape, ++index->back()) {
         ForEachMutableSubshapeHelper(tuple_shape, fn, index);
-        index->pop_back();
       }
+      index->pop_back();
     }
   }
 
@@ -1187,12 +1187,13 @@ class ShapeUtil {
     if (Shape::TupleState* tuple = shape->if_tuple_state()) {
       Shape* tuple_shape = tuple->tuple_shapes.data();
       int64_t tuple_count = tuple->tuple_shapes.size();
-      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
-        index->push_back(i);
+      index->push_back(0);
+      for (int64_t i = 0; i < tuple_count;
+           ++i, ++tuple_shape, ++index->back()) {
         TF_RETURN_IF_ERROR(
             ForEachMutableSubshapeWithStatusHelper(tuple_shape, fn, index));
-        index->pop_back();
       }
+      index->pop_back();
     }
     return absl::OkStatus();
   }
@@ -1205,11 +1206,12 @@ class ShapeUtil {
     if (Shape::TupleState* tuple = shape->if_tuple_state()) {
       Shape* tuple_shape = tuple->tuple_shapes.data();
       int64_t tuple_count = tuple->tuple_shapes.size();
-      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
-        index->push_back(i);
+      index->push_back(0);
+      for (int64_t i = 0; i < tuple_count;
+           ++i, ++tuple_shape, ++index->back()) {
         ForEachMutableSubshapePostOrderHelper(tuple_shape, fn, index);
-        index->pop_back();
       }
+      index->pop_back();
     }
     fn(shape, *index);
   }
@@ -1222,12 +1224,13 @@ class ShapeUtil {
     if (Shape::TupleState* tuple = shape->if_tuple_state()) {
       Shape* tuple_shape = tuple->tuple_shapes.data();
       int64_t tuple_count = tuple->tuple_shapes.size();
-      for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape) {
-        index->push_back(i);
+      index->push_back(0);
+      for (int64_t i = 0; i < tuple_count;
+           ++i, ++tuple_shape, ++index->back()) {
         TF_RETURN_IF_ERROR(ForEachMutableSubshapePostOrderWithStatusHelper(
             tuple_shape, fn, index));
-        index->pop_back();
       }
+      index->pop_back();
     }
     TF_RETURN_IF_ERROR(fn(shape, *index));
     return absl::OkStatus();
