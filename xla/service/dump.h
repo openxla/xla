@@ -212,6 +212,8 @@ std::optional<std::string> DumpNonDefaultDebugOptions(const HloModule& module,
 // are received from DefaultDebugOptionsIgnoringFlags().
 // TODO: move this to xla/debug_options_flags.cc
 std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options);
+std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options,
+                                      const DebugOptions& reference_options);
 
 }  // namespace xla
 
