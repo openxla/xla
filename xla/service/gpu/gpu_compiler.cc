@@ -659,7 +659,7 @@ absl::Status RunSPMDPasses(
                 DefaultAutoShardingOptionFromModuleConfig(hlo_module->config()),
                 alias_info);
           }
-        }
+        },
 #else
         std::nullopt,
 #endif  // PLATFORM_GOOGLE
