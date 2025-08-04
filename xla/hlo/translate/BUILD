@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_binary")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
@@ -112,7 +113,15 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:UBDialect",
+        "@shardy//shardy/dialect/sdy/ir:register",
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_passes",
     ],
+)
+
+cc_library(
+    name = "attributes",
+    hdrs = ["attributes.h"],
+    compatible_with = get_compatible_with_portable(),
 )

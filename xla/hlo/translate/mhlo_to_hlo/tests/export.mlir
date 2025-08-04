@@ -19,7 +19,7 @@ func.func @main(%arg0: tensor<2xi1>) -> tensor<2xi1> {
 
 // CHECK:  ENTRY
 // CHECK:  %[[ARG:.*]] = pred[2] parameter(0)
-// CHECK:  ROOT %[[RESULT:.*]] = pred[2] xor(%[[ARG]], %[[ARG]])
+// CHECK:  ROOT %[[RESULT:.*]] = pred[2] add(%[[ARG]], %[[ARG]])
 
 // -----
 
@@ -1691,24 +1691,6 @@ func.func @main(%arg0: tensor<2x2x2xi8>, %arg1: tensor<2x2x3xi8>) -> tensor<2x2x
 // -----
 
 // CHECK:  HloModule
-func.func @main(%arg0: tensor<10x16xbf16>, %arg1: tensor<32x20xbf16>, %meta: tensor<10x2xui16>) -> tensor<10x20xf32> {
-  // CHECK:  [[ARG0:%.*]] = bf16[10,16] parameter(0)
-  // CHECK:  [[ARG1:%.*]] = bf16[32,20] parameter(1)
-  // CHECK:  [[META:%.*]] = u16[10,2] parameter(2)
-  // CHECK:  dot([[ARG0]], [[ARG1]], [[META]]), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
-    lhs_sparsity = #mhlo.sparsity<dimension=1, n=2, m=4>,
-    dot_dimension_numbers = #mhlo.dot<
-      lhs_contracting_dimensions = [1],
-      rhs_contracting_dimensions = [0]
-    >,
-    precision_config = []} : (tensor<10x16xbf16>, tensor<32x20xbf16>, tensor<10x2xui16>) -> tensor<10x20xf32>
-  func.return %0 : tensor<10x20xf32>
-}
-
-// -----
-
-// CHECK:  HloModule
 func.func @main(%arg0: tensor<3x4xi32>, %arg1: tensor<4x5xi32>) -> tensor<3x5xi32> {
   // Simple einsum is lowered to HLO dot op.
   // CHECK:  [[ARG0:%.*]] = s32[3,4] parameter(0)
@@ -3185,4 +3167,15 @@ func.func @main(%input0: tensor<16x16xf32>, %input1: tensor<16x16xi32>) {
     "mhlo.return"(%7) : (tensor<i1>) -> ()
   }) {dimension = 1 : i64, is_stable = true} : (tensor<16x16xf32>, tensor<16x16xi32>) -> (tensor<16x16xf32>, tensor<16x16xi32>)
   func.return
+}
+
+// -----
+// CHECK: HloModule
+// CHECK: ENTRY
+// CHECK: %[[ARG0:.*]] = f32[192] parameter(0)
+// CHECK: ROOT %[[RESULT:.*]] = f32[1,17,17,192] broadcast(%[[ARG0]]), dimensions={3}, origin={{[{][{]}}"broadcast.2342"{{[}][}]}}
+
+func.func @main(%arg0: tensor<192xf32>) -> tensor<1x17x17x192xf32> {
+  %0 = "mhlo.broadcast_in_dim"(%arg0) <{broadcast_dimensions = dense<3> : tensor<1xi64>}> {mhlo.original_value = "{{\22broadcast.2342\22}}"} : (tensor<192xf32>) -> tensor<1x17x17x192xf32>
+  return %0 : tensor<1x17x17x192xf32>
 }

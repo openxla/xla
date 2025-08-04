@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 
@@ -354,17 +355,18 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
+        "//xla/python/ifrt_proxy/common:versions",
         "//xla/python/ifrt_proxy/server:host_callback",
         "//xla/python/pjrt_ifrt",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_to_from_proto",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:status_to_from_proto",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -381,6 +383,7 @@ ifrt_proxy_cc_test(
         ":rpc_helper",
         ":version",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt:mock",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
@@ -418,6 +421,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt:sharding_serdes",
+        "//xla/python/ifrt:user_context",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "//xla/python/ifrt_proxy/common:types",
         "//xla/python/ifrt_proxy/common:versions",
@@ -603,8 +607,6 @@ ifrt_proxy_cc_test(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 

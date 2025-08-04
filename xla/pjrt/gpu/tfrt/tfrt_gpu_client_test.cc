@@ -107,7 +107,6 @@ class DonationTransactionPeer {
 
 namespace {
 
-using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Gt;
@@ -692,19 +691,29 @@ TEST(TfrtGpuClientTest, ToLiteralAsync) {
   std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
 
   absl::Mutex mu;
-  auto literal = std::make_shared<Literal>(
-      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
   bool got_literal = false;
 
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
-    absl::MutexLock l(&mu);
-    TF_ASSERT_OK(s);
-    got_literal = true;
-  });
+  Shape host_shape =
+      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape());
+  auto literal_promise = PjRtFuture<MutableLiteralBase*>::CreatePromise();
+
+  // Literal is not ready.
+  buffer
+      ->LazyToLiteral(
+          [&]() { return PjRtFuture<MutableLiteralBase*>(literal_promise); })
+      .OnReady([&](absl::Status s) {
+        absl::MutexLock l(&mu);
+        TF_ASSERT_OK(s);
+        got_literal = true;
+      });
   buffer.reset();
+
+  // Make the literal ready.
+  auto literal = std::make_shared<Literal>(host_shape);
+  literal_promise.Set(literal.get());
 
   {
     absl::MutexLock l(&mu);
@@ -740,18 +749,26 @@ TEST(TfrtGpuClientTest, ToLiteralAsyncWithNonCompactLayout) {
           client->addressable_devices()[0]->memory_spaces()[0]));
   std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
 
-  absl::Notification n;
-  auto literal = std::make_shared<Literal>(
-      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
-
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
-    TF_ASSERT_OK(s);
-    n.Notify();
-  });
+  Shape host_shape =
+      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape());
+  auto literal_promise = PjRtFuture<MutableLiteralBase*>::CreatePromise();
+
+  absl::Notification n;
+  buffer
+      ->LazyToLiteral(
+          [&]() { return PjRtFuture<MutableLiteralBase*>(literal_promise); })
+      .OnReady([&](absl::Status s) {
+        TF_ASSERT_OK(s);
+        n.Notify();
+      });
   buffer.reset();
+
+  // Make the literal ready.
+  auto literal = std::make_shared<Literal>(host_shape);
+  literal_promise.Set(literal.get());
 
   n.WaitForNotification();
 
@@ -1245,7 +1262,6 @@ TEST(GpuTopology, FromProto) {
   GpuTopologyProto msg;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
-        device_ids: [ 3, 2, 1 ]
         platform_version: "platform_version"
         num_slices: 2
         num_hosts_per_slice: 1
@@ -1254,7 +1270,6 @@ TEST(GpuTopology, FromProto) {
       &msg));
 
   std::unique_ptr<const GpuTopology> gpu_topology = GpuTopology::FromProto(msg);
-  EXPECT_THAT(gpu_topology->device_ids(), ElementsAre(3, 2, 1));
   EXPECT_THAT(gpu_topology->platform_version(), "platform_version");
   EXPECT_THAT(gpu_topology->num_slices(), 2);
   EXPECT_THAT(gpu_topology->num_hosts_per_slice(), 1);
@@ -1262,13 +1277,12 @@ TEST(GpuTopology, FromProto) {
 }
 
 TEST(GpuTopology, ToProto) {
-  GpuTopology gpu_topology(/*gpu_device_ids=*/{3, 2, 1},
-                           /*platform_version=*/"platform_version",
-                           /*num_slices=*/2,
-                           /*num_hosts_per_slice=*/1,
-                           /*num_devices_per_host=*/3);
+  GpuTopology gpu_topology(
+      /*platform_version=*/"platform_version",
+      /*num_slices=*/2,
+      /*num_hosts_per_slice=*/1,
+      /*num_devices_per_host=*/3);
   GpuTopologyProto msg = gpu_topology.ToProto();
-  EXPECT_THAT(msg.device_ids(), ElementsAre(3, 2, 1));
   EXPECT_THAT(msg.platform_version(), "platform_version");
   EXPECT_THAT(msg.num_slices(), 2);
   EXPECT_THAT(msg.num_hosts_per_slice(), 1);

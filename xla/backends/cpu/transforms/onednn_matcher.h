@@ -27,13 +27,15 @@ limitations under the License.
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla::cpu {
 
 class OneDnnMatcher : public LibraryMatcher {
  public:
-  explicit OneDnnMatcher(const TargetMachineFeatures* target_machine_features)
-      : LibraryMatcher(target_machine_features) {}
+  explicit OneDnnMatcher(const TargetMachineFeatures* target_machine_features,
+                         const tsl::protobuf::RepeatedField<int>* fusion_types)
+      : LibraryMatcher(target_machine_features, fusion_types) {}
   ~OneDnnMatcher() override = default;
 
   // Returns the set of supported HLO instructions.
@@ -55,6 +57,13 @@ class OneDnnMatcher : public LibraryMatcher {
                        [](const HloInstruction* operand) {
                          return operand->shape().element_type() == F32;
                        });
+  }
+
+  // Returns true if we should start a new fusion containing just the given HLO
+  // instruction.
+  bool ShouldCreateFusion(const HloInstruction* instr) override {
+    // Policy: Only dots can start a fusion for now.
+    return instr->opcode() == HloOpcode::kDot;
   }
 
   // Returns a prefix string for the fusion op's name.

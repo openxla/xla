@@ -2117,35 +2117,6 @@ absl::StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
   return AddInstruction(std::move(instr), HloOpcode::kDot, {lhs, rhs});
 }
 
-XlaOp XlaBuilder::SparseDot(
-    XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
-    absl::Span<const SparsityDescriptor> sparsity,
-    const DotDimensionNumbers& dimension_numbers,
-    const PrecisionConfig* precision_config,
-    std::optional<PrimitiveType> preferred_element_type) {
-  return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
-    TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
-    TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
-    TF_ASSIGN_OR_RETURN(Shape shape,
-                        ShapeInference::InferDotOpShape(
-                            *lhs_shape, *rhs_shape, dimension_numbers,
-                            preferred_element_type, sparsity));
-    std::vector<XlaOp> operands{lhs, rhs};
-    operands.insert(operands.end(), sparse_meta.begin(), sparse_meta.end());
-
-    HloInstructionProto instr;
-    *instr.mutable_shape() = shape.ToProto();
-    *instr.mutable_dot_dimension_numbers() = dimension_numbers;
-    if (precision_config != nullptr) {
-      *instr.mutable_precision_config() = *precision_config;
-    }
-    for (const SparsityDescriptor& descriptor : sparsity) {
-      *instr.add_dot_sparsity() = descriptor;
-    }
-    return AddInstruction(std::move(instr), HloOpcode::kDot, operands);
-  });
-}
-
 XlaOp XlaBuilder::RaggedAllToAll(
     XlaOp input, XlaOp input_offsets, XlaOp send_sizes, XlaOp output,
     XlaOp output_offsets, XlaOp recv_sizes,
@@ -4966,6 +4937,11 @@ absl::StatusOr<XlaOp> XlaBuilder::AddInstruction(
   if (sharding_) {
     TF_RETURN_IF_ERROR(NormalizeAndAssignSharing(&instr, *sharding_));
   }
+
+  if (original_value_) {
+    *instr.mutable_original_value() = *original_value_;
+  }
+
   *instr.mutable_frontend_attributes() = frontend_attributes_;
 
   handle_to_index_[handle] = instructions_.size();
@@ -5314,17 +5290,6 @@ XlaOp DotGeneral(const XlaOp lhs, const XlaOp rhs,
                  std::optional<PrimitiveType> preferred_element_type) {
   return lhs.builder()->DotGeneral(lhs, rhs, dimension_numbers,
                                    precision_config, preferred_element_type);
-}
-
-XlaOp SparseDot(const XlaOp lhs, const XlaOp rhs,
-                absl::Span<const XlaOp> sparse_meta,
-                absl::Span<const SparsityDescriptor> sparsity,
-                const DotDimensionNumbers& dimension_numbers,
-                const PrecisionConfig* precision_config,
-                std::optional<PrimitiveType> preferred_element_type) {
-  return lhs.builder()->SparseDot(lhs, rhs, sparse_meta, sparsity,
-                                  dimension_numbers, precision_config,
-                                  preferred_element_type);
 }
 
 XlaOp RaggedAllToAll(const XlaOp input, const XlaOp input_offsets,

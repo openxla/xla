@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -23,11 +24,15 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "absl/time/time.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
@@ -613,15 +618,15 @@ ENTRY %e {
                    /*layout_canonicalization_callback=*/{},
                    /*is_autotuning_compilation=*/true}),
               ::testing::AnyOf(
-                  tsl::testing::StatusIs(
+                  absl_testing::StatusIs(
                       tsl::error::CANCELLED,
                       "Compilation result discarded due to register spilling"),
                   // Hopper can't spill registers since wgmma instructions are
                   // asynchronous, instead it just runs out of them.
-                  tsl::testing::StatusIs(
+                  absl_testing::StatusIs(
                       tsl::error::RESOURCE_EXHAUSTED,
                       ::testing::HasSubstr("Register allocation failed")),
-                  tsl::testing::StatusIs(
+                  absl_testing::StatusIs(
                       tsl::error::RESOURCE_EXHAUSTED,
                       ::testing::HasSubstr("Insufficient registers"))));
 }
@@ -874,6 +879,46 @@ ENTRY e {
 // TODO(b/281489442): Write a testcase called
 // `SkipConfigsProducingDeviantResults` or similar.
 
+// TODO(b/393299275): remove when the legacy GEMM emitter is removed.
+class GemmFusionAutotunerLevelLegacyEmitterTest
+    : public StatelessAutotunerTest,
+      public ::testing::WithParamInterface<int> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        StatelessAutotunerTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_autotune_level(GetParam());
+    debug_options.set_xla_gpu_cublas_fallback(false);
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    return debug_options;
+  }
+};
+
+TEST_P(GemmFusionAutotunerLevelLegacyEmitterTest,
+       AllAutotuningLevelsWorkCorrectly) {
+  const std::string kHloText = R"(
+HloModule m
+
+ENTRY e {
+  p0 = pred[64,10] parameter(0)
+  p0c = f32[64,10] convert(p0)
+  p1 = f32[10,128] parameter(1)
+  ROOT r = f32[64,128] dot(p0c, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  MatchOptimizedHlo(kHloText, R"(
+; CHECK: kind=kCustom
+; CHECK-SAME: __triton_gemm
+      )");
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+INSTANTIATE_TEST_SUITE_P(GemmFusionAutotunerLevelSweep,
+                         GemmFusionAutotunerLevelLegacyEmitterTest,
+                         ::testing::Range(0, 5));
+
 class GemmFusionAutotunerLevelTest : public StatelessAutotunerTest,
                                      public ::testing::WithParamInterface<int> {
  public:
@@ -882,6 +927,10 @@ class GemmFusionAutotunerLevelTest : public StatelessAutotunerTest,
         StatelessAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(GetParam());
     debug_options.set_xla_gpu_cublas_fallback(false);
+    // TODO(b/393299275): remove when the flag is enabled by default.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
     return debug_options;
   }
 };
@@ -900,7 +949,7 @@ ENTRY e {
 
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-SAME: __triton_nested_gemm_fusion
       )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -960,7 +1009,7 @@ ENTRY e {
     EXPECT_TRUE(filecheck_matches);
   } else {
     EXPECT_THAT(HloTestBase::RunHloPass(&pipeline, module.get()),
-                tsl::testing::StatusIs(
+                absl_testing::StatusIs(
                     tsl::error::INTERNAL,
                     ::testing::HasSubstr(
                         "Expect autotune result cache hit for deviceless")));
@@ -1432,8 +1481,8 @@ TEST_F(
       GemmFusionAutotunerForKeyValueStore(multi_process_key_value_store);
 
   // Run the autotuner once to populate the key-value store.
-  EXPECT_THAT(autotuner.Run(module->Clone().get()),
-              ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(autotuner.Run(module->Clone().get()),
+              absl_testing::IsOkAndHolds(true));
 
   auto& key_value_store = *static_cast<KeyValueStoreForTest*>(
       multi_process_key_value_store.key_value_store.get());
@@ -1444,7 +1493,7 @@ TEST_F(
   // Running the autotuner a second time on the same module should succeed and
   // modify the HLO again, but we should hit the cache (i.e., the key-value
   // store should still contain a single entry for each process).
-  EXPECT_THAT(autotuner.Run(module.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(autotuner.Run(module.get()), absl_testing::IsOkAndHolds(true));
   ASSERT_THAT(key_value_store.storage(), ::testing::SizeIs(kProcessCount));
 }
 
@@ -1516,7 +1565,7 @@ TEST_F(
       GemmFusionAutotunerForKeyValueStore(multi_process_key_value_store);
 
   // Run the autotuner on the first module.
-  EXPECT_THAT(autotuner.Run(module1.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(autotuner.Run(module1.get()), absl_testing::IsOkAndHolds(true));
 
   auto& key_value_store = *static_cast<KeyValueStoreForTest*>(
       multi_process_key_value_store.key_value_store.get());
@@ -1527,7 +1576,7 @@ TEST_F(
   // Running the autotuner on the second module should *not* hit the cached
   // results in the key-value store. I.e., the key-value store should now
   // contain a second entry for each process).
-  EXPECT_THAT(autotuner.Run(module2.get()), ::tsl::testing::IsOkAndHolds(true));
+  ASSERT_THAT(autotuner.Run(module2.get()), absl_testing::IsOkAndHolds(true));
   ASSERT_THAT(key_value_store.storage(), ::testing::SizeIs(2 * kProcessCount));
 }
 
@@ -1655,6 +1704,73 @@ TEST_F(GemmFusionAutotunerTest, VerifyHopperConfigsAreDifferentFromBlackwell) {
   EXPECT_NE(blackwell_configs_set, hopper_configs_set);
 }
 
+// TODO(b/315957220): Remove the experimental flags once TMA is enabled by
+// default.
+class GemmFusionAutotunerEnableTma : public GemmFusionAutotunerTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        GemmFusionAutotunerTest::GetDebugOptionsForTest();
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    debug_options.set_xla_gpu_experimental_enable_triton_tma(true);
+    return debug_options;
+  }
+};
+
+TEST_F(GemmFusionAutotunerEnableTma,
+       TmaConfigsAreGeneratedOnlyForHopperAndWorkCorrectly) {
+  if (isRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
+
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+    ENTRY e {
+      p0 = f32[64,64] parameter(0)
+      p1 = f32[64,64] parameter(1)
+      ROOT r = f32[64,64] dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })")
+                                                  .value();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> ampere_configs,
+      GetPossibleMatmulAutotuneTritonConfigs(
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          se::CudaComputeCapability(se::CudaComputeCapability::kAmpere, 0),
+          GetToolkitVersion(), GetDebugOptionsForTest()));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> hopper_configs,
+      GetPossibleMatmulAutotuneTritonConfigs(
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          se::CudaComputeCapability(se::CudaComputeCapability::kHopper, 0),
+          GetToolkitVersion(), GetDebugOptionsForTest()));
+
+  std::set<TritonGemmConfig> ampere_configs_set(ampere_configs.begin(),
+                                                ampere_configs.end());
+  std::set<TritonGemmConfig> hopper_configs_set(hopper_configs.begin(),
+                                                hopper_configs.end());
+
+  // Expect that both configs are greater than zero and that the number of
+  // configs for Hopper is twice the number of configs for Ampere. This is
+  // because Hopper expects the same configs with and without TMA.
+  EXPECT_GT(ampere_configs_set.size(), 0);
+  EXPECT_GT(hopper_configs_set.size(), 0);
+  EXPECT_EQ(ampere_configs_set.size() * 2, hopper_configs_set.size());
+
+  auto count_tma_allowed = [](const std::vector<TritonGemmConfig>& configs) {
+    return std::count_if(
+        configs.begin(), configs.end(),
+        [](const TritonGemmConfig& config) { return config.is_tma_allowed; });
+  };
+  EXPECT_EQ(count_tma_allowed(hopper_configs), hopper_configs.size() / 2);
+
+  EXPECT_TRUE(RunAndCompare(std::move(module),
+                            ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

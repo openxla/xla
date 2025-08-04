@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/codegen/math_lib.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,7 +28,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -59,13 +65,109 @@ limitations under the License.
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/SCCP.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "xla/codegen/math/erf.h"
 #include "xla/codegen/math/exp.h"
+#include "xla/codegen/math/fptrunc.h"
+#include "xla/codegen/math/intrinsic.h"
 #include "xla/codegen/math/ldexp.h"
+#include "xla/codegen/math/log1p.h"
+#include "xla/codegen/math/rsqrt.h"
 #include "xla/codegen/math/string_interner.h"
 #include "xla/codegen/math/vec_name_mangler.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::codegen {
+namespace {
+// Allows unpacking a vector of types into individual arguments.
+template <typename F, typename Container, size_t... Is>
+decltype(auto) apply_vector(F&& f, const Container& v,
+                            std::index_sequence<Is...>) {
+  return f(v[Is]...);
+}
+
+template <size_t N, typename F, typename Container>
+decltype(auto) apply_vector(F&& f, const Container& v) {
+  return apply_vector(f, v, std::make_index_sequence<N>{});
+}
+}  // namespace
+
+using intrinsics::Type;
+
+template <typename Intrinsic>
+class IntrinsicAdapter : public MathFunction {
+ public:
+  absl::string_view FunctionName() const override { return Intrinsic::kName; }
+  std::vector<std::vector<Type>> SupportedVectorTypes(
+      llvm::TargetMachine* target_machine) const override {
+    if constexpr (std::is_invocable_v<decltype(Intrinsic::SupportedVectorTypes),
+                                      llvm::TargetMachine*>) {
+      return Intrinsic::SupportedVectorTypes(target_machine);
+    } else {
+      return Intrinsic::SupportedVectorTypes();
+    }
+  }
+
+  llvm::Function* CreateDefinition(
+      llvm::Module& module, llvm::TargetMachine* target_machine,
+      absl::Span<const Type> types) const override {
+    return apply_vector<Intrinsic::kNumArgs>(
+               [&](auto... args) {
+                 if constexpr (std::is_invocable_v<
+                                   decltype(Intrinsic::CreateDefinition),
+                                   llvm::Module*, llvm::TargetMachine*,
+                                   decltype(args)...>) {
+                   return Intrinsic::CreateDefinition(&module, target_machine,
+                                                      args...);
+                 } else {
+                   return Intrinsic::CreateDefinition(&module, args...);
+                 }
+               },
+               types)
+        .value();
+  }
+
+  std::string GenerateVectorizedFunctionName(
+      absl::Span<const Type> types) const override {
+    return apply_vector<Intrinsic::kNumArgs>(
+        [](auto... args) { return Intrinsic::Name(args...); }, types);
+  }
+  std::string GenerateMangledSimdPrefix(
+      absl::Span<const Type> types) const override {
+    std::vector<math::VecParamCardinality> param_cardinalities;
+    auto front = types.front();
+    // Remove the return type if it's in the types list:
+    for (const auto& type :
+         types.first(types.size() - Intrinsic::kLastArgIsReturnType)) {
+      if (type.is_scalar()) {
+        param_cardinalities.push_back(math::VecParamCardinality::kScalar);
+      } else {
+        param_cardinalities.push_back(math::VecParamCardinality::kVector);
+      }
+      CHECK(type.vector_width() == front.vector_width())
+          << "All types must have the same vector width.";
+    }
+    return math::GetMangledNamePrefix(Intrinsic::kIsMasked,
+                                      front.vector_width().value_or(1),
+                                      param_cardinalities);
+  }
+};
+
+MathFunctionLib::MathFunctionLib(llvm::TargetMachine* target_machine)
+    : target_machine_(target_machine) {
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Ldexp>>());
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Exp>>());
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::FpTrunc>>());
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Log1p>>());
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Erf>>());
+  math_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Rsqrt>>());
+}
 
 namespace {
 
@@ -104,105 +206,37 @@ GetCalledApproximatableFunctions(
 
 }  // anonymous namespace
 
-class LdexpF64MathFunction final : public MathFunction {
- public:
-  absl::string_view FunctionName() const override { return "ldexp"; }
-  std::vector<std::string> TargetFunctions() const override {
-    return {"xla.ldexp.f64.i32"};
-  }
-  std::vector<VectorType> SupportedVectorTypes() const override {
-    return {
-        {xla::F64, 1},
-        {xla::F64, 2},
-        {xla::F64, 4},
-        {xla::F64, 8},
-    };
-  }
-
-  std::string GenerateVectorizedFunctionName(
-      VectorType vector_type) const override {
-    return math::LdexpF64FunctionName(vector_type.width);
-  }
-
-  std::string GenerateMangledSimdName(VectorType vector_type) const override {
-    return math::GetMangledNamePrefix(/*is_masked=*/false, vector_type.width,
-                                      {math::VecParamCardinality::kVector,
-                                       math::VecParamCardinality::kVector});
-  }
-
-  llvm::Function* CreateDefinition(llvm::Module& module, absl::string_view name,
-                                   VectorType vector_type) const override {
-    llvm::Type* float_type =
-        llvm_ir::PrimitiveTypeToIrType(vector_type.dtype, module.getContext());
-    llvm::Type* vec_type = float_type;
-    if (vector_type.width > 1) {
-      vec_type = llvm::VectorType::get(float_type, vector_type.width, false);
-    }
-    return math::CreateLdexpF64(&module, vec_type);
-  }
-};
-
-class ExpF64MathFunction final : public MathFunction {
- public:
-  absl::string_view FunctionName() const override { return "exp"; }
-  std::vector<std::string> TargetFunctions() const override {
-    return {"xla.exp.f64"};
-  }
-  std::vector<VectorType> SupportedVectorTypes() const override {
-    return {
-        {xla::F64, 1},
-        {xla::F64, 2},
-        {xla::F64, 4},
-        {xla::F64, 8},
-    };
-  }
-
-  std::string GenerateVectorizedFunctionName(
-      VectorType vector_type) const override {
-    return math::ExpF64FunctionName(vector_type.width);
-  }
-
-  std::string GenerateMangledSimdName(VectorType vector_type) const override {
-    return math::GetMangledNamePrefix(/*is_masked=*/false, vector_type.width,
-                                      {math::VecParamCardinality::kVector});
-  }
-
-  llvm::Function* CreateDefinition(llvm::Module& module, absl::string_view name,
-                                   VectorType vector_type) const override {
-    llvm::Type* float_type =
-        llvm_ir::PrimitiveTypeToIrType(vector_type.dtype, module.getContext());
-    llvm::Type* vec_type = float_type;
-    if (vector_type.width > 1) {
-      vec_type = llvm::VectorType::get(float_type, vector_type.width, false);
-    }
-    return math::CreateExpF64(&module, vec_type);
-  }
-};
-
-MathFunctionLib::MathFunctionLib() {
-  math_functions_.push_back(std::make_unique<LdexpF64MathFunction>());
-  math_functions_.push_back(std::make_unique<ExpF64MathFunction>());
-}
-
 std::vector<llvm::VecDesc> MathFunctionLib::Vectorizations() {
   std::vector<llvm::VecDesc> vec_descs;
   for (const auto& math_func : math_functions_) {
-    for (const std::string& target_function : math_func->TargetFunctions()) {
-      absl::string_view target_function_interned =
-          math::StringInterner::Get().Intern(target_function);
-      for (const auto& vector_type : math_func->SupportedVectorTypes()) {
+    // For each floating point type supported, we add all vector widths to every
+    // other vector width as a possible vectorization.
+    for (const auto& target_types :
+         math_func->SupportedVectorTypes(target_machine_)) {
+      for (const auto& vector_types :
+           math_func->SupportedVectorTypes(target_machine_)) {
+        if (target_types.front().element_type() !=
+            vector_types.front().element_type()) {
+          continue;
+        }
+        absl::string_view target_name = math::StringInterner::Get().Intern(
+            math_func->GenerateVectorizedFunctionName(target_types));
         absl::string_view vec_name = math::StringInterner::Get().Intern(
-            math_func->GenerateVectorizedFunctionName(vector_type));
+            math_func->GenerateVectorizedFunctionName(vector_types));
+        targets_[vec_name] = math_func->FunctionName();
+        if (target_name == vec_name) {
+          continue;
+        }
+        size_t vector_width = vector_types.front().vector_width().value_or(1);
         llvm::VecDesc vec_desc = {
-            target_function_interned,
+            target_name,
             vec_name,
-            llvm::ElementCount::getFixed(vector_type.width),
+            llvm::ElementCount::getFixed(vector_width),
             false,
             math::StringInterner::Get().Intern(
-                math_func->GenerateMangledSimdName(vector_type)),
+                math_func->GenerateMangledSimdPrefix(vector_types)),
             std::nullopt};
         vec_descs.push_back(vec_desc);
-        targets_[vec_name] = math_func->FunctionName();
       }
     }
   }
@@ -211,7 +245,8 @@ std::vector<llvm::VecDesc> MathFunctionLib::Vectorizations() {
 
 void CreateDefinitionAndReplaceDeclaration(llvm::Module& module,
                                            absl::string_view name,
-                                           MathFunction::VectorType vector_type,
+                                           absl::Span<const Type> types,
+                                           llvm::TargetMachine* target_machine,
                                            MathFunction& math_func) {
   // The Vectorization pass may have already inserted a declaration
   // of this function that we need to rename and later remove to avoid
@@ -221,7 +256,7 @@ void CreateDefinitionAndReplaceDeclaration(llvm::Module& module,
     existing_func->setName(std::string(name) + ".old_decl");
   }
   llvm::Function* definition =
-      math_func.CreateDefinition(module, name, vector_type);
+      math_func.CreateDefinition(module, target_machine, types);
   definition->setLinkage(llvm::Function::InternalLinkage);
   definition->addFnAttr(llvm::Attribute::AlwaysInline);
   llvm::verifyFunction(*definition);
@@ -244,12 +279,14 @@ absl::flat_hash_set<absl::string_view> MathFunctionLib::RewriteMathFunctions(
        GetCalledApproximatableFunctions(module, targets_)) {
     for (const auto& math_func : math_functions_) {
       if (math_func->FunctionName() == function_name) {
-        for (const auto& vector_type : math_func->SupportedVectorTypes()) {
-          if (dtypes.contains(vector_type.dtype)) {
+        for (const auto& types :
+             math_func->SupportedVectorTypes(target_machine_)) {
+          auto vector_type = types.front();
+          if (dtypes.contains(vector_type.element_type())) {
             absl::string_view name = math::StringInterner::Get().Intern(
-                math_func->GenerateVectorizedFunctionName(vector_type));
-            CreateDefinitionAndReplaceDeclaration(module, name, vector_type,
-                                                  *math_func);
+                math_func->GenerateVectorizedFunctionName(types));
+            CreateDefinitionAndReplaceDeclaration(module, name, types,
+                                                  target_machine_, *math_func);
             replaced_functions.insert(name);
           }
         }
@@ -259,8 +296,14 @@ absl::flat_hash_set<absl::string_view> MathFunctionLib::RewriteMathFunctions(
 
   CHECK(!llvm::verifyModule(module)) << "Module is invalid after optimization\n"
                                      << llvm_ir::DumpToString(&module);
-
   return replaced_functions;
 }
 
+std::string MathFunction::GenerateVectorizedFunctionName(
+    absl::Span<const Type> types) const {
+  std::vector<std::string> names;
+  std::transform(types.begin(), types.end(), std::back_inserter(names),
+                 std::mem_fn(&Type::name));
+  return absl::StrCat("xla.", FunctionName(), ".", absl::StrJoin(names, "."));
+}
 }  // namespace xla::codegen

@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "xla/literal.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/shape.h"
@@ -76,6 +77,9 @@ class PjRtRawBuffer : public tsl::ReferenceCounted<PjRtRawBuffer> {
 // events.
 class CommonPjRtRawBuffer : public PjRtRawBuffer {
  public:
+  // Return opaque device memory pointer to the underlying memory.
+  virtual void* OpaqueDeviceMemoryDataPointer() const = 0;
+
   // Transfers the buffer to a sub-range of the on-device representation.
   // offset+transfer_size must be less than GetOnDeviceSizeInBytes. The
   // returned future transitions to ready on error, or after the transfer has
@@ -134,6 +138,18 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
       tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
       ::tsl::AsyncValueRef<bool> allocation_event) = 0;
+
+  // Blocks on a list of dependencies and then copies directly into
+  // dst_raw_buffer. Must set definition_event_promise,
+  // when dst_raw_buffer is ready, allocation_event before using dst_raw_buffer
+  // and src_usage_event_promise when done using this buffer.
+  virtual void ScheduleCopyTo(
+      AsyncWorkRunner* async_work_runner,
+      std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
+      tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+      tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
+      tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
+      ::tsl::AsyncValueRef<bool> allocation_event);
 };
 
 class RegisterRawBufferFactory {

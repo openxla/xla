@@ -38,6 +38,13 @@ namespace cpu {
 namespace {
 
 bool CanBeLoopFused(const HloInstruction& hlo) {
+  const HloModuleConfig& config = hlo.parent()->parent()->config();
+  bool use_new_fusion = options::UseExperimentalLoopFusion(config);
+  if (use_new_fusion && hlo.opcode() == HloOpcode::kDynamicUpdateSlice) {
+    // TODO(willfroom): Remove this once we port DUS emitter.
+    return false;
+  }
+
   // These are the only ones we fuse since we rely on effective elemental IR
   // generation.
   return hlo.IsElementwise() ||  //
@@ -163,8 +170,9 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   // number of arguments.
   static constexpr int64_t kMaxConcatenateArguments = 8;
 
-  if (IsLargeConstant(producer)) {
-    return FusionDecision::Forbid("Don't fuse large constants.");
+  if (HloPredicateIsOp<HloOpcode::kConstant>(producer) &&
+      !ShapeUtil::IsEffectiveScalar(producer->shape())) {
+    return FusionDecision::Forbid("Don't fuse non-scalar constants.");
   }
 
   if (CanBeOutputFused(producer, consumer)) {
@@ -335,11 +343,5 @@ HloInstruction* CpuInstructionFusion::FuseInstruction(
   return new_producer;
 }
 
-bool CpuInstructionFusion::IsLargeConstant(
-    const HloInstruction* constant) const {
-  return constant->IsConstant() &&
-         Cast<HloConstantInstruction>(constant)->literal().size_bytes() >
-             GetLargeConstantThresholdBytes();
-}
 }  // namespace cpu
 }  // namespace xla

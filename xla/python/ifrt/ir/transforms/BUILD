@@ -1,4 +1,5 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
@@ -41,6 +42,7 @@ cc_library(
         "ifrt_remove_attrs_from_other_dialects_pass.cc",
         "ifrt_remove_ifrt_attrs_pass.cc",
         "ifrt_reshard_to_copy_arrays_pass.cc",
+        "ifrt_to_dot_pass.cc",
         "ifrt_verify_bound_external_loaded_executable_pass.cc",
         "ifrt_verify_device_type_consistency_pass.cc",
         "ifrt_verify_donation_pass.cc",
@@ -59,6 +61,7 @@ cc_library(
     ],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":debug",
         ":passes_inc_gen",
         ":utils",
         "//xla:status_macros",
@@ -66,12 +69,15 @@ cc_library(
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
+        "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/python/ifrt/ir",
         "//xla/python/ifrt/ir:atom_program_compiler",
+        "//xla/python/ifrt/ir:ifrt_ir_program",
         "//xla/python/ifrt/ir:ifrt_ir_program_proto_cc",
         "//xla/python/ifrt/ir:ifrt_ops_inc_gen",
         "//xla/python/ifrt/ir:sharding_param",
@@ -85,6 +91,8 @@ cc_library(
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:btree",
@@ -96,6 +104,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -111,7 +120,9 @@ cc_library(
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],

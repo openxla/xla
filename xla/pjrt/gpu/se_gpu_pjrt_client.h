@@ -25,10 +25,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -52,6 +54,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/protobuf/coordination_service.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
 namespace xla {
@@ -65,7 +69,9 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
                           std::unique_ptr<LocalDeviceState> local_device_state,
                           std::string device_kind, std::string device_vendor,
                           std::string compute_capability, int core_count,
-                          int node_id, int slice_index = 0);
+                          int shared_memory_per_block_optin,
+                          int local_device_id, int node_id,
+                          int slice_index = 0);
 
   int slice_index() const;
 
@@ -105,7 +111,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::shared_ptr<KeyValueStoreInterface> kv_store,
       std::shared_ptr<DistributedRuntimeClient> distributed_client,
       bool abort_collectives_on_failure,
-      std::shared_ptr<const GpuTopology> gpu_topology);
+      std::shared_ptr<const GpuTopology> gpu_topology,
+      std::optional<int> num_nodes);
 
   std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
       const override {
@@ -120,6 +127,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::string_view platform_version() const override;
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+
+  void UpdateGlobalProcessInfo(
+      absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) override;
 
   using PjRtStreamExecutorClient::CreateBuffersForAsyncHostToDevice;
   absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -178,9 +188,15 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
   GetLatestIncarnations();
 
+  std::optional<int> num_nodes_;
+  const bool abort_collectives_on_failure_ = false;
   xla::StreamExecutorGpuTopologyDescription topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
   std::shared_ptr<DistributedRuntimeClient> distributed_client_;
+
+  absl::Mutex task_state_infos_mu_;
+  std::vector<tensorflow::CoordinatedTaskStateInfo> task_state_infos_
+      ABSL_GUARDED_BY(task_state_infos_mu_);
 };
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(

@@ -217,7 +217,15 @@ absl::Status ClearShardingAttributes(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
+      bool has_unreduced_axes =
+          hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
+      if (has_unreduced_axes) {
+        hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
+      }
       if (ShouldKeepSharding(hlo)) {
+        if (has_unreduced_axes) {
+          hlo->set_sharding(HloSharding::Unreduced());
+        }
         continue;
       }
       hlo->clear_sharding();
@@ -635,8 +643,8 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
                    << ". As the last resort, SPMD will replicate the tensor "
                       "and then partition it to obtain the target sharding, "
                       "which is inefficient. This issue will be fixed by "
-                      "Shardy with explicit collectives features enabled. "
-                      "Contact XLA or Shardy team for help.";
+                      "Shardy partitioner in the future, which is tracked in "
+                      "b/433785288. Contact Shardy or XLA team for help.";
     }
     return Replicate().Reshard(target);
   }
@@ -2250,6 +2258,10 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
         return std::nullopt;
       }
     }
+
+    // SplitReshapeHelper and MergeReshapeHelper may change the base shape. We
+    // need to recover it.
+    reshaped.set_base_shape(base_shape());
     return reshaped;
   }
   if (auto intermediate_target =
@@ -2560,15 +2572,6 @@ absl::Status SpmdPartitioningVisitor::DefaultAction(HloInstruction* hlo) {
 
   if (hlo->IsElementwise() && hlo->operand_count() > 0) {
     return HandleElementwise(hlo);
-  }
-
-  if (!hlo->sharding().IsTileMaximal()) {
-    VLOG(1) << "Not partitioned in SPMD mode (DefaultAction):"
-            << hlo->ToString();
-    for (int64_t i = 0; i < hlo->operand_count(); ++i) {
-      VLOG(1) << "  operand " << i
-              << " sharding:" << hlo->operand(i)->sharding().ToString();
-    }
   }
 
   // The base sharding is a non-tuple sharding that is either assigned to a
@@ -3210,7 +3213,6 @@ absl::Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 }
 
 absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
-  // TODO(b/397731516). Add cache even though the sharding is maximal.
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -5622,6 +5624,15 @@ absl::Status SpmdPartitioner::PreprocessSharding(
       if (hlo->HasSideEffectNoRecurse() && hlo->opcode() != HloOpcode::kRng &&
           (hlo->opcode() != HloOpcode::kCustomCall ||
            GetCustomCallPartitioner(hlo->custom_call_target()) == nullptr)) {
+        // TODO: b/432201708 - Remove this error once Shardy is stable in JAX.
+        if (hlo->opcode() == HloOpcode::kCustomCall) {
+          TF_RET_CHECK(hlo->custom_call_target().rfind("xla.sdy", 0) != 0)
+              << "This is a custom call named 'xla.sdy.*' which shouldn't "
+              << "appear in the XLA partitioner, please file a bug against the "
+              << "OpenXLA Shardy team. One of the possible bugs is your model "
+              << "was lowered targeting Shardy, but Shardy was then disabled "
+              << "in XLA.";
+        }
         TF_RET_CHECK(hlo->has_sharding())
             << "Side-effect HLO must have sharding: " << hlo->ToString();
         TF_RET_CHECK(!HasReplicatedSharding(hlo->sharding()) ||
@@ -5646,6 +5657,13 @@ absl::Status SpmdPartitioner::PreprocessSharding(
           hlo->set_sharding(
               HloSharding::Single(hlo->shape(), HloSharding::Replicate()));
         }
+      }
+
+      // Represent unreduced as a frontend attribute to avoid propagating
+      // the unreduced HLO sharding.
+      if (hlo->sharding().IsUnreduced()) {
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        hlo->set_sharding(HloSharding::Replicate());
       }
     }
   }

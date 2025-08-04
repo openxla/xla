@@ -21,6 +21,7 @@ limitations under the License.
 #include <limits>
 #include <utility>
 
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -29,21 +30,22 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
+#include "tsl/platform/context.h"
 
 namespace tsl {
 
 uint16_t AsyncValue::CreateTypeInfoAndReturnTypeIdImpl(
     const TypeInfo& type_info) {
-  size_t type_id = GetTypeInfoTableSingleton()->emplace_back(type_info) + 1;
+  size_t type_id = GetTypeInfoTableSingleton().emplace_back(type_info) + 1;
   DCHECK(type_id < std::numeric_limits<uint16_t>::max())
       << "Too many different AsyncValue types.";
   return type_id;
 }
 
-AsyncValue::TypeInfoTable* AsyncValue::GetTypeInfoTableSingleton() {
+AsyncValue::TypeInfoTable& AsyncValue::GetTypeInfoTableSingleton() {
   constexpr int kInitialCapacity = 64;
-  static auto* const type_info_table = new TypeInfoTable(kInitialCapacity);
-  return type_info_table;
+  static absl::NoDestructor<TypeInfoTable> type_info_table(kInitialCapacity);
+  return *type_info_table;
 }
 
 std::atomic<size_t> AsyncValue::total_allocated_async_values_;
@@ -74,6 +76,10 @@ void AsyncValue::RunWaiters(WaiterListNode* list) {
     WaiterListNode* node = list;
     (*node)();
     list = node->next;
+
+    // Waiter destruction may perform work that needs to run in the same context
+    // that created the waiter.
+    WithContext wc(std::move(node->context));
     delete node;
   }
 }

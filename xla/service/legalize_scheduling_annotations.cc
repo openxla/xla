@@ -121,7 +121,12 @@ absl::Status AttachAnnotation(
   return absl::OkStatus();
 }
 
-bool IsSupportedAsyncOp(HloInstruction* instr) {
+bool IsSupportedAsyncOp(HloInstruction* instr, bool supports_async_start) {
+  if (instr->opcode() == HloOpcode::kAsyncStart && !supports_async_start) {
+    VLOG(1) << "Dropping annotation on async start operation: "
+            << instr->name();
+    return false;
+  }
   return HloPredicateIsOp<
       HloOpcode::kAllGatherDone, HloOpcode::kAllGatherStart,
       HloOpcode::kAllReduceDone, HloOpcode::kAllReduceStart,
@@ -166,8 +171,11 @@ absl::Status CheckGapBetweenAnnotatedInstructions(
         absl::flat_hash_map<HloComputation*, std::vector<HloInstruction*>>>&
         annotation_to_instruction,
     const absl::flat_hash_map<HloInstruction*, Annotation>&
-        instruction_to_annotation) {
+        instruction_to_annotation,
+    bool deannotate_unsupported_groups) {
+  VLOG(2) << "Checking gap between annotated instructions";
   absl::flat_hash_map<HloInstruction*, HloInstruction*> parent;
+  absl::flat_hash_set<Annotation> bad_annotations;
   for (const auto& [annotation, comp_inst_vector] : annotation_to_instruction) {
     for (const auto& [comp, annotated_instructions] : comp_inst_vector) {
       // First find the frontier nodes that are not annotated with id but use an
@@ -219,12 +227,20 @@ absl::Status CheckGapBetweenAnnotatedInstructions(
                 current = parent[current];
                 log_inst(current);
               }
-              return absl::UnimplementedError(absl::StrCat(
-                  "Support for annotation groups with gaps doesn't "
-                  "exist yet, annotation: ",
-                  annotation.ToString(), ", instr: ", user->name(),
-                  " has the same annotation in its operand tree but "
-                  "has gaps on the way from that operand to itself."));
+              if (deannotate_unsupported_groups) {
+                bad_annotations.insert(annotation);
+              } else {
+                return absl::UnimplementedError(absl::StrCat(
+                    "Support for annotation groups with gaps doesn't "
+                    "exist yet, annotation: ",
+                    annotation.ToString(), ", instr: ", user->name(),
+                    " has the same annotation in its operand tree but "
+                    "has gaps on the way from that operand to itself. You can "
+                    "use "
+                    "--xla_tpu_scheduling_annotation_deannotate_unsupported_"
+                    "groups=true to deannotate the unsupported "
+                    "groups."));
+              }
             }
             if (visited.contains(user)) {
               continue;
@@ -233,6 +249,18 @@ absl::Status CheckGapBetweenAnnotatedInstructions(
             parent[user] = instr;
             visited.insert(user);
           }
+        }
+      }
+    }
+  }
+  // De-annotate unsupported scheduling groups
+  if (deannotate_unsupported_groups) {
+    for (Annotation annotation : bad_annotations) {
+      VLOG(1) << "De-annotating annotation: " << annotation.ToString();
+      for (const auto& [comp, annotated_instructions] :
+           annotation_to_instruction.at(annotation)) {
+        for (HloInstruction* instr : annotated_instructions) {
+          RemoveSchedulingAnnotation(instr);
         }
       }
     }
@@ -326,7 +354,8 @@ bool LegalizeSchedulingAnnotations::KeepSchedulingAnnotation(
     return false;
   }
 
-  return IsSupportedAsyncOp(instr) || config_.keep_sync_annotation(instr);
+  return IsSupportedAsyncOp(instr, config_.keep_start_annotation) ||
+         config_.keep_sync_annotation(instr);
 }
 
 bool LegalizeSchedulingAnnotations::RemoveTrivialGroups(
@@ -528,7 +557,8 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::Run(
     }
   } else {
     auto result = CheckGapBetweenAnnotatedInstructions(
-        annotation_to_instruction, instruction_to_annotation);
+        annotation_to_instruction, instruction_to_annotation,
+        config_.deannotate_unsupported_groups);
     if (!result.ok()) {
       return result;
     }

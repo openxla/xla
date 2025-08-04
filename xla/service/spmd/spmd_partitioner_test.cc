@@ -2525,6 +2525,41 @@ ENTRY entry {
   EXPECT_THAT(root, op::Select(_, op::DynamicSlice(pad, op::Constant(), _), _));
 }
 
+// Pad is treated as a special case of window operator. When this pad-window has
+// a large edge pad, halo exchange with collective permute is not sufficient.
+// resharding with collective(AG or AR) is needed.
+// This test case aims to validate the collective insertion behavior when spmd
+// partitioner handles large cross-partition pad in SPMD partitioner.
+TEST_P(SpmdPartitioningTest, LargeEdgePadAlongCrossPartitionDimension) {
+  absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY entry {
+      %param0 = f32[14,257] parameter(0), sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+      %const = f32[] constant(0)
+      ROOT %pad = f32[14,2257] pad(%param0, %const), padding=0_0x0_2000,
+    sharding={devices=[2,4]0,1,2,3,4,5,6,7}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  // Reshard operand will trigger collective.
+  // All-gather is intended to be used in production for pad operation,
+  // dynamic-update-slice + all-reduce is used in test environment for pattern
+  // matching purpose.
+  const HloInstruction* all_reduce =
+      FindInstruction(module.get(), HloOpcode::kAllReduce);
+  ASSERT_NE(all_reduce, nullptr);
+
+  EXPECT_THAT(all_reduce->operand(0), op::DynamicUpdateSlice());
+
+  EXPECT_THAT(root, op::DynamicSlice(op::Pad(all_reduce, _), _, _));
+}
+
 TEST_P(SpmdPartitioningTest, PadAlongPartitionedDimensionWithInteriorPadding) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -4052,8 +4087,6 @@ ENTRY %reshape {
               op::Tuple(reshape_1, abs));
 }
 
-// TODO(b/397731516). We can add a reshard cache for the reshape such that we
-// can avoid the reshard (dynamic-slice) on reshape.
 TEST_P(SpmdPartitioningTest, ReshapeWithSpecialCache2) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -16172,8 +16205,8 @@ HloModule module
 ENTRY entry {
   a = f32[8,1024]{1,0} parameter(0), sharding={devices=[1,2]0,1}
   b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,1]0,1}
-  dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
-  ROOT copy = f32[8,256]{1,0} copy(dot), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={unreduced}
+  ROOT copy = f32[8,256]{1,0} copy(dot), sharding={unreduced}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
@@ -16190,8 +16223,8 @@ HloModule module
 ENTRY entry {
   constant = s32[2,4]{1,0} constant({{1,1,1,1},{1,1,1,1}}), sharding={maximal device=0}
   a = s32[2,4]{1,0} parameter(0), sharding={devices=[1,2]0,1}
-  add = s32[2,4]{1,0} add(constant, a), frontend_attributes={xla.sdy.has_unreduced_axes="true"}
-  ROOT %copy = s32[2,4]{1,0} copy(%add), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  add = s32[2,4]{1,0} add(constant, a), sharding={unreduced}
+  ROOT copy = s32[2,4]{1,0} copy(%add), sharding={unreduced}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
@@ -16200,6 +16233,23 @@ ENTRY entry {
   // that the `add` has unreduced axes.
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               op::Copy(op::Add(op::AllReduce(), op::AllReduce())));
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedParam) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = s32[2,4]{1,0} parameter(0), sharding={unreduced}
+  b = s32[2,4]{1,0} parameter(1), sharding={unreduced}
+  ROOT add = s32[2,4]{1,0} add(a, b), sharding={unreduced}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  // Check that unreduced HloSharding is preserved after the pass.
+  EXPECT_THAT(module->entry_computation()->parameter_instructions(),
+              ::testing::Each(op::Sharding("{unreduced}")));
 }
 
 }  // namespace

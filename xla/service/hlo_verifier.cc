@@ -23,6 +23,7 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,8 +56,10 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/collective_permute_cycle.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
+#include "xla/service/source_target_pairs.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
@@ -319,28 +322,43 @@ static absl::Status CheckReplicaGroups(HloInstruction* hlo,
                                        CollectiveOpGroupMode group_mode,
                                        bool uniform_replica_group_size = true) {
   if (!hlo->replica_groups().empty()) {
-    absl::flat_hash_set<int64_t> replicas_seen;
+    size_t n = 0;
     for (const ReplicaGroup& g : hlo->replica_groups()) {
-      if (g.replica_ids().empty()) {
+      const size_t size = g.replica_ids_size();
+      if (size == 0) {
         return Internal("Instruction cannot have an empty replica group: %s",
                         hlo->ToString());
       }
+      n += size;
+    }
+    std::vector<bool> seen_replica_ids(n, false);
+    for (const ReplicaGroup& g : hlo->replica_groups()) {
       for (int64_t i : g.replica_ids()) {
-        if (!replicas_seen.insert(i).second) {
+        if (i < 0 || i >= n) {
+          return Internal(
+              "Replica %d is out of range (should be in [0, %d) range) in "
+              "instruction's replica-groups: %s",
+              i, n, hlo->ToString());
+        }
+        if (seen_replica_ids[i]) {
           return Internal(
               "Replica %d is repeated in instruction's replica-groups: %s", i,
               hlo->ToString());
         }
+        seen_replica_ids[i] = true;
       }
     }
-    size_t n = replicas_seen.size();
+    // If we come here then it is guaranteed that we have seen all replicas from
+    // 0 to n-1. This is because we calculate the `n` in the first pass and then
+    // on the second pass we only add to `seen_replica_ids` iff we see a replica
+    // id in the range [0, n) for the first time. So, there is no need to check
+    // that all `seen_replica_ids` values are true.
+#ifndef NDEBUG
     for (int64_t i = 0; i < n; ++i) {
-      if (!replicas_seen.count(i)) {
-        return Internal(
-            "Replica %d is not named in instruction's replica-groups: %s", i,
-            hlo->ToString());
-      }
+      CHECK(seen_replica_ids[i])
+          << "Programming error: seen_replica_ids[" << i << "] is false!";
     }
+#endif  // NDEBUG
 
     // replica-groups have numbers [0, n). This n should be either replica or
     // partition count, or their product. In some cases, replica and/or
@@ -2412,6 +2430,174 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
   return absl::OkStatus();
 }
 
+// Helper function to match source-target pairs for a pair of send/recv
+// instructions.
+absl::Status VerifySourceTargetPairs(const HloInstruction* first,
+                                     const HloInstruction* second) {
+  if (first == nullptr || second == nullptr) {
+    return Internal("Expected send or recv instruction to be non-null");
+  }
+  auto send_source_target_pairs =
+      first->frontend_attributes().map().find(kSendRecvSourceTargetPairsAttr);
+  auto recv_source_target_pairs =
+      second->frontend_attributes().map().find(kSendRecvSourceTargetPairsAttr);
+  // Source-target pairs should be set or unset for both send and recv.
+  if ((send_source_target_pairs == first->frontend_attributes().map().end()) !=
+      (recv_source_target_pairs == second->frontend_attributes().map().end())) {
+    return Internal(
+        "Expected both send and recv instruction to have source-target pairs "
+        "set, but found %s and %s",
+        first->ToString(), second->ToString());
+  }
+
+  // Skip checks if source-target pairs are unset for both send and recv
+  if (send_source_target_pairs == first->frontend_attributes().map().end()) {
+    return absl::OkStatus();
+  }
+
+  if (send_source_target_pairs->second != recv_source_target_pairs->second) {
+    return Internal(
+        "Expected send and recv instructions to have the same source-target "
+        "pairs, but found %s and %s",
+        first->ToString(), second->ToString());
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      SourceTargetPairs send_source_target_pairs_array,
+      SourceTargetPairs::FromString(send_source_target_pairs->second));
+  if (collective_permute_cycle::HasCycles(send_source_target_pairs_array)) {
+    return Internal(
+        "Expected send and recv instructions to have non-cyclical "
+        "source-target pairs, but found %s",
+        first->ToString());
+  }
+  std::set<int> sources;
+  std::set<int> targets;
+  for (int i = 0; i < send_source_target_pairs_array.size(); ++i) {
+    sources.insert(send_source_target_pairs_array[i].source);
+    targets.insert(send_source_target_pairs_array[i].target);
+  }
+  if (sources.size() != send_source_target_pairs_array.size() ||
+      targets.size() != send_source_target_pairs_array.size()) {
+    return Internal(
+        "Expected send and recv instructions to have unique source and target "
+        "pairs, but found %s",
+        first->ToString());
+  }
+
+  return absl::OkStatus();
+}
+
+enum class DfaState { kNoException, kExpectSend, kExpectRecv };
+
+// Helper function to handle the state transitions for a Send instruction.
+absl::Status HandleSendInstruction(const HloInstruction* instruction,
+                                   DfaState& current_state,
+                                   const HloInstruction*& current_instruction) {
+  if (DynCast<HloSendInstruction>(instruction)->is_host_transfer()) {
+    return absl::OkStatus();
+  }
+  switch (current_state) {
+    case DfaState::kNoException:
+      current_instruction = instruction;
+      current_state = DfaState::kExpectRecv;
+      break;
+    case DfaState::kExpectSend:
+      TF_RETURN_IF_ERROR(
+          VerifySourceTargetPairs(current_instruction, instruction));
+      current_state = DfaState::kNoException;
+      current_instruction = nullptr;
+      break;
+    case DfaState::kExpectRecv:
+      return Internal("Expected recv to match send, but found %s",
+                      instruction->ToString());
+    default:
+      break;
+  }
+  return absl::OkStatus();
+}
+
+// Helper function to handle the state transitions for a Recv instruction.
+absl::Status HandleRecvInstruction(const HloInstruction* instruction,
+                                   DfaState& current_state,
+                                   const HloInstruction*& current_instruction) {
+  if (DynCast<HloRecvInstruction>(instruction)->is_host_transfer()) {
+    return absl::OkStatus();
+  }
+  switch (current_state) {
+    case DfaState::kNoException:
+      current_instruction = instruction;
+      current_state = DfaState::kExpectSend;
+      break;
+    case DfaState::kExpectSend:
+      return Internal("Expected send to match recv, but found %s",
+                      instruction->ToString());
+    case DfaState::kExpectRecv:
+      TF_RETURN_IF_ERROR(
+          VerifySourceTargetPairs(current_instruction, instruction));
+      current_state = DfaState::kNoException;
+      current_instruction = nullptr;
+      break;
+    default:
+      break;
+  }
+  return absl::OkStatus();
+}
+
+// Checks that the send/recv instructions in the module do not deadlock. This is
+// only done on scheduled modules and is specific to device-to-device
+// communications on GPU. At a high level, we want to check that:
+// 1. no collectives are scheduled between a matching pair of send and recv
+// 2. no two send instructions are scheduled in a row
+// 3. no two recv instructions are scheduled in a row
+// 4. the program does not terminate with a dangling send or recv
+absl::Status VerifyNoCollectiveDeadlocks(const HloModule& module) {
+  DfaState current_state = DfaState::kNoException;
+  const HloInstruction* current_instruction = nullptr;
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      switch (instruction->opcode()) {
+        case HloOpcode::kSend:
+          TF_RETURN_IF_ERROR(HandleSendInstruction(instruction, current_state,
+                                                   current_instruction));
+          break;
+          // Handles Recv instructions.
+          break;
+        case HloOpcode::kRecv:
+          TF_RETURN_IF_ERROR(HandleRecvInstruction(instruction, current_state,
+                                                   current_instruction));
+          break;
+        case HloOpcode::kAllGather:
+        case HloOpcode::kAllReduce:
+        case HloOpcode::kAllToAll:
+        case HloOpcode::kRaggedAllToAll:
+        case HloOpcode::kCollectivePermute:
+        case HloOpcode::kReduceScatter:
+        case HloOpcode::kCollectiveBroadcast:
+          switch (current_state) {
+            case DfaState::kExpectSend:
+            case DfaState::kExpectRecv:
+              return Internal("Expected send or recv, but found %s",
+                              instruction->ToString());
+            default:
+              break;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  return current_state == DfaState::kNoException
+             ? absl::OkStatus()
+             : Internal(
+                   "Program terminated with dangling send or recv. Last "
+                   "checked instruction: %s",
+                   current_instruction == nullptr
+                       ? ""
+                       : current_instruction->ToString());
+}
+
 // Checks that the asynchronous computation only has a root and parameter
 // instructions.
 absl::Status VerifyAsyncComputation(const HloComputation* async_computation) {
@@ -2473,32 +2659,29 @@ absl::Status VerifyOriginalValue(const HloModule& module) {
 // collectives).
 absl::Status VerifyChannels(const HloModule& module,
                             const HloVerifierOpts& opts) {
-  // Send/recv instruction must have a unique user. If it is the corresponding
-  // send-done/recv-done operation, channel IDs must match.
+  // 1) Send/recv instruction must have a unique user. If it is the
+  // corresponding send-done/recv-done operation, channel IDs must match.
+  // 2) Host-transfer send/recv instructions that use the same channel must be
+  // exactly the same up to having different operands (but the operands must
+  // still have the same shapes).
+  absl::flat_hash_map<int64_t, std::vector<const HloSendRecvInstruction*>>
+      channel_to_host_transfer_send_recv_instructions;
   for (const HloComputation* computation : module.computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
-      auto channel_instr = DynCast<HloChannelInstruction>(instruction);
-      if (!channel_instr || !channel_instr->channel_id()) {
+      auto send_recv_instr = DynCast<HloSendRecvInstruction>(instruction);
+      if (!send_recv_instr || !send_recv_instr->channel_id()) {
         continue;
       }
 
       switch (instruction->opcode()) {
-        case HloOpcode::kSend: {
-          // If the instruction is kSend or kRecv, it can have no users if and
-          // only if it is wrapped in an async call.
-          if (instruction->IsRoot() &&
-              instruction->parent()->IsAsyncComputation()) {
-            break;
-          }
-          TF_RET_CHECK(instruction->users().size() == 1);
-          const HloInstruction* send_done = instruction->users().front();
-          if (send_done->opcode() == HloOpcode::kSendDone) {
-            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, send_done));
-            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, send_done));
-          }
-          break;
-        }
+        case HloOpcode::kSend:
         case HloOpcode::kRecv: {
+          if (send_recv_instr->is_host_transfer() &&
+              send_recv_instr->channel_id().has_value()) {
+            channel_to_host_transfer_send_recv_instructions
+                [send_recv_instr->channel_id().value()]
+                    .push_back(send_recv_instr);
+          }
           // If the instruction is kSend or kRecv, it can have no users if and
           // only if it is wrapped in an async call.
           if (instruction->IsRoot() &&
@@ -2506,10 +2689,13 @@ absl::Status VerifyChannels(const HloModule& module,
             break;
           }
           TF_RET_CHECK(instruction->users().size() == 1);
-          const HloInstruction* recv_done = instruction->users().front();
-          if (recv_done->opcode() == HloOpcode::kRecvDone) {
-            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, recv_done));
-            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, recv_done));
+          auto done_opcode = instruction->opcode() == HloOpcode::kSend
+                                 ? HloOpcode::kSendDone
+                                 : HloOpcode::kRecvDone;
+          const HloInstruction* done = instruction->users().front();
+          if (done->opcode() == done_opcode) {
+            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, done));
+            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, done));
           }
           break;
         }
@@ -2523,6 +2709,27 @@ absl::Status VerifyChannels(const HloModule& module,
     }
   }
 
+  for (const auto& [channel, send_recv_instructions] :
+       channel_to_host_transfer_send_recv_instructions) {
+    if (send_recv_instructions.size() > 1) {
+      const HloSendRecvInstruction* reference = send_recv_instructions[0];
+      for (const HloSendRecvInstruction* send_recv_instruction :
+           send_recv_instructions) {
+        auto eq_operand_shapes = [](const HloInstruction* a,
+                                    const HloInstruction* b) {
+          return ShapeUtil::Equal(a->shape(), b->shape());
+        };
+        if (!reference->Identical(*send_recv_instruction, eq_operand_shapes)) {
+          return Internal(
+              "Host-transfer send/recv instructions that use the same channel "
+              "must be identical up to having different operands. Found "
+              "different instructions with the same channel ID: \n%s \nvs "
+              "\n%s.",
+              reference->ToString(), send_recv_instruction->ToString());
+        }
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -3425,6 +3632,9 @@ absl::StatusOr<bool> HloVerifier::Run(
     // If the module has a schedule, it must be valid.
     if (module->has_schedule()) {
       TF_RETURN_IF_ERROR(module->schedule().Verify());
+      if (target_metadata_->GetVerifierOpts().CheckForCollectiveDeadlocks()) {
+        TF_RETURN_IF_ERROR(VerifyNoCollectiveDeadlocks(*module));
+      }
     }
 
     if (HloInstruction::IsThreadIncluded(

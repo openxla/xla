@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_test",
@@ -25,7 +26,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_protobuf//:any_cc_proto",
     ],
 )
 
@@ -82,7 +83,9 @@ cc_library(
     hdrs = ["profiler.h"],
     deps = [
         "//xla/service:executable",
+        "//xla/service:shaped_buffer",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
     ],

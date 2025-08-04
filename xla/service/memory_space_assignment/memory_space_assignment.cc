@@ -412,7 +412,7 @@ MemorySpaceAssignment::RunMemorySpaceAssignment(
   ScheduleAsynchronousCopies();
   TF_RETURN_IF_ERROR(SimplifyGraph());
   TF_RETURN_IF_ERROR(FixSchedule());
-  TF_ASSIGN_OR_RETURN(auto alias, HloAliasAnalysis::Run(module_));
+  TF_ASSIGN_OR_RETURN(auto alias, HloAliasAnalysis::Run(module_, alias_info_));
   TF_RETURN_IF_ERROR(ExportAndColorBuffers(*alias));
   std::vector<int64_t> alt_mem_bytes_occupied;
   // alt_mem_bytes_occupied is used for logging in the RuntimeSimulator below.
@@ -423,7 +423,7 @@ MemorySpaceAssignment::RunMemorySpaceAssignment(
       runtime_simulator.has_value() ? &alt_mem_bytes_occupied : nullptr));
   if (VLOG_IS_ON(2) && runtime_simulator.has_value()) {
     float estimated_time = runtime_simulator->SimulateElapsedTime(
-        module_, allocations_, &alt_mem_bytes_occupied);
+        module_, *alias, allocations_, &alt_mem_bytes_occupied);
     LOG(INFO) << "Estimated elapsed time with async copies (sec): "
               << estimated_time;
   }
@@ -659,31 +659,65 @@ absl::Status MemorySpaceAssignment::ExportAndColorBuffers(
   return absl::OkStatus();
 }
 
-void MemorySpaceAssignment::RemoveAssignmentForInstruction(
-    const HloInstruction* instruction) {
-  auto it = alternate_memory_assignments_.begin();
-  auto end = alternate_memory_assignments_.end();
-  while (it != end) {
-    const HloPosition& position = it->first;
-    if (position.instruction == instruction) {
-      VLOG(3) << "Removing instruction from alternate memory assignments.";
-      if (std::next(it) == end) {
-        alternate_memory_assignments_.pop_back();
-        break;
-      } else {
-        // Swap the removed position and chunk with the back and pop back.
-        *it = alternate_memory_assignments_.back();
-        alternate_memory_assignments_.pop_back();
-        end = alternate_memory_assignments_.end();
-      }
-    } else {
+void MemorySpaceAssignment::RemoveAlternateMemoryAssignments(
+    const absl::flat_hash_set<const HloInstruction*>& instructions) {
+  for (auto it = alternate_memory_assignments_.begin();
+       it != alternate_memory_assignments_.end();) {
+    const HloInstruction* instruction = it->first.instruction;
+    if (!instructions.contains(instruction)) {
       ++it;
+      continue;
     }
+
+    VLOG(3) << "Removing instruction from alternate memory assignments.";
+    if (std::next(it) == alternate_memory_assignments_.end()) {
+      alternate_memory_assignments_.pop_back();
+      break;
+    }
+
+    // Swap the removed position and chunk with the back and pop back.
+    *it = alternate_memory_assignments_.back();
+    alternate_memory_assignments_.pop_back();
+  }
+}
+
+void MemorySpaceAssignment::RemoveScopedMemoryAssignments(
+    const absl::flat_hash_set<const HloInstruction*>& instructions) {
+  for (auto it = scoped_memory_assignments_.begin();
+       it != scoped_memory_assignments_.end();) {
+    const HloInstruction* instruction = it->first.instruction;
+    if (!instructions.contains(instruction)) {
+      ++it;
+      continue;
+    }
+
+    VLOG(3) << "Removing instruction from alternate memory assignments.";
+    if (std::next(it) == scoped_memory_assignments_.end()) {
+      scoped_memory_assignments_.pop_back();
+      break;
+    }
+
+    // Swap the removed position and chunk with the back and pop back.
+    *it = scoped_memory_assignments_.back();
+    scoped_memory_assignments_.pop_back();
   }
 }
 
 absl::Status MemorySpaceAssignment::SimplifyGraph() {
   VLOG(1) << "Simplifying graph...";
+
+  // Preprocess flattened_instructions_ for quick index lookup.
+  absl::flat_hash_map<HloInstruction*, int64_t>
+      instruction_to_flattened_instructions_idx;
+  for (int64_t i = 0; i < flattened_instructions_.size(); ++i) {
+    if (flattened_instructions_[i] == nullptr) {
+      continue;
+    }
+    instruction_to_flattened_instructions_idx[flattened_instructions_[i]] = i;
+  }
+
+  absl::flat_hash_set<const HloInstruction*> removed_instructions;
+
   for (HloComputation* computation : module_->MakeNonfusionComputations()) {
     // Parallel computations aren't in the schedule and don't need to be
     // modified.
@@ -717,17 +751,15 @@ absl::Status MemorySpaceAssignment::SimplifyGraph() {
             instruction->opcode() != HloOpcode::kCopyStart &&
             instruction->opcode() != HloOpcode::kCopyDone) {
           VLOG(4) << "Instruction removed: " << instruction->ToString();
-          // Ensure the alternate memory assignments don't contain a reference
-          // to the removed instruction.
-          RemoveAssignmentForInstruction(instruction);
+          removed_instructions.insert(instruction);
           // Instead of deleting the instruction from the schedule, replace it
           // with a nullptr. This is needed because FixSchedule relies on the
           // logical time that is the index into flattened_instructions_ for
           // scheduling asynchronous copies.
-          auto instruction_it =
-              absl::c_find(flattened_instructions_, instruction);
-          if (instruction_it != flattened_instructions_.end()) {
-            *instruction_it = nullptr;
+          if (instruction_to_flattened_instructions_idx.contains(instruction)) {
+            flattened_instructions_
+                [instruction_to_flattened_instructions_idx[instruction]] =
+                    nullptr;
           }
           TF_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
           computation_modified = true;
@@ -778,6 +810,9 @@ absl::Status MemorySpaceAssignment::SimplifyGraph() {
       }
     }
   }
+
+  RemoveAlternateMemoryAssignments(removed_instructions);
+  RemoveScopedMemoryAssignments(removed_instructions);
 
   return absl::OkStatus();
 }

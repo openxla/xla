@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
@@ -70,29 +71,30 @@ limitations under the License.
 namespace xla::gpu {
 
 // clang-format off
-#define COMMAND_BUFFER_CMD_LIST(V)                       \
-  V(kEmptyCmd, "EmptyCmd")                               \
-  V(kTracedCommandBufferCmd, "TracedCommandBufferCmd")   \
-  V(kComputationIdCmd, "ComputationIdCmd")               \
-  V(kLaunchCmd, "LaunchCmd")                             \
-  V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")     \
-  V(kCublasLtCmd, "CublasLtCmd")                         \
-  V(kCuDnnCmd, "CuDnnCmd")                               \
-  V(kGemmCmd, "GemmCmd")                                 \
-  V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd") \
-  V(kMemzeroCmd, "MemzeroCmd")                           \
-  V(kMemset32Cmd, "Memset32Cmd")                         \
-  V(kCaseCmd, "CaseCmd")                                 \
-  V(kWhileCmd, "WhileCmd")                               \
-  V(kCustomCallCmd, "CustomCallCmd")                     \
-  V(kBarrierCmd, "BarrierCmd")                           \
-  V(kCollectiveCmd, "CollectiveCmd")                     \
-  V(kAllReduceCmd, "AllReduceCmd")                       \
-  V(kReduceScatter, "ReduceScatterCmd")                  \
-  V(kAllToAll, "AllToAllCmd")                            \
-  V(kAllGatherCmd, "AllGatherCmd")                       \
-  V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")   \
-  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")     \
+#define COMMAND_BUFFER_CMD_LIST(V)                               \
+  V(kEmptyCmd, "EmptyCmd")                                       \
+  V(kTracedCommandBufferCmd, "TracedCommandBufferCmd")           \
+  V(kComputationIdCmd, "ComputationIdCmd")                       \
+  V(kLaunchCmd, "LaunchCmd")                                     \
+  V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")             \
+  V(kCublasLtCmd, "CublasLtCmd")                                 \
+  V(kCuDnnCmd, "CuDnnCmd")                                       \
+  V(kGemmCmd, "GemmCmd")                                         \
+  V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd")         \
+  V(kMemzeroCmd, "MemzeroCmd")                                   \
+  V(kMemset32Cmd, "Memset32Cmd")                                 \
+  V(kCaseCmd, "CaseCmd")                                         \
+  V(kWhileCmd, "WhileCmd")                                       \
+  V(kCustomCallCmd, "CustomCallCmd")                             \
+  V(kBarrierCmd, "BarrierCmd")                                   \
+  V(kCollectiveCmd, "CollectiveCmd")                             \
+  V(kAllReduceCmd, "AllReduceCmd")                               \
+  V(kReduceScatter, "ReduceScatterCmd")                          \
+  V(kAllToAll, "AllToAllCmd")                                    \
+  V(kAllGatherCmd, "AllGatherCmd")                               \
+  V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")           \
+  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")             \
+  V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd")     \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -280,6 +282,12 @@ class CommandBufferCmd {
   // ensure that all ranks execute NCCL command update.
   virtual bool requires_initialization() { return false; }
 
+  // This is only true for DynamicSliceCopyFusionCmd when offset is dependents
+  // on loop iteration. As the command of slice operation is access the sliced
+  // memory region that varies across loop iterations, so even the original
+  // buffer allocation is the same, it still requires to do update.
+  virtual bool force_update() { return false; }
+
   // Returns all buffers used by the cmd. These will be used to track cmd
   // updates, thus they need to be consistent across calls to the function.
   virtual BufferUseVector buffers() const = 0;
@@ -413,6 +421,11 @@ class CommandBufferCmdExecutor {
     return absl::c_any_of(commands_, [](const auto& cmd) {
       return cmd->requires_initialization();
     });
+  }
+
+  bool force_update() const {
+    return absl::c_any_of(commands_,
+                          [](const auto& cmd) { return cmd->force_update(); });
   }
 
   // Renders the execution graph using default renderer. Returns url of the
@@ -718,6 +731,8 @@ class CaseCmd : public CommandBufferCmd {
 
   bool requires_initialization() override;
 
+  bool force_update() override;
+
   BufferUseVector buffers() const override;
 
  private:
@@ -746,6 +761,8 @@ class WhileCmd : public CommandBufferCmd {
       se::CommandBuffer* command_buffer) override;
 
   bool requires_initialization() override;
+
+  bool force_update() override;
 
   BufferUseVector buffers() const override;
 
@@ -958,13 +975,15 @@ class CollectiveCmd : public CommandBufferCmd {
       absl::FunctionRef<absl::Status(se::Stream*)> trace);
 
   virtual AsyncStreamKind GetAsyncStreamKind() = 0;
+  virtual CollectiveStreamId GetAsyncStreamId() = 0;
 
   bool IsAsync() const {
     return async_from_stream_id_ != execution_stream_id();
   }
 
   CollectiveStreamId nccl_stream_id() {
-    return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamKind());
+    return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamId(),
+                                           GetAsyncStreamKind());
   }
 
   ExecutionStreamId async_from_stream_id() const {
@@ -1001,6 +1020,9 @@ class AllReduceCmd : public CollectiveCmd {
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
   };
+  CollectiveStreamId GetAsyncStreamId() override {
+    return CollectiveStreamId(1);
+  };
 
  private:
   ReductionKind reduction_kind_;
@@ -1028,6 +1050,9 @@ class ReduceScatterCmd : public CollectiveCmd {
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
+  };
+  CollectiveStreamId GetAsyncStreamId() override {
+    return CollectiveStreamId(1);
   };
 
  private:
@@ -1057,6 +1082,9 @@ class AllToAllCmd : public CollectiveCmd {
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
   };
+  CollectiveStreamId GetAsyncStreamId() override {
+    return CollectiveStreamId(1);
+  };
 
  private:
   bool has_split_dimension_;
@@ -1083,6 +1111,9 @@ class AllGatherCmd : public CollectiveCmd {
 
   AsyncStreamKind GetAsyncStreamKind() override {
     return AsyncStreamKind::kCollective;
+  };
+  CollectiveStreamId GetAsyncStreamId() override {
+    return CollectiveStreamId(1);
   };
 
  private:
@@ -1169,6 +1200,37 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
   // command sequences.
   absl::flat_hash_map<int64_t, std::optional<BufferAllocation::Slice>>
       embeded_to_origin_slice_map_;
+};
+
+//===----------------------------------------------------------------------===//
+// DynamicSliceCopyFusionCmd
+//===----------------------------------------------------------------------===//
+
+// DynamicSliceCopyFusionCmd is a command that copies a slice from one
+// buffer to another, it is only supported for static slice.
+class DynamicSliceCopyFusionCmd : public CommandBufferCmd {
+ public:
+  DynamicSliceCopyFusionCmd(ExecutionStreamId execution_stream_id,
+                            const BufferAllocation::Slice& source_buffer,
+                            const BufferAllocation::Slice& destination_buffer,
+                            uint64_t mem_size,
+                            DynamicMemcpyThunk::Offsets offsets,
+                            ResourceUseVector resources = {});
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  bool force_update() override { return offsets_.depends_on_loop; }
+
+  BufferUseVector buffers() const override;
+
+ private:
+  const BufferAllocation::Slice source_buffer_;
+  const BufferAllocation::Slice destination_buffer_;
+  uint64_t mem_size_;
+  DynamicMemcpyThunk::Offsets offsets_;
 };
 
 }  // namespace xla::gpu

@@ -252,6 +252,15 @@ ENTRY DotOperationFusion_TransposeFusion {
 
 class OpcodeFusionTest : public InstructionFusionTest {
  protected:
+  bool RunFusion(HloModule* module) {
+    absl::StatusOr<bool> did_fusion = CpuInstructionFusion().Run(module);
+    EXPECT_TRUE(did_fusion.ok());
+    if (!did_fusion.ok()) {
+      return false;
+    }
+    return *did_fusion;
+  }
+
   // Runs CPU instruction fusion on the given module, and tests that the result
   // contains a fused op at the root with exactly the given multiset of opcodes.
   void RunFusionAndCheckOpcodesWereFused(
@@ -259,9 +268,8 @@ class OpcodeFusionTest : public InstructionFusionTest {
       HloInstruction::FusionKind fusion_kind =
           HloInstruction::FusionKind::kLoop) {
     auto computation = module->entry_computation();
-    auto did_fusion = CpuInstructionFusion().Run(module);
-    ASSERT_TRUE(did_fusion.ok());
-    EXPECT_TRUE(did_fusion.value());
+    auto did_fusion = RunFusion(module);
+    EXPECT_TRUE(did_fusion);
 
     HloInstruction* root = computation->root_instruction();
     ASSERT_THAT(root, op::Fusion());
@@ -569,16 +577,25 @@ TEST_F(OpcodeFusionTest, DynamicSliceWithDynamicUpdateSlice) {
       slice, update_indices));
 
   module->AddEntryComputation(builder.Build());
-  RunFusionAndCheckOpcodesWereFused(
-      module.get(),
-      {HloOpcode::kDynamicSlice, HloOpcode::kDynamicUpdateSlice,
-       HloOpcode::kParameter, HloOpcode::kParameter, HloOpcode::kParameter,
-       HloOpcode::kParameter, HloOpcode::kParameter, HloOpcode::kParameter,
-       HloOpcode::kParameter, HloOpcode::kParameter});
+  if (options::UseExperimentalLoopFusion(module->config())) {
+    EXPECT_FALSE(RunFusion(module.get()));
+  } else {
+    RunFusionAndCheckOpcodesWereFused(
+        module.get(),
+        {HloOpcode::kDynamicSlice, HloOpcode::kDynamicUpdateSlice,
+         HloOpcode::kParameter, HloOpcode::kParameter, HloOpcode::kParameter,
+         HloOpcode::kParameter, HloOpcode::kParameter, HloOpcode::kParameter,
+         HloOpcode::kParameter, HloOpcode::kParameter});
+  }
 }
 
 TEST_F(OpcodeFusionTest, MessOfFusibleNodes) {
   auto module = CreateNewVerifiedModule();
+
+  if (options::UseExperimentalLoopFusion(module->config())) {
+    GTEST_SKIP() << "New fusion emitter does not support DUS yet.";
+  }
+
   HloComputation::Builder builder(TestName());
 
   Shape full_shape = ShapeUtil::MakeShape(F32, {4, 100, 10, 100, 50});
@@ -957,16 +974,16 @@ ENTRY main {
                      HloOpcode::kParameter, HloOpcode::kAdd, HloOpcode::kAdd});
 }
 
-TEST_F(OpcodeFusionTest, SmallConstantInFusion) {
+TEST_F(OpcodeFusionTest, ScalarConstantInFusion) {
   absl::string_view module_string = R"(
 HloModule module
 
 ENTRY main {
-  a = f32[10,10]{1,0} parameter(0)
-  b = f32[10,10]{1,0} constant({...})
-  a_plus_b = f32[10,10]{1,0} add(a, b)
-  c = f32[10,10]{1,0} constant({...})
-  ROOT result = f32[10,10]{1,0} add(a_plus_b, c)
+  a = f32[1] parameter(0)
+  b = f32[1] constant({...})
+  a_plus_b = f32[1] add(a, b)
+  c = f32[1] constant({...})
+  ROOT result = f32[1] add(a_plus_b, c)
 }
 )";
 

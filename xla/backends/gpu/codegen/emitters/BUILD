@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 
 package(
@@ -21,21 +22,22 @@ cc_library(
         ":emitter_base",
         "//xla:shape_util",
         "//xla/codegen/emitters:computation_partitioner",
-        "//xla/codegen/emitters:elemental_hlo_to_mlir",
+        "//xla/codegen/emitters:concatenate_kernel_emitter",
+        "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@llvm-project//llvm:Support",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:TensorDialect",
     ],
 )
 
@@ -227,6 +229,7 @@ cc_library(
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "//xla/runtime:work_dimensions",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_fusible",

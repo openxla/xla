@@ -104,8 +104,6 @@ struct LowerLoadOp : public mlir::OpRewritePattern<LoadOp> {
         mlir::LLVM::GEPNoWrapFlags::inbounds);
     auto arg_ptr = b.create<mlir::LLVM::LoadOp>(ptr, arg_gep);
     arg_ptr.setInvariant(true);
-    arg_ptr->setAttr(mlir::LLVM::LLVMDialect::getAlignAttrName(),
-                     b.getIndexAttr(32));
 
     if (auto dereferenceable = op->getAttrOfType<mlir::IntegerAttr>(
             mlir::LLVM::LLVMDialect::getDereferenceableAttrName())) {
@@ -264,8 +262,11 @@ class WrapEntryWithCallFrame
     auto error = builder.create<cpu::SuccessOp>(error_type);
     builder.create<mlir::func::ReturnOp>(error.getResult());
 
-    op->setAttr("xla.cpu.is_wrapped", mlir::UnitAttr::get(context));
+    op->setAttr("xla.cpu.is_wrapped", builder.getUnitAttr());
     op.setPrivate();
+    op->setAttr("llvm.linkage", mlir::LLVM::LinkageAttr::get(
+                                    context, mlir::LLVM::Linkage::Internal));
+    op->setAttr("always_inline", builder.getUnitAttr());
 
     return mlir::success();
   }
@@ -329,6 +330,7 @@ class WrapEntryWithCallFrame
           mlir::LLVM::GEPNoWrapFlags::inbounds);
       auto workgroup_dim_load =
           builder.create<mlir::LLVM::LoadOp>(i64_ty, workgroup_dim_gep);
+      workgroup_dim_load.setInvariant(true);
 
       mlir::Value workgroup_dim = workgroup_dim_load.getResult();
       auto index_ty = builder.getIntegerType(

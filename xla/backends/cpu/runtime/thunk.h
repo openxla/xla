@@ -26,16 +26,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
+#include "xla/backends/cpu/runtime/xfeed_manager.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/resource_use.h"
-#include "xla/service/cpu/xfeed_manager.h"
 #include "xla/service/global_device_id.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
@@ -111,17 +113,7 @@ class Thunk {
   class TaskRunner {
    public:
     virtual ~TaskRunner() = default;
-
     virtual void operator()(Task task) = 0;
-
-    // Returns the current worker id if the caller happens to run on a thread
-    // managed by the task runner. Otherwise returns empty optional. Thunk
-    // executor relies on this information to do a best-effort resource
-    // isolation by making sure that all thunks are executed inside a task
-    // runner, and do not "leak" into arbitrary thread pools in the process,
-    // because by default we resume execution on a thread that completed thunk
-    // execute event AsyncValue, and it can be an external thread pool.
-    virtual std::optional<int64_t> current_worker_id() const = 0;
   };
 
   Thunk(Kind kind, Info info);
@@ -147,10 +139,10 @@ class Thunk {
   using ResourceUses = absl::InlinedVector<ResourceUse, 4>;
   virtual ResourceUses resource_uses() const { return {}; }
 
-  virtual std::vector<std::pair<std::string, const ThunkSequence*>>
-  nested_thunks() const {
-    return {};
-  }
+  // Returns the list of nested thunk sequences together with their names (i.e.
+  // for ConditionalThunk it returns thunk sequences for all branches).
+  using NamedThunkSequence = std::pair<std::string, const ThunkSequence*>;
+  virtual std::vector<NamedThunkSequence> nested_thunks() const { return {}; }
 
   //===--------------------------------------------------------------------===//
   // CollectiveExecuteParams
@@ -266,20 +258,17 @@ class Thunk {
   // An execute event that becomes ready when all tasks are completed.
   using ExecuteEvent = tsl::Chain;
 
-  // Returns non-reference-counted async value ref in constructed state.
-  // Returned async value is a per-process singleton stored in a storage with a
-  // static duration, and can be safely compared using pointer equality.
-  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEventSingleton();
-
-  // Returns `OkExecuteEventSingleton()` cached by this thunk instance.
-  tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent() const { return ok_event_; }
+  // Returns ExecuteEvent that is immediately ready with OK status.
+  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent() {
+    return ok_event_->AsRef();
+  }
 
   bool IsOkExecuteEvent(const tsl::AsyncValueRef<ExecuteEvent>& event) const {
-    return event == ok_event_;
+    return event.AsPtr() == ok_event_->AsPtr();
   }
 
   bool IsOkExecuteEvent(tsl::AsyncValuePtr<ExecuteEvent> event) const {
-    return event == ok_event_.AsPtr();
+    return event == ok_event_->AsPtr();
   }
 
   // Thunk execution must be asynchronous and never block the caller thread,
@@ -289,6 +278,15 @@ class Thunk {
   // Thunk execution completion must be reported via the `ExecuteEvent`.
   virtual tsl::AsyncValueRef<ExecuteEvent> Execute(
       const ExecuteParams& params) = 0;
+
+  // Returns `true` if thunk execution uses thread pool(s) not owned by the
+  // XLA:CPU runtime, i.e. thunk execution happens asynchronously on the IO
+  // event manager thread pool. Thunk executor takes extra care to resume
+  // execution using the TaskRunner passed via the ExecuteParams, otherwise we
+  // can accidentally take over the thread pool that we do not own. By default
+  // thunk execution is resumed on a thread that sets the ExecuteEvent async
+  // value concrete.
+  virtual bool ExecutesOnExternalThreadPool() const { return false; }
 
  protected:
   // Returns `true` if thunk should check buffer slices bounds, alignment, etc.
@@ -313,7 +311,8 @@ class Thunk {
   Kind kind_;
   Info info_;
 
-  tsl::AsyncValueRef<ExecuteEvent> ok_event_;
+  // Execute event that is immediately ready with OK status.
+  static absl::NoDestructor<tsl::AsyncValueOwningRef<ExecuteEvent>> ok_event_;
 };
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);

@@ -126,7 +126,7 @@ GpuBackendConfig GetTritonGpuBackendConfig(
     const BlockLevelParameters& block_level_parameters) {
   GpuBackendConfig gpu_backend_config;
   gpu_backend_config.mutable_fusion_backend_config()->set_kind(
-      std::string(kTritonFusionKind));
+      kTritonFusionKind);
   *gpu_backend_config.mutable_fusion_backend_config()
        ->mutable_block_level_fusion_config() =
       block_level_parameters.ToBlockLevelFusionConfig();
@@ -435,9 +435,9 @@ class PriorityFusionQueue {
           fusion_process_dump_->add_fusion_steps()->mutable_fusion();
 
       // Explicit std::string is needed for OSS proto implementation.
-      fusion_step->set_fusion_name(std::string(fusion->name()));
-      fusion_step->set_producer_name(std::string(original_producer->name()));
-      fusion_step->set_consumer_name(std::string(original_consumer->name()));
+      fusion_step->set_fusion_name(fusion->name());
+      fusion_step->set_producer_name(original_producer->name());
+      fusion_step->set_consumer_name(original_consumer->name());
     }
 
     if (dump_fusion_visualization_) {
@@ -576,7 +576,7 @@ class PriorityFusionQueue {
         absl::MutexLock lock(&fusion_process_dump_mutex_);
         auto* step = fusion_process_dump_->add_fusion_steps()
                          ->mutable_producer_ineligible();
-        step->set_producer_name(std::string(producer->name()));
+        step->set_producer_name(producer->name());
         step->set_reason(fusion_decision.Explain());
       }
       return -absl::InfiniteDuration();
@@ -612,7 +612,7 @@ class PriorityFusionQueue {
       absl::MutexLock lock(&fusion_process_dump_mutex_);
       auto* step =
           fusion_process_dump_->add_fusion_steps()->mutable_update_priority();
-      step->set_producer_name(std::string(producer->name()));
+      step->set_producer_name(producer->name());
       for (auto* consumer : producer->users()) {
         step->add_consumer_names(std::string(consumer->name()));
       }
@@ -696,8 +696,17 @@ class PriorityFusionQueue {
   FusionDecision CanFuseTriton(HloInstruction* producer,
                                HloInstruction* consumer,
                                bool use_multi_output_fusion = false) {
-    if (!IsGenericTritonFusion(*producer) &&
-        !IsGenericTritonFusion(*consumer) && !triton_heroless_fusion_enabled_) {
+    if (!IsFusible(*producer)) {
+      return FusionDecision::Forbid("the producer is not fusible");
+    }
+
+    if (!IsFusible(*consumer)) {
+      return FusionDecision::Forbid("the consumer is not fusible");
+    }
+
+    if (!(IsGenericTritonFusion(*producer) ||
+          IsGenericTritonFusion(*consumer) ||
+          triton_heroless_fusion_enabled_)) {
       return FusionDecision::Forbid("triton heroless fusion is not enabled");
     }
 
@@ -820,11 +829,11 @@ class PriorityFusionQueue {
     // reductions, which suffer from limited emitter support.
     // TODO(b/312686229): Cost model should handle this.
     const auto& analysis = fusion_analysis_cache_.Get(*producer);
-    if (analysis.GetEmitterFusionKind() ==
+    if (analysis.emitter_fusion_kind() ==
         HloFusionAnalysis::EmitterFusionKind::kReduction) {
       const auto& analysis_fused =
           fusion_analysis_cache_.Get(*producer, *consumer);
-      if (analysis_fused.GetEmitterFusionKind() ==
+      if (analysis_fused.emitter_fusion_kind() ==
           HloFusionAnalysis::EmitterFusionKind::kLoop) {
         return FusionDecision::Forbid(
             "fusion into output of a reduce fusion would create a loop fusion");
@@ -1261,7 +1270,7 @@ HloInstruction::FusionKind PriorityFusion::ChooseKind(
   // matter but some passes downstream still query these instead of fusion
   // analysis.
   const auto& analysis = fusion_analysis_cache_.Get(*producer, *consumer);
-  switch (analysis.GetEmitterFusionKind()) {
+  switch (analysis.emitter_fusion_kind()) {
     case HloFusionAnalysis::EmitterFusionKind::kDynamicMemcpy:
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
       return HloInstruction::FusionKind::kLoop;

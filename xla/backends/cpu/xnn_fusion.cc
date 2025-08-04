@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <utility>
 
 #include "xnnpack.h"
@@ -24,10 +25,12 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_lib.h"
+#include "xla/backends/cpu/xnn_gemm_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -128,17 +132,33 @@ absl::StatusOr<bool> IsDotSupportedByXnn(
   TF_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
                       GetDotCanonicalDims(dot_dimensions, dot_shape));
 
-  // TODO(b/385370486): XNNPACK does not tile by `K` and can be a lot slower
-  // than the default Eigen implementation.
-  if (dot_canonical_dims.k / dot_canonical_dims.m > 5 ||
-      dot_canonical_dims.k / dot_canonical_dims.n > 5) {
+
+  if (dot_canonical_dims.m == 1 && dot_canonical_dims.n == 1 &&
+      dot_shape.batch_size > 1) {
+    // TODO(b/430079105): XNNPACK does not handle batch dimensions that are not
+    // matrix dimensions. We could handle this case by fully implementing dot
+    // (b/430079105), but we also could just insert dummy dimensions of size 1
+    // for the matrix dimensions, so the batch dimensions get handled correctly.
     return false;
   }
 
   // XNNPACK does not support transposing LHS or col-major layouts.
-  return dot_canonical_dims.lhs_canonical &&
-         !dot_canonical_dims.lhs_column_major &&
-         !dot_canonical_dims.rhs_column_major;
+  if (!dot_canonical_dims.lhs_canonical ||
+      dot_canonical_dims.lhs_column_major ||
+      dot_canonical_dims.rhs_column_major) {
+    return false;
+  }
+
+  const XnnGemm gemm{/*dot_canonical_dims=*/dot_canonical_dims,
+                     /*lhs_dtype=*/lhs_shape.element_type(),
+                     /*rhs_dtype=*/rhs_shape.element_type(),
+                     /*out_dtype=*/out_shape.element_type()};
+  switch (GetXnnGemmConfig().Evaluate(gemm, cpu_features)) {
+    case XnnGemmConfig::Opinion::kAccept:
+      return true;
+    default:
+      return false;
+  }
 }
 
 absl::StatusOr<xnn_datatype> XnnDatatype(const PrimitiveType& type) {
@@ -287,6 +307,59 @@ bool IsBroadcastOpSupportedByXnn(const HloInstruction* hlo) {
   // TODO(ashaposhnikov): this case works well, but we should investigate the
   // performance regressions that occur if this condition is removed.
   return dims.back() + 1 == dims.size();
+}
+
+template <class T>
+static T InvariantValueFor(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kAdd:
+      return T{0};
+    case HloOpcode::kMinimum:
+      return std::numeric_limits<T>::infinity();
+    case HloOpcode::kMaximum:
+      return -std::numeric_limits<T>::infinity();
+    default:
+      LOG(FATAL) << "Unexpected opcode " << opcode;
+  }
+}
+
+bool IsReduceOpSupportedByXnn(const HloInstruction* hlo) {
+  CHECK_EQ(hlo->opcode(), HloOpcode::kReduce);
+  if (!XnnDatatype(hlo->shape().element_type()).ok()) {
+    return false;
+  }
+  const HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
+  CHECK_NE(reduce, nullptr);
+  // TODO(ashaposhnikov): we can support this edge case,
+  // planning to come back to this later.
+  if (reduce->dimensions().empty()) {
+    return false;
+  }
+  const HloComputation* to_apply = reduce->to_apply();
+  CHECK_NE(to_apply, nullptr);
+  if (!Match(to_apply->root_instruction(),
+             match::AnyOf<HloInstruction>(match::Add(), match::Maximum(),
+                                          match::Minimum())
+                 .WithBinaryOperandsAnyOrder(match::Parameter(0),
+                                             match::Parameter(1)))) {
+    return false;
+  }
+  if (reduce->init_values().size() != 1) {
+    return false;
+  }
+  HloInstruction* init = reduce->init_values().front();
+  CHECK_EQ(init->shape().element_type(), hlo->shape().element_type());
+  const HloOpcode opcode = to_apply->root_instruction()->opcode();
+  const PrimitiveType ty = init->shape().element_type();
+  return primitive_util::FloatingPointTypeSwitch(
+      [&](auto primitive_type) {
+        return Match(
+            init,
+            match::ConstantScalar(
+                InvariantValueFor<primitive_util::NativeTypeOf<primitive_type>>(
+                    opcode)));
+      },
+      ty);
 }
 
 }  // namespace xla::cpu

@@ -59,29 +59,6 @@ limitations under the License.
 
 namespace xla {
 
-std::vector<int64_t> ToMixedRadix(const int64_t n,
-                                  absl::Span<const int64_t> bounds) {
-  if (bounds.empty()) {
-    return {};
-  }
-
-  std::vector<int64_t> digits;
-  digits.reserve(bounds.size());
-  int64_t divisor = Product(bounds);
-  CHECK_GT(divisor, 0);
-  int64_t remainder = n % divisor;
-  for (const int64_t radix : bounds) {
-    CHECK_GT(radix, 0);
-    divisor /= radix;
-    CHECK_GT(divisor, 0);
-
-    // The divisor is always 1 for the last iteration.
-    digits.push_back(remainder / divisor);
-    remainder = remainder % divisor;
-  }
-  return digits;
-}
-
 absl::Status WithLogBacktrace(const absl::Status& status) {
   CHECK(!status.ok());
   VLOG(1) << status.ToString();
@@ -311,6 +288,12 @@ std::string HumanReadableNumOps(double flops, double nanoseconds,
   throughput += absl::StrCat(op_prefix, "OP/s");
   return throughput;
 }
+
+void LogString(absl::string_view fname, int line, absl::LogSeverity severity,
+               absl::string_view message) {
+  LOG(LEVEL(severity)).AtLocation(fname, line) << message;
+}
+
 }  // namespace
 
 std::string HumanReadableNumFlops(double flops, double nanoseconds) {
@@ -341,14 +324,12 @@ void LogLines(absl::LogSeverity sev, absl::string_view text, const char* fname,
       eol = text.size();
     }
     auto msg = text.substr(cur, eol - cur);
-    tsl::internal::LogString(fname, lineno, sev,
-                             std::string(msg.data(), msg.size()));
+    LogString(fname, lineno, sev, msg);
     cur = eol + 1;
   }
 
   if (orig_sev == absl::LogSeverity::kFatal) {
-    tsl::internal::LogString(fname, lineno, orig_sev,
-                             "Aborting due to errors.");
+    LogString(fname, lineno, orig_sev, "Aborting due to errors.");
   }
 }
 
