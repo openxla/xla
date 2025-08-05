@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
@@ -178,6 +179,10 @@ static llvm::PipelineTuningOptions GetPipelineTuningOptions(
   return pto_from_options(with_overrides);
 }
 
+static bool FunctionHasInternalLinkage(const llvm::Function& function) {
+  return function.hasInternalLinkage();
+}
+
 std::unique_ptr<IrCompiler> IrCompiler::Create(
     llvm::TargetOptions target_options, Options options,
     CompilationHooks hooks) {
@@ -248,6 +253,10 @@ IrCompiler::TargetMachineBuilder IrCompiler::InferTargetMachineBuilder(
 
 llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> IrCompiler::operator()(
     llvm::Module& module) {
+  absl::string_view module_name = module.getName();
+  XLA_SCOPED_LOGGING_TIMER_LEVEL(
+      absl::StrCat("Compiled LLVM module: ", module_name), 1);
+
   VLOG(2) << "IR before optimizations";
   XLA_VLOG_LINES(2, llvm_ir::DumpToString(&module));
 
@@ -309,6 +318,10 @@ llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> IrCompiler::operator()(
 
 llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
                                     llvm::TargetMachine* target_machine) const {
+  if (absl::c_any_of(module.getFunctionList(), FunctionHasInternalLinkage)) {
+    codegen::math::RunInlineAndOptPasses(module);
+  }
+
   llvm::PipelineTuningOptions pto =
       GetPipelineTuningOptions(module, options_, target_machine);
   llvm::LoopAnalysisManager lam;
@@ -328,7 +341,7 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
       std::make_unique<llvm::TargetLibraryInfoImpl>(target_triple);
   target_library_info_impl->addVectorizableFunctions(
       PolynomialApproximationsVectorization());
-  codegen::MathFunctionLib math_lib;
+  codegen::MathFunctionLib math_lib(target_machine);
   target_library_info_impl->addVectorizableFunctions(math_lib.Vectorizations());
 
   fam.registerPass(

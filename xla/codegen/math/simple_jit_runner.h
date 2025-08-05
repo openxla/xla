@@ -47,7 +47,6 @@ limitations under the License.
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::codegen::math {
@@ -150,6 +149,8 @@ class JitRunner {
       const std::string& original_function_name, size_t vector_size,
       PrimitiveType ret_type, std::vector<PrimitiveType> arg_types);
 };
+
+std::unique_ptr<llvm::TargetMachine> CreateHostTargetMachine();
 
 }  // namespace xla::codegen::math
 

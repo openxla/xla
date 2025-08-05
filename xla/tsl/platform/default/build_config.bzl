@@ -7,6 +7,8 @@ load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 load("@com_github_grpc_grpc//bazel:python_rules.bzl", "py_grpc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:py_proto_library.bzl", "py_proto_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_test.bzl", _cc_test = "cc_test")
 load("@rules_python//python:py_library.bzl", "py_library")
 load(
     "@xla//xla/tsl:tsl.bzl",
@@ -127,7 +129,7 @@ def pyx_library(
     for src in pyx_srcs:
         stem = src.split(".")[0]
         shared_object_name = stem + ".so"
-        native.cc_binary(
+        cc_binary(
             name = shared_object_name,
             srcs = [stem + ".cpp"],
             deps = cc_deps + ["@xla//third_party/python_runtime:headers"],
@@ -471,8 +473,7 @@ def strict_cc_test(
             clean_dep("@xla//xla/tsl:is_ci_build"): ["--gtest_fail_if_no_test_selected"],
             "//conditions:default": [],
         })
-
-    native.cc_test(
+    _cc_test(
         name = name,
         linkstatic = linkstatic,
         args = args,

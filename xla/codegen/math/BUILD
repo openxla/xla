@@ -31,10 +31,13 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/mlir/utils:type_util",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -125,14 +128,18 @@ cc_library(
         "//xla/service/cpu:orc_jit_memory_mapper",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/util:safe_reinterpret_cast",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:JITLink",
+        "@llvm-project//llvm:MC",
         "@llvm-project//llvm:OrcJIT",  # buildcleaner: keep
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ] + if_llvm_aarch64_available([
         "@llvm-project//llvm:AArch64AsmParser",  # fixdeps: keep
@@ -201,7 +208,6 @@ cc_library(
     hdrs = ["math_compiler_lib.h"],
     deps = [
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:IPO",
@@ -306,14 +312,13 @@ cc_library(
     deps = [
         ":intrinsic",
         "//xla:xla_data_proto_cc",
-        "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Core",  # buildcleaner: keep
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -358,6 +363,7 @@ xla_cc_test(
         ":test_matchers",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:Support",
@@ -379,6 +385,39 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
+    name = "tanh",
+    srcs = ["tanh.cc"],
+    hdrs = ["tanh.h"],
+    deps = [
+        ":intrinsic",
+        "//xla:xla_data_proto_cc",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "tanh_test",
+    srcs = ["tanh_test.cc"],
+    deps = [
+        ":intrinsic",
+        ":simple_jit_runner",
+        ":tanh",
+        ":test_matchers",
+        "//xla:xla_data_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:ir_headers",
     ],
 )

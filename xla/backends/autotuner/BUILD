@@ -1,4 +1,8 @@
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(
+    "//xla:xla.default.bzl",
+    "xla_cc_test",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -22,7 +26,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_protobuf//:any_cc_proto",
     ],
 )
 
@@ -35,6 +39,7 @@ cc_library(
         ":profiler",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
+        "//xla/service:shaped_buffer",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -51,25 +56,19 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "autotuner_test",
     srcs = ["autotuner_test.cc"],
-    backends = [
-        "a100",
-        "h100",
-        "b200",
-    ],
-    tags = [
-        "no_mac",
-    ],
     deps = [
         ":autotuner",
         ":codegen_backend",
         ":profiler",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:executable",
+        "//xla/service:shaped_buffer",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_matchers",

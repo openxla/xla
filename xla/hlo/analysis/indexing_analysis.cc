@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"
@@ -845,7 +846,7 @@ HloInstructionIndexing ComputeOutputToInputConvolutionOpIndexing(
         input_spatial_indexing.GetAffineMap().getResult(i).replaceDims(
             replacement_dims);
   }
-  llvm::DenseMap<AffineExpr, Interval> input_constraints;
+  llvm::MapVector<AffineExpr, Interval> input_constraints;
   for (const auto& [key, val] : input_spatial_indexing.GetConstraints()) {
     input_constraints[key.replaceDims(replacement_dims)] = val;
   }
@@ -1355,7 +1356,9 @@ bool HloInstructionIndexing::Simplify() {
   for (auto& operand_indexing : indexing_maps) {
     std::vector<OperandIndexing> to_remove, to_add;
     for (OperandIndexing idx : operand_indexing) {
+      auto old_idx = idx;
       if (idx.Simplify()) {
+        to_remove.push_back(old_idx);
         idx.RemoveUnusedSymbols();
         to_add.push_back(idx);
       }

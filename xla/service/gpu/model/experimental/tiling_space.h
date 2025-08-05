@@ -18,16 +18,21 @@ limitations under the License.
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "llvm/ADT/SmallVector.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/gpu/model/constraint_expression.h"
+#include "xla/service/gpu/model/experimental/symbolic_tile.h"
 #include "xla/shape.h"
 
-namespace xla::gpu {
+namespace xla::gpu::experimental {
 
 // TilingSpace contains information about all parallel and sequential dimensions
 // and runtime variables in a fusion.
@@ -39,6 +44,8 @@ namespace xla::gpu {
 // fusion.
 class TilingSpace {
  public:
+  TilingSpace() : constraints_(ConstraintExpression::GetAlwaysSatisfied()) {}
+
   // Unique ID for the dimension or runtime variable.
   using ID = int64_t;
 
@@ -72,7 +79,8 @@ class TilingSpace {
     const HloInstruction* hlo;
   };
 
-  static TilingSpace Create(const HloFusionAdaptor& fusion);
+  static std::unique_ptr<TilingSpace> Create(const HloFusionAdaptor& fusion,
+                                             mlir::MLIRContext* ctx);
 
   std::string ToString() const;
 
@@ -87,6 +95,13 @@ class TilingSpace {
 
   const RTVarInfo& GetRTVarInfo(const HloInstruction& hlo,
                                 int64_t operand_id) const;
+
+  ConstraintExpression& mutable_constraint() { return constraints_; }
+  const ConstraintExpression& constraint() const { return constraints_; }
+
+  mlir::MLIRContext* mlir_context() const { return mlir_context_; }
+
+  llvm::ArrayRef<SymbolicTile> tiled_roots() const { return tiled_roots_; }
 
   int64_t num_dimensions() const { return dimensions_.size(); }
   int64_t num_rt_vars() const { return rt_vars_.size(); }
@@ -114,12 +129,20 @@ class TilingSpace {
       hlo_to_rt_var_;
   // The deque is used to guarantee the pointer stability.
   std::deque<RTVarInfo> rt_vars_;
+
+  // Root instruction of the fusion.
+  llvm::SmallVector<SymbolicTile, 2> tiled_roots_;
+
+  // Constraint expression for the tiling space.
+  ConstraintExpression constraints_;
+
+  mlir::MLIRContext* mlir_context_;
 };
 
 // If the shape is a tuple, return the shape at the given index.
 // Otherwise, return the shape itself.
 const Shape& GetFirstShape(const HloInstruction* instr, int64_t index = 0);
 
-}  // namespace xla::gpu
+}  // namespace xla::gpu::experimental
 
 #endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TILING_SPACE_H_

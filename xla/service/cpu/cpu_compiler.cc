@@ -616,7 +616,12 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     return strategy == DotImplementationStrategy::kEigen;
   };
   HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
-    if (!call_library_for_dot(*instr)) return true;
+    if (instr->opcode() != HloOpcode::kDot) {
+      return true;
+    }
+    if (!call_library_for_dot(*instr)) {
+      return true;
+    }
     return !IsDotSupportedByXnn(instr->dot_dimension_numbers(),
                                 instr->operand(0)->shape(),
                                 instr->operand(1)->shape(), instr->shape(),
@@ -1857,7 +1862,7 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrFormat("Compiling [%s] for CPU using JIT", module->name()));
   std::string slow_compilation_msg =
-      absl::StrCat("Compiling module ", module->name());
+      absl::StrCat("Compiling module ", module->name(), " for CPU");
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
   auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
       module->config().debug_options().xla_backend_extra_options());

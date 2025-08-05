@@ -1,4 +1,5 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -43,6 +44,7 @@ cc_library(
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla/backends/gpu/codegen/triton:emitter_helpers",
+        "//xla/backends/gpu/codegen/triton:tma_utils",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/codegen/emitters/ir:xla",
