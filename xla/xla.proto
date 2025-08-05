@@ -697,8 +697,10 @@ message DebugOptions {
   // Command buffer scheduling mode. 
   // SERIALIZE: Serialize all commands in a command buffer.
   // CONCURRENT: Identify concurrent across operator through data conflicts.
-  // LHS: Uses the same latency hidden scheulding results.
-  enum CommandBufferSchedulingMode   {
+  // LHS: Uses the same latency hidden scheduling results as adopted by
+  // LatencyHidingScheduler which hides latencies of operations that can run in
+  // parallel with other operations.
+  enum CommandBufferSchedulingMode {
     SERIALIZE = 0;
     CONCURRENT = 1;
     LHS = 2;
