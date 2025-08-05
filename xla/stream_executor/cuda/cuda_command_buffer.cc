@@ -453,6 +453,11 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
 
   child_command_buffer.is_owned_graph_ = false;
 
+  CUgraphNodeParams nodeParams;
+  std::memset(&nodeParams, 0, sizeof(nodeParams));
+  nodeParams.type = CU_GRAPH_NODE_TYPE_GRAPH;
+  nodeParams.graph.graph = child_graph;
+  nodeParams.graph.ownership = CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE;
   VLOG(2) << "Create a new node by moving the child graph " << child_graph
           << " and add it to " << graph_ << "; deps: " << dependencies.size();
 
@@ -460,8 +465,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
 
   CUgraphNode node_handle;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
-                               std::move(child_graph)),
+      cuGraphAddNode(&node_handle, graph_, deps.data(), deps.size(), &nodeParams),
       "Failed to create a child graph node and add it to a CUDA graph"));
   VLOG(5) << "CreateChildNode: " << node_handle;
   return FromCudaGraphHandle(node_handle);
