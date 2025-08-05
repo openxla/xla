@@ -725,6 +725,11 @@ class ChildCmd : public CommandBufferCmd {
 
  private:
   CommandBufferCmdExecutor child_commands_;
+
+  // child command buffer is created at initialization time and then use the
+  // move semantics to move it to the command buffer implementation. We do not
+  // use the copy semantics because we will lose track of of the grahp nodes for
+  // underlying implementation.
   std::unique_ptr<se::CommandBuffer> child_command_buffer_;
 };
 

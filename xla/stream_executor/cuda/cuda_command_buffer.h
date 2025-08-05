@@ -136,6 +136,10 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       absl::Span<const GraphNodeHandle> dependencies,
       CommandBuffer& nested) override;
 
+  absl::StatusOr<GraphNodeHandle> CreateMovedChildNode(
+      absl::Span<const GraphNodeHandle> dependencies,
+      CommandBuffer& nested) override;
+
   absl::Status UpdateChildNode(GraphNodeHandle node_handle,
                                const CommandBuffer& nested) override;
 

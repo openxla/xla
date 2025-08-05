@@ -231,6 +231,17 @@ GpuCommandBuffer::CreateNestedCommand(
   return AppendCommand(GpuCommand{handle});
 }
 
+absl::StatusOr<const CommandBuffer::Command*>
+GpuCommandBuffer::CreateMoveNestedCommand(
+    CommandBuffer& nested, absl::Span<const Command* const> dependencies) {
+  TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
+  TF_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateMovedChildNode(ToGraphNodeDependencies(dependencies), nested));
+  VLOG(5) << "CreateNestedCommand: ";
+  return AppendCommand(GpuCommand{handle});
+}
+
 absl::Status GpuCommandBuffer::UpdateNestedCommand(
     const Command* command, const CommandBuffer& nested) {
   TF_RETURN_IF_ERROR(CheckInState(State::kUpdate));

@@ -439,7 +439,31 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
       cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
                                child_graph),
       "Failed to create a child graph node and add it to a CUDA graph"));
-  VLOG(5) << "CreateChildNode: " << reinterpret_cast<const void*>(&node_handle);
+  VLOG(5) << "CreateChildNode: " << node_handle;
+  return FromCudaGraphHandle(node_handle);
+}
+
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
+    absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
+  auto& child_command_buffer =
+      tensorflow::down_cast<CudaCommandBuffer&>(nested);
+  child_command_buffer.parent_ = this;
+  CUgraph child_graph =
+      tensorflow::down_cast<CudaCommandBuffer&>(nested).graph_;
+
+  child_command_buffer.is_owned_graph_ = false;
+
+  VLOG(2) << "Create a new node by moving the child graph " << child_graph
+          << " and add it to " << graph_ << "; deps: " << dependencies.size();
+
+  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
+
+  CUgraphNode node_handle;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
+                               std::move(child_graph)),
+      "Failed to create a child graph node and add it to a CUDA graph"));
+  VLOG(5) << "CreateChildNode: " << node_handle;
   return FromCudaGraphHandle(node_handle);
 }
 

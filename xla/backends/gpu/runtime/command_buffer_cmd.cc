@@ -1151,13 +1151,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
     const RecordParams& record_params, RecordAction record_action,
     se::CommandBuffer* command_buffer) {
   VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
+  CHECK(child_command_buffer_ != nullptr);
   TF_RETURN_IF_ERROR(child_commands_.Record(execute_params, record_params,
                                             child_command_buffer_.get()));
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*child_command_buffer_,
-                                                   dependencies);
+        return command_buffer->CreateMoveNestedCommand(*child_command_buffer_,
+                                                       dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateNestedCommand(command,
