@@ -27,7 +27,7 @@ onednn_graph_cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
     ],
 )
 
@@ -69,7 +69,7 @@ onednn_graph_cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -81,7 +81,7 @@ onednn_graph_cc_library(
         ":onednn_interop",
         "//xla/backends/cpu/runtime:work_queue",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
     ],
 )
 
@@ -104,6 +104,6 @@ onednn_graph_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
     ],
 )

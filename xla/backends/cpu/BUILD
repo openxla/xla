@@ -54,7 +54,7 @@ onednn_graph_cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
     ],
 )
 
@@ -64,7 +64,7 @@ onednn_graph_cc_library(
     hdrs = ["onednn_fusion_graph.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@onednn//:mkl_dnn",
+        "@mkl_dnn_acl_compatible//:mkl_dnn_acl" if "@xla//xla/tsl/mkl:build_with_mkl_aarch64" else "@onednn//:mkl_dnn",
     ],
 )
 
