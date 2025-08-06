@@ -24,25 +24,18 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/backends/autotuner/autotune_config.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/executable.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/fingerprint.h"
 
 using InstructionFilterFn = absl::FunctionRef<bool(const xla::HloInstruction&)>;
 
 namespace xla {
-
-struct AutotuneConfig {
-  // Whether to skip configs that failed to compile.
-  bool skip_failing_configs = true;
-  // TODO b/407495547 - Add and implement following options.
-  // bool should_check_correctness;
-  // bool should_skip_wrong_results;
-  // bool should_crash_on_check_failure;
-};
 
 class Autotuner {
  public:
@@ -70,6 +63,10 @@ class Autotuner {
     CodegenBackend* codegen_backend;
     std::unique_ptr<BackendConfig> backend_config;
   };
+  struct ExecutableCandidate {
+    Config config;
+    std::unique_ptr<Executable> executable;
+  };
 
   Autotuner(std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
             std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
@@ -88,6 +85,17 @@ class Autotuner {
       HloInstruction* instr);
   std::vector<absl::StatusOr<std::unique_ptr<Executable>>> CompileAll(
       HloInstruction* instr, std::vector<Config>& configs);
+
+  absl::StatusOr<Config> ProfileAndPickBest(
+      std::vector<ExecutableCandidate>& candidates);
+
+  absl::StatusOr<ScopedShapedBuffer> GetReferenceOutput(
+      std::vector<ExecutableCandidate>& candidates,
+      InputBuffers& input_buffers);
+
+  absl::Status CheckBuffers(InputBuffers& input_buffers,
+                            ScopedShapedBuffer& output,
+                            ScopedShapedBuffer& reference);
 
   std::vector<std::unique_ptr<CodegenBackend>> codegen_backends_;
   std::unique_ptr<Profiler> profiler_;
