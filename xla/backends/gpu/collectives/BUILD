@@ -314,7 +314,6 @@ xla_cc_test(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     tags = [
-        "requires-gpu-nvidia",
         # Stop chloroxylenol from running this test with msan because msan does
         # not work with CUDA.
         #

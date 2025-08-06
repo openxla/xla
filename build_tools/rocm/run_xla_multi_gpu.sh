@@ -103,6 +103,21 @@ bazel \
        //xla/tests:collective_ops_test \
        //xla/tests:collective_pipeline_parallelism_test \
        //xla/tests:replicated_io_feed_test \
+       //xla/backends/gpu/collectives:gpu_clique_key_test \
+       //xla/backends/gpu/collectives:nccl_communicator_test \
+       //xla/service:collective_ops_utils_test \
+       //xla/service:collective_pipeliner_test \
+       //xla/service:collective_permute_cycle_test \
+       //xla/service:batched_gather_scatter_normalizer_test \
+       //xla/service:all_reduce_simplifier_test \
+       //xla/service:all_gather_simplifier_test \
+       //xla/service:reduce_scatter_decomposer_test \
+       //xla/service:reduce_scatter_reassociate_test \
+       //xla/service:reduce_scatter_combiner_test \
+       //xla/service:scatter_simplifier_test \
+       //xla/service:sharding_propagation_test \
+       //xla/service:sharding_remover_test \
+       //xla/service:p2p_schedule_preparation_test \
        //xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
        //xla/pjrt/distributed:topology_util_test \
        //xla/pjrt/distributed:client_server_test
