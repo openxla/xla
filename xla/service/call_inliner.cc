@@ -342,7 +342,8 @@ bool CallInliner::ShouldInline(const CallGraph& call_graph,
 
 absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     const CallGraph& call_graph, HloComputation* computation,
-    absl::Span<HloInstruction* const> instruction_sequence) const {
+    absl::Span<HloInstruction* const> instruction_sequence,
+    std::optional<InlinedInstructionMap*> inline_map) {
   HloModule* module = computation->parent();
   bool did_node_mutate = false;
   std::vector<HloInstruction*> inlined_instructions;
@@ -355,22 +356,29 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       // The caller instruction will get removed after inlining. Record the
       // callee computation beforehand, so we can find its schedule.
       HloComputation* callee = instruction->to_apply();
-      TF_ASSIGN_OR_RETURN(CallInliner::InlinedInstructionMap inline_map,
-                          Inline(instruction));
+      TF_ASSIGN_OR_RETURN(
+          CallInliner::InlinedInstructionMap inline_map_cur_call,
+          Inline(instruction));
       if (module->has_schedule()) {
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {
           // Parameters were already added to sequence as operands to the
           // call.
           if (inlined_instruction->opcode() != HloOpcode::kParameter) {
-            inlined_instructions.push_back(inline_map[inlined_instruction]);
+            inlined_instructions.push_back(
+                inline_map_cur_call[inlined_instruction]);
           }
         }
       }
       if (update_domain_) {
         HloDomainIsolator isolator([]() { return ShardingDomainCreator{}; });
-        for (const auto& [call_inst, inlined_inst] : inline_map) {
+        for (const auto& [call_inst, inlined_inst] : inline_map_cur_call) {
           TF_RETURN_IF_ERROR(isolator.UpdateDomains(inlined_inst).status());
+        }
+      }
+      if (inline_map.has_value()) {
+        for (const auto& [call_inst, inlined_inst] : inline_map_cur_call) {
+          (*inline_map.value())[call_inst] = inlined_inst;
         }
       }
       did_node_mutate = true;
@@ -393,8 +401,8 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
   return did_node_mutate;
 }
 
-absl::StatusOr<bool> CallInliner::Run(
-    HloModule* module,
+absl::StatusOr<bool> CallInliner::RunWithInlineMap(
+    HloModule* module, std::optional<InlinedInstructionMap*> inline_map,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   // Because call graph nodes are visited in post-order (callees before callers)
@@ -412,12 +420,12 @@ absl::StatusOr<bool> CallInliner::Run(
               HloInstructionSequence& sequence =
                   module->schedule().GetOrCreateSequence(node.computation());
               return InlineAndLegalize(*call_graph, node.computation(),
-                                       sequence.instructions());
+                                       sequence.instructions(), inline_map);
             }
 
             return InlineAndLegalize(
                 *call_graph, node.computation(),
-                node.computation()->MakeInstructionPostOrder());
+                node.computation()->MakeInstructionPostOrder(), inline_map);
           }));
   if (did_mutate) {
     // Run DCE to remove called computations which are now becoming unused.
@@ -431,6 +439,49 @@ absl::StatusOr<bool> CallInliner::Run(
     }
   }
   return did_mutate;
+}
+
+absl::StatusOr<bool> CallInliner::Run(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  return RunWithInlineMap(module, std::nullopt, execution_threads);
+}
+
+ScopedModuleCallInliner::ScopedModuleCallInliner(const HloModule* module)
+    : module_(module) {
+  inlined_module_ =
+      std::make_unique<HloModule>(module_->name(), module_->config());
+  clone_context_ = std::make_unique<HloCloneContext>(inlined_module_.get());
+  module_->Clone("clone", clone_context_.get());
+  // For computations that are not tracable from ROOT comptation, clone context
+  // just maps to its own.
+  for (auto* comp : module_->computations()) {
+    if (clone_context_->FindComputation(comp) == nullptr) {
+      clone_context_->MapComputation(comp, comp);
+      for (auto* inst : comp->instructions()) {
+        clone_context_->MapInstruction(inst, inst);
+      }
+    }
+  }
+  CallInliner inliner;
+  auto status =
+      inliner.RunWithInlineMap(inlined_module_.get(), &inline_map_, {});
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to inline module: " << status.status();
+  }
+}
+
+HloInstruction* ScopedModuleCallInliner::get_mapped_instruction(
+    const HloInstruction* instruction) const {
+  auto* cloned_instruction = clone_context_->FindInstruction(instruction);
+  if (cloned_instruction == nullptr) {
+    return nullptr;
+  }
+  auto it = inline_map_.find(cloned_instruction);
+  if (it == inline_map_.end()) {
+    return cloned_instruction;
+  }
+  return it->second;
 }
 
 }  // namespace xla
