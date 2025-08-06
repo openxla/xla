@@ -456,7 +456,7 @@ ScopedClonedModuleCallInliner::ScopedClonedModuleCallInliner(
   inlined_module_ = std::move(inlined_module);
   clone_context_ = std::move(clone_context);
 
-  // For computations that are not tracable from ROOT comptation, clone context
+  // For computations that are not tracable from ROOT computation, clone context
   // just maps to its own.
   for (auto* comp : module_->computations()) {
     if (clone_context_->FindComputation(comp) == nullptr) {

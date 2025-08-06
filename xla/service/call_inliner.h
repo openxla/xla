@@ -108,8 +108,8 @@ class CallInliner : public HloModulePass {
 };
 
 // ScopedClonedModuleCallInliner is used for the scenario where we can not
-// modify the orignal module, instead this RAII class clones the target module
-// and inlines it duriing initialization. 'inlined_module' returns the inlined
+// modify the original module, instead this RAII class clones the target module
+// and inlines it during initialization. 'inlined_module' returns the inlined
 // module, 'get_mapped_instruction' returns the inlined instruction for a
 // given original instruction.
 class ScopedClonedModuleCallInliner {
