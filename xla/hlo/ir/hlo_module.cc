@@ -1245,9 +1245,6 @@ void CopyUniqueIds(const HloModule& source, HloModule* clone,
 
 void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
                       std::optional<const HloModuleConfig> config) const {
-  CHECK(context != nullptr) << "HloCloneContext pointer must not be null.";
-  CHECK(context->module() != nullptr)
-      << "HloCloneContext must have a valid module set.";
   auto module = context->module();
   if (entry_computation_) {
     auto cloned_computation = entry_computation_->Clone(suffix, context);
