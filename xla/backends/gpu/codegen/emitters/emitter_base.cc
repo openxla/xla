@@ -102,6 +102,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
+#include "xla/service/platform_util.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
@@ -223,9 +224,46 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
 
 }  // namespace
 
+/* static */ std::array<uint64_t, 2> EmitterBase::MaybeSplitGridDimensionX(
+      uint64_t num_threads_x, uint64_t num_blocks_x,
+      const se::DeviceDescription& info)
+{
+  const se::BlockDim& limit = info.block_dim_limit();
+  constexpr uint64_t rocm_limit = std::numeric_limits<uint32_t>::max();
+
+  bool is_rocm = 
+           xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "rocm";
+  // Add an extra condition for ROCM backend
+  if (num_blocks_x <= limit.x && 
+            (!is_rocm || num_blocks_x * num_threads_x <= rocm_limit)) {
+    return {num_blocks_x, 1};
+  }
+  
+  uint64_t dimx = 0, dimy = 0;
+  // We assume that num_blocks_x is most likely of the form: 2^N * K
+  for (uint64_t nzeros = 1; ; nzeros++) {
+    dimy = 1ULL << nzeros;
+    if (dimy > limit.y) { 
+      // We could not find the proper power-of-two dim Y => use max gridY
+      dimy = limit.y;
+      dimx = CeilOfRatio(num_blocks_x, dimy);
+      break;
+    }
+    // num_blocks_x might not be divided evenly by dimy:
+    dimx = (num_blocks_x + dimy-1) >> nzeros;
+    if (dimx <= limit.x) {
+      // We have an extra requirement on ROCM to check
+      if (!is_rocm || dimx * num_threads_x <= rocm_limit) break;
+    }
+  }
+  VLOG(1) << num_blocks_x << " splitting as: " << dimx << "x" << dimy 
+           << " wasted blocks: " << (dimx*dimy - num_blocks_x);
+  return {dimx, dimy};
+}
+
 Value EmitterBase::EmitWorkGroupId(mlir::ImplicitLocOpBuilder& builder,
                                    WorkGroupDimension dim) const {
-  const auto& counts = launch_dimensions().block_counts();
+  const auto counts = launch_dimensions().block_counts();
   int64_t count = dim == WorkGroupDimension::x   ? counts.x
                   : dim == WorkGroupDimension::y ? counts.y
                                                  : counts.z;
@@ -236,7 +274,7 @@ Value EmitterBase::EmitWorkGroupId(mlir::ImplicitLocOpBuilder& builder,
 
 Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
                                int dim) const {
-  const auto& counts = launch_dimensions().block_counts();
+  const auto counts = launch_dimensions().block_counts();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
   auto block_id = mlir::gpu::BlockIdOp::create(
       builder, static_cast<mlir::gpu::Dimension>(dim));
@@ -246,7 +284,7 @@ Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
 
 Value EmitterBase::EmitThreadId(mlir::ImplicitLocOpBuilder& builder,
                                 int dim) const {
-  const auto& counts = launch_dimensions().thread_counts_per_block();
+  const auto counts = launch_dimensions().thread_counts_per_block();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
   auto thread_id = mlir::gpu::ThreadIdOp::create(
       builder, static_cast<mlir::gpu::Dimension>(dim));
