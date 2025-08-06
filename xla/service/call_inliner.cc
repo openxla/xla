@@ -449,10 +449,12 @@ absl::StatusOr<bool> CallInliner::Run(
 
 ScopedModuleCallInliner::ScopedModuleCallInliner(const HloModule* module)
     : module_(module) {
-  inlined_module_ =
-      std::make_unique<HloModule>(module_->name(), module_->config());
-  clone_context_ = std::make_unique<HloCloneContext>(inlined_module_.get());
-  module_->Clone("clone", clone_context_.get());
+  // We clone the module to avoid modifying the original module.
+  auto [inlined_module, clone_context] =
+      module_->CloneWithContext("clone", module_->config());
+  inlined_module_ = std::move(inlined_module);
+  clone_context_ = std::move(clone_context);
+
   // For computations that are not tracable from ROOT comptation, clone context
   // just maps to its own.
   for (auto* comp : module_->computations()) {
