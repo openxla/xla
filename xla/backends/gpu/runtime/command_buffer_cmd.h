@@ -93,7 +93,7 @@ namespace xla::gpu {
   V(kAllToAllCmd, "AllToAllCmd")                                 \
   V(kAllGatherCmd, "AllGatherCmd")                               \
   V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")           \
-  V(kAsyncDone, "AsyncDone")                                       \
+  V(kAsyncDone, "AsyncDone")                                     \
   V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")             \
   V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd")     \
   V(kUnknownCmd, "UnknownCmd") \
@@ -568,7 +568,6 @@ class EmptyCmd : public CommandBufferCmd {
 class AsyncDoneCmd : public CommandBufferCmd {
  public:
   explicit AsyncDoneCmd(
-      ExecutionStreamId execution_stream_id,
       std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
       ResourceUseVector resources = {});
 

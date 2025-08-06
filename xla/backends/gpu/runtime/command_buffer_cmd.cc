@@ -562,8 +562,8 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
     auto is_async_start = [](const CommandBufferCmd* cmd) -> bool {
       return cmd->command_type() == CommandBufferCmdType::kAllGatherCmd ||
              cmd->command_type() == CommandBufferCmdType::kAllReduceCmd ||
-             cmd->command_type() == CommandBufferCmdType::kReduceScatter ||
-             cmd->command_type() == CommandBufferCmdType::kAllToAll;
+             cmd->command_type() == CommandBufferCmdType::kReduceScatterCmd ||
+             cmd->command_type() == CommandBufferCmdType::kAllToAllCmd;
     };
 
     auto find_async_start_cmd_id =
@@ -815,11 +815,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
 //===----------------------------------------------------------------------===//
 
 AsyncDoneCmd::AsyncDoneCmd(
-    ExecutionStreamId execution_stream_id,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
-    : CommandBufferCmd(CommandBufferCmdType::kAsyncDone, execution_stream_id,
-                       std::move(resources)),
+    : CommandBufferCmd(CommandBufferCmdType::kAsyncDone, std::move(resources)),
       async_events_(std::move(async_events)) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> AsyncDoneCmd::Record(
@@ -1838,7 +1836,7 @@ ReduceScatterCmd::ReduceScatterCmd(
     absl::Span<const CollectiveThunk::Buffer> buffers,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
-    : CollectiveCmd(CommandBufferCmdType::kReduceScatter, std::move(config),
+    : CollectiveCmd(CommandBufferCmdType::kReduceScatterCmd, std::move(config),
                     std::move(async_events), std::move(resources)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
@@ -1902,7 +1900,7 @@ AllToAllCmd::AllToAllCmd(
     absl::Span<const CollectiveThunk::Buffer> buffers,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
-    : CollectiveCmd(CommandBufferCmdType::kAllToAll, std::move(config),
+    : CollectiveCmd(CommandBufferCmdType::kAllToAllCmd, std::move(config),
                     std::move(async_events), std::move(resources)),
       has_split_dimension_(has_split_dimension),
       buffers_(buffers.begin(), buffers.end()) {}
