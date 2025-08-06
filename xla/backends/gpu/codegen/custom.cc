@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/custom_call_status.h"
+#include "xla/service/call_inliner.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -271,9 +272,20 @@ std::unique_ptr<HloModule> ExtractWhileUpdateModule(
   if (tuple_idx == std::nullopt) {
     return nullptr;
   }
+
+  // If the module has been parsed by command buffer rewriter, we need to inline
+  // the command buffer call to make the module extractor work.
+  ScopedModuleCallInliner module_inliner(while_op->while_body()->parent());
+  auto while_op_mapped = module_inliner.get_mapped_instruction(while_op);
+  CHECK(while_op_mapped != nullptr)
+      << "Unable to map while body root: " << while_op->ToString();
+
   const HloInstruction* update =
-      while_op->while_body()->root_instruction()->operand(*tuple_idx);
-  return ExtractOffsetModule(update, while_op);
+      while_op_mapped->while_body()->root_instruction()->operand(*tuple_idx);
+  std::unique_ptr<HloModule> update_module =
+      ExtractOffsetModule(update, while_op);
+  VLOG(2) << "Extracted while update module is \n" << update_module->ToString();
+  return update_module;
 }
 
 // Extracts the while induction variable initialization module. This must have
@@ -285,11 +297,20 @@ std::unique_ptr<HloModule> ExtractWhileInitModule(
   if (tuple_idx == std::nullopt) {
     return nullptr;
   }
-  const HloInstruction* init = while_op->operand(0)->operand(*tuple_idx);
+
+  ScopedModuleCallInliner module_inliner(while_op->parent()->parent());
+  auto while_op_mapped = module_inliner.get_mapped_instruction(while_op);
+  CHECK(while_op_mapped != nullptr)
+      << "Unable to map while op: " << while_op->ToString();
+
+  const HloInstruction* init = while_op_mapped->operand(0)->operand(*tuple_idx);
   std::unique_ptr<HloModule> init_module = ExtractModule(
       /*instruction=*/init, /*height=*/-1, /*extract_selector=*/nullptr,
       /*replace_type_selector=*/nullptr, /*cross_computation=*/false,
       /*inline_calls_and_fusions=*/true, /*run_verifier=*/false);
+
+  VLOG(2) << "Extracted while init module is \n" << init_module->ToString();
+
   CHECK(init_module->entry_computation()->num_parameters() == 0)
       << "Expected zero parameter for init module: " << init_module->ToString();
   return init_module;
@@ -315,24 +336,36 @@ absl::Status CollectSliceInfo(
   if (!IsDynamicSliceOrDynamicUpdateSlice(slice_instrs[arg_idx])) {
     return absl::OkStatus();
   }
+
   auto* arg_slice_instr =
       Cast<HloDynamicIndexInstruction>(slice_instrs[arg_idx]);
   std::optional<HloInstruction*> async_caller =
       fusion_instr.parent()->GetUniqueCaller(HloOpcode::kAsyncStart);
 
+  std::optional<std::unique_ptr<ScopedModuleCallInliner>> module_inliner =
+      std::nullopt;
+  std::optional<HloInstruction*> fusion_instr_mapped;
+  std::optional<HloInstruction*> async_caller_mapped = std::nullopt;
+  module_inliner = std::make_unique<ScopedModuleCallInliner>(
+      fusion_instr.parent()->parent());
+
+  fusion_instr_mapped =
+      module_inliner.value()->get_mapped_instruction(&fusion_instr);
+
+  async_caller_mapped = fusion_instr_mapped.value()->parent()->GetUniqueCaller(
+      HloOpcode::kAsyncStart);
+
   std::vector<DynamicSliceThunk::Offset> arg_offsets;
   for (auto idx_op : arg_slice_instr->index_operands()) {
     const auto* param = Cast<HloParameterInstruction>(idx_op);
-    const HloInstruction* offset_value =
-        async_caller.has_value()
-            ? (*async_caller)->operand(param->parameter_number())
-            : fusion_instr.operand(param->parameter_number());
-
-    VLOG(2) << "Offset value:" << offset_value->ToString();
+    auto offset_value_mapped =
+        async_caller_mapped.has_value()
+            ? (*async_caller_mapped)->operand(param->parameter_number())
+            : fusion_instr_mapped.value()->operand(param->parameter_number());
 
     // Try to evaluate the offset value, maybe it is simple arithmetic.
     absl::StatusOr<Literal> offset_literal = HloEvaluator().Evaluate(
-        /*instruction=*/offset_value,
+        /*instruction=*/offset_value_mapped,
         /*precomputed_analyses=*/{},
         /*recursively_evaluate_nonconstant_operands=*/true);
 
@@ -341,20 +374,26 @@ absl::Status CollectSliceInfo(
       std::optional<int64_t> offset_value =
           LiteralUtil::LiteralAsScalarInt64(offset_literal.value());
       if (offset_value.has_value()) {
+        VLOG(2) << "Index operand offset is a constant: "
+                << offset_value.value();
         arg_offsets.emplace_back() = *offset_value;
       } else {
         return absl::InternalError(
             absl::StrCat("Unsupported constant offset shape: ",
                          offset_literal->shape().ToString()));
       }
-
     } else if (std::unique_ptr<HloModule> offset_module =
-                   ExtractOffsetModule(offset_value, while_op);
+                   ExtractOffsetModule(offset_value_mapped, while_op);
                (can_compute_indvar_on_host && offset_module != nullptr)) {
+      VLOG(2) << "Index operand offset module: \n" << offset_module->ToString();
       extracted_offset_modules.push_back(std::move(offset_module));
       arg_offsets.emplace_back() = extracted_offset_modules.back().get();
     } else {
       // Loop offset computed on device and has to be transferred to host.
+      const HloInstruction* offset_value =
+          async_caller.has_value()
+              ? (*async_caller)->operand(param->parameter_number())
+              : fusion_instr.operand(param->parameter_number());
       TF_ASSIGN_OR_RETURN(arg_offsets.emplace_back(),
                           GetAllocationSlice(buffer_assignment, offset_value,
                                              /*index=*/{}));
@@ -1355,6 +1394,7 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
     const HloFusionInstruction& fusion) const {
   const HloFusionAdaptor& adaptor = analysis_.fusion();
   // Only reduce-scatter is supported for now.
+
   auto maybe_collective =
       HloBfsFindIf(/*roots=*/adaptor.GetRoots(), /*fusion=*/adaptor,
                    /*visit=*/[](HloInstructionAdaptor node) -> bool {

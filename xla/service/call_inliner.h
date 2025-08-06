@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -75,6 +76,10 @@ class CallInliner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
+  absl::StatusOr<bool> RunWithInlineMap(
+      HloModule* module, std::optional<InlinedInstructionMap*> inline_map,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
   // Returns true if the instruction is a kCall operation and is eligible for
   // inlining.
   virtual bool IsInlineableCallOp(HloInstruction* instruction) const;
@@ -85,7 +90,8 @@ class CallInliner : public HloModulePass {
  private:
   absl::StatusOr<bool> InlineAndLegalize(
       const CallGraph& call_graph, HloComputation* computation,
-      absl::Span<HloInstruction* const> instruction_sequence) const;
+      absl::Span<HloInstruction* const> instruction_sequence,
+      std::optional<InlinedInstructionMap*> inline_map);
 
   bool ShouldInline(const CallGraph& call_graph,
                     HloInstruction* instruction) const;
@@ -98,6 +104,25 @@ class CallInliner : public HloModulePass {
   std::optional<
       std::function<bool(const CallGraph& call_graph, HloInstruction*)>>
       should_inline_;
+  InlinedInstructionMap inline_map_;
+};
+
+// Inlines a module and returns a map of the original instructions to their
+// inlined versions. Useful for some analysis that needs to be done on the
+// inlined module.
+class ScopedModuleCallInliner {
+ public:
+  ScopedModuleCallInliner(const HloModule* module);
+  ~ScopedModuleCallInliner() = default;
+  HloModule* inlined_module() const { return inlined_module_.get(); }
+  HloInstruction* get_mapped_instruction(
+      const HloInstruction* instruction) const;
+
+ private:
+  const HloModule* module_;
+  std::unique_ptr<HloModule> inlined_module_;
+  std::unique_ptr<HloCloneContext> clone_context_;
+  CallInliner::InlinedInstructionMap inline_map_;
 };
 
 }  // namespace xla
