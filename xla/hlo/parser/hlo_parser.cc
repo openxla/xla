@@ -3847,6 +3847,7 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
   bool replicated = false;
   bool manual = false;
   bool unknown = false;
+  bool unreduced = false;
   bool last_tile_dim_replicate = false;
   bool last_tile_dims = false;
   bool shard_like = false;
@@ -3874,6 +3875,10 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
         break;
       case TokKind::kw_unknown:
         unknown = true;
+        lexer_.Lex();
+        break;
+      case TokKind::kw_unreduced:
+        unreduced = true;
         lexer_.Lex();
         break;
       case TokKind::kAttributeName: {
@@ -3959,6 +3964,12 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
                    "unknown shardings should not have any devices assigned");
     }
     sharding = HloSharding::Unknown(metadata);
+  } else if (unreduced) {
+    if (!devices.empty()) {
+      return Error(loc,
+                   "unreduced shardings should not have any devices assigned");
+    }
+    sharding = HloSharding::Unreduced(metadata);
   } else {
     if (tile_assignment_dimensions.empty()) {
       return Error(
@@ -6666,19 +6677,24 @@ bool HloParserImpl::ParseOriginalValueRecoveryTable(
     if (!ParseOriginalArray(replacing_original_array)) {
       return false;
     }
-    if (!ParseToken(TokKind::kComma, errmsg)) {
-      return false;
+    std::unique_ptr<HloModule> recovery_module;
+    if (lexer_.GetKind() == TokKind::kComma) {
+      if (!ParseToken(TokKind::kComma, errmsg)) {
+        return false;
+      }
+      std::string hlo_string;
+      if (!ParseString(&hlo_string)) {
+        return false;
+      }
+      auto status_or_recovery_module =
+          ParseAndReturnUnverifiedModule(hlo_string);
+      if (!status_or_recovery_module.ok()) {
+        return false;
+      }
+      recovery_module = std::move(status_or_recovery_module.value());
     }
-    std::string hlo_string;
-    if (!ParseString(&hlo_string)) {
-      return false;
-    }
-    auto recovery_module = ParseAndReturnUnverifiedModule(hlo_string);
-    if (!recovery_module.ok()) {
-      return false;
-    }
-    original_value_recovery_table[replaced_original_array] = std::make_pair(
-        replacing_original_array, std::move(recovery_module.value()));
+    original_value_recovery_table[replaced_original_array] =
+        std::make_pair(replacing_original_array, std::move(recovery_module));
   }
 
   lexer_.Lex();

@@ -330,6 +330,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
@@ -803,6 +804,7 @@ cc_library(
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -859,7 +861,12 @@ cc_library(
         "//xla:friends",
     ]),
     deps = [
-        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:hash_container_defaults",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -870,6 +877,8 @@ xla_cc_test(
     deps = [
         ":lru_cache",
         "//xla/hlo/testlib:test",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/random",
         "@com_google_googletest//:gtest_main",
     ],
 )

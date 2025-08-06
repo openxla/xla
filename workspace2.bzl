@@ -361,13 +361,12 @@ def _tf_repositories():
         urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
     )
 
-    # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
     tf_http_archive(
         name = "com_github_grpc_grpc",
-        sha256 = "ae14a0de222485fd6e3baf52028c74acbd9ad8d685c813580401d3832cfae9f1",
-        strip_prefix = "grpc-1.72.2",
+        sha256 = "dd6a2fa311ba8441bbefd2764c55b99136ff10f7ea42954be96006a2723d33fc",
+        strip_prefix = "grpc-1.74.0",
         patch_file = ["//third_party/grpc:grpc.patch"],
-        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.72.2.tar.gz"),
+        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.74.0.tar.gz"),
     )
 
     # Load the raw llvm-project.  llvm does not have build rules set up by default,
@@ -444,9 +443,9 @@ def _tf_repositories():
     tf_http_archive(
         name = "nvtx_archive",
         build_file = "//third_party:nvtx/BUILD.bazel",
-        sha256 = "e4438f921fb88a564b0b92791c1c1fdd0f388901213e6a31fdd0dc3803fb9764",
-        strip_prefix = "NVTX-bf31d7859ab3130cbf1ef77c33d18d0ebb8c8d08/c/include",
-        urls = tf_mirror_urls("https://github.com/NVIDIA/NVTX/archive/bf31d7859ab3130cbf1ef77c33d18d0ebb8c8d08.tar.gz"),
+        sha256 = "5a581c3234c5a6b2fd94363e3fdd5a4f5d2a3d9c53c4b9442b0784e6cdfe722c",
+        strip_prefix = "NVTX-2942f167cc30c5e3a44a2aecd5b0d9c07ff61a07/c/include",
+        urls = tf_mirror_urls("https://github.com/NVIDIA/NVTX/archive/2942f167cc30c5e3a44a2aecd5b0d9c07ff61a07.tar.gz"),
     )
 
     tf_http_archive(

@@ -4105,11 +4105,12 @@ ENTRY %reshape {
   auto param_replicated = AllOf(
       op::Shape("bf16[8,8]"), op::AllReduce(op::DynamicUpdateSlice(
                                   op::Broadcast(op::Constant()), param, _, _)));
-  auto reshape_1 = AllOf(op::Shape("bf16[64]"), op::Reshape(param_replicated));
-  auto reshape_2 = AllOf(op::Shape("bf16[16]"), op::Reshape(param));
-  auto abs = AllOf(op::Shape("bf16[16]"), op::Abs(reshape_2));
+  auto reshape = AllOf(op::Shape("bf16[64]"), op::Reshape(param_replicated));
+  auto reshape_resharded =
+      AllOf(op::Shape("bf16[16]"), op::DynamicSlice(reshape, _));
+  auto abs = AllOf(op::Shape("bf16[16]"), op::Abs(reshape_resharded));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              op::Tuple(reshape_1, abs));
+              op::Tuple(reshape, abs));
 }
 
 TEST_P(SpmdPartitioningTest, PartialReplicateShardableReshape) {
@@ -16204,8 +16205,8 @@ HloModule module
 ENTRY entry {
   a = f32[8,1024]{1,0} parameter(0), sharding={devices=[1,2]0,1}
   b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,1]0,1}
-  dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
-  ROOT copy = f32[8,256]{1,0} copy(dot), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={unreduced}
+  ROOT copy = f32[8,256]{1,0} copy(dot), sharding={unreduced}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
@@ -16222,8 +16223,8 @@ HloModule module
 ENTRY entry {
   constant = s32[2,4]{1,0} constant({{1,1,1,1},{1,1,1,1}}), sharding={maximal device=0}
   a = s32[2,4]{1,0} parameter(0), sharding={devices=[1,2]0,1}
-  add = s32[2,4]{1,0} add(constant, a), frontend_attributes={xla.sdy.has_unreduced_axes="true"}
-  ROOT %copy = s32[2,4]{1,0} copy(%add), sharding={replicated}, frontend_attributes={xla.sdy.has_unreduced_axes="true"}
+  add = s32[2,4]{1,0} add(constant, a), sharding={unreduced}
+  ROOT copy = s32[2,4]{1,0} copy(%add), sharding={unreduced}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
@@ -16232,6 +16233,23 @@ ENTRY entry {
   // that the `add` has unreduced axes.
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               op::Copy(op::Add(op::AllReduce(), op::AllReduce())));
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedParam) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = s32[2,4]{1,0} parameter(0), sharding={unreduced}
+  b = s32[2,4]{1,0} parameter(1), sharding={unreduced}
+  ROOT add = s32[2,4]{1,0} add(a, b), sharding={unreduced}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  // Check that unreduced HloSharding is preserved after the pass.
+  EXPECT_THAT(module->entry_computation()->parameter_instructions(),
+              ::testing::Each(op::Sharding("{unreduced}")));
 }
 
 }  // namespace

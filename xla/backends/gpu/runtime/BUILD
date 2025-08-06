@@ -696,6 +696,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
     ],
 )
 
@@ -1640,6 +1641,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
     ],
 )
 

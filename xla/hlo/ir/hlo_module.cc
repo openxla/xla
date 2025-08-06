@@ -316,58 +316,28 @@ void HloModule::ReplaceComputations(
   std::vector<std::unique_ptr<HloComputation>> new_computations;
   new_computations.reserve(computations_.size());
 
-  for (std::unique_ptr<HloComputation>& computation : computations_) {
-    for (auto* instruction : computation->instructions()) {
-      if (instruction->has_to_apply()) {
-        HloComputation* new_arg = tsl::gtl::FindWithDefault(
-            replacements, instruction->to_apply(), nullptr);
-        if (new_arg != nullptr) {
-          instruction->set_to_apply(new_arg);
-        }
+  for (const auto iter : replacements) {
+    HloComputation* old_computation = iter.first;
+    HloComputation* new_computation = iter.second;
+    for (auto* caller_instruction : old_computation->caller_instructions()) {
+      // TODO(b/434814814): This check shouldn't be necessary, since it's
+      // illegal to refer to a computation in a different module. But it can
+      // happen in practice. Temporarily adding a guard, should be removed when
+      // the code that creates these invalid modules is fixed.
+      if (caller_instruction->parent()->parent() != this) {
         continue;
       }
-      switch (instruction->opcode()) {
-        case HloOpcode::kWhile: {
-          HloComputation* new_condition = tsl::gtl::FindWithDefault(
-              replacements, instruction->while_condition(), nullptr);
-          if (new_condition != nullptr) {
-            instruction->set_while_condition(new_condition);
-          }
-          HloComputation* new_body = tsl::gtl::FindWithDefault(
-              replacements, instruction->while_body(), nullptr);
-          if (new_body != nullptr) {
-            instruction->set_while_body(new_body);
-          }
-          break;
-        }
-        case HloOpcode::kConditional: {
-          for (int b = 0; b < instruction->branch_count(); ++b) {
-            HloComputation* new_computation = tsl::gtl::FindWithDefault(
-                replacements, instruction->branch_computation(b), nullptr);
-            if (new_computation != nullptr) {
-              instruction->set_branch_computation(b, new_computation);
+      caller_instruction->ReplaceCalledComputations(
+          [&](HloComputation* callee) {
+            if (callee == old_computation) {
+              return new_computation;
             }
-          }
-          break;
-        }
-        case HloOpcode::kSelectAndScatter: {
-          HloComputation* new_select = tsl::gtl::FindWithDefault(
-              replacements, instruction->select(), nullptr);
-          if (new_select != nullptr) {
-            instruction->set_select(new_select);
-          }
-          HloComputation* new_scatter = tsl::gtl::FindWithDefault(
-              replacements, instruction->scatter(), nullptr);
-          if (new_scatter != nullptr) {
-            instruction->set_scatter(new_scatter);
-          }
-          break;
-        }
-        default:
-          break;
-      }
+            return callee;
+          });
     }
+  }
 
+  for (std::unique_ptr<HloComputation>& computation : computations_) {
     if (replacements.find(computation.get()) == replacements.end()) {
       new_computations.push_back(std::move(computation));
     } else {
@@ -1427,16 +1397,20 @@ std::string HloModule::OriginalValueRecoveryTable::ToString(
     // without interferecing with theparseing of the main module the table is
     // associated with.
     const std::string tab(2 * (options.indent_amount()), ' ');
+    std::string recovery_module_string;
+    if (recovery_module) {
+      absl::StrAppend(&recovery_module_string, ",\n", tab, "\"\n",
+                      recovery_module->entry_computation()->ToString(
+                          HloPrintOptions()
+                              .set_print_computation_mode(
+                                  HloPrintOptions::PrintComputationMode::
+                                      kComputationWithEntryKeyword)
+                              .set_indent_amount(options.indent_amount() + 1)),
+                      "\n", tab, "\"");
+    }
     absl::StrAppend(&result, tab, "{", replaced_original_array.ToString(),
-                    "} : {", replacing_original_array.ToString(), "},\n", tab,
-                    "\"\n",
-                    recovery_module->entry_computation()->ToString(
-                        HloPrintOptions()
-                            .set_print_computation_mode(
-                                HloPrintOptions::PrintComputationMode::
-                                    kComputationWithEntryKeyword)
-                            .set_indent_amount(options.indent_amount() + 1)),
-                    "\n", tab, "\"\n");
+                    "} : {", replacing_original_array.ToString(), "}",
+                    recovery_module_string, "\n");
   }
   return result;
 }
@@ -1453,7 +1427,9 @@ OriginalValueRecoveryTableProto HloModule::OriginalValueRecoveryTable::ToProto()
         replaced_original_array.ToProto();
     *entry->mutable_replacing_original_array() =
         replacing_original_array.ToProto();
-    *entry->mutable_recovery_module() = recovery_module->ToProto();
+    if (recovery_module) {
+      *entry->mutable_recovery_module() = recovery_module->ToProto();
+    }
   }
   return original_value_recovery_table_proto;
 }
@@ -1469,12 +1445,15 @@ HloModule::OriginalValueRecoveryTable::FromProto(
                       OriginalArray::FromProto(entry.replaced_original_array()),
                   replacing_original_array = OriginalArray::FromProto(
                       entry.replacing_original_array());
-    const HloModuleProto proto = entry.recovery_module();
-    TF_ASSIGN_OR_RETURN(HloModuleConfig config,
-                        HloModule::CreateModuleConfigFromProto(
-                            proto, GetDebugOptionsFromFlags()));
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> recovery_module,
-                        HloModule::CreateFromProto(proto, config));
+    std::unique_ptr<HloModule> recovery_module;
+    if (entry.has_recovery_module()) {
+      const HloModuleProto proto = entry.recovery_module();
+      TF_ASSIGN_OR_RETURN(HloModuleConfig config,
+                          HloModule::CreateModuleConfigFromProto(
+                              proto, GetDebugOptionsFromFlags()));
+      TF_ASSIGN_OR_RETURN(recovery_module,
+                          HloModule::CreateFromProto(proto, config));
+    }
     original_value_recovery_table[replaced_original_array] =
         std::make_pair(replacing_original_array, std::move(recovery_module));
   }
@@ -1491,22 +1470,24 @@ void HloModule::OriginalValueRecoveryTable::AddRecoveryComputation(
   if (!replaced_original_value) {
     return;
   }
-
-  xla::HloComputation::Builder builder("recovery_computation");
-  xla::HloModuleConfig config;
-  auto recovery_module =
-      std::make_unique<xla::HloModule>("recovery_module", config);
-  recovery_module->AddEntryComputation(builder.Build(recovery_computation(
-      builder, replacing_inst->shape(), replaced_inst->shape())));
-
   std::shared_ptr<OriginalValue> replacing_original_value =
       replacing_inst->original_value();
-  // Creates a placeholder original value for the replacing instruction if it
-  // doesn't have one.
-  if (!replacing_original_value) {
-    replacing_original_value = OriginalValue::CreateFromInstruction(
-        replacing_inst, /*prefix=*/"placeholder_");
-    replacing_inst->set_original_value(replacing_original_value);
+  std::unique_ptr<HloModule> recovery_module;
+  if (recovery_computation) {
+    xla::HloComputation::Builder builder("recovery_computation");
+    xla::HloModuleConfig config;
+    recovery_module =
+        std::make_unique<xla::HloModule>("recovery_module", config);
+    recovery_module->AddEntryComputation(builder.Build(recovery_computation(
+        builder, replacing_inst->shape(), replaced_inst->shape())));
+
+    // Creates a placeholder original value for the replacing instruction if it
+    // doesn't have one.
+    if (!replacing_original_value) {
+      replacing_original_value = OriginalValue::CreateFromInstruction(
+          replacing_inst, /*prefix=*/"placeholder_");
+      replacing_inst->set_original_value(replacing_original_value);
+    }
   }
   (*this)[*replaced_original_value->leaf_begin()->second] =
       std::make_pair(*replacing_original_value->leaf_begin()->second,
