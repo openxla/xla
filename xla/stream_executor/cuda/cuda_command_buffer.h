@@ -62,6 +62,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
                     CudaContext* cuda_context, CUgraph graph,
                     bool is_owned_graph)
       : GpuCommandBuffer(mode, parent),
+        parent_(parent),
         cuda_context_(cuda_context),
         graph_(graph),
         is_owned_graph_(is_owned_graph) {
@@ -198,7 +199,6 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   SetWhileConditionKernel set_while_condition_kernel_;
 
   StreamExecutor* parent_;
-  CudaCommandBuffer* executor_;
 
   CudaContext* cuda_context_;
 

@@ -445,7 +445,6 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
   auto& child_command_buffer =
       tensorflow::down_cast<CudaCommandBuffer&>(nested);
-  child_command_buffer.is_owned_graph_ = false;
   CUgraph child_graph =
       tensorflow::down_cast<CudaCommandBuffer&>(nested).graph_;
 
@@ -477,12 +476,9 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
   VLOG(2) << "Set child node params " << node_handle << " in graph executable "
           << exec_ << " to params contained in " << child_graph;
 
-  CUgraphExec exec_update = exec_;
-  CHECK(exec_update != nullptr) << "exec is nullptr";
-  return cuda::ToStatus(
-      cuGraphExecChildGraphNodeSetParams(
-          exec_update, ToCudaGraphHandle(node_handle), child_graph),
-      "Failed to set CUDA graph child node params");
+  return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
+                            exec_, ToCudaGraphHandle(node_handle), child_graph),
+                        "Failed to set CUDA graph child node params");
 }
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
@@ -800,7 +796,7 @@ std::unique_ptr<ScopedUpdateMode> CudaCommandBuffer::ActivateUpdateMode(
 }
 
 CudaCommandBuffer::~CudaCommandBuffer() {
-  if (exec_ != nullptr) {
+  if (exec_ != nullptr && is_owned_graph_exec_) {
     auto exec_num = NotifyExecDestroyed();
     VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
             << "(remaining alive executable graphs: " << exec_num << ")";
