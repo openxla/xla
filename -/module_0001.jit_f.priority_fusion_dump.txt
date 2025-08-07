@@ -1,0 +1,85 @@
+fusion_steps {
+  producer_ineligible {
+    producer_name: "all-reduce.1.0"
+    reason: "the producer is not fusible"
+  }
+}
+fusion_steps {
+  update_priority {
+    producer_name: "triton_softmax.3"
+    consumer_names: "exponential.1.0"
+    us_fused: 1.00275
+    us_unfused: 2.02875
+  }
+}
+fusion_steps {
+  update_priority {
+    producer_name: "exponential.1.0"
+    consumer_names: "triton_softmax.2"
+    us_fused: 1.02975
+    us_unfused: 2.029
+  }
+}
+fusion_steps {
+  fusion {
+    fusion_name: "fusion.4"
+    producer_name: "triton_softmax.3"
+    consumer_name: "exponential.1.0"
+  }
+}
+fusion_steps {
+  producer_ineligible {
+    producer_name: "all-reduce.1.0"
+    reason: "the producer is not fusible"
+  }
+}
+fusion_steps {
+  update_priority {
+    producer_name: "fusion.4"
+    consumer_names: "triton_softmax.2"
+    us_fused: 1.03325
+    us_unfused: 2.0055
+  }
+}
+fusion_steps {
+  fusion {
+    fusion_name: "triton_softmax.2"
+    producer_name: "fusion.4"
+    consumer_name: "triton_softmax.2"
+  }
+}
+fusion_steps {
+  producer_ineligible {
+    producer_name: "all-reduce.1.0"
+    reason: "the producer is not fusible"
+  }
+}
+fusion_steps {
+  producer_ineligible {
+    producer_name: "triton_softmax.2"
+    reason: "No users to fuse"
+  }
+}
+gpu_device_info {
+  threads_per_block_limit: 1024
+  threads_per_warp: 32
+  shared_memory_per_block: 49152
+  shared_memory_per_core: 233472
+  threads_per_core_limit: 2048
+  core_count: 132
+  fpus_per_core: 128
+  block_dim_limit_x: 2147483647
+  block_dim_limit_y: 65535
+  block_dim_limit_z: 65535
+  memory_bandwidth: 3352320000000
+  l2_cache_size: 52428800
+  clock_rate_ghz: 1.98
+  device_memory_size: 85029158912
+  shared_memory_per_block_optin: 232448
+  cuda_compute_capability {
+    major: 9
+  }
+  registers_per_core_limit: 65536
+  registers_per_block_limit: 65536
+}
+hlo_module_before_fusion: "HloModule jit_f, entry_computation_layout={(f32[32]{0})->f32[32]{0}}, num_partitions=8\n\nregion_0.4 {\n  Arg_0.5 = f32[] parameter(0)\n  Arg_1.6 = f32[] parameter(1)\n  ROOT add.7.0 = f32[] add(Arg_0.5, Arg_1.6)\n}\n\nregion_2.12 {\n  Arg_0.13 = f32[] parameter(0)\n  Arg_1.14 = f32[] parameter(1)\n  ROOT add.15.0 = f32[] add(Arg_0.13, Arg_1.14)\n}\n\ntriton_softmax_computation.2 {\n  parameter_0.2 = f32[32]{0} parameter(0)\n  constant.6 = f32[] constant(0)\n  reduce.6 = f32[] reduce(parameter_0.2, constant.6), dimensions={0}, to_apply=region_2.12\n  broadcast.10 = f32[32]{0} broadcast(reduce.6), dimensions={}\n  ROOT divide.3 = f32[32]{0} divide(parameter_0.2, broadcast.10)\n}\n\nregion_1.8 {\n  Arg_0.9 = f32[] parameter(0)\n  Arg_1.10 = f32[] parameter(1)\n  ROOT maximum.11.0 = f32[] maximum(Arg_0.9, Arg_1.10)\n}\n\ntriton_softmax_computation.3 {\n  parameter_0.3 = f32[32]{0} parameter(0)\n  constant.7 = f32[] constant(-inf)\n  reduce.7 = f32[] reduce(parameter_0.3, constant.7), dimensions={0}, to_apply=region_1.8\n  broadcast.11 = f32[32]{0} broadcast(reduce.7), dimensions={}\n  ROOT subtract.3 = f32[32]{0} subtract(parameter_0.3, broadcast.11)\n}\n\nENTRY main.38_spmd {\n  param = f32[32]{0} parameter(0), sharding={replicated}\n  all-reduce.1.0 = f32[32]{0} all-reduce(param), channel_id=1, replica_groups={{0,1,2,3,4,5,6,7}}, use_global_device_ids=true, to_apply=region_0.4\n  triton_softmax.3 = f32[32]{0} fusion(all-reduce.1.0), kind=kCustom, calls=triton_softmax_computation.3\n  exponential.1.0 = f32[32]{0} exponential(triton_softmax.3)\n  ROOT triton_softmax.2 = f32[32]{0} fusion(exponential.1.0), kind=kCustom, calls=triton_softmax_computation.2\n}\n\n"

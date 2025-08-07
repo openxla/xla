@@ -1595,6 +1595,7 @@ cc_library(
         "//xla/service/gpu/transforms:scatter_expander",
         "//xla/service/gpu/transforms:scatter_slice_simplifier",
         "//xla/service/gpu/transforms:softmax_rewriter_triton",
+        "//xla/service/gpu/transforms:allreduce_softmax_fusion",
         "//xla/service/gpu/transforms:sort_rewriter",
         "//xla/service/gpu/transforms:splitk_rewriter",
         "//xla/service/gpu/transforms:stream_attribute_annotator",
