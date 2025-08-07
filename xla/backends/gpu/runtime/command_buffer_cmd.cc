@@ -2280,8 +2280,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
   // create ephemeral command buffers at run time.
   auto nested_command_buffer =
       execute_params.stream->parent()
-          ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested,
-                                command_buffer)
+          ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested)
           .value();
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, record_params,
                                                nested_command_buffer.get()));

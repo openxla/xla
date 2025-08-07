@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -105,7 +106,7 @@ class GpuCommandBuffer : public CommandBuffer {
     GraphConditionalNodeHandle conditional_node;
   };
 
-  GpuCommandBuffer(Mode mode, StreamExecutor* executor);
+  GpuCommandBuffer(Mode mode, StreamExecutor* parent);
 
   // Bring CreateLaunch and UpdateLaunch template functions into scope.
   using CommandBuffer::CreateLaunch;
@@ -125,7 +126,7 @@ class GpuCommandBuffer : public CommandBuffer {
                             const KernelArgs& args) override;
 
   absl::StatusOr<const Command*> CreateNestedCommand(
-      CommandBuffer& nested,
+      const CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
   absl::StatusOr<const Command*> CreateMoveNestedCommand(
@@ -204,6 +205,13 @@ class GpuCommandBuffer : public CommandBuffer {
   using Dependencies = absl::InlinedVector<GraphNodeHandle, 1>;
 
  private:
+  // Prepares a nested command buffer for an update of the graph.
+  // It's a prerequisite to a call to `Update` on a nested command buffer.
+  // The return value needs to be kept alive until the update is finished. An
+  // update finishes by a call to `Finalize`.
+  virtual std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
+      GpuCommandBuffer* nested_cmd_buffer) = 0;
+
   absl::StatusOr<std::vector<GraphConditionalHandle>> CreateConditionalHandles(
       size_t num_handles);
 
@@ -278,7 +286,8 @@ class GpuCommandBuffer : public CommandBuffer {
   template <typename T>
   const Command* AppendCommand(T command) {
     commands_.push_back(std::make_unique<T>(std::move(command)));
-    VLOG(5) << "AppendCommand: " << reinterpret_cast<const void*>(commands_.back().get());
+    VLOG(5) << "AppendCommand: "
+            << reinterpret_cast<const void*>(commands_.back().get());
     return commands_.back().get();
   }
 
@@ -333,7 +342,7 @@ class GpuCommandBuffer : public CommandBuffer {
   // Adds a new nested command buffer node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
-      CommandBuffer& nested) = 0;
+      const CommandBuffer& nested) = 0;
 
   // Adds a new nested command buffer node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateMovedChildNode(
@@ -383,7 +392,7 @@ class GpuCommandBuffer : public CommandBuffer {
   Mode mode_;
   State state_ = State::kCreate;
 
-  StreamExecutor* executor_;  // not owned, must outlive *this
+  StreamExecutor* parent_;  // not owned, must outlive *this
 
   // Track the number of command buffer updates for debugging.
   int64_t num_updates_ = 0;

@@ -73,7 +73,7 @@ class RocmExecutor : public GpuExecutor {
   absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
       std::optional<std::variant<StreamPriority, int>> priority) override;
   absl::StatusOr<std::unique_ptr<CommandBuffer>> CreateCommandBuffer(
-      CommandBuffer::Mode mode, CommandBuffer* parent = nullptr) override;
+      CommandBuffer::Mode mode) override;
   absl::StatusOr<std::unique_ptr<Kernel>> LoadKernel(
       const KernelLoaderSpec& spec) override;
   void UnloadKernel(const Kernel* kernel) override;

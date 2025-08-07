@@ -148,7 +148,6 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
                       GetOrCreateCommandBuffer(params.executor));
   absl::MutexLock lock(&cmd_buffer->mutex);
 
-  VLOG(0) << "Initialize command buffer thunk 1";
   // Initialize commands.
   TF_RETURN_IF_ERROR(commands_.Initialize(params, cmd_buffer->state));
 
@@ -157,8 +156,6 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   if (thunks_) {
     TF_RETURN_IF_ERROR(thunks_->Initialize(params));
   }
-
-  VLOG(0) << "Initialize command buffer thunk 2";
 
   // Construct ExecuteParams with empty fields for everything that is not needed
   // for recording commands.
