@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
+#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -759,8 +760,6 @@ absl::Status CudaCommandBuffer::WriteGraphToDotFile(absl::string_view path) {
 absl::Status CudaCommandBuffer::InstantiateGraph() {
   // If we get a "resource exhausted error" we retry instantiating Gpu graph
   // one more time after releasing unused device memory allocated for graphs.
-  CHECK(parent_ == nullptr)
-      << "InstantiateGraph should be called on the root command buffer";
   auto instantiated = GraphInstantiate(&exec_, graph_);
   if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
     LOG(WARNING) << "Retry CUDA graph instantiation after OOM error";
@@ -779,7 +778,7 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
 }
 
 std::unique_ptr<ScopedUpdateMode> CudaCommandBuffer::ActivateUpdateMode(
-    GpuCommandBuffer* nested_cmd_buffer) {
+    CommandBuffer* nested_cmd_buffer) {
   auto nested_cuda_cmd_buffer =
       static_cast<CudaCommandBuffer*>(nested_cmd_buffer);
 

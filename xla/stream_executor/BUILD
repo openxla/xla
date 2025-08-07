@@ -665,6 +665,7 @@ cc_library(
         ":kernel",
         ":launch_dim",
         ":platform",
+        "//xla/stream_executor/gpu:scoped_update_mode",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

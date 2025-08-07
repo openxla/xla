@@ -177,7 +177,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
 
   using ScopedCudaGraphExec = ScopedGraphExec<CUgraphExec>;
   std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
-      GpuCommandBuffer* nested_cmd_buffer) override;
+      CommandBuffer* nested_cmd_buffer) override;
 
   absl::Status CheckCanBeUpdated() override;
 

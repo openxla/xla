@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/gpu/scoped_update_mode.h"
 
 namespace stream_executor {
 
@@ -303,6 +304,13 @@ class CommandBuffer {
   // Command buffer tracing API
   //--------------------------------------------------------------------------//
  private:
+  // Prepares a nested command buffer for an update of the graph.
+  // It's a prerequisite to a call to `Update` on a nested command buffer.
+  // The return value needs to be kept alive until the update is finished. An
+  // update finishes by a call to `Finalize`.
+  virtual std::unique_ptr<gpu::ScopedUpdateMode> ActivateUpdateMode(
+      CommandBuffer* nested_cmd_buffer) = 0;
+
   friend class TraceCommandBufferFactory;
 
   // Tracing APIs are private because they do not compose with command buffer
