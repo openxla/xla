@@ -825,7 +825,7 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence child_commands;
-  child_commands.Emplace<GemmCmd>(s0, config.value(), slice_lhs, slice_rhs,
+  child_commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs,
                                   slice_out, slice_workspace,
                                   /*deterministic=*/true);
   TF_ASSERT_OK_AND_ASSIGN(
@@ -833,8 +833,7 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
       CommandBufferCmdExecutor::Create(std::move(child_commands), serialize));
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<ChildCmd>(s0, std::move(child_executor),
-                             ResourceUseVector{});
+  commands.Emplace<ChildCmd>(std::move(child_executor), ResourceUseVector{});
 
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,

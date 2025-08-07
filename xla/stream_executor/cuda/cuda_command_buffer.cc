@@ -445,6 +445,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
   auto& child_command_buffer =
       tensorflow::down_cast<CudaCommandBuffer&>(nested);
+  child_command_buffer.is_owned_graph_ = false;
   CUgraph child_graph =
       tensorflow::down_cast<CudaCommandBuffer&>(nested).graph_;
 
@@ -779,6 +780,23 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
   }
 
   return absl::OkStatus();
+}
+
+std::unique_ptr<ScopedUpdateMode> CudaCommandBuffer::ActivateUpdateMode(
+    GpuCommandBuffer* nested_cmd_buffer) {
+  auto nested_cuda_cmd_buffer =
+      static_cast<CudaCommandBuffer*>(nested_cmd_buffer);
+
+  auto scoped_graph_exec = std::make_unique<ScopedCudaGraphExec>(
+      &nested_cuda_cmd_buffer->exec_,
+      &nested_cuda_cmd_buffer->is_owned_graph_exec_);
+
+  // We need to store the graph exec handle in the nested command buffer.
+  // The scoped_graph_exec will restore the old state once we are done.
+  nested_cuda_cmd_buffer->exec_ = exec_;
+  nested_cuda_cmd_buffer->is_owned_graph_exec_ = false;
+
+  return std::move(scoped_graph_exec);
 }
 
 CudaCommandBuffer::~CudaCommandBuffer() {

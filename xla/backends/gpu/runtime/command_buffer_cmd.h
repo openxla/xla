@@ -705,8 +705,7 @@ class Memset32Cmd : public CommandBufferCmd {
 
 class ChildCmd : public CommandBufferCmd {
  public:
-  ChildCmd(ExecutionStreamId execution_stream_id,
-           CommandBufferCmdExecutor child_commands,
+  ChildCmd(CommandBufferCmdExecutor child_commands,
            ResourceUseVector resources = {});
 
   absl::Status Initialize(const Thunk::InitializeParams& params,

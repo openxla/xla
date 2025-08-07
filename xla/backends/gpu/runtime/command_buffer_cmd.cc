@@ -1118,11 +1118,9 @@ CommandBufferCmd::BufferUseVector Memset32Cmd::buffers() const {
 // ChildCmd
 //===----------------------------------------------------------------------===//
 
-ChildCmd::ChildCmd(ExecutionStreamId execution_stream_id,
-                   CommandBufferCmdExecutor child_commands,
+ChildCmd::ChildCmd(CommandBufferCmdExecutor child_commands,
                    ResourceUseVector resources)
-    : CommandBufferCmd(CommandBufferCmdType::kChildCmd, execution_stream_id,
-                       std::move(resources)),
+    : CommandBufferCmd(CommandBufferCmdType::kChildCmd, std::move(resources)),
       child_commands_(std::move(child_commands)) {}
 
 bool ChildCmd::requires_initialization() {
