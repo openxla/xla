@@ -93,4 +93,25 @@ def RoundF32ToTF32ForTf32DotRewritePass
   let constructor = "CreateRoundF32ToTF32ForTf32DotRewritePass()";
 }
 
+def ConvertNvshmemTensorToExternElementwisePass
+    : Pass<"convert-nvshmem-tensor-to-extern-elementwise", "mlir::ModuleOp"> {
+  let summary = "Convert NVSHMEM tensor operations to standard tt.extern_elementwise format.";
+  let description = [{
+    This pass converts NVSHMEM tensor operations to standard tt.extern_elementwise format 
+    with proper pointer arguments. It handles both:
+    1. New placeholder operations (__xla_nvshmem_allreduce_placeholder)
+    2. Existing NVSHMEM symbols (nvshmem_*_*_reduce)
+    
+    This enables the standard Triton LLVM conversion pipeline to handle NVSHMEM calls correctly.
+    
+    Input:  ttir.extern_elementwise tensor {symbol="__xla_nvshmem_allreduce_placeholder" or "nvshmem_float_sum_reduce"}
+    Output: tt.extern_elementwise %rank, %ptr, %ptr, %count {libname="nvshmem", symbol="nvshmemx_float_sum_reduce_block"}
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "triton::TritonDialect"
+  ];
+  let constructor = "CreateConvertNvshmemTensorToExternElementwisePass()";
+}
+
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

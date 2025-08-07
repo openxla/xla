@@ -2137,6 +2137,8 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(mlir::triton::xla::CreateTritonXLAExtractInsertToTritonPass(
       device_info, block_level_parameters.is_tma_allowed));
 
+  // Convert NVSHMEM tensor placeholders to standard format
+  pm.addPass(mlir::triton::xla::CreateConvertNvshmemTensorToExternElementwisePass());
   pm.addPass(mlir::triton::xla::CreateTritonXLASqueezeDimsPass());
 
   // Lower affine expressions into arithmetic ops.
