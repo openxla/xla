@@ -88,7 +88,7 @@ TEST(RocmComputeCapability, IsSupportedGfxVersion) {
 }
 
 TEST(RocmComputeCapability, Accessors) {
-  // there's not much point in testing individual trivial implementations as 
+  // there's not much point in testing individual trivial implementations as
   // this require to put here the whole knowledge of RocmComputeCapability.
   // This will make maintanance of the class unnecessary more painful.
   // Testing only the most complicated methods, basically IsThisGfxInAnyList().
@@ -137,7 +137,7 @@ TEST(RocmComputeCapability, Accessors) {
   EXPECT_TRUE(RocmComputeCapability{"gfx90a"}.has_hipblaslt());
   EXPECT_TRUE(RocmComputeCapability{"gfx1200"}.has_hipblaslt());
   EXPECT_TRUE(RocmComputeCapability{"gfx1100"}.has_hipblaslt());
-  EXPECT_TRUE(RocmComputeCapability{"gfx1103"}.has_hipblaslt());  
+  EXPECT_TRUE(RocmComputeCapability{"gfx1103"}.has_hipblaslt());
 }
 
 }  // namespace
