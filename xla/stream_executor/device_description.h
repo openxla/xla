@@ -70,6 +70,10 @@ class RocmComputeCapability {
     return gcn_arch_name_ == other.gcn_arch_name_;
   }
 
+  bool operator!=(const RocmComputeCapability &other) const {
+    return !this->operator==(other);
+  }
+
   std::string gfx_version() const {
     //  std::strchr() is faster for the case than std::string::find()
     const char *const p_colon = std::strchr(gcn_arch_name_.c_str(), ':');
