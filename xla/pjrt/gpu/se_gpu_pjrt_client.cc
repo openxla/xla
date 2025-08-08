@@ -1008,7 +1008,9 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
       options, returned_extras, lookup_addressable_devices));
   TF_ASSIGN_OR_RETURN(const auto* topology_description,
                       GetTopologyDescription());
-  if (topology_description != nullptr) {
+  // TODO: Fix null topology usage in TF.
+  // https://github.com/search?q=repo%3Atensorflow%2Ftensorflow%20%2F*gpu_topology%3D*%2Fnullptr&type=code
+  if (topology_description.gpu_topology_ptr() != nullptr) {
     const auto& gpu_topology =
         tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
             *topology_description);
