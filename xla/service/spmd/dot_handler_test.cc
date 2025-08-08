@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
@@ -28,6 +30,7 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 

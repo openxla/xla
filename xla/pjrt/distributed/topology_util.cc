@@ -219,17 +219,15 @@ absl::StatusOr<GlobalTopologyProto> BuildGlobalTopology(
   }
 
   if (assign_global_device_ids) {
-    std::map<int, std::set<DeviceProto*>> slice_id_to_devices;
+    absl::btree_multimap<int, DeviceProto*> slice_id_to_devices;
     for (LocalTopologyProto& local : local_topologies) {
       for (DeviceProto& device : *local.mutable_devices()) {
-        slice_id_to_devices[device.slice_index()].insert(&device);
+        slice_id_to_devices.emplace(device.slice_index(), &device);
       }
     }
     int next_global_device_id = 0;
-    for (auto& [slice_id, devices] : slice_id_to_devices) {
-      for (DeviceProto* device : devices) {
-        device->set_global_device_id(next_global_device_id++);
-      }
+    for (auto& [_slice_id, device] : slice_id_to_devices) {
+      device->set_global_device_id(next_global_device_id++);
     }
   }
 
