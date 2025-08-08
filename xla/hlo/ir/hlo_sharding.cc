@@ -291,12 +291,14 @@ HloSharding HloSharding::Subgroup(
     absl::InlinedVector<int64_t, 6> transposed_shape = merged_shape;
     std::vector<OpSharding::Type> merged_types;
     static constexpr std::array<OpSharding::Type, OpSharding::Type_ARRAYSIZE>
-        kOrderedTypes = {OpSharding::MAXIMAL,    OpSharding::TUPLE,
-                         OpSharding::OTHER,      OpSharding::MANUAL,
-                         OpSharding::REPLICATED, OpSharding::UNKNOWN};
+        kOrderedTypes = {OpSharding::MAXIMAL,   OpSharding::TUPLE,
+                         OpSharding::OTHER,     OpSharding::MANUAL,
+                         OpSharding::UNREDUCED, OpSharding::REPLICATED,
+                         OpSharding::UNKNOWN};
     static_assert(kOrderedTypes[0] == 1 && kOrderedTypes[1] == 2 &&
                   kOrderedTypes[2] == 3 && kOrderedTypes[3] == 4 &&
-                  kOrderedTypes[4] == 0 && kOrderedTypes[5] == 5);
+                  kOrderedTypes[4] == 6 && kOrderedTypes[5] == 0 &&
+                  kOrderedTypes[6] == 5);
     for (OpSharding::Type type : kOrderedTypes) {
       auto& dims = type_to_dims[type];
       if (dims.empty()) continue;
@@ -450,6 +452,14 @@ void HloSharding::Print(Printer* printer, bool include_metadata) const {
     return;
   }
 
+  if (unreduced_) {
+    printer->Append("{unreduced");
+    print_shard_group();
+    print_metadata();
+    printer->Append("}");
+    return;
+  }
+
   if (maximal_) {
     AppendCat(printer, "{maximal device=",
               static_cast<int64_t>(*tile_assignment_.array().begin()));
@@ -466,9 +476,11 @@ void HloSharding::Print(Printer* printer, bool include_metadata) const {
           case OpSharding::MANUAL:
             return "manual";
           case OpSharding::MAXIMAL:
-            return "maximul";
+            return "maximal";
           case OpSharding::REPLICATED:
             return "replicated";
+          case OpSharding::UNREDUCED:
+            return "unreduced";
           default:
             return "error_type.";
         }
@@ -838,7 +850,7 @@ absl::Status HloSharding::ValidateNonTuple(
                        tile_assignment_.iota_->num_elements() == *num_devices;
   }
 
-  if (IsTileMaximal() || IsManual() || IsUnknown()) {
+  if (IsTileMaximal() || IsManual() || IsUnknown() || IsUnreduced()) {
     return absl::OkStatus();
   }
 

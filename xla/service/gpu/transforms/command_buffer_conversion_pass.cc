@@ -36,9 +36,12 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/ffi/ffi_api.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -113,11 +116,19 @@ CommandBufferConfig GetCommandBufferConfig(
   return config;
 }
 
-// TODO(aliia): Add support for other command buffer types.
 std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
-    Thunk::Kind kind) {
+    const Thunk* thunk) {
+  auto kind = thunk->kind();
   switch (kind) {
     case Thunk::kCopy:
+      if (dynamic_cast<const DynamicMemcpyThunk*>(thunk)) {
+        return DebugOptions::DYNAMIC_SLICE_COPY_FUSION;
+      } else if (dynamic_cast<const DeviceToDeviceCopyThunk*>(thunk)) {
+        return DebugOptions::FUSION;
+      } else {
+        // Only copy within the same device can be converted to command buffers.
+        return std::nullopt;
+      }
     case Thunk::kKernel:
       return DebugOptions::FUSION;
     case Thunk::kWhile:
@@ -136,6 +147,12 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
     case Thunk::kRecv:
     case Thunk::kSend:
       return DebugOptions::COLLECTIVES;
+    case Thunk::kCuDnn:
+      return DebugOptions::CUDNN;
+    case Thunk::kCustomCall:
+      return DebugOptions::CUSTOM_CALL;
+    case Thunk::kCublasLtMatmul:
+      return DebugOptions::CUBLASLT;
     default:
       return std::nullopt;
   }
@@ -151,7 +168,7 @@ bool IsConvertible(const Thunk* thunk, const CommandBufferConfig& config) {
   if (thunk->IsAsyncDone()) {
     return true;
   }
-  auto cmd_type = GetCommandBufferCmdType(thunk->kind());
+  auto cmd_type = GetCommandBufferCmdType(thunk);
   if (!cmd_type.has_value() || !config.enabled_commands.contains(*cmd_type)) {
     return false;  // Thunk kind is not supported for command buffer conversion.
   }
@@ -175,6 +192,22 @@ bool IsConvertible(const Thunk* thunk, const CommandBufferConfig& config) {
     return true;
   }
 
+  if (thunk->kind() == Thunk::kCustomCall) {
+    const auto* custom_call_thunk = static_cast<const CustomCallThunk*>(thunk);
+    const std::string& target_name = custom_call_thunk->target_name();
+    if (config.enabled_legacy_custom_call_targets.contains(target_name)) {
+      VLOG(3) << "Recording legacy custom call target " << target_name
+              << " into command buffer.";
+      return true;
+    }
+
+    // Check if FFI handler is compatible with command buffers.
+    absl::StatusOr<ffi::HandlerRegistration> registration =
+        ffi::FindHandler(target_name, "gpu");
+    return registration.ok()
+               ? ffi::IsCommandBufferCompatible(registration->traits)
+               : false;
+  }
   return true;
 }
 

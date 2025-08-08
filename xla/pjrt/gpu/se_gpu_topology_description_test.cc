@@ -32,21 +32,20 @@ using ::testing::ElementsAre;
 
 void CheckDeviceDescription(const PjRtDeviceDescription& device_desc,
                             int global_device_id, int local_device_id,
-                            int process_index, int slice_index) {
+                            int process_index, int partition_index) {
   EXPECT_EQ(device_desc.id(), global_device_id);
   EXPECT_EQ(device_desc.process_index(), process_index);
   const auto& gpu_device_desc =
       dynamic_cast<const PjRtStreamExecutorDeviceDescription&>(device_desc);
   EXPECT_THAT(gpu_device_desc.coords(),
-              ElementsAre(local_device_id, process_index, slice_index));
+              ElementsAre(local_device_id, process_index, partition_index));
 }
 
 TEST(StreamExecutorGpuTopologyDescriptionTest, SymmetricTopology) {
   std::shared_ptr<xla::GpuTopology> gpu_topology =
       std::make_shared<xla::GpuTopology>(
-          /*device_ids=*/std::vector<int>{0, 1, 2, 3, 4, 5, 6, 7},
-          /*platform_version=*/"12.3", /*num_slices=*/2,
-          /*num_hosts_per_slice=*/2, /*num_devices_per_host=*/2);
+          /*platform_version=*/"12.3", /*num_partitions=*/2,
+          /*num_hosts_per_partition=*/2, /*num_devices_per_host=*/2);
 
   StreamExecutorGpuTopologyDescription topology_desc(
       xla::CudaId(), xla::CudaName(), gpu_topology);
@@ -70,9 +69,8 @@ TEST(StreamExecutorGpuTopologyDescriptionTest, SymmetricTopology) {
 TEST(StreamExecutorGpuTopologyDescriptionTest, AsymmetricTopology) {
   std::shared_ptr<xla::GpuTopology> gpu_topology =
       std::make_shared<xla::GpuTopology>(
-          /*device_ids=*/std::vector<int>{0, 1, 2, 3, 4, 5, 6, 7},
-          /*platform_version=*/"12.3", /*num_slices=*/-1,
-          /*num_hosts_per_slice=*/-1, /*num_devices_per_host=*/-1);
+          /*platform_version=*/"12.3", /*num_partitions=*/-1,
+          /*num_hosts_per_partition=*/-1, /*num_devices_per_host=*/-1);
 
   StreamExecutorGpuTopologyDescription topology_desc(
       xla::CudaId(), xla::CudaName(), gpu_topology);
@@ -82,15 +80,7 @@ TEST(StreamExecutorGpuTopologyDescriptionTest, AsymmetricTopology) {
   EXPECT_EQ(topology_desc.platform_version(), "12.3");
 
   const auto device_descs = topology_desc.DeviceDescriptions();
-  EXPECT_EQ(device_descs.size(), 8);
-  CheckDeviceDescription(*device_descs[0], 0, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[1], 1, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[2], 2, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[3], 3, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[4], 4, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[5], 5, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[6], 6, 0, 0, 0);
-  CheckDeviceDescription(*device_descs[7], 7, 0, 0, 0);
+  EXPECT_EQ(device_descs.size(), 0);
 }
 
 }  // namespace

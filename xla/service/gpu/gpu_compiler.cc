@@ -104,6 +104,8 @@ limitations under the License.
 #include "xla/hlo/transforms/host_offloader.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_reduce_folder.h"
 #include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
@@ -697,7 +699,6 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<TopkSpecializer>();
   pipeline.AddPass<TopkDecomposer>();
 
-  pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
   pipeline.AddPass<DotDimensionSorter>();
   pipeline.AddPass<DotDecomposer>();
 
@@ -900,6 +901,7 @@ absl::Status RunOptimizationPasses(
                                              gpu_version);
   }();
 
+  pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
   pipeline.AddPass<HloComputationDeduplicator>(
       /*mark_fusion_duplications=*/false);
   return pipeline.Run(hlo_module).status();
@@ -934,6 +936,8 @@ absl::Status RunCollectiveOptimizationPasses(
   }
   collectives_pipeline.AddPass<AllGatherOptimizer>();
   collectives_pipeline.AddPass<AllGatherDynamicSliceSimplifier>();
+  collectives_pipeline.AddPass<AllGatherPadDsSimplifier>();
+  collectives_pipeline.AddPass<AllGatherDynamicSlicePermutedOffsetSimplifier>();
   collectives_pipeline.AddPass<AllReduceReassociate>(
       debug_options.xla_gpu_enable_reassociation_for_converted_ar());
   collectives_pipeline.AddPass<ReduceScatterReassociate>();
@@ -1772,9 +1776,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   pipeline.AddPass<HostOffloader>(alias_info);
 
-  TF_RETURN_IF_ERROR(
-      AddConvAndGemmAutotuningPasses(&pipeline, gpu_version, options,
-                                     hlo_module, autotune_config, thread_pool));
+  TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPasses(
+      &pipeline, gpu_version, options, hlo_module, autotune_config, thread_pool,
+      stream_exec));
 
   // The GEMM fusion autotuner can insert new bf16 reductions that need to be
   // normalized again.
@@ -2898,8 +2902,15 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
       HloPassPipeline& pipeline =
           main_pipeline.AddPass<HloPassPipeline>("command-buffer-scheduling");
       pipeline.AddPass<CommandBufferScheduling>(gpu_device_info);
-      pipeline.AddPass<SanitizeConstantNames>();
     }
+  }
+
+  // Sanitize constant names. This is in its own pipeline to ensure it always
+  // runs, as the preceding pipeline is conditional.
+  {
+    auto& pipeline =
+        main_pipeline.AddPass<HloPassPipeline>("sanitize-constant-names");
+    pipeline.AddPass<SanitizeConstantNames>();
   }
 
   if (module->config().debug_options().xla_gpu_pgle_accuracy_checker() ==

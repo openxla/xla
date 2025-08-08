@@ -217,7 +217,15 @@ absl::Status ClearShardingAttributes(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
+      bool has_unreduced_axes =
+          hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
+      if (has_unreduced_axes) {
+        hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
+      }
       if (ShouldKeepSharding(hlo)) {
+        if (has_unreduced_axes) {
+          hlo->set_sharding(HloSharding::Unreduced());
+        }
         continue;
       }
       hlo->clear_sharding();
@@ -3206,6 +3214,9 @@ absl::Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
+  if (sharding.IsTileMaximal()) {
+    return DefaultAction(hlo);
+  }
 
   const Shape& in_shape = hlo->operand(0)->shape();
   const Shape& out_shape = hlo->shape();
@@ -5646,6 +5657,13 @@ absl::Status SpmdPartitioner::PreprocessSharding(
           hlo->set_sharding(
               HloSharding::Single(hlo->shape(), HloSharding::Replicate()));
         }
+      }
+
+      // Represent unreduced as a frontend attribute to avoid propagating
+      // the unreduced HLO sharding.
+      if (hlo->sharding().IsUnreduced()) {
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        hlo->set_sharding(HloSharding::Replicate());
       }
     }
   }

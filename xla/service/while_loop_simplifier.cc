@@ -16,8 +16,11 @@ limitations under the License.
 #include "xla/service/while_loop_simplifier.h"
 
 #include <cstdint>
+#include <iterator>
+#include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
@@ -1006,6 +1009,7 @@ static absl::StatusOr<bool> TryRemoveWhileLoop(HloInstruction* while_op) {
       auto call_op = computation->AddInstruction(HloInstruction::CreateCall(
           while_op->shape(), while_op->operands(), while_op->while_body()));
       TF_RETURN_IF_ERROR(computation->ReplaceInstruction(while_op, call_op));
+      call_op->set_metadata_op_name("");
       TF_ASSIGN_OR_RETURN(auto inlined_instructions_map,
                           CallInliner::Inline(call_op));
       (void)inlined_instructions_map;

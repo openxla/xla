@@ -38,6 +38,13 @@ namespace cpu {
 namespace {
 
 bool CanBeLoopFused(const HloInstruction& hlo) {
+  const HloModuleConfig& config = hlo.parent()->parent()->config();
+  bool use_new_fusion = options::UseExperimentalLoopFusion(config);
+  if (use_new_fusion && hlo.opcode() == HloOpcode::kDynamicUpdateSlice) {
+    // TODO(willfroom): Remove this once we port DUS emitter.
+    return false;
+  }
+
   // These are the only ones we fuse since we rely on effective elemental IR
   // generation.
   return hlo.IsElementwise() ||  //
@@ -254,7 +261,7 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   // inefficiencies in the fusion emitter.
   // TODO(b/119692968): Remove this once the fusion emitter can handle
   // arbitrary fusion nodes.
-  if (consumer->opcode() == HloOpcode::kFusion) {
+  if (may_duplicate() && consumer->opcode() == HloOpcode::kFusion) {
     if (fusion_node_evaluations_.find(consumer) ==
         fusion_node_evaluations_.end()) {
       // We have no cached results for this fusion node yet. This can happen
@@ -322,6 +329,10 @@ HloInstruction::FusionKind CpuInstructionFusion::ChooseKind(
 
 HloInstruction* CpuInstructionFusion::FuseInstruction(
     HloInstruction* fusion_instruction, HloInstruction* producer) {
+  if (!may_duplicate()) {
+    return InstructionFusion::FuseInstruction(fusion_instruction, producer);
+  }
+
   auto evaluation = fusion_node_evaluations_.find(fusion_instruction);
   if (evaluation == fusion_node_evaluations_.end()) {
     evaluation = fusion_node_evaluations_

@@ -15,6 +15,14 @@ package(
     licenses = ["notice"],
 )
 
+package_group(
+    name = "codegen_tests",
+    packages = [
+        "//xla/backends/gpu/codegen/emitters/tests",
+        "//xla/codegen/emitters/tests",
+    ],
+)
+
 cc_library(
     name = "test_lib",
     testonly = 1,
@@ -58,9 +66,10 @@ xla_cc_binary(
     # set linkopts in such a way that dynamic libraries are found, which are
     # symlinked from the lit_lib directory.
     linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
-    visibility = ["//xla/backends/gpu/codegen:__subpackages__"],
+    visibility = [":codegen_tests"],
     deps = [
         ":test_lib",
+        "//xla/codegen/tools:test_lib",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
@@ -77,7 +86,7 @@ xla_cc_binary(
     # set linkopts in such a way that dynamic libraries are found, which are
     # symlinked from the lit_lib directory.
     linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
-    visibility = ["//xla/backends/gpu/codegen:__subpackages__"],
+    visibility = [":codegen_tests"],
     deps = [
         ":test_lib",
         "@com_google_googletest//:gtest",
@@ -89,6 +98,7 @@ xla_cc_binary(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "//xla/codegen/tools:test_lib",
         "//xla:debug_options_flags",
         "//xla:error_spec",
         "//xla:shape_util",
@@ -113,9 +123,9 @@ xla_cc_binary(
     name = "fusion_wrapper",
     testonly = 1,
     srcs = ["fusion_wrapper.cc"],
-    visibility = ["//xla/backends/gpu/codegen:__subpackages__"],
+    visibility = [":codegen_tests"],
     deps = [
-        ":test_lib",
+        "//xla/codegen/tools:test_lib",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

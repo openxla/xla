@@ -696,6 +696,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
     ],
 )
 
@@ -1640,6 +1641,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
     ],
 )
 
@@ -1837,6 +1839,7 @@ xla_test(
         "//xla/stream_executor/gpu:all_reduce_kernel",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/host:host_platform",
+        "//xla/tests:literal_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",

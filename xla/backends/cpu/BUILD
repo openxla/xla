@@ -41,12 +41,13 @@ onednn_graph_cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":onednn_fusion",
-        ":onednn_fusion_graph",
+        ":onednn_support",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime/onednn:onednn_interop",
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -54,24 +55,20 @@ onednn_graph_cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@onednn//:mkl_dnn",
     ],
 )
 
 onednn_graph_cc_library(
-    name = "onednn_fusion_graph",
-    srcs = [],
-    hdrs = ["onednn_fusion_graph.h"],
+    name = "onednn_fusion",
+    hdrs = ["onednn_fusion.h"],
     compatible_with = get_compatible_with_portable(),
-    deps = [
-        "@onednn//:mkl_dnn",
-    ],
+    deps = ["//xla/tsl/mkl:onednn"],
 )
 
 cc_library(
-    name = "onednn_fusion",
-    srcs = ["onednn_fusion.cc"],
-    hdrs = ["onednn_fusion.h"],
+    name = "onednn_support",
+    srcs = ["onednn_support.cc"],
+    hdrs = ["onednn_support.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:shape_util",
@@ -111,10 +108,24 @@ cc_library(
 )
 
 cc_library(
+    name = "xnn_gemm_config",
+    srcs = ["xnn_gemm_config.cc"],
+    hdrs = ["xnn_gemm_config.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/runtime:dot_lib",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Target",
+    ],
+)
+
+cc_library(
     name = "xnn_fusion",
     srcs = ["xnn_fusion.cc"],
     hdrs = ["xnn_fusion.h"],
     deps = [
+        ":xnn_gemm_config",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",

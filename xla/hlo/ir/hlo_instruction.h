@@ -451,16 +451,11 @@ class HloInstruction {
       const Shape& shape, HloInstruction* a, const CholeskyOptions& options);
 
   // Creates a dot op with operands 'lhs' and 'rhs' with contracting and batch
-  // dimensions specified in 'dimension_numbers'. If 'sparsity' is set, then
-  // 'sparse_meta' must also be present (and have the same size).
-  // Note: 'sparsity' argument is eventually moved in the HloDotInstruction
-  // constructor, so no extra copies are created.
+  // dimensions specified in 'dimension_numbers'.
   static std::unique_ptr<HloInstruction> CreateDot(
       const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
       const DotDimensionNumbers& dimension_numbers,
-      const PrecisionConfig& precision_config,
-      std::vector<SparsityDescriptor> sparsity = {},
-      absl::Span<HloInstruction* const> sparse_meta = {});
+      const PrecisionConfig& precision_config);
 
   // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes', with
   // contracting, batch, ragged, and group dimensions specified in
@@ -469,6 +464,15 @@ class HloInstruction {
       const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
       HloInstruction* group_sizes,
       const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig& precision_config);
+
+  // Creates a scaled dot op with operands 'lhs', 'lhs_scale', 'rhs', and
+  // 'rhs_scale', with contracting, batch, ragged, and group dimensions
+  // specified in 'dimension_numbers'.
+  static std::unique_ptr<HloInstruction> CreateScaledDot(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
+      HloInstruction* rhs, HloInstruction* rhs_scale,
+      const DotDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
 
   // Creates a reduce-precision op, where operand is the data to reduce in
@@ -1511,7 +1515,11 @@ class HloInstruction {
   // Returns true whether this instruction is effectively a bitcast. Currently,
   // this means it either is a bitcast, or it is a transpose that is effectively
   // a bitcast.
-  bool IsEffectiveBitcast() const;
+  bool IsEffectiveBitcast() const { return IsEffectiveBitcast(opcode_); }
+  // Like zero-argument IsEffectiveBitcast, except can be faster if the client
+  // already has the opcode for "*this" available.
+  // REQUIRES: opcode == this->opcode()
+  bool IsEffectiveBitcast(HloOpcode opcode) const;
 
   // Returns true if this instruction is asynchronous with the
   // async_execution_thread set to `execution_thread`.

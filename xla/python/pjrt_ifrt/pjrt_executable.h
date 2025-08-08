@@ -226,7 +226,7 @@ class PjRtLoadedExecutable final
         "PjRtLoadedExecutable::GetDonatableInputIndices is not implemented.");
   }
 
-  UserContextRef user_context() const override { return {}; }
+  UserContextRef user_context() const override { return user_context_; }
 
   Future<> GetReadyFuture() const override {
     // PjRtCompiler blocks until compilation finishes and returns only the
@@ -295,6 +295,8 @@ class PjRtLoadedExecutable final
       absl::Span<ArrayRef> args, const ExecuteOptions& options,
       std::optional<DeviceListRef> devices) override;
 
+  const DeviceListRef& devices() const override { return devices_; }
+
   absl::Span<Device* const> addressable_devices() const override {
     DCHECK(this);
     return addressable_devices_;
@@ -347,6 +349,7 @@ class PjRtLoadedExecutable final
   std::vector<DType> output_dtypes_;
   std::vector<Shape> output_shapes_;
   std::vector<ShardingRef> output_shardings_;
+  const xla::ifrt::UserContextRef user_context_;
 };
 
 }  // namespace ifrt

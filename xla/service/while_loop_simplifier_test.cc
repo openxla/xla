@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/while_loop_simplifier.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include <gmock/gmock.h>
@@ -159,6 +160,20 @@ TEST_F(WhileLoopSimplifierTest, LoopWithOneIterationSimplified) {
   ASSERT_TRUE(WhileLoopSimplifier().Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               op::Tuple(op::Add(), op::Multiply()));
+}
+
+TEST_F(WhileLoopSimplifierTest, LoopWithOneIterationSimplifiedOpMetadata) {
+  auto m = MakeModuleWithSimpleLoop(/*num_iters=*/1);
+  m->entry_computation()->root_instruction()->set_metadata_op_name("while");
+  m->entry_computation()
+      ->root_instruction()
+      ->while_body()
+      ->root_instruction()
+      ->set_metadata_op_name("while/tuple");
+  ASSERT_TRUE(WhileLoopSimplifier().Run(m.get()).value());
+  // We want "while/tuple", not "while/while/tuple"
+  EXPECT_EQ(m->entry_computation()->root_instruction()->metadata().op_name(),
+            "while/tuple");
 }
 
 TEST_F(WhileLoopSimplifierTest,
