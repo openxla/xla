@@ -16,5 +16,6 @@ those to this list.
 temporary_patch_list = [
     "//third_party/triton:temporary/accelerateamdmatmul.patch",
     "//third_party/triton:temporary/accelerateamdmatmul2.patch",
+    "//third_party/triton:temporary/0001-AMD-Quick-fix-disabling-transposed-load-used-as-diff.patch",
     # Add new patches just above this line
 ]
