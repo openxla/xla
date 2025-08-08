@@ -1,0 +1,24 @@
+// RUN: hlo-opt %s --platform=gpu --stage=hlo-backend --xla_gpu_target_config_filename=%S/../../../tools/hlo_opt/gpu_specs/%{GPU}.txtpb | FileCheck %s
+
+HloModule m, replica_count=8
+
+%add {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  o = bf16[] add(b, a)
+}
+
+entry {
+  x = bf16[4608,4608] parameter(0)
+  y = bf16[4,4608] parameter(1)
+
+  ar = bf16[4,4608] all-reduce(y), to_apply=%add, replica_groups={},
+    frontend_attributes={l2_prefetch_opportunity="1234"}
+  d = bf16[4,1152,4608] broadcast(ar), dimensions={0, 2}
+  e = bf16[4608,4608] reshape(d)
+  a = bf16[4608,4608] add(x, e)
+}
+
+// CHECK: all-reduce-start
+// CHECK-NEXT: "kind":"l2_prefetch"
+// CHECK-NEXT: all-reduce-done

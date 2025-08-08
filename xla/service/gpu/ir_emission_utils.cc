@@ -146,6 +146,11 @@ bool IsCustomCallToTopK(const HloInstruction& hlo) {
          hlo.custom_call_target() == kTopKCustomCallTarget;
 }
 
+bool IsL2PrefetchCustomCall(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kL2Prefetch;
+}
+
 bool IsSliceWithUnitStrides(const HloInstruction* instr) {
   auto slice = DynCast<HloSliceInstruction>(instr);
   return slice && absl::c_all_of(slice->slice_strides(),

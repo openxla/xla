@@ -334,12 +334,12 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
     CHECK: %command_buffer ([[P0:.+]]: s32[4]) -> s32[4] {
     CHECK:   %[[P0]] = s32[4]{0} parameter(0)
     CHECK:   %[[START:.+]] = s32[4]{0} all-reduce-start(%[[P0]])
-    CHECK:   %[[BITCAST:.+]] = s32[4]{0} bitcast(%[[P0]])
     CHECK:   ROOT %[[DONE:.+]] = s32[4]{0} all-reduce-done(%[[START]])
     CHECK: }
 
     CHECK: ENTRY %main (a: s32[4]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
+    CHECK:   %[[BITCAST:.+]] = s32[4]{0} bitcast(%[[A]])
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
     CHECK:     to_apply=%command_buffer
     CHECK: })";

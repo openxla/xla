@@ -1654,8 +1654,11 @@ absl::Status IrEmitterUnnested::EmitAsyncCustomCallStart(
     }
     return status;
   }
-  return Internal("Unsupported async custom call instruction: %s",
-                  HloOpcodeString(wrapped->opcode()));
+  absl::Status status = EmitCustomCallThunk(custom_call);
+  if (status.ok()) {
+    thunk_sequence_.back()->set_execution_stream_id(execution_stream_id);
+  }
+  return status;
 }
 
 absl::Status IrEmitterUnnested::AssertNonDeterminismIsOkay(
