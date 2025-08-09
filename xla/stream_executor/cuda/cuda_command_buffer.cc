@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -149,9 +148,8 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
 absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
     Mode mode, StreamExecutor* parent, CudaContext* cuda_context) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
-  return std::unique_ptr<CudaCommandBuffer>(
-      new CudaCommandBuffer(mode, parent, cuda_context, graph,
-                            /*is_owned_graph=*/true));
+  return std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
+      mode, parent, cuda_context, graph, /*is_owned_graph=*/true));
 }
 
 //===----------------------------------------------------------------------===//
@@ -398,7 +396,6 @@ absl::Status CudaCommandBuffer::UpdateMemcpyD2DNode(
   params.WidthInBytes = size;
   params.Height = 1;
   params.Depth = 1;
-
   return cuda::ToStatus(
       cuGraphExecMemcpyNodeSetParams(exec_, ToCudaGraphHandle(node_handle),
                                      &params, cuda_context_->context()),
@@ -440,7 +437,35 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
       cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
                                child_graph),
       "Failed to create a child graph node and add it to a CUDA graph"));
+  VLOG(5) << "CreateChildNode: " << node_handle;
+  return FromCudaGraphHandle(node_handle);
+}
 
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNode(
+    absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
+  auto& child_command_buffer =
+      tensorflow::down_cast<CudaCommandBuffer&>(nested);
+  CUgraph child_graph =
+      tensorflow::down_cast<CudaCommandBuffer&>(nested).graph_;
+
+  child_command_buffer.is_owned_graph_ = false;
+
+  CUgraphNodeParams nodeParams;
+  std::memset(&nodeParams, 0, sizeof(nodeParams));
+  nodeParams.type = CU_GRAPH_NODE_TYPE_GRAPH;
+  nodeParams.graph.graph = child_graph;
+  nodeParams.graph.ownership = CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE;
+  VLOG(2) << "Create a new node by moving the child graph " << child_graph
+          << " and add it to " << graph_ << "; deps: " << dependencies.size();
+
+  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
+
+  CUgraphNode node_handle;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuGraphAddNode(&node_handle, graph_, deps.data(), deps.size(),
+                     &nodeParams),
+      "Failed to create a child graph node and add it to a CUDA graph"));
+  VLOG(5) << "CreateChildNode: " << node_handle;
   return FromCudaGraphHandle(node_handle);
 }
 
@@ -449,7 +474,7 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
   CUgraph child_graph =
       tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
   VLOG(2) << "Set child node params " << node_handle << " in graph executable "
-          << exec_ << "to params contained in " << child_graph;
+          << exec_ << " to params contained in " << child_graph;
 
   return cuda::ToStatus(cuGraphExecChildGraphNodeSetParams(
                             exec_, ToCudaGraphHandle(node_handle), child_graph),
@@ -548,7 +573,6 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
                            shared_mem_bytes),
         "Failed to set shared memory size"));
   }
-
   return cuda::ToStatus(cuGraphExecKernelNodeSetParams(
                             exec_, ToCudaGraphHandle(node_handle), &params),
                         "Failed to set CUDA graph kernel node params");
@@ -735,6 +759,8 @@ absl::Status CudaCommandBuffer::WriteGraphToDotFile(absl::string_view path) {
 absl::Status CudaCommandBuffer::InstantiateGraph() {
   // If we get a "resource exhausted error" we retry instantiating Gpu graph
   // one more time after releasing unused device memory allocated for graphs.
+  CHECK(parent_ == nullptr)
+      << "InstantiateGraph should be called on the root command buffer";
   auto instantiated = GraphInstantiate(&exec_, graph_);
   if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
     LOG(WARNING) << "Retry CUDA graph instantiation after OOM error";

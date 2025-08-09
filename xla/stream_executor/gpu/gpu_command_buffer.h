@@ -129,6 +129,10 @@ class GpuCommandBuffer : public CommandBuffer {
       const CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
+  absl::StatusOr<const Command*> CreateMoveNestedCommand(
+      CommandBuffer& nested,
+      absl::Span<const Command* const> dependencies) override;
+
   absl::Status UpdateNestedCommand(const Command* command,
                                    const CommandBuffer& nested) override;
 
@@ -282,6 +286,8 @@ class GpuCommandBuffer : public CommandBuffer {
   template <typename T>
   const Command* AppendCommand(T command) {
     commands_.push_back(std::make_unique<T>(std::move(command)));
+    VLOG(5) << "AppendCommand: "
+            << reinterpret_cast<const void*>(commands_.back().get());
     return commands_.back().get();
   }
 
@@ -337,6 +343,11 @@ class GpuCommandBuffer : public CommandBuffer {
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       const CommandBuffer& nested) = 0;
+
+  // Adds a new nested command buffer node to the graph.
+  virtual absl::StatusOr<GraphNodeHandle> CreateMovedChildNode(
+      absl::Span<const GraphNodeHandle> dependencies,
+      CommandBuffer& nested) = 0;
 
   // Associate another command buffer with this child node. Will return an
   // error if the given node has not been created as a child node.
