@@ -81,6 +81,7 @@ onednn_graph_cc_library(
     hdrs = ["onednn_threadpool.h"],
     deps = [
         ":onednn_interop",
+        "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:work_queue",
         "//xla/tsl/mkl:onednn",
         "@eigen_archive//:eigen3",
@@ -90,9 +91,11 @@ onednn_graph_cc_library(
 onednn_graph_cc_test(
     name = "onednn_threadpool_test",
     srcs = ["onednn_threadpool_test.cc"],
+    copts = tsl_copts(),
     deps = [
         ":onednn_interop",
         ":onednn_threadpool",
+        "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
