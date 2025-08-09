@@ -994,6 +994,25 @@ PjRtFuture<> StreamExecutorGpuClient::CopyRawDeviceToHost(
       });
 }
 
+absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
+    CompileOptions* options, ExecutableExtras* returned_extras,
+    bool lookup_addressable_devices) {
+  TF_RETURN_IF_ERROR(PjRtStreamExecutorClient::UpdateCompileOptionsInternal(
+      options, returned_extras, lookup_addressable_devices));
+  TF_ASSIGN_OR_RETURN(const auto* topology_description,
+                      GetTopologyDescription());
+  // TODO: Fix null topology usage in TF.
+  // https://github.com/search?q=repo%3Atensorflow%2Ftensorflow%20%2F*gpu_topology%3D*%2Fnullptr&type=code
+  if (topology_description.gpu_topology_ptr() != nullptr) {
+    const auto& gpu_topology =
+        tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
+            *topology_description);
+    options->executable_build_options.set_slice_size(
+        gpu_topology.gpu_topology().slice_size());
+  }
+  return absl::OkStatus();
+}
+
 void StreamExecutorGpuClient::CopyToRemoteDevice(
     PjRtBuffer* buffer, absl::string_view serialized_descriptor,
     PjRtBuffer::RemoteSendCallback on_done) {
