@@ -29,6 +29,17 @@ limitations under the License.
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "xla/tsl/profiler/utils/parse_annotation.h"
+#include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
+#include "xla/tsl/profiler/utils/xplane_utils.h"
+#include "xla/tsl/util/env_var.h"
+#include "tsl/platform/abi.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 
@@ -59,7 +70,6 @@ class GpuTracer : public profiler::ProfilerInterface {
   absl::Status DoStop();
 
   RocmTracerOptions GetRocmTracerOptions();
-
   RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
 
   enum State {
@@ -76,10 +86,9 @@ class GpuTracer : public profiler::ProfilerInterface {
 };
 
 RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
-  // TODO(rocm-profiler): We need support for context similar to CUDA
   RocmTracerOptions options;
+#if TF_ROCM_VERSION < 60300
   std::vector<uint32_t> empty_vec;
-
   // clang formatting does not preserve one entry per line
   // clang-format off
   std::vector<uint32_t> hip_api_domain_ops{
@@ -149,7 +158,9 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, empty_vec);
 
   options.activity_tracing.emplace(ACTIVITY_DOMAIN_HIP_OPS, empty_vec);
-
+#else
+  options.max_annotation_strings = 1024 * 1024;
+#endif
   return options;
 }
 
@@ -164,20 +175,16 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 }
 
 absl::Status GpuTracer::DoStart() {
-  if (!rocm_tracer_->IsAvailable()) {
-    return tsl::errors::Unavailable("Another profile session running.");
-  }
-
   AnnotationStack::Enable(true);
-
-  RocmTraceCollectorOptions trace_collector_options =
-      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   uint64_t start_gputime_ns = RocmTracer::GetTimestamp();
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
+
+  RocmTracerOptions tracer_options = GetRocmTracerOptions();
+  RocmTraceCollectorOptions trace_collector_options =
+      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
 
-  RocmTracerOptions tracer_options = GetRocmTracerOptions();
   rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
 
   return absl::OkStatus();
@@ -228,8 +235,7 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
       return absl::OkStatus();
     }
   }
-  return absl::InternalError(
-      absl::StrCat("Invalid profiling state: ", profiling_state_));
+  return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
 }
 
 // Not in anonymous namespace for testing purposes.
@@ -238,15 +244,17 @@ std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
   if (options.device_type() != ProfileOptions::GPU &&
       options.device_type() != ProfileOptions::UNSPECIFIED) {
     return nullptr;
-  }
 
+#if TF_ROCM_VERSION < 60300
   profiler::RocmTracer* rocm_tracer =
       profiler::RocmTracer::GetRocmTracerSingleton();
-  if (!rocm_tracer->IsAvailable()) {
-    return nullptr;
-  }
-
+  if (!rocm_tracer->IsAvailable()) return nullptr;
   return std::make_unique<profiler::GpuTracer>(rocm_tracer);
+#else
+  auto& rocm_tracer = profiler::RocmTracer::i();
+  if (!rocm_tracer.IsAvailable()) return nullptr;
+  return std::make_unique<profiler::GpuTracer>(&rocm_tracer);
+#endif
 }
 
 auto register_rocm_gpu_tracer_factory = [] {

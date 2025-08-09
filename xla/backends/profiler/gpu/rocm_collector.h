@@ -20,12 +20,25 @@ limitations under the License.
 #include <limits>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/container/node_hash_set.h"
+#include "xla/stream_executor/rocm/roctracer_wrapper.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "xla/tsl/profiler/utils/parse_annotation.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
+#include "xla/tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {
 
+using tsl::mutex;
+using tsl::mutex_lock;
+using tsl::profiler::XEvent;
+using tsl::profiler::XLineBuilder;
+using tsl::profiler::XPlaneBuilder;
 using tsl::profiler::XSpace;
 
 struct MemcpyDetails {
@@ -116,6 +129,7 @@ enum class RocmTracerEventDomain {
   HIP_API,
   HIP_OPS,
 };
+
 const char* GetRocmTracerEventDomainName(const RocmTracerEventDomain& domain);
 // RocmTracerSyncTypes forward declaration
 enum class RocmTracerSyncTypes;
@@ -146,7 +160,8 @@ struct RocmTracerEvent {
   uint32_t device_id = kInvalidDeviceId;
   uint32_t correlation_id = kInvalidCorrelationId;
   uint64_t thread_id = kInvalidThreadId;
-  int64_t stream_id = kInvalidStreamId;
+  uint64_t stream_id = kInvalidStreamId;
+
   union {
     MemcpyDetails memcpy_info;                    // If type == Memcpy*
     MemsetDetails memset_info;                    // If type == Memset*
@@ -194,6 +209,9 @@ class AnnotationMap {
   AnnotationMap& operator=(const AnnotationMap&) = delete;
 };
 
+// for roctracer (v1)
+#if TF_ROCM_VERSION < 60300
+
 class RocmTraceCollector {
  public:
   explicit RocmTraceCollector(const RocmTraceCollectorOptions& options)
@@ -219,6 +237,137 @@ class RocmTraceCollector {
   RocmTraceCollector(const RocmTraceCollector&) = delete;
   RocmTraceCollector& operator=(const RocmTraceCollector&) = delete;
 };
+
+#else
+// for rocprofiler-sdk (v3)
+
+class RocmTraceCollector {
+ public:
+  explicit RocmTraceCollector(const RocmTraceCollectorOptions& options)
+      : options_(options) {}
+  virtual ~RocmTraceCollector() {}
+
+  virtual void AddEvent(RocmTracerEvent&& event, bool is_auxiliary) = 0;
+  virtual void OnEventsDropped(const std::string& reason,
+                               uint32_t num_events) = 0;
+  virtual void Flush() = 0;
+  virtual void Export(XSpace* space) = 0;
+
+ protected:
+  RocmTraceCollectorOptions options_;
+
+ public:
+  // Disable copy and move.
+  RocmTraceCollector(const RocmTraceCollector&) = delete;
+  RocmTraceCollector& operator=(const RocmTraceCollector&) = delete;
+};
+#endif
+
+struct RocmDeviceOccupancyParams {
+  hipFuncAttributes attributes = {};
+  int block_size = 0;
+  size_t dynamic_smem_size = 0;
+  void* func_ptr;
+
+  friend bool operator==(const RocmDeviceOccupancyParams& lhs,
+                         const RocmDeviceOccupancyParams& rhs) {
+    return 0 == memcmp(&lhs, &rhs, sizeof(lhs));
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H hash_state,
+                         const RocmDeviceOccupancyParams& params) {
+    return H::combine(
+        std::move(hash_state), params.attributes.maxThreadsPerBlock,
+        params.attributes.numRegs, params.attributes.sharedSizeBytes,
+        params.attributes.maxDynamicSharedSizeBytes, params.block_size,
+        params.dynamic_smem_size, params.func_ptr);
+  }
+};
+
+// FIXME: rocprofiler-sdk does not have this one yet
+struct OccupancyStats {
+  double occupancy_pct = 0.0;
+  int min_grid_size = 0;
+  int suggested_block_size = 0;
+};
+
+class PerDeviceCollector {
+ public:
+  void Export(uint64_t start_walltime_ns, uint64_t start_gputime_ns,
+              uint64_t end_gputime_ns, XPlaneBuilder* device_plane,
+              XPlaneBuilder* host_plane);
+
+  PerDeviceCollector() = default;
+
+  void AddEvent(RocmTracerEvent&& event);
+  void GetDeviceCapabilities(int32_t device_ordinal,
+                             XPlaneBuilder* device_plane);
+
+ private:
+  OccupancyStats GetOccupancy(const RocmDeviceOccupancyParams& params) const;
+  void CreateXEvent(const RocmTracerEvent& event, XPlaneBuilder* plane,
+                    uint64_t start_gpu_ns, uint64_t end_gpu_ns,
+                    XLineBuilder* line);
+  void SortByStartTime();
+  bool IsHostEvent(const RocmTracerEvent& event, tsl::int64* line_id);
+
+ private:
+  mutex events_mutex_;
+  std::vector<RocmTracerEvent> events_ TF_GUARDED_BY(events_mutex_);
+  absl::flat_hash_map<RocmDeviceOccupancyParams, OccupancyStats>
+      occupancy_cache_;
+  hipDeviceProp_t device_properties_;
+};  // PerDeviceCollector
+
+class RocmTraceCollectorImpl : public RocmTraceCollector {
+ public:
+  RocmTraceCollectorImpl(const RocmTraceCollectorOptions& options,
+                         uint64_t start_walltime_ns, uint64_t start_gputime_ns)
+      : RocmTraceCollector(options),
+        num_callback_events_(0),
+        num_activity_events_(0),
+        start_walltime_ns_(start_walltime_ns),
+        start_gputime_ns_(start_gputime_ns),
+        num_gpus_(options.num_gpus) {}
+
+  void AddEvent(RocmTracerEvent&& event, bool is_auxiliary) override;
+  void Flush() override;
+  void Export(XSpace* space) override;
+
+  void OnEventsDropped(const std::string& reason,
+                       uint32_t correlation_id) override {
+    LOG(INFO) << "RocmTracerEvent dropped (correlation_id=" << correlation_id
+              << ",) : " << reason << ".";
+  }
+
+ private:
+  std::atomic<int> num_callback_events_;
+  std::atomic<int> num_activity_events_;
+  uint64_t start_walltime_ns_;
+  uint64_t start_gputime_ns_;
+  int num_gpus_;
+
+  mutex event_maps_mutex_;
+  absl::flat_hash_map<uint32_t, RocmTracerEvent> api_events_map_
+      TF_GUARDED_BY(event_maps_mutex_);
+
+  /* Some apis such as MEMSETD32 (based on an observation with ResNet50),
+   trigger multiple HIP ops domain activities. We keep them in a vector and
+   merge them with api activities at flush time.
+ */
+  absl::flat_hash_map<uint32_t, std::vector<RocmTracerEvent>>
+      activity_ops_events_map_ TF_GUARDED_BY(event_maps_mutex_);
+  // This is for the APIs that we track because we need some information from
+  // them to populate the corresponding activity that we actually track.
+  absl::flat_hash_map<uint32_t, RocmTracerEvent> auxiliary_api_events_map_
+      TF_GUARDED_BY(event_maps_mutex_);
+
+  std::vector<RocmTracerEvent> ApiActivityInfoExchange()
+      TF_EXCLUSIVE_LOCKS_REQUIRED(event_maps_mutex_);
+
+  absl::node_hash_map<uint32_t, PerDeviceCollector> per_device_collector_;
+};  // RocmTraceCollectorImpl
 
 std::unique_ptr<RocmTraceCollector> CreateRocmCollector(
     const RocmTraceCollectorOptions& options, const uint64_t start_walltime_ns,

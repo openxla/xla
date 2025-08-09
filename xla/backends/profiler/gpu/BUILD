@@ -1,13 +1,21 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
+
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
     "internal_visibility",
 )
+
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_additional_device_tracer_srcs",
+)
+load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured", "if_cuda_newer_than")
+
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -132,6 +140,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
     ],
 )
@@ -144,8 +153,13 @@ xla_test(
     tags = [
         "cuda-only",
         "no_mac",
+        "cuda-only"
     ],
     deps = [
+        ":cupti_interface",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
+    ] + if_cuda_is_configured([
         ":cuda_test",
         ":cupti_collector",
         ":cupti_error_manager",
@@ -223,17 +237,11 @@ cc_library(
         "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "//xla/tsl/profiler/utils:lock_free_queue",
         "//xla/tsl/profiler/utils:per_thread",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:env",
@@ -241,7 +249,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
     ],
 )
@@ -383,24 +390,31 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:abi",
         "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/platform:env",
     ],
 )
 
 cc_library(
     name = "rocm_tracer",
-    srcs = ["rocm_tracer.cc"],
-    hdrs = ["rocm_tracer.h"],
-    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    srcs = if_rocm(["rocm_tracer.cc"]),
+    hdrs = if_rocm(["rocm_tracer.h"]),
+    copts = tf_profiler_copts() + tsl_copts(),
+    linkopts = select({
+        "//conditions:default": [
+            "-L/opt/rocm/lib",      # search path for all ROCm shared objects
+            "-lrocprofiler-sdk",    # the library that owns the missing symbols
+        ],
+    }),
     tags = [
         "gpu",
         "rocm-only",
@@ -427,9 +441,60 @@ cc_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
     ],
+)
+
+xla_test(
+    name = "rocm_tracer_test",
+    size = "small",
+    srcs = ["rocm_tracer_test.cc"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "gpu",
+        "rocm",
+        "rocm-only",
+    ] + if_google([
+        # Optional: only run internally if ROCm config is enabled
+        "manual",
+    ]),
+    deps = if_rocm([
+        ":rocm_tracer",
+        ":rocm_collector",
+    ]) + [
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_test(
+  name = "rocm_collector_test",
+  size = "small",
+  srcs = ["rocm_collector_test.cc"],
+  copts = tf_profiler_copts() + tsl_copts(),
+  tags = [
+      "gpu",
+      "rocm",
+      "rocm-only",
+  ] + if_google([
+      "manual",
+  ]),
+  deps = if_rocm([
+      ":rocm_tracer",
+      ":rocm_collector",
+  ]) + [
+      "//xla/tsl/profiler/utils:xplane_builder",
+      "@com_google_absl//absl/container:flat_hash_map",
+      "@com_google_googletest//:gtest_main",
+      "@tsl//tsl/platform:status_matchers",
+      "@tsl//tsl/platform:test",
+      "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+  ],
+  args = ["--gtest_shuffle"],
 )
 
 cc_library(
@@ -482,6 +547,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:abi",
+        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
@@ -515,6 +581,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
     ],
@@ -561,7 +628,10 @@ cc_library(
 
 xla_cc_test(
     name = "cupti_buffer_events_test",
+    size = "small",
     srcs = ["cupti_buffer_events_test.cc"],
+    backends = ["cpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
     tags = [
         "cuda-only",
         "gpu",
@@ -569,7 +639,6 @@ xla_cc_test(
     ],
     deps = [
         ":cupti_buffer_events",
-        ":cupti_collector",  # buildcleaner: keep
         ":cupti_utils",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
@@ -580,6 +649,8 @@ xla_cc_test(
     name = "cupti_collector_test",
     size = "small",
     srcs = ["cupti_collector_test.cc"],
+    backends = ["cpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
     tags = [
         "cuda-only",
         "gpu",
@@ -589,12 +660,14 @@ xla_cc_test(
         ":cupti_buffer_events",
         ":cupti_collector",
         ":cupti_utils",
+    ]) + [
         "//xla/tsl/profiler/utils:xplane_builder",
-        "//xla/tsl/profiler/utils:xplane_schema",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
@@ -604,6 +677,11 @@ cuda_library(
     testonly = 1,
     srcs = ["nvtx_with_cuda_kernels.cu.cc"],
     hdrs = ["nvtx_with_cuda_kernels.h"],
+    copts = if_nvcc([
+        "-nvcc_options",
+        "ptxas-options=-v",
+    ]),
+    local_defines = if_oss(["NVTX_VERSION_3_1=1"]),
     tags = [
         "cuda-only",
         "gpu",
