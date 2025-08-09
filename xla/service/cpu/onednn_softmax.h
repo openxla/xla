@@ -17,8 +17,15 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_SOFTMAX_H_
 #if defined(INTEL_MKL)
 
+#include "dnnl.hpp"
+#include "xla/service/cpu/onednn_util.h"
+
 namespace xla {
 namespace cpu {
+
+void ExecuteOneDnnSoftmax(void* input, void* result, void* softmax_config_ptr,
+                          dnnl::engine& cpu_engine, dnnl::stream& onednn_stream,
+                          OneDnnResources& resources);
 
 extern "C" {
 extern void __xla_cpu_runtime_OneDnnSoftmax(const void* run_options_ptr,
