@@ -450,7 +450,7 @@ absl::Status CudaCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
           << graph_exec() << " to params contained in " << child_graph;
 
   CUgraphExec exec_update = graph_exec();
-  CHECK(exec_update != nullptr) << "exec is nullptr";
+  CHECK(exec_update != nullptr) << "graph executor for update is nullptr";
   return cuda::ToStatus(
       cuGraphExecChildGraphNodeSetParams(
           exec_update, ToCudaGraphHandle(node_handle), child_graph),

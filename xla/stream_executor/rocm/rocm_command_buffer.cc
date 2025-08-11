@@ -345,7 +345,7 @@ absl::Status RocmCommandBuffer::Trace(
     Stream* stream, absl::AnyInvocable<absl::Status()> function) {
   TF_RETURN_IF_ERROR(CheckNotFinalized());
   TF_ASSIGN_OR_RETURN(size_t count, GetNodeCount());
-  if (count != 0 || !exec_)
+  if (count != 0 || !is_owned_graph_)
     return absl::InternalError(
         "Stream can't be traced on non empty command buffer");
 
