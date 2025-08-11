@@ -292,9 +292,8 @@ GpuCommandBuffer::CreateDnnGraphCommand(
     absl::Span<const Command* const> dependencies) {
   TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<CommandBuffer> nested,
-      stream.parent()->CreateCommandBuffer(Mode::kNested));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<CommandBuffer> nested,
+                      stream.parent()->CreateCommandBuffer(Mode::kNested));
   GpuCommandBuffer& nested_gpu =
       tensorflow::down_cast<GpuCommandBuffer&>(*nested);
   TF_RETURN_IF_ERROR(
