@@ -192,7 +192,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   SetCaseConditionKernel set_case_condition_kernel_;
   SetWhileConditionKernel set_while_condition_kernel_;
 
-  StreamExecutor* stream_exec_;
+  StreamExecutor* stream_exec_ = nullptr;
   CudaCommandBuffer* parent_ = nullptr;
 
   CudaContext* cuda_context_;

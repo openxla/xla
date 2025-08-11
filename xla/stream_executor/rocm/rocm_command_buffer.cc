@@ -220,9 +220,12 @@ absl::Status RocmCommandBuffer::UpdateMemcpyD2DNode(
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
-  static_cast<RocmCommandBuffer&>(nested).parent_ = this;
-  hipGraph_t child_graph =
-      tensorflow::down_cast<const RocmCommandBuffer&>(nested).graph_;
+  auto& child_command_buffer =
+      tensorflow::down_cast<RocmCommandBuffer&>(nested);
+  CHECK(child_command_buffer.parent_ == nullptr)
+      << "Nested command buffer's parent is not null";
+  child_command_buffer.parent_ = this;
+  hipGraph_t child_graph = child_cmd_buffer.graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
           << " and add it to " << graph_ << "; deps: " << dependencies.size();
 

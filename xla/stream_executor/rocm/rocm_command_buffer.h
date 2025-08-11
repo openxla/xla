@@ -162,6 +162,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   static_assert(std::is_pointer_v<hipGraphExec_t>,
                 "hipGraphExec_t must be a pointer");
 
+  RocmCommandBuffer* parent_ = nullptr;
+
   hipGraph_t graph_ = nullptr;
   bool is_owned_graph_ = true;
   hipGraphExec_t exec_ = nullptr;

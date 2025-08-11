@@ -425,9 +425,12 @@ absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
-  static_cast<CudaCommandBuffer&>(nested).parent_ = this;
-  CUgraph child_graph =
-      tensorflow::down_cast<const CudaCommandBuffer&>(nested).graph_;
+  auto& child_command_buffer =
+      tensorflow::down_cast<CudaCommandBuffer&>(nested);
+  CHECK(child_command_buffer.parent_ == nullptr)
+      << "Nested command buffer's parent is not null";
+  child_command_buffer.parent_ = this;
+  CUgraph child_graph = child_command_buffer.graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
           << " and add it to " << graph_ << "; deps: " << dependencies.size();
 
