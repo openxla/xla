@@ -198,7 +198,6 @@ cc_library(
         "@llvm-project//mlir:NVVMDialect",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_rocm//rocm:rocm_headers",
-        "@tsl//tsl/platform:base64",
         "@tsl//tsl/platform:cuda_root_path",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
