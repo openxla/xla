@@ -182,6 +182,9 @@ class CommandBuffer {
   virtual absl::Status UpdateNestedCommand(const Command* command,
                                            const CommandBuffer& nested) = 0;
 
+  virtual absl::StatusOr<const Command*> CreateMoveNestedCommand(
+      CommandBuffer& nested, absl::Span<const Command* const> dependencies) = 0;
+
   // Creates a device-to-device memory copy.
   virtual absl::StatusOr<const Command*> CreateMemcpyD2D(
       DeviceMemoryBase* dst, const DeviceMemoryBase& src, uint64_t size,

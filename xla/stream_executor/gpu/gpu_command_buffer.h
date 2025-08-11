@@ -128,6 +128,10 @@ class GpuCommandBuffer : public CommandBuffer {
       CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
+  absl::StatusOr<const Command*> CreateMoveNestedCommand(
+      CommandBuffer& nested,
+      absl::Span<const Command* const> dependencies) override;
+
   absl::Status UpdateNestedCommand(const Command* command,
                                    const CommandBuffer& nested) override;
 
@@ -329,6 +333,11 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Adds a new nested command buffer node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
+      absl::Span<const GraphNodeHandle> dependencies,
+      CommandBuffer& nested) = 0;
+
+  // Adds a new nested command buffer node to the graph.
+  virtual absl::StatusOr<GraphNodeHandle> CreateMovedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       CommandBuffer& nested) = 0;
 
