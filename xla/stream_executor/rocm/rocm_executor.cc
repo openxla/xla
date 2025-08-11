@@ -1039,7 +1039,7 @@ absl::StatusOr<std::unique_ptr<Stream>> RocmExecutor::CreateStream(
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
 RocmExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
   VLOG(2) << "Create ROCm command buffer (ROCm graph)";
-  return RocmCommandBuffer::Create(mode, this);
+  return RocmCommandBuffer::Create(mode, this, /*parent=*/nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
