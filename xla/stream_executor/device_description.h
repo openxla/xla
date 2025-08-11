@@ -186,6 +186,9 @@ class RocmComputeCapability {
 
   bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
 
+  /// \brief Invalid gfx id for default gcn_arch_name_ value and testing
+  static constexpr absl::string_view kInvalidGfx = "gfx000";
+
  private:
   /// \brief Takes one or more arrays of string-like objects and tests if the
   /// result of `gfx_version()` matches to any string in any of the arrays.
@@ -206,7 +209,7 @@ class RocmComputeCapability {
     });
   }
 
-  std::string gcn_arch_name_ = "gfx000";  // default to invalid arch.
+  std::string gcn_arch_name_{kInvalidGfx};  // default to invalid arch.
 };
 
 using GpuComputeCapability =

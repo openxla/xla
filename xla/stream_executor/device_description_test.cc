@@ -39,33 +39,9 @@ TEST(DeviceDescription, DefaultConstruction) {
 // class RocmComputeCapability tests. To be moved to a separate file once the
 // class is refactored out of device_description.h
 
-namespace Stealer {
-// We need a private data member stealer for the default constuction test.
-// This assumes two things: that there's a `gcn_arch_name_` data member
-// and it's type is std::string. Obviously, a compiler will take care about
-// these assumptions from a technical view and a possibility of change of the
-// semantic of the variable is negligible. Beyond everything, these are tests,
-// so it'll fail first should assumptions go wrong.
-
-struct RocmComputeCapabilityMember {
-  using type = std::string RocmComputeCapability::*;
-  friend type get(RocmComputeCapabilityMember);
-};
-
-template <typename Tag, typename Tag::type M>
-struct Robber {
-  friend typename Tag::type get(Tag) { return M; }
-};
-
-// explicit template instantiation is excluded from access rules check.
-template struct Robber<RocmComputeCapabilityMember,
-                       &RocmComputeCapability::gcn_arch_name_>;
-}  // namespace Stealer
-
 TEST(RocmComputeCapability, GfxVersion) {
   RocmComputeCapability rcc0;  // default constructed
-  auto default_gcn_arch_name =
-      rcc0.*get(Stealer::RocmComputeCapabilityMember());
+  auto default_gcn_arch_name = RocmComputeCapability::kInvalidGfx;
   // failure is serious enough to not expect the rest could pass
   ASSERT_EQ(default_gcn_arch_name, rcc0.gfx_version());
 
