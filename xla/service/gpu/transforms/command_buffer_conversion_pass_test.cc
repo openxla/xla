@@ -736,6 +736,42 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
 }
 
 TEST(CommandBufferConversionPassTest,
+     ForceCompatibleCustomCallUseCommandBufferThunk) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+
+  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind(), {Traits::kCmdBufferCompatible});
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "normal_custom_call", "gpu", NoOp);
+  DebugOptions debug_options;
+  // Even though this is set to 2, we still want the custom call to be in a 
+  // command buffer. 
+  debug_options.xla_gpu_graph_min_graph_size(2); 
+
+  std::vector<std::unique_ptr<Thunk>> thunks;
+  thunks.push_back(CreateCustomCallThunk("normal_custom_call"));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
+
+  CommandBufferConversionPass pass;
+
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCustomCall));
+}
+
+
+TEST(CommandBufferConversionPassTest,
      ConvertsLegacyCustomCallToCommandBufferThunk) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   thunks.push_back(CreateCustomCallThunk("test_legacy_custom_call"));
