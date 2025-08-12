@@ -428,9 +428,9 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
        /*tolerance*/0.1, /* verbose */false, /*run_host_compare*/false);
   EXPECT_TRUE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 
-  // Change only the very last entries of both arrays to verify that the whole 
-  // arrays are compared (if grid dimensions are not computed correctly, this
-  // is very likely to fail)
+  // Change only the very last entry of rhs to verify that the whole arrays are 
+  // compared (if the grid dimensions are not computed correctly, this is very 
+  // likely to fail)
   *(static_cast< NT *>(rhs.opaque()) + element_count - 1) = 1777;
   EXPECT_FALSE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 }
