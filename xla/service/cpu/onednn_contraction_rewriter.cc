@@ -401,8 +401,7 @@ absl::StatusOr<Shape> AdjustBinaryOperandShape(
     return absl::CancelledError(
         "Number of elements in operand and dot instruction do not match.");
   }
-  Shape new_shape = dot_shape;
-  return new_shape;
+  return dot_shape;
 };
 
 inline bool IsOperandFusible(HloInstruction* operand, HloInstruction* instr) {
@@ -752,10 +751,10 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       //      constant = f32[32,197,3072] constant(..)
       //      reshape1 = f32[6304,3072] reshape(constant)
       //      add = f32[6304,3072] add(dot, reshape1)
+      //      reshape2 = f32[32,197,3072] reshape(add)
       // and be replaced with the fusion
       //      fused = f32[6304,3072] custom-call(..)
       //      bitcast = f32[32,197,3072] bitcast(fused)
-      // clang-format on
       auto addend_dims = addend->shape().dimensions();
       auto contraction_dims = contraction->shape().dimensions();
       if (optional_contraction_bitcast &&
