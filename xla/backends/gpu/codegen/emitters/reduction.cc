@@ -97,39 +97,6 @@ struct PerThreadOutputs {
   SmallVector<Value> outputs;
 };
 
-template < class Container >
-std::string dumpV(const Container& v) {
-  std::ostringstream oss;
-  oss << "[";
-  for(const auto& i : v) {
-    oss << i << ',';
-  }
-  oss << "]";
-  return oss.str();
-}
-
-template < class Object >
-std::string dumpMLIR(const Object& o) {
-  std::string s;
-  {
-    llvm::raw_string_ostream os(s);
-    o.print(os);
-  }
-  return s;
-}
-
-template < class Container >
-std::string dumpMLIRV(const Container& v) {
-  std::ostringstream oss;
-  oss << "[";
-  for(const auto& i : v) {
-    oss << dumpMLIR(i) << ',';
-  }
-  oss << "]";
-  return oss.str();
-}
-
-
 struct ReductionFusion::EmitterState {
   EmitterState(const ReductionFusion& owner, mlir::func::FuncOp entry_function,
                const HloFusionInstruction& fusion,
@@ -480,8 +447,7 @@ IndexingMap ReductionFusion::GetThreadIndexingMap(
 
 LaunchDimensions ReductionFusion::launch_dimensions() const {
   size_t blocks_z = groups_.grouped_roots.size();
-  return {se::BlockDim(
-                        /*x=*/gpu_blocks_[0],
+  return {se::BlockDim( /*x=*/gpu_blocks_[0],
                         /*y=*/gpu_blocks_[1],
                         /*z=*/static_cast<int64_t>(blocks_z)),
           se::ThreadDim(/*x=*/Product(num_threads_),
