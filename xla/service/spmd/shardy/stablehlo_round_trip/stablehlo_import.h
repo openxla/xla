@@ -69,7 +69,8 @@ void registerStablehloImportPipeline();
 // - have the same number of elements as the number of args/results.
 void addStablehloImportPipeline(mlir::OpPassManager& pm,
                                 mlir::ArrayRef<bool> allowPropagationToArgs,
-                                mlir::ArrayRef<bool> allowPropagationToResults);
+                                mlir::ArrayRef<bool> allowPropagationToResults,
+                                bool importOnlyUninlineableFuncCalls = true);
 
 // Creates ImportShardingsPass that converts `mhlo.sharding` to `mesh` and
 // `sdy.sharding`.
@@ -77,8 +78,11 @@ std::unique_ptr<mlir::Pass> createImportShardingsPass(
     mlir::ArrayRef<bool> allowPropagationToArgs,
     mlir::ArrayRef<bool> allowPropagationToResults);
 
-// Adds the sdy shardings to frontend attributes for each instruction of main
-// computation in the HloModule.
+// Adds the sdy shardings to frontend attributes for each instruction of entry
+// computation in the HloModule. This function should only be used if
+// sdy.shardings are not already present in entry computation. This function is
+// currently being used only via jax2tf codepath which adds wrapper main
+// without sdy.shardings.
 absl::Status addSdyShardingsToEntryComputation(xla::HloModule* module);
 
 }  // namespace sdy

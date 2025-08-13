@@ -1,3 +1,4 @@
+load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//xla/tsl/mkl:graph.bzl",
@@ -24,10 +25,10 @@ onednn_graph_cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:util",
+        "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
-        "@onednn//:mkl_dnn",
     ],
 )
 
@@ -36,6 +37,7 @@ onednn_graph_cc_library(
     srcs = ["onednn_fusion_thunk.cc"],
     hdrs = ["onednn_fusion_thunk.h"],
     compatible_with = get_compatible_with_portable(),
+    copts = tsl_copts(),
     deps = [
         ":onednn_interop",
         ":onednn_threadpool",
@@ -44,15 +46,15 @@ onednn_graph_cc_library(
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu:onednn_fusion_graph",
+        "//xla/backends/cpu:onednn_fusion",
         "//xla/backends/cpu/runtime:dot_lib",
-        "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/runtime:buffer_use",
         "//xla/runtime:object_pool",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
@@ -70,7 +72,6 @@ onednn_graph_cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -82,8 +83,8 @@ onednn_graph_cc_library(
         ":onednn_interop",
         "//xla/backends/cpu/runtime:parallel_loop_runner",
         "//xla/backends/cpu/runtime:work_queue",
+        "//xla/tsl/mkl:onednn",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
     ],
 )
 
@@ -98,6 +99,7 @@ onednn_graph_cc_test(
         "//xla/backends/cpu/runtime:work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
@@ -108,6 +110,5 @@ onednn_graph_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
-        "@onednn//:mkl_dnn",
     ],
 )

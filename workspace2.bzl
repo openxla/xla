@@ -129,17 +129,17 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "44955ad1ef0ab8d2c658ae0ece05429729a17239c9b17ffcd16816212cd00e12",
-        strip_prefix = "XNNPACK-585e73e63cb35c8a416c83a48ca9ab79f7f7d45e",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/585e73e63cb35c8a416c83a48ca9ab79f7f7d45e.zip"),
+        sha256 = "3560d433b09cc2ca7242078d6b94f1ce47a1eb9b42e0b42a7ebdd9183926c6da",
+        strip_prefix = "XNNPACK-dc684a5034949433f77cdb7043673cacfb422b0a",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/dc684a5034949433f77cdb7043673cacfb422b0a.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
     tf_http_archive(
         name = "KleidiAI",
-        sha256 = "439926527fca9405ae90b602a3938d3435751ec78492e5f1c62d85f5df8c2784",
-        strip_prefix = "kleidiai-dc69e899945c412a8ce39ccafd25139f743c60b1",
-        urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/dc69e899945c412a8ce39ccafd25139f743c60b1.zip"),
+        sha256 = "b1ba8f690704a37f2ff924f98edfb3d3486a5d07142d0723dd22ff0c0391e2df",
+        strip_prefix = "kleidiai-f362d32fa5f8c8f36da487e13f5b59c911ce6b22",
+        urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/f362d32fa5f8c8f36da487e13f5b59c911ce6b22.zip"),
     )
 
     tf_http_archive(
@@ -151,9 +151,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "cpuinfo",
-        sha256 = "ae356c4c0c841e20711b5e111a1ccdec9c2f3c1dd7bde7cfba1bed18d6d02459",
-        strip_prefix = "cpuinfo-de0ce7c7251372892e53ce9bc891750d2c9a4fd8",
-        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/de0ce7c7251372892e53ce9bc891750d2c9a4fd8.zip"),
+        sha256 = "a074e612706113048f1bb2937e7af3c5b57a037ce048d3cfaaca2931575819d2",
+        strip_prefix = "cpuinfo-e4cadd02a8b386c38b84f0a19eddacec3f433baa",
+        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/e4cadd02a8b386c38b84f0a19eddacec3f433baa.zip"),
     )
 
     tf_http_archive(
@@ -178,6 +178,15 @@ def _tf_repositories():
         sha256 = "071f289dc961b43a3b7c8cbe8a305290a7c5d308ec4b2f586397749abdc88296",
         strip_prefix = "oneDNN-3.7.3",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.7.3.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "onednn_async",
+        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
+        patch_file = ["//third_party/mkl_dnn:setting_init.patch"],
+        sha256 = "1cfa18fad65b4c3b46ef701a83c64b87411d63e79c8549cdb37f8c1fc10e2398",
+        strip_prefix = "oneDNN-dev-v3.7-thunk-preview",
+        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/heads/dev-v3.7-thunk-preview.tar.gz"),
     )
 
     tf_http_archive(
@@ -303,10 +312,14 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "com_google_protobuf",
-        patch_file = ["//third_party/protobuf:protobuf.patch"],
-        sha256 = "f645e6e42745ce922ca5388b1883ca583bafe4366cc74cf35c3c9299005136e2",
-        strip_prefix = "protobuf-5.28.3",
-        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/refs/tags/v5.28.3.zip"),
+        patch_file = ["//third_party/protobuf:protobuf-6.31.1.patch"],
+        sha256 = "6e09bbc950ba60c3a7b30280210cd285af8d7d8ed5e0a6ed101c72aff22e8d88",
+        strip_prefix = "protobuf-6.31.1",
+        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/refs/tags/v6.31.1.zip"),
+        repo_mapping = {
+            "@abseil-cpp": "@com_google_absl",
+            "@protobuf_pip_deps": "@pypi",
+        },
     )
 
     tf_http_archive(
@@ -357,13 +370,12 @@ def _tf_repositories():
         urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
     )
 
-    # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
     tf_http_archive(
         name = "com_github_grpc_grpc",
-        sha256 = "ae14a0de222485fd6e3baf52028c74acbd9ad8d685c813580401d3832cfae9f1",
-        strip_prefix = "grpc-1.72.2",
-        patch_file = ["//third_party/grpc:grpc-1.72.2.patch"],
-        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.72.2.tar.gz"),
+        sha256 = "dd6a2fa311ba8441bbefd2764c55b99136ff10f7ea42954be96006a2723d33fc",
+        strip_prefix = "grpc-1.74.0",
+        patch_file = ["//third_party/grpc:grpc.patch"],
+        urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.74.0.tar.gz"),
     )
 
     # Load the raw llvm-project.  llvm does not have build rules set up by default,
@@ -432,17 +444,17 @@ def _tf_repositories():
         name = "nccl_archive",
         build_file = "//third_party:nccl/archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
-        sha256 = "0c5199ea56c70beb72a00eaf0d29887ac90243b47ebba048fba33ad86fcc2322",
-        strip_prefix = "nccl-2.26.5-1",
-        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.26.5-1.tar.gz"),
+        sha256 = "98e6262bd55932c51e7c8ffc50cc764f019e4b94a8fd6694d839ae828ec8d128",
+        strip_prefix = "nccl-2.27.7-1",
+        urls = tf_mirror_urls("https://github.com/NVIDIA/nccl/archive/refs/tags/v2.27.7-1.tar.gz"),
     )
 
     tf_http_archive(
         name = "nvtx_archive",
         build_file = "//third_party:nvtx/BUILD.bazel",
-        sha256 = "e4438f921fb88a564b0b92791c1c1fdd0f388901213e6a31fdd0dc3803fb9764",
-        strip_prefix = "NVTX-bf31d7859ab3130cbf1ef77c33d18d0ebb8c8d08/c/include",
-        urls = tf_mirror_urls("https://github.com/NVIDIA/NVTX/archive/bf31d7859ab3130cbf1ef77c33d18d0ebb8c8d08.tar.gz"),
+        sha256 = "5a581c3234c5a6b2fd94363e3fdd5a4f5d2a3d9c53c4b9442b0784e6cdfe722c",
+        strip_prefix = "NVTX-2942f167cc30c5e3a44a2aecd5b0d9c07ff61a07/c/include",
+        urls = tf_mirror_urls("https://github.com/NVIDIA/NVTX/archive/2942f167cc30c5e3a44a2aecd5b0d9c07ff61a07.tar.gz"),
     )
 
     tf_http_archive(
@@ -456,7 +468,7 @@ def _tf_repositories():
         name = "com_google_ortools",
         sha256 = "f6a0bd5b9f3058aa1a814b798db5d393c31ec9cbb6103486728997b49ab127bc",
         strip_prefix = "or-tools-9.11",
-        patch_file = ["//third_party/ortools:ortools-9.11.patch"],
+        patch_file = ["//third_party/ortools:ortools.patch"],
         urls = tf_mirror_urls("https://github.com/google/or-tools/archive/v9.11.tar.gz"),
         repo_mapping = {
             "@com_google_protobuf_cc": "@com_google_protobuf",

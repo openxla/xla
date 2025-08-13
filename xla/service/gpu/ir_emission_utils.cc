@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -87,9 +87,10 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
       return false;
     }
     // cuBLAS doesn't support minor batch dimension.
-    if (absl::c_any_of(dims.Indices(DotOperandDims::kBatch), [&](int64_t dim) {
-          return dim == dims.shape().dimensions().size() - 1;
-        })) {
+    if (absl::c_any_of(dims.DimensionIndices(DotOperandDims::kBatch),
+                       [&](int64_t dim) {
+                         return dim == dims.shape().dimensions().size() - 1;
+                       })) {
       return false;
     }
     // cuBLAS supports up to one non-contracting dimension.
@@ -143,12 +144,6 @@ bool IsCustomCallToCusolver(const HloInstruction& hlo) {
 bool IsCustomCallToTopK(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kTopKCustomCallTarget;
-}
-
-bool IsSliceWithUnitStrides(const HloInstruction* instr) {
-  auto slice = DynCast<HloSliceInstruction>(instr);
-  return slice && absl::c_all_of(slice->slice_strides(),
-                                 [](int64_t stride) { return stride == 1; });
 }
 
 static bool IsContiguousSlice(
@@ -598,10 +593,6 @@ const HloInstruction& FindNonTrivialHero(const HloInstruction& instr) {
   auto fusion_adaptor = HloFusionAdaptor::ForComputation(instr.parent());
   HloInstructionAdaptor instr_adaptor(instr, fusion_adaptor.get());
   return FindNonTrivialHero(instr_adaptor).instruction();
-}
-
-void VLogModule(int level, const llvm::Module& module) {
-  XLA_VLOG_LINES(level, llvm_ir::DumpToString(&module));
 }
 
 void VerifyModule(const llvm::Module& module) {

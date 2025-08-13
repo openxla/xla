@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
-#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal.h"
@@ -301,6 +301,7 @@ absl::StatusOr<bool> UnrollInternal(HloInstruction* while_op,
 
   TF_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
                       NextSchedulingGroupId(*while_op->GetModule()));
+  std::vector<HloInstruction*> new_calls;
   for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
     CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
 
@@ -311,15 +312,16 @@ absl::StatusOr<bool> UnrollInternal(HloInstruction* while_op,
     unrolled_body_call_op =
         computation->AddInstruction(HloInstruction::CreateCall(
             while_op->shape(), call_operands, unrolled_body));
+    new_calls.push_back(unrolled_body_call_op);
     call_operands.clear();
     call_operands.push_back(unrolled_body_call_op);
   }
   TF_RETURN_IF_ERROR(
       computation->ReplaceInstruction(while_op, unrolled_body_call_op));
-
-  // Needed for the nested while loops in which the outer loop has been
-  // unrolled which leaves the call graph non-flat.
-  TF_RETURN_IF_ERROR(FlattenCallGraph().Run(module).status());
+  unrolled_body_call_op->set_metadata_op_name("");
+  for (HloInstruction* call : new_calls) {
+    TF_RETURN_IF_ERROR(CallInliner::Inline(call).status());
+  }
   return true;
 }
 
@@ -344,6 +346,8 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
 
   TF_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
                       NextSchedulingGroupId(*while_op->GetModule()));
+
+  std::vector<HloInstruction*> new_calls;
   for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
     CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
 
@@ -356,6 +360,7 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
         HloInstruction::CreateCall(while_op->shape(), call_operands,
                                    unrolled_body),
         absl::StrCat(while_op->name(), "-unrolled-body-call-", i));
+    new_calls.push_back(unrolled_body_call_op);
 
     call_operands.clear();
     call_operands.push_back(unrolled_body_call_op);
@@ -372,10 +377,10 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
           while_op->shape(), new_cond, new_body, while_op->mutable_operand(0)));
   while_op->SetupDerivedInstruction(new_while_op);
   CHECK_OK(computation->ReplaceInstruction(while_op, new_while_op));
+  for (HloInstruction* call : new_calls) {
+    TF_RETURN_IF_ERROR(CallInliner::Inline(call).status());
+  }
 
-  // Needed for the nested while loops in which the outer loop has been
-  // unrolled which leaves the call graph non-flat.
-  TF_RETURN_IF_ERROR(FlattenCallGraph().Run(module).status());
   UnrollResult result;
   result.unrolled = true;
   result.new_while_op = new_while_op;
@@ -675,10 +680,12 @@ absl::Status FindIndicesCoveredByDynamicInstructionsInInnerLoop(
 
     TF_RET_CHECK(first_index_range.has_value() &&
                  first_index_range->IsBounded() &&
-                 first_index_range->IsStepKnown());
+                 first_index_range->IsStepKnown() &&
+                 first_index_range->step()->GetSignedValue() != 0);
     TF_RET_CHECK(second_index_range.has_value() &&
                  second_index_range->IsBounded() &&
-                 second_index_range->IsStepKnown());
+                 second_index_range->IsStepKnown() &&
+                 second_index_range->step()->GetSignedValue() != 0);
     TF_RET_CHECK(first_index_range->IsSingleValue() ||
                  second_index_range->IsSingleValue())
         << "At least one of first_dynamic_index_range and "
@@ -1024,7 +1031,8 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
 
   TF_RET_CHECK(dynamic_index_range.has_value() &&
                dynamic_index_range->IsBounded() &&
-               dynamic_index_range->IsStepKnown());
+               dynamic_index_range->IsStepKnown() &&
+               dynamic_index_range->step()->GetSignedValue() != 0);
 
   // Step 1.3: Simulate the loop and populate `entries_written`.
   const int64_t slice_size = slice_shape.dimensions(dynamic_indices->at(0));
@@ -1067,9 +1075,6 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
          input_tuple_idx < inner_while_input->operand_count();
          ++input_tuple_idx) {
       const HloInstruction* instr = inner_while_input->operand(input_tuple_idx);
-      if (instr->opcode() == HloOpcode::kConstant) {
-        continue;
-      }
       std::optional<Range> operand_trivial_range = RecursivelyIdentifyRange(
           instr, trivial_predefined_ranges, /*dataflow_analysis=*/nullptr);
       if (operand_trivial_range.has_value() &&
@@ -1077,6 +1082,11 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
         trivial_predefined_ranges[instr] = operand_trivial_range.value();
       }
     }
+    // Remove constants from trivial_predefined_ranges that may be added by
+    // RecursivelyIdentifyRange since those aren't determined by the outer loop.
+    absl::erase_if(trivial_predefined_ranges, [](const auto& entry) {
+      return entry.first->opcode() == HloOpcode::kConstant;
+    });
 
     // Step 2.2: Simulate the dynamic update slice(s) in the inner while loop.
     TF_RET_CHECK(
@@ -1170,7 +1180,8 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
           instr->operand(start_indices_offset + dynamic_indices[0]), config);
   if (dynamic_index_range == std::nullopt ||
       !dynamic_index_range->IsBounded() ||
-      !dynamic_index_range->IsStepKnown()) {
+      !dynamic_index_range->IsStepKnown() ||
+      dynamic_index_range->step()->GetSignedValue() == 0) {
     VLOG(3) << "Could not compute compact dynamic index range.";
     return std::nullopt;
   }
@@ -1222,21 +1233,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
 
   // TODO(b/300668690): Add support for unrolling loops with control dependency.
   // For now, we bail.
-  //
-  // Finding all the while loops where other instructions have explicit control
-  // dependencies on them.
-  std::vector<HloInstruction*> while_dependees;
-  for (HloComputation* comp : while_op->GetModule()->computations()) {
-    for (HloInstruction* instr : comp->instructions()) {
-      for (HloInstruction* control_dep : instr->control_predecessors()) {
-        if (control_dep->opcode() == HloOpcode::kWhile) {
-          while_dependees.push_back(control_dep);
-        }
-      }
-    }
-  }
-  if (absl::linear_search(while_dependees.begin(), while_dependees.end(),
-                          while_op)) {
+  if (!while_op->control_successors().empty()) {
     VLOG(2) << "Not attempting to unroll " << while_op->name()
             << " due to control dependency: " << while_op->ToShortString();
     return std::nullopt;
@@ -1424,10 +1421,10 @@ WhileLoopUnroller::UnrollAndReturnReplacement(
                         UnrollInternal(while_op, config.value()));
   }
 
-  // We need to inline the calls created for unrolling since later passes rely
-  // on the calls to be inlined.
   if (result.unrolled) {
-    TF_RETURN_IF_ERROR(CallInliner().Run(module).status());
+    // Inlining calls created during unrolling may have left unused computations
+    // around, run DCE to clean them up.
+    TF_RETURN_IF_ERROR(HloDCE().Run(module, /*execution_threads=*/{}).status());
   }
 
   return result;
@@ -1473,10 +1470,10 @@ absl::StatusOr<bool> WhileLoopUnroller::Run(
     changed |= unrolled;
   }
 
-  // We need to inline the calls created for unrolling since later passes rely
-  // on the calls to be inlined.
   if (changed) {
-    TF_RETURN_IF_ERROR(CallInliner().Run(module, execution_threads).status());
+    // Inlining calls created during unrolling may have left unused computations
+    // around, run DCE to clean them up.
+    TF_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
   }
 
   XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), after:\n" + module->ToString());

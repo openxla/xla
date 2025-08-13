@@ -33,8 +33,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -61,7 +61,7 @@ HloInstruction* PermuteDotOperandDimensions(HloInstruction* operand,
   std::vector<int64_t> permutation;
   for (auto kind : {DotOperandDims::kBatch, DotOperandDims::kNonContracting,
                     DotOperandDims::kContracting}) {
-    for (auto index : dims->Indices(kind)) {
+    for (auto index : dims->DimensionIndices(kind)) {
       permutation.push_back(index);
     }
   }
@@ -205,7 +205,22 @@ bool DotStrengthReduction::InstructionMatchesPattern(
   const bool rhs_is_vector = (dnums.rhs_batch_dimensions_size() +
                                   dnums.rhs_contracting_dimensions_size() ==
                               rhs->shape().dimensions().size());
-  if (!lhs_is_vector && !rhs_is_vector) {
+  // For s32xs32->s32 dots, with RHS contracting dimension 1,
+  // the loop emitter is slow and other backends don't support it.
+  // Rewriting it as a faster alternative.
+  const bool is_favourable_s32_dot = [&]() {
+    if (lhs->shape().element_type() != S32 ||
+        rhs->shape().element_type() != S32 ||
+        dot->shape().element_type() != S32) {
+      return false;
+    }
+    if (dnums.rhs_contracting_dimensions().size() != 1 ||
+        dnums.rhs_contracting_dimensions()[0] != 1) {
+      return false;
+    }
+    return true;
+  }();
+  if (!lhs_is_vector && !rhs_is_vector && !is_favourable_s32_dot) {
     return false;
   }
   // Strength-reduce vector-vector dots since they are not supported by

@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "lit_test_suite")
 load("//xla:xla.default.bzl", "xla_cc_binary")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
@@ -54,6 +55,9 @@ xla_cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:RegisterAllDialects",
+        "@llvm-project//mlir:RegisterAllExtensions",
+        "@llvm-project//mlir:RegisterAllPasses",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
     ],

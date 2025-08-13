@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
@@ -56,25 +57,18 @@ namespace gpu {
 
 KernelThunk::KernelThunk(
     Thunk::ThunkInfo thunk_info, std::string kernel_name,
-    absl::Span<const emitters::KernelArgument> kernel_arguments,
+    const emitters::KernelArguments& kernel_arguments,
     LaunchDimensions launch_dimensions,
     std::optional<se::ClusterDim> cluster_dim, int64_t shmem_bytes,
     std::optional<stream_executor::gpu::TmaMetadata> tma_metadata)
     : Thunk(Kind::kKernel, std::move(thunk_info)),
+      args_(kernel_arguments.GetArgumentBufferSlices()),
+      written_(kernel_arguments.GetArgumentOutputFlags()),
       kernel_name_(std::move(kernel_name)),
       launch_dimensions_(std::move(launch_dimensions)),
       cluster_dim_(std::move(cluster_dim)),
       shmem_bytes_(shmem_bytes),
-      tma_metadata_(std::move(tma_metadata)) {
-  args_.reserve(kernel_arguments.size());
-  written_.reserve(kernel_arguments.size());
-  for (const emitters::KernelArgument& kernel_argument : kernel_arguments) {
-    if (!kernel_argument.first_with_same_slice().has_value()) {
-      args_.push_back(kernel_argument.slice());
-      written_.push_back(kernel_argument.written());
-    }
-  }
-}
+      tma_metadata_(std::move(tma_metadata)) {}
 
 std::string KernelThunk::ToString(int indent) const {
   return absl::StrFormat(
@@ -129,8 +123,9 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
     TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
                         BufferAllocation::Slice::FromProto(proto.args().at(i),
                                                            buffer_allocations));
-    bool written = proto.written().at(i);
-    arguments.push_back(emitters::KernelArgument{Shape{}, slice, written});
+    emitters::KernelArgument argument{Shape{}, slice};
+    argument.set_written(proto.written().at(i));
+    arguments.push_back(std::move(argument));
   }
 
   std::optional<stream_executor::gpu::TmaMetadata> tma_metadata;
@@ -141,7 +136,8 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
   }
 
   return std::make_unique<KernelThunk>(
-      thunk_info, proto.kernel_name(), arguments, launch_dimensions,
+      thunk_info, proto.kernel_name(),
+      emitters::KernelArguments(std::move(arguments)), launch_dimensions,
       cluster_dim, proto.shmem_bytes(), tma_metadata);
 }
 
@@ -259,19 +255,12 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
 
 CustomKernelThunk::CustomKernelThunk(
     const HloInstruction* instr, CustomKernel custom_kernel,
-    absl::Span<const emitters::KernelArgument> kernel_arguments)
+    const emitters::KernelArguments& kernel_arguments)
     : Thunk(Kind::kCustomKernel,
             Thunk::ThunkInfo::WithProfileAnnotation(instr)),
-      custom_kernel_(std::move(custom_kernel)) {
-  args_.reserve(kernel_arguments.size());
-  written_.reserve(kernel_arguments.size());
-  for (const emitters::KernelArgument& kernel_argument : kernel_arguments) {
-    if (!kernel_argument.first_with_same_slice().has_value()) {
-      args_.push_back(kernel_argument.slice());
-      written_.push_back(kernel_argument.written());
-    }
-  }
-}
+      args_(kernel_arguments.GetArgumentBufferSlices()),
+      written_(kernel_arguments.GetArgumentOutputFlags()),
+      custom_kernel_(std::move(custom_kernel)) {}
 
 std::string CustomKernelThunk::ToString(int indent) const {
   return custom_kernel_.ToString();

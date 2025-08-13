@@ -248,7 +248,7 @@ tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
     const Thunk::ExecuteParams& params) {
   // Short-circuit execution of empty thunk sequence.
   if (ABSL_PREDICT_FALSE(num_thunks_ == 0)) {
-    return Thunk::OkExecuteEventSingleton();
+    return Thunk::OkExecuteEvent();
   }
 
   // Short-circuit execution of single thunk sequence.
@@ -350,23 +350,23 @@ ThunkExecutor::ExecuteSequential(const Thunk::ExecuteParams& params) {
     // resume sequential execution starting from the next thunk.
     if (ABSL_PREDICT_FALSE(!execute_event.IsAvailable())) {
       auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
-      execute_event.AndThen(
-          [this, &params, &thunk, it, event](absl::Status status) {
-            Thunk::TaskRunner* runner = params.task_runner;
-
-            if (ABSL_PREDICT_FALSE(!status.ok())) {
-              event.SetError(std::move(status));
-            } else if (ABSL_PREDICT_FALSE(thunk.async_resume() && runner)) {
-              // Resume execution using the task runner to avoid executing
-              // remaining thunks on a thread pool that we don't own.
-              (*runner)([this, &params, it, event = std::move(event)] {
-                ResumeExecuteSequential(it + 1, params, std::move(event));
-              });
-            } else {
-              // Resume execution on a thread that completed thunk execution.
-              ResumeExecuteSequential(it + 1, params, std::move(event));
-            }
+      execute_event.AndThen([this, &params, &thunk, it,
+                             event](absl::Status status) {
+        if (ABSL_PREDICT_FALSE(!status.ok())) {
+          event.SetError(std::move(status));
+        } else if (Thunk::TaskRunner* runner = params.task_runner;
+                   ABSL_PREDICT_FALSE(thunk.ExecutesOnExternalThreadPool() &&
+                                      runner != nullptr)) {
+          // Resume execution using the task runner to avoid executing
+          // remaining thunks on a thread pool that we don't own.
+          (*runner)([this, &params, it, event = std::move(event)]() mutable {
+            ResumeExecuteSequential(it + 1, params, std::move(event));
           });
+        } else {
+          // Resume execution on a thread that completed thunk execution.
+          ResumeExecuteSequential(it + 1, params, std::move(event));
+        }
+      });
       return event;
     }
 
@@ -382,7 +382,7 @@ ThunkExecutor::ExecuteSequential(const Thunk::ExecuteParams& params) {
 
   // If we got to the end of the sequence it means that all thunks have
   // succeeded.
-  return Thunk::OkExecuteEventSingleton();
+  return Thunk::OkExecuteEvent();
 }
 
 void ThunkExecutor::ResumeExecuteSequential(
@@ -402,14 +402,14 @@ void ThunkExecutor::ResumeExecuteSequential(
     if (ABSL_PREDICT_FALSE(!execute_event.IsAvailable())) {
       execute_event.AndThen([this, &params, &thunk, it,
                              event = std::move(event)](absl::Status status) {
-        Thunk::TaskRunner* runner = params.task_runner;
-
         if (ABSL_PREDICT_FALSE(!status.ok())) {
           event.SetError(std::move(status));
-        } else if (ABSL_PREDICT_FALSE(thunk.async_resume() && runner)) {
+        } else if (Thunk::TaskRunner* runner = params.task_runner;
+                   ABSL_PREDICT_FALSE(thunk.ExecutesOnExternalThreadPool() &&
+                                      runner != nullptr)) {
           // Resume execution using the task runner to avoid executing
           // remaining thunks on a thread pool that we don't own.
-          (*runner)([this, &params, it, event = std::move(event)] {
+          (*runner)([this, &params, it, event = std::move(event)]() mutable {
             ResumeExecuteSequential(it + 1, params, std::move(event));
           });
         } else {
@@ -471,16 +471,34 @@ void ThunkExecutor::Execute(ExecuteState* state,
     // If we have multiple ready thunks, split the ready queue and offload
     // thunks processing to the task runner.
     int64_t num_ready_thunks = ready_queue.Size();
-    if (ABSL_PREDICT_FALSE(has_runner && num_ready_thunks > split_threshold)) {
+    if (ABSL_PREDICT_FALSE(num_ready_thunks > split_threshold && has_runner)) {
       SplitReadyQueue(state, params, ready_queue, split_threshold);
+    }
+
+    Thunk& thunk = *state->executor->thunk_sequence_[id];
+
+    // If thunk execution may block, and we have more ready thunks, offload
+    // thunk execution to the task runner to avoid blocking the current thread.
+    // We unconditionally join the execution session by grabbing a lock,
+    // because for blocking thunks the opportunity cost of blocking execution of
+    // the remaining thunks is higher than the cost of launching a task.
+    if (ABSL_PREDICT_FALSE(thunk.ExecuteMayBlock() && !ready_queue.Empty() &&
+                           has_runner)) {
+      (*state->runner)([state, &params, id,
+                        ready_queue = ready_queue.CreateEmptyReadyQueue(),
+                        lock = params.session.Join()]() mutable {
+        ready_queue.Push(id);
+        state->executor->Execute(state, params, std::move(ready_queue),
+                                 std::move(lock));
+      });
+      continue;
     }
 
     // Execute thunk for the given node id. If execution is aborted, we keep
     // processing the nodes DAG without executing thunks.
-    Thunk& thunk = *state->executor->thunk_sequence_[id];
     tsl::AsyncValueRef<ExecuteEvent> execute_event =
         ABSL_PREDICT_FALSE(state->abort.load(std::memory_order_relaxed))
-            ? Thunk::OkExecuteEventSingleton()
+            ? Thunk::OkExecuteEvent()
             : TracedExecute(thunk, params);
 
     if (ABSL_PREDICT_TRUE(execute_event.IsAvailable())) {
@@ -529,8 +547,8 @@ void ThunkExecutor::Execute(ExecuteState* state,
           return;
         }
 
-        Thunk::TaskRunner* runner = state->runner;
-        if (ABSL_PREDICT_FALSE(thunk.async_resume() && runner)) {
+        if (Thunk::TaskRunner* runner = state->runner; ABSL_PREDICT_FALSE(
+                thunk.ExecutesOnExternalThreadPool() && runner != nullptr)) {
           // Resume execution using the task runner to avoid executing
           // remaining thunks on a thread pool that we don't own.
           (*runner)([state, &params, ready_queue = std::move(ready_queue),
@@ -570,7 +588,7 @@ inline ABSL_ATTRIBUTE_ALWAYS_INLINE void ThunkExecutor::SplitReadyQueue(
 
     // Execute half of the ready queue nodes in the task runner.
     (*state->runner)([&params, state, ready_queue = ready_queue.PopHalf(),
-                      lock = std::move(task_runner_lock)] {
+                      lock = std::move(task_runner_lock)]() mutable {
       state->executor->Execute(state, params, std::move(ready_queue),
                                std::move(lock));
     });

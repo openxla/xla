@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -24,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -43,7 +45,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -51,8 +52,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-using TritonBackendConfig = AutotuneResult::TritonGemmKey;
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
@@ -73,6 +72,10 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
       supports_contracting_split &&
       debug_options().xla_gpu_enable_split_k_autotuning();
 
+  // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
+  bool autotune_tma =
+      debug_options().xla_gpu_experimental_enable_triton_tma() &&
+      IsTmaEnabledForDevice(target_config().device_description);
   std::vector<std::unique_ptr<BackendConfig>> configs;
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -81,10 +84,13 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
   std::vector<TritonGemmConfig> gemm_configs = search_space.GenerateConfigs(
       /*force_contracting_split=*/autotune_contracting_split
           ? std::nullopt
-          : std::make_optional(1));
+          : std::make_optional(1),
+      /*autotune_tma=*/autotune_tma);
   configs.reserve(gemm_configs.size());
   for (const auto& config : gemm_configs) {
-    configs.push_back(std::make_unique<TritonBackendConfig>(config.ToProto()));
+    auto any = std::make_unique<google::protobuf::Any>();
+    any->PackFrom(config.ToProto());
+    configs.push_back(std::move(any));
   }
   return configs;
 }
@@ -95,8 +101,9 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> TritonBackend::GetDefaultConfig(
     return absl::InvalidArgumentError(
         "TritonBackend does not support this instruction.");
   }
-  return std::make_unique<TritonBackendConfig>(
-      TritonGemmConfig(64, 64, 64, 1, 1, 2, 1).ToProto());
+  auto any = std::make_unique<google::protobuf::Any>();
+  any->PackFrom(TritonGemmConfig(64, 64, 64, 1, 1, 2, 1, false).ToProto());
+  return any;
 }
 
 absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
@@ -105,12 +112,11 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
     return absl::InvalidArgumentError(
         "TritonBackend does not support this instruction.");
   }
-  if (config.GetDescriptor() != TritonBackendConfig::GetDescriptor()) {
+  AutotuneResult::TritonGemmKey triton_config_proto;
+  if (!config.UnpackTo(&triton_config_proto)) {
     return absl::InvalidArgumentError(
-        "Invalid backend config type for TritonBackend.");
+        "Failed to unpack TritonBackendConfig from Any.");
   }
-  const TritonBackendConfig& triton_config_proto =
-      static_cast<const TritonBackendConfig&>(config);
 
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       instr.backend_config<GpuBackendConfig>());

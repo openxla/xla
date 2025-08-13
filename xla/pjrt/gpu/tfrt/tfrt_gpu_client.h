@@ -127,7 +127,7 @@ class TfrtGpuDevice final : public PjRtDevice {
   struct Options {
     int id;
     int32_t process_index;
-    int slice_index;
+    int partition_index;
     PjRtLocalDeviceId local_device_id;
     PjRtLocalHardwareId local_hardware_id;
     se::StreamExecutor* executor;
@@ -150,7 +150,7 @@ class TfrtGpuDevice final : public PjRtDevice {
 
   PjRtClient* client() const override;
 
-  bool IsAddressable() const override { return local_device_id_ != -1; }
+  bool IsAddressable() const override { return executor_ != nullptr; }
 
   int id() const override { return id_; }
 

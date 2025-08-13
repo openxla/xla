@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -398,6 +397,12 @@ CodegenDecision AreDotAlgorithmInputAndOutputConversionsSupported(
                                      gpu_version)) {
       return forbid("Unsupported result conversion");
     }
+  }
+
+  if (algorithm == PrecisionConfig::ALG_DOT_F64_F64_F64 &&
+      primitive_util::BitWidth(lhs_type) < 32 &&
+      !std::get<se::CudaComputeCapability>(gpu_version).IsAtLeastBlackwell()) {
+    return forbid("Unsupported BF16 on GPUs before Blackwell");
   }
 
   if (allowed_operands_types_or->size() != 1) {

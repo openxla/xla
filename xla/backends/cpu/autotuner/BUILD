@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 
 package(
@@ -49,8 +50,10 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:maybe_owning_device_memory",
+        "//xla/service:shaped_buffer",
         "//xla/service/cpu:cpu_executable",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -118,6 +121,7 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",
@@ -130,7 +134,6 @@ cc_library(
     hdrs = ["llvm_kernel_backend.h"],
     deps = [
         ":cpu_codegen_backend",
-        "//xla:status_macros",
         "//xla:util",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/ir:hlo",
@@ -142,7 +145,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:casts",
     ],
 )
 

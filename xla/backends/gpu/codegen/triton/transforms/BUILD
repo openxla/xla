@@ -1,4 +1,5 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -35,6 +36,7 @@ cc_library(
         "int4_passes.cc",
         "round_f32_to_tf32_for_tf32_dot_pass.cc",
         "triton_xla_extract_insert_to_triton_pass.cc",
+        "triton_xla_fold_transpose_pass.cc",
         "triton_xla_squeeze_dims_pass.cc",
     ],
     hdrs = ["passes.h"],
@@ -43,6 +45,7 @@ cc_library(
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla/backends/gpu/codegen/triton:emitter_helpers",
+        "//xla/backends/gpu/codegen/triton:tma_utils",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/codegen:emitter_loc_op_builder",
         "//xla/codegen/emitters/ir:xla",
@@ -55,6 +58,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ArithDialect",
@@ -66,12 +70,9 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFTransforms",
-        "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:ViewLikeInterface",
         "@triton//:TritonDialects",
-        "@triton//:TritonGPUTransforms",
     ],
 )

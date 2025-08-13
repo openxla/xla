@@ -1,5 +1,6 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -220,6 +221,7 @@ xla_test(
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/pjrt/distributed:service",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/pjrt/profiling/test_util:mock_device_time_measurement",
@@ -232,6 +234,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
@@ -629,6 +632,19 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "se_gpu_topology_description_test",
+    srcs = ["se_gpu_topology_description_test.cc"],
+    deps = [
+        ":gpu_topology",
+        ":se_gpu_topology_description",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_device_description",
+        "//xla/pjrt:pjrt_stream_executor_device_description",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

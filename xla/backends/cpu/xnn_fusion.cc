@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_lib.h"
+#include "xla/backends/cpu/xnn_gemm_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -118,7 +119,7 @@ bool AreDtypesSupported(const Shape& lhs_shape, const Shape& rhs_shape,
 absl::StatusOr<bool> IsDotSupportedByXnn(
     const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
     const Shape& rhs_shape, const Shape& out_shape,
-    const TargetMachineFeatures* cpu_features) {
+    const TargetMachineFeatures* cpu_features, bool use_cost_model) {
   // Check data types.
   if (!AreDtypesSupported(lhs_shape, rhs_shape, out_shape, cpu_features)) {
     return false;
@@ -131,13 +132,6 @@ absl::StatusOr<bool> IsDotSupportedByXnn(
   TF_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
                       GetDotCanonicalDims(dot_dimensions, dot_shape));
 
-  // TODO(b/385370486): XNNPACK does not tile by `K` and can be a lot slower
-  // than the default Eigen implementation.
-  if (dot_canonical_dims.k / dot_canonical_dims.m > 5 ||
-      dot_canonical_dims.k / dot_canonical_dims.n > 5) {
-    return false;
-  }
-
   if (dot_canonical_dims.m == 1 && dot_canonical_dims.n == 1 &&
       dot_shape.batch_size > 1) {
     // TODO(b/430079105): XNNPACK does not handle batch dimensions that are not
@@ -148,9 +142,26 @@ absl::StatusOr<bool> IsDotSupportedByXnn(
   }
 
   // XNNPACK does not support transposing LHS or col-major layouts.
-  return dot_canonical_dims.lhs_canonical &&
-         !dot_canonical_dims.lhs_column_major &&
-         !dot_canonical_dims.rhs_column_major;
+  if (!dot_canonical_dims.lhs_canonical ||
+      dot_canonical_dims.lhs_column_major ||
+      dot_canonical_dims.rhs_column_major) {
+    return false;
+  }
+
+  if (!use_cost_model) {
+    return true;
+  }
+
+  const XnnGemm gemm{/*dot_canonical_dims=*/dot_canonical_dims,
+                     /*lhs_dtype=*/lhs_shape.element_type(),
+                     /*rhs_dtype=*/rhs_shape.element_type(),
+                     /*out_dtype=*/out_shape.element_type()};
+  switch (GetXnnGemmConfig().Evaluate(gemm, cpu_features)) {
+    case XnnGemmConfig::Opinion::kAccept:
+      return true;
+    default:
+      return false;
+  }
 }
 
 absl::StatusOr<xnn_datatype> XnnDatatype(const PrimitiveType& type) {

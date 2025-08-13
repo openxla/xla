@@ -34,6 +34,8 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/shape.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
@@ -46,16 +48,19 @@ namespace {
 using TestConfig = gpu::CustomFusionConfig;
 
 MATCHER_P(ConfigMatcher, name, "") {
-  const TestConfig& test_config = static_cast<const TestConfig&>(arg);
+  TestConfig test_config;
+  arg.UnpackTo(&test_config);
   return test_config.name() == name;
 }
 
 MATCHER_P(InstructionMatcher, opcode, "") { return arg.opcode() == opcode; }
 
-std::unique_ptr<TestConfig> GetTestConfig(std::string name) {
+std::unique_ptr<google::protobuf::Any> GetTestConfig(std::string name) {
   TestConfig config;
   config.set_name(name);
-  return std::make_unique<TestConfig>(config);
+  auto any = std::make_unique<google::protobuf::Any>();
+  any->PackFrom(config);
+  return any;
 }
 
 class MockCodegenBackend : public CodegenBackend {
@@ -71,6 +76,12 @@ class MockCodegenBackend : public CodegenBackend {
   MOCK_METHOD(absl::Status, ApplyConfig,
               (HloInstruction & instr, const BackendConfig& config),
               (override));
+  MOCK_METHOD(bool, CanProduceWrongResults, (), (const, override));
+};
+
+class MockCodegenBackendWithWrongResults : public MockCodegenBackend {
+ public:
+  bool CanProduceWrongResults() const override { return true; }
 };
 
 class MockProfiler : public Profiler {
@@ -84,6 +95,12 @@ class MockProfiler : public Profiler {
               (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<InputBuffers>>, CreateInputBuffers,
               (const Executable* executable), (override));
+  MOCK_METHOD(absl::Status, CheckInputBuffers, (InputBuffers & buffers),
+              (override));
+  MOCK_METHOD(absl::Status, CheckOutputBuffer,
+              (ScopedShapedBuffer & output, ScopedShapedBuffer& reference,
+               float rtol),
+              (override));
 };
 
 using ::testing::_;
@@ -109,15 +126,15 @@ absl::StatusOr<std::unique_ptr<Autotuner>> SetupAutotunerWithExpectations(
   int count = instr_to_apply_config_and_count.second;
   EXPECT_CALL(*backend,
               ApplyConfig(InstructionMatcher(instr_to_apply_config), _))
-      .Times(count);
+      .Times(count)
+      .WillRepeatedly(Return(absl::OkStatus()));
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
-    std::vector<absl::StatusOr<ProfileResult>> results;
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
-    return results;
-  }()));
+  EXPECT_CALL(*profiler, CreateInputBuffers(_))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -140,7 +157,8 @@ class AutotunerTest : public HloHardwareIndependentTestBase {};
 
 TEST_F(AutotunerTest, NoCodegenBackend) {
   auto autotuner = Autotuner::Create({}, nullptr, AutotuneConfig());
-  EXPECT_THAT(autotuner, StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(autotuner,
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(AutotunerTest, AutotuneButNoSupportedConfigs) {
@@ -156,10 +174,10 @@ TEST_F(AutotunerTest, AutotuneButNoSupportedConfigs) {
       Autotuner::Create(std::move(backends), nullptr, AutotuneConfig()));
   auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
   EXPECT_THAT(autotuner->Autotune(dummy_instr.get()),
-              StatusIs(absl::StatusCode::kInternal));
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
 }
 
-TEST_F(AutotunerTest, AutotuneButNoValidConfigs) {
+TEST_F(AutotunerTest, AutotuneButNoCompiledConfigs) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("invalid_config"));
 
@@ -170,8 +188,7 @@ TEST_F(AutotunerTest, AutotuneButNoValidConfigs) {
       .WillOnce(Return(absl::InternalError("test error")));
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers(testing::IsEmpty()))
-      .WillOnce(Return(std::vector<absl::StatusOr<ProfileResult>>()));
+  EXPECT_CALL(*profiler, Profile(_, _)).Times(0);
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -180,13 +197,13 @@ TEST_F(AutotunerTest, AutotuneButNoValidConfigs) {
                                         std::move(profiler), AutotuneConfig()));
   auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
   EXPECT_THAT(autotuner->Autotune(dummy_instr.get()),
-              StatusIs(absl::StatusCode::kInternal));
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
 }
 
-TEST_F(AutotunerTest, AutotuneAppliesBestConfigAndSkipsInvalidConfig) {
+TEST_F(AutotunerTest, AutotuneAppliesBestConfigAndSkipsNonCompilableConfig) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
-  configs.push_back(GetTestConfig("invalid_config"));
+  configs.push_back(GetTestConfig("non_compilable_config"));
   configs.push_back(GetTestConfig("test_config_2"));
 
   auto backend = std::make_unique<MockCodegenBackend>();
@@ -197,22 +214,22 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigAndSkipsInvalidConfig) {
       .WillOnce(Return(absl::InternalError("test error")))
       .WillOnce(Return(std::unique_ptr<Executable>()));
   EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
-      .Times(1);
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
-    std::vector<absl::StatusOr<ProfileResult>> results;
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(2)}));
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
-    return results;
-  }()));
+  EXPECT_CALL(*profiler, CreateInputBuffers(_))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
   TF_ASSERT_OK_AND_ASSIGN(
       auto autotuner, Autotuner::Create(std::move(backends),
                                         std::move(profiler), AutotuneConfig()));
   auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
-  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), absl_testing::IsOk());
 }
 
 TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
@@ -227,15 +244,15 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
   EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
-      .Times(1);
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, ProfileWithSharedBuffers).WillOnce(Return([] {
-    std::vector<absl::StatusOr<ProfileResult>> results;
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(2)}));
-    results.push_back(absl::StatusOr<ProfileResult>({absl::Seconds(1)}));
-    return results;
-  }()));
+  EXPECT_CALL(*profiler, CreateInputBuffers(_))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -245,7 +262,7 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
       Autotuner::Create(std::move(backends), std::move(profiler),
                         AutotuneConfig(), &thread_pool));
   auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
-  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), absl_testing::IsOk());
 }
 
 TEST_F(AutotunerTest, AutotuneModuleFindsNoInstructionsToAutotune) {
@@ -261,7 +278,7 @@ TEST_F(AutotunerTest, AutotuneModuleFindsNoInstructionsToAutotune) {
                           ParseAndReturnVerifiedModule(kHlo));
   EXPECT_THAT(autotuner->Autotune(
                   module.get(), [](const HloInstruction& _) { return false; }),
-              IsOk());
+              absl_testing::IsOk());
 }
 
 TEST_F(AutotunerTest, AutotuneModuleFollowsFilter) {
@@ -278,7 +295,8 @@ TEST_F(AutotunerTest, AutotuneModuleFollowsFilter) {
           /*instr_to_autotune=*/HloOpcode::kCopy,
           /*instr_to_apply_config_and_count=*/{HloOpcode::kCopy, 1}));
 
-  EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune), IsOk());
+  EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune),
+              absl_testing::IsOk());
 }
 
 TEST_F(AutotunerTest, AutotuneModuleWithDuplicateInstructions) {
@@ -294,8 +312,54 @@ TEST_F(AutotunerTest, AutotuneModuleWithDuplicateInstructions) {
           /*instr_to_autotune=*/HloOpcode::kAdd,
           /*instr_to_apply_config_and_count=*/{HloOpcode::kAdd, 2}));
 
-  EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune), IsOk());
+  EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune),
+              absl_testing::IsOk());
 }
 
+TEST_F(AutotunerTest, AutotuneWithBufferCheck) {
+  std::vector<std::unique_ptr<BackendConfig>> configs_1;
+  configs_1.push_back(GetTestConfig("test_config_1"));
+  auto backend_1 = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend_1, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs_1)));
+  EXPECT_CALL(*backend_1, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  std::vector<std::unique_ptr<BackendConfig>> configs_2;
+  configs_2.push_back(GetTestConfig("wrong_results_config"));
+  auto backend_2 = std::make_unique<MockCodegenBackendWithWrongResults>();
+  EXPECT_CALL(*backend_2, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs_2)));
+  EXPECT_CALL(*backend_2, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  EXPECT_CALL(*backend_1, ApplyConfig(_, ConfigMatcher("test_config_1")))
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  ScopedShapedBuffer output_1(Shape(), nullptr, 0),
+      output_2(Shape(), nullptr, 0), output_3(Shape(), nullptr, 0);
+  EXPECT_CALL(*profiler, CreateInputBuffers(_))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2), std::move(output_1)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2), std::move(output_2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(output_3)})));
+  EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
+      .WillOnce(Return(absl::OkStatus()))
+      .WillOnce(Return(absl::InternalError("Don't match")));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend_1));
+  backends.push_back(std::move(backend_2));
+  AutotuneConfig config;
+  config.check_buffers = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+}
 }  // namespace
 }  // namespace xla

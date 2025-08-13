@@ -3281,22 +3281,6 @@ TEST_F(HloVerifierTest, InconsistentConditionSharding) {
       HasSubstr("Inconsistent conditional sharding among instructions"));
 }
 
-TEST_F(HloVerifierTest, DisableS4Veridication) {
-  const char* const hlo = R"(
-  HloModule Module
-
-  ENTRY entry {
-    param0 = s32[] parameter(0)
-    x = s4[] convert(param0)
-    ROOT add = s4[] add(x, x)
-  }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
-  HloVerifier verifier{HloVerifierOpts{}.WithVerifyS4U4Usage(false)};
-  auto status = verifier.Run(module.get()).status();
-  ASSERT_TRUE(status.ok());
-}
-
 TEST(MetadataTrackerTest, MetadataTrackerLogsInfo) {
   if (tsl::kIsOpenSource) {
     return;
@@ -3497,24 +3481,6 @@ TEST_F(HloVerifierTest, EnableUnboundedDynamism) {
   HloVerifier verifier{HloVerifierOpts{}.WithAllowUnboundedDynamism(true)};
   auto status = verifier.Run(module.get()).status();
   ASSERT_TRUE(status.ok());
-}
-
-TEST_F(HloVerifierTest, SparseDotMetadataShape) {
-  const char* const kHlo = R"(
-  HloModule test
-  ENTRY entry {
-    %lhs = f32[10,16] parameter(0)
-    %rhs = f32[32,20] parameter(1)
-    %meta = u16[10,4] parameter(2)
-    ROOT %dot = f32[10,20] dot(%lhs, %rhs, %meta),
-        lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-  }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
-  HloVerifier verifier{HloVerifierOpts{}.WithAllowUnboundedDynamism(true)};
-  auto status = verifier.Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(), HasSubstr("Expected sparse dot metadata"));
 }
 
 TEST_F(HloVerifierTestLayoutSensitive,
@@ -4378,7 +4344,7 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
-  EXPECT_THAT(verifier().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOkAndHolds(false));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnRecv) {
@@ -4395,8 +4361,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnRecv) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected send to match recv")));
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("Expected send to match recv")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnSend) {
@@ -4414,8 +4380,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnSend) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected recv to match send")));
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("Expected recv to match send")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4435,8 +4401,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected send or recv")));
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("Expected send or recv")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4483,8 +4449,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected send or recv")));
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("Expected send or recv")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4511,9 +4477,10 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(
       verifier().Run(module.get()),
-      StatusIs(absl::StatusCode::kInternal,
-               HasSubstr("Expected send and recv instructions to have the same "
-                         "source-target pairs")));
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("Expected send and recv instructions to have the same "
+                    "source-target pairs")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4540,9 +4507,10 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(
       verifier().Run(module.get()),
-      StatusIs(absl::StatusCode::kInternal,
-               HasSubstr("Expected send and recv instructions to have unique "
-                         "source and target pairs")));
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("Expected send and recv instructions to have unique "
+                    "source and target pairs")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4569,9 +4537,10 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(
       verifier().Run(module.get()),
-      StatusIs(absl::StatusCode::kInternal,
-               HasSubstr("Expected send and recv instructions to have unique "
-                         "source and target pairs")));
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("Expected send and recv instructions to have unique "
+                    "source and target pairs")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnCycle) {
@@ -4596,9 +4565,10 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnCycle) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected send and recv instructions to have "
-                                 "non-cyclical source-target pairs")));
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  HasSubstr("Expected send and recv instructions to have "
+                            "non-cyclical source-target pairs")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvNoDeadlocks) {
@@ -4622,7 +4592,69 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvNoDeadlocks) {
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
-  EXPECT_THAT(verifier().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(HloVerifierTest, VerifyMatchingSendSameChannel) {
+  const char* const hlo = R"(
+  HloModule module
+  ENTRY test_computation {
+    c0 = f32[] constant(0)
+    after_all = token[] after-all()
+    send0 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1, is_host_transfer=true
+    send0-done = token[] send-done(send0), channel_id=1, is_host_transfer=true
+    c1 = f32[] constant(1)
+    send1 = (f32[], u32[], token[]) send(c1, send0-done), channel_id=1, is_host_transfer=true
+    ROOT send1-done = token[] send-done(send1), channel_id=1, is_host_transfer=true
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(HloVerifierTest, VerifyMatchingSendSameChannelDifferentShape) {
+  const char* const hlo = R"(
+  HloModule module
+  ENTRY test_computation {
+    c0 = f32[] constant(0)
+    after_all = token[] after-all()
+    send0 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1, is_host_transfer=true
+    send0-done = token[] send-done(send0), channel_id=1, is_host_transfer=true
+    c1 = f32[10] constant(1)
+    send1 = (f32[10], u32[], token[]) send(c1, send0-done), channel_id=1, is_host_transfer=true
+    ROOT send1-done = token[] send-done(send1), channel_id=1, is_host_transfer=true
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  HasSubstr("Host-transfer send/recv instructions that use the "
+                            "same channel must be identical")));
+}
+
+TEST_F(HloVerifierTest, VerifyMatchingSendSameChannelDifferentAttributes) {
+  const char* const hlo = R"(
+  HloModule module
+  ENTRY test_computation {
+    c0 = f32[] constant(0)
+    after_all = token[] after-all()
+    send0 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1, is_host_transfer=true, frontend_attributes={_xla_host_transfer_rendezvous="_foo"}
+    send0-done = token[] send-done(send0), channel_id=1, is_host_transfer=true
+    c1 = f32[] constant(1)
+    send1 = (f32[], u32[], token[]) send(c1, send0-done), channel_id=1, is_host_transfer=true
+    ROOT send1-done = token[] send-done(send1), channel_id=1, is_host_transfer=true, frontend_attributes={_xla_host_transfer_rendezvous="_bar"}
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  HasSubstr("Host-transfer send/recv instructions that use the "
+                            "same channel must be identical")));
 }
 
 }  // namespace

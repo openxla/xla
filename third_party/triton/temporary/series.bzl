@@ -14,8 +14,9 @@ those to this list.
 """
 
 temporary_patch_list = [
-    "//third_party/triton:temporary/mem_sync_scope_agent_to_device.patch",
-    "//third_party/triton:temporary/convert_layout_heuristic.patch",
     "//third_party/triton:temporary/fix_test_core_h100_target.patch",
+    "//third_party/triton:temporary/speed_up_int4_unpacking.patch",
+    "//third_party/triton:temporary/tutorial_fixes.patch",
+    "//third_party/triton:temporary/ws_fix.patch",
     # Add new patches just above this line
 ]

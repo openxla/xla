@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -73,7 +74,11 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
                      .value()
                      ->ExecutorForDevice(0)
                      .value(),
-                 &debug_options_, &compiler_) {}
+                 &debug_options_, &compiler_) {
+    // TODO(b/315957220): Remove the experimental flags once TMA is enabled by
+    // default.
+    debug_options_.set_xla_gpu_experimental_enable_triton_tma(true);
+  }
 
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
@@ -87,8 +92,27 @@ TEST_F(TritonBackendTest, GetSupportedConfigs) {
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           *(module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, IsOk());
+  EXPECT_THAT(configs, absl_testing::IsOk());
   EXPECT_GT(configs.value().size(), 0);
+
+  if (backend_.target_config()
+          .device_description.cuda_compute_capability()
+          .IsAtLeastHopper()) {
+    auto count_tma_allowed =
+        [](const std::vector<std::unique_ptr<BackendConfig>>& configs) {
+          return std::count_if(configs.begin(), configs.end(),
+                               [](auto& config) {
+                                 TritonBackendConfig actual_config;
+                                 if (!config->UnpackTo(&actual_config)) {
+                                   return false;
+                                 }
+                                 return actual_config.is_tma_allowed();
+                               });
+        };
+    // The current TMA autotuning duplicates the given configurations with
+    // is_tma_allowed set to true.
+    EXPECT_EQ(count_tma_allowed(configs.value()), configs.value().size() / 2);
+  }
 }
 
 TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
@@ -100,7 +124,7 @@ TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
                                           ->root_instruction();
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(*unsupported_instr);
-  EXPECT_THAT(configs, IsOk());
+  EXPECT_THAT(configs, absl_testing::IsOk());
   EXPECT_THAT(configs.value(), testing::IsEmpty());
 }
 
@@ -108,15 +132,15 @@ TEST_F(TritonBackendTest, GetDefaultConfig) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo));
   TritonBackendConfig expected_config =
-      TritonGemmConfig(64, 64, 64, 1, 1, 2, 1).ToProto();
+      TritonGemmConfig(64, 64, 64, 1, 1, 2, 1, false).ToProto();
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(
           *(module->entry_computation()->root_instruction()));
 
-  EXPECT_THAT(config, IsOk());
-  const TritonBackendConfig& actual_config =
-      static_cast<const TritonBackendConfig&>(*config.value());
+  EXPECT_THAT(config, absl_testing::IsOk());
+  TritonBackendConfig actual_config;
+  ASSERT_TRUE(config.value()->UnpackTo(&actual_config));
   EXPECT_THAT(actual_config, EqualsProto(expected_config));
 }
 
@@ -129,7 +153,8 @@ TEST_F(TritonBackendTest, GetDefaultConfigForUnsupportedInstruction) {
                                           ->root_instruction();
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(*unsupported_instr);
-  EXPECT_THAT(config.status(), StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(config.status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(TritonBackendTest, Compile) {
@@ -141,7 +166,7 @@ TEST_F(TritonBackendTest, Compile) {
           *(module->entry_computation()->root_instruction())));
   absl::StatusOr<std::unique_ptr<Executable>> executable = backend_.Compile(
       *(module->entry_computation()->root_instruction()), *config);
-  EXPECT_THAT(executable, IsOk());
+  EXPECT_THAT(executable, absl_testing::IsOk());
 }
 
 }  // namespace

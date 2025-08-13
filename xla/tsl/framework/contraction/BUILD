@@ -34,7 +34,10 @@ config_setting(
 bzl_library(
     name = "build_defs",
     srcs = ["build_defs.bzl"],
-    deps = ["//xla/tsl:package_groups_bzl"],
+    deps = [
+        # copybara:uncomment "@rules_cc//cc:core_rules",
+        "//xla/tsl:package_groups_bzl",
+    ],
 )
 
 # Add
@@ -121,7 +124,7 @@ cc_library(
         "//xla/tsl:linux_ppc64le": [],
         "//xla/tsl:linux_s390x": [],
         "//xla/tsl:macos_arm64": [],
-        "//conditions:default": ["@onednn//:mkl_dnn"],
+        "//conditions:default": ["//xla/tsl/mkl:onednn"],
     }),
 )
 

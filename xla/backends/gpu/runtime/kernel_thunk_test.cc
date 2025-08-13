@@ -26,6 +26,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -45,7 +47,7 @@ using Kind = Thunk::Kind;
 TEST(KernelThunkTest, CreateWithDefaultValues) {
   KernelThunk thunk(Thunk::ThunkInfo(),
                     /*kernel_name=*/"",
-                    /*kernel_arguments=*/{},
+                    /*kernel_arguments=*/emitters::KernelArguments({}),
                     /*launch_dimensions=*/LaunchDimensions(),
                     /*cluster_dim=*/se::ClusterDim(),
                     /*shmem_bytes=*/0,
@@ -75,11 +77,12 @@ TEST(KernelThunkTest, CreateAndGettersAndToString) {
   BufferAllocation alloc1(/*index=*/0, /*size=*/256, /*color=*/0);
   BufferAllocation::Slice slice1(&alloc1, /*offset=*/0, /*size=*/256);
 
-  std::vector<emitters::KernelArgument> kernel_arguments = {
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {1024}), slice0,
-                               /*written=*/false),
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {256}), slice1,
-                               /*written=*/true)};
+  emitters::KernelArgument arg0(ShapeUtil::MakeShape(F32, {1024}), slice0);
+  emitters::KernelArgument arg1(ShapeUtil::MakeShape(F32, {256}), slice1);
+  arg0.set_written(false);
+  arg1.set_written(true);
+
+  emitters::KernelArguments kernel_arguments({arg0, arg1});
 
   LaunchDimensions launch_dimensions(se::BlockDim(32, 31, 30),
                                      se::ThreadDim(256, 255, 254));
@@ -118,11 +121,12 @@ TEST(KernelThunkTest, ToProto) {
   BufferAllocation alloc1(/*index=*/0, /*size=*/256, /*color=*/0);
   BufferAllocation::Slice slice1(&alloc1, /*offset=*/0, /*size=*/256);
 
-  std::vector<emitters::KernelArgument> kernel_arguments = {
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {1024}), slice0,
-                               /*written=*/false),
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {256}), slice1,
-                               /*written=*/true)};
+  emitters::KernelArgument arg0(ShapeUtil::MakeShape(F32, {1024}), slice0);
+  emitters::KernelArgument arg1(ShapeUtil::MakeShape(F32, {256}), slice1);
+  arg0.set_written(false);
+  arg1.set_written(true);
+
+  emitters::KernelArguments kernel_arguments({arg0, arg1});
 
   LaunchDimensions launch_dimensions(se::BlockDim(32, 31, 30),
                                      se::ThreadDim(256, 255, 254));
@@ -139,8 +143,10 @@ TEST(KernelThunkTest, ToProto) {
                                              std::move(descriptor));
 
   KernelThunk thunk(thunk_info,
-                    /*kernel_name=*/"kernel123", kernel_arguments,
-                    launch_dimensions, se::ClusterDim(8, 7, 6),
+                    /*kernel_name=*/"kernel123",
+                    /*kernel_arguments=*/kernel_arguments,
+                    /*launch_dimensions=*/launch_dimensions,
+                    /*cluster_dim=*/se::ClusterDim(8, 7, 6),
                     /*shmem_bytes=*/1024,
                     /*tma_metadata=*/tma_metadata);
   TF_ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
@@ -198,11 +204,12 @@ TEST(KernelThunkTest, ToAndFromProto) {
   BufferAllocation::Slice slice1(&allocations.at(1), /*offset=*/0,
                                  /*size=*/256);
 
-  std::vector<emitters::KernelArgument> kernel_arguments = {
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {1024}), slice0,
-                               /*written=*/false),
-      emitters::KernelArgument(ShapeUtil::MakeShape(F32, {256}), slice1,
-                               /*written=*/true)};
+  emitters::KernelArgument arg0(ShapeUtil::MakeShape(F32, {1024}), slice0);
+  emitters::KernelArgument arg1(ShapeUtil::MakeShape(F32, {256}), slice1);
+  arg0.set_written(false);
+  arg1.set_written(true);
+
+  emitters::KernelArguments kernel_arguments({arg0, arg1});
 
   LaunchDimensions launch_dimensions(se::BlockDim(32, 31, 30),
                                      se::ThreadDim(256, 255, 254));

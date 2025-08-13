@@ -78,6 +78,16 @@ class OneDnnThreadPool final
   }
 #endif  // ENABLE_ONEDNN_ASYNC
 
+#ifdef ENABLE_ONEDNN_ASYNC
+  // This is a placeholder implementation for the wait method, as we
+  // need to satisfy the interface requirements of the
+  // dnnl::threadpool_interop::threadpool_iface with the experimental
+  // asynchronous runtime support in oneDNN.
+  // TODO(intel-tf): Implement proper wait logic when thunk runtime
+  // with oneDNN is enabled.
+  void wait() final {}
+#endif  // ENABLE_ONEDNN_ASYNC
+
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
     if (use_runner_) {
       // oneDNN ThreadPool instance is only created with ParallelLoopRunner

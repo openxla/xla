@@ -430,6 +430,9 @@ message OpMetadata {
   // e.g. it could be the file and line of user code that generated the op.
   string source_file = 3;
   int32 source_line = 4;
+  int32 source_end_line = 17;
+  int32 source_column = 18;
+  int32 source_end_column = 19;
 
   // Deprecated, use [ProfileInfo][profile_type] instead.
   repeated ProfileType profile_type = 5 [deprecated = true];
@@ -806,36 +809,6 @@ message RaggedDotDimensionNumbers {
   repeated int64 rhs_group_dimensions = 3;
 }
 
-enum SparsityType {
-  SPARSITY_INVALID = 0;
-
-  // Structured N:M sparsity.
-  SPARSITY_STRUCTURED_N_M = 1;
-
-  // Next: 2
-}
-
-// Contains sparsity metadata for a sparse dot operation.
-// The only supported type atm is structured 2:4 sparsity, which is natively
-// supported on NVidia GPUs.
-// Restrictions:
-// - only one operand of the dot operation may be sparse;
-// - only the contracting dimension may be sparse.
-message SparsityDescriptor {
-  SparsityType type = 1;
-
-  // Sparse operand index (0 or 1).
-  int32 index = 2;
-  // Sparse dimension number.
-  int32 dimension = 3;
-
-  // Structured N:M sparsity (N < M).
-  int32 n = 4;
-  int32 m = 5;
-
-  // Next: 6
-}
-
 enum RandomDistribution {
   RNG_INVALID = 0;
 
@@ -929,6 +902,8 @@ message OpSharding {
     // This sharding is a placeholder sharding with lowest precedence, it can be
     // overwriten by any other shardings.
     UNKNOWN = 5;
+    // This op is unreduced: its outputs will not be combined via an all-reduce.
+    UNREDUCED = 6;
   }
   Type type = 1;
   // The shape of the sharded tile.

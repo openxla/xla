@@ -90,17 +90,15 @@ TEST_F(FissionBackendTest, GetSupportedConfigsFromCublasCustomCall) {
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           (*module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, IsOkAndHolds(SizeIs(10)));
+  EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(10)));
   // The first config is the cublas config.
-  EXPECT_EQ(
-      static_cast<const AutotuneResult::GemmKey&>(*configs.value().front())
-          .algorithm(),
-      -1);
+  AutotuneResult::GemmKey cublas_config;
+  EXPECT_TRUE(configs.value().front()->UnpackTo(&cublas_config));
+  EXPECT_EQ(cublas_config.algorithm(), -1);
   // The last config is the custom kernel config.
-  EXPECT_EQ(static_cast<const AutotuneResult::CustomKernelFusionKey&>(
-                *configs.value().back())
-                .kernel_index(),
-            0);
+  AutotuneResult::CustomKernelFusionKey custom_kernel_config;
+  EXPECT_TRUE(configs.value().back()->UnpackTo(&custom_kernel_config));
+  EXPECT_EQ(custom_kernel_config.kernel_index(), 0);
 }
 
 TEST_F(FissionBackendTest, GetSupportedConfigsForUnsupportedInstructionFails) {
@@ -118,7 +116,8 @@ TEST_F(FissionBackendTest, GetSupportedConfigsForUnsupportedInstructionFails) {
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           (*module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs.status(), StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(configs.status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(FissionBackendTest, GetDefaultConfigFails) {
@@ -128,7 +127,8 @@ TEST_F(FissionBackendTest, GetDefaultConfigFails) {
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(
           (*module->entry_computation()->root_instruction()));
-  EXPECT_THAT(config.status(), StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(config.status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(FissionBackendTest, ApplyCublasConfigToFusionInstruction) {
@@ -136,11 +136,13 @@ TEST_F(FissionBackendTest, ApplyCublasConfigToFusionInstruction) {
                           ParseAndReturnVerifiedModule(kTritonFusionHlo));
   AutotuneResult::GemmKey config;
   config.set_algorithm(3);
+  google::protobuf::Any any;
+  any.PackFrom(config);
   TF_EXPECT_OK(backend_.ApplyConfig(
-      *hlo_module->entry_computation()->root_instruction(), config));
+      *hlo_module->entry_computation()->root_instruction(), any));
   EXPECT_THAT(RunFileCheck(hlo_module->ToString(),
                            "CHECK: \"selected_algorithm\":\"3\""),
-              IsOkAndHolds(true));
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(FissionBackendTest, ApplyCustomKernelConfigToFusionInstruction) {
@@ -148,10 +150,12 @@ TEST_F(FissionBackendTest, ApplyCustomKernelConfigToFusionInstruction) {
                           ParseAndReturnVerifiedModule(kTritonFusionHlo));
   AutotuneResult::CustomKernelFusionKey config;
   config.set_kernel_index(3);
+  google::protobuf::Any any;
+  any.PackFrom(config);
   TF_EXPECT_OK(backend_.ApplyConfig(
-      *hlo_module->entry_computation()->root_instruction(), config));
+      *hlo_module->entry_computation()->root_instruction(), any));
   EXPECT_THAT(RunFileCheck(hlo_module->ToString(), "CHECK: \"kernel_index\":3"),
-              IsOkAndHolds(true));
+              absl_testing::IsOkAndHolds(true));
 }
 
 }  // namespace
