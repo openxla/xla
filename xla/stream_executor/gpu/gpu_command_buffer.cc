@@ -226,7 +226,7 @@ GpuCommandBuffer::CreateClonedChildCommand(
 
   TF_ASSIGN_OR_RETURN(
       GraphNodeHandle handle,
-      CreateChildNode(ToGraphNodeDependencies(dependencies), nested));
+      CreateClonedChildNode(ToGraphNodeDependencies(dependencies), nested));
   return AppendCommand(GpuCommand{handle});
 }
 
@@ -239,7 +239,7 @@ absl::Status GpuCommandBuffer::UpdateChildCommand(const Command* command,
 }
 
 absl::StatusOr<const CommandBuffer::Command*>
-GpuCommandBuffer::CreateMoveChildCommand(
+GpuCommandBuffer::CreateMovedChildCommand(
     CommandBuffer& nested, absl::Span<const Command* const> dependencies) {
   TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
   TF_ASSIGN_OR_RETURN(
@@ -310,7 +310,7 @@ GpuCommandBuffer::CreateDnnGraphCommand(
 
   TF_ASSIGN_OR_RETURN(
       GraphNodeHandle handle,
-      CreateChildNode(ToGraphNodeDependencies(dependencies), *nested));
+      CreateClonedChildNode(ToGraphNodeDependencies(dependencies), *nested));
 
   return AppendCommand(GpuCommand{handle});
 }

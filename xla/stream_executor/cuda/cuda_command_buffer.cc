@@ -423,7 +423,7 @@ absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
       "Failed to set CUDA graph child node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateClonedChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
   auto& child_command_buffer =
       tensorflow::down_cast<CudaCommandBuffer&>(nested);
@@ -441,7 +441,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
       cuGraphAddChildGraphNode(&node_handle, graph_, deps.data(), deps.size(),
                                child_graph),
       "Failed to create a child graph node and add it to a CUDA graph"));
-  VLOG(5) << "CreateChildNode: " << reinterpret_cast<const void*>(&node_handle);
+  VLOG(5) << "CreateClonedChildNode: "
+          << reinterpret_cast<const void*>(&node_handle);
   return FromCudaGraphHandle(node_handle);
 }
 

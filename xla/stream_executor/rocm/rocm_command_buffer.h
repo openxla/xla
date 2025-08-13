@@ -116,7 +116,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
     return absl::UnimplementedError("Not implemented.");
   }
 
-  absl::StatusOr<GraphNodeHandle> CreateChildNode(
+  absl::StatusOr<GraphNodeHandle> CreateClonedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       CommandBuffer& nested) override;
 

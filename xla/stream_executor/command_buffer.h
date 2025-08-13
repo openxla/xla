@@ -181,7 +181,7 @@ class CommandBuffer {
 
   // Creates a command that launches a nested command buffer. Nested command
   // buffer is constructed is through move semantics.
-  virtual absl::StatusOr<const Command*> CreateMoveChildCommand(
+  virtual absl::StatusOr<const Command*> CreateMovedChildCommand(
       CommandBuffer& nested, absl::Span<const Command* const> dependencies) = 0;
 
   // Updates a command that launches a nested command buffer.

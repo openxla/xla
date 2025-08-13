@@ -780,7 +780,8 @@ TracedCommandBufferCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateClonedChildCommand(*nested_cmd,
+                                                        dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
@@ -1230,8 +1231,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMoveChildCommand(*child_command_buffer_,
-                                                      dependencies);
+        return command_buffer->CreateMovedChildCommand(*child_command_buffer_,
+                                                       dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return absl::OkStatus();
@@ -1664,7 +1665,8 @@ CustomCallCmd::RecordLegacyCustomCall(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateClonedChildCommand(*nested_cmd,
+                                                        dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
@@ -1743,7 +1745,8 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateClonedChildCommand(*nested_cmd,
+                                                        dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
@@ -1805,7 +1808,8 @@ CollectiveCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateClonedChildCommand(*nested_cmd,
+                                                        dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
@@ -2370,7 +2374,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
         return command_buffer->CreateClonedChildCommand(*nested_command_buffer,
-                                                  dependencies);
+                                                        dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command,

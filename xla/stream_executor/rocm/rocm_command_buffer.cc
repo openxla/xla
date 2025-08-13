@@ -218,7 +218,7 @@ absl::Status RocmCommandBuffer::UpdateMemcpyD2DNode(
       "Failed to set memcpy d2d node params");
 }
 
-absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateClonedChildNode(
     absl::Span<const GraphNodeHandle> dependencies, CommandBuffer& nested) {
   auto& child_command_buffer =
       tensorflow::down_cast<RocmCommandBuffer&>(nested);

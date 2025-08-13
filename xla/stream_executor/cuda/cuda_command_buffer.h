@@ -130,7 +130,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
                                   absl::Span<DeviceMemoryBase> operands,
                                   GraphNodeHandle) override;
 
-  absl::StatusOr<GraphNodeHandle> CreateChildNode(
+  absl::StatusOr<GraphNodeHandle> CreateClonedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
       CommandBuffer& nested) override;
 
