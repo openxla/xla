@@ -42,9 +42,6 @@ bool is_done(HloOpcode code) {
  return code == HloOpcode::kCollectivePermuteDone || code == HloOpcode::kAsyncDone;
 }
 
-
-
-
 absl::StatusOr<bool> ExplicitControl::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -54,10 +51,6 @@ absl::StatusOr<bool> ExplicitControl::Run(
     absl::flat_hash_map<std::string, HloInstruction*> control_map;    
     // Populate map first
     for (HloInstruction* instr : comp->instructions()) {
-      if(instr->frontend_attributes().map().contains("wait_tag")) {
-	auto key = instr->frontend_attributes().map().at("wait_tag");
-        control_map[key] = instr;
-      }
       if(instr->frontend_attributes().map().contains("start_wait_tag")) {
         if (is_start(instr->opcode())) {
           auto key = instr->frontend_attributes().map().at("start_wait_tag");
@@ -81,12 +74,6 @@ absl::StatusOr<bool> ExplicitControl::Run(
 	  changed = true;
 	  continue;
         }
-      }
-      if(instr->frontend_attributes().map().contains("wait_for")) {
-	auto key = instr->frontend_attributes().map().at("wait_for");
-        control_map[key]->AddControlDependencyTo(instr);
-	changed = true;
-	continue;
       }
       if(instr->frontend_attributes().map().contains("done_wait_for")) {
         if (is_done(instr->opcode())) {
