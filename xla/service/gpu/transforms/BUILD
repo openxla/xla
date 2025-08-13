@@ -389,6 +389,7 @@ xla_test(
     deps = [
         ":command_buffer_scheduling",
         "//xla:xla_proto_cc",
+	"//xla/ffi:ffi",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
