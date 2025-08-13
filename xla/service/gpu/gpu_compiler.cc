@@ -222,7 +222,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 #include "xla/service/gpu/transforms/explicit_control.h"
 #include "xla/service/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
-#include "xla/service/gpu/transforms/futures_mode_async_wrapper.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
 #include "xla/service/gpu/transforms/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/transforms/gemm_fusion.h"
@@ -2896,12 +2895,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
   
-  {
-    HloPassPipeline& pipeline =
-        main_pipeline.AddPass<HloPassPipeline>("futures-mode-wrapper");
-    pipeline.AddPass<FuturesModeAsyncWrapper>();
-  }
-
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &gpu_device_info.gpu_compute_capability());
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
