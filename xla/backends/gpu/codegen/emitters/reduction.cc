@@ -425,7 +425,8 @@ IndexingMap ReductionFusion::GetIndexingMap(
   auto num_groups = static_cast<int64_t>(reduction_heroes_.size());
   return IndexingMap{AffineMap::get(6, symbol_sizes.size(), results, ctx),
                      DimVarsFromGPUGrid({Product(num_threads_), 1, 1,
-                                    gpu_blocks_[0], gpu_blocks_[1], num_groups}),
+                            static_cast<int64_t>(gpu_blocks_[0]), 
+                            static_cast<int64_t>(gpu_blocks_[1]), num_groups}),
                      RangeVarsFromTensorSizes(symbol_sizes),
                      /*rt_vars=*/{}};
 }
@@ -446,10 +447,10 @@ IndexingMap ReductionFusion::GetThreadIndexingMap(
 }
 
 LaunchDimensions ReductionFusion::launch_dimensions() const {
-  size_t blocks_z = groups_.grouped_roots.size();
+  uint64_t blocks_z = groups_.grouped_roots.size();
   return {se::BlockDim( /*x=*/gpu_blocks_[0],
                         /*y=*/gpu_blocks_[1],
-                        /*z=*/static_cast<int64_t>(blocks_z)),
+                        /*z=*/blocks_z),
           se::ThreadDim(/*x=*/Product(num_threads_),
                         /*y=*/1, /*z=*/1)};
 }

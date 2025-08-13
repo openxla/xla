@@ -224,12 +224,12 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
 
 }  // namespace
 
-/* static */ std::array<int64_t, 2> EmitterBase::MaybeSplitGridDimensionX(
-      int64_t num_threads_x, int64_t num_blocks_x,
+/* static */ std::array<uint64_t, 2> EmitterBase::MaybeSplitGridDimensionX(
+      uint64_t num_threads_x, uint64_t num_blocks_x,
       const se::DeviceDescription& info)
 {
   const se::BlockDim& limit = info.block_dim_limit();
-  constexpr int64_t rocm_limit = std::numeric_limits<uint32_t>::max();
+  constexpr uint64_t rocm_limit = std::numeric_limits<uint32_t>::max();
 
   bool is_rocm = 
            xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "rocm";
@@ -239,10 +239,10 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
     return {num_blocks_x, 1};
   }
   
-  int64_t dimx = 0, dimy = 0;
+  uint64_t dimx = 0, dimy = 0;
   // We assume that num_blocks_x is most likely of the form: 2^N * K
-  for (int64_t nzeros = 1; ; nzeros++) {
-    dimy = 1LL << nzeros;
+  for (uint64_t nzeros = 1; ; nzeros++) {
+    dimy = 1ULL << nzeros;
     if (dimy > limit.y) { 
       // We could not find the proper power-of-two dim Y => use max gridY
       dimy = limit.y;
