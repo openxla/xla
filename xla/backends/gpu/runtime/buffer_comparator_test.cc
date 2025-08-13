@@ -419,18 +419,19 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
 
   // We use overlapping lhs and rhs arrays to reduce memory usage, also this 
   // serves as an extra test for possible pointer aliasing problems
-  se::DeviceMemoryBase lhs(base->opaque(), base->size() - 1),
-         rhs(static_cast< NT *>(base->opaque()) + 1, base->size() - 1);
+  se::DeviceMemoryBase lhs(base->opaque(), base->size() - sizeof(NT)),
+                       rhs(static_cast< NT *>(base->opaque()) + 1, lhs.size());
+
   TF_CHECK_OK(stream->Memset32(&lhs, 0xABCDABCD, base->size()));
 
-  // Disable host comparison here since it could take long for ~8GB array
+  // Disable host comparison here since it could take a while for ~8GB array
   BufferComparator comparator(ShapeUtil::MakeShape(number_type, {element_count}),
        /*tolerance*/0.1, /* verbose */false, /*run_host_compare*/false);
   EXPECT_TRUE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 
   // Change only the very last entry of rhs to verify that the whole arrays are 
-  // compared (if the grid dimensions are not computed correctly, this is very 
-  // likely to fail)
+  // compared (if the grid dimensions are not computed correctly, this might
+  // not be the case)
   *(static_cast< NT *>(rhs.opaque()) + element_count - 1) = 1777;
   EXPECT_FALSE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 }
