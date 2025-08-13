@@ -124,16 +124,16 @@ class GpuCommandBuffer : public CommandBuffer {
                             const BlockDim& blocks, const Kernel& kernel,
                             const KernelArgs& args) override;
 
-  absl::StatusOr<const Command*> CreateNestedCommand(
+  absl::StatusOr<const Command*> CreateClonedChildCommand(
       CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
-  absl::StatusOr<const Command*> CreateMoveNestedCommand(
+  absl::StatusOr<const Command*> CreateMoveChildCommand(
       CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
-  absl::Status UpdateNestedCommand(const Command* command,
-                                   const CommandBuffer& nested) override;
+  absl::Status UpdateChildCommand(const Command* command,
+                                  const CommandBuffer& nested) override;
 
   absl::StatusOr<const Command*> CreateMemcpyD2D(
       DeviceMemoryBase* dst, const DeviceMemoryBase& src, uint64_t size,
