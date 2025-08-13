@@ -25,7 +25,6 @@ limitations under the License.
 #include "oneapi/dnnl/dnnl_graph.hpp"
 #include "oneapi/dnnl/dnnl_threadpool.hpp"
 #include "xla/backends/cpu/runtime/onednn/onednn_interop.h"
-#include "xla/backends/cpu/runtime/parallel_loop_runner.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
@@ -56,13 +55,10 @@ TEST(OneDnnThreadPoolTest, Binary) {
   tsl::thread::ThreadPool threads(tsl::Env::Default(), "test", 32);
 
 #ifdef ENABLE_ONEDNN_ASYNC
-  Eigen::ThreadPoolDevice device(threads.AsEigenThreadPool(),
-                                 threads.NumThreads());
-  ParallelLoopRunner runner(&device);
-  OneDnnThreadPool threadpool(&runner);
+  OneDnnThreadPool threadpool(threads.AsEigenThreadPool(), /*is_async=*/true);
 #else
   OneDnnThreadPool threadpool(threads.AsEigenThreadPool());
-#endif
+#endif  // ENABLE_ONEDNN_ASYNC
 
   int64_t d0 = 100;
   int64_t d1 = 1000;
@@ -110,7 +106,7 @@ TEST(OneDnnThreadPoolTest, Binary) {
   compiled_partitions[0].execute(stream, {src}, {dst});
 
 #ifdef ENABLE_ONEDNN_ASYNC
-  tsl::BlockUntilReady(runner.done_event());
+  stream.wait();
 #endif
 
   for (int i = 0; i < num_elements; ++i) {
