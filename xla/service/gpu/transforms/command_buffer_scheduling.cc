@@ -221,16 +221,17 @@ bool IsCommand<HloOpcode::kConditional>(const HloInstruction* hlo,
                         });
 }
 
-static bool CanUseCommandBuffer(
-    const HloInstruction* hlo,
-    const CommandBufferConfig& config) {
+static bool CallCanUseCommandBuffer(const HloInstruction* hlo,
+                                    const CommandBufferConfig& config) {
   // Check if FFI handler is compatible with command buffers.
   if (auto* custom_call = DynCast<HloCustomCallInstruction>(hlo)) {
-    auto registration = ffi::FindHandler(custom_call->custom_call_target(), "gpu");
+    auto registration =
+        ffi::FindHandler(custom_call->custom_call_target(), "gpu");
     return registration.ok()
                ? ffi::IsCommandBufferCompatible(registration->traits)
                : false;
   }
+  return false;
 }
 
 static bool IsCommand(const HloCustomCallInstruction* hlo,
@@ -263,7 +264,7 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
             << hlo->custom_call_target() << " into command buffer.";
     return true;
   }
-  return CanUseCommandBuffer(hlo, config);
+  return CallCanUseCommandBuffer(hlo, config);
 }
 
 static bool IsCommand(const HloInstruction* hlo,
@@ -462,7 +463,8 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 
   // Adds `current_seq` to `sequences` if it has enough commands in it.
   auto collect_current_seq = [&]() {
-    if (num_commands_in_current_seq >= std::max(1, min_num_commands) || must_use_command_buffer) {
+    if (num_commands_in_current_seq >= std::max(1, min_num_commands) ||
+        must_use_command_buffer) {
       RemoveTrailingNoOps(current_seq);
       sequences.push_back(std::move(current_seq));
     }
@@ -587,10 +589,10 @@ CommandBufferScheduling::CollectCommandBufferSequences(
     if (IsCommand(inst, config) &&
         check_dynamic_slice_operand_not_from_seq(current_seq, inst)) {
       num_commands_in_current_seq++;
-      current_seq.push_back(inst);
-      if (CanUseCommandBuffer(inst, config)) {
+      if (CallCanUseCommandBuffer(inst, config)) {
         must_use_command_buffer = true;
       }
+      current_seq.push_back(inst);
       continue;
     }
 

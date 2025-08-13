@@ -165,8 +165,7 @@ bool AllThunksInSequentialThunkAreConvertible(
 size_t CheckAsyncRegion(absl::Span<std::unique_ptr<Thunk>> thunks,
                         const CommandBufferConfig& config);
 
-bool MustUseCommandBuffer(const CustomCallThunk* custom_call_thunk, const CommandBufferConfig& config) {
-  // Check if FFI handler is compatible with command buffers.
+bool IsCommandBufferCompatible(const std::string& target_name) {
   absl::StatusOr<ffi::HandlerRegistration> registration =
       ffi::FindHandler(target_name, "gpu");
   return registration.ok()
@@ -210,7 +209,7 @@ bool IsConvertible(const Thunk* thunk, const CommandBufferConfig& config) {
               << " into command buffer.";
       return true;
     }
-    return MustUseCommandBuffer(custom_call_thunk, config);
+    return IsCommandBufferCompatible(target_name);
   }
   return true;
 }
@@ -340,13 +339,15 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
   };
   bool must_use_command_buffer = false;
   std::vector<std::unique_ptr<Thunk>> current_command_buffer_thunks;
+
   std::vector<std::unique_ptr<Thunk>> new_thunks;
 
   auto flush_command_buffer = [&]() -> absl::Status {
     // If we don't have enough thunks to form a command buffer, we just add
     // them to the new thunks sequence as is.
     if (current_command_buffer_thunks.size() <
-        std::max(1, debug_options.xla_gpu_graph_min_graph_size()) || must_use_command_buffer) {
+            std::max(1, debug_options.xla_gpu_graph_min_graph_size()) &&
+        !must_use_command_buffer) {
       new_thunks.insert(
           new_thunks.end(),
           std::make_move_iterator(current_command_buffer_thunks.begin()),
@@ -395,14 +396,15 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       // Check if thunk is convertible and not an async done: async done thunks
       // can be only added to the current_command_buffer_thunks as part of a
       // valid async regions.
-
-      current_command_buffer_thunks.push_back(std::move(thunk));
       if (thunk->kind() == Thunk::kCustomCall) {
-        const auto* custom_call_thunk = static_cast<const CustomCallThunk*>(thunk.get());
-	if(MustUseCommandBuffer(custom_call_thunk, config)) {
-	  must_use_command_buffer = true;
-	}
+        const auto* custom_call_thunk =
+            static_cast<const CustomCallThunk*>(thunk.get());
+        const std::string& target_name = custom_call_thunk->target_name();
+        if (IsCommandBufferCompatible(target_name)) {
+          must_use_command_buffer = true;
+        }
       }
+      current_command_buffer_thunks.push_back(std::move(thunk));
       continue;
     }
 

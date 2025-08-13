@@ -38,6 +38,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -739,12 +741,16 @@ TEST(CommandBufferConversionPassTest,
      ForceCompatibleCustomCallUseCommandBufferThunk) {
   static constexpr auto* noop = +[] { return absl::OkStatus(); };
 
-  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind(), {Traits::kCmdBufferCompatible});
-  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "normal_custom_call", "gpu", NoOp);
+  XLA_FFI_DEFINE_HANDLER(NoOp, noop, ffi::Ffi::Bind(),
+                         {ffi::Traits::kCmdBufferCompatible});
+  XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "normal_custom_call", "gpu",
+                           NoOp);
   DebugOptions debug_options;
-  // Even though this is set to 2, we still want the custom call to be in a 
-  // command buffer. 
-  debug_options.xla_gpu_graph_min_graph_size(2); 
+  // Even though this is set to 2, we still want the custom call to be in a
+  // command buffer.
+  debug_options.set_xla_gpu_graph_min_graph_size(2);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
 
   std::vector<std::unique_ptr<Thunk>> thunks;
   thunks.push_back(CreateCustomCallThunk("normal_custom_call"));
@@ -769,7 +775,6 @@ TEST(CommandBufferConversionPassTest,
       command_buffer_thunk->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCustomCall));
 }
-
 
 TEST(CommandBufferConversionPassTest,
      ConvertsLegacyCustomCallToCommandBufferThunk) {
