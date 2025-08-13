@@ -60,7 +60,7 @@ class GpuTopology {
   int32_t num_hosts_per_partition() const { return num_hosts_per_partition_; }
   int32_t num_devices_per_host() const { return num_devices_per_host_; }
   int32_t slice_size() const {
-    return num_hosts_per_slice() * num_devices_per_host();
+    return num_hosts_per_partition() * num_devices_per_host();
   }
 
  private:
