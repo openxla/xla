@@ -780,11 +780,13 @@ TracedCommandBufferCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd,
-                                                        dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1231,10 +1233,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMovedChildCommand(*child_command_buffer_,
-                                                       dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kMoved, *child_command_buffer_,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
+        // Moved child command does not need to be updated.
         return absl::OkStatus();
       });
 }
@@ -1665,11 +1669,13 @@ CustomCallCmd::RecordLegacyCustomCall(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd,
-                                                        dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1745,11 +1751,13 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd,
-                                                        dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1808,11 +1816,13 @@ CollectiveCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_cmd,
-                                                        dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -2373,12 +2383,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateClonedChildCommand(*nested_command_buffer,
-                                                        dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned,
+            *nested_command_buffer, dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command,
-                                                  *nested_command_buffer);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command,
+            *nested_command_buffer);
       });
 }
 
