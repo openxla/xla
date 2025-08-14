@@ -182,6 +182,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
