@@ -449,6 +449,7 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
     return FromCudaGraphHandle(node_handle);
 
   } else if (type == ChildCommandType::kMoved) {
+#if CUDA_VERSION >= 12090
     child_command_buffer.is_owned_graph_ = false;
     CUgraphNodeParams nodeParams;
     std::memset(&nodeParams, 0, sizeof(nodeParams));
@@ -466,7 +467,10 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateChildNode(
                        &nodeParams),
         "Failed to create a child graph node and add it to a CUDA graph"));
     return FromCudaGraphHandle(node_handle);
-
+#else
+    return absl::UnimplementedError(
+        "Moved child node is not supported for CUDA < 12.9");
+#endif
   } else {
     return absl::InternalError("Unsupported child command type");
   }

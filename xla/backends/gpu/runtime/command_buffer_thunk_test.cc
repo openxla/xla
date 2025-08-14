@@ -129,6 +129,19 @@ bool IsAtLeastCuda12300(const se::StreamExecutor* stream_executor) {
   return false;
 }
 
+bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
+  const auto& device_description = stream_executor->GetDeviceDescription();
+  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
+      &device_description.gpu_compute_capability());
+  if (cuda_cc != nullptr) {
+    if (device_description.driver_version() >=
+        stream_executor::SemanticVersion(12, 9, 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Give a short alias to synchronization mode.
 static constexpr auto serialize =
     CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
@@ -771,8 +784,8 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 TEST(CommandBufferThunkTest, ChildGemmCmd) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
-  if (!IsAtLeastCuda12300(stream_executor)) {
-    GTEST_SKIP() << "CUDA graph tracing is not supported";
+  if (!IsAtLeastCuda12900(stream_executor)) {
+    GTEST_SKIP() << "Child command is not supported for CUDA < 12.9";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
