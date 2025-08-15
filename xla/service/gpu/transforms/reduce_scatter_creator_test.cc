@@ -689,6 +689,7 @@ ENTRY %SubtractionPattern {
   TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                                /*num_replicas=*/1,
                                                /*num_partitions=*/8,
+                                               /*use_spmd_partitioning=*/true,
                                                /*expect_change=*/true));
   ASSERT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::ReduceScatter(m::Parameter(0))));
