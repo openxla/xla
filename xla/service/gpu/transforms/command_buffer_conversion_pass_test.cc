@@ -22,7 +22,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
@@ -30,7 +32,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/cudnn_thunk.h"
+#include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
+#include "xla/backends/gpu/runtime/replica_id_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
@@ -49,11 +54,23 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
 namespace {
+
+using ::absl_testing::IsOkAndHolds;
+using ::testing::ElementsAre;
+using ::testing::Pointee;
+
+MATCHER_P(ThunkKindIs, kind, "") { return arg.kind() == kind; }
+
+template <typename... Matchers>
+auto ThunkKindsAre(Matchers... matchers) {
+  return ElementsAre(Pointee(ThunkKindIs(matchers))...);
+}
 
 std::string GetPlatformName() {
   return absl::AsciiStrToUpper(
@@ -66,7 +83,8 @@ se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-std::unique_ptr<AllGatherStartThunk> CreateAllGatherStartThunk() {
+std::unique_ptr<AllGatherStartThunk> CreateAllGatherStartThunk(
+    const BufferAllocation& alloc0, const BufferAllocation& alloc1) {
   auto create_replica_groups =
       [](const std::vector<std::vector<int64_t>>& replica_groups) {
         std::vector<ReplicaGroup> result;
@@ -97,11 +115,8 @@ std::unique_ptr<AllGatherStartThunk> CreateAllGatherStartThunk() {
           /*constrain_layout=*/false,
           /*channel_id=*/2, /*use_global_device_ids=*/false));
 
-  Thunk::ThunkInfo thunk_info;
   std::vector<std::unique_ptr<Thunk>> thunks;
 
-  BufferAllocation alloc0(1, 16 * 4, 0);
-  BufferAllocation alloc1(1, 16 * 4, 0);
   BufferAllocation::Slice slice0(&alloc0, 0, 16 * 4);
   BufferAllocation::Slice slice1(&alloc1, 0, 16 * 4);
 
@@ -110,18 +125,19 @@ std::unique_ptr<AllGatherStartThunk> CreateAllGatherStartThunk() {
   buffer.destination_buffer = slice1;
 
   return std::make_unique<AllGatherStartThunk>(
-      std::move(thunk_info),
+      Thunk::ThunkInfo(),
       static_cast<const HloAllGatherInstruction*>(all_gather_start),
       std::vector<CollectiveThunk::Buffer>({buffer}), false);
 }
 
-std::unique_ptr<CopyThunk> CreateCopyThunk() {
-  BufferAllocation alloc0(0, 1024, 0);
+std::unique_ptr<DeviceToDeviceCopyThunk> CreateCopyThunk(
+    const BufferAllocation& alloc0) {
   BufferAllocation::Slice slice0(&alloc0, 0, 1024);
-  return std::make_unique<CopyThunk>(Thunk::ThunkInfo(), slice0, slice0, 1024);
+  return std::make_unique<DeviceToDeviceCopyThunk>(Thunk::ThunkInfo(), slice0,
+                                                   slice0, 1024);
 }
 
-std::unique_ptr<GemmThunk> CreateGemmThunk() {
+std::unique_ptr<GemmThunk> CreateGemmThunk(const BufferAllocation& alloc1) {
   se::StreamExecutor* executor = GpuExecutor();
   auto config = GemmConfig::For(
       ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), {}, {1},
@@ -130,7 +146,6 @@ std::unique_ptr<GemmThunk> CreateGemmThunk() {
       PrecisionConfig::ALG_UNSET, std::nullopt,
       se::blas::kDefaultComputePrecision, false, false,
       executor->GetDeviceDescription().gpu_compute_capability());
-  BufferAllocation alloc1(1, 16 * 4, 0);
   BufferAllocation::Slice slice1(&alloc1, 0, 16 * 4);
   return std::make_unique<GemmThunk>(Thunk::ThunkInfo(), config.value(), slice1,
                                      slice1, slice1, slice1, true);
@@ -147,8 +162,8 @@ std::unique_ptr<CollectiveDoneThunk> CreateAllGatherDoneThunk(
 
 std::unique_ptr<WhileThunk> CreateWhileThunk(
     std::vector<std::unique_ptr<Thunk>> condition_thunks,
-    std::vector<std::unique_ptr<Thunk>> body_thunks) {
-  BufferAllocation alloc(0, 1024, 0);
+    std::vector<std::unique_ptr<Thunk>> body_thunks,
+    const BufferAllocation& alloc) {
   BufferAllocation::Slice slice(&alloc, 0, 1024);
 
   return std::make_unique<WhileThunk>(
@@ -175,12 +190,38 @@ std::unique_ptr<ConditionalThunk> CreateConditionalThunk(
                                             /*branch_index_is_bool=*/false);
 }
 
+std::unique_ptr<CustomCallThunk> CreateCustomCallThunk(
+    std::string call_target) {
+  auto thunk =
+      CustomCallThunk::Create(Thunk::ThunkInfo(), std::move(call_target),
+                              CustomCallThunk::CustomCallTarget(),
+                              /*operands=*/{},
+                              /*results=*/{},
+                              /*opaque=*/"");
+  TF_CHECK_OK(thunk.status());
+  return std::move(thunk).value();
+}
+
+std::unique_ptr<CuDnnThunk> CreateCuDnnThunk(const BufferAllocation& alloc0) {
+  BufferAllocation::Slice slice0(&alloc0, 0, 1024);
+  return std::make_unique<CuDnnThunk>(
+      /*fingerprint=*/"fingeprint", Thunk::ThunkInfo(),
+      /*args=*/std::vector<BufferAllocation::Slice>{slice0},
+      /*output_args=*/std::vector<bool>{true});
+}
+
+std::unique_ptr<PartitionIdThunk> CreatePartitionIdThunk(
+    const BufferAllocation& alloc0) {
+  BufferAllocation::Slice slice0(&alloc0, 0, 1024);
+  return std::make_unique<PartitionIdThunk>(Thunk::ThunkInfo(), slice0);
+}
+
 TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
   // Create a CopyThunk
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc0));
 
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
@@ -190,7 +231,7 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
 
   se::DeviceDescription device_info;
 
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
 
   CommandBufferConversionPass pass;
 
@@ -198,33 +239,32 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   // supported in command buffers. The expected transformation is:
   // SequentialThunk(CopyThunk) ->
   // SequentialThunk(CommandBufferThunk(CopyThunk))
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
-  const Thunk* thunk = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk->kind(), Thunk::kCommandBuffer);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+  EXPECT_THAT(root_thunk->thunks()[0]->thunk_info().profile_annotation,
+              "command_buffer");
 
-  auto* command_buffer_thunk = static_cast<const CommandBufferThunk*>(thunk);
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
 
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer.size(), 1);
-
-  EXPECT_EQ(thunks_in_command_buffer[0]->kind(), Thunk::kCopy);
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   CommandBufferConversionPass pass;
 
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
   // Create a {CopyThunk, GemmThunk, CopyThunk}
-  thunks.push_back(CreateCopyThunk());
-  thunks.push_back(CreateGemmThunk());
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateCopyThunk(alloc0));
+  thunks.push_back(CreateGemmThunk(alloc1));
+  thunks.push_back(CreateCopyThunk(alloc0));
 
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
@@ -235,18 +275,16 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   se::DeviceDescription device_info;
 
-  EXPECT_EQ(root_thunk->thunks().size(), 3);
+  ASSERT_EQ(root_thunk->thunks().size(), 3);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
-  EXPECT_EQ(root_thunk->thunks().size(), 3);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: (Copy, Gemm, Copy) -> (CommandBuffer(Copy), Gemm,
   // CommandBuffer(Copy))
-  EXPECT_EQ(root_thunk->thunks()[0]->kind(), Thunk::kCommandBuffer);
-  EXPECT_EQ(root_thunk->thunks()[1]->kind(), Thunk::kGemm);
-  EXPECT_EQ(root_thunk->thunks()[2]->kind(), Thunk::kCommandBuffer);
+  EXPECT_THAT(root_thunk->thunks(),
+              ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kGemm,
+                            Thunk::kCommandBuffer));
 
   // Check the content of the first command buffer thunk
   auto* command_buffer_thunk0 =
@@ -254,7 +292,7 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   ASSERT_NE(command_buffer_thunk0, nullptr);
   const auto& thunks_in_command_buffer0 =
       command_buffer_thunk0->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer0[0]->kind(), Thunk::kCopy);
+  EXPECT_THAT(thunks_in_command_buffer0, ThunkKindsAre(Thunk::kCopy));
 
   // Check the content of the second command buffer thunk
   auto* command_buffer_thunk1 =
@@ -262,13 +300,15 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   ASSERT_NE(command_buffer_thunk1, nullptr);
   const auto& thunks_in_command_buffer1 =
       command_buffer_thunk1->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer1[0]->kind(), Thunk::kCopy);
+  EXPECT_THAT(thunks_in_command_buffer1, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Create a start thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
 
   // Create a done thunk
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
@@ -276,7 +316,7 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 2);
+  ASSERT_EQ(root_thunk->thunks().size(), 2);
 
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
@@ -284,35 +324,34 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation:
   // SequentialThunk(AllGatherStartThunk, CollectiveDoneThunk) ->
   // SequentialThunk(CommandBufferThunk(AllGatherStartThunk,
   // CollectiveDoneThunk))
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
-  const Thunk* thunk = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk->kind(), Thunk::kCommandBuffer);
-
-  auto* command_buffer_thunk = static_cast<const CommandBufferThunk*>(thunk);
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer.size(), 2);
-  EXPECT_EQ(thunks_in_command_buffer[0]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[1]->kind(), Thunk::kAllGatherDone);
+  EXPECT_THAT(thunks_in_command_buffer,
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kAllGatherDone));
 }
 
 TEST(CommandBufferConversionPassTest,
      DontConvertAsyncsIfNonConvertibleThunkInBetween) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Create a start thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
 
   // Create a non-convertible thunk
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc2(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc2));
 
   // Create a done thunk
   thunks.push_back(CreateAllGatherDoneThunk(thunks[0].get()));
@@ -320,7 +359,7 @@ TEST(CommandBufferConversionPassTest,
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 3);
+  ASSERT_EQ(root_thunk->thunks().size(), 3);
 
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
@@ -328,20 +367,23 @@ TEST(CommandBufferConversionPassTest,
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-
   // Expected no transformation, because there is a non-convertible thunk in
   // between the asyncs.
-  EXPECT_FALSE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(false));
+  EXPECT_THAT(root_thunk->thunks(),
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kCopy,
+                            Thunk::kAllGatherDone));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertCrossedAsyncs) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Create start thunk A
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
   // Create start thunk B
-  thunks.push_back(CreateAllGatherStartThunk());
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
   // Create a done thunk A
   thunks.push_back(CreateAllGatherDoneThunk(thunks[0].get()));
   // Create a done thunk B
@@ -350,7 +392,7 @@ TEST(CommandBufferConversionPassTest, ConvertCrossedAsyncs) {
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 4);
+  ASSERT_EQ(root_thunk->thunks().size(), 4);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
@@ -358,43 +400,41 @@ TEST(CommandBufferConversionPassTest, ConvertCrossedAsyncs) {
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: Convert all 4 thunks into command buffer
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
-  const Thunk* thunk = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk->kind(), Thunk::kCommandBuffer);
-
-  auto* command_buffer_thunk = static_cast<const CommandBufferThunk*>(thunk);
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer.size(), 4);
-  EXPECT_EQ(thunks_in_command_buffer[0]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[1]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[2]->kind(), Thunk::kAllGatherDone);
-  EXPECT_EQ(thunks_in_command_buffer[3]->kind(), Thunk::kAllGatherDone);
+  EXPECT_THAT(thunks_in_command_buffer,
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kAllGatherStart,
+                            Thunk::kAllGatherDone, Thunk::kAllGatherDone));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertNestedAsyncs) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Create start thunk A
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
   // Create start thunk B
-  thunks.push_back(CreateAllGatherStartThunk());
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
   // Create a done thunk B
   thunks.push_back(CreateAllGatherDoneThunk(thunks[0].get()));
   // Create a convertible thunk C
-  thunks.push_back(CreateGemmThunk());
+  BufferAllocation alloc2(1, 16 * 4, 0);
+  thunks.push_back(CreatePartitionIdThunk(alloc2));
   // Create a done thunk A
   thunks.push_back(CreateAllGatherDoneThunk(thunks[1].get()));
 
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 5);
+  ASSERT_EQ(root_thunk->thunks().size(), 5);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
@@ -402,49 +442,48 @@ TEST(CommandBufferConversionPassTest, ConvertNestedAsyncs) {
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: Convert all 5 thunks into command buffer
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
-  const Thunk* thunk = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk->kind(), Thunk::kCommandBuffer);
-
-  auto* command_buffer_thunk = static_cast<const CommandBufferThunk*>(thunk);
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer.size(), 5);
-  EXPECT_EQ(thunks_in_command_buffer[0]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[1]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[2]->kind(), Thunk::kAllGatherDone);
-  EXPECT_EQ(thunks_in_command_buffer[3]->kind(), Thunk::kGemm);
-  EXPECT_EQ(thunks_in_command_buffer[4]->kind(), Thunk::kAllGatherDone);
+  EXPECT_THAT(thunks_in_command_buffer,
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kAllGatherStart,
+                            Thunk::kAllGatherDone, Thunk::kPartitionId,
+                            Thunk::kAllGatherDone));
 }
 
 TEST(CommandBufferConversionPassTest, DontConvertAsyncsIfUnpairedStart) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Convertible CopyThunk in the beginning
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc0));
 
   // Start A Thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  BufferAllocation alloc2(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc1, alloc2));
 
   // Start B Thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  thunks.push_back(CreateAllGatherStartThunk(alloc1, alloc2));
 
   // Done A Thunk
   thunks.push_back(CreateAllGatherDoneThunk(thunks[1].get()));
 
   // Another convertible CopyThunk
-  thunks.push_back(CreateCopyThunk());
+  thunks.push_back(CreateCopyThunk(alloc0));
 
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 5);
+  ASSERT_EQ(root_thunk->thunks().size(), 5);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
@@ -453,47 +492,46 @@ TEST(CommandBufferConversionPassTest, DontConvertAsyncsIfUnpairedStart) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: {Copy, AllGatherStart0, AllGatherStart1,
   // AllGatherDone0, Copy} -> {CommandBuffer(Copy), AllGatherStart0,
   // AllGatherStart1, AllGatherDone0, CommandBuffer(Copy)}
-  EXPECT_EQ(root_thunk->thunks().size(), 5);
+  EXPECT_THAT(root_thunk->thunks(),
+              ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAllGatherStart,
+                            Thunk::kAllGatherStart, Thunk::kAllGatherDone,
+                            Thunk::kCommandBuffer));
 
-  const Thunk* thunk0 = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk0->kind(), Thunk::kCommandBuffer);
-  auto* command_buffer_thunk0 = static_cast<const CommandBufferThunk*>(thunk0);
+  const auto* command_buffer_thunk0 =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
   const auto& thunks_in_command_buffer0 =
       command_buffer_thunk0->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer0[0]->kind(), Thunk::kCopy);
+  EXPECT_THAT(thunks_in_command_buffer0, ThunkKindsAre(Thunk::kCopy));
 
-  EXPECT_EQ(root_thunk->thunks()[1]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(root_thunk->thunks()[2]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(root_thunk->thunks()[3]->kind(), Thunk::kAllGatherDone);
-
-  const Thunk* thunk4 = root_thunk->thunks()[4].get();
-  EXPECT_EQ(thunk4->kind(), Thunk::kCommandBuffer);
-  auto* command_buffer_thunk4 = static_cast<const CommandBufferThunk*>(thunk4);
+  const auto* command_buffer_thunk4 =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[4].get());
   const auto& thunks_in_command_buffer4 =
       command_buffer_thunk4->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer4[0]->kind(), Thunk::kCopy);
+  EXPECT_THAT(thunks_in_command_buffer4, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
   std::vector<std::unique_ptr<Thunk>> thunks;
   // Create a start thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
 
   // Create a done thunk
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
 
   // Convertible thunk in the middle
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc2(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc2));
 
   // Create a start thunk
-  thunks.push_back(CreateAllGatherStartThunk());
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
 
   // Create a done thunk
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
@@ -501,7 +539,7 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
   // Pack the thunks into a root thunk
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  EXPECT_EQ(root_thunk->thunks().size(), 5);
+  ASSERT_EQ(root_thunk->thunks().size(), 5);
 
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
@@ -510,35 +548,30 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   CommandBufferConversionPass pass;
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation:
   // SequentialThunk(AllGatherStartThunk0, CollectiveDoneThunk0, CopyThunk,
   // AllGatherStartThunk1, AllGatherDoneThunk1) ->
   // SequentialThunk(CommandBufferThunk(/*The same sequence of thunks*/))
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
-  const Thunk* thunk = root_thunk->thunks()[0].get();
-  EXPECT_EQ(thunk->kind(), Thunk::kCommandBuffer);
-
-  auto* command_buffer_thunk = static_cast<const CommandBufferThunk*>(thunk);
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
-  EXPECT_EQ(thunks_in_command_buffer.size(), 5);
-  EXPECT_EQ(thunks_in_command_buffer[0]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[1]->kind(), Thunk::kAllGatherDone);
-  EXPECT_EQ(thunks_in_command_buffer[2]->kind(), Thunk::kCopy);
-  EXPECT_EQ(thunks_in_command_buffer[3]->kind(), Thunk::kAllGatherStart);
-  EXPECT_EQ(thunks_in_command_buffer[4]->kind(), Thunk::kAllGatherDone);
+  EXPECT_THAT(
+      thunks_in_command_buffer,
+      ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kAllGatherDone, Thunk::kCopy,
+                    Thunk::kAllGatherStart, Thunk::kAllGatherDone));
 }
 
 TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
-  thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc0));
 
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
@@ -549,33 +582,35 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 
   se::DeviceDescription device_info;
 
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
 
   CommandBufferConversionPass pass;
 
   // The size of the sequence is less than the min graph size, so it should not
   // be converted to a command buffer.
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_FALSE(changed);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(false));
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
   CommandBufferConversionPass pass;
 
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
   // Create condition and branch sequences
   std::vector<std::unique_ptr<Thunk>> condition_thunks;
-  condition_thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  condition_thunks.push_back(CreateCopyThunk(alloc0));
 
   std::vector<std::unique_ptr<Thunk>> body_thunks;
-  body_thunks.push_back(CreateGemmThunk());
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  body_thunks.push_back(CreateGemmThunk(alloc1));
 
   // Create a while thunk
-  thunks.push_back(
-      CreateWhileThunk(std::move(condition_thunks), std::move(body_thunks)));
+  BufferAllocation alloc2(0, 1024, 0);
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks), alloc2));
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
   DebugOptions debug_options;
@@ -586,16 +621,14 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: (While({Copy}, {Gemm})) ->
   // (CommandBuffer(While({Copy}, {Gemm})))
-  EXPECT_EQ(root_thunk->thunks()[0]->kind(), Thunk::kCommandBuffer);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
   // Check the content of the command buffer thunk
   auto* command_buffer_thunk =
@@ -603,14 +636,14 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
   ASSERT_NE(command_buffer_thunk, nullptr);
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kWhile));
   auto* while_thunk_transformed =
       dynamic_cast<const WhileThunk*>(thunks_in_command_buffer[0].get());
   ASSERT_NE(while_thunk_transformed, nullptr);
-  EXPECT_EQ(
-      while_thunk_transformed->condition_thunk_sequence()->thunks()[0]->kind(),
-      Thunk::kCopy);
-  EXPECT_EQ(while_thunk_transformed->body_thunk_sequence()->thunks()[0]->kind(),
-            Thunk::kGemm);
+  EXPECT_THAT(while_thunk_transformed->condition_thunk_sequence()->thunks(),
+              ThunkKindsAre(Thunk::kCopy));
+  EXPECT_THAT(while_thunk_transformed->body_thunk_sequence()->thunks(),
+              ThunkKindsAre(Thunk::kGemm));
 }
 
 TEST(CommandBufferConversionPassTest,
@@ -618,14 +651,16 @@ TEST(CommandBufferConversionPassTest,
   CommandBufferConversionPass pass;
 
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
   // Create branch sequences
   std::vector<std::unique_ptr<Thunk>> branch0_thunks;
-  branch0_thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  branch0_thunks.push_back(CreateCopyThunk(alloc0));
 
   std::vector<std::unique_ptr<Thunk>> branch1_thunks;
-  branch1_thunks.push_back(CreateAllGatherStartThunk());
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  BufferAllocation alloc2(1, 16 * 4, 0);
+  branch1_thunks.push_back(CreateAllGatherStartThunk(alloc1, alloc2));
 
   // Create a conditional thunk
   std::vector<std::vector<std::unique_ptr<Thunk>>> branch_thunks;
@@ -642,36 +677,37 @@ TEST(CommandBufferConversionPassTest,
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_FALSE(changed);
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(false));
 
   // Expected no transformation, because one of the branches has an unclosed
   // async thunk => is not convertible.
-  EXPECT_EQ(root_thunk->thunks()[0]->kind(), Thunk::kConditional);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kConditional));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
   CommandBufferConversionPass pass;
 
   std::vector<std::unique_ptr<Thunk>> thunks;
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo();
 
   // Create condition and branch sequences
   std::vector<std::unique_ptr<Thunk>> condition_thunks;
-  condition_thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc0(0, 1024, 0);
+  condition_thunks.push_back(CreateCopyThunk(alloc0));
 
   std::vector<std::unique_ptr<Thunk>> body_thunks;
-  body_thunks.push_back(CreateAllGatherStartThunk());
-  body_thunks.push_back(CreateCopyThunk());
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  BufferAllocation alloc2(1, 16 * 4, 0);
+  body_thunks.push_back(CreateAllGatherStartThunk(alloc1, alloc2));
+  body_thunks.push_back(CreateCopyThunk(alloc0));
   body_thunks.push_back(CreateAllGatherDoneThunk(body_thunks[0].get()));
 
   // Create a while thunk
-  thunks.push_back(
-      CreateWhileThunk(std::move(condition_thunks), std::move(body_thunks)));
+  BufferAllocation alloc3(0, 1024, 0);
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks), alloc3));
   auto root_thunk =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
   DebugOptions debug_options;
@@ -682,17 +718,15 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, pass.Run(root_thunk.get(), debug_options, device_info));
-  EXPECT_TRUE(changed);
-  EXPECT_EQ(root_thunk->thunks().size(), 1);
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
 
   // Expected transformation: (While({Copy}, {AllGatherStart, Copy,
   // AllGatherDone})) -> (CommandBuffer(While({Copy}, {AllGatherStart, Copy,
   // AllGatherDone})))
-  EXPECT_EQ(root_thunk->thunks()[0]->kind(), Thunk::kCommandBuffer);
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
   // Check the content of the command buffer thunk
   auto* command_buffer_thunk =
@@ -700,18 +734,137 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
   ASSERT_NE(command_buffer_thunk, nullptr);
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kWhile));
   auto* while_thunk_transformed =
       dynamic_cast<const WhileThunk*>(thunks_in_command_buffer[0].get());
   ASSERT_NE(while_thunk_transformed, nullptr);
-  EXPECT_EQ(
-      while_thunk_transformed->condition_thunk_sequence()->thunks()[0]->kind(),
-      Thunk::kCopy);
-  EXPECT_EQ(while_thunk_transformed->body_thunk_sequence()->thunks()[0]->kind(),
-            Thunk::kAllGatherStart);
-  EXPECT_EQ(while_thunk_transformed->body_thunk_sequence()->thunks()[1]->kind(),
-            Thunk::kCopy);
-  EXPECT_EQ(while_thunk_transformed->body_thunk_sequence()->thunks()[2]->kind(),
-            Thunk::kAllGatherDone);
+  EXPECT_THAT(while_thunk_transformed->condition_thunk_sequence()->thunks(),
+              ThunkKindsAre(Thunk::kCopy));
+  EXPECT_THAT(while_thunk_transformed->body_thunk_sequence()->thunks(),
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kCopy,
+                            Thunk::kAllGatherDone));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsLegacyCustomCallToCommandBufferThunk) {
+  std::vector<std::unique_ptr<Thunk>> thunks;
+  thunks.push_back(CreateCustomCallThunk("test_legacy_custom_call"));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  DebugOptions debug_options;
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  debug_options.add_legacy_command_buffer_custom_call_targets(
+      "test_legacy_custom_call");
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
+
+  CommandBufferConversionPass pass;
+
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCustomCall));
+}
+
+TEST(CommandBufferConversionPassTest, ConvertsCuDnnThunkToCommandBufferThunk) {
+  std::vector<std::unique_ptr<Thunk>> thunks;
+
+  // Create a CuDnnThunk
+  BufferAllocation alloc0(0, 1024, 0);
+  thunks.push_back(CreateCuDnnThunk(alloc0));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  DebugOptions debug_options;
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
+
+  CommandBufferConversionPass pass;
+
+  // The expected transformation is: SequentialThunk(CuDnnThunk) ->
+  // SequentialThunk(CommandBufferThunk(CuDnnThunk))
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCuDnn));
+}
+TEST(CommandBufferConversionPassTest, ConvertTheBodyOfWhileThunk) {
+  CommandBufferConversionPass pass;
+
+  std::vector<std::unique_ptr<Thunk>> thunks;
+
+  // Create condition and branch sequences
+  std::vector<std::unique_ptr<Thunk>> condition_thunks;
+  BufferAllocation alloc0(0, 1024, 0);
+  condition_thunks.push_back(CreateCopyThunk(alloc0));
+
+  std::vector<std::unique_ptr<Thunk>> body_thunks;
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  BufferAllocation alloc2(1, 16 * 4, 0);
+  BufferAllocation alloc3(1, 16 * 4, 0);
+  // Add one non-convertible thunk to the body.
+  body_thunks.push_back(CreateAllGatherStartThunk(alloc1, alloc2));
+  body_thunks.push_back(CreateGemmThunk(alloc3));
+
+  // Create a while thunk
+  BufferAllocation alloc4(0, 1024, 0);
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks), alloc4));
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  DebugOptions debug_options;
+
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  ASSERT_EQ(root_thunk->thunks().size(), 1);
+
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info),
+              IsOkAndHolds(true));
+
+  // While thunk is not converted itself, because it has a non-convertible thunk
+  // in its body, but the body is partially converted. Expected transformation:
+  // (While({Copy}, {AllGatherStart,Gemm})) ->
+  // ((While({Copy}, {AllGatherStart, CommandBuffer(Gemm))})))
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kWhile));
+
+  // Check the content of the while thunk
+  auto* while_thunk =
+      dynamic_cast<const WhileThunk*>(root_thunk->thunks()[0].get());
+  ASSERT_NE(while_thunk, nullptr);
+  const auto& thunks_in_while_thunk_body =
+      while_thunk->body_thunk_sequence()->thunks();
+  EXPECT_THAT(thunks_in_while_thunk_body,
+              ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kCommandBuffer));
+  auto* command_buffer_thunk = dynamic_cast<const CommandBufferThunk*>(
+      thunks_in_while_thunk_body[1].get());
+  ASSERT_NE(command_buffer_thunk, nullptr);
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kGemm));
 }
 
 }  // namespace

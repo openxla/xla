@@ -196,13 +196,13 @@ TEST_F(ClientServerTest, ConnectAndEnumerateDevices) {
   node0->mutable_devices(0)->set_global_device_id(0);
   node0->mutable_devices(1)->set_global_device_id(1);
   node0->mutable_devices(2)->set_global_device_id(2);
-  node0->mutable_devices(0)->set_slice_index(0);
-  node0->mutable_devices(1)->set_slice_index(0);
-  node0->mutable_devices(2)->set_slice_index(0);
+  node0->mutable_devices(0)->set_partition_index(0);
+  node0->mutable_devices(1)->set_partition_index(0);
+  node0->mutable_devices(2)->set_partition_index(0);
   *node1 = locals[1];
   node1->set_boot_id(host_1_boot_id);
   node1->mutable_devices(0)->set_global_device_id(3);
-  node1->mutable_devices(0)->set_slice_index(1);
+  node1->mutable_devices(0)->set_partition_index(1);
 
   // Used to ensure that thread0's client sends their device after thread1's
   // client. This ensures that devices are sent out of turn (compared to their
@@ -292,11 +292,13 @@ TEST_F(ClientServerTest, EnumerateElevenDevices) {
     device->set_vendor("test_vendor");
   }
   GlobalTopologyProto expected_topology;
+  int slice_0_global_id = 0, slice_1_global_id = num_nodes / 2 + 1;
   for (int i = 0; i < num_nodes; ++i) {
     auto* node = expected_topology.add_nodes();
     *node = locals[i];
-    node->mutable_devices(0)->set_global_device_id(i);
-    node->mutable_devices(0)->set_slice_index(i % 2);
+    node->mutable_devices(0)->set_global_device_id(
+        (i % 2 == 0) ? slice_0_global_id++ : slice_1_global_id++);
+    node->mutable_devices(0)->set_partition_index(i % 2);
   }
 
   auto thread_fn = [&](int node_id) -> absl::Status {

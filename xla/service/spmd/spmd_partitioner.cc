@@ -215,8 +215,21 @@ bool ShouldKeepSharding(const HloInstruction* hlo) {
 absl::Status ClearShardingAttributes(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  auto has_unreduced_axes = [](const HloInstruction* hlo) -> bool {
+    return hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
+  };
+  for (int64_t i = 0; i < module->entry_computation()->num_parameters(); ++i) {
+    // Recover the unreduced sharding for parameters.
+    auto param = module->entry_computation()->parameter_instruction(i);
+    if (has_unreduced_axes(param)) {
+      param->set_sharding(module->spmd_parameters_shardings()[i]);
+    }
+  }
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
+      if (has_unreduced_axes(hlo)) {
+        hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
+      }
       if (ShouldKeepSharding(hlo)) {
         continue;
       }
@@ -2631,20 +2644,8 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
     return sharding;
   };
 
-  const bool has_manual_sharding =
-      hlo->sharding().IsManual() ||
-      (hlo->sharding().IsTuple() &&
-       absl::c_any_of(
-           hlo->sharding().tuple_elements(),
-           [](const HloSharding& sharding) { return sharding.IsManual(); }));
-  const bool has_manual_subgroup =
-      hlo->sharding().IsManualSubgroup() ||
-      (hlo->sharding().IsTuple() &&
-       absl::c_any_of(hlo->sharding().tuple_elements(),
-                      [](const HloSharding& sharding) {
-                        return sharding.IsManualSubgroup();
-                      }));
-  if (has_manual_sharding && !hlo->IsCustomCall("SPMDFullToShardShape")) {
+  if (hlo->sharding().IsManual() &&
+      !hlo->IsCustomCall("SPMDFullToShardShape")) {
     visiting_hlo_sharding_ = hlo->sharding();
     auto get_sharding_shape = [](const HloInstruction* hlo) {
       if (hlo->opcode() != HloOpcode::kOutfeed) {
@@ -2666,7 +2667,7 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
           hlo->opcode(), get_sharding_shape(operand), operand->sharding()));
       GetPartitionedHlo(operand).hlo()->copy_sharding(operand);
     }
-  } else if (has_manual_subgroup &&
+  } else if (hlo->sharding().IsManualSubgroup() &&
              !hlo->IsCustomCall("SPMDFullToShardShape") &&
              !hlo->IsCustomCall("SPMDShardToFullShape") &&
              hlo->opcode() != HloOpcode::kGetTupleElement) {
@@ -3206,6 +3207,9 @@ absl::Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
+  if (sharding.IsTileMaximal()) {
+    return DefaultAction(hlo);
+  }
 
   const Shape& in_shape = hlo->operand(0)->shape();
   const Shape& out_shape = hlo->shape();
@@ -5524,6 +5528,9 @@ absl::StatusOr<bool> SpmdPartitioner::Run(
   XLA_VLOG_LINES(1, SpmdLogger::ReportBeforePartition(
                         *module, options_.report_instruction_count));
   RecordInputsOutputsSharding(module);
+  // Convert unreduced sharding after recording inputs/output onto module so
+  // that unreduced sharding can be recovered at the end of this pass.
+  TF_RETURN_IF_ERROR(ConvertUnreducedSharding(module, execution_threads));
 
   FlattenCallGraph flatten;
   TF_ASSIGN_OR_RETURN(auto changed, flatten.Run(module));
@@ -5679,6 +5686,61 @@ absl::Status SpmdPartitioner::PreprocessSharding(
     }
   }
 
+  return absl::OkStatus();
+}
+
+absl::Status SpmdPartitioner::ConvertUnreducedSharding(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  for (HloComputation* computation : module->computations(execution_threads)) {
+    for (HloInstruction* hlo : computation->instructions()) {
+      const HloSharding& sharding = hlo->sharding();
+      auto convert_unreduced_sharding =
+          [](HloInstruction* hlo, const HloSharding& sharding) -> HloSharding {
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        return HloSharding::Replicate();
+      };
+      auto convert_unreduced_subgroup_sharding =
+          [](HloInstruction* hlo,
+             const HloSharding& sharding) -> absl::StatusOr<HloSharding> {
+        // TODO(b/438306205, b/438308782): Remove this check once the unreduced
+        // subgroup sharding is compatible with manual and replicated.
+        TF_RET_CHECK(!sharding.HasPartialReplication() &&
+                     !sharding.IsManualSubgroup())
+            << "Incompatible unreduced sharding at " << hlo->ToString();
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        return HloSharding::PartialTile(sharding.tile_assignment(),
+                                        sharding.metadata());
+      };
+      if (sharding.IsTuple()) {
+        std::vector<HloSharding> subshardings = sharding.tuple_elements();
+        bool should_convert = false;
+        for (HloSharding& subsharding : subshardings) {
+          if (subsharding.IsUnreduced()) {
+            subsharding = convert_unreduced_sharding(hlo, subsharding);
+            should_convert = true;
+          } else if (subsharding.IsUnreducedSubgroup()) {
+            TF_ASSIGN_OR_RETURN(
+                subsharding,
+                convert_unreduced_subgroup_sharding(hlo, subsharding));
+            should_convert = true;
+          }
+        }
+        if (should_convert) {
+          hlo->set_sharding(HloSharding::Tuple(hlo->shape(), subshardings));
+        }
+      } else {
+        if (sharding.IsUnreduced()) {
+          hlo->set_sharding(convert_unreduced_sharding(hlo, sharding));
+        } else if (sharding.IsUnreducedSubgroup()) {
+          TF_ASSIGN_OR_RETURN(
+              HloSharding new_sharding,
+              convert_unreduced_subgroup_sharding(hlo, sharding));
+          hlo->set_sharding(new_sharding);
+        }
+      }
+    }
+  }
   return absl::OkStatus();
 }
 

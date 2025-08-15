@@ -214,9 +214,6 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
 
 absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                                     int64_t operand_idx) {
-  if (Cast<HloDotInstruction>(&dot)->sparse_operands()) {
-    return false;
-  }
   TF_RET_CHECK(dot.opcode() == HloOpcode::kDot);
   TF_RET_CHECK(dot.operand_count() > operand_idx);
 
@@ -889,7 +886,7 @@ bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
   }
 }
 
-PrimitiveType GetGemmAccumulatorType(HloDotInstruction* dot) {
+PrimitiveType GetGemmAccumulatorType(const HloDotInstruction* dot) {
   // Return the accumulator type if it is explicitly specified as dot algorithm.
   auto accumulator_type = algorithm_util::GetDotAccumulatorType(
       dot->precision_config().algorithm());

@@ -127,9 +127,7 @@ cc_library(
         "//xla/service/spmd/shardy/round_trip_common:pipeline_passes",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
@@ -147,6 +145,7 @@ xla_cc_test(
     srcs = ["stablehlo_import_test.cc"],
     deps = [
         ":stablehlo_import",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",

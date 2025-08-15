@@ -1262,14 +1262,15 @@ xla_cc_test(
             ":xla_proto_cc",
             "//xla/service:dump",
             "//xla/tsl/platform:env",
-            "//xla/tsl/platform:status_matchers",
             "//xla/tsl/platform:test",
             "//xla/tsl/util:command_line_flags",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/status",
+            "@com_google_absl//absl/status:status_matchers",
             "@com_google_absl//absl/status:statusor",
             "@com_google_absl//absl/strings",
             "@com_google_googletest//:gtest",
+            "@tsl//tsl/platform:protobuf",
         ],
 )
 
@@ -1411,6 +1412,7 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
     ],
 )

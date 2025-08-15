@@ -747,7 +747,13 @@ INSTANTIATE_TEST_SUITE_P(
         std::make_pair(PrimitiveType::F8E4M3FN, PrimitiveType::F8E4M3FN),
         std::make_pair(PrimitiveType::F8E5M2, PrimitiveType::F8E4M3FN),
         std::make_pair(PrimitiveType::F8E4M3FN, PrimitiveType::F8E5M2),
-        std::make_pair(PrimitiveType::F8E5M2, PrimitiveType::F8E5M2)));
+        std::make_pair(PrimitiveType::F8E5M2, PrimitiveType::F8E5M2)),
+    [](const ::testing::TestParamInfo<FloatNormalizationTest::ParamType>&
+           info) {
+      return absl::StrCat(
+          primitive_util::LowercasePrimitiveTypeName(info.param.first), "_",
+          primitive_util::LowercasePrimitiveTypeName(info.param.second));
+    });
 
 TEST_P(FloatNormalizationTest, Fp8Normalization) {
   const PrimitiveType lhs_type = GetParam().first;
@@ -1825,7 +1831,7 @@ TEST_F(GpuCompilerTest,
                                                .set_print_operand_shape(false)
                                                .set_print_metadata(false)),
                    kExpected),
-      ::tsl::testing::IsOkAndHolds(true));
+      absl_testing::IsOkAndHolds(true));
 
   if (test_runner().device_count() < 2) {
     GTEST_SKIP() << "Skipping test as it requires at least 2 devices.";
@@ -1869,7 +1875,7 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
     // CHECK: ENTRY
   )";
   EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
-              ::tsl::testing::IsOkAndHolds(true));
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -39,6 +40,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -58,6 +60,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_permute_cycle.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/source_target_pairs.h"
 #include "xla/shape.h"
@@ -213,34 +216,13 @@ absl::Status ShapeVerifier::HandleCopy(HloInstruction* copy) {
 }
 
 absl::Status ShapeVerifier::HandleDot(HloInstruction* dot) {
-  auto sparsity = Cast<HloDotInstruction>(dot)->sparsity();
-  TF_RETURN_IF_ERROR(
-      CheckOperandCount(dot, HloDotInstruction::kOperands + sparsity.size()));
   TF_ASSIGN_OR_RETURN(
       const Shape expected,
       ShapeInference::InferDotOpShape(
           dot->operand(0)->shape(), dot->operand(1)->shape(),
           dot->dot_dimension_numbers(),
-          /*preferred_element_type=*/dot->shape().element_type(), sparsity));
+          /*preferred_element_type=*/dot->shape().element_type()));
 
-  for (int i = 0; i < sparsity.size(); ++i) {
-    const SparsityDescriptor& descriptor = sparsity[i];
-    TF_RET_CHECK(descriptor.index() == 0 || descriptor.index() == 1);
-    TF_ASSIGN_OR_RETURN(const Shape expected_metadata_shape,
-                        ShapeInference::InferSparseDotMetadataShape(
-                            dot->operand(descriptor.index())->shape(),
-                            dot->dot_dimension_numbers(), descriptor));
-    const Shape actual_metadata_shape =
-        dot->operand(HloDotInstruction::kOperands + i)->shape();
-    if (!ShapeUtil::Compatible(actual_metadata_shape,
-                               expected_metadata_shape)) {
-      return Internal(
-          "Expected sparse dot metadata to have shape equal to %s, actual "
-          "shape is %s:\n%s",
-          StringifyShape(expected_metadata_shape),
-          StringifyShape(actual_metadata_shape), dot->ToString());
-    }
-  }
   return CheckShape(dot, expected);
 }
 
@@ -255,6 +237,114 @@ absl::Status ShapeVerifier::HandleRaggedDot(HloInstruction* ragged_dot) {
           ragged_dot->ragged_dot_dimension_numbers(),
           /*preferred_element_type=*/ragged_dot->shape().element_type()));
   return CheckShape(ragged_dot, expected);
+}
+
+// Check that the scale operand is a constant and equal to 1. This is the
+// magic number for the case when we have no scales for the operand.
+absl::StatusOr<bool> IsNoOpScale(const HloInstruction* dot,
+                                 const HloInstruction* operand,
+                                 const HloInstruction* scale_operand) {
+  // It should be a constant scalar.
+  if (!ShapeUtil::IsScalar(scale_operand->shape()) ||
+      scale_operand->opcode() != HloOpcode::kConstant) {
+    return false;
+  }
+  // If the scale operand is a constant, it must be a scalar of the same type
+  // as the operand.
+  if (scale_operand->shape().element_type() !=
+      operand->shape().element_type()) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "Dummy scale operand '%s' has a different type than operand '%s'. %s "
+        "vs %s in %s",
+        scale_operand->name(), operand->name(),
+        PrimitiveType_Name(scale_operand->shape().element_type()),
+        PrimitiveType_Name(operand->shape().element_type()), dot->ToString()));
+  }
+  auto constant = Cast<HloConstantInstruction>(scale_operand);
+
+  // If the element type is float, the scale must be 1.0.
+  if (primitive_util::IsFloatingPointType(operand->shape().element_type())) {
+    if (!constant->literal().IsAllFloat(1.0)) {
+      return absl::FailedPreconditionError(absl::StrFormat(
+          "Dummy scale operand %s of %s is not a scalar with value 1.0",
+          scale_operand->name(), dot->ToString()));
+    }
+    return true;  // Dummy constant scale equal to 1.0 with float type found.
+  }
+
+  // If the element type is not float, the scale must be 1.
+  if (!constant->literal().IsAll(1)) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "Dummy scale operand %s of %s is not a constant with value 1",
+        scale_operand->name(), dot->ToString()));
+  }
+  return true;  // Dummy constant scale equal to 1 with integer type found.
+}
+
+absl::Status ScalesShapeVerifier(
+    HloInstruction* dot, const std::array<DotOperandDims, 4>& dim_numbers,
+    int64_t operand_number, int64_t scale_operand_number) {
+  const HloInstruction* operand = dot->operand(operand_number);
+  const HloInstruction* scale_operand = dot->operand(scale_operand_number);
+
+  TF_ASSIGN_OR_RETURN(bool is_dummy_scale,
+                      IsNoOpScale(dot, operand, scale_operand));
+  if (is_dummy_scale) {
+    return absl::OkStatus();
+  }
+
+  // Check that the operand and scale ranks are the same.
+  if (scale_operand->shape().dimensions().size() !=
+      operand->shape().dimensions().size()) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "Scale operand %s has a different number of dimensions than "
+        "operand %s in %s",
+        scale_operand->name(), operand->name(), dot->ToString()));
+  }
+
+  // Check that the contracting dimension of the _operand_ has exactly one
+  // dimension.
+  if (dim_numbers[operand_number].DimensionCount(
+          DotOperandDims::kContracting) != 1) {
+    return Internal(
+        "Contracting dimensions must have exactly one dimension in instruction "
+        "%s",
+        dot->ToString());
+  }
+  auto operand_dims = operand->shape().dimensions();
+  auto scale_operand_dims = scale_operand->shape().dimensions();
+  for (int i = 0; i < operand_dims.size(); ++i) {
+    if (operand_dims[i] % scale_operand_dims[i]) {
+      return absl::FailedPreconditionError(absl::StrFormat(
+          "Dimension %d of operand %s should be a multiple of dimension "
+          "%d of scale operand %s in %s",
+          i, operand->name(), i, scale_operand->name(), dot->ToString()));
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ShapeVerifier::HandleScaledDot(HloInstruction* scaled_dot) {
+  TF_RETURN_IF_ERROR(
+      CheckOperandCount(scaled_dot, HloScaledDotInstruction::kOperands));
+
+  TF_ASSIGN_OR_RETURN(auto dim_numbers,
+                      DotOperandDims::FromScaledDot(scaled_dot));
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 0, 1));
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 2, 3));
+  if (ShapeUtil::IsScalar(scaled_dot->operand(1)->shape()) &&
+      ShapeUtil::IsScalar(scaled_dot->operand(3)->shape())) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "At least one of the scales should be not a scalar in %s",
+        scaled_dot->ToString()));
+  }
+  TF_ASSIGN_OR_RETURN(
+      const Shape expected,
+      ShapeInference::InferDotOpShape(
+          scaled_dot->operand(0)->shape(), scaled_dot->operand(2)->shape(),
+          scaled_dot->dot_dimension_numbers(),
+          /*preferred_element_type=*/scaled_dot->shape().element_type()));
+  return CheckShape(scaled_dot, expected);
 }
 
 absl::Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
@@ -1289,8 +1379,10 @@ absl::Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
     if (!ShapesSame(fused_param->shape(), fusion->operand(param_no)->shape())) {
       return Internal(
           "Shape mismatch between parameter number %d and its operand in "
-          "%s.",
-          param_no, fusion->ToString().c_str());
+          "%s. (%s != %s)",
+          param_no, fusion->ToString().c_str(),
+          fused_param->shape().ToString(true),
+          fusion->operand(param_no)->shape().ToString(true));
     }
   }
   const HloFusionInstruction* casted_fusion =
@@ -2554,14 +2646,16 @@ absl::Status HandleRecvInstruction(const HloInstruction* instruction,
 absl::Status VerifyNoCollectiveDeadlocks(const HloModule& module) {
   DfaState current_state = DfaState::kNoException;
   const HloInstruction* current_instruction = nullptr;
-  for (const HloComputation* computation : module.computations()) {
-    for (const HloInstruction* instruction : computation->instructions()) {
+  // TODO: b/434020459 - start the static verification in ENTRY and run the
+  // function recursively instead of iterating through all computations
+  // serially
+
+  for (auto& [computation_id, sequence] : module.schedule().sequences()) {
+    for (const HloInstruction* instruction : sequence.instructions()) {
       switch (instruction->opcode()) {
         case HloOpcode::kSend:
           TF_RETURN_IF_ERROR(HandleSendInstruction(instruction, current_state,
                                                    current_instruction));
-          break;
-          // Handles Recv instructions.
           break;
         case HloOpcode::kRecv:
           TF_RETURN_IF_ERROR(HandleRecvInstruction(instruction, current_state,
@@ -2659,32 +2753,29 @@ absl::Status VerifyOriginalValue(const HloModule& module) {
 // collectives).
 absl::Status VerifyChannels(const HloModule& module,
                             const HloVerifierOpts& opts) {
-  // Send/recv instruction must have a unique user. If it is the corresponding
-  // send-done/recv-done operation, channel IDs must match.
+  // 1) Send/recv instruction must have a unique user. If it is the
+  // corresponding send-done/recv-done operation, channel IDs must match.
+  // 2) Host-transfer send/recv instructions that use the same channel must be
+  // exactly the same up to having different operands (but the operands must
+  // still have the same shapes).
+  absl::flat_hash_map<int64_t, std::vector<const HloSendRecvInstruction*>>
+      channel_to_host_transfer_send_recv_instructions;
   for (const HloComputation* computation : module.computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
-      auto channel_instr = DynCast<HloChannelInstruction>(instruction);
-      if (!channel_instr || !channel_instr->channel_id()) {
+      auto send_recv_instr = DynCast<HloSendRecvInstruction>(instruction);
+      if (!send_recv_instr || !send_recv_instr->channel_id()) {
         continue;
       }
 
       switch (instruction->opcode()) {
-        case HloOpcode::kSend: {
-          // If the instruction is kSend or kRecv, it can have no users if and
-          // only if it is wrapped in an async call.
-          if (instruction->IsRoot() &&
-              instruction->parent()->IsAsyncComputation()) {
-            break;
-          }
-          TF_RET_CHECK(instruction->users().size() == 1);
-          const HloInstruction* send_done = instruction->users().front();
-          if (send_done->opcode() == HloOpcode::kSendDone) {
-            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, send_done));
-            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, send_done));
-          }
-          break;
-        }
+        case HloOpcode::kSend:
         case HloOpcode::kRecv: {
+          if (send_recv_instr->is_host_transfer() &&
+              send_recv_instr->channel_id().has_value()) {
+            channel_to_host_transfer_send_recv_instructions
+                [send_recv_instr->channel_id().value()]
+                    .push_back(send_recv_instr);
+          }
           // If the instruction is kSend or kRecv, it can have no users if and
           // only if it is wrapped in an async call.
           if (instruction->IsRoot() &&
@@ -2692,10 +2783,13 @@ absl::Status VerifyChannels(const HloModule& module,
             break;
           }
           TF_RET_CHECK(instruction->users().size() == 1);
-          const HloInstruction* recv_done = instruction->users().front();
-          if (recv_done->opcode() == HloOpcode::kRecvDone) {
-            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, recv_done));
-            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, recv_done));
+          auto done_opcode = instruction->opcode() == HloOpcode::kSend
+                                 ? HloOpcode::kSendDone
+                                 : HloOpcode::kRecvDone;
+          const HloInstruction* done = instruction->users().front();
+          if (done->opcode() == done_opcode) {
+            TF_RETURN_IF_ERROR(CheckSameChannel(instruction, done));
+            TF_RETURN_IF_ERROR(CheckSameIsHostTransfer(instruction, done));
           }
           break;
         }
@@ -2709,6 +2803,27 @@ absl::Status VerifyChannels(const HloModule& module,
     }
   }
 
+  for (const auto& [channel, send_recv_instructions] :
+       channel_to_host_transfer_send_recv_instructions) {
+    if (send_recv_instructions.size() > 1) {
+      const HloSendRecvInstruction* reference = send_recv_instructions[0];
+      for (const HloSendRecvInstruction* send_recv_instruction :
+           send_recv_instructions) {
+        auto eq_operand_shapes = [](const HloInstruction* a,
+                                    const HloInstruction* b) {
+          return ShapeUtil::Equal(a->shape(), b->shape());
+        };
+        if (!reference->Identical(*send_recv_instruction, eq_operand_shapes)) {
+          return Internal(
+              "Host-transfer send/recv instructions that use the same channel "
+              "must be identical up to having different operands. Found "
+              "different instructions with the same channel ID: \n%s \nvs "
+              "\n%s.",
+              reference->ToString(), send_recv_instruction->ToString());
+        }
+      }
+    }
+  }
   return absl::OkStatus();
 }
 

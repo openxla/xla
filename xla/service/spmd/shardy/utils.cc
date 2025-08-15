@@ -48,6 +48,8 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/extensions/mhlo_extensions.h"
@@ -375,13 +377,19 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module) {
         if (func.getArgAttr(argIndex, sdy::kXlaShardingAttr) &&
             !func.getArgAttr(argIndex, mlir::sdy::kShardingAttr) &&
             !hasKey(sdy::getFuncArgFrontendAttrs(func, argIndex),
-                    sdy::kShardingRoundTripAttr)) {
+                    xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
           return true;
         }
       }
-      if (areFuncResultShardingsForGspmd(func)) {
-        return true;
-      }
+    }
+    // We check for the module level kOutTupleShardings attribute because there
+    // are cases where Shardy shardings are not added to the results of
+    // XlaCallModule function. This is likely acceptable as these functions are
+    // intended to be inlined. If kOutTupleShardings is set, it indicates that
+    // we have added support for Shardy shardings on the wrapper main in tf2xla.
+    if (!hasKey(sdy::getFrontendAttrs(module), sdy::kOutTupleShardings) &&
+        areFuncResultShardingsForGspmd(func)) {
+      return true;
     }
     bool hasGspmd = false;
     // Check the func for a `Sharding` custom call.
@@ -390,7 +398,9 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module) {
               sdy::kShardingCustomCallTargetName &&
           customCall->hasAttr(sdy::kXlaShardingAttr) &&
           !customCall->hasAttr(mlir::sdy::kShardingAttr) &&
-          !hasFrontendAttr(customCall, sdy::kShardingRoundTripAttr)) {
+          !hasFrontendAttr(
+              customCall,
+              xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
         hasGspmd = true;
         return mlir::WalkResult::interrupt();
       }

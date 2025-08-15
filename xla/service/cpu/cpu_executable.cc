@@ -131,6 +131,12 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
       executable->thunks_,
       ThunkExecutor::Create(std::move(thunks), thunk_executor_options));
 
+  // Find if the thunk sequence contains any XNN fusion thunks. If we do have
+  // any, we will prepare the XNNPACK thread pool for them at run time.
+  executable->thunks_->thunk_sequence().ForEach([&](const Thunk& thunk) {
+    executable->has_xnn_fusions_ |= thunk.kind() == Thunk::Kind::kXnnFusion;
+  });
+
   // Re-index constants by their allocation index to allow efficient lookup.
   for (auto& constant : constants) {
     if (executable->constants_.size() <= constant.index) {
@@ -312,6 +318,12 @@ absl::Status CpuExecutable::ExecuteThunks(
   TF_ASSIGN_OR_RETURN(Thunk::CustomCallExecuteParams custom_call_execute_params,
                       Thunk::CustomCallExecuteParams::Create(run_options));
 
+  // Prepare for executing XNNPACK fusions.
+  std::optional<Thunk::XnnParams> xnn_params;
+  if (has_xnn_fusions()) {
+    TF_ASSIGN_OR_RETURN(xnn_params, Thunk::XnnParams::Create(run_options));
+  }
+
   // Use the intra-op thread pool to offload thunk executor tasks.
   auto* intra_op_thread_pool = run_options->intra_op_thread_pool();
   ThreadPoolTaskRunner task_runner(
@@ -324,7 +336,8 @@ absl::Status CpuExecutable::ExecuteThunks(
       intra_op_thread_pool,
       &task_runner,
       &collective_execute_params,
-      &custom_call_execute_params};
+      &custom_call_execute_params,
+      xnn_params ? &*xnn_params : nullptr};
 
   auto executed_event = thunks_->Execute(execute_params);
 

@@ -53,9 +53,9 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "xla/codegen/math/fptrunc.h"
-#include "xla/codegen/math/intrinsic.h"
-#include "xla/codegen/math/log1p.h"
+#include "xla/codegen/intrinsic/fptrunc.h"
+#include "xla/codegen/intrinsic/intrinsic.h"
+#include "xla/codegen/intrinsic/log1p.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1338,7 +1338,10 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
       }
       if (from_type == F8E5M2) {
         TF_RET_CHECK(to_type != F8E5M2);
-        operand_value = EmitF8e5m2ToF16(operand_value, b_);
+        llvm::Function* fptrunc =
+            codegen::intrinsics::FpTrunc::GetOrInsertDeclaration(
+                module_, IntrinsicType::S(F8E5M2), IntrinsicType::S(F16));
+        operand_value = b_->CreateCall(fptrunc, {operand_value});
         from_type = F16;
         if (from_type == to_type) {
           return operand_value;
@@ -3603,10 +3606,6 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
     return absl::InvalidArgumentError(absl::StrFormat(
         "Algorithm not supported by the ElementalIrEmitter: %s",
         PrecisionConfig::Algorithm_Name(hlo->precision_config().algorithm())));
-  }
-  const HloDotInstruction* dot = Cast<HloDotInstruction>(hlo);
-  if (dot->sparse_operands()) {
-    return Unimplemented("Sparse dot is supported by Triton emitter only.");
   }
 
   auto lhs_generator = operand_to_generator.at(hlo->operand(0));

@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -95,6 +94,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
@@ -473,12 +473,11 @@ absl::Status DumpOriginalFusion(AutotunerCompileUtil& util,
   return absl::OkStatus();
 }
 
-absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
-                                 const se::SemanticVersion& toolkit_version,
-                                 AutotunerCompileUtil& util,
-                                 const AutotuneResult result,
-                                 const HloFusionInstruction* fusion,
-                                 int fusion_id) {
+absl::StatusOr<std::unique_ptr<HloModule>> GetAutotunedModule(
+    const AutotuneConfig& autotune_config,
+    const se::SemanticVersion& toolkit_version, AutotunerCompileUtil& util,
+    const AutotuneResult result, const HloFusionInstruction* fusion,
+    int fusion_id) {
   TritonGemmConfig triton_gemm_config;
   if (result.has_triton()) {
     TF_ASSIGN_OR_RETURN(triton_gemm_config,
@@ -510,17 +509,7 @@ absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
         LOG(FATAL) << "Unknown result type: " << result.DebugString();
       }));
   module->set_name(std::string(fusion->name()));
-  // Using the original module for its debug info and name in the first
-  // parameter. It's better to include the name of both the original module
-  // and the extracted module, to avoid name clashes.
-  DumpToFileInDirOrStdout(
-      /*module=*/*fusion->GetModule(),
-      /*file_prefix=*/"",
-      /*file_suffix=*/
-      absl::StrCat("gemm_fusion_", fusion_id, ".", module->name(),
-                   ".optimized.txt"),
-      /*contents=*/module->ToString());
-  return absl::OkStatus();
+  return module;
 }
 
 std::string ConfigToString(const BackendConfig& config) {
@@ -563,7 +552,9 @@ absl::Status RewriteGemmFusionToCall(HloInstruction* fusion_instr) {
       computation->AddInstruction(HloInstruction::CreateCall(
           fusion_instr->shape(), fusion_instr->operands(),
           fusion_instr->fused_instructions_computation()));
-  return computation->ReplaceInstruction(fusion_instr, call);
+  TF_RETURN_IF_ERROR(computation->ReplaceInstruction(fusion_instr, call));
+  call->set_metadata_op_name("");
+  return absl::OkStatus();
 }
 
 absl::Status RewriteGemmFusionToCustomKernelFusion(
@@ -579,6 +570,7 @@ absl::Status RewriteGemmFusionToCustomKernelFusion(
           fusion_instr->shape(), fusion_instr->operands(),
           fusion_instr->fused_instructions_computation()));
   TF_RETURN_IF_ERROR(computation->ReplaceInstruction(fusion_instr, call));
+  call->set_metadata_op_name("");
   HloPassPipeline pipeline("autotuner_custom_kernel_fusion_rewriter");
   pipeline.AddPass<CallInliner>();
   pipeline.AddPass<CustomKernelFusionRewriter>(&device_description,
@@ -597,6 +589,35 @@ absl::Status HandleTritonGemm(HloInstruction* fusion_instr,
     TF_RETURN_IF_ERROR(MakeDotSplitKBatch(fusion_instr, config));
   }
   return absl::OkStatus();
+}
+
+// Returns the string representation of the selected GEMM backend.
+// Used for logging purposes, do not rely on the values.
+std::string GetSelectedGemmBackendAsString(const HloModule* module) {
+  if (module == nullptr) {
+    return "";
+  }
+  // We are looking for the first (and it should be the only) custom call or
+  // fusion with gpu backend config in the entry computation.
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kCustomCall) {
+      return instruction->custom_call_target();
+    }
+    if (instruction->opcode() == HloOpcode::kFusion) {
+      auto fusion = Cast<HloFusionInstruction>(instruction);
+      if (!fusion->IsCustomFusion()) {
+        continue;
+      }
+      absl::StatusOr<GpuBackendConfig> gpu_config =
+          fusion->backend_config<GpuBackendConfig>();
+      if (!gpu_config.ok()) {
+        continue;
+      }
+      return gpu_config->fusion_backend_config().kind();
+    }
+  }
+  return "";
 }
 
 }  // anonymous namespace
@@ -799,7 +820,7 @@ GemmFusionAutotunerImpl::GenerateConfigs(const HloFusionInstruction& fusion) {
     if (algorithm_util::IsSupportedByCublasOrCublasLt(
             dot->precision_config().algorithm(), GetComputeCapability(), dot,
             rhs_contracting_index) &&
-        !dot->sparse_operands() && IsAutotuningEnabled()) {
+        IsAutotuningEnabled()) {
       configs.push_back(CuBlasConfig{});
     }
 
@@ -844,7 +865,8 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
 
   // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
   bool autotune_tma = debug_options_.xla_gpu_experimental_enable_triton_tma() &&
-                      IsTmaEnabledForDevice(config_.GetDeviceDescription());
+                      stream_executor::gpu::IsTmaAvailableForDevice(
+                          config_.GetDeviceDescription());
   TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(), &dot);
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -1237,9 +1259,26 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
     VLOG(2) << "Best time: "
             << tsl::proto_utils::FromDurationProto(best.run_time());
 
+    std::unique_ptr<HloModule> module;
+    if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions() ||
+        !debug_options_.xla_gpu_dump_autotune_logs_to().empty()) {
+      TF_ASSIGN_OR_RETURN(
+          module, GetAutotunedModule(config_, toolkit_version_, compile_util,
+                                     best, fusion, fusion_id));
+    }
+
     if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
-      TF_RETURN_IF_ERROR(DumpAutotunedFusion(
-          config_, toolkit_version_, compile_util, best, fusion, fusion_id++));
+      DCHECK(module != nullptr);
+      // Using the original module for its debug info and name in the first
+      // parameter. It's better to include the name of both the original module
+      // and the extracted module, to avoid name clashes.
+      DumpToFileInDirOrStdout(
+          /*module=*/*fusion->GetModule(),
+          /*file_prefix=*/"",
+          /*file_suffix=*/
+          absl::StrCat("gemm_fusion_", fusion_id, ".", module->name(),
+                       ".optimized.txt"),
+          /*contents=*/module->ToString());
     }
 
     const AutotuneCacheKey key = AutotunerUtil::GetKey(fusion, config_);
@@ -1254,7 +1293,9 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
 
     if (!debug_options_.xla_gpu_dump_autotune_logs_to().empty()) {
       auto autotuning_log = autotuning_logs.add_logs();
-      autotuning_log->set_fusion_name(std::string(fusion->name()));
+      autotuning_log->set_fusion_name(fusion->name());
+      autotuning_log->set_selected_backend(
+          GetSelectedGemmBackendAsString(module.get()));
 
       for (const auto& autotune_result : results) {
         auto log_result = autotuning_log->add_results();
@@ -1268,6 +1309,7 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
         autotuning_log->set_fusion_count(fusion_count);
       }
     }
+    fusion_id++;
   }
 
   return DumpAutotuningLogs(debug_options_, autotuning_logs);

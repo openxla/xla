@@ -158,7 +158,126 @@ TEST_F(ShardyXLATest, NonFlatGraph) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
   runShardyWithStablehloImport(module.get());
-  EXPECT_EQ(module->computation_count(), 1);
+  // Computations refer to: %foo, %bar (x1), %entry.
+  EXPECT_EQ(module->computation_count(), 3);
+}
+
+TEST_F(ShardyXLATest, NonFlatGraphForcedDifferentShardingsOnSharedFunc) {
+  const char* const hloString = R"(
+    HloModule module
+
+    %bar {
+      %arg = f32[6,4] parameter(0)
+      %multiply = f32[6,4] multiply(arg, arg)
+      ROOT result = f32[6,4] copy(%multiply)
+    }
+
+    %foo {
+      %arg = f32[6,4] parameter(0)
+      %multiply = f32[6,4] call(%arg), to_apply=%bar
+      %add = f32[6,4] add(multiply, multiply)
+      ROOT result = f32[6,4] copy(%add)
+    }
+
+    ENTRY %entry {
+      %p0 = f32[6,4] parameter(0), sharding={devices=[2,1]<=[2]}
+      %foores = f32[6,4] call(%p0), to_apply=%foo
+      %absres = abs(%foores), sharding={devices=[1,2]<=[2]}
+      %barres = f32[6,4] call(%absres), to_apply=%bar
+      ROOT result = f32[6,4] copy(%barres)
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithStablehloImport(module.get());
+  // Computations refer to: %foo, %bar (x2), %entry.
+  EXPECT_EQ(module->computation_count(), 4);
+}
+
+TEST_F(ShardyXLATest, NonFlatWhileComputation) {
+  const char* const hloString = R"(
+    HloModule module
+
+    %foo {
+      %arg = f32[6,3] parameter(0)
+      %multiply = f32[6,3] multiply(arg, arg)
+      ROOT result = f32[6,3] copy(%multiply)
+    }
+
+    %cond1 {
+      %arg = f32[6,3] parameter(0)
+      %dot = f32[] dot(%arg, %arg),
+        lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
+      ROOT %compare = pred[] compare(%dot, %dot), direction=LT
+    }
+
+    %cond2 {
+      %arg = f32[6,3] parameter(0)
+      %dot = f32[] dot(%arg, %arg),
+        lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
+      ROOT %compare = pred[] compare(%dot, %dot), direction=LT
+    }
+
+    %loop1 {
+      %arg = f32[6,3] parameter(0)
+      %multiply = f32[6,3] call(%arg), to_apply=%foo
+      %add = f32[6,3] add(multiply, multiply)
+      ROOT result = f32[6,3] copy(%add)
+    }
+
+    %loop2 {
+      %arg = f32[6,3] parameter(0)
+      %multiply = f32[6,3] call(%arg), to_apply=%foo
+      %negate = f32[6,3] negate(multiply)
+      ROOT result = f32[6,3] copy(%negate)
+    }
+
+    ENTRY %entry {
+      %p0 = f32[6,3] parameter(0), sharding={devices=[2,1]<=[2]}
+      %foores = f32[6,3] call(%p0), to_apply=%foo
+      %while.1 = f32[6,3] while(%foores), body=%loop1, condition=%cond1
+      ROOT %while.2 = f32[6,3] while(%while.1), body=%loop2, condition=%cond2
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithStablehloImport(module.get());
+  // Computations refer to: %foo (x1), %cond1, %cond2, %loop1, %loop2, %entry.
+  EXPECT_EQ(module->computation_count(), 6);
+}
+
+TEST_F(ShardyXLATest, SharedWhileComputation) {
+  const char* const hloString = R"(
+    HloModule module
+
+    %foo {
+      %arg = f32[6,3] parameter(0)
+      %multiply = f32[6,3] multiply(arg, arg)
+      ROOT result = f32[6,3] copy(%multiply)
+    }
+
+    %cond {
+      %arg = f32[6,3] parameter(0)
+      %dot = f32[] dot(%arg, %arg),
+        lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
+      ROOT %compare = pred[] compare(%dot, %dot), direction=LT
+    }
+
+    %loop {
+      %arg = f32[6,3] parameter(0)
+      %multiply = f32[6,3] call(%arg), to_apply=%foo
+      %add = f32[6,3] add(multiply, multiply)
+      ROOT result = f32[6,3] copy(%add)
+    }
+
+    ENTRY %entry {
+      %p0 = f32[6,3] parameter(0), sharding={devices=[2,1]<=[2]}
+      %while.1 = f32[6,3] while(%p0), body=%loop, condition=%cond
+      ROOT %while.2 = f32[6,3] while(%while.1), body=%loop, condition=%cond
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithStablehloImport(module.get());
+  // Computations refer to: %foo (x1), %cond (x2), %loop (x2), %entry.
+  EXPECT_EQ(module->computation_count(), 6);
 }
 
 TEST_F(ShardyXLATest, CostantSplitter) {
@@ -946,6 +1065,68 @@ TEST_F(ShardyXLATest, RaggedDotMode1) {
               op::Sharding("{devices=[2,1,4]<=[8] last_tile_dim_replicate}"));
   EXPECT_THAT(entry->root_instruction(),
               op::Sharding("{devices=[2,2,1,2]<=[8] last_tile_dim_replicate}"));
+}
+
+TEST_F(ShardyXLATest, PreserveOriginalValueRecoveryTable) {
+  const char* const hloString = R"(
+  HloModule test, entry_computation_layout={(f32[6,3], f32[6,3])->f32[6,3]}, origin_recovery_table={
+    {"reshape.2341"} : {"placeholder_reshape.201"},
+    "
+      ENTRY %recovery_computation.1 (p.1: f32[192]) -> f32[1,192] {
+      %p.1 = f32[192]{0} parameter(0)
+      ROOT %reshape.2 = f32[1,192]{1,0} reshape(%p.1)
+    }
+    "
+  }
+
+  ENTRY %entry {
+    p0 = f32[6,3] parameter(0)
+    p1 = f32[6,3] parameter(1)
+    copy.p0 = f32[6,3] copy(p0)
+    copy.p1 = f32[6,3] copy(p1)
+    add = f32[6,3] add(copy.p0, copy.p1), sharding={devices=[2,1]<=[2]}
+    ROOT result = f32[6,3] copy(add)
+  }
+  )";
+
+  const char* const expected = R"(
+  // CHECK:       {"reshape.2341"} : {"placeholder_reshape.201"},
+  // CHECK-NEXT:  "
+  // CHECK-NEXT:    ENTRY %recovery_computation.1 (p.1: f32[192]) -> f32[1,192] {
+  // CHECK-NEXT:      %p.1 = f32[192]{0} parameter(0)
+  // CHECK-NEXT:      ROOT %reshape.2 = f32[1,192]{1,0} reshape(%p.1)
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:  "
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithSdyImport(module.get());
+  EXPECT_TRUE(*RunFileCheck(module->original_value_recovery_table().ToString(),
+                            expected));
+}
+
+TEST_F(ShardyXLATest, UpdateInlineableAttr) {
+  const char* const hloString = R"(
+    HloModule module
+
+    xla.sdy.manual_computation_body {
+      constant.0 = f32[1] constant({0})
+      ROOT tuple.1 = () tuple()
+    }
+
+    ENTRY entry {
+      ROOT call.2 = () call(), to_apply=xla.sdy.manual_computation_body, frontend_attributes={inlineable="false"}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardy(module.get(), /*stablehloImport=*/false,
+            /*runSdyShardingPropagation=*/false);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCall);
+  EXPECT_FALSE(root->has_frontend_attributes());
+  EXPECT_EQ(root->to_apply()->name(), "inlineable_callee");
 }
 
 }  // namespace sdy

@@ -16,17 +16,23 @@ limitations under the License.
 #include "xla/stream_executor/cuda/compilation_provider.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider_test.h"
+#include "xla/stream_executor/cuda/composite_compilation_provider.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/driver_compilation_provider.h"
 #include "xla/stream_executor/cuda/nvjitlink_compilation_provider.h"
 #include "xla/stream_executor/cuda/nvjitlink_support.h"
@@ -34,12 +40,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/cuda/subprocess_compilation_provider.h"
-#include "xla/stream_executor/device_description.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace stream_executor::cuda {
 using ::testing::_;
@@ -47,9 +50,6 @@ using ::testing::AnyOf;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Not;
-using ::tsl::testing::IsOk;
-using ::tsl::testing::IsOkAndHolds;
-using ::tsl::testing::StatusIs;
 
 void CompilationProviderTest::SetUp() {
 #ifdef ABSL_HAVE_MEMORY_SANITIZER
@@ -63,12 +63,19 @@ void CompilationProviderTest::SetUp() {
   }
 #endif
 
-  if (GetParam() == kNvJitLinkCompilationProviderName &&
-      !IsLibNvJitLinkSupported()) {
+  absl::string_view provider = GetParam();
+
+  if (!IsLibNvJitLinkSupported() &&
+      (provider == kNvJitLinkCompilationProviderName ||
+       provider ==
+           kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName)) {
     GTEST_SKIP() << "nvjitlink is not supported in this build.";
   }
-  if (GetParam() == kNvptxcompilerCompilationProviderName &&
-      !IsLibNvPtxCompilerSupported()) {
+
+  if (!IsLibNvPtxCompilerSupported() &&
+      (provider == kNvptxcompilerCompilationProviderName ||
+       provider ==
+           kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName)) {
     GTEST_SKIP() << "nvptxcompiler is not supported in this build.";
   }
 
@@ -96,6 +103,13 @@ CompilationProviderTest::CreateCompilationProvider(absl::string_view name) {
 
   if (name == kDriverCompilationProviderName) {
     return std::make_unique<DriverCompilationProvider>();
+  }
+
+  if (name == kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName) {
+    std::vector<std::unique_ptr<CompilationProvider>> providers;
+    providers.push_back(std::make_unique<NvptxcompilerCompilationProvider>());
+    providers.push_back(std::make_unique<NvJitLinkCompilationProvider>());
+    return CompositeCompilationProvider::Create(std::move(providers));
   }
 
   return absl::NotFoundError(
@@ -155,8 +169,8 @@ constexpr const char kDependentPtx[] = R"(
         { // callseq 0, 0
         .reg .b32 temp_param_reg;
         .param .b32 retval0;
-        call.uni (retval0), 
-        _Z5magicv, 
+        call.uni (retval0),
+        _Z5magicv,
         (
         );
         ld.param.b32    %r1, [retval0+0];
@@ -202,6 +216,17 @@ TEST_P(CompilationProviderTest, CompileStandaloneModuleSucceeds) {
       Assembly module, compilation_provider()->Compile(
                            kDefaultComputeCapability, kStandalonePtx, options));
   EXPECT_FALSE(module.cubin.empty());
+  EXPECT_EQ(module.compilation_log, std::nullopt);
+}
+
+TEST_P(CompilationProviderTest,
+       CompileStandaloneModuleDumpsCompilationLogWhenRequested) {
+  CompilationOptions options;
+  options.dump_compilation_log = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      Assembly module, compilation_provider()->Compile(
+                           kDefaultComputeCapability, kStandalonePtx, options));
+  EXPECT_THAT(module.compilation_log, Optional(Not(IsEmpty())));
 }
 
 TEST_P(CompilationProviderTest, CompileStandaloneRelocatableModuleSucceeds) {
@@ -215,6 +240,22 @@ TEST_P(CompilationProviderTest, CompileStandaloneRelocatableModuleSucceeds) {
       compilation_provider()->CompileToRelocatableModule(
           kDefaultComputeCapability, kStandalonePtx, options));
   EXPECT_FALSE(module.cubin.empty());
+  EXPECT_EQ(module.compilation_log, std::nullopt);
+}
+
+TEST_P(CompilationProviderTest,
+       CompileStandaloneRelocatableModuleDumpsCompilationLogWhenRequested) {
+  if (!compilation_provider()->SupportsCompileToRelocatableModule()) {
+    GTEST_SKIP();
+  }
+
+  CompilationOptions options;
+  options.dump_compilation_log = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      RelocatableModule module,
+      compilation_provider()->CompileToRelocatableModule(
+          kDefaultComputeCapability, kStandalonePtx, options));
+  EXPECT_THAT(module.compilation_log, Optional(Not(IsEmpty())));
 }
 
 TEST_P(CompilationProviderTest,
@@ -226,7 +267,7 @@ TEST_P(CompilationProviderTest,
   CompilationOptions options;
   EXPECT_THAT(compilation_provider()->CompileToRelocatableModule(
                   kDefaultComputeCapability, kStandalonePtx, options),
-              StatusIs(absl::StatusCode::kUnavailable));
+              absl_testing::StatusIs(absl::StatusCode::kUnavailable));
 }
 
 TEST_P(CompilationProviderTest, CompileAndLinkStandaloneModule) {
@@ -268,8 +309,9 @@ TEST_P(CompilationProviderTest,
   CompilationOptions options;
   EXPECT_THAT(compilation_provider()->Compile(kDefaultComputeCapability,
                                               kDependentPtx, options),
-              StatusIs(_, AnyOf(HasSubstr("Undefined reference"),
-                                HasSubstr("Unresolved extern function"))));
+              absl_testing::StatusIs(
+                  _, AnyOf(HasSubstr("Undefined reference"),
+                           HasSubstr("Unresolved extern function"))));
 }
 
 TEST_P(CompilationProviderTest,
@@ -288,8 +330,9 @@ TEST_P(CompilationProviderTest,
   CompilationOptions options;
   EXPECT_THAT(compilation_provider()->CompileAndLink(
                   kDefaultComputeCapability, {Ptx{kDependentPtx}}, options),
-              StatusIs(_, AnyOf(HasSubstr("Undefined reference"),
-                                HasSubstr("Unresolved extern function"))));
+              absl_testing::StatusIs(
+                  _, AnyOf(HasSubstr("Undefined reference"),
+                           HasSubstr("Unresolved extern function"))));
 }
 
 TEST_P(CompilationProviderTest, CompileAndLinkMultipleModulesSucceeds) {
@@ -353,7 +396,7 @@ TEST_P(CompilationProviderTest, CancelsOnRegSpill) {
   EXPECT_THAT(compilation_provider()->CompileAndLink(
                   kDefaultComputeCapability,
                   {Ptx{dependent_ptx}, Ptx{kDependeePtx}}, options),
-              StatusIs(absl::StatusCode::kCancelled));
+              absl_testing::StatusIs(absl::StatusCode::kCancelled));
 
   // This is to make sure we didn't break the PTX and that's why it was failing
   // in the previous assertion.
@@ -361,7 +404,7 @@ TEST_P(CompilationProviderTest, CancelsOnRegSpill) {
   EXPECT_THAT(compilation_provider()->CompileAndLink(
                   kDefaultComputeCapability,
                   {Ptx{dependent_ptx}, Ptx{kDependeePtx}}, options),
-              IsOk());
+              absl_testing::IsOk());
 }
 
 TEST_P(CompilationProviderTest,
@@ -369,7 +412,7 @@ TEST_P(CompilationProviderTest,
   CompilationOptions default_options;
   EXPECT_THAT(compilation_provider()->Compile(CudaComputeCapability{100, 0},
                                               kStandalonePtx, default_options),
-              Not(IsOk()));
+              Not(absl_testing::IsOk()));
 }
 
 TEST_P(CompilationProviderTest,
@@ -383,7 +426,7 @@ TEST_P(CompilationProviderTest,
   EXPECT_THAT(
       compilation_provider()->CompileToRelocatableModule(
           CudaComputeCapability{100, 0}, kStandalonePtx, default_options),
-      Not(IsOk()));
+      Not(absl_testing::IsOk()));
 }
 
 TEST_P(CompilationProviderTest,
@@ -396,7 +439,7 @@ TEST_P(CompilationProviderTest,
   EXPECT_THAT(compilation_provider()->CompileAndLink(
                   CudaComputeCapability{100, 0}, {Ptx{kStandalonePtx}},
                   default_options),
-              Not(IsOk()));
+              Not(absl_testing::IsOk()));
 }
 
 TEST_P(CompilationProviderTest, ParallelCompileReturnsSameResult) {
@@ -416,7 +459,7 @@ TEST_P(CompilationProviderTest, ParallelCompileReturnsSameResult) {
       EXPECT_THAT(
           compilation_provider()->Compile(kDefaultComputeCapability,
                                           kStandalonePtx, CompilationOptions()),
-          IsOkAndHolds(reference_assembly));
+          absl_testing::IsOkAndHolds(reference_assembly));
     });
   }
 }
@@ -445,7 +488,7 @@ TEST_P(CompilationProviderTest,
       EXPECT_THAT(
           compilation_provider()->CompileToRelocatableModule(
               kDefaultComputeCapability, kStandalonePtx, CompilationOptions()),
-          IsOkAndHolds(reference_module));
+          absl_testing::IsOkAndHolds(reference_module));
     });
   }
 }
@@ -471,8 +514,26 @@ TEST_P(CompilationProviderTest, ParallelCompileAndLinkReturnsSameResult) {
       EXPECT_THAT(compilation_provider()->CompileAndLink(
                       kDefaultComputeCapability, {Ptx{kStandalonePtx}},
                       CompilationOptions()),
-                  IsOkAndHolds(reference_assembly));
+                  absl_testing::IsOkAndHolds(reference_assembly));
     });
+  }
+}
+
+TEST_P(CompilationProviderTest,
+       QueryLatestPtxIsaVersionReturnsAValidPtxIsaVersion) {
+  CompilationProvider* provider = compilation_provider();
+  if (dynamic_cast<SubprocessCompilationProvider*>(provider) ||
+      dynamic_cast<NvptxcompilerCompilationProvider*>(provider) ||
+      dynamic_cast<NvJitLinkCompilationProvider*>(provider) ||
+      dynamic_cast<CompositeCompilationProvider*>(provider)) {
+    TF_ASSERT_OK_AND_ASSIGN(int latest_ptx_isa_version,
+                            provider->GetLatestPtxIsaVersion());
+    EXPECT_GE(latest_ptx_isa_version, 80);
+    // Update when PTX 20.0 comes out.
+    EXPECT_LE(latest_ptx_isa_version, 200);
+  } else {
+    EXPECT_THAT(provider->GetLatestPtxIsaVersion(),
+                absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
   }
 }
 

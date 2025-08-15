@@ -690,13 +690,6 @@ class XlaBuilder {
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
-  XlaOp SparseDot(
-      XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
-      absl::Span<const SparsityDescriptor> sparsity,
-      const DotDimensionNumbers& dimension_numbers,
-      const PrecisionConfig* precision_config = nullptr,
-      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
-
   XlaOp RaggedAllToAll(
       XlaOp input, XlaOp input_offsets, XlaOp send_sizes, XlaOp output,
       XlaOp output_offsets, XlaOp recv_sizes,
@@ -706,6 +699,12 @@ class XlaBuilder {
   XlaOp RaggedDot(
       XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
       const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig* precision_config = nullptr,
+      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
+  XlaOp ScaledDot(
+      XlaOp lhs, XlaOp lhs_scale, XlaOp rhs, XlaOp rhs_scale,
+      const DotDimensionNumbers& dimension_number,
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
@@ -1407,16 +1406,18 @@ class XlaBuilder {
                           const DotDimensionNumbers& dimension_number,
                           const PrecisionConfig* precision_config,
                           std::optional<PrimitiveType> preferred_element_type);
+  friend XlaOp RaggedDot(XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+                         const RaggedDotDimensionNumbers& dimension_numbers,
+                         const PrecisionConfig* precision_config,
+                         std::optional<PrimitiveType> preferred_element_type);
+  friend XlaOp ScaledDot(XlaOp lhs, XlaOp lhs_scale, XlaOp rhs, XlaOp rhs_scale,
+                         const DotDimensionNumbers& dimension_number,
+                         const PrecisionConfig* precision_config,
+                         std::optional<PrimitiveType> preferred_element_type);
   virtual absl::StatusOr<XlaOp> DotGeneralInternal(
       const Shape& shape, XlaOp lhs, XlaOp rhs,
       const DotDimensionNumbers& dimension_number,
       const PrecisionConfig* precision_config);
-  friend XlaOp SparseDot(XlaOp lhs, XlaOp rhs,
-                         absl::Span<const XlaOp> sparse_meta,
-                         absl::Span<const SparsityDescriptor> sparsity,
-                         const DotDimensionNumbers& dimension_number,
-                         const PrecisionConfig* precision_config,
-                         std::optional<PrimitiveType> preferred_element_type);
   friend XlaOp RaggedAllToAll(XlaOp input, XlaOp input_offsets,
                               XlaOp send_sizes, XlaOp output,
                               XlaOp output_offsets, XlaOp recv_sizes,
@@ -2330,14 +2331,6 @@ XlaOp Dot(XlaOp lhs, XlaOp rhs,
 // Enqueues a general dot instruction onto the computation.
 XlaOp DotGeneral(
     XlaOp lhs, XlaOp rhs, const DotDimensionNumbers& dimension_numbers,
-    const PrecisionConfig* precision_config = nullptr,
-    std::optional<PrimitiveType> preferred_element_type = std::nullopt);
-
-// Enqueues a sparse dot instruction onto the computation.
-XlaOp SparseDot(
-    XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
-    absl::Span<const SparsityDescriptor> sparsity,
-    const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config = nullptr,
     std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
