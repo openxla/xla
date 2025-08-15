@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/translate/stablehlo.h"
@@ -356,19 +357,28 @@ absl::Status runShardingPropagation(HloModule* hloModule,
                                                dumpIndex++));
 
   if (importMhloShardings) {
+    // This branch is only used for testing. It allows us to test the module
+    // with hlo shardings without the frontend attributes.
+    LOG(WARNING) << "ShardyXLA is run against a module with HLO shardings. It "
+                    "should be used only for testing.";
     auto spanToArrayRef = [](absl::Span<const bool> span) {
       return mlir::ArrayRef<bool>(span.data(), span.size());
     };
 
     addStablehloImportPipeline(
         pm,
+        /* allowPropagationToArgs=*/
         spanToArrayRef(hloModule->config()
                            .allow_spmd_sharding_propagation_to_parameters()),
+        /*allowPropagationToResults=*/
         spanToArrayRef(
-            hloModule->config().allow_spmd_sharding_propagation_to_output()));
+            hloModule->config().allow_spmd_sharding_propagation_to_output()),
+        /*importOnlyUninlineableFuncCalls=*/false);
   } else {
-    // This is the default path.
-    addSdyRoundTripImportPipeline(pm);
+    // This branch is in production.
+    addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
+                                  /*importOnlyUninlineableFuncCalls=*/false,
+                                  /*liftAndDedupMeshes=*/true);
   }
 
   // NOTE: if we are using auto-spmd, we will use conservative propagation
@@ -385,6 +395,31 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   return diagnosticHandler.consumeStatus(pm.run(mlirModule));
 }
 
+bool eraseInlineableAttrForShardyManualComputations(HloModule* module) {
+  bool changed = false;
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() != HloOpcode::kCall ||
+          !instruction->frontend_attributes().map().contains(
+              kXlaInlineableAttr)) {
+        continue;
+      }
+      if (absl::StrContains(instruction->to_apply()->name(),
+                            sdy::kManualComputationBodyFuncName.str())) {
+        instruction->erase_frontend_attribute(kXlaInlineableAttr);
+        // TODO(b/436603025). CallInliner do not inline the Shardy related
+        // manual computations based on the callee name. We have to rename the
+        // callee to a name such that it can be inlined. If we can remove the
+        // special handling in CallInliner, we can remove this renaming.
+        module->SetAndUniquifyComputationName(instruction->to_apply(),
+                                              "inlineable_callee");
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 }  // namespace
 
 absl::StatusOr<bool> ShardyXLA::Run(
@@ -394,10 +429,16 @@ absl::StatusOr<bool> ShardyXLA::Run(
   bool useTupleArgs = moduleFrontendAttrs.contains(kUseTupleArgs);
   bool importMhloShardings = moduleFrontendAttrs.contains(kImportMhloShardings);
 
-  if (!runSdyShardingPropagation && !useTupleArgs) {
-    // Nothing to do.
-    return false;
+  // If propagation is enabled, we don't need to erase the inlineable attribute
+  // for manual computations, since StablehloExportPipeline can handle it.
+  if (!runSdyShardingPropagation) {
+    bool changed = eraseInlineableAttrForShardyManualComputations(hloModule);
+    if (!useTupleArgs) {
+      // Nothing more to do.
+      return changed;
+    }
   }
+
   // The auto-spmd flag is present in both the HLO module and the config. Apply
   // auto spmd partitioning if either is true.
   if (hloModule->use_auto_spmd_partitioning() ||

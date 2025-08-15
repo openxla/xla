@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -113,24 +114,6 @@ TEST(PjRtCpuClientTest, MemorySpace) {
     device->memory_spaces(),
         ElementsAre(cpu_device_memory_space, pinned_host_memory_space,
                     unpinned_host_memory_space);
-  }
-}
-
-TEST(PjRtCpuClientTest, LegacyMemorySpace) {
-  CpuClientOptions options;
-  options.legacy_memory_space_behavior = true;
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(std::move(options)));
-  ASSERT_GE(client->devices().size(), 1);
-
-  ASSERT_EQ(client->memory_spaces().size(),
-            client->addressable_devices().size());
-  for (auto* device : client->devices()) {
-    TF_ASSERT_OK_AND_ASSIGN(auto* memory_space, device->default_memory_space());
-    EXPECT_THAT(device->memory_spaces(), ElementsAre(memory_space));
-    EXPECT_EQ(memory_space->kind(), UnpinnedHostMemorySpace::kKind);
-    EXPECT_EQ(memory_space->kind_id(), UnpinnedHostMemorySpace::kKindId);
-    EXPECT_THAT(device->memory_space_by_kind(UnpinnedHostMemorySpace::kKind),
-                absl_testing::IsOkAndHolds(memory_space));
   }
 }
 
@@ -199,7 +182,7 @@ TEST(PjRtCpuClientTest, HloSnapshot) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
                           ParseAndReturnUnverifiedModule(kProgram, {}));
 
-  std::string dir = tsl::testing::TmpDir();
+  std::string dir = tsl::io::JoinPath(tsl::testing::TmpDir(), "HloSnapshot");
   xla::CompileOptions options;
   auto* debug_opts = options.executable_build_options.mutable_debug_options();
   debug_opts->set_xla_dump_to(dir);
@@ -268,12 +251,13 @@ TEST(PjRtCpuClientTest, UnoptimizedHloSnapshot) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
                           ParseAndReturnUnverifiedModule(kProgram, {}));
 
-  std::string dir = tsl::testing::TmpDir();
+  std::string dir =
+      tsl::io::JoinPath(tsl::testing::TmpDir(), "UnoptimizedHloSnapshot");
   xla::CompileOptions options;
   auto* debug_opts = options.executable_build_options.mutable_debug_options();
   debug_opts->set_xla_dump_to(dir);
   debug_opts->set_xla_dump_hlo_snapshots(true);
-  debug_opts->set_xla_cpu_dump_unoptimized_hlo_snapshots(true);
+  debug_opts->set_xla_dump_hlo_unoptimized_snapshots(true);
   XlaComputation xla_computation(hlo_module->ToProto());
   TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
                           client->CompileAndLoad(xla_computation, options));
@@ -306,22 +290,18 @@ TEST(PjRtCpuClientTest, UnoptimizedHloSnapshot) {
 
   std::vector<std::string> paths;
   ASSERT_TRUE(
-      fs->GetMatchingPaths(dir + "/*.unoptimized_hlo_snapshot.*.pb", &paths)
-          .ok());
+      fs->GetMatchingPaths(dir + "/*.hlo_unoptimized_snapshot.*", &paths).ok());
   ASSERT_EQ(paths.size(), 1);
 
-  HloSnapshot snapshot;
+  HloUnoptimizedSnapshot snapshot;
   ASSERT_TRUE(
       tsl::ReadBinaryProto(tsl::Env::Default(), paths[0], &snapshot).ok());
 
-  ASSERT_EQ(*Literal::CreateFromProto(snapshot.arguments(0)),
+  ASSERT_EQ(*Literal::CreateFromProto(snapshot.partitions(0).arguments(0)),
             LiteralUtil::CreateR2<float>({{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}}));
   ASSERT_EQ(
-      *Literal::CreateFromProto(snapshot.arguments(1)),
+      *Literal::CreateFromProto(snapshot.partitions(0).arguments(1)),
       LiteralUtil::CreateR2<float>({{10.0, 20.0}, {30.0, 40.0}, {50.0, 60.0}}));
-  ASSERT_EQ(
-      *Literal::CreateFromProto(snapshot.result()),
-      LiteralUtil::CreateR2<float>({{11.0, 22.0}, {33.0, 44.0}, {55.0, 66.0}}));
 }
 
 TEST(PjRtCpuClientTest, AsyncTransferRawData) {

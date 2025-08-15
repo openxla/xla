@@ -104,6 +104,8 @@ limitations under the License.
 #include "xla/hlo/transforms/host_offloader.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_reduce_folder.h"
 #include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
@@ -119,6 +121,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_rematerialization.h"
 #include "xla/hlo/transforms/simplifiers/host_memory_transfer_asyncifier.h"
 #include "xla/hlo/transforms/simplifiers/optimize_input_output_buffer_alias.h"
+#include "xla/hlo/transforms/simplifiers/reduce_window_resizer.h"
 #include "xla/hlo/transforms/simplifiers/reduce_window_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/result_caster.h"
@@ -147,6 +150,7 @@ limitations under the License.
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/service/cpu_gpu_shape_verifier.h"
+#include "xla/service/debug/unstable_reduction_detector.h"
 #include "xla/service/dump.h"
 #include "xla/service/dynamic_dimension_inference.h"
 #include "xla/service/dynamic_padder.h"
@@ -630,7 +634,8 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
 absl::Status RunSPMDPasses(
     HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
     const AliasInfo* alias_info,
-    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts) {
+    const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
+    int64_t max_windowed_einsum_iteration) {
   bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
 #ifndef PLATFORM_GOOGLE
   if (auto_sharding) {
@@ -658,10 +663,11 @@ absl::Status RunSPMDPasses(
                 DefaultAutoShardingOptionFromModuleConfig(hlo_module->config()),
                 alias_info);
           }
-        });
+        },
 #else
-        std::nullopt);
+        std::nullopt,
 #endif  // PLATFORM_GOOGLE
+        max_windowed_einsum_iteration);
     return spmd_pipeline.Run(hlo_module).status();
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
@@ -686,6 +692,10 @@ absl::Status RunOptimizationPasses(
 
   HloPassPipeline pipeline("optimization");
   AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id());
+  if (debug_options.xla_detect_unstable_reductions() !=
+      DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE) {
+    pipeline.AddPass<UnstableReductionDetector>();
+  }
   pipeline.AddPass<RaggedDotRewriter>();
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
   if (debug_options.xla_gpu_multi_streamed_windowed_einsum()) {
@@ -695,7 +705,6 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<TopkSpecializer>();
   pipeline.AddPass<TopkDecomposer>();
 
-  pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
   pipeline.AddPass<DotDimensionSorter>();
   pipeline.AddPass<DotDecomposer>();
 
@@ -790,6 +799,7 @@ absl::Status RunOptimizationPasses(
   if (debug_options.xla_reduce_window_rewrite_base_length() != 0) {
     pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(
         debug_options.xla_reduce_window_rewrite_base_length());
+    pipeline.AddPass<ReduceWindowResizer>();
   }
 
   DynamicPadderOptions dynamic_padder_options;
@@ -898,6 +908,7 @@ absl::Status RunOptimizationPasses(
                                              gpu_version);
   }();
 
+  pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
   pipeline.AddPass<HloComputationDeduplicator>(
       /*mark_fusion_duplications=*/false);
   return pipeline.Run(hlo_module).status();
@@ -932,6 +943,8 @@ absl::Status RunCollectiveOptimizationPasses(
   }
   collectives_pipeline.AddPass<AllGatherOptimizer>();
   collectives_pipeline.AddPass<AllGatherDynamicSliceSimplifier>();
+  collectives_pipeline.AddPass<AllGatherPadDsSimplifier>();
+  collectives_pipeline.AddPass<AllGatherDynamicSlicePermutedOffsetSimplifier>();
   collectives_pipeline.AddPass<AllReduceReassociate>(
       debug_options.xla_gpu_enable_reassociation_for_converted_ar());
   collectives_pipeline.AddPass<ReduceScatterReassociate>();
@@ -1437,13 +1450,17 @@ absl::Status GpuCompiler::OptimizeHloModule(
                                     gpu_target_config.platform_name == "ROCM");
 
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
-  TF_RETURN_IF_ERROR(RunSPMDPasses(hlo_module, gpu_target_config, alias_info,
-                                   layout_insensitive_algsimp_opts));
+  // Set max_windowed_einsum_iteration to slice_size, as there will be
+  // siginificant overhead when scaled beyond the maximum size of the
+  // fast-interconnect domain.
+  TF_RETURN_IF_ERROR(
+      RunSPMDPasses(hlo_module, gpu_target_config, alias_info,
+                    layout_insensitive_algsimp_opts,
+                    /*max_windowed_einsum_iteration=*/options.slice_size));
 
   // Dump the HLO module after SPMD partitioning. There should be no more Python
   // callbacks at this point.
   DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
-
   TF_ASSIGN_OR_RETURN(
       const stream_executor::Platform* platform,
       stream_executor::PlatformManager::PlatformWithId(PlatformId()));
@@ -1766,9 +1783,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   pipeline.AddPass<HostOffloader>(alias_info);
 
-  TF_RETURN_IF_ERROR(
-      AddConvAndGemmAutotuningPasses(&pipeline, gpu_version, options,
-                                     hlo_module, autotune_config, thread_pool));
+  TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPasses(
+      &pipeline, gpu_version, options, hlo_module, autotune_config, thread_pool,
+      stream_exec));
 
   // The GEMM fusion autotuner can insert new bf16 reductions that need to be
   // normalized again.
@@ -1954,7 +1971,10 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
   const HloModule* module = inst->GetModule();
   // If no collective memory is needed, return.
   if (!module->config().debug_options().xla_gpu_enable_nccl_user_buffers() &&
-      !module->config().debug_options().xla_gpu_experimental_enable_nvshmem()) {
+      !module->config().debug_options().xla_gpu_experimental_enable_nvshmem() &&
+      !module->config()
+           .debug_options()
+           .xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
     return false;
   }
   // Add copy if a potential collective-memmory-spaced op directly consumes from
@@ -2389,6 +2409,7 @@ GpuCompiler::CompileToBackendResult(
                                         alias_info.get()));
   HloPassPipeline pipeline("scheduled-gpu-module");
   AddHloVerifier(&pipeline);
+  TF_RETURN_IF_ERROR(pipeline.Run(module).status());
   TF_RETURN_IF_ERROR(
       RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
                                  gpu_device_info, alias_info.get()));
@@ -2892,8 +2913,15 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
       HloPassPipeline& pipeline =
           main_pipeline.AddPass<HloPassPipeline>("command-buffer-scheduling");
       pipeline.AddPass<CommandBufferScheduling>(gpu_device_info);
-      pipeline.AddPass<SanitizeConstantNames>();
     }
+  }
+
+  // Sanitize constant names. This is in its own pipeline to ensure it always
+  // runs, as the preceding pipeline is conditional.
+  {
+    auto& pipeline =
+        main_pipeline.AddPass<HloPassPipeline>("sanitize-constant-names");
+    pipeline.AddPass<SanitizeConstantNames>();
   }
 
   if (module->config().debug_options().xla_gpu_pgle_accuracy_checker() ==

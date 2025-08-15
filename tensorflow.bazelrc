@@ -148,7 +148,7 @@ build:macos --features=archive_param_file
 # Settings for MacOS on ARM CPUs.
 build:macos_arm64 --cpu=darwin_arm64
 build:macos_arm64 --macos_minimum_os=11.0
-build:macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
+build:macos_arm64 --platforms=@build_bazel_apple_support//platforms:darwin_arm64
 
 # Config to use a mostly-static build and disable modular op registration
 # support (this will revert to loading TensorFlow with RTLD_GLOBAL in Python).
@@ -184,7 +184,7 @@ build:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
 build:mkl_aarch64_threadpool -c opt
 
 # Default CUDA, CUDNN and NVSHMEM versions.
-build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
+build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
 build:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 build:cuda_version --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
 
@@ -467,7 +467,13 @@ build:resultstore --bes_timeout=600s
 # Flag to enable remote config
 common --experimental_repo_remote_exec
 
+build:use_tar_archive_files --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
+build:use_tar_archive_files --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
+build:use_tar_archive_files --repo_env=USE_LLVM_TAR_ARCHIVE_FILES=1
+build:use_tar_archive_files --repo_env=USE_MIRRORED_TAR_ARCHIVE_FILES=1
+
 # Make Bazel not try to probe the host system for a C++ toolchain.
+build:rbe_base --config=use_tar_archive_files
 build:rbe_base --config=resultstore
 build:rbe_base --define=EXECUTOR=remote
 build:rbe_base --jobs=800
@@ -528,8 +534,6 @@ build:rbe_linux_cuda --config=rbe_linux_cpu
 # dt9 is based on glibc 2.17, which is outdated and incompatible with CUDA 12.8.0
 # unset TF_SYSROOT
 build:rbe_linux_cuda --repo_env=TF_SYSROOT=
-build:rbe_linux_cuda --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
-build:rbe_linux_cuda --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
 # For Remote build execution -- GPU configuration
 build:rbe_linux_cuda --repo_env=REMOTE_GPU_TESTING=1
 
@@ -588,7 +592,7 @@ build:release_macos_x86 --config=release_macos_base
 # Build with the AVX instruction set when on macOS x86
 build:release_macos_x86 --config=avx_linux
 build:release_macos_x86 --cpu=darwin
-build:release_macos_x86 --platforms=@build_bazel_apple_support//configs/platforms:darwin_x86_64
+build:release_macos_x86 --platforms=@build_bazel_apple_support//platforms:darwin_x86_64
 # Target Catalina as the minimum compatible OS version
 build:release_macos_x86 --macos_minimum_os=10.15
 build:release_macos_x86 --macos_sdk_version=10.15
@@ -596,7 +600,7 @@ build:release_macos_x86 --macos_sdk_version=10.15
 # Build configs for macOS Arm64
 build:release_macos_arm64 --config=release_macos_base
 build:release_macos_arm64 --cpu=darwin_arm64
-build:release_macos_arm64 --platforms=@build_bazel_apple_support//configs/platforms:darwin_arm64
+build:release_macos_arm64 --platforms=@build_bazel_apple_support//platforms:darwin_arm64
 build:release_macos_arm64 --define=tensorflow_mkldnn_contraction_kernel=0
 # Target Moneterey as the minimum compatible OS version
 build:release_macos_arm64 --macos_minimum_os=12.0

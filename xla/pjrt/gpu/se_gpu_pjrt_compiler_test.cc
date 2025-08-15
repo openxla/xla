@@ -23,6 +23,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -76,10 +77,12 @@ absl::StatusOr<xla::XlaComputation> GetXlaComputation(
 }
 
 std::shared_ptr<xla::GpuTopology> GetGpuTopology(
-    absl::string_view platform_version, int num_slices, int num_hosts_per_slice,
-    int num_devices_per_host, int core_count_per_chip) {
-  return std::make_shared<xla::GpuTopology>(
-      platform_version, num_slices, num_hosts_per_slice, num_devices_per_host);
+    absl::string_view platform_version, int num_partitions,
+    int num_hosts_per_partition, int num_devices_per_host,
+    int core_count_per_chip) {
+  return std::make_shared<xla::GpuTopology>(platform_version, num_partitions,
+                                            num_hosts_per_partition,
+                                            num_devices_per_host);
 }
 
 TEST(StreamExecutorGpuCompilerTest, NoClientXla) {

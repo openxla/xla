@@ -9481,37 +9481,6 @@ ENTRY entry {
   EXPECT_THAT(root, dot);
 }
 
-TEST_P(SpmdPartitioningTest, SimpleSparseDot) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %lhs = f32[2,24,128] parameter(0),
-    sharding={devices=[2,2,1]<=[4]}
-  %rhs = f32[2,32,256] parameter(1),
-    sharding={devices=[2,1,1,2]<=[4] last_tile_dim_replicate}
-  %meta = u16[2,24,16] parameter(2),
-    sharding={devices=[2,2,1]<=[4]}
-  ROOT %dot = f32[2,24,32] dot(%lhs, %rhs, %meta),
-    lhs_batch_dims={0}, rhs_batch_dims={0},
-    lhs_contracting_dims={2}, rhs_contracting_dims={2}, sparsity=L.2@2:4,
-    sharding={devices=[2,2,1]<=[4]}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          PartitionComputation(hlo_string, /*num_devices=*/4));
-  VLOG(1) << module->ToString();
-
-  const auto lhs = AllOf(op::Shape("f32[1,12,128]"), op::Parameter(0));
-  const auto rhs = AllOf(op::Shape("f32[1,32,256]"), op::Parameter(1));
-  const auto meta = AllOf(op::Shape("u16[1,12,16]"), op::Parameter(2));
-  auto dot = AllOf(op::Shape("f32[1,12,32]"),
-                   ::testing::MakeMatcher(new ::xla::testing::HloMatcher(
-                       HloOpcode::kDot, {lhs, rhs, meta})));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, dot);
-}
-
 TEST_P(SpmdPartitioningTest, DotPartialContracting) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -16242,7 +16211,7 @@ HloModule module
 ENTRY entry {
   a = s32[2,4]{1,0} parameter(0), sharding={unreduced}
   b = s32[2,4]{1,0} parameter(1), sharding={unreduced}
-  ROOT add = s32[2,4]{1,0} add(a, b), sharding={unreduced}
+  ROOT add = s32[2,4]{1,0} add(a, b)
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
@@ -16250,6 +16219,40 @@ ENTRY entry {
   // Check that unreduced HloSharding is preserved after the pass.
   EXPECT_THAT(module->entry_computation()->parameter_instructions(),
               ::testing::Each(op::Sharding("{unreduced}")));
+}
+
+TEST_P(SpmdPartitioningTest, SubgroupUnreducedParam) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = s32[2,4]{1,0} parameter(0), sharding={devices=[1,2,2]<=[4] last_tile_dims={unreduced}}
+  b = s32[2,4]{1,0} parameter(1), sharding={devices=[1,2,2]<=[4] last_tile_dims={unreduced}}
+  ROOT add = s32[2,4]{1,0} add(a, b)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+  // Check that unreduced HloSharding is preserved after the pass.
+  EXPECT_THAT(module->entry_computation()->parameter_instructions(),
+              ::testing::Each(op::Sharding(
+                  "{devices=[1,2,2]<=[4] last_tile_dims={unreduced}}")));
+}
+
+TEST_P(SpmdPartitioningTest, SubgroupUnreducedDot) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[8,1024]{1,0} parameter(0), sharding={devices=[2,2,2]<=[2,2,2]T(0,1,2) last_tile_dim_replicate}
+  b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,2,2]<=[2,2,2]T(1,2,0) last_tile_dim_replicate}
+  ROOT dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={devices=[2,2,2]<=[2,2,2]T(0,2,1) last_tile_dims={unreduced}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(), op::Dot());
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
 }
 
 }  // namespace

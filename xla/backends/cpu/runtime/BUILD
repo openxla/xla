@@ -141,41 +141,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "parallel_loop_runner",
-    srcs = ["parallel_loop_runner.cc"],
-    hdrs = ["parallel_loop_runner.h"],
-    deps = [
-        ":work_queue",
-        "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/lib/math:math_util",
-        "//xla/tsl/platform:logging",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
-xla_cc_test(
-    name = "parallel_loop_runner_test",
-    srcs = ["parallel_loop_runner_test.cc"],
-    deps = [
-        ":parallel_loop_runner",
-        "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:env",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
 tf_proto_library(
     name = "thunk_proto",
     srcs = ["thunk.proto"],
@@ -209,10 +174,13 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/profiler/lib:traceme",

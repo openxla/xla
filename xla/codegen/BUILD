@@ -48,6 +48,7 @@ xla_cc_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:ArithDialect",
@@ -178,20 +179,21 @@ cc_library(
 )
 
 cc_library(
-    name = "math_lib",
-    srcs = ["math_lib.cc"],
-    hdrs = ["math_lib.h"],
+    name = "intrinsic_lib",
+    srcs = ["intrinsic_lib.cc"],
+    hdrs = ["intrinsic_lib.h"],
     deps = [
         "//xla:xla_data_proto_cc",
-        "//xla/codegen/math:erf",
-        "//xla/codegen/math:exp",
-        "//xla/codegen/math:fptrunc",
-        "//xla/codegen/math:intrinsic",
-        "//xla/codegen/math:ldexp",
-        "//xla/codegen/math:log1p",
-        "//xla/codegen/math:rsqrt",
-        "//xla/codegen/math:string_interner",
-        "//xla/codegen/math:vec_name_mangler",
+        "//xla/codegen/intrinsic",
+        "//xla/codegen/intrinsic:erf",
+        "//xla/codegen/intrinsic:exp",
+        "//xla/codegen/intrinsic:fptrunc",
+        "//xla/codegen/intrinsic:ldexp",
+        "//xla/codegen/intrinsic:log1p",
+        "//xla/codegen/intrinsic:rsqrt",
+        "//xla/codegen/intrinsic:string_interner",
+        "//xla/codegen/intrinsic:tanh",
+        "//xla/codegen/intrinsic:vec_name_mangler",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -206,7 +208,6 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Scalar",
         "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:ir_headers",
     ],
@@ -219,5 +220,18 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "trace_pass_instrumentation",
+    srcs = ["trace_pass_instrumentation.cc"],
+    hdrs = ["trace_pass_instrumentation.h"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )

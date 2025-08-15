@@ -146,29 +146,6 @@ cc_library(
 )
 
 cc_library(
-    name = "pprof_profile_builder",
-    srcs = ["pprof_profile_builder.cc"],
-    hdrs = ["pprof_profile_builder.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "//xla:util",
-        "//xla/tsl/platform:logging",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
-        "@nanobind",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/profiler/protobuf:profile_proto_cc",
-    ],
-)
-
-cc_library(
     name = "inspect_sharding",
     srcs = ["inspect_sharding.cc"],
     hdrs = ["inspect_sharding.h"],

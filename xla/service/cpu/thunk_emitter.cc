@@ -34,7 +34,9 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/concatenate_kernel_emitter.h"
@@ -69,7 +71,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/xnnpack/xnn_dot_thunk.h"
 #include "xla/backends/cpu/runtime/xnnpack/xnn_fusion_thunk.h"
 #include "xla/backends/cpu/xnn_emitter.h"
-#include "xla/backends/cpu/xnn_fusion.h"
+#include "xla/backends/cpu/xnn_support.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
@@ -108,13 +110,14 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
 #if XLA_ONEDNN_USE_GRAPH_API
 #include "xla/backends/cpu/onednn_emitter.h"
-#include "xla/backends/cpu/onednn_fusion.h"
+#include "xla/backends/cpu/onednn_support.h"
 #include "xla/backends/cpu/runtime/onednn/onednn_fusion_thunk.h"
 #endif  // XLA_ONEDNN_USE_GRAPH_API
 
@@ -221,12 +224,18 @@ absl::StatusOr<std::string> GetFusionFingerprint(
 
 }  // namespace
 
-static FusionCompiler FusionCompilerFactory(const HloModule& hlo_module) {
-  const DebugOptions& debug_options = hlo_module.config().debug_options();
-  FusionCompiler::Options options{
+static FusionCompiler::Options FusionCompilerOptions(
+    const HloModuleConfig& config) {
+  const DebugOptions& debug_options = config.debug_options();
+  return FusionCompiler::Options{
       debug_options.xla_cpu_prefer_vector_width(),
       debug_options.xla_cpu_emitter_verification_level(),
       debug_options.xla_cpu_enable_fast_min_max()};
+}
+
+static FusionCompiler FusionCompilerFactory(mlir::MLIRContext* context,
+                                            const HloModule& hlo_module) {
+  FusionCompiler::Options options = FusionCompilerOptions(hlo_module.config());
 
   FusionCompiler::CompilationHooks hooks;
   if (DumpingEnabledForHloModule(hlo_module)) {
@@ -249,10 +258,11 @@ static FusionCompiler FusionCompilerFactory(const HloModule& hlo_module) {
     hooks.post_lowering = callback_factory("post-lowering");
   }
 
-  return FusionCompiler(std::move(options), std::move(hooks));
+  return FusionCompiler(context, std::move(options), std::move(hooks));
 }
 
 ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
+                           tsl::thread::ThreadPool& thread_pool,
                            const BufferAssignment& buffer_assignment,
                            const TargetMachineFeatures& target_machine_features,
                            const HloModule& hlo_module, const Options& options)
@@ -263,8 +273,13 @@ ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
       options_(options),
       communicator_resource_(
           Resource::Create(Resource::kCollectiveCommunicator)),
-      fusion_compiler_(FusionCompilerFactory(hlo_module)),
-      mlir_context_(FusionCompiler::CreateContext()) {}
+      mlir_context_(FusionCompiler::CreateContext()),
+      fusion_compiler_(FusionCompilerFactory(mlir_context_.get(), hlo_module)),
+      parallel_fusion_emitter_(
+          thread_pool, FusionCompilerOptions(hlo_module_config_),
+          &buffer_assignment,
+          hlo_module_config_.debug_options()
+              .xla_cpu_generate_unique_c_style_kernel_entry_points()) {}
 
 static Thunk::Info ThunkInfo(const HloInstruction* instruction) {
   const HloModule* module = instruction->GetModule();
@@ -279,6 +294,20 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitEntryComputation(
   }
   tsl::profiler::TraceMe trace("ThunkEmitter::EmitEntryComputation");
   return EmitHloComputation(module.entry_computation());
+}
+
+absl::StatusOr<std::vector<ThunkEmitter::EmittedKernel>>
+ThunkEmitter::ConsumeKernels() {
+  TF_ASSIGN_OR_RETURN(std::vector<LlvmKernelDefinition> fusion_kernels,
+                      parallel_fusion_emitter_.ConsumeKernels());
+
+  kernels_.reserve(kernels_.size() + fusion_kernels.size());
+  for (LlvmKernelDefinition& kernel : fusion_kernels) {
+    auto [spec, source] = std::move(kernel).ReleaseStorage();
+    kernels_.push_back({spec.name(), std::move(source).thread_safe_module()});
+  }
+
+  return std::move(kernels_);
 }
 
 absl::StatusOr<BufferAllocation::Slice> ThunkEmitter::GetAllocationSlice(
@@ -879,8 +908,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
 
   if (ir_emitter_.IsSupportedByFusionEmitter(fusion) &&
       fusion->fused_expression_root()->opcode() == HloOpcode::kScatter) {
-    auto kernel_emitter =
-        std::make_unique<CpuScatterFusion>(buffer_assignment_, fusion);
+    auto kernel_emitter = std::make_unique<CpuScatterFusion>(
+        buffer_assignment_, fusion, mlir_context_.get());
 
     TF_ASSIGN_OR_RETURN(MlirKernelDefinition kernel_definition,
                         kernel_emitter->EmitKernelDefinition());
@@ -922,22 +951,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
           /*min_alignment=*/cpu_function_runtime::MinAlign());
     }
 
-    bool use_unique_c_name =
-        hlo_module_config_.debug_options()
-            .xla_cpu_generate_unique_c_style_kernel_entry_points();
-    TF_ASSIGN_OR_RETURN(
-        MlirKernelDefinition kernel_definition,
-        EmitFusionKernel(*mlir_context_, *fusion, &buffer_assignment_,
-                         use_unique_c_name));
-
-    auto [kernel_spec, kernel_source] =
-        std::move(kernel_definition).ReleaseStorage();
-
-    TF_ASSIGN_OR_RETURN(LlvmIrKernelSource llvm_ir_kernel_source,
-                        fusion_compiler_.Compile(std::move(kernel_source)));
-
-    kernels_.push_back({kernel_spec.name(),
-                        std::move(llvm_ir_kernel_source).thread_safe_module()});
+    TF_ASSIGN_OR_RETURN(KernelSpec kernel_spec,
+                        parallel_fusion_emitter_.AddFusion(fusion));
 
     kernel_spec_cache_.insert({fingerprint, kernel_spec});
 
@@ -1141,8 +1156,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       }
 
       if (use_xnn) {
-        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction),
-                                        /*use_slinky=*/true};
+        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction)};
         bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(rhs);
         return ThunkSequence::Of<XnnDotThunk>(
             std::move(options), ThunkInfo(instruction), dnums, lhs_slice,
@@ -1512,8 +1526,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitXnnFusionThunk(
   // Construct XNNPACK subgraph builder from the fusion computation.
   TF_ASSIGN_OR_RETURN(auto builder, EmitXnnFusionBuilder(computation));
 
-  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation),
-                                     /*use_slinky=*/true};
+  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation)};
   return ThunkSequence::Of<XnnFusionThunk>(
       std::move(options), ThunkInfo(instruction), std::move(arguments),
       std::move(results),

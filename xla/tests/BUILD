@@ -228,6 +228,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -274,7 +275,8 @@ cc_library(
     hdrs = ["hlo_pjrt_interpreter_reference_mixin.h"],
     deps = [
         ":hlo_runner_agnostic_reference_mixin",
-        "//xla/pjrt/interpreter:interpreter_client",
+        ":split_phase_utils",
+        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/service:hlo_runner_pjrt",
     ],
 )
@@ -286,8 +288,8 @@ cc_library(
     hdrs = ["hlo_pjrt_test_base.h"],
     deps = [
         ":hlo_runner_agnostic_test_base",
-        ":hlo_runner_pjrt_test_utils",
         ":pjrt_client_registry",
+        ":split_phase_utils",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
@@ -2738,6 +2740,7 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_config",
@@ -2759,6 +2762,7 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:regexp",
     ],
 )
 
@@ -3683,14 +3687,18 @@ xla_test(
 )
 
 cc_library(
-    name = "hlo_runner_pjrt_test_utils",
+    name = "split_phase_utils",
     testonly = True,
-    srcs = ["hlo_runner_pjrt_test_utils.cc"],
-    hdrs = ["hlo_runner_pjrt_test_utils.h"],
+    srcs = ["split_phase_utils.cc"],
+    hdrs = ["split_phase_utils.h"],
     deps = [
+        "//xla/hlo/evaluator:caching_hlo_evaluator",
+        "//xla/hlo/evaluator:hlo_evaluator_interface",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt/interpreter:interpreter_client",
         "//xla/service:hlo_runner_pjrt",
         "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings:string_view",
     ],
 )

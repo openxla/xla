@@ -505,20 +505,6 @@ xla_test(
 )
 
 xla_test(
-    name = "gpu_input_fusible_slice_test",
-    srcs = ["gpu_input_fusible_slice_test.cc"],
-    backends = ["gpu"],
-    deps = [
-        ":gpu_codegen_test",
-        "//xla:error_spec",
-        "//xla/service:hlo_module_config",
-        "//xla/tests:hlo_test_base",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-xla_test(
     name = "gpu_convolution_regression_test",
     srcs = ["gpu_convolution_regression_test.cc"],
     backend_args = {"gpu": [
@@ -662,6 +648,7 @@ lit_test_suite(
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MlirOptLib",
+#         "@llvm-project//mlir:RegisterAllExtensions",
 #         "@llvm-project//mlir:TensorDialect",
 #         "//xla/backends/gpu/codegen/emitters/transforms:passes",
 #         "//xla/backends/gpu/codegen/triton/ir:triton_xla",

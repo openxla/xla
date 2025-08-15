@@ -223,6 +223,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kRngGetAndUpdateState:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRsqrt:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSend:
@@ -802,6 +803,10 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
 
 HloInstruction* InstructionFusion::FuseInstruction(
     HloInstruction* fusion_instruction, HloInstruction* producer) {
+  if (producer->opcode() == HloOpcode::kFusion) {
+    fusion_instruction->MergeFusionInstruction(producer);
+    return fusion_instruction;
+  }
   return fusion_instruction->FuseInstruction(producer);
 }
 

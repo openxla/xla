@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/tile_assignment.h"  // IWYU pragma: export
@@ -47,6 +48,11 @@ namespace xla {
 // computations.
 class HloSharding {
  public:
+  // The name of the HLO instruction frontend attribute which stores that
+  // instruction's sharding (e.g., Shardy).
+  static inline constexpr absl::string_view kShardingFrontendAttrName =
+      "xla.sdy.sharding";
+
   // Creates a trivial sharding that replicates a maximal tile across all
   // devices.
   static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
@@ -288,7 +294,17 @@ class HloSharding {
     });
   }
 
-  // Returns weather the sharding represents a tiled sharding where the mapping
+  // Returns whether the sharding represents unreduced subgroup sharding.
+  bool IsUnreducedSubgroup() const {
+    if (!IsTuple()) {
+      return absl::c_linear_search(subgroup_types_, OpSharding::UNREDUCED);
+    }
+    return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
+      return s.IsUnreducedSubgroup();
+    });
+  }
+
+  // Returns whether the sharding represents a tiled sharding where the mapping
   // between devices and tiles is represented through 'tile_assignment()'.
   bool IsTiled() const {
     return !IsTileMaximal() && !IsManual() && !IsUnknown();
@@ -682,7 +698,7 @@ class HloSharding {
   friend class HloShardingTestHelper;
 
   // Checks that the number of elements in tuple_elements_ is consistent with
-  // the tuple shape passes as argument.
+  // the argument `shape`.
   absl::Status CheckLeafCount(const Shape& shape) const;
 
   // Internal helper to validate a tuple sharding.
@@ -713,16 +729,15 @@ class HloSharding {
   std::vector<HloSharding> tuple_elements_;
   // This field is used to track the source of this sharding, usually derived
   // from instructions. Multiple metadata may be populated if sharding is
-  // combined with other shardings. Metadata are to not be populated when
-  // tuple_ == true and instead metadata should be set on individual tuple
-  // elements.
+  // combined with other shardings. Metadata are not populated when tuple_ is
+  // true. Instead, metadata should be set on individual tuple elements.
   std::vector<OpMetadata> metadata_;
-  // This field is used to represented the sharding type of each subgroup.
+  // This field is used to represent the sharding type of each subgroup.
   // For example, sharding={devices=[2,2,2,2]0,1,2,...,15 last_tile_dims={
   // replicate, manual, unreduced}} means that each of the last 3 dimensions
-  // in [2,2,2,2] represents a subgrouping in replicate, manual.
+  // in [2,2,2,2] represents a subgroup in replicate, manual and unreduced.
   // When creating HloSharding, subgroup dims of the same type will be merged,
-  // so that there is at most one dim with a given type.
+  // so that the elements in subgroup_types_ are unique.
   std::vector<OpSharding::Type> subgroup_types_;
   bool replicated_ : 1;  // When non-tuple, true if the sharding is trivial.
   bool maximal_ : 1;     // When non-tuple, true if the tile size is the same as
@@ -740,7 +755,7 @@ class HloSharding {
   // replications, i.e., elements in slice [..., :] will be replicated.
   bool replicate_on_last_tile_dim_ : 1;
   // This field is used to store the shard group information. Instructions
-  // within the same shard group(i.e. under the same shard_group_id) will be
+  // within the same shard group (i.e. under the same shard_group_id) will be
   // sharded alike or exactly the same as each other.
   ShardGroup shard_group_ = NotShardGroup();
 };

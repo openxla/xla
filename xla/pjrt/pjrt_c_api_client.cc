@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/extensions/cross_host_transfers/pjrt_c_api_cross_host_transfers_extension.h"
+#include "xla/pjrt/extensions/executable_metadata/executable_metadata_extension.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -447,27 +448,40 @@ PjRtCApiClient::CompileAndLoad(const XlaComputation& computation,
                                   module_str, format);
 }
 
+namespace {
+
+std::string GetPluginStablehloVersionOrDefault(PjRtClient* client) {
+  // If the plugin is not set, use the default.
+  if (!client) {
+    return xla::GetDefaultStablehloVersion();
+  }
+
+  // If the plugin doesn't have attributes, use the default.
+  auto attributes = client->plugin_attributes();
+  if (!attributes.has_value()) {
+    return xla::GetDefaultStablehloVersion();
+  }
+
+  // If plugin doesn't report it StableHLO version, use the default.
+  auto attr_map = attributes->attributes;
+  auto version = attr_map.find("stablehlo_current_version");
+  if (version == attr_map.end()) {
+    return xla::GetDefaultStablehloVersion();
+  }
+
+  std::vector<int64_t> v = std::get<std::vector<int64_t>>(version->second);
+  return absl::StrFormat("%d.%d.%d", v[0], v[1], v[2]);
+}
+
+}  // namespace
+
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCApiClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
   if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
 
-  auto attributes = plugin_attributes()->attributes;
-  std::string version_string;
-  auto version = attributes.find("stablehlo_current_version");
-  if (version != attributes.end()) {
-    std::vector<int64_t> v = std::get<std::vector<int64_t>>(version->second);
-    version_string = absl::StrFormat("%d.%d.%d", v[0], v[1], v[2]);
-  } else {
-    version_string = xla::GetDefaultStablehloVersion(
-        plugin_attributes()->pjrt_c_api_minor_version);
-  }
-  TF_ASSIGN_OR_RETURN(
-      std::string serialized,
-      xla::Serialize(module, version_string,
-                     /*plugin_version=*/plugin_attributes().has_value()
-                         ? std::make_optional(
-                               plugin_attributes()->pjrt_c_api_minor_version)
-                         : std::nullopt));
+  std::string version_string = GetPluginStablehloVersionOrDefault(this);
+  TF_ASSIGN_OR_RETURN(std::string serialized,
+                      xla::Serialize(module, version_string));
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
                                   serialized, format);
@@ -1513,6 +1527,35 @@ PjRtCApiExecutable::GetOutputElementTypes() const {
     out.push_back(pjrt::ConvertFromPjRtBufferType(args.output_types[i]));
   }
   return std::vector<std::vector<PrimitiveType>>{std::move(out)};
+}
+
+absl::StatusOr<std::string>
+PjRtCApiExecutable::GetSerializedExecutableMetadata() const {
+  auto executable_metadata_extension =
+      pjrt::FindExtension<PJRT_ExecutableMetadata_Extension>(
+          c_api_, PJRT_Extension_Type::PJRT_Extension_Type_ExecutableMetadata);
+  if (executable_metadata_extension == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT_ExecutableMetadata_Extension not implemented by this PJRT "
+        "plugin.");
+  }
+  PJRT_ExecutableMetadata_GetExecutableMetadata_Args args;
+  args.executable = c_executable();
+  args.metadata = nullptr;
+  executable_metadata_extension->get_executable_metadata(&args);
+  absl::Cleanup cleanup = [&args, &executable_metadata_extension] {
+    if (args.metadata != nullptr) {
+      PJRT_ExecutableMetadata_DestroySerializedMetadata_Args free_args;
+      free_args.metadata = args.metadata;
+      executable_metadata_extension->destroy_serialized_metadata(&free_args);
+    }
+  };
+  if (args.metadata == nullptr) {
+    return absl::InternalError(
+        "PJRT_ExecutableMetadata_Extension did not return metadata.");
+  }
+  return std::string(args.metadata->serialized_metadata,
+                     args.metadata->serialized_metadata_size);
 }
 
 absl::StatusOr<std::vector<std::vector<DimensionVector>>>
@@ -2829,17 +2872,29 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
     CompileOptions options, mlir::ModuleOp module,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
-  std::optional<int64_t> plugin_version;
-  if (client) {
-    plugin_version = client->plugin_attributes()->pjrt_c_api_minor_version;
-  }
-  TF_ASSIGN_OR_RETURN(
-      std::string serialized,
-      xla::Serialize(module, xla::GetDefaultStablehloVersion(plugin_version),
-                     /*plugin_version=*/plugin_version));
+  std::string target_version = GetPluginStablehloVersionOrDefault(client);
+  TF_ASSIGN_OR_RETURN(std::string serialized,
+                      xla::Serialize(module, target_version));
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompileAot(c_api_, client, options, topology,
                                      serialized, format);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
+PjRtCApiCompiler::DeserializePjRtTopologyDescription(
+    const std::string& serialized_topology) {
+  PJRT_TopologyDescription_Deserialize_Args args;
+  args.struct_size = PJRT_TopologyDescription_Deserialize_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.serialized_topology = serialized_topology.data();
+  args.serialized_topology_size = serialized_topology.size();
+  args.topology = nullptr;
+
+  RETURN_STATUS_IF_PJRT_ERROR(
+      (*c_api_->PJRT_TopologyDescription_Deserialize)(&args), c_api_);
+
+  return std::make_unique<PjRtCApiTopologyDescription>(c_api_, args.topology,
+                                                       /*owned=*/true);
 }
 
 // -------------------------------- API access ---------------------------------

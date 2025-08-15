@@ -570,11 +570,25 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
   // between all recorded commands. This guarantees that we execute
   // all device operations in the exact same order as a thunk
   // sequence.
-  CommandBufferCmdExecutor::SynchronizationMode synchronization_mode =
-      ir_emitter_context_->debug_options()
-              .xla_gpu_graph_enable_concurrent_region()
-          ? CommandBufferCmdExecutor::SynchronizationMode::kAutomatic
-          : CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
+  CommandBufferCmdExecutor::SynchronizationMode synchronization_mode;
+  auto mode = ir_emitter_context_->debug_options()
+                  .xla_gpu_command_buffer_scheduling_mode();
+  switch (mode) {
+    case DebugOptions::SERIALIZE:
+      synchronization_mode =
+          CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
+      break;
+    case DebugOptions::CONCURRENT:
+      synchronization_mode =
+          CommandBufferCmdExecutor::SynchronizationMode::kConcurrent;
+      break;
+    case DebugOptions::LHS:
+      synchronization_mode =
+          CommandBufferCmdExecutor::SynchronizationMode::kLHS;
+      break;
+    default:
+      return Internal("Unsupported command buffer scheduling mode: %d", mode);
+  }
 
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdExecutor cmd_executor,
@@ -1407,8 +1421,8 @@ absl::Status IrEmitterUnnested::EmitTopKCustomCall(
                           ir_emitter_context_->buffer_assignment(),
                           GetDefaultBufferAlignment(), instr));
 
-  auto thunk = std::make_unique<CustomKernelThunk>(
-      instr, std::move(kernel), std::move(kernel_arguments.args()));
+  auto thunk = std::make_unique<CustomKernelThunk>(instr, std::move(kernel),
+                                                   kernel_arguments);
   AddThunkToThunkSequence(std::move(thunk));
 
   return absl::OkStatus();
@@ -1491,7 +1505,7 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
       TF_ASSIGN_OR_RETURN(llvm::Function * kernel,
                           BuildKernelPrototypeFromUniqueName(
                               *ir_emitter_context_, impl_fn->getName().str(),
-                              sanitized_kernel_name, kernel_arguments.args(),
+                              sanitized_kernel_name, kernel_arguments,
                               launch_dimensions, &builder));
 
       // Move function body into kernel prototype.
@@ -1538,7 +1552,7 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
 
   AddThunkToThunkSequence(std::make_unique<KernelThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), entry->kernel_name,
-      kernel_arguments.args(), entry->launch_dimensions, entry->cluster_dim,
+      kernel_arguments, entry->launch_dimensions, entry->cluster_dim,
       entry->shmem_bytes));
   return absl::OkStatus();
 }
@@ -2560,12 +2574,12 @@ IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
   TF_ASSIGN_OR_RETURN(
       llvm::Function * kernel,
       BuildKernelPrototype(*ir_emitter_context_, suggested_kernel_name,
-                           suggested_kernel_name, kernel_arguments.args(),
+                           suggested_kernel_name, kernel_arguments,
                            launch_dimensions, &b_));
 
   AddThunkToThunkSequence(std::make_unique<KernelThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), kernel->getName().str(),
-      kernel_arguments.args(), launch_dimensions,
+      kernel_arguments, launch_dimensions,
       /*cluster_dim=*/std::nullopt,
       /*shmem_bytes=*/0));
 
