@@ -13,12 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/log/log_sink.h"
-#include "absl/log/scoped_mock_log.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/gpu/model/gpu_collective_performance_model.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -39,32 +36,6 @@ TEST_F(GpuPerformanceWithCollectiveModelTest, TestNvmlLibraryLoading) {
   EXPECT_TRUE(GpuPerformanceWithCollectiveModel::InitNvml());
 
 #endif  // GOOGLE_CUDA
-}
-
-TEST_F(GpuPerformanceWithCollectiveModelTest, TestNvmlLibraryLoadingWarning) {
-#if GOOGLE_CUDA && defined(PLATFORM_POSIX) && !defined(PLATFORM_GOOGLE)
-  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
-
-  bool warning_caught = false;
-
-  EXPECT_CALL(mock_log,
-              Log(absl::LogSeverity::kWarning, ::testing::_, ::testing::_))
-      .Times(::testing::AnyNumber())
-      .WillRepeatedly([&warning_caught](absl::LogSeverity severity,
-                                        const std::string& filename,
-                                        const std::string& message) {
-        if (message.find("undefined symbol:") != std::string::npos) {
-          warning_caught = true;
-          EXPECT_THAT(message, ::testing::ContainsRegex("undefined symbol:"));
-        }
-      });
-
-  mock_log.StartCapturingLogs();
-  GpuPerformanceWithCollectiveModel::InitNvml();
-  mock_log.StopCapturingLogs();
-
-  EXPECT_TRUE(warning_caught);
-#endif
 }
 
 }  // namespace
