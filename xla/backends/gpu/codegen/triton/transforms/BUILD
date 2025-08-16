@@ -31,6 +31,7 @@ gentbl_cc_library(
 cc_library(
     name = "passes",
     srcs = [
+        "convert_nvshmem_tensor_to_extern_elementwise.cc",
         "extract_tma_info_pass.cc",
         "generalize_kernel_signature.cc",
         "int4_passes.cc",
@@ -39,7 +40,10 @@ cc_library(
         "triton_xla_fold_transpose_pass.cc",
         "triton_xla_squeeze_dims_pass.cc",
     ],
-    hdrs = ["passes.h"],
+    hdrs = [
+        "convert_nvshmem_tensor_to_extern_elementwise.h",
+        "passes.h",
+    ],
     deps = [
         ":passes_inc_gen",
         "//xla:permutation_util",

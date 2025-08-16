@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <string>
@@ -69,6 +70,7 @@ limitations under the License.
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -117,6 +119,79 @@ absl::Status LinkLibdeviceIfNecessary(llvm::Module* module,
   return LinkWithBitcodeVector(module, {libdevice_path});
 }
 
+// Returns whether the module could use any NVSHMEM device library functions.
+bool CouldNeedNvshmemBitcode(const llvm::Module& module) {
+  for (const llvm::Function& function : module.functions()) {
+    // Check for NVSHMEM function declarations (both nvshmem_ and nvshmemx_ prefixes)
+    if (!function.isIntrinsic() && function.isDeclaration() &&
+        (function.getName().starts_with("nvshmem_") || 
+         function.getName().starts_with("nvshmemx_"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Get the path to NVSHMEM device bitcode library
+std::string GetNvshmemDevicePath(const std::string& cuda_data_dir) {
+  // Check NVSHMEM_HOME environment variable first
+  const char* nvshmem_home_env = std::getenv("NVSHMEM_HOME");
+  if (nvshmem_home_env) {
+    std::string env_path = tsl::io::JoinPath(nvshmem_home_env, "lib", "libnvshmem_device.bc");
+    if (tsl::Env::Default()->FileExists(env_path).ok()) {
+      return env_path;
+    }
+  }
+  
+  // For hermetic NVSHMEM installation - try the same pattern as save version
+  std::string hermetic_path = tsl::io::JoinPath(
+      cuda_data_dir, "..", "..", "nvidia", "nvshmem", "lib", "libnvshmem_device.bc");
+  
+  if (tsl::Env::Default()->FileExists(hermetic_path).ok()) {
+    return hermetic_path;
+  }
+  
+  // Fallback paths for different NVSHMEM installations
+  std::vector<std::string> fallback_paths = {
+      "/usr/local/nvshmem/lib/libnvshmem_device.bc",
+      "/opt/nvshmem/lib/libnvshmem_device.bc",
+      tsl::io::JoinPath(cuda_data_dir, "nvshmem", "lib", "libnvshmem_device.bc")
+  };
+  
+  for (const auto& path : fallback_paths) {
+    if (tsl::Env::Default()->FileExists(path).ok()) {
+      return path;
+    }
+  }
+  
+  // Return the user home path as preferred if no files found
+  const char* home_env = std::getenv("HOME");
+  if (home_env) {
+    return tsl::io::JoinPath(home_env, "opt", "nvshmem", "lib", "libnvshmem_device.bc");
+  }
+  return hermetic_path;
+}
+
+// Links NVSHMEM device library into the given module if the module needs NVSHMEM.
+absl::Status LinkNvshmemIfNecessary(llvm::Module* module,
+                                    const std::string& cuda_data_dir) {
+  if (!CouldNeedNvshmemBitcode(*module)) {
+    return absl::OkStatus();
+  }
+  
+  std::string nvshmem_device_path = GetNvshmemDevicePath(cuda_data_dir);
+  
+  if (!tsl::Env::Default()->FileExists(nvshmem_device_path).ok()) {
+    LOG(WARNING)
+        << "NVSHMEM device library is required by this HLO module but was not found at "
+        << nvshmem_device_path;
+    return xla::Internal("NVSHMEM device library not found at %s", nvshmem_device_path);
+  }
+
+  VLOG(1) << "Linking with NVSHMEM device library from: " << nvshmem_device_path;
+  return LinkWithBitcodeVector(module, {nvshmem_device_path});
+}
+
 absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
                                      se::GpuComputeCapability gpu_version,
                                      const DebugOptions& debug_options,
@@ -124,6 +199,9 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
   // Link the input module with libdevice, to pull in implementations of some
   // builtins.
   TF_RETURN_IF_ERROR(LinkLibdeviceIfNecessary(module, device_bitcode_path));
+
+  // Link the input module with NVSHMEM device library if needed
+  TF_RETURN_IF_ERROR(LinkNvshmemIfNecessary(module, debug_options.xla_gpu_cuda_data_dir()));
 
   // Set the flush-denormals-to-zero flag on the module so the NVVM reflect pass
   // can access it.

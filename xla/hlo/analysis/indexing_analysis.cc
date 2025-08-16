@@ -1586,6 +1586,12 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (auto parameter = DynCast<HloParameterInstruction>(instr)) {
     return HloInstructionIndexing{};
   }
+  if (auto all_reduce = DynCast<HloAllReduceInstruction>(instr)) {
+    // AllReduce performs reduction across replicas/partitions but maintains
+    // the same output shape as input shape, so we can use identity mapping
+    IndexingMap identity_map = CreateIdentityMap(instr->shape(), ctx);
+    return HloInstructionIndexing::FromIndexingMaps({identity_map});
+  }
   if (auto reduce = DynCast<HloReduceInstruction>(instr)) {
     return ComputeOutputToInputReduceOpIndexing(reduce, ctx);
   }
@@ -1647,6 +1653,12 @@ HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
     return ComputeInputToOutputTransposeOpIndexing(transpose, ctx);
   }
   // go/keep-sorted end
+  if (auto all_reduce = DynCast<HloAllReduceInstruction>(instr)) {
+    // AllReduce performs reduction across replicas/partitions but maintains
+    // the same output shape as input shape, so we can use identity mapping
+    IndexingMap identity_map = CreateIdentityMap(instr->shape(), ctx);
+    return HloInstructionIndexing::FromIndexingMaps({identity_map});
+  }
   if (instr->opcode() == HloOpcode::kTuple) {
     return HloInstructionIndexing::FromIndexingMaps(
         {CreateIdentityMap(instr->shape().tuple_shapes(input_id), ctx)});

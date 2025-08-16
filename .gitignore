@@ -16,6 +16,7 @@ tools/python_bin_path.sh
 # Emacs autosaves
 *~
 \#*\#
+-/
 
 # Visual Studio files
 .vs/
