@@ -293,6 +293,7 @@ cc_library(
     visibility = internal_visibility([
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
+        "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//tensorflow/core/kernels:__subpackages__",
     ]),
     deps = [
