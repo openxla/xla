@@ -1495,6 +1495,45 @@ GroupedByOpIndexing ComputeGroupedOutputToInputIndexing(
   return grouped_indexing_maps;
 }
 
+HloInstructionIndexing ComputeOutputToInputAllGatherOpIndexing(
+    const HloAllGatherInstruction* instr, MLIRContext* ctx) {
+  // CHECK_EQ(instr->all_gather_dimension(), 0);
+  // if (instr->all_gather_dimension() != 0) {
+  //   return CreateUnknownIndexing(instr->operand_count());
+  // }
+
+  int64_t all_gather_dim = instr->all_gather_dimension();
+
+  auto output_rank = instr->shape().dimensions().size();
+
+  std::vector<AffineExpr> exprs;
+  exprs.reserve(output_rank);
+
+  int64_t all_gather_input_dim_size =
+      instr->operand(0)->shape().dimensions()[instr->all_gather_dimension()];
+
+  for (int64_t i = 0; i < output_rank; ++i) {
+    auto dim = mlir::getAffineDimExpr(i, ctx);
+    exprs.push_back(i == all_gather_dim ? dim % all_gather_input_dim_size
+                                        : dim);
+  }
+
+  IndexingMap indexing_map = IndexingMap::FromTensorSizes(
+      AffineMap::get(output_rank, /*symbolCount=*/0, exprs, ctx),
+      instr->shape().dimensions(), {});
+
+  AffineExpr replica_id_expr = mlir::getAffineDimExpr(all_gather_dim, ctx)
+                                   .floorDiv(all_gather_input_dim_size);
+
+  IndexingMap replica_id_map = IndexingMap::FromTensorSizes(
+      AffineMap::get(output_rank, /*symbolCount=*/0, replica_id_expr, ctx),
+      instr->shape().dimensions(), {});
+
+  OperandIndexing operand_indexing(indexing_map, {}, replica_id_map);
+
+  return HloInstructionIndexing::FromOperandIndexing({operand_indexing});
+}
+
 HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
                                                     int output_id,
                                                     MLIRContext* ctx) {
@@ -1507,6 +1546,10 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (instr->opcode() == HloOpcode::kBitcast) {
     return ComputeOutputToInputBitcastOpIndexing(instr, ctx);
   }
+  // go/keep-sorted start
+  if (auto all_gather = DynCast<HloAllGatherInstruction>(instr)) {
+    return ComputeOutputToInputAllGatherOpIndexing(all_gather, ctx);
+  }
   if (auto broadcast = DynCast<HloBroadcastInstruction>(instr)) {
     return ComputeOutputToInputBroadcastOpIndexing(broadcast, ctx);
   }
@@ -1516,14 +1559,17 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (auto constant = DynCast<HloConstantInstruction>(instr)) {
     return HloInstructionIndexing{};
   }
+  if (auto convolution = DynCast<HloConvolutionInstruction>(instr)) {
+    return ComputeOutputToInputConvolutionOpIndexing(convolution, ctx);
+  }
   if (auto dot = DynCast<HloDotInstruction>(instr)) {
     return ComputeOutputToInputDotOpIndexing(dot, ctx);
   }
-  if (auto dynamic_slice = DynCast<HloDynamicSliceInstruction>(instr)) {
-    return ComputeOutputToInputDynamicSliceOpIndexing(dynamic_slice, ctx);
-  }
   if (auto dus = DynCast<HloDynamicUpdateSliceInstruction>(instr)) {
     return ComputeOutputToInputDynamicUpdateSliceOpIndexing(dus, ctx);
+  }
+  if (auto dynamic_slice = DynCast<HloDynamicSliceInstruction>(instr)) {
+    return ComputeOutputToInputDynamicSliceOpIndexing(dynamic_slice, ctx);
   }
   if (auto fusion = DynCast<HloFusionInstruction>(instr)) {
     return ComputeOutputToInputFusionOpIndexing(fusion, output_id, ctx);
@@ -1537,14 +1583,14 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (auto pad = DynCast<HloPadInstruction>(instr)) {
     return ComputeOutputToInputPadOpIndexing(pad, ctx);
   }
+  if (auto parameter = DynCast<HloParameterInstruction>(instr)) {
+    return HloInstructionIndexing{};
+  }
   if (auto reduce = DynCast<HloReduceInstruction>(instr)) {
     return ComputeOutputToInputReduceOpIndexing(reduce, ctx);
   }
   if (auto reduce_window = DynCast<HloReduceWindowInstruction>(instr)) {
     return ComputeOutputToInputReduceWindowOpIndexing(reduce_window, ctx);
-  }
-  if (auto convolution = DynCast<HloConvolutionInstruction>(instr)) {
-    return ComputeOutputToInputConvolutionOpIndexing(convolution, ctx);
   }
   if (auto reshape = DynCast<HloReshapeInstruction>(instr)) {
     return ComputeOutputToInputReshapeOpIndexing(reshape, ctx);
@@ -1558,9 +1604,7 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
     return ComputeOutputToInputTransposeOpIndexing(transpose, ctx);
   }
-  if (auto parameter = DynCast<HloParameterInstruction>(instr)) {
-    return HloInstructionIndexing{};
-  }
+  // go/keep-sorted end
   LOG(ERROR) << "ComputeOutputToInputIndexing is not implemented for opcode "
              << instr->opcode();
   // If we cannot compute output-to-input indexing, we return std::nullopt for
@@ -1580,6 +1624,7 @@ HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
   if (instr->opcode() == HloOpcode::kBitcast) {
     return ComputeInputToOutputBitcastOpIndexing(instr, ctx);
   }
+  // go/keep-sorted start
   if (auto broadcast = DynCast<HloBroadcastInstruction>(instr)) {
     return ComputeInputToOutputBroadcastOpIndexing(broadcast, ctx);
   }
@@ -1595,12 +1640,13 @@ HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
   if (auto reverse = DynCast<HloReverseInstruction>(instr)) {
     return ComputeReverseOpIndexing(reverse, ctx);
   }
-  if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
-    return ComputeInputToOutputTransposeOpIndexing(transpose, ctx);
-  }
   if (auto slice = DynCast<HloSliceInstruction>(instr)) {
     return ComputeInputToOutputSliceOpIndexing(slice, ctx);
   }
+  if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
+    return ComputeInputToOutputTransposeOpIndexing(transpose, ctx);
+  }
+  // go/keep-sorted end
   if (instr->opcode() == HloOpcode::kTuple) {
     return HloInstructionIndexing::FromIndexingMaps(
         {CreateIdentityMap(instr->shape().tuple_shapes(input_id), ctx)});
@@ -1636,10 +1682,14 @@ IndexingMap ComputeEpilogueInputToOutputIndexing(
 std::string OperandIndexing::ToString() const {
   std::string result = absl::StrCat(xla::ToString(map_));
   if (!rt_vars_.empty()) {
-    absl::StrAppend(&result, "runtime variables:\n");
+    absl::StrAppend(&result, "\nruntime variables:\n");
     for (const auto& [id, rt_var] : llvm::enumerate(rt_vars_)) {
       absl::StrAppend(&result, "\nrt", id, ": ", rt_var.ToString());
     }
+  }
+  if (replica_id_map_.has_value()) {
+    absl::StrAppend(&result, "\nreplica id:\n",
+                    xla::ToString(*replica_id_map_));
   }
   return result;
 }
@@ -1713,7 +1763,22 @@ OperandIndexing ComposeOperandIndexing(const OperandIndexing& first,
     IndexingMap combined_map = ComposeIndexingMaps(first.map(), rt_var.map);
     combined_runtime.push_back(RuntimeVarIndexing{rt_var.hlo, combined_map});
   }
-  return OperandIndexing(map, combined_runtime);
+
+  std::optional<IndexingMap> replica_id_map;
+  if (first.replica_id_map().has_value()) {
+    replica_id_map = first.replica_id_map();
+    if (second.replica_id_map().has_value()) {
+      // TODO(shyshkov): Support chaining collective ops.
+      return OperandIndexing(IndexingMap::GetUndefined(), {});
+    }
+  }
+
+  if (second.replica_id_map().has_value()) {
+    replica_id_map =
+        ComposeIndexingMaps(first.map(), second.replica_id_map().value());
+  }
+
+  return OperandIndexing(map, combined_runtime, replica_id_map);
 }
 
 std::string RuntimeVarIndexing::ToString() const {

@@ -360,7 +360,8 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
         std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this));
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(std::move(backends), stream_exec, thread_pool));
+        AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
+                              thread_pool));
     pipeline->AddPass(std::move(autotuner_pass));
   } else {
     // On Ampere or later, GemmAlgorithmPicker just provides a way to "warmup"
@@ -382,20 +383,8 @@ absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     const MultiProcessKeyValueStore& key_value_store,
     const se::SemanticVersion& toolkit_version,
     se::StreamExecutor* stream_executor) {
-  if (hlo_module->config()
-          .debug_options()
-          .xla_gpu_experimental_use_autotuner_pass()) {
-    const DebugOptions& debug_options = hlo_module->config().debug_options();
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(
-            GetAllGpuCodegenBackends(stream_executor, &debug_options, this),
-            stream_executor, thread_pool));
-    pipeline->AddPass(std::move(autotuner_pass));
-  } else {
-    pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
-                                           thread_pool, key_value_store);
-  }
+  pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
+                                         thread_pool, key_value_store);
   return absl::OkStatus();
 }
 

@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_HLO_IR_HLO_MODULE_H_
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -59,6 +60,9 @@ limitations under the License.
 #include "xla/xla.pb.h"
 
 namespace xla {
+
+inline constexpr absl::string_view kOriginalValuePlaceholderPrefix =
+    "_ovplaceholder_";
 
 using LayoutCanonicalizationCallback =
     std::function<absl::StatusOr<std::pair<std::vector<Shape>, Shape>>(
@@ -113,6 +117,8 @@ class HloModule {
       std::unique_ptr<HloComputation> computation);
 
   // Removes an embedded computation.
+  absl::Status RemoveEmbeddedComputation(
+      std::vector<std::unique_ptr<HloComputation>>::iterator to_remove);
   absl::Status RemoveEmbeddedComputation(HloComputation* to_remove);
 
   // Removes unused computations.
@@ -148,6 +154,13 @@ class HloModule {
   // Optionally, a custom config can be provided.
   std::unique_ptr<HloModule> Clone(
       const std::string& suffix = "clone",
+      std::optional<const HloModuleConfig> config = std::nullopt) const;
+
+  // Performs a deep clone of the module and also returns clone context with
+  // the cloned object mappings.
+  std::pair<std::unique_ptr<HloModule>, std::unique_ptr<HloCloneContext>>
+  CloneWithContext(
+      const std::string& suffix,
       std::optional<const HloModuleConfig> config = std::nullopt) const;
 
   // Performs a deep clone of the computation, by recursively cloning all
@@ -249,17 +262,27 @@ class HloModule {
   //
   //   for (HloComputation* c : module->computations()) { ... }
   //
-  tsl::gtl::iterator_range<UnwrappingIterator<
-      std::vector<std::unique_ptr<HloComputation>>::const_iterator>>
+  tsl::gtl::iterator_range<FilteringUnwrappingIterator<
+      std::vector<std::unique_ptr<HloComputation>>::const_iterator,
+      bool (*)(const HloComputation*)>>
   computations() const {
-    return {MakeUnwrappingIterator(computations_.begin()),
-            MakeUnwrappingIterator(computations_.end())};
+    bool (*not_deleted)(const HloComputation*) =
+        +[](const HloComputation* computation) {
+          return computation != nullptr;
+        };
+    return MakeFilteringUnwrappingIteratorRange(
+        computations_.begin(), computations_.end(), not_deleted);
   }
-  tsl::gtl::iterator_range<UnwrappingIterator<
-      std::vector<std::unique_ptr<HloComputation>>::iterator>>
+  tsl::gtl::iterator_range<FilteringUnwrappingIterator<
+      std::vector<std::unique_ptr<HloComputation>>::iterator,
+      bool (*)(const HloComputation*)>>
   computations() {
-    return {MakeUnwrappingIterator(computations_.begin()),
-            MakeUnwrappingIterator(computations_.end())};
+    bool (*not_deleted)(const HloComputation*) =
+        +[](const HloComputation* computation) {
+          return computation != nullptr;
+        };
+    return MakeFilteringUnwrappingIteratorRange(
+        computations_.begin(), computations_.end(), not_deleted);
   }
 
   // Similar as above, but return a filtered view of computations for specified
@@ -274,6 +297,10 @@ class HloModule {
     // beyond this function.
     std::function<bool(const HloComputation*)> pred =
         [execution_threads](const HloComputation* computation) {
+          // This computation was deleted.
+          if (computation == nullptr) {
+            return false;
+          }
           if (execution_threads.empty()) {
             return true;
           }
@@ -288,20 +315,25 @@ class HloModule {
   HloComputation* GetComputationWithName(absl::string_view name) const;
 
   // Gets the number of computations in this module.
-  int64_t computation_count() const { return computations_.size(); }
-
-  // Returns the mutable computation for the given index.
-  HloComputation* mutable_computation(int64_t idx) {
-    CHECK(idx >= 0 && idx < computations_.size());
-    return computations_[idx].get();
+  int64_t computation_count() const {
+    const size_t all_computations = computations_.size();
+    const size_t deleted_computations = to_be_deleted_computations_.size();
+    CHECK_GE(all_computations, deleted_computations);
+    return all_computations - deleted_computations;
   }
 
   // Gets the number of instructions in this module.
   int64_t instruction_count() const;
 
-  // Deallocate removed instructions in each computation.
+  // Deallocates computations that were marked for deletion during
+  // RemoveEmbeddedComputation.
+  void CleanupComputations();
+
+  // Runs HloModule::CleanupComputations() and HloComputation::Cleanup() on all
+  // computations.
   void Cleanup() {
-    for (auto& comp : computations_) {
+    CleanupComputations();
+    for (HloComputation* comp : computations()) {
       comp->Cleanup();
     }
   }
@@ -711,6 +743,11 @@ class HloModule {
       std::unique_ptr<HloComputation> computation, bool is_entry,
       bool uniquify_identifiers, bool preserve_entry_layouts);
 
+  // Performs a deep clone of current module to context->module, and populate
+  // the context with the cloned object mappings.
+  void Clone(const std::string& suffix, HloCloneContext* context,
+             std::optional<const HloModuleConfig> config) const;
+
   std::string name_;
 
   // Sharabled copy-on-write instance.
@@ -719,6 +756,7 @@ class HloModule {
 
   HloComputation* entry_computation_ = nullptr;
   std::vector<std::unique_ptr<HloComputation>> computations_;
+  std::vector<std::unique_ptr<HloComputation>> to_be_deleted_computations_;
 
   // Random number generator engine to use when generating random numbers per
   // HloModule compilation.
@@ -830,17 +868,26 @@ class HloModule {
         const xla::OriginalValueRecoveryTableProto&
             original_value_recovery_table);
 
-    // Adds an entry to the original value recovery table.
-    // XLA may replace some instructions in the HLO graph to improve
-    // performance. This adds an entry to the recovery table to record the
-    // computation that can be used to recover the replaced original value due
-    // to the replacement from the replacing instruction.
-    void AddRecoveryComputation(
+    // Adds an entry to the original value recovery table. Each entry contains a
+    // recovery computation that can be used to recover the original array in
+    // the old original value from the original array in the new original value.
+
+    // Adds an entry to the original value recovery table. Tries to
+    // create a placeholder original value for the replacing instruction if it
+    // doesn't have one.
+    void AddRecoveryModule(const HloInstruction* replaced_inst,
+                           HloInstruction* replacing_inst,
+                           std::unique_ptr<HloModule> recovery_module);
+
+    // Creates a recovery module using the computation built from
+    // build_recovery_computation as the entry computation, and adds an entry to
+    // the original value recovery table using the recovery module.
+    void BuildAndAddRecoveryModule(
         const HloInstruction* replaced_inst, HloInstruction* replacing_inst,
         const std::function<HloInstruction*(
             xla::HloComputation::Builder& builder,
             const xla::Shape& input_shape, const xla::Shape& output_shape)>&
-            recovery_computation);
+            build_entry_computation);
   };
 
   const OriginalValueRecoveryTable& original_value_recovery_table() const {

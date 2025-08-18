@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -95,6 +94,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
@@ -552,7 +552,9 @@ absl::Status RewriteGemmFusionToCall(HloInstruction* fusion_instr) {
       computation->AddInstruction(HloInstruction::CreateCall(
           fusion_instr->shape(), fusion_instr->operands(),
           fusion_instr->fused_instructions_computation()));
-  return computation->ReplaceInstruction(fusion_instr, call);
+  TF_RETURN_IF_ERROR(computation->ReplaceInstruction(fusion_instr, call));
+  call->set_metadata_op_name("");
+  return absl::OkStatus();
 }
 
 absl::Status RewriteGemmFusionToCustomKernelFusion(
@@ -568,6 +570,7 @@ absl::Status RewriteGemmFusionToCustomKernelFusion(
           fusion_instr->shape(), fusion_instr->operands(),
           fusion_instr->fused_instructions_computation()));
   TF_RETURN_IF_ERROR(computation->ReplaceInstruction(fusion_instr, call));
+  call->set_metadata_op_name("");
   HloPassPipeline pipeline("autotuner_custom_kernel_fusion_rewriter");
   pipeline.AddPass<CallInliner>();
   pipeline.AddPass<CustomKernelFusionRewriter>(&device_description,
@@ -817,7 +820,7 @@ GemmFusionAutotunerImpl::GenerateConfigs(const HloFusionInstruction& fusion) {
     if (algorithm_util::IsSupportedByCublasOrCublasLt(
             dot->precision_config().algorithm(), GetComputeCapability(), dot,
             rhs_contracting_index) &&
-        !dot->sparse_operands() && IsAutotuningEnabled()) {
+        IsAutotuningEnabled()) {
       configs.push_back(CuBlasConfig{});
     }
 
@@ -862,7 +865,8 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
 
   // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
   bool autotune_tma = debug_options_.xla_gpu_experimental_enable_triton_tma() &&
-                      IsTmaEnabledForDevice(config_.GetDeviceDescription());
+                      stream_executor::gpu::IsTmaAvailableForDevice(
+                          config_.GetDeviceDescription());
   TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(), &dot);
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();

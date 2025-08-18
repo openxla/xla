@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
@@ -108,6 +109,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::FloatEq;
@@ -115,8 +117,6 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
-using ::tsl::testing::IsOkAndHolds;
-using ::tsl::testing::StatusIs;
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
     absl::string_view program, xla::PjRtClient& client,
@@ -1168,29 +1168,29 @@ TEST(GpuTopology, FromProto) {
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
         platform_version: "platform_version"
-        num_slices: 2
-        num_hosts_per_slice: 1
+        num_partitions: 2
+        num_hosts_per_partition: 1
         num_devices_per_host: 3
       )pb",
       &msg));
 
   std::unique_ptr<const GpuTopology> gpu_topology = GpuTopology::FromProto(msg);
   EXPECT_THAT(gpu_topology->platform_version(), "platform_version");
-  EXPECT_THAT(gpu_topology->num_slices(), 2);
-  EXPECT_THAT(gpu_topology->num_hosts_per_slice(), 1);
+  EXPECT_THAT(gpu_topology->num_partitions(), 2);
+  EXPECT_THAT(gpu_topology->num_hosts_per_partition(), 1);
   EXPECT_THAT(gpu_topology->num_devices_per_host(), 3);
 }
 
 TEST(GpuTopology, ToProto) {
   GpuTopology gpu_topology(
       /*platform_version=*/"platform_version",
-      /*num_slices=*/2,
-      /*num_hosts_per_slice=*/1,
+      /*num_partitions=*/2,
+      /*num_hosts_per_partition=*/1,
       /*num_devices_per_host=*/3);
   GpuTopologyProto msg = gpu_topology.ToProto();
   EXPECT_THAT(msg.platform_version(), "platform_version");
-  EXPECT_THAT(msg.num_slices(), 2);
-  EXPECT_THAT(msg.num_hosts_per_slice(), 1);
+  EXPECT_THAT(msg.num_partitions(), 2);
+  EXPECT_THAT(msg.num_hosts_per_partition(), 1);
   EXPECT_THAT(msg.num_devices_per_host(), 3);
 }
 
@@ -1278,11 +1278,11 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
                           GetStreamExecutorGpuClient(DefaultOptions()));
   for (int device_index = 0; device_index < client->device_count();
        device_index++) {
-    auto coords =
-        static_cast<PjRtStreamExecutorDevice*>(client->devices()[device_index])
-            ->description()
-            .coords();
-    EXPECT_EQ(coords[0], device_index);
+    auto device =
+        static_cast<PjRtStreamExecutorDevice*>(client->devices()[device_index]);
+    auto coords = device->description().coords();
+    // All devices are in the same partition & process.
+    EXPECT_THAT(coords, ElementsAre(0, 0, device->local_device_id().value()));
   }
 }
 
@@ -1351,10 +1351,10 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   EXPECT_EQ(client->device_count(), devices_per_host * num_nodes);
   for (int i = 0; i < client->device_count(); i++) {
     auto device = client->devices()[i];
-    auto slice_index =
-        std::get<int64_t>(device->Attributes().at("slice_index"));
+    auto partition_index =
+        std::get<int64_t>(device->Attributes().at("partition_index"));
     auto host_index = device->process_index();
-    EXPECT_EQ(slice_index, host_index);
+    EXPECT_EQ(partition_index, host_index);
   }
 }
 
@@ -1432,8 +1432,8 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientWithGpuTopologyTest) {
       tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
           *topology);
 
-  EXPECT_EQ(gpu_topology.gpu_topology().num_slices(), 2);
-  EXPECT_EQ(gpu_topology.gpu_topology().num_hosts_per_slice(), 4);
+  EXPECT_EQ(gpu_topology.gpu_topology().num_partitions(), 2);
+  EXPECT_EQ(gpu_topology.gpu_topology().num_hosts_per_partition(), 4);
   EXPECT_EQ(gpu_topology.gpu_topology().num_devices_per_host(), 2);
 }
 

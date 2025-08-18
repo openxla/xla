@@ -267,6 +267,9 @@ absl::StatusOr<bool> PropagateIdenticalConstantArguments(
   for (int i = 0; i < computation->num_parameters(); ++i) {
     if (identical_constant_parameters[i]) {
       HloInstruction* parameter = computation->parameter_instruction(i);
+      if (parameter->IsDead()) {
+        continue;
+      }
       const HloInstruction* constant =
           computation->caller_instructions()[0]->operand(i);
       TF_RETURN_IF_ERROR(parameter->ReplaceAllUsesWith(

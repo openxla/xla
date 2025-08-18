@@ -1,4 +1,3 @@
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -683,7 +682,6 @@ xla_test(
         "no_mac",
     ],
     deps = [
-        ":kernel_name_tracer",
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -691,6 +689,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/profiler:kernel_name_tracer",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -749,7 +748,6 @@ xla_test(
         "no_mac",
     ],
     deps = [
-        ":kernel_name_tracer",
         ":test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -757,6 +755,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/profiler:kernel_name_tracer",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -843,38 +842,6 @@ xla_test(
         "@llvm-project//mlir:Pass",
         "@tsl//tsl/platform:path",
     ],
-)
-
-cc_library(
-    name = "kernel_name_tracer_cuda",
-    testonly = True,
-    srcs = if_cuda(["kernel_name_tracer_cuda.cc"]),
-    hdrs = ["kernel_name_tracer.h"],
-    tags = ["manual"],  # Need to exclude this from wildcard builds
-    deps = [
-        "//xla/backends/profiler/gpu:cupti_collector",
-        "//xla/backends/profiler/gpu:cupti_tracer",
-        "//xla/tsl/profiler/utils:time_utils",
-        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-    ],
-)
-
-cc_library(
-    name = "kernel_name_tracer_noop",
-    testonly = True,
-    srcs = ["kernel_name_tracer_noop.cc"],
-    hdrs = ["kernel_name_tracer.h"],
-    tags = ["manual"],  # Need to exclude this from wildcard builds
-)
-
-cc_library(
-    name = "kernel_name_tracer",
-    testonly = True,
-    hdrs = ["kernel_name_tracer.h"],
-    deps = if_cuda(
-        [":kernel_name_tracer_cuda"],
-        [":kernel_name_tracer_noop"],
-    ),
 )
 
 cc_library(

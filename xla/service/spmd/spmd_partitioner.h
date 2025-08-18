@@ -131,6 +131,9 @@ struct SpmdPartitionerOptions {
   // This combines sizes in bytes of both operands.
   // When it's set, it will override threshold_for_windowed_einsum_mib.
   std::optional<int64_t> total_bytes_windowed_einsum_threshold = std::nullopt;
+
+  // The maximum number of iterations for windowed einsum.
+  int64_t max_windowed_einsum_iteration = 32;
 };
 
 // Class to wrap the computation builder to capture information during SPMD
@@ -393,6 +396,12 @@ class SpmdPartitioner : public HloModulePass {
   // Verifies that the sharding of instructions in the module are valid, and
   // also fill in missing sharding information.
   virtual absl::Status PreprocessSharding(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
+  // Replaces unreduced sharding type with replicated type to decouple unreduced
+  // with other sharding types.
+  absl::Status ConvertUnreducedSharding(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
@@ -695,11 +704,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
 
   // Sets the PartitionedHlo for the original hlo.
   void SetPartitionedHlo(const HloInstruction* hlo,
-                         PartitionedHlo&& partitioned_hlo) {
-    CHECK_EQ(partitioned_instructions_.count(hlo), 0);
-    partitioned_instructions_.emplace(hlo, partitioned_hlo);
-    changed_ = true;
-  }
+                         PartitionedHlo&& partitioned_hlo);
 
   // Convenient wrapper that creates PartitionedHlo from the result of the func
   // and maps it to the given original hlo.

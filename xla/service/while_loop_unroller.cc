@@ -318,6 +318,7 @@ absl::StatusOr<bool> UnrollInternal(HloInstruction* while_op,
   }
   TF_RETURN_IF_ERROR(
       computation->ReplaceInstruction(while_op, unrolled_body_call_op));
+  unrolled_body_call_op->set_metadata_op_name("");
   for (HloInstruction* call : new_calls) {
     TF_RETURN_IF_ERROR(CallInliner::Inline(call).status());
   }
@@ -679,10 +680,12 @@ absl::Status FindIndicesCoveredByDynamicInstructionsInInnerLoop(
 
     TF_RET_CHECK(first_index_range.has_value() &&
                  first_index_range->IsBounded() &&
-                 first_index_range->IsStepKnown());
+                 first_index_range->IsStepKnown() &&
+                 first_index_range->step()->GetSignedValue() != 0);
     TF_RET_CHECK(second_index_range.has_value() &&
                  second_index_range->IsBounded() &&
-                 second_index_range->IsStepKnown());
+                 second_index_range->IsStepKnown() &&
+                 second_index_range->step()->GetSignedValue() != 0);
     TF_RET_CHECK(first_index_range->IsSingleValue() ||
                  second_index_range->IsSingleValue())
         << "At least one of first_dynamic_index_range and "
@@ -1028,7 +1031,8 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
 
   TF_RET_CHECK(dynamic_index_range.has_value() &&
                dynamic_index_range->IsBounded() &&
-               dynamic_index_range->IsStepKnown());
+               dynamic_index_range->IsStepKnown() &&
+               dynamic_index_range->step()->GetSignedValue() != 0);
 
   // Step 1.3: Simulate the loop and populate `entries_written`.
   const int64_t slice_size = slice_shape.dimensions(dynamic_indices->at(0));
@@ -1071,9 +1075,6 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
          input_tuple_idx < inner_while_input->operand_count();
          ++input_tuple_idx) {
       const HloInstruction* instr = inner_while_input->operand(input_tuple_idx);
-      if (instr->opcode() == HloOpcode::kConstant) {
-        continue;
-      }
       std::optional<Range> operand_trivial_range = RecursivelyIdentifyRange(
           instr, trivial_predefined_ranges, /*dataflow_analysis=*/nullptr);
       if (operand_trivial_range.has_value() &&
@@ -1081,6 +1082,11 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
         trivial_predefined_ranges[instr] = operand_trivial_range.value();
       }
     }
+    // Remove constants from trivial_predefined_ranges that may be added by
+    // RecursivelyIdentifyRange since those aren't determined by the outer loop.
+    absl::erase_if(trivial_predefined_ranges, [](const auto& entry) {
+      return entry.first->opcode() == HloOpcode::kConstant;
+    });
 
     // Step 2.2: Simulate the dynamic update slice(s) in the inner while loop.
     TF_RET_CHECK(
@@ -1174,7 +1180,8 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
           instr->operand(start_indices_offset + dynamic_indices[0]), config);
   if (dynamic_index_range == std::nullopt ||
       !dynamic_index_range->IsBounded() ||
-      !dynamic_index_range->IsStepKnown()) {
+      !dynamic_index_range->IsStepKnown() ||
+      dynamic_index_range->step()->GetSignedValue() == 0) {
     VLOG(3) << "Could not compute compact dynamic index range.";
     return std::nullopt;
   }
@@ -1226,21 +1233,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
 
   // TODO(b/300668690): Add support for unrolling loops with control dependency.
   // For now, we bail.
-  //
-  // Finding all the while loops where other instructions have explicit control
-  // dependencies on them.
-  std::vector<HloInstruction*> while_dependees;
-  for (HloComputation* comp : while_op->GetModule()->computations()) {
-    for (HloInstruction* instr : comp->instructions()) {
-      for (HloInstruction* control_dep : instr->control_predecessors()) {
-        if (control_dep->opcode() == HloOpcode::kWhile) {
-          while_dependees.push_back(control_dep);
-        }
-      }
-    }
-  }
-  if (absl::linear_search(while_dependees.begin(), while_dependees.end(),
-                          while_op)) {
+  if (!while_op->control_successors().empty()) {
     VLOG(2) << "Not attempting to unroll " << while_op->name()
             << " due to control dependency: " << while_op->ToShortString();
     return std::nullopt;

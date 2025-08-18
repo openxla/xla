@@ -834,5 +834,30 @@ TEST_F(HloConstantFoldingTest,
                                      m::Constant())));
 }
 
+TEST_F(HloConstantFoldingTest, InterproceduralDeadParameter) {
+  const char* const kModuleStr = R"(
+    HloModule test
+
+    Fn {
+      param0 = f32[8] parameter(0)
+      param1 = f32[8] parameter(1)
+      iota = f32[8] iota(), iota_dimension=0
+      ROOT add.1 = f32[8] add(iota, param1)
+    }
+
+    ENTRY entry {
+      entry.param = f32[8] parameter(0)
+      constant.0 = f32[8] constant({1, -1, 1, -1, 1, -1, 1, -1})
+      ROOT call = f32[8] call(constant.0, entry.param), to_apply=Fn
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  HloConstantFolding constant_folding;
+  TF_ASSERT_OK_AND_ASSIGN(bool result,
+                          RunHloPass(&constant_folding, module.get()));
+  EXPECT_FALSE(result);
+}
+
 }  // namespace
 }  // namespace xla

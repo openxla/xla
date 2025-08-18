@@ -66,8 +66,9 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/polynomial_approximations.h"
-#include "xla/codegen/math/math_compiler_lib.h"
-#include "xla/codegen/math_lib.h"
+#include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
+#include "xla/codegen/intrinsic_lib.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -89,6 +90,9 @@ void SetXlaCpuBackendOptions(llvm::Module& llvm_module,
   }
   if (options.slp_vectorizer_disabled()) {
     llvm_kernel_options.emplace_back(options::kDisableSlpVectorizer);
+  }
+  if (options.disable_platform_dependent_math()) {
+    llvm_kernel_options.emplace_back(options::kDisablePlatformDependentMath);
   }
 
   llvm::MDString* options_mdstring = llvm::MDString::get(
@@ -319,7 +323,7 @@ llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> IrCompiler::operator()(
 llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
                                     llvm::TargetMachine* target_machine) const {
   if (absl::c_any_of(module.getFunctionList(), FunctionHasInternalLinkage)) {
-    codegen::math::RunInlineAndOptPasses(module);
+    codegen::intrinsic::RunInlineAndOptPasses(module);
   }
 
   llvm::PipelineTuningOptions pto =
@@ -341,8 +345,12 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
       std::make_unique<llvm::TargetLibraryInfoImpl>(target_triple);
   target_library_info_impl->addVectorizableFunctions(
       PolynomialApproximationsVectorization());
-  codegen::MathFunctionLib math_lib(target_machine);
-  target_library_info_impl->addVectorizableFunctions(math_lib.Vectorizations());
+  codegen::IntrinsicFunctionLib intrinsic_lib(
+      {target_machine->getTargetFeatureString().str(),
+       /*disable_platform_dependent_math=*/options_
+           .disable_platform_dependent_math});
+  target_library_info_impl->addVectorizableFunctions(
+      intrinsic_lib.Vectorizations());
 
   fam.registerPass(
       [&] { return llvm::TargetLibraryAnalysis(*target_library_info_impl); });
@@ -390,11 +398,11 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     }
   }
 
-  auto replaced_functions = math_lib.RewriteMathFunctions(module);
+  auto replaced_functions = intrinsic_lib.RewriteIntrinsicFunctions(module);
   RewriteToPolynomialApproximations(&module, options_.fast_math_flags);
   if (!replaced_functions.empty()) {
-    codegen::math::RemoveFromCompilerUsed(module, replaced_functions);
-    codegen::math::RunInlineAndOptPasses(module);
+    codegen::intrinsic::RemoveFromCompilerUsed(module, replaced_functions);
+    codegen::intrinsic::RunInlineAndOptPasses(module);
   }
 
   return llvm::Error::success();

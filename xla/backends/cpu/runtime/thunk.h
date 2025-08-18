@@ -28,12 +28,15 @@ limitations under the License.
 
 #include "absl/base/no_destructor.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_interop.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
@@ -100,22 +103,6 @@ class Thunk {
     int64_t module_id;
   };
 
-  using Task = std::function<void()>;
-
-  // An abstract task runner that can be used by a ThunkExecutor (including
-  // thunk executors for nested computations in conditional or while thunks) for
-  // running tasks corresponding to thunk execution. It can be a simple inline
-  // executor that runs tasks on the same thread, or a runner backed by a thread
-  // pool. By default XLA:CPU uses task runner that shares underlying thread
-  // pool with the intra-op thread pool used for compute tasks. We deliberately
-  // do not prescribe task runner to be Eigen or any other particular thread
-  // pool, and let users make the choice.
-  class TaskRunner {
-   public:
-    virtual ~TaskRunner() = default;
-    virtual void operator()(Task task) = 0;
-  };
-
   Thunk(Kind kind, Info info);
 
   Thunk(const Thunk&) = delete;
@@ -145,51 +132,27 @@ class Thunk {
   virtual std::vector<NamedThunkSequence> nested_thunks() const { return {}; }
 
   //===--------------------------------------------------------------------===//
-  // CollectiveExecuteParams
+  // TaskRunner
   //===--------------------------------------------------------------------===//
 
-  // Parameters capturing all the details required for collective execution
-  // of XLA executables (multiple partitions and replicas).
-  struct CollectiveExecuteParams {
-    static absl::StatusOr<CollectiveExecuteParams> Create(
-        const ExecutableRunOptions* run_options);
+  using Task = std::function<void()>;
 
-    RunId run_id;
-
-    int64_t local_device_ordinal;
-    GlobalDeviceId global_device_id;
-
-    const DeviceAssignment* device_assignment = nullptr;
-    CpuCollectives* collectives = nullptr;
-
-    CollectiveExecuteParams(RunId run_id, int64_t local_device_ordinal,
-                            GlobalDeviceId global_device_id,
-                            const DeviceAssignment* device_assignment,
-                            CpuCollectives* collectives);
+  // An abstract task runner that can be used by a ThunkExecutor (including
+  // thunk executors for nested computations in conditional or while thunks) for
+  // running tasks corresponding to thunk execution. It can be a simple inline
+  // executor that runs tasks on the same thread, or a runner backed by a thread
+  // pool. By default XLA:CPU uses task runner that shares underlying thread
+  // pool with the intra-op thread pool used for compute tasks. We deliberately
+  // do not prescribe task runner to be Eigen or any other particular thread
+  // pool, and let users make the choice.
+  class TaskRunner {
+   public:
+    virtual ~TaskRunner() = default;
+    virtual void operator()(Task task) = 0;
   };
 
   //===--------------------------------------------------------------------===//
-  // CustomCallExecuteParams
-  //===--------------------------------------------------------------------===//
-
-  // Parameters capturing all the details required for custom call execution of
-  // XLA executables.
-  struct CustomCallExecuteParams {
-    static absl::StatusOr<CustomCallExecuteParams> Create(
-        const ExecutableRunOptions* run_options);
-
-    RunId run_id;
-    int32_t device_ordinal;
-    const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
-    const ffi::ExecutionContext* ffi_execution_context = nullptr;
-
-    CustomCallExecuteParams(RunId run_id, int32_t device_ordinal,
-                            const Eigen::ThreadPoolDevice* intra_op_thread_pool,
-                            const ffi::ExecutionContext* ffi_execution_context);
-  };
-
-  //===--------------------------------------------------------------------===//
-  // ExecuteParams
+  // ExecuteSession
   //===--------------------------------------------------------------------===//
 
   // ExecuteSession controls the number of task runner threads that can
@@ -241,6 +204,68 @@ class Thunk {
     int64_t split_threshold_;
   };
 
+  //===--------------------------------------------------------------------===//
+  // CollectiveExecuteParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for collective execution
+  // of XLA executables (multiple partitions and replicas).
+  struct CollectiveExecuteParams {
+    static absl::StatusOr<CollectiveExecuteParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    RunId run_id;
+
+    int64_t local_device_ordinal;
+    GlobalDeviceId global_device_id;
+
+    const DeviceAssignment* device_assignment = nullptr;
+    CpuCollectives* collectives = nullptr;
+
+    CollectiveExecuteParams(RunId run_id, int64_t local_device_ordinal,
+                            GlobalDeviceId global_device_id,
+                            const DeviceAssignment* device_assignment,
+                            CpuCollectives* collectives);
+  };
+
+  //===--------------------------------------------------------------------===//
+  // CustomCallExecuteParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for custom call execution of
+  // XLA executables.
+  struct CustomCallExecuteParams {
+    static absl::StatusOr<CustomCallExecuteParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    RunId run_id;
+    int32_t device_ordinal;
+    const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
+    const ffi::ExecutionContext* ffi_execution_context = nullptr;
+
+    CustomCallExecuteParams(RunId run_id, int32_t device_ordinal,
+                            const Eigen::ThreadPoolDevice* intra_op_thread_pool,
+                            const ffi::ExecutionContext* ffi_execution_context);
+  };
+
+  //===--------------------------------------------------------------------===//
+  // XnnParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for running XNNPACK fusions.
+  struct XnnParams {
+    static absl::StatusOr<XnnParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    XnnThreadpool threadpool = nullptr;
+
+    explicit XnnParams(XnnThreadpool threadpool);
+  };
+
+  //===--------------------------------------------------------------------===//
+  // ExecuteParams
+  //===--------------------------------------------------------------------===//
+
   // Parameters passed to Execute. Execute is responsible for launching "work"
   // on device, i.e., it launches host kernels, calls into libraries, etc.
   struct ExecuteParams {
@@ -251,6 +276,7 @@ class Thunk {
     TaskRunner* task_runner = nullptr;
     CollectiveExecuteParams* collective_params = nullptr;
     CustomCallExecuteParams* custom_call_params = nullptr;
+    XnnParams* xnn_params = nullptr;
     ExecuteSession session = ExecuteSession(ExecuteSession::kMaxWorkers,
                                             ExecuteSession::kSplitThreshold);
   };
@@ -288,6 +314,21 @@ class Thunk {
   // value concrete.
   virtual bool ExecutesOnExternalThreadPool() const { return false; }
 
+  // Returns `true` if thunk execution may block the caller thread.
+  //
+  // Although thunks are expected to be non-blocking, and signal completion via
+  // asynchronous ExecuteEvent, some thunks may block during execution. Thunk
+  // executor will launch such thunks as separate tasks using the provided
+  // runner to avoid blocking the execution of the other ready thunks.
+  //
+  // WARNING: It's important that thunks that may block and wait for completion
+  // of launched tasks use work stealing mechanism to avoid deadlocks. Simply
+  // waiting on a condition variable (non work stealing parallel for loop), is
+  // a 100% guaranteed way to deadlock. For example, Worker::Parallelize
+  // implementation does work stealing by default, and it's safe to block host
+  // on the returned async value.
+  virtual bool ExecuteMayBlock() const { return false; }
+
  protected:
   // Returns `true` if thunk should check buffer slices bounds, alignment, etc.
   // In optimized builds, we skip buffer slices checks, and assume that all
@@ -320,6 +361,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 // A sequence of thunks to execute.
 class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
  public:
+  using BufferUses = Thunk::BufferUses;
+  using ResourceUses = Thunk::ResourceUses;
+
   ThunkSequence() = default;
 
   // Returns an empty thunk sequence.
@@ -335,12 +379,18 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
     return ThunkSequence(std::move(thunk));
   }
 
-  using BufferUses = Thunk::BufferUses;
   BufferUses buffer_uses() const;
-
-  using ResourceUses = Thunk::ResourceUses;
   ResourceUses resource_uses() const;
 
+  // Invokes `fn` on each thunk in the sequence, recursing into nested thunks.
+  void ForEach(absl::FunctionRef<void(const Thunk&)> fn) const;
+
+  // Invokes `fn` on each thunk in the sequence, recursing into nested thunks.
+  // Returns early if `fn` returns an error status on any of the thunks.
+  absl::Status ForEachWithStatus(
+      absl::FunctionRef<absl::Status(const Thunk&)> fn) const;
+
+  // Appends the given thunk sequence to the end of this one.
   void Append(ThunkSequence other);
 
  private:

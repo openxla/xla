@@ -1146,27 +1146,17 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       instruction = CreateIota(shape, proto.dimensions(0));
       break;
     case HloOpcode::kDot: {
-      int expected_operands =
-          HloDotInstruction::kOperands + proto.dot_sparsity_size();
-      TF_RET_CHECK(proto.dot_sparsity_size() <= HloDotInstruction::kOperands)
-          << "Too many sparse dot descriptors: " << proto.dot_sparsity_size();
-      TF_RET_CHECK(proto.operand_ids_size() == expected_operands)
-          << proto.opcode() << " instruction should have " << expected_operands
-          << " operands but sees " << proto.operand_ids_size();
       TF_RET_CHECK(proto.has_dot_dimension_numbers())
           << "Dot instruction should have dot_dimension_numbers.";
       TF_RET_CHECK(absl::c_all_of(proto.precision_config().operand_precision(),
                                   PrecisionConfig::Precision_IsValid));
       PrecisionConfig precision_config = proto.precision_config();
       precision_config.mutable_operand_precision()->Resize(
-          HloDotInstruction::kOperands, PrecisionConfig::DEFAULT);
-      std::vector<SparsityDescriptor> sparsity(proto.dot_sparsity().begin(),
-                                               proto.dot_sparsity().end());
+          proto.operand_ids_size(), PrecisionConfig::DEFAULT);
       auto operand_vector = all_operands();
       instruction = std::make_unique<HloDotInstruction>(
           shape, operands(0), operands(1), proto.dot_dimension_numbers(),
-          precision_config, std::move(sparsity),
-          absl::MakeSpan(operand_vector).subspan(HloDotInstruction::kOperands));
+          precision_config);
       break;
     }
     case HloOpcode::kRaggedDot: {
@@ -1186,6 +1176,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       instruction = std::make_unique<HloRaggedDotInstruction>(
           shape, operands(0), operands(1), operands(2),
           proto.ragged_dot_dimension_numbers(), precision_config);
+      break;
+    }
+    case HloOpcode::kScaledDot: {
+      int expected_operands = HloScaledDotInstruction::kOperands;
+      TF_RET_CHECK(proto.operand_ids_size() == expected_operands)
+          << proto.opcode() << " instruction should have " << expected_operands
+          << " operands but sees " << proto.operand_ids_size();
+      TF_RET_CHECK(proto.has_dot_dimension_numbers())
+          << "ScaledDot instruction should have dot_dimension_numbers.";
+      TF_RET_CHECK(absl::c_all_of(proto.precision_config().operand_precision(),
+                                  PrecisionConfig::Precision_IsValid));
+      PrecisionConfig precision_config = proto.precision_config();
+      // Only the lhs and rhs have precisions.
+      precision_config.mutable_operand_precision()->Resize(
+          HloScaledDotInstruction::kOperands - 2, PrecisionConfig::DEFAULT);
+      auto operand_vector = all_operands();
+      instruction = std::make_unique<HloScaledDotInstruction>(
+          shape, operands(0), operands(1), operands(2), operands(3),
+          proto.dot_dimension_numbers(), precision_config);
       break;
     }
     case HloOpcode::kDomain: {
@@ -1631,12 +1640,9 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateDot(
     const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
     const DotDimensionNumbers& dimension_numbers,
-    const PrecisionConfig& precision_config,
-    std::vector<SparsityDescriptor> sparsity,
-    absl::Span<HloInstruction* const> sparse_meta) {
+    const PrecisionConfig& precision_config) {
   return std::make_unique<HloDotInstruction>(shape, lhs, rhs, dimension_numbers,
-                                             precision_config,
-                                             std::move(sparsity), sparse_meta);
+                                             precision_config);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateRaggedDot(
@@ -1646,6 +1652,16 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
     const PrecisionConfig& precision_config) {
   return std::make_unique<HloRaggedDotInstruction>(
       shape, lhs, rhs, group_sizes, dimension_numbers, precision_config);
+}
+
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateScaledDot(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
+    HloInstruction* rhs, HloInstruction* rhs_scale,
+    const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig& precision_config) {
+  return std::make_unique<HloScaledDotInstruction>(shape, lhs, lhs_scale, rhs,
+                                                   rhs_scale, dimension_numbers,
+                                                   precision_config);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
@@ -3045,9 +3061,15 @@ bool HloInstruction::IdenticalInternal(
                          : ShapeUtil::Compatible(shape(), other.shape()))) {
     return false;
   }
-  if (sharding_sensitive && has_sharding() && other.has_sharding() &&
-      sharding() != other.sharding()) {
-    return false;
+  if (sharding_sensitive) {
+    if (has_sharding() && other.has_sharding() &&
+        sharding() != other.sharding()) {
+      return false;
+    }
+    if (get_frontend_attribute(HloSharding::kShardingFrontendAttrName) !=
+        other.get_frontend_attribute(HloSharding::kShardingFrontendAttrName)) {
+      return false;
+    }
   }
   if (operands().size() != other.operands().size()) {
     return false;
@@ -3282,6 +3304,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kScatter:
     case HloOpcode::kDot:
     case HloOpcode::kRaggedDot:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kDomain:
     case HloOpcode::kGetDimensionSize:
     case HloOpcode::kRaggedAllToAll:
@@ -4535,6 +4558,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleDot(this);
     case HloOpcode::kRaggedDot:
       return visitor->HandleRaggedDot(this);
+    case HloOpcode::kScaledDot:
+      return visitor->HandleScaledDot(this);
     case HloOpcode::kPower:
       return visitor->HandlePower(this);
     case HloOpcode::kRemainder:
@@ -5819,6 +5844,9 @@ const ScatterDimensionNumbers& HloInstruction::scatter_dimension_numbers()
 }
 
 const DotDimensionNumbers& HloInstruction::dot_dimension_numbers() const {
+  if (auto scaled_dot = DynCast<HloScaledDotInstruction>(this)) {
+    return scaled_dot->dot_dimension_numbers();
+  }
   return Cast<HloDotInstruction>(this)->dot_dimension_numbers();
 }
 

@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
@@ -206,6 +207,10 @@ class PjRtCApiCompiler : public PjRtCompiler {
       CompileOptions options, mlir::ModuleOp module,
       const PjRtTopologyDescription& topology, PjRtClient* client) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
+  DeserializePjRtTopologyDescription(
+      const std::string& serialized_topology) override;
+
  private:
   const PJRT_Api* c_api_;
 };
@@ -219,11 +224,9 @@ class PjRtCApiTopologyDescription : public PjRtTopologyDescription {
   PjRtCApiTopologyDescription(const PJRT_Api* c_api,
                               PJRT_TopologyDescription* c_topology, bool owned);
 
-  PjRtPlatformId platform_id() const override {
-    CHECK(false) << "PJRT C API does not support platform_id.";
-  }
+  PjRtPlatformId platform_id() const override { return platform_id_; }
 
-  absl::string_view platform_name() const override;
+  absl::string_view platform_name() const override { return platform_name_; }
 
   absl::string_view platform_version() const override;
 
@@ -261,6 +264,9 @@ class PjRtCApiTopologyDescription : public PjRtTopologyDescription {
   PJRT_TopologyDescription* c_topology_;
   // Device specific attributes with corresponding values.
   absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
+
+  const std::string platform_name_;
+  const PjRtPlatformId platform_id_;
 
   // Initializes device specific attributes.
   void InitAttributes();
@@ -578,6 +584,9 @@ class PjRtCApiExecutable : public PjRtExecutable {
   absl::StatusOr<std::string> SerializeExecutable() const override;
 
   absl::StatusOr<std::string> FingerprintExecutable() const override;
+
+  // TODO(b/438000615): Move this to PjRtLoadedExecutable.
+  absl::StatusOr<std::string> GetSerializedExecutableMetadata() const;
 
  private:
   const PJRT_Api* c_api_;

@@ -131,30 +131,12 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "scoped_update_mode",
-    hdrs = [
-        "scoped_update_mode.h",
-    ],
-)
-
-cc_library(
-    name = "scoped_gpu_graph_exec",
-    hdrs = [
-        "scoped_gpu_graph_exec.h",
-    ],
-    deps = [
-        ":scoped_update_mode",
-    ],
-)
-
-cc_library(
     name = "gpu_command_buffer",
     srcs = ["gpu_command_buffer.cc"],
     hdrs = [
         "gpu_command_buffer.h",
     ],
     deps = [
-        ":scoped_update_mode",
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
@@ -309,6 +291,7 @@ cc_library(
     hdrs = ["asm_compiler.h"],
     copts = tsl_copts(),
     visibility = internal_visibility([
+        "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
         "//tensorflow/core/kernels:__subpackages__",
@@ -758,6 +741,8 @@ cc_library(
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     deps = [
         ":tma_metadata_proto_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -770,6 +755,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -783,6 +769,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:protobuf",
@@ -820,6 +807,7 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -905,6 +893,7 @@ xla_test(
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
