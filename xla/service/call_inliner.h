@@ -99,7 +99,6 @@ class CallInliner : public HloModulePass {
   std::optional<
       std::function<bool(const CallGraph& call_graph, HloInstruction*)>>
       should_inline_;
-  InlinedInstructionMap inline_map_;
 };
 
 // Returns true if the computation has instructioin that is inlinable.
