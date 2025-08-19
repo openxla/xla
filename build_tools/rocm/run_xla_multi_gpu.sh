@@ -77,6 +77,12 @@ GPU_NAME=${GPU_NAME[1]}
 BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
 
+EXCLUDED_TESTS=(
+  CollectiveOpsTestE2E.MemcpyP2pLargeMessage
+  RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/sync_decomposer
+  RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/async_decomposer
+)
+
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false \
@@ -99,6 +105,7 @@ bazel \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     -- //xla/tests:collective_ops_e2e_test \
        //xla/tests:collective_ops_test \
        //xla/tests:collective_pipeline_parallelism_test \

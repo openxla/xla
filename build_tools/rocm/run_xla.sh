@@ -107,6 +107,8 @@ bazel \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --run_under=//build_tools/ci:parallel_gpu_execute \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    --test_env=MIOPEN_FIND_ENFORCE=5 \
+    --test_env=MIOPEN_FIND_MODE=1 \
     -- //xla/... \
 
 # clean up bazel disk_cache
