@@ -1,4 +1,3 @@
-load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
@@ -26,19 +25,4 @@ cc_library(
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
     alwayslink = 1,
-)
-
-tsl_pybind_extension(
-    name = "profile_data",
-    srcs = ["py_profile_data.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    deps = [
-        ":profile_data_lib",
-        "@nanobind",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-    ],
 )
