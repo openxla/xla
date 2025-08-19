@@ -706,7 +706,7 @@ cc_library(
     ],
     deps = [
         ":compilation_provider",
-        "//xla/stream_executor:device_description",
+        ":cuda_compute_capability",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/status",
@@ -1522,6 +1522,10 @@ cc_library(
 cc_library(
     name = "compilation_options",
     hdrs = ["compilation_options.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = ["@com_google_absl//absl/strings:str_format"],
 )
 
