@@ -63,6 +63,7 @@ absl::Status CollectiveGroupThunk::Initialize(const InitializeParams& params) {
 
 absl::Status CollectiveGroupThunk::ExecuteOnStream(
     const Thunk::ExecuteParams& params) {
+  VLOG(1) << "##### " << __func__ << " Start";
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   int64_t async_stream_idx = static_cast<int64_t>(stream_kind_);
   // Async streams are already assigned in gpu_executable.cc::ExecuteThunks.
@@ -70,9 +71,14 @@ absl::Status CollectiveGroupThunk::ExecuteOnStream(
   // elements to index by the AsyncStreamKind enum.
   se::Stream* async_stream =
       params.collective_params->async_streams.at(async_stream_idx);
+  VLOG(1) << "##### " << __func__ << " WaitFor stream";
   TF_RETURN_IF_ERROR(async_stream->WaitFor(params.stream));
+  VLOG(1) << "##### " << __func__ << " GroupStart";
   TF_RETURN_IF_ERROR(collectives->GroupStart());
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
+    VLOG(1) << "##### " << __func__
+            << " Run thunk on stream: " << thunk->ToString(0)
+            << " Stream idx: " << async_stream_idx;
     TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(params));
   }
   TF_RETURN_IF_ERROR(collectives->GroupEnd());
@@ -80,6 +86,7 @@ absl::Status CollectiveGroupThunk::ExecuteOnStream(
                       async_events_->GetEvent(params.stream->parent()));
   TF_RETURN_IF_ERROR(async_stream->RecordEvent(event));
 
+  VLOG(1) << "##### " << __func__ << " Done";
   return absl::OkStatus();
 }
 

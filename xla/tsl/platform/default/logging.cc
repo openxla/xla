@@ -508,7 +508,7 @@ void TFDefaultLogSink::Send(const TFLogEntry& entry) {
   if (entry.log_severity() == absl::LogSeverity::kFatal) {
     abort();
   }
-#else   // PLATFORM_POSIX_ANDROID
+#else  // PLATFORM_POSIX_ANDROID
   static const internal::VlogFileMgr vlog_file;
   static bool log_thread_id = internal::EmitThreadIdFromEnv();
   uint64_t now_micros = EnvTime::NowMicros();

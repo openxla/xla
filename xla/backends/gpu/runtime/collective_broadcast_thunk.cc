@@ -72,6 +72,7 @@ absl::Status CollectiveBroadcastStartThunk::RunCollective(
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator* comm,
                                     GpuCollectives* collectives) {
+  VLOG(1) << "##### " << __func__ << " Start";
   TF_RETURN_IF_ERROR(collectives->GroupStart());
   for (auto buffer : buffers) {
     se::DeviceMemoryBase src_addr = buffer.source_buffer;
@@ -82,7 +83,9 @@ absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
         src_addr, dest_addr, buffer.element_type, buffer.element_count,
         RankId(0), GpuCollectives::On(stream)));
   }
-  return collectives->GroupEnd();
+  auto result = collectives->GroupEnd();
+  VLOG(1) << "##### " << __func__ << " Done " << result.ToString();
+  return result;
 }
 
 }  // namespace xla::gpu

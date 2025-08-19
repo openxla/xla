@@ -127,6 +127,7 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
                                      const std::optional<CliqueIds>& clique_ids,
                                      absl::Span<const DeviceRank> ranks,
                                      const Collectives::Config& config) {
+  VLOG(1) << "##### " << __func__ << " Start";
   // With NCCL backend we rely on host to exchange unique clique ids.
   if (!clique_ids.has_value() || clique_ids->data().empty()) {
     return InvalidArgument("CliqueId is required to create NCCL communicators");
@@ -169,6 +170,7 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
     comms.emplace_back(std::make_unique<NcclCommunicator>(comm_handle));
   }
 
+  VLOG(1) << "##### " << __func__ << " Done";
   return comms;
 }
 
@@ -177,6 +179,7 @@ NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
                                     int32_t color,
                                     absl::Span<const RankId> keys,
                                     const Collectives::Config& config) {
+  VLOG(1) << "##### " << __func__ << " Start";
   auto rank_formatter = [](std::string* str, RankId rank) {
     absl::StrAppend(str, rank.value());
   };
@@ -217,8 +220,10 @@ NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
     split_comms.emplace_back(
         std::make_unique<NcclCommunicator>(split_comms_handles[i]));
   }
+  VLOG(1) << "##### " << __func__ << " Done";
   return split_comms;
 #else
+  VLOG(1) << "##### " << __func__ << " Unimplemented";
   return absl::UnimplementedError(
       absl::StrFormat("%s:%d: NCCL operation ncclCommSplit not implemented",
                       __FILE__, __LINE__));
@@ -237,6 +242,7 @@ absl::Status NcclCollectives::GroupEnd() {
 
 absl::StatusOr<void*> NcclCollectives::Allocate(uint64_t bytes) {
   void* ptr = nullptr;
+  VLOG(1) << "##### " << __func__ << " Start";
   ncclResult_t res = ncclMemAlloc(&ptr, bytes);
   if (res != ncclSuccess) {
     return absl::InternalError(absl::StrFormat(
@@ -247,10 +253,12 @@ absl::StatusOr<void*> NcclCollectives::Allocate(uint64_t bytes) {
   }
   VLOG(2) << "Allocated collective memory " << ptr << " of " << bytes
           << " bytes";
+  VLOG(1) << "##### " << __func__ << " Done";
   return ptr;
 }
 
 absl::Status NcclCollectives::Deallocate(void* location) {
+  VLOG(1) << "##### " << __func__ << " Start";
   ncclResult_t res = ncclMemFree(location);
   if (res != ncclSuccess) {
     return absl::InternalError(absl::StrFormat(
@@ -260,6 +268,7 @@ absl::Status NcclCollectives::Deallocate(void* location) {
   }
 
   VLOG(2) << "Deallocated collective memory " << location;
+  VLOG(1) << "##### " << __func__ << " Done";
   return absl::OkStatus();
 }
 

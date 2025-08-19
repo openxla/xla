@@ -73,7 +73,7 @@ ResourceRequests::AcquireCollectiveCliques(
     const Thunk::CollectiveExecuteParams& params, bool use_persistent_cliques) {
   if (cliques_.empty()) return Thunk::CollectiveCliques();
 
-  VLOG(2) << "Acquire " << cliques_.size()
+  VLOG(1) << "Acquire " << cliques_.size()
           << " collective cliques for global device id "
           << params.global_device_id.value()
           << "; run_id=" << params.run_id.ToInt()
@@ -85,7 +85,7 @@ ResourceRequests::AcquireCollectiveCliques(
   std::vector<CliqueRequest> ordered_cliques = GetOrderedCliqueRequests();
   for (size_t i = 0; i < ordered_cliques.size(); ++i) {
     const CliqueRequest& r = ordered_cliques[i];
-    VLOG(2) << "  clique #" << i << " (for global device id "
+    VLOG(1) << "  clique #" << i << " (for global device id "
             << params.global_device_id.value() << ")"
             << ": num_local_participants=" << r.key.num_local_participants()
             << "; id=" << r.id << "; key=" << r.key.ToString();
@@ -126,7 +126,7 @@ ResourceRequests::AcquireCollectiveCliques(
       absl::MutexLock lock(&pc.mutex);
 
       if (auto it = pc.cliques_map.find(r.key); it != pc.cliques_map.end()) {
-        VLOG(2) << "Found persistent clique for key " << r.key.ToString();
+        VLOG(1) << "Found persistent clique for key " << r.key.ToString();
         cliques_map[r.key] = it->second;
         continue;
       }
@@ -160,7 +160,7 @@ ResourceRequests::AcquireCollectiveCliques(
   }
 
   auto end_micros = tsl::Env::Default()->NowMicros();
-  VLOG(2) << "Acquired " << cliques_map.size()
+  VLOG(1) << "Acquired " << cliques_map.size()
           << " collective cliques for global device id "
           << params.global_device_id.value() << " in "
           << (end_micros - start_micros) << " μs"

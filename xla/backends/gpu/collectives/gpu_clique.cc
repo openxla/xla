@@ -63,6 +63,8 @@ absl::Status GpuClique::HealthCheck() const {
   ForEachComm([&health_check](RankId rank, Communicator* comm) {
     if (auto s = comm->HealthCheck(); !s.ok()) {
       LOG(ERROR) << "GPU communicator error (rank " << rank << "): " << s;
+      VLOG(1) << __func__ << "#### GPU communicator error (rank " << rank
+              << "): " << s;
       if (health_check.ok()) health_check = std::move(s);  // return first error
     }
   });

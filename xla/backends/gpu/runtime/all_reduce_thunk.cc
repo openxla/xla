@@ -107,6 +107,7 @@ RendezvousBeforeKernelStart(const GpuCliqueKey& clique_key, RankId rank,
   std::string start_rendezvous_key =
       absl::StrFormat("start one-shot all-reduce for rank %d, clique %s",
                       rank.value(), clique_key.ToString());
+  VLOG(1) << "##### " << __func__ << start_rendezvous_key;
   TF_ASSIGN_OR_RETURN(
       std::shared_ptr<std::vector<RendezvousValue>> rendezvous_values,
       Rendezvous<std::vector<RendezvousValue>>(
@@ -117,9 +118,11 @@ RendezvousBeforeKernelStart(const GpuCliqueKey& clique_key, RankId rank,
   // Wait for all devices to reach the start event. This indicates that all
   // output buffers are ready for transfer.
   for (auto& value : *rendezvous_values) {
+    VLOG(1) << "##### " << __func__ << " Wait on stream ";
     TF_RETURN_IF_ERROR(stream.WaitFor(value.start_event));
   }
 
+  VLOG(1) << "##### " << __func__ << " Done";
   return rendezvous_values;
 }
 
@@ -130,6 +133,7 @@ absl::Status RendezvousAfterKernelFinish(
     se::Stream& stream, se::Event* end_event,
     const std::shared_ptr<std::vector<RendezvousValue>>& rendezvous_values) {
   // Record that this device has finished executing the kernel.
+  VLOG(1) << "##### " << __func__ << " Start ";
   TF_RETURN_IF_ERROR(stream.RecordEvent(end_event));
 
   // Do another rendezvous to make sure that we call RecordEvent for end_event
@@ -137,6 +141,7 @@ absl::Status RendezvousAfterKernelFinish(
   std::string finish_rendezvous_key =
       absl::StrFormat("finish one-shot all-reduce for rank %d, clique %s",
                       rank.value(), clique_key.ToString());
+  VLOG(1) << "##### " << __func__ << " " << finish_rendezvous_key;
   TF_RETURN_IF_ERROR(Rendezvous(/*name=*/finish_rendezvous_key,
                                 /*key=*/clique_key,
                                 /*num_threads=*/num_ranks));
@@ -147,6 +152,7 @@ absl::Status RendezvousAfterKernelFinish(
     TF_RETURN_IF_ERROR(stream.WaitFor(value.end_event));
   }
 
+  VLOG(1) << "##### " << __func__ << " Done";
   return absl::OkStatus();
 }
 
@@ -194,11 +200,13 @@ absl::Status RunOneShotAllReduce(const GpuCliqueKey& clique_key, RankId rank,
   TF_RETURN_IF_ERROR(RendezvousAfterKernelFinish(
       clique_key, rank, num_ranks, stream, end_event, rendezvous_values));
 
+  VLOG(1) << "##### " << __func__ << " Done ";
   return absl::OkStatus();
 }
 
 absl::Status CheckImplementableInst(const HloInstruction* inst,
                                     Thunk::Kind reduction_op) {
+  VLOG(1) << "##### " << __func__ << " Start ";
   for (HloInstruction* operand : inst->operands()) {
     TF_RETURN_IF_ERROR(IsValidOperand(operand->shape(), reduction_op));
   }
@@ -208,6 +216,7 @@ absl::Status CheckImplementableInst(const HloInstruction* inst,
     return absl::UnimplementedError("Unrecognized reduction computation");
   }
 
+  VLOG(1) << "##### " << __func__ << " Done ";
   return absl::OkStatus();
 }
 
@@ -235,6 +244,7 @@ absl::Status RunAllReduce(GpuCollectives* collectives,
                           std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator* comm) {
   int device_ordinal = stream.parent()->device_ordinal();
+  VLOG(1) << "##### " << __func__ << " Start ";
   VLOG(3) << "Performing all-reduce from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
       MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
@@ -246,7 +256,9 @@ absl::Status RunAllReduce(GpuCollectives* collectives,
         buffer.element_count, reduction_kind, GpuCollectives::On(stream)));
   }
 
-  return collectives->GroupEnd();
+  auto result = collectives->GroupEnd();
+  VLOG(1) << "##### " << __func__ << " Done " << result.ToString();
+  return result;
 }
 
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
@@ -287,12 +299,15 @@ CollectiveOpGroupMode AllReduceStartThunk::GetGroupMode(
 absl::StatusOr<bool> AllReduceStartThunk::ShouldUseOneShotAllReduceKernel(
     const GpuCliqueKey& clique_key,
     const CollectiveCliques* collective_cliques) {
+  VLOG(1) << "##### " << __func__ << " Start";
   if (!one_shot_kernel_enabled_) {
+    VLOG(1) << "##### " << __func__ << " Done";
     return false;
   }
 
   // TODO(b/407736956): Support variadic all-reduce.
   if (buffers_.size() != 1) {
+    VLOG(1) << "##### " << __func__ << " Done";
     return false;
   }
 
@@ -304,6 +319,7 @@ absl::StatusOr<bool> AllReduceStartThunk::ShouldUseOneShotAllReduceKernel(
 
   // One-shot all-reduce is only beneficial for small inputs.
   if (input_size_bytes > kMaxOneShotAllReduceSizeBytes) {
+    VLOG(1) << "##### " << __func__ << " Done";
     return false;
   }
 
@@ -312,14 +328,18 @@ absl::StatusOr<bool> AllReduceStartThunk::ShouldUseOneShotAllReduceKernel(
 
   // Check that peer access is enabled.
   if (!peer_access_enabled) {
+    VLOG(1) << "##### " << __func__ << " Done";
     return false;
   }
 
-  return IsAllReduceKernelSupported(clique_key.num_local_participants(),
-                                    config().operand_element_type[0]);
+  auto result = IsAllReduceKernelSupported(clique_key.num_local_participants(),
+                                           config().operand_element_type[0]);
+  VLOG(1) << "##### " << __func__ << " Done";
+  return result;
 }
 
 absl::Status AllReduceStartThunk::Initialize(const InitializeParams& params) {
+  VLOG(1) << "##### " << __func__ << " Start";
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
 
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
@@ -334,6 +354,7 @@ absl::Status AllReduceStartThunk::Initialize(const InitializeParams& params) {
       ShouldUseOneShotAllReduceKernel(clique_key, params.collective_cliques));
 
   if (use_one_shot_kernel) {
+    VLOG(1) << "##### " << __func__ << " use one shot kernel";
     absl::MutexLock lock(&mutex_);
 
     if (!local_buffer_allocs_.contains(params.executor)) {
@@ -362,12 +383,14 @@ absl::Status AllReduceStartThunk::Initialize(const InitializeParams& params) {
     }
   }
 
+  VLOG(1) << "##### " << __func__ << " Done";
   return absl::OkStatus();
 }
 
 absl::Status AllReduceStartThunk::RunCollective(
     const ExecuteParams& params, se::Stream& stream,
     CommunicatorHandle comm_handle) {
+  VLOG(1) << "##### " << __func__ << " Start";
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
@@ -437,6 +460,7 @@ absl::Status RunReduceScatter(GpuCollectives* collectives,
                               ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator* comm) {
+  VLOG(1) << "##### " << __func__ << " Start";
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing reduce-scatter from device ordinal: "
           << device_ordinal;
@@ -460,7 +484,9 @@ absl::Status RunReduceScatter(GpuCollectives* collectives,
         GpuCollectives::On(stream)));
   }
 
-  return collectives->GroupEnd();
+  auto result = collectives->GroupEnd();
+  VLOG(1) << "##### " << __func__ << " Done " << result.ToString();
+  return result;
 }
 
 }  // namespace gpu

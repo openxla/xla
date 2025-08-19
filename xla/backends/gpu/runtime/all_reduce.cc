@@ -88,6 +88,7 @@ absl::Status RunAllReduceKernel(
 
   auto launch_kernel = [&](auto type) -> absl::Status {
     using T = decltype(type);
+    VLOG(1) << "##### " << __func__ << " LaunchTypedKernel ";
     return LaunchTypedKernel<T>(stream, executor, thread_dims, block_dims,
                                 input_ptrs, output_buffer, num_inputs,
                                 num_elements);
@@ -97,6 +98,9 @@ absl::Status RunAllReduceKernel(
     case F32:
       return launch_kernel(float{});
     default:
+      VLOG(1) << "##### " << __func__
+              << " Unsupported element type for AllReduce kernel: "
+              << primitive_util::LowercasePrimitiveTypeName(element_type);
       return absl::InvalidArgumentError(
           absl::StrCat("Unsupported element type: ",
                        primitive_util::LowercasePrimitiveTypeName(element_type),
