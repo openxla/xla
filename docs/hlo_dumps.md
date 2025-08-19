@@ -176,3 +176,44 @@ export LIBTPU_INIT_ARGS="--xla_mosaic_dump_to=/tmp/mosaic_dumps"
 ```
 
 Check out the [JAX documentation on Pallas and Mosaic](https://docs.jax.dev/en/latest/pallas/index.html) to learn more.
+
+## More with HLO Dumps
+
+### Find the right computation
+
+Usually, many computations get dumped. The dumped files are explicitly named with the JAX, Tensorflow, or PyTorch/XLA "computation name” that are called out in the logs, making it easy to identify the relevant HLO files. For example:
+
+```
+1624325116260738.module_0065.pmap__unnamed_wrapped_function_.186875.before_optimizations.txt
+```
+
+Otherwise, you can use `ripgrep` to quickly identify which module holds particular symbols or computations.
+
+**Tip:** Include the 3 dumped before/after/buffer-assignment files of interest to your bug reports.
+
+### HLO Conversion
+
+Sometimes you may have HLOProto buffer dumps and want readable HLO text, or vice-versa.
+
+A tool called `hlo-opt` that can translate between HLO proto and text formats. Learn to use it: [XLA Tooling documentation: hlo-opt](tools.md#hlo-opt-convert-hlo-module-formats).
+
+### Replay
+
+The dumped computations can be run it on fake data or input snapshots, which is useful as a simple reproducible example for XLA developers.
+
+The following commands use fake data.
+If you have saved HLO Snapshots, you can pass those in instead, and the data from the snapshot will be used.
+To still use fake data while running the snapshot, pass the flag `--force_fake_data`.
+
+CPU backend:
+
+```shell
+bazel run -c opt //xla/hlo/tools:run_hlo_module -- --platform=cpu
+/tmp/xladump/module_4561.before_optimizations.txt
+```
+
+GPU backend:
+
+```shell
+bazel run -c opt //xla/hlo/tools:run_hlo_module \
+```
