@@ -278,11 +278,6 @@ std::unique_ptr<HloModule> ExtractWhileInitModule(
   return init_module;
 }
 
-std::unique_ptr<HloModule> ExtractSliceModule(
-    const HloInstruction* offset_value, int64_t indvar_idx) {
-  return ExtractOffsetModule(offset_value, indvar_idx);
-}
-
 bool IsDynamicSliceOrDynamicUpdateSlice(const HloInstruction* instr) {
   return instr != nullptr &&
          (instr->opcode() == HloOpcode::kDynamicSlice ||
@@ -338,7 +333,7 @@ absl::Status CollectSliceInfo(
       }
     } else if (indvar_idx != std::nullopt && can_compute_indvar_on_host) {
       std::unique_ptr<HloModule> offset_module =
-          ExtractSliceModule(offset_value, indvar_idx.value());
+          ExtractOffsetModule(offset_value, indvar_idx.value());
       CHECK(offset_module != nullptr) << "Failed to extract slice module";
       extracted_offset_modules.push_back(std::move(offset_module));
       arg_offsets.emplace_back() = extracted_offset_modules.back().get();
