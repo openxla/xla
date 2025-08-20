@@ -209,6 +209,7 @@ std::optional<HloInstruction*> GetParentWhileOp(const HloInstruction& op,
 // hard checks for the conditions on this here, because these conditions are
 // ensured before fusing in
 // `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+// indvar_idx is the tuple index of the induction variable in the while body.
 std::unique_ptr<HloModule> ExtractOffsetModule(
     const HloInstruction* offset_value, int64_t indvar_idx) {
   // Extract offset as a function of parameter to while body.
@@ -256,6 +257,7 @@ std::unique_ptr<HloModule> ExtractOffsetModule(
 // variable. There are hard checks for the conditions on this here, because
 // these conditions are ensured before fusing in
 // `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+// indvar_idx is the tuple index of the induction variable in the while body.
 std::unique_ptr<HloModule> ExtractWhileUpdateModule(
     const HloInstruction* while_op, int64_t indvar_idx) {
   const HloInstruction* update =
@@ -266,6 +268,7 @@ std::unique_ptr<HloModule> ExtractWhileUpdateModule(
 // Extracts the while induction variable initialization module. This must have
 // no parameters and this condition was ensured before fusing in
 // `dynamic_slice_fusion_rewriter.cc:IsValueFunctionOfLoopInductionVariable`.
+// indvar_idx is the tuple index of the induction variable in the while body.
 std::unique_ptr<HloModule> ExtractWhileInitModule(
     const HloInstruction* while_op, int64_t indvar_idx) {
   const HloInstruction* init = while_op->operand(0)->operand(indvar_idx);
@@ -284,6 +287,11 @@ bool IsDynamicSliceOrDynamicUpdateSlice(const HloInstruction* instr) {
           instr->opcode() == HloOpcode::kDynamicUpdateSlice);
 }
 
+// Collects the slice info for the argument `arg_idx` of the fusion
+// `fusion_instr`. can_compute_indvar_on_host is true if the induction variable
+// can be computed on host. while_op is the possible while op surrounding the
+// fusion. indvar_idx is the possible tuple index of the induction variable in
+// the while body.
 absl::Status CollectSliceInfo(
     const BufferAssignment& buffer_assignment,
     const HloInstruction& fusion_instr,
