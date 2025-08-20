@@ -884,8 +884,7 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                           ParseAndReturnVerifiedModule(hlo));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto inlined_module,
-                          GetInlinedModule(m->entry_computation()));
+  TF_ASSERT_OK_AND_ASSIGN(auto inlined_module, GetInlinedModule(m.get()));
   auto root = inlined_module.module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Reduce());
   EXPECT_EQ(root->metadata().op_name(), "x/reduce");
