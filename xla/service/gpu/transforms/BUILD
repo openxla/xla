@@ -1416,6 +1416,28 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "explicit_control",
+    srcs = ["explicit_control.cc"],
+    hdrs = ["explicit_control.h"],
+    deps = [
+        "//xla:side_effect_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+
 xla_cc_test(
     name = "explicit_stream_annotation_async_wrapper_test",
     srcs = ["explicit_stream_annotation_async_wrapper_test.cc"],
