@@ -2188,7 +2188,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:notification",
         "@tsl//tsl/platform:statusor",
     ],
 )
