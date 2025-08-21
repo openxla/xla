@@ -1885,6 +1885,48 @@ ENTRY main.12 {
   CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr);
 }
 
+TEST_F(CollectiveOpsTestE2E, CollectiveMultiStreaming) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_mat = u32[2,2] broadcast(id), dimensions={}
+    const.0 = u32[2,2] constant({{10,15}, {20,25}})
+    add.0 = u32[2,2] add(id_mat, const.0)
+    a2a = u32[2,2] all-to-all(u32[2,2] id_mat), replica_groups={{0,1},{2,3}}, dimensions={0}
+    ag_start = (u32[2,2], u32[4,2]) all-gather-start(u32[2,2] id_mat), replica_groups={{0,2},{1,3}}, dimensions={0}
+    add.1 = u32[2,2] add(id_mat, id_mat)
+    ag_done = u32[4,2] all-gather-done(ag_start)
+    a2a_reshape = u32[4] reshape(a2a)
+    ag_reshape = u32[8] reshape(ag_done)
+    add_reshape.1 = u32[4] reshape(add.1)
+    ROOT out = (u32[4], u32[8], u32[4]) tuple(a2a_reshape, ag_reshape, add_reshape.1)
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_parallel_collective_overlap_limit(2);
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+
+  auto schedule = executable_module->schedule();
+  std::vector<HloInstruction*> instruction_sequence =
+      schedule.sequence(executable_module->entry_computation()).instructions();
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+  ASSERT_EQ(results.size(), kNumReplicas);
+}
+
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed, WindowedEinsumE2EAllGatherF8) {
   absl::string_view kModuleReplicatedStr = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[2,16,48]{2,1,0}, f8e4m3fn[48,192]{1,0}, bf16[], bf16[])->bf16[2,16,192]{2,1,0}}, allow_spmd_sharding_propagation_to_parameters={false,false,false,false}, num_partitions=4

@@ -119,12 +119,12 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
                                 Thunk::KindToString(kind()));
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
   se::StreamExecutor* executor = params.stream->parent();
-  int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
 
   if (IsAsync()) {
-    // Launch collective operation on an async stream.
-    se::Stream& async_stream =
-        *params.collective_params->async_streams.at(async_stream_idx);
+    TF_ASSIGN_OR_RETURN(
+      se::Stream* stream_ptr,
+      GetStreamForExecution(Thunk::execution_stream_id(), params));
+    se::Stream& async_stream = *stream_ptr;
 
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
