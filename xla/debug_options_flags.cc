@@ -406,6 +406,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
+  opts.set_xla_gpu_experimental_autotuner_cache_dir("");
+
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
   opts.set_xla_enable_command_buffers_during_profiling(false);
@@ -445,7 +447,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
-  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(false);
+  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
   return opts;
@@ -1121,7 +1123,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "  `XNN_GRAPH_FUSION_MODE_GREEDY` - greedy extraction of "
       "XNNPACK-compatible subgraphs starting from root instructions,\n"
       "  `XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY` - same as GREEDY plus "
-      "operations that are only supported with slinky."));
+      "operations that are only supported with slinky,"
+      "  `XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL` - test-only value for "
+      "disabling XNNPACK cost models."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_parallel_codegen_split_count",
       int32_setter_for(&DebugOptions::set_xla_cpu_parallel_codegen_split_count),

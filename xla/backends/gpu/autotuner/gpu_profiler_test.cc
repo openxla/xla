@@ -37,6 +37,8 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
@@ -113,8 +115,11 @@ class GpuProfilerTest : public HloHardwareIndependentTestBase {
     std::vector<se::StreamExecutor*> executors =
         PlatformUtil::GetStreamExecutors(platform).value();
     stream_exec_ = executors[0];
+    allocator_ =
+        std::make_unique<se::StreamExecutorMemoryAllocator>(stream_exec_);
   }
   se::StreamExecutor* stream_exec_;
+  std::unique_ptr<se::DeviceMemoryAllocator> allocator_;
 };
 
 TEST_F(GpuProfilerTest, ProfileWithSharedBuffersWithoutOutputBuffer) {
@@ -132,7 +137,7 @@ TEST_F(GpuProfilerTest, ProfileWithSharedBuffersWithoutOutputBuffer) {
 
   ProfileOptions options;
   options.should_populate_output_buffer = false;
-  auto profiler = GpuProfiler::Create(stream_exec_, options);
+  auto profiler = GpuProfiler::Create(stream_exec_, allocator_.get(), options);
   TF_ASSERT_OK_AND_ASSIGN(auto profiles, profiler->ProfileWithSharedBuffers(
                                              std::move(executables)));
   EXPECT_EQ(profiles.size(), 2);
@@ -162,7 +167,8 @@ TEST_F(GpuProfilerTest, ProfileWithSharedBuffers) {
   std::vector<std::unique_ptr<Executable>> executables;
   executables.push_back(std::make_unique<MockExecutable>(module, 1));
 
-  auto profiler = GpuProfiler::Create(stream_exec_, ProfileOptions());
+  auto profiler =
+      GpuProfiler::Create(stream_exec_, allocator_.get(), ProfileOptions());
   TF_ASSERT_OK_AND_ASSIGN(auto profiles, profiler->ProfileWithSharedBuffers(
                                              std::move(executables)));
   EXPECT_THAT(profiles, ElementsAre(IsOkAndHolds(Field(
@@ -184,7 +190,8 @@ TEST_F(GpuProfilerTest, FailingExecutablesReturnStatus) {
       std::make_unique<MockExecutable>(module, 2000, /*should_fail=*/true));
   executables.push_back(std::make_unique<MockExecutable>(module, 3000));
 
-  auto profiler = GpuProfiler::Create(stream_exec_, ProfileOptions());
+  auto profiler =
+      GpuProfiler::Create(stream_exec_, allocator_.get(), ProfileOptions());
   TF_ASSERT_OK_AND_ASSIGN(auto profiles, profiler->ProfileWithSharedBuffers(
                                              std::move(executables)));
   EXPECT_EQ(profiles.size(), 3);
@@ -208,7 +215,8 @@ TEST_F(GpuProfilerTest, CreateInputBuffersAndProfile) {
                           ParseAndReturnVerifiedModule(kHloModule));
   MockExecutable mock_executable(module, 1000);
 
-  auto profiler = GpuProfiler::Create(stream_exec_, ProfileOptions());
+  auto profiler =
+      GpuProfiler::Create(stream_exec_, allocator_.get(), ProfileOptions());
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
                           profiler->CreateInputBuffers(&mock_executable));
   TF_ASSERT_OK_AND_ASSIGN(ProfileResult profile,
@@ -232,7 +240,7 @@ TEST_P(GpuProfilerTestWithRedzonePadding, CheckInputBuffers) {
   MockExecutable mock_executable(module, 1000);
   ProfileOptions options;
   options.redzone_padding_bytes = GetParam();
-  auto profiler = GpuProfiler::Create(stream_exec_, options);
+  auto profiler = GpuProfiler::Create(stream_exec_, allocator_.get(), options);
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
                           profiler->CreateInputBuffers(&mock_executable));
   TF_EXPECT_OK(profiler->CheckInputBuffers(*buffers));
@@ -244,7 +252,7 @@ INSTANTIATE_TEST_SUITE_P(GpuProfilerTestWithRedzonePadding,
 
 TEST_F(GpuProfilerTest, CheckOutputBufferWhenBuffersAreSame) {
   ProfileOptions options;
-  auto profiler = GpuProfiler::Create(stream_exec_, options);
+  auto profiler = GpuProfiler::Create(stream_exec_, allocator_.get(), options);
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_exec_->CreateStream());
   auto allocator =
@@ -262,7 +270,7 @@ TEST_F(GpuProfilerTest, CheckOutputBufferWhenBuffersAreSame) {
 
 TEST_F(GpuProfilerTest, CheckOutputBufferWhenBuffersAreDifferent) {
   ProfileOptions options;
-  auto profiler = GpuProfiler::Create(stream_exec_, options);
+  auto profiler = GpuProfiler::Create(stream_exec_, allocator_.get(), options);
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_exec_->CreateStream());
   auto allocator =
       std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
@@ -275,6 +283,40 @@ TEST_F(GpuProfilerTest, CheckOutputBufferWhenBuffersAreDifferent) {
                                            stream.get(), /*value=*/2));
   EXPECT_THAT(profiler->CheckOutputBuffer(output, reference, /*rtol=*/0.0),
               StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST_F(GpuProfilerTest, CheckScratchBytesArePopulatedUsingBufferAssignment) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule gemm_fusion_dot.1, is_scheduled=true, entry_computation_layout={(bf16[32,120,6,512]{3,2,1,0}, f32[3072,512]{1,0})->bf16[3840,512]{1,0}}, frontend_attributes={fingerprint_before_lhs="40f912baf5b53a4f75b1ba9b3442042f"}
+
+%wrapped_convert_computation (param_0: f32[3072,512]) -> bf16[3072,512] {
+  %param_0 = f32[3072,512]{1,0} parameter(0)
+  ROOT %convert.1 = bf16[3072,512]{1,0} convert(%param_0)
+}
+
+ENTRY %entry_computation (transpose.562: bf16[32,120,6,512], Arg_1.2: f32[3072,512]) -> bf16[3840,512] {
+  %Arg_1.2 = f32[3072,512]{1,0} parameter(1)
+  %transpose.562 = bf16[32,120,6,512]{3,2,1,0} parameter(0)
+  %bitcast.0 = bf16[1,32,120,6,512]{4,3,2,1,0} bitcast(%transpose.562)
+  %bitcast.1 = bf16[3840,3072]{1,0} bitcast(%bitcast.0)
+  %wrapped_convert = bf16[3072,512]{1,0} fusion(%Arg_1.2), kind=kLoop, calls=%wrapped_convert_computation
+  %custom-call.1 = (bf16[512,3840]{0,1}, s8[26738688]{0}) custom-call(%wrapped_convert, %bitcast.1), custom_call_target="__cublas$gemm", backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"gemm_backend_config":{"alpha_real":1,"beta":0,"dot_dimension_numbers":{"lhs_contracting_dimensions":["0"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],"rhs_batch_dimensions":[]},"alpha_imag":0,"precision_config":{"operand_precision":["DEFAULT","DEFAULT"],"algorithm":"ALG_UNSET"},"epilogue":"DEFAULT","lhs_stride":"1572864","rhs_stride":"11796480","grad_x":false,"grad_y":false,"damax_output":false},"force_earliest_schedule":false,"reification_cost":[]}
+  %get-tuple-element = bf16[512,3840]{0,1} get-tuple-element(%custom-call.1), index=0
+  ROOT %bitcast.2 = bf16[3840,512]{1,0} bitcast(%get-tuple-element)
+})";
+  NVPTXCompiler compiler;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_executable,
+                          compiler.RunBackend(std::move(module), stream_exec_,
+                                              GpuCompiler::CompileOptions()));
+  auto profiler =
+      GpuProfiler::Create(stream_exec_, allocator_.get(), ProfileOptions());
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                          profiler->CreateInputBuffers(gpu_executable.get()));
+  TF_ASSERT_OK_AND_ASSIGN(ProfileResult profile,
+                          profiler->Profile(gpu_executable.get(), *buffers));
+  EXPECT_EQ(profile.scratch_bytes, 26738688);
 }
 
 }  // namespace

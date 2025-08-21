@@ -294,6 +294,7 @@ cc_library(
         "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
+        "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//tensorflow/core/kernels:__subpackages__",
     ]),
     deps = [
@@ -599,6 +600,8 @@ xla_test(
     name = "gpu_command_buffer_test",
     srcs = ["gpu_command_buffer_test.cc"],
     backends = ["gpu"],
+    # TODO(ybaturina): Re-enable once the CUDA driver version is updated in RBE.
+    tags = ["manual"],
     deps = [
         ":gpu_command_buffer",
         ":gpu_test_kernels",

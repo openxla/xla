@@ -1157,17 +1157,21 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       // Decide whether to use XNNPACK or Eigen.
       bool use_xnn = hlo_module_config_.debug_options().xla_cpu_use_xnnpack();
       if (use_xnn) {
+        const bool use_cost_model =
+            hlo_module_config_.debug_options()
+                .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+            DebugOptions::XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL;
         TF_ASSIGN_OR_RETURN(
-            use_xnn, IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
-                                         instruction->shape(),
-                                         &target_machine_features_));
+            use_xnn,
+            IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
+                                instruction->shape(), &target_machine_features_,
+                                use_cost_model));
       }
 
       if (use_xnn) {
-        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction)};
         bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(rhs);
         return ThunkSequence::Of<XnnDotThunk>(
-            std::move(options), ThunkInfo(instruction), dnums, lhs_slice,
+            XnnDotThunk::Options{}, ThunkInfo(instruction), dnums, lhs_slice,
             lhs->shape(), rhs_slice, rhs->shape(), out_slice,
             instruction->shape(), capture_rhs);
       } else {
@@ -1534,9 +1538,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitXnnFusionThunk(
   // Construct XNNPACK subgraph builder from the fusion computation.
   TF_ASSIGN_OR_RETURN(auto builder, EmitXnnFusionBuilder(computation));
 
-  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation)};
   return ThunkSequence::Of<XnnFusionThunk>(
-      std::move(options), ThunkInfo(instruction), std::move(arguments),
+      XnnFusionThunk::Options{}, ThunkInfo(instruction), std::move(arguments),
       std::move(results),
       [b = std::move(builder)](auto, auto) mutable { return b(); });
 }

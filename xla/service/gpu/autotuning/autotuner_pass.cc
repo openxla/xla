@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -46,15 +47,15 @@ namespace gpu {
 
 absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     std::vector<std::unique_ptr<CodegenBackend>> backends,
-    const DebugOptions& debug_options,
+    const DebugOptions& debug_options, se::DeviceMemoryAllocator* allocator,
     stream_executor::StreamExecutor* stream_executor,
     tsl::thread::ThreadPool* thread_pool) {
   std::unique_ptr<GpuProfiler> profiler =
-      GpuProfiler::Create(stream_executor, ProfileOptions());
+      GpuProfiler::Create(stream_executor, allocator, ProfileOptions());
 
   std::unique_ptr<AutotunerCacheInterface> cache = nullptr;
   const std::string& cache_dir =
-      debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+      debug_options.xla_gpu_experimental_autotuner_cache_dir();
   if (!cache_dir.empty()) {
     FileBasedCacheConfig cache_config;
     cache_config.autotune_cache_dir = cache_dir;
