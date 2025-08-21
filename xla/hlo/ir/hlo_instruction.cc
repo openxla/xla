@@ -4469,6 +4469,11 @@ bool HloInstruction::IsFusible() const {
     case HloOpcode::kReduce:
     case HloOpcode::kReduceWindow:
       return true;
+    case HloOpcode::kAllReduce:
+      // AllReduce can be fused in certain contexts, such as with softmax
+      // operations for optimization purposes. Allow fusion when the AllReduce
+      // is part of a custom fusion pattern.
+      return true;
     case HloOpcode::kRng:
       return user_count() <= 1;
     // Side effecting instructions cannot be fused.

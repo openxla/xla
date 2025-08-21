@@ -244,6 +244,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/scatter_expander.h"
 #include "xla/service/gpu/transforms/scatter_slice_simplifier.h"
 #include "xla/service/gpu/transforms/softmax_rewriter_triton.h"
+#include "xla/service/gpu/transforms/allreduce_softmax_fusion.h"
 #include "xla/service/gpu/transforms/sort_rewriter.h"
 #include "xla/service/gpu/transforms/splitk_rewriter.h"
 #include "xla/service/gpu/transforms/stream_attribute_annotator.h"
@@ -1719,6 +1720,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<SoftmaxRewriterTriton>(
           gpu_target_config.device_description, ShapeSizeBytesFunction(),
           /*only_fuse_if_profitable=*/true);
+      // Add AllReduceSoftmaxFusion pass after SoftmaxRewriterTriton to combine
+      // AllReduce operations with Triton Softmax kernels
+      pipeline.AddPass<AllReduceSoftmaxFusion>();
     }
 
     pipeline.AddPass<ReductionDimensionGrouper>();
