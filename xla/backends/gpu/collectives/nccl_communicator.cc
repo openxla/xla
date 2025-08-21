@@ -455,7 +455,7 @@ absl::Status NcclCommunicator::CollectivePermute(
 
   XLA_NCCL_RETURN_IF_ERROR(ncclGroupEnd());
 
-  VLOG(-1) << "##### " << __func__ << " Done";
+  VLOG(1) << "##### " << __func__ << " Done";
   return absl::OkStatus();
 }
 
