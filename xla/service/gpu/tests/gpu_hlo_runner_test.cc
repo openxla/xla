@@ -112,7 +112,7 @@ absl::StatusOr<std::vector<Literal>> MakeSpecialArguments(HloModule* const modul
   for (int i = 0; i < params.size(); ++i) {
     TF_ASSIGN_OR_RETURN(arguments[i], 
         MakeVarLiteral(params[i]->shape(), 
-          [](int idx){ return idx + 1; }
+          [](int idx){ return idx; }
         ));
   }
   return std::move(arguments);
@@ -122,8 +122,11 @@ absl::StatusOr<std::vector<Literal>> MakeSpecialArguments(HloModule* const modul
 
 
 #define DO_REFERENCE_CHECK 1
-#define USE_MULTIPLE_GPUS 0
+#define NUM_REPLICAS_TO_RUN 0 // set to 0 to use single GPU
 #define USE_SPECIAL_ARGUMENTS 1
+#define USE_PSEUDO_RANDOM true
+#define USE_RANDOM_LARGE_RANGE false
+#define DUMP_OUTPUT 0
 
 class HloRunnerTest : public GpuCodegenTest {
 
@@ -152,8 +155,8 @@ protected:
   
 #if !USE_SPECIAL_ARGUMENTS
   TF_ASSERT_OK_AND_ASSIGN(auto fake_arguments, xla::MakeFakeArguments(module.get(), 
-        true, /*pseudo-random*/
-        false /* use large range*/));
+        USE_PSEUDO_RANDOM, /*pseudo-random*/
+        USE_RANDOM_LARGE_RANGE /* use large range*/));
 #else
   TF_ASSERT_OK_AND_ASSIGN(auto fake_arguments, MakeSpecialArguments(module.get()));
 #endif
@@ -162,18 +165,10 @@ protected:
   auto ref_module = module->Clone();  
   TF_ASSERT_OK_AND_ASSIGN(auto exec, CreateExecutable(std::move(module), true));
 
-  //  TF_ASSERT_OK_AND_ASSIGN(auto truth, 
-  //        ReadLiteralFromProto("/tf/xla/expected.pb"));
-  // TF_ASSERT_OK_AND_ASSIGN(auto truth, 
-  // ref_runner.ExecuteWithExecutable(ref_exec.get(), arg_ptrs, nullptr));
-  // WriteLiteralToTempFile(truth, "expected");
-  //VLOG(0) << "Got expected literal from file.. running test";
-
   auto& runner = test_runner_as_hlo_runner();
-
-  int num_runs = 10, num_warmups = 2;
+  int num_runs = 1, num_warmups = 0;
   TF_ASSERT_OK_AND_ASSIGN(auto argument_buffers,
-                      runner.TransferLiteralsToDevice(arg_ptrs));
+                      runner.TransferLiteralsToDevice(fake_arguments));
   
   uint64_t timeNs = 0;
   for(int i = 0; i < num_runs + num_warmups; i++) {
@@ -191,7 +186,17 @@ protected:
     if (i == 0) {
       TF_ASSERT_OK_AND_ASSIGN(auto host_res, 
                 runner.TransferLiteralFromDevice(result.Result()));
-      //WriteLiteralToTempFile(host_res, name); // write execution results to file
+#if DUMP_OUTPUT
+      WriteLiteralToTempFile(host_res, "myout"); // write execution results to file
+      int zz = 0, start = 10000, num = 1024;
+      for (const auto& val : host_res.data<int32_t>()) {
+        if (zz >= start) {
+          if(zz >= start + num) break;
+          VLOG(0) << zz << ": " << val;
+        }
+        zz++;
+      }
+#endif
     }
     if (i >= num_warmups) timeNs += profile.compute_time_ns();
     //VLOG(0) << i << " compute time: " << profile.compute_time_ns();
@@ -206,31 +211,19 @@ protected:
                       runner.ExecuteWithExecutable(
                           /*executable=*/exec.get(),
                           /*arguments=*/arg_ptrs));
-  // VLOG(0) << test_res.ToString();
  
   auto& ref_runner = reference_runner();
   TF_ASSERT_OK_AND_ASSIGN(auto truth, ref_runner.Execute(std::move(ref_module),
                                        fake_arguments, /*run_hlo_passes*/true));
   
   // TF_ASSERT_OK_AND_ASSIGN(auto truth, ReadLiteralFromFile(name));
-  
-  // VLOG(0) << "Running reference exec..";
-  // auto& ref_runner = HloTestBase::reference_runner_;
-  // TF_ASSERT_OK_AND_ASSIGN(
-  //      auto ref_exec, ref_runner.CreateExecutable(std::move(ref_module), true));
-
-  // TF_ASSERT_OK_AND_ASSIGN(
-  //      auto truth, ref_runner.ExecuteWithExecutable(ref_exec.get(), arg_ptrs));
-
-  // //ErrorSpec error_spec{1e-2, 1e-3};
   ErrorSpec error_spec(1e-5 /*abs*/, 1e-5 /*rel*/);
   ASSERT_EQ(literal_comparison::Near(/*expected=*/truth,
                                    /*actual=*/test_res,
                                    /*error=*/error_spec,
                             /*detailed_message=*/true, {}), absl::OkStatus());
 #endif // DO_REFERENCE_CHECK
- //    EXPECT_TRUE(RunAndCompare(std::move(module), 
-  // //     absl::Span< xla::Literal * const>(arg_ptrs.data(), arg_ptrs.size()), error_spec));
+ 
 #else // USE_MULTIPLE_GPUS
   int NumReplicas = 8, NumParts = 1;
   config.set_replica_count(NumReplicas);
