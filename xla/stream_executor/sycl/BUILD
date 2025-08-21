@@ -150,7 +150,7 @@ cc_library(
     alwayslink = 1,
 )
 
-cc_library(
+sycl_library(
     name = "sycl_kernel",
     srcs = ["sycl_kernel.cc"],
     hdrs = ["sycl_kernel.h"],
@@ -161,7 +161,6 @@ cc_library(
     deps = [
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status:statusor",
-        "@local_config_sycl//sycl:sycl_headers",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -184,7 +183,6 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
-        "@local_config_sycl//sycl:sycl_headers",
     ],
 )
 
