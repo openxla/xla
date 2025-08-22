@@ -4360,9 +4360,11 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnRecv) {
 
   ENTRY test_computation {
     after_all = token[] after-all()
-    recv1 = (f32[], u32[], token[]) recv(after_all), channel_id=1
+    recv1 = (f32[], u32[], token[]) recv(after_all), channel_id=1, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{3,0}}"}
     recv1-done = (f32[], token[]) recv-done(recv1), channel_id=1
-    recv2 = (f32[], u32[], token[]) recv(after_all), channel_id=2
+    recv2 = (f32[], u32[], token[]) recv(after_all), channel_id=2, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{0,1}}"}
     ROOT recv2-done = (f32[], token[]) recv-done(recv2), channel_id=2
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
@@ -4379,9 +4381,11 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvDeadlockOnSend) {
   ENTRY test_computation {
     c0 = f32[] constant(0)
     after_all = token[] after-all()
-    send1 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1
+    send1 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{3,0}}"}
     send1-done = token[] send-done(send1), channel_id=1
-    send2 = (f32[], u32[], token[]) send(c0, after_all), channel_id=2
+    send2 = (f32[], u32[], token[]) send(c0, after_all), channel_id=2, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{0,1}}"}
     ROOT send2-done = token[] send-done(send2), channel_id=2
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
@@ -4407,9 +4411,12 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
-  EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Expected send or recv")));
+  EXPECT_THAT(
+      verifier().Run(module.get()),
+      StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "Introducing the following instruction will cause a deadlock")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4420,7 +4427,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
   while_body {
     c0 = f32[] constant(0)
     after_all = token[] after-all()
-    send1 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1
+    send1 = (f32[], u32[], token[]) send(c0, after_all), channel_id=1, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{3,0}}"}
     send1-done = token[] send-done(send1), channel_id=1
     params = (f32[10], bf16[10]) parameter(0)
     p0 = f32[10] get-tuple-element(params), index=0
@@ -4441,7 +4449,8 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
 
   ENTRY test_computation {
     after_all = token[] after-all()
-    recv = (f32[], u32[], token[]) recv(after_all), channel_id=1
+    recv = (f32[], u32[], token[]) recv(after_all), channel_id=1, frontend_attributes={
+            _xla_send_recv_source_target_pairs="{{0,1},{1,2},{2,3}}"}
     recv_done = (f32[], token[]) recv-done(recv), channel_id=1
     p0 = f32[10] parameter(0)
     p1 = bf16[10] parameter(1)
@@ -4455,10 +4464,13 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks,
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
-  EXPECT_THAT(verifier().Run(module.get()),
-              StatusIs(absl::StatusCode::kInternal,
-                       AnyOf(HasSubstr("Expected send or recv"),
-                             HasSubstr("Expected send to match recv"))));
+  EXPECT_THAT(
+      verifier().Run(module.get()),
+      StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "Expected send and recv instructions to have the same "
+              "source-target pairs, but could not match some instructions.")));
 }
 
 TEST_F(HloVerifierTestForCollectiveDeadlocks,
@@ -4594,6 +4606,375 @@ TEST_F(HloVerifierTestForCollectiveDeadlocks, VerifySendRecvNoDeadlocks) {
     p1 = bf16[10] parameter(1)
     ROOT ag = (f32[20], bf16[20]) all-gather(p0, p1), dimensions={0}
   })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(HloVerifierTestForCollectiveDeadlocks,
+       VerifySendRecvNoDeadlocksPartiallyPipelined) {
+  const char* const hlo = R"(
+  HloModule nccl_group_send_recv_with_while_loop_x4, is_scheduled=true
+
+read_buffer_mb5 {
+  buffer = f32[5,16] parameter(0)
+  offset = u32[] parameter(1)
+  index = u32[] parameter(2)
+  c0 = u32[] constant(0)
+  c5 = u32[] constant(5)
+  index_ = u32[] add(index, offset)
+  index__ = u32[] remainder(index_, c5)
+  slice = f32[1,16] dynamic-slice(buffer, index__, c0),
+      dynamic_slice_sizes={1,16}
+  ROOT slice_ = f32[16] reshape(slice)
+}
+
+update_buffer_mb5 {
+  buffer = f32[5,16] parameter(0)
+  update = f32[16] parameter(1)
+  offset = u32[] parameter(2)
+  index = u32[] parameter(3)
+  c0 = u32[] constant(0)
+  c5 = u32[] constant(5)
+  index_ = u32[] add(index, offset)
+  index__ = u32[] remainder(index_, c5)
+  update_ = f32[1,16] reshape(update)
+  ROOT buffer_ = f32[5,16] dynamic-update-slice(buffer, update_, index__, c0)
+}
+
+is_input_replica {
+  replica_id = u32[] replica-id()
+  c0 = u32[] constant(0)
+  ROOT predicate = pred[] compare(replica_id, c0), direction=EQ
+}
+
+is_output_replica {
+  replica_id = u32[] replica-id()
+  c3 = u32[] constant(3)
+  ROOT predicate = pred[] compare(replica_id, c3), direction=EQ
+}
+
+is_read_input_mb5 {
+  is_input_replica = pred[] call(), to_apply=is_input_replica
+  i = u32[] parameter(0)
+  c5 = u32[] constant(5)
+  is_input_iteration = pred[] compare(i, c5), direction=LT
+  ROOT is_read_input = pred[] and(is_input_replica, is_input_iteration)
+}
+%wrapped_send_recv_1 (param0: f32[16], param1: token[], param2: token[],
+  param3: f32[16], param4: token[], param5: token[]) -> ((f32[16], u32[], token[]),
+  (f32[16], u32[], token[]), (f32[16], u32[], token[]), (f32[16], u32[], token[])) {
+  %param0 = f32[16]{0} parameter(0)
+  %param1 = token[] parameter(1)
+  %fwd_send.2 = (f32[16]{0}, u32[], token[]) send(f32[16]{0} %param0, token[] %param1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+  %param2 = token[] parameter(2)
+  %fwd_recv.2 = (f32[16]{0}, u32[], token[]) recv(token[] %param2),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+  %param3 = f32[16]{0} parameter(3)
+  %param4 = token[] parameter(4)
+  %bwd_send.2 = (f32[16]{0}, u32[], token[]) send(f32[16]{0} %param3, token[] %param4),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+  %param5 = token[] parameter(5)
+  %bwd_recv.2 = (f32[16]{0}, u32[], token[]) recv(token[] %param5),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+  ROOT %tuple.3 = ((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]))
+    tuple((f32[16]{0}, u32[], token[]) %fwd_send.2,
+    (f32[16]{0}, u32[], token[]) %fwd_recv.2,
+    (f32[16]{0}, u32[], token[]) %bwd_send.2,
+    (f32[16]{0}, u32[], token[]) %bwd_recv.2)
+}
+
+%while_body (tuple.1: (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16],
+  /*index=5*/u32[], (f32[16], token[]), (f32[16], token[]))) ->
+  (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16], /*index=5*/u32[],
+  (f32[16], token[]), (f32[16], token[])) {
+  %c2 = u32[] constant(2)
+  %c5.3 = u32[] constant(5)
+  %tuple.1 = (f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0}, token[])) parameter(0)
+  %weights = f32[16,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=0
+  %input = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=1
+  %output = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=2
+  %is_device_zero = pred[] call(), to_apply=%is_input_replica
+  %i.2 = u32[] get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=5
+  %is_read_input.1 = pred[] call(u32[] %i.2), to_apply=%is_read_input_mb5
+  %c0.3 = u32[] constant(0)
+  %input_slice = f32[16]{0} call(f32[5,16]{1,0} %input, u32[] %c0.3, u32[] %i.2),
+    to_apply=%read_buffer_mb5
+  %prev_iter_bwd_recv_done = (f32[16]{0}, token[])
+    get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]),
+    (f32[16]{0}, token[])) %tuple.1), index=7
+  %prev_stage_slice_bwd = f32[16]{0} get-tuple-element((f32[16]{0}, token[])
+    %prev_iter_bwd_recv_done), index=0
+
+  %compute_arg_bwd = f32[16]{0} select(pred[] %is_read_input.1,
+    f32[16]{0} %input_slice, f32[16]{0} %prev_stage_slice_bwd)
+  %compute_res_bwd = f32[16]{0} dot(f32[16,16]{1,0} %weights, f32[16]{0} %compute_arg_bwd),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %prev_iter_fwd_recv_done = (f32[16]{0}, token[])
+    get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]),
+    (f32[16]{0}, token[])) %tuple.1), index=6
+  %prev_stage_slice_fwd = f32[16]{0} get-tuple-element((f32[16]{0}, token[])
+    %prev_iter_fwd_recv_done), index=0
+  %compute_arg_fwd = f32[16]{0} select(pred[] %is_device_zero,
+    f32[16]{0} %prev_stage_slice_bwd, f32[16]{0} %prev_stage_slice_fwd)
+  %compute_res_fwd = f32[16]{0} dot(f32[16,16]{1,0} %weights,
+    f32[16]{0} %compute_arg_fwd), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %compute_res = f32[16]{0} select(pred[] %is_device_zero,
+    f32[16]{0} %compute_res_bwd, f32[16]{0} %compute_res_fwd)
+
+  %c1 = u32[] constant(1)
+  %output_ = f32[5,16]{1,0} call(f32[5,16]{1,0} %output, f32[16]{0} %compute_res,
+    u32[] %c1, u32[] %i.2), to_apply=%update_buffer_mb5
+  %buffer.2 = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=3
+  %prev_iteration_compute_res = f32[16]{0} get-tuple-element((f32[16,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.1), index=4
+  %c4 = u32[] constant(4)
+  %buffer_.1 = f32[5,16]{1,0} call(f32[5,16]{1,0} %buffer.2,
+    f32[16]{0} %prev_iteration_compute_res, u32[] %c4, u32[] %i.2),
+    to_apply=%update_buffer_mb5
+  %i_ = u32[] add(u32[] %i.2, u32[] %c1)
+  %is_output_replica = pred[] call(), to_apply=%is_output_replica
+  %c3.1 = u32[] constant(3)
+  %buffer_slice = f32[16]{0} call(f32[5,16]{1,0} %buffer.2, u32[] %c3.1,
+    u32[] %i.2), to_apply=%read_buffer_mb5
+  %next_stage_slice = f32[16]{0} select(pred[] %is_output_replica,
+    f32[16]{0} %buffer_slice, f32[16]{0} %prev_iteration_compute_res)
+  %after_all_fwd = token[] after-all()
+  %after_all_bwd = token[] after-all()
+  %tuple-start = ((f32[16]{0}, token[], token[], f32[16]{0}, token[],
+    /*index=5*/token[]), ((f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[])), s32[]) async-start(f32[16]{0} %next_stage_slice,
+    token[] %after_all_fwd, token[] %after_all_fwd, f32[16]{0} %next_stage_slice,
+    token[] %after_all_bwd, /*index=5*/token[] %after_all_bwd),
+    calls=%wrapped_send_recv_1
+  %tuple-done = ((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]))
+    async-done(((f32[16]{0}, token[], token[], f32[16]{0}, token[],
+    /*index=5*/token[]), ((f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[])), s32[]) %tuple-start)
+
+  %get-tuple-element.2 = (f32[16]{0}, u32[], token[])
+    get-tuple-element(((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[])) %tuple-done), index=1
+  %get-tuple-element.3 = f32[16]{0} get-tuple-element((f32[16]{0}, u32[],
+    token[]) %get-tuple-element.2), index=0
+  %get-tuple-element.4 = token[] get-tuple-element((f32[16]{0}, u32[],
+    token[]) %get-tuple-element.2), index=2
+  %tuple.4 = (f32[16]{0}, token[]) tuple(f32[16]{0} %get-tuple-element.3,
+    token[] %get-tuple-element.4), control-predecessors={%tuple-start}
+  %get-tuple-element.7 = (f32[16]{0}, u32[], token[])
+    get-tuple-element(((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[])) %tuple-done), index=3
+  %get-tuple-element.8 = f32[16]{0} get-tuple-element((f32[16]{0}, u32[],
+    token[]) %get-tuple-element.7), index=0
+  %get-tuple-element.9 = token[] get-tuple-element((f32[16]{0}, u32[], token[])
+    %get-tuple-element.7), index=2
+  %tuple.5 = (f32[16]{0}, token[]) tuple(f32[16]{0} %get-tuple-element.8,
+    token[] %get-tuple-element.9), control-predecessors={%tuple-start}
+  ROOT %tuple_ = (f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0},
+    token[])) tuple(f32[16,16]{1,0} %weights, f32[5,16]{1,0} %input,
+    f32[5,16]{1,0} %output_, f32[5,16]{1,0} %buffer_.1, f32[16]{0} %compute_res,
+    /*index=5*/u32[] %i_, (f32[16]{0}, token[]) %tuple.4, (f32[16]{0}, token[]) %tuple.5)
+  %get-tuple-element = (f32[16]{0}, u32[], token[])
+    get-tuple-element(((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[])) %tuple-done), index=0
+  %get-tuple-element.1 = token[] get-tuple-element((f32[16]{0}, u32[], token[])
+    %get-tuple-element), index=2
+  %get-tuple-element.5 = (f32[16]{0}, u32[], token[])
+    get-tuple-element(((f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[]),
+    (f32[16]{0}, u32[], token[]), (f32[16]{0}, u32[], token[])) %tuple-done), index=2
+  %get-tuple-element.6 = token[] get-tuple-element((f32[16]{0}, u32[], token[])
+    %get-tuple-element.5), index=2
+}
+
+%while_condition (tuple: (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16],
+  /*index=5*/u32[], (f32[16], token[]), (f32[16], token[]))) -> pred[] {
+  %tuple = (f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0}, token[])) parameter(0)
+  %i.1 = u32[] get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]),
+    (f32[16]{0}, token[])) %tuple), index=5
+  %n = u32[] constant(13)
+  ROOT %predicate.2 = pred[] compare(u32[] %i.1, u32[] %n), direction=LT
+}
+
+ENTRY %main (weights.1: f32[16,16], input.1: f32[5,16]) -> f32[5,16] {
+  %input.1 = f32[5,16]{1,0} parameter(1)
+  %c0.4 = u32[] constant(0)
+  %input_slice.1 = f32[16]{0} call(f32[5,16]{1,0} %input.1, u32[] %c0.4,
+    u32[] %c0.4), to_apply=%read_buffer_mb5
+  %after_all_bwd.1 = token[] after-all()
+  %bwd_send.1 = (f32[16]{0}, u32[], token[]) send(f32[16]{0} %input_slice.1,
+    token[] %after_all_bwd.1), frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+  %bwd_send_done.1 = token[] send-done((f32[16]{0}, u32[], token[]) %bwd_send.1)
+  %weights.1 = f32[16,16]{1,0} parameter(0)
+  %cf0 = f32[] constant(0)
+  %output.1 = f32[5,16]{1,0} broadcast(f32[] %cf0), dimensions={}
+  %buffer.3 = f32[5,16]{1,0} broadcast(f32[] %cf0), dimensions={}
+  %prev_iteration_compute_res.1 = f32[16]{0} broadcast(f32[] %cf0), dimensions={}
+
+  %after_all_fwd.1 = token[] after-all()
+  %fwd_recv.1 = (f32[16]{0}, u32[], token[]) recv(token[] %after_all_fwd.1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+  %fwd_recv_done.1 = (f32[16]{0}, token[]) recv-done((f32[16]{0}, u32[], token[]) %fwd_recv.1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+  %bwd_recv.1 = (f32[16]{0}, u32[], token[]) recv(token[] %after_all_bwd.1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+  %bwd_recv_done.1 = (f32[16]{0}, token[]) recv-done((f32[16]{0}, u32[], token[]) %bwd_recv.1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+
+  %tuple.2 = (f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0}, token[]))
+    tuple(f32[16,16]{1,0} %weights.1, f32[5,16]{1,0} %input.1,
+    f32[5,16]{1,0} %output.1, f32[5,16]{1,0} %buffer.3,
+    f32[16]{0} %prev_iteration_compute_res.1, /*index=5*/u32[] %c0.4,
+    (f32[16]{0}, token[]) %fwd_recv_done.1, (f32[16]{0}, token[]) %bwd_recv_done.1)
+  %tuple_.1 = (f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0}, token[]))
+    while((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple.2),
+    condition=%while_condition, body=%while_body
+  %input_ = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=1
+  %buffer_.2 = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=3
+  %c2_ = u32[] constant(2)
+  %c4_ = u32[] constant(4)
+  %c5_ = u32[] constant(5)
+  %is_output_replica_ = pred[] call(), to_apply=%is_output_replica
+  %c3_ = u32[] constant(3)
+  %i_.1 = u32[] get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=5
+  %buffer_slice_ = f32[16]{0} call(f32[5,16]{1,0} %buffer.3, u32[] %c3_, u32[] %i_.1),
+    to_apply=%read_buffer_mb5
+  %prev_iteration_compute_res_ = f32[16]{0} get-tuple-element((f32[16,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=4
+  %next_stage_slice_ = f32[16]{0} select(pred[] %is_output_replica_,
+    f32[16]{0} %buffer_slice_, f32[16]{0} %prev_iteration_compute_res_)
+  %fwd_send.1 = (f32[16]{0}, u32[], token[]) send(f32[16]{0} %next_stage_slice_,
+    token[] %after_all_fwd.1),
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+  %fwd_send_done.1 = token[] send-done((f32[16]{0}, u32[], token[]) %fwd_send.1)
+  %output_.1 = f32[5,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=2
+  %is_device_zero_ = pred[] call(), to_apply=%is_input_replica
+  %weights_ = f32[16,16]{1,0} get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[],
+    (f32[16]{0}, token[]), (f32[16]{0}, token[])) %tuple_.1), index=0
+  %is_read_input_ = pred[] call(u32[] %i_.1), to_apply=%is_read_input_mb5
+  %c0_ = u32[] constant(0)
+  %input_slice_ = f32[16]{0} call(f32[5,16]{1,0} %input.1, u32[] %c0_, u32[] %i_.1),
+    to_apply=%read_buffer_mb5
+  %prev_stage_bwd_recv_done_ = (f32[16]{0}, token[])
+    get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]),
+    (f32[16]{0}, token[])) %tuple_.1), index=7
+  %prev_stage_slice_bwd_ = f32[16]{0}
+    get-tuple-element((f32[16]{0}, token[]) %prev_stage_bwd_recv_done_), index=0
+  %compute_arg_bwd_ = f32[16]{0} select(pred[] %is_read_input_,
+    f32[16]{0} %input_slice_, f32[16]{0} %prev_stage_slice_bwd_)
+  %compute_res_bwd_ = f32[16]{0} dot(f32[16,16]{1,0} %weights_,
+    f32[16]{0} %compute_arg_bwd_), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %prev_stage_fwd_recv_done_ = (f32[16]{0}, token[])
+    get-tuple-element((f32[16,16]{1,0}, f32[5,16]{1,0}, f32[5,16]{1,0},
+    f32[5,16]{1,0}, f32[16]{0}, /*index=5*/u32[], (f32[16]{0}, token[]),
+    (f32[16]{0}, token[])) %tuple_.1), index=6
+  %prev_stage_slice_fwd_ = f32[16]{0} get-tuple-element((f32[16]{0},
+    token[]) %prev_stage_fwd_recv_done_), index=0
+  %compute_arg_fwd_ = f32[16]{0} select(pred[] %is_device_zero_,
+    f32[16]{0} %prev_stage_slice_bwd_, f32[16]{0} %prev_stage_slice_fwd_)
+  %compute_res_fwd_ = f32[16]{0} dot(f32[16,16]{1,0} %weights_,
+    f32[16]{0} %compute_arg_fwd_), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %compute_res_ = f32[16]{0} select(pred[] %is_device_zero_,
+    f32[16]{0} %compute_res_bwd_, f32[16]{0} %compute_res_fwd_)
+  %c1_ = u32[] constant(1)
+  ROOT %output__ = f32[5,16]{1,0} call(f32[5,16]{1,0} %output_.1,
+    f32[16]{0} %compute_res_, u32[] %c1_, u32[] %i_.1), to_apply=%update_buffer_mb5
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(HloVerifierTestForCollectiveDeadlocks,
+       VerifyAsyncComputationWithMultipleSendRecvs) {
+  const char* const hlo = R"(
+HloModule nccl_group_send_recv_no_loop_x4, is_scheduled=true
+
+wrapped_send_recv {
+  param0 = f32[] parameter(0)
+  param1 = token[] parameter(1)
+  send1 = (f32[], u32[], token[]) send(param0, param1), channel_id=0,
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2}}}
+  param2 = f32[] parameter(2)
+  param3 = token[] parameter(3)
+  send2 = (f32[], u32[], token[]) send(param2, param3), channel_id=0,
+    frontend_attributes={_xla_send_recv_source_target_pairs={{2,3}}}
+  param4 = token[] parameter(4)
+  recv1 = (f32[], u32[], token[]) recv(param4), channel_id=0,
+    frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2}}}
+  param5 = token[] parameter(5)
+  recv2 = (f32[], u32[], token[]) recv(param5), channel_id=0,
+    frontend_attributes={_xla_send_recv_source_target_pairs={{2,3}}}
+  ROOT out = ((f32[], u32[], token[]), (f32[], u32[], token[]),
+    (f32[], u32[], token[]), (f32[], u32[], token[]))
+    tuple(send1, send2, recv1, recv2)
+}
+
+ENTRY main {
+  data1 = f32[] constant(10)
+  after-all1 = token[] after-all()
+  data2 = f32[] constant(20)
+  after-all2 = token[] after-all()
+  async-comp-start = ((f32[], token[], f32[], token[], token[], token[]),
+    ((f32[], u32[], token[]), (f32[], u32[], token[]), (f32[], u32[], token[]),
+    (f32[], u32[], token[])), s32[]) async-start(data1, after-all1,
+    data2, after-all2, after-all1, after-all2), calls=wrapped_send_recv
+  async-comp-done = ((f32[], u32[], token[]), (f32[], u32[], token[]),
+    (f32[], u32[], token[]), (f32[], u32[], token[])) async-done(async-comp-start)
+  unpack-recv-done1 = (f32[], u32[], token[]) get-tuple-element(async-comp-done), index=2
+  recv-done-data1 = f32[] get-tuple-element(unpack-recv-done1), index=0
+  recv-done-token1 = token[] get-tuple-element(unpack-recv-done1), index=2
+  recv-done1 = (f32[], token[]) tuple(recv-done-data1, recv-done-token1),
+    control-predecessors={async-comp-start}
+  data-out1 = f32[] get-tuple-element(recv-done1), index=0
+  unpack-recv-done2 = (f32[], u32[], token[]) get-tuple-element(async-comp-done), index=3
+  recv-done-data2 = f32[] get-tuple-element(unpack-recv-done2), index=0
+  recv-done-token2 = token[] get-tuple-element(unpack-recv-done2), index=2
+  recv-done2 = (f32[], token[]) tuple(recv-done-data2, recv-done-token2),
+    control-predecessors={async-comp-start}
+  data-out2 = f32[] get-tuple-element(recv-done2), index=0
+  ROOT out = (f32[], f32[]) tuple(data-out1, data-out2)
+  unpack-send-done1 = (f32[], u32[], token[]) get-tuple-element(async-comp-done), index=0
+  send-done1 = token[] get-tuple-element(unpack-send-done1), index=2
+  unpack-send-done2 = (f32[], u32[], token[]) get-tuple-element(async-comp-done), index=1
+  send-done2 = token[] get-tuple-element(unpack-send-done2), index=2
+}
+  )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(hlo));
   EXPECT_THAT(verifier().Run(module.get()), IsOkAndHolds(false));
