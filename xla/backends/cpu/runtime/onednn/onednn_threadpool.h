@@ -111,6 +111,10 @@ class OneDnnThreadPool final
     thread_pool_ = thread_pool;
   }
 
+  tsl::AsyncValueRef<tsl::Chain> done_event() const {
+    return done_event_;
+  }
+
  private:
   Eigen::ThreadPoolInterface* thread_pool_;
 
