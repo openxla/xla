@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
+#include "xla/pjrt/gpu/tfrt/tfrt_gpu_executable.h"
 #include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -71,6 +72,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/platform.h"
@@ -107,6 +109,7 @@ class DonationTransactionPeer {
 
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Gt;
@@ -1713,7 +1716,9 @@ TEST(TfrtGpuClientTest, DeviceAttributes) {
     EXPECT_EQ(compute_capability, expected_compute_capability);
 
     // Attribute `coords`.
-    EXPECT_EQ(device->description().coords()[0], device_index);
+    // All devices are in the same partition & process.
+    EXPECT_THAT(device->description().coords(),
+                ElementsAre(0, 0, device->local_device_id().value()));
 
     // Attribute `device_vendor`.
     auto device_vendor =

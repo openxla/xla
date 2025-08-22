@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/stream_executor/cuda/compilation_provider.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -29,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider_test.h"
+#include "xla/stream_executor/cuda/composite_compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/driver_compilation_provider.h"
 #include "xla/stream_executor/cuda/nvjitlink_compilation_provider.h"
@@ -60,12 +63,19 @@ void CompilationProviderTest::SetUp() {
   }
 #endif
 
-  if (GetParam() == kNvJitLinkCompilationProviderName &&
-      !IsLibNvJitLinkSupported()) {
+  absl::string_view provider = GetParam();
+
+  if (!IsLibNvJitLinkSupported() &&
+      (provider == kNvJitLinkCompilationProviderName ||
+       provider ==
+           kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName)) {
     GTEST_SKIP() << "nvjitlink is not supported in this build.";
   }
-  if (GetParam() == kNvptxcompilerCompilationProviderName &&
-      !IsLibNvPtxCompilerSupported()) {
+
+  if (!IsLibNvPtxCompilerSupported() &&
+      (provider == kNvptxcompilerCompilationProviderName ||
+       provider ==
+           kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName)) {
     GTEST_SKIP() << "nvptxcompiler is not supported in this build.";
   }
 
@@ -93,6 +103,13 @@ CompilationProviderTest::CreateCompilationProvider(absl::string_view name) {
 
   if (name == kDriverCompilationProviderName) {
     return std::make_unique<DriverCompilationProvider>();
+  }
+
+  if (name == kCompositeNvptxCompilerAndNvJitLinkCompilationProviderName) {
+    std::vector<std::unique_ptr<CompilationProvider>> providers;
+    providers.push_back(std::make_unique<NvptxcompilerCompilationProvider>());
+    providers.push_back(std::make_unique<NvJitLinkCompilationProvider>());
+    return CompositeCompilationProvider::Create(std::move(providers));
   }
 
   return absl::NotFoundError(
@@ -199,6 +216,17 @@ TEST_P(CompilationProviderTest, CompileStandaloneModuleSucceeds) {
       Assembly module, compilation_provider()->Compile(
                            kDefaultComputeCapability, kStandalonePtx, options));
   EXPECT_FALSE(module.cubin.empty());
+  EXPECT_EQ(module.compilation_log, std::nullopt);
+}
+
+TEST_P(CompilationProviderTest,
+       CompileStandaloneModuleDumpsCompilationLogWhenRequested) {
+  CompilationOptions options;
+  options.dump_compilation_log = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      Assembly module, compilation_provider()->Compile(
+                           kDefaultComputeCapability, kStandalonePtx, options));
+  EXPECT_THAT(module.compilation_log, Optional(Not(IsEmpty())));
 }
 
 TEST_P(CompilationProviderTest, CompileStandaloneRelocatableModuleSucceeds) {
@@ -212,6 +240,22 @@ TEST_P(CompilationProviderTest, CompileStandaloneRelocatableModuleSucceeds) {
       compilation_provider()->CompileToRelocatableModule(
           kDefaultComputeCapability, kStandalonePtx, options));
   EXPECT_FALSE(module.cubin.empty());
+  EXPECT_EQ(module.compilation_log, std::nullopt);
+}
+
+TEST_P(CompilationProviderTest,
+       CompileStandaloneRelocatableModuleDumpsCompilationLogWhenRequested) {
+  if (!compilation_provider()->SupportsCompileToRelocatableModule()) {
+    GTEST_SKIP();
+  }
+
+  CompilationOptions options;
+  options.dump_compilation_log = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      RelocatableModule module,
+      compilation_provider()->CompileToRelocatableModule(
+          kDefaultComputeCapability, kStandalonePtx, options));
+  EXPECT_THAT(module.compilation_log, Optional(Not(IsEmpty())));
 }
 
 TEST_P(CompilationProviderTest,
@@ -479,7 +523,9 @@ TEST_P(CompilationProviderTest,
        QueryLatestPtxIsaVersionReturnsAValidPtxIsaVersion) {
   CompilationProvider* provider = compilation_provider();
   if (dynamic_cast<SubprocessCompilationProvider*>(provider) ||
-      dynamic_cast<NvptxcompilerCompilationProvider*>(provider)) {
+      dynamic_cast<NvptxcompilerCompilationProvider*>(provider) ||
+      dynamic_cast<NvJitLinkCompilationProvider*>(provider) ||
+      dynamic_cast<CompositeCompilationProvider*>(provider)) {
     TF_ASSERT_OK_AND_ASSIGN(int latest_ptx_isa_version,
                             provider->GetLatestPtxIsaVersion());
     EXPECT_GE(latest_ptx_isa_version, 80);

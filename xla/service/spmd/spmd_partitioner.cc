@@ -215,17 +215,22 @@ bool ShouldKeepSharding(const HloInstruction* hlo) {
 absl::Status ClearShardingAttributes(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  auto has_unreduced_axes = [](const HloInstruction* hlo) -> bool {
+    return hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
+  };
+  for (int64_t i = 0; i < module->entry_computation()->num_parameters(); ++i) {
+    // Recover the unreduced sharding for parameters.
+    auto param = module->entry_computation()->parameter_instruction(i);
+    if (has_unreduced_axes(param)) {
+      param->set_sharding(module->spmd_parameters_shardings()[i]);
+    }
+  }
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
-      bool has_unreduced_axes =
-          hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
-      if (has_unreduced_axes) {
+      if (has_unreduced_axes(hlo)) {
         hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
       }
       if (ShouldKeepSharding(hlo)) {
-        if (has_unreduced_axes) {
-          hlo->set_sharding(HloSharding::Unreduced());
-        }
         continue;
       }
       hlo->clear_sharding();
@@ -2540,24 +2545,20 @@ std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
 
 absl::Status SpmdPartitioningVisitor::HandleCall(HloInstruction* hlo) {
   std::vector<HloInstruction*> call_args;
-  HloComputation* computation = hlo->called_computations()[0];
+  call_args.reserve(hlo->operand_count());
   for (int64_t i = 0; i < hlo->operand_count(); ++i) {
-    // Shardings of the computation parameter and its argument must be
-    // the same.
-    computation->parameter_instruction(i)->set_sharding(
-        hlo->operand(i)->sharding());
     call_args.push_back(GetPartitionedHlo(hlo->operand(i)).hlo());
   }
 
-  TF_RETURN_IF_ERROR(partitioner_
-                         ->PartitionComputation(computation, hlo->sharding(),
-                                                next_channel_id_, logger_,
-                                                call_graph_)
-                         .status());
+  TF_RETURN_IF_ERROR(
+      partitioner_
+          ->PartitionComputation(hlo->to_apply(), hlo->sharding(),
+                                 next_channel_id_, logger_, call_graph_)
+          .status());
   SetPartitionedHlo(hlo, [&] {
     auto* call = b_.AddInstruction(HloInstruction::CreateCall(
         MakePartitionedShape(hlo->shape(), hlo->sharding()), call_args,
-        hlo->called_computations()[0]));
+        hlo->to_apply()));
     call->set_raw_backend_config_string(hlo->raw_backend_config_string());
     return call;
   });
@@ -2639,20 +2640,8 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
     return sharding;
   };
 
-  const bool has_manual_sharding =
-      hlo->sharding().IsManual() ||
-      (hlo->sharding().IsTuple() &&
-       absl::c_any_of(
-           hlo->sharding().tuple_elements(),
-           [](const HloSharding& sharding) { return sharding.IsManual(); }));
-  const bool has_manual_subgroup =
-      hlo->sharding().IsManualSubgroup() ||
-      (hlo->sharding().IsTuple() &&
-       absl::c_any_of(hlo->sharding().tuple_elements(),
-                      [](const HloSharding& sharding) {
-                        return sharding.IsManualSubgroup();
-                      }));
-  if (has_manual_sharding && !hlo->IsCustomCall("SPMDFullToShardShape")) {
+  if (hlo->sharding().IsManual() &&
+      !hlo->IsCustomCall("SPMDFullToShardShape")) {
     visiting_hlo_sharding_ = hlo->sharding();
     auto get_sharding_shape = [](const HloInstruction* hlo) {
       if (hlo->opcode() != HloOpcode::kOutfeed) {
@@ -2674,7 +2663,7 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
           hlo->opcode(), get_sharding_shape(operand), operand->sharding()));
       GetPartitionedHlo(operand).hlo()->copy_sharding(operand);
     }
-  } else if (has_manual_subgroup &&
+  } else if (hlo->sharding().IsManualSubgroup() &&
              !hlo->IsCustomCall("SPMDFullToShardShape") &&
              !hlo->IsCustomCall("SPMDShardToFullShape") &&
              hlo->opcode() != HloOpcode::kGetTupleElement) {
@@ -4287,18 +4276,8 @@ absl::Status SpmdPartitioningVisitor::HandleReverse(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
-
-  // Shardings for the body parameter, body root, and cond parameter must be
-  // the same.
-  hlo->while_condition()->parameter_instruction(0)->set_sharding(sharding);
-  hlo->while_body()->parameter_instruction(0)->set_sharding(sharding);
-
-  // The condition root must be replicated so that all partitions follow the
-  // same control flow.
   HloInstruction* cond_root = hlo->while_condition()->root_instruction();
-  const HloSharding cond_root_sharding =
-      hlo_sharding_util::ReplicateAllDataDims(cond_root->sharding());
-  cond_root->set_sharding(cond_root_sharding);
+  const HloSharding cond_root_sharding = cond_root->sharding();
   TF_RETURN_IF_ERROR(
       partitioner_
           ->PartitionComputation(hlo->while_condition(), cond_root_sharding,
@@ -4322,12 +4301,6 @@ absl::Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
 absl::Status SpmdPartitioningVisitor::HandleConditional(HloInstruction* hlo) {
   std::vector<HloInstruction*> branch_args;
   for (int64_t i = 0; i < hlo->branch_count(); ++i) {
-    HloComputation* computation = hlo->branch_computation(i);
-
-    // Shardings of the branch computation parameter and its argument must be
-    // the same.
-    computation->parameter_instruction(0)->set_sharding(
-        hlo->operand(i + 1)->sharding());
     branch_args.push_back(GetPartitionedHlo(hlo->operand(i + 1)).hlo());
   }
 
@@ -4934,7 +4907,7 @@ absl::StatusOr<bool> SpmdPartitioningVisitor::DoPartition(
     const SpmdPartitionerOptions& options) {
   VLOG(2) << "Partitioning computation " << computation->name() << " for "
           << num_replicas_ << " replicas and " << num_partitions_
-          << " partitions";
+          << " partitions" << " with root sharding " << root_sharding;
   TF_RETURN_IF_ERROR(computation->Accept(this));
 
   HloModule* module = computation->parent();
@@ -5535,6 +5508,9 @@ absl::StatusOr<bool> SpmdPartitioner::Run(
   XLA_VLOG_LINES(1, SpmdLogger::ReportBeforePartition(
                         *module, options_.report_instruction_count));
   RecordInputsOutputsSharding(module);
+  // Convert unreduced sharding after recording inputs/output onto module so
+  // that unreduced sharding can be recovered at the end of this pass.
+  TF_RETURN_IF_ERROR(ConvertUnreducedSharding(module, execution_threads));
 
   FlattenCallGraph flatten;
   TF_ASSIGN_OR_RETURN(auto changed, flatten.Run(module));
@@ -5659,11 +5635,40 @@ absl::Status SpmdPartitioner::PreprocessSharding(
         }
       }
 
-      // Represent unreduced as a frontend attribute to avoid propagating
-      // the unreduced HLO sharding.
-      if (hlo->sharding().IsUnreduced()) {
-        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
-        hlo->set_sharding(HloSharding::Replicate());
+      // For control-flow constructs, we must make sure that the inputs and
+      // outputs of the called computation have the same sharding as the
+      // arguments being passed in.
+      switch (hlo->opcode()) {
+        case HloOpcode::kWhile: {
+          hlo->while_condition()->parameter_instruction(0)->set_sharding(
+              hlo->sharding());
+          hlo->while_body()->parameter_instruction(0)->set_sharding(
+              hlo->sharding());
+          // The condition root must be replicated so that all partitions follow
+          // the same control flow.
+          HloInstruction* cond_root =
+              hlo->while_condition()->root_instruction();
+          const HloSharding cond_root_sharding =
+              hlo_sharding_util::ReplicateAllDataDims(cond_root->sharding());
+          cond_root->set_sharding(cond_root_sharding);
+          break;
+        }
+        case HloOpcode::kConditional: {
+          for (int64_t i = 0; i < hlo->branch_count(); ++i) {
+            hlo->branch_computation(i)->parameter_instruction(0)->set_sharding(
+                hlo->operand(i + 1)->sharding());
+          }
+          break;
+        }
+        case HloOpcode::kCall: {
+          for (int64_t i = 0; i < hlo->operand_count(); ++i) {
+            hlo->to_apply()->parameter_instruction(i)->set_sharding(
+                hlo->operand(i)->sharding());
+          }
+          break;
+        }
+        default:
+          break;
       }
     }
   }
@@ -5697,6 +5702,61 @@ absl::Status SpmdPartitioner::PreprocessSharding(
     }
   }
 
+  return absl::OkStatus();
+}
+
+absl::Status SpmdPartitioner::ConvertUnreducedSharding(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  for (HloComputation* computation : module->computations(execution_threads)) {
+    for (HloInstruction* hlo : computation->instructions()) {
+      const HloSharding& sharding = hlo->sharding();
+      auto convert_unreduced_sharding =
+          [](HloInstruction* hlo, const HloSharding& sharding) -> HloSharding {
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        return HloSharding::Replicate();
+      };
+      auto convert_unreduced_subgroup_sharding =
+          [](HloInstruction* hlo,
+             const HloSharding& sharding) -> absl::StatusOr<HloSharding> {
+        // TODO(b/438306205, b/438308782): Remove this check once the unreduced
+        // subgroup sharding is compatible with manual and replicated.
+        TF_RET_CHECK(!sharding.HasPartialReplication() &&
+                     !sharding.IsManualSubgroup())
+            << "Incompatible unreduced sharding at " << hlo->ToString();
+        hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+        return HloSharding::PartialTile(sharding.tile_assignment(),
+                                        sharding.metadata());
+      };
+      if (sharding.IsTuple()) {
+        std::vector<HloSharding> subshardings = sharding.tuple_elements();
+        bool should_convert = false;
+        for (HloSharding& subsharding : subshardings) {
+          if (subsharding.IsUnreduced()) {
+            subsharding = convert_unreduced_sharding(hlo, subsharding);
+            should_convert = true;
+          } else if (subsharding.IsUnreducedSubgroup()) {
+            TF_ASSIGN_OR_RETURN(
+                subsharding,
+                convert_unreduced_subgroup_sharding(hlo, subsharding));
+            should_convert = true;
+          }
+        }
+        if (should_convert) {
+          hlo->set_sharding(HloSharding::Tuple(hlo->shape(), subshardings));
+        }
+      } else {
+        if (sharding.IsUnreduced()) {
+          hlo->set_sharding(convert_unreduced_sharding(hlo, sharding));
+        } else if (sharding.IsUnreducedSubgroup()) {
+          TF_ASSIGN_OR_RETURN(
+              HloSharding new_sharding,
+              convert_unreduced_subgroup_sharding(hlo, sharding));
+          hlo->set_sharding(new_sharding);
+        }
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -5919,6 +5979,46 @@ absl::Status SpmdPartitioner::PreprocessHlos(
     }
   }
   return absl::OkStatus();
+}
+
+void SpmdPartitioningVisitor::SetPartitionedHlo(
+    const HloInstruction* hlo, PartitionedHlo&& partitioned_hlo) {
+  CHECK_EQ(partitioned_instructions_.count(hlo), 0);
+  if (hlo->original_value() && !partitioned_hlo.sharding().IsReplicated()) {
+    SpmdBuilder builder("recovery_computation", nullptr);
+    auto* param = builder.AddInstruction(xla::HloInstruction::CreateParameter(
+        0, partitioned_hlo.hlo()->shape(), "param"));
+    param->set_sharding(partitioned_hlo.sharding());
+    xla::HloModuleConfig config;
+    auto recovery_module =
+        std::make_unique<HloModule>("recovery_module", config);
+    PartitionedHlo::ReshardCache reshard_cache;
+    int64_t next_channel_id = hlo_query::NextChannelId(*recovery_module);
+
+    xla::spmd::PartitionedHlo::PartitioningState partitioning_state =
+        partitioned_hlo.state();
+    partitioning_state.b = &builder;
+    partitioning_state.module = recovery_module.get();
+    partitioning_state.partition_id =
+        partitioning_state.collective_ops_creator.create_partition_id(&builder);
+    partitioning_state.next_channel_id = &next_channel_id;
+    partitioning_state.reshard_cache = &reshard_cache;
+
+    PartitionedHlo param_partitioned_hlo(param, partitioned_hlo.base_shape(),
+                                         partitioning_state);
+    // Creates computation to recover the partitioned value.
+    param_partitioned_hlo.Replicate();
+    recovery_module->AddEntryComputation(builder.Build());
+
+    // Adds recovery computation to the original value recovery table.
+    auto* module = const_cast<HloModule*>(hlo->parent()->parent());
+    module->mutable_original_value_recovery_table().AddRecoveryModule(
+        /*replaced_inst=*/hlo, /*replacing_inst=*/partitioned_hlo.hlo(),
+        std::move(recovery_module));
+  }
+
+  partitioned_instructions_.emplace(hlo, partitioned_hlo);
+  changed_ = true;
 }
 
 }  // namespace spmd

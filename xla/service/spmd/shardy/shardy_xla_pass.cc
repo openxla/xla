@@ -357,6 +357,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
                                                dumpIndex++));
 
   if (importMhloShardings) {
+    // This branch is only used for testing. It allows us to test the module
+    // with hlo shardings without the frontend attributes.
+    LOG(WARNING) << "ShardyXLA is run against a module with HLO shardings. It "
+                    "should be used only for testing.";
     auto spanToArrayRef = [](absl::Span<const bool> span) {
       return mlir::ArrayRef<bool>(span.data(), span.size());
     };
@@ -369,10 +373,12 @@ absl::Status runShardingPropagation(HloModule* hloModule,
         /*allowPropagationToResults=*/
         spanToArrayRef(
             hloModule->config().allow_spmd_sharding_propagation_to_output()),
+        /*importFuncCalls=*/true,
         /*importOnlyUninlineableFuncCalls=*/false);
   } else {
-    // This is the default path.
+    // This branch is in production.
     addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
+                                  /*importFuncCalls=*/true,
                                   /*importOnlyUninlineableFuncCalls=*/false,
                                   /*liftAndDedupMeshes=*/true);
   }

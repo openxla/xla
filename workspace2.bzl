@@ -129,17 +129,17 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "3560d433b09cc2ca7242078d6b94f1ce47a1eb9b42e0b42a7ebdd9183926c6da",
-        strip_prefix = "XNNPACK-dc684a5034949433f77cdb7043673cacfb422b0a",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/dc684a5034949433f77cdb7043673cacfb422b0a.zip"),
+        sha256 = "d6871c9e499924d0efe6c759b976615f8704804d4fda782626db130abe0bc599",
+        strip_prefix = "XNNPACK-dd9be413f1a49957f0c7617caf315b64566c3ed2",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/dd9be413f1a49957f0c7617caf315b64566c3ed2.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
     tf_http_archive(
         name = "KleidiAI",
-        sha256 = "b1ba8f690704a37f2ff924f98edfb3d3486a5d07142d0723dd22ff0c0391e2df",
-        strip_prefix = "kleidiai-f362d32fa5f8c8f36da487e13f5b59c911ce6b22",
-        urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/f362d32fa5f8c8f36da487e13f5b59c911ce6b22.zip"),
+        sha256 = "919683ceeedd6dd9db26c341eef448f9096616dfc4e9270e0209e481921e78e4",
+        strip_prefix = "kleidiai-45bf06030727ce049793ce6749e943cc2ea896fe",
+        urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/45bf06030727ce049793ce6749e943cc2ea896fe.zip"),
     )
 
     tf_http_archive(
@@ -427,9 +427,9 @@ def _tf_repositories():
         name = "cudnn_frontend_archive",
         build_file = "//third_party:cudnn_frontend.BUILD",
         patch_file = ["//third_party:cudnn_frontend_header_fix.patch"],
-        sha256 = "34dfe01057e43e799af207522aa0c863ad3177f8c1568b6e7a7e4ccf1cbff769",
-        strip_prefix = "cudnn-frontend-1.11.0",
-        urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.11.0.zip"),
+        sha256 = "257b3b7f8a99abc096094abc9e5011659117b647d55293bcd2c5659f9181b99e",
+        strip_prefix = "cudnn-frontend-1.13.0",
+        urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.13.0.zip"),
     )
 
     tf_http_archive(

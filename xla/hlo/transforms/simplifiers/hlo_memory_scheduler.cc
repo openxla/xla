@@ -361,7 +361,8 @@ class ListScheduler {
         }
       }
     }
-    CHECK_EQ(schedule.size(), computation_->instruction_count());
+    CHECK_EQ(schedule.size(), computation_->instruction_count())
+        << "There could be a cycle in the HLO graph";
     CHECK_EQ(scheduled_instructions_.size(), computation_->instruction_count());
 
     return schedule;

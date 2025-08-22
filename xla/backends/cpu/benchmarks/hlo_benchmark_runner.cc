@@ -169,12 +169,7 @@ absl::Status RunHloBenchmark(benchmark::State& state,
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
   }
-  // TODO(intel-tf): Remove this if-block once oneDNN custom calls are enabled
-  // with thunk runtime
-  if (!benchmark_options.use_thunk_runtime) {
-    compile_options.executable_build_options.mutable_debug_options()
-        ->set_xla_cpu_use_thunk_runtime(false);
-  }
+
   std::unique_ptr<PjRtLoadedExecutable> executable;
   if (benchmark_options.aot_options) {
     auto* cpu_client = tsl::down_cast<PjRtCpuClient*>(client.get());
@@ -351,7 +346,7 @@ namespace {
 
 absl::StatusOr<std::pair<std::unique_ptr<HloModule>,
                          std::unique_ptr<RunHloModuleIterationLiterals>>>
-LoadFromHloSnapshotOrHloModuleProto(const std::string& hlo_data,
+LoadFromHloSnapshotOrHloModuleProto(absl::string_view hlo_data,
                                     absl::string_view extension) {
   auto iteration_literals_proto =
       std::make_unique<RunHloModuleIterationLiterals>();
@@ -411,6 +406,17 @@ LoadHloModuleAndMaybeIterationLiterals(absl::string_view hlo_path) {
 
   return LoadFromHloSnapshotOrHloModuleProto(hlo_data,
                                              tsl::io::Extension(hlo_path));
+}
+
+absl::StatusOr<std::pair<std::unique_ptr<HloModule>,
+                         std::unique_ptr<RunHloModuleIterationLiterals>>>
+LoadHloModuleAndMaybeIterationLiteralsFromString(absl::string_view hlo_data) {
+  HloUnoptimizedSnapshot unoptimized_snapshot;
+  if (unoptimized_snapshot.ParseFromString(hlo_data)) {
+    return LoadFromHloUnoptimizedSnapshot(unoptimized_snapshot);
+  }
+
+  return LoadFromHloSnapshotOrHloModuleProto(hlo_data, "hlo");
 }
 
 }  // namespace xla::cpu

@@ -110,6 +110,7 @@ std::vector<Type> ParseTypesFromFunctionName(absl::string_view function_name) {
 
 }  // namespace
 
+using intrinsics::IntrinsicOptions;
 using intrinsics::Type;
 
 template <typename Intrinsic>
@@ -127,16 +128,16 @@ class IntrinsicAdapter : public IntrinsicFunction {
   }
 
   llvm::Function* CreateDefinition(llvm::Module& module,
-                                   absl::string_view features,
+                                   IntrinsicOptions options,
                                    absl::string_view name) const override {
     std::vector<Type> types = ParseTypesFromFunctionName(name);
     return apply_vector<Intrinsic::kNumArgs>(
                [&](auto... args) {
                  if constexpr (std::is_invocable_v<
                                    decltype(Intrinsic::CreateDefinition),
-                                   llvm::Module*, absl::string_view,
+                                   llvm::Module*, IntrinsicOptions,
                                    decltype(args)...>) {
-                   return Intrinsic::CreateDefinition(&module, features,
+                   return Intrinsic::CreateDefinition(&module, options,
                                                       args...);
                  } else {
                    return Intrinsic::CreateDefinition(&module, args...);
@@ -172,8 +173,8 @@ class IntrinsicAdapter : public IntrinsicFunction {
   }
 };
 
-IntrinsicFunctionLib::IntrinsicFunctionLib(absl::string_view features)
-    : features_(features) {
+IntrinsicFunctionLib::IntrinsicFunctionLib(IntrinsicOptions options)
+    : options_(options) {
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Ldexp>>());
   intrinsic_functions_.push_back(
@@ -216,9 +217,11 @@ GetCalledApproximatableFunctions(
   absl::flat_hash_map<absl::string_view, absl::flat_hash_set<absl::string_view>>
       called_targets;
   VisitFunctionCalls(module, [&](const llvm::CallInst& call) {
-    if (auto it = targets.find(call.getCalledFunction()->getName());
-        it != targets.end()) {
-      called_targets[it->second].insert(it->first);
+    if (call.getCalledFunction() != nullptr) {
+      if (auto it = targets.find(call.getCalledFunction()->getName());
+          it != targets.end()) {
+        called_targets[it->second].insert(it->first);
+      }
     }
   });
   return called_targets;
@@ -232,9 +235,9 @@ std::vector<llvm::VecDesc> IntrinsicFunctionLib::Vectorizations() {
     // For each floating point type supported, we add all vector widths to every
     // other vector width as a possible vectorization.
     for (const auto& target_types :
-         math_func->SupportedVectorTypes(features_)) {
+         math_func->SupportedVectorTypes(options_.features)) {
       for (const auto& vector_types :
-           math_func->SupportedVectorTypes(features_)) {
+           math_func->SupportedVectorTypes(options_.features)) {
         if (target_types.front().element_type() !=
             vector_types.front().element_type()) {
           continue;
@@ -265,7 +268,7 @@ std::vector<llvm::VecDesc> IntrinsicFunctionLib::Vectorizations() {
 
 void CreateDefinitionAndReplaceDeclaration(llvm::Module& module,
                                            absl::string_view name,
-                                           absl::string_view features,
+                                           IntrinsicOptions options,
                                            IntrinsicFunction& math_func) {
   // The Vectorization pass may have already inserted a declaration
   // of this function that we need to rename and later remove to avoid
@@ -275,7 +278,7 @@ void CreateDefinitionAndReplaceDeclaration(llvm::Module& module,
     existing_func->setName(std::string(name) + ".old_decl");
   }
   llvm::Function* definition =
-      math_func.CreateDefinition(module, features, name);
+      math_func.CreateDefinition(module, options, name);
   definition->setLinkage(llvm::Function::InternalLinkage);
   definition->addFnAttr(llvm::Attribute::AlwaysInline);
   llvm::verifyFunction(*definition);
@@ -288,7 +291,7 @@ void CreateDefinitionAndReplaceDeclaration(llvm::Module& module,
 }
 
 absl::flat_hash_set<absl::string_view>
-IntrinsicFunctionLib::RewriteIntrinsicFunctions(llvm::Module& module) {
+IntrinsicFunctionLib::DefineIntrinsicFunctions(llvm::Module& module) {
   // Find each called target function, generate the definition and insert it
   // into the module.
   // Keep track of the function names we replaced so we can remove them from
@@ -299,7 +302,7 @@ IntrinsicFunctionLib::RewriteIntrinsicFunctions(llvm::Module& module) {
     for (const auto& math_func : intrinsic_functions_) {
       if (math_func->FunctionName() == function_name) {
         for (const auto& signature : signatures) {
-          CreateDefinitionAndReplaceDeclaration(module, signature, features_,
+          CreateDefinitionAndReplaceDeclaration(module, signature, options_,
                                                 *math_func);
           replaced_functions.insert(signature);
         }
@@ -312,4 +315,8 @@ IntrinsicFunctionLib::RewriteIntrinsicFunctions(llvm::Module& module) {
   return replaced_functions;
 }
 
+bool IntrinsicFunctionLib::IsIntrinsicFunction(
+    absl::string_view function_name) const {
+  return targets_.contains(function_name);
+}
 }  // namespace xla::codegen

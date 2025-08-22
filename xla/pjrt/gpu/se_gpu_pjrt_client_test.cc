@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
@@ -108,6 +109,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::FloatEq;
@@ -115,8 +117,6 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::SizeIs;
-using ::tsl::testing::IsOkAndHolds;
-using ::tsl::testing::StatusIs;
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
     absl::string_view program, xla::PjRtClient& client,
@@ -1278,11 +1278,11 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
                           GetStreamExecutorGpuClient(DefaultOptions()));
   for (int device_index = 0; device_index < client->device_count();
        device_index++) {
-    auto coords =
-        static_cast<PjRtStreamExecutorDevice*>(client->devices()[device_index])
-            ->description()
-            .coords();
-    EXPECT_EQ(coords[0], device_index);
+    auto device =
+        static_cast<PjRtStreamExecutorDevice*>(client->devices()[device_index]);
+    auto coords = device->description().coords();
+    // All devices are in the same partition & process.
+    EXPECT_THAT(coords, ElementsAre(0, 0, device->local_device_id().value()));
   }
 }
 

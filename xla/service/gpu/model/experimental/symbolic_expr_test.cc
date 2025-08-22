@@ -106,7 +106,7 @@ INSTANTIATE_TEST_SUITE_P(PositiveAndNegative, SymbolicExprEvaluateDivModTest,
 TEST_F(SymbolicExprTest, ReplaceVariables) {
   SymbolicExpr expr_to_sub = ctx.Parse("(v0 + v1)");
   std::vector<SymbolicExpr> substitutions{{}, ctx.Parse("(v2 * 10)")};
-  SymbolicExpr result = expr_to_sub.ReplaceVariables(substitutions, &ctx);
+  SymbolicExpr result = expr_to_sub.ReplaceVariables(substitutions);
   EXPECT_EQ(result.ToString(), "(v0 + (v2 * 10))");
 }
 
@@ -124,18 +124,21 @@ TEST_F(SymbolicExprTest, UniquingWorks) {
   EXPECT_NE(add1, add3);
 }
 
-TEST_F(SymbolicExprTest, DISABLED_Canonicalization) {
+TEST_F(SymbolicExprTest, Canonicalization_Basic) {
   SymbolicExpr constants = (c2 * 3) + 5;
   EXPECT_EQ(constants.Canonicalize().ToString(), "11");
+
+  SymbolicExpr add_commutativity = c2 + v0;
+  EXPECT_EQ(add_commutativity.Canonicalize().ToString(), "(v0 + 2)");
 
   SymbolicExpr neutral_element = (v0 + 0) * 1 + (v1 * 0);
   EXPECT_EQ(neutral_element.Canonicalize().ToString(), "v0");
 
-  SymbolicExpr add_associativity = (v0 + 2) + 3;
-  EXPECT_EQ(add_associativity.Canonicalize().ToString(), "(v0 + 5)");
+  SymbolicExpr add_combining_constants = (c2 + v0) + 3;
+  EXPECT_EQ(add_combining_constants.Canonicalize().ToString(), "(v0 + 5)");
 
-  SymbolicExpr add_commutativity = c2 + v0;
-  EXPECT_EQ(add_commutativity.Canonicalize().ToString(), "(v0 + 2)");
+  SymbolicExpr mul_combining_constants = (c2 * v0) * 3;
+  EXPECT_EQ(mul_combining_constants.Canonicalize().ToString(), "(v0 * 6)");
 
   SymbolicExpr combination = (v0 * 3) + (v0 * 2);
   EXPECT_EQ(combination.Canonicalize().ToString(), "(v0 * 5)");
@@ -164,15 +167,40 @@ TEST_F(SymbolicExprTest, DISABLED_Canonicalization) {
   EXPECT_EQ(complex_expression.Canonicalize().ToString(),
             "(((v0 * 3) + (v1 * -1)) + 5)");
 
+  SymbolicExpr nested_dist = (c2 * (v0 + 1) + 3) * 4;
+  EXPECT_EQ(nested_dist.Canonicalize().ToString(), "((v0 * 8) + 20)");
+}
+
+TEST_F(SymbolicExprTest, Canonicalization_MinMax) {
   // Min - Max
   EXPECT_EQ((c2.min(5) + c2.max(7)).Canonicalize().ToString(), "9");
   EXPECT_EQ((v0.max(v0)).Canonicalize().ToString(), "v0");
   EXPECT_EQ((v0.min(v0)).Canonicalize().ToString(), "v0");
   EXPECT_EQ((v0.max(v0 + 1)).Canonicalize().ToString(), "(v0 + 1)");
-  EXPECT_EQ((v0.min(v0 - 1)).Canonicalize().ToString(), "(v0 - 1)");
+  EXPECT_EQ((v0.min(v0 - 1)).Canonicalize().ToString(), "(v0 + -1)");
+  EXPECT_EQ((v0.min(v1) + v0.min(v1)).Canonicalize().ToString(),
+            "(min(v0, v1) * 2)");
+}
 
-  SymbolicExpr non_affine_terms = (v0.min(v1) + v0.min(v1));
-  EXPECT_EQ(non_affine_terms.Canonicalize().ToString(), "(min(v0, v1) * 2)");
+TEST_F(SymbolicExprTest, DISABLED_Canonicalization_DivMod) {
+  // FloorDiv, CeilDiv, and Mod simplifications.
+  EXPECT_EQ((v0.floorDiv(1)).Canonicalize().ToString(), "v0");
+  EXPECT_EQ((v0.ceilDiv(1)).Canonicalize().ToString(), "v0");
+  EXPECT_EQ((v0 % 1).Canonicalize().ToString(), "0");
+
+  EXPECT_EQ(((v0 * 8).floorDiv(4)).Canonicalize().ToString(), "(v0 * 2)");
+  EXPECT_EQ(((v0 * 8).ceilDiv(4)).Canonicalize().ToString(), "(v0 * 2)");
+  EXPECT_EQ(((v0 * 8 + 3).floorDiv(4)).Canonicalize().ToString(), "(v0 * 2)");
+  EXPECT_EQ(((v0 * 8 + 3).ceilDiv(4)).Canonicalize().ToString(),
+            "((v0 * 2) + 1)");
+
+  EXPECT_EQ(((v0 * 8 + 4).floorDiv(4)).Canonicalize().ToString(),
+            "((v0 * 2) + 1)");
+  EXPECT_EQ(((v0 * 8 + 4).ceilDiv(4)).Canonicalize().ToString(),
+            "((v0 * 2) + 1)");
+
+  EXPECT_EQ(((v0 * 8) % 4).Canonicalize().ToString(), "0");
+  EXPECT_EQ(((v0 * 8 + 3) % 4).Canonicalize().ToString(), "3");
 }
 
 }  // namespace

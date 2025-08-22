@@ -58,6 +58,7 @@ class SymbolicExpr {
   bool operator!() const { return impl_ == nullptr; }
   bool operator==(SymbolicExpr other) const { return impl_ == other.impl_; }
   bool operator!=(SymbolicExpr other) const { return !(*this == other); }
+  bool operator<(const SymbolicExpr& other) const;
 
   SymbolicExprContext* GetContext() const;
   SymbolicExprType GetType() const;
@@ -66,8 +67,8 @@ class SymbolicExpr {
   int64_t GetValue() const;
   std::string ToString() const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
-  SymbolicExpr ReplaceVariables(absl::Span<const SymbolicExpr> substitutions,
-                                SymbolicExprContext* ctx) const;
+  SymbolicExpr ReplaceVariables(
+      absl::Span<const SymbolicExpr> substitutions) const;
   SymbolicExpr Canonicalize() const;
 
   SymbolicExpr operator+(int64_t v) const;

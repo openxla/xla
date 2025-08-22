@@ -203,8 +203,14 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
                                              dnn_version, toolkit_version);
     pipeline.AddPass<ConvPaddingLegalization>();
     pipeline.AddPass<CudnnPadForConvolutions>(cuda_compute_capability);
-    pipeline.AddPass<CudnnVectorizeConvolutions>(cuda_compute_capability,
-                                                 dnn_version);
+    if (!cuda_compute_capability.IsAtLeast(
+            se::CudaComputeCapability::CudaComputeCapabilities::kHopper)) {
+      // CUDNN vectorization is not performant on Hopper and later.
+      // The official guidance is not to use the vectorized layouts anymore on
+      // these newer architectures.
+      pipeline.AddPass<CudnnVectorizeConvolutions>(cuda_compute_capability,
+                                                   dnn_version);
+    }
   }
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
@@ -360,7 +366,8 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
         std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this));
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(std::move(backends), stream_exec, thread_pool));
+        AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
+                              thread_pool));
     pipeline->AddPass(std::move(autotuner_pass));
   } else {
     // On Ampere or later, GemmAlgorithmPicker just provides a way to "warmup"
@@ -382,20 +389,8 @@ absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     const MultiProcessKeyValueStore& key_value_store,
     const se::SemanticVersion& toolkit_version,
     se::StreamExecutor* stream_executor) {
-  if (hlo_module->config()
-          .debug_options()
-          .xla_gpu_experimental_use_autotuner_pass()) {
-    const DebugOptions& debug_options = hlo_module->config().debug_options();
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(
-            GetAllGpuCodegenBackends(stream_executor, &debug_options, this),
-            stream_executor, thread_pool));
-    pipeline->AddPass(std::move(autotuner_pass));
-  } else {
-    pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
-                                           thread_pool, key_value_store);
-  }
+  pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
+                                         thread_pool, key_value_store);
   return absl::OkStatus();
 }
 

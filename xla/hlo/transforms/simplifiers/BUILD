@@ -1464,6 +1464,7 @@ cc_library(
     srcs = ["reduce_window_rewriter.cc"],
     hdrs = ["reduce_window_rewriter.h"],
     deps = [
+        ":reduce_window_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla:window_util",
@@ -1481,6 +1482,39 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "reduce_window_resizer",
+    srcs = ["reduce_window_resizer.cc"],
+    hdrs = ["reduce_window_resizer.h"],
+    deps = [
+        ":reduce_window_util",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "reduce_window_util",
+    srcs = ["reduce_window_util.cc"],
+    hdrs = ["reduce_window_util.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
     ],
 )
 

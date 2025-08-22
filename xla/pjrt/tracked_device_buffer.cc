@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/se_raw_buffer.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
@@ -60,6 +61,11 @@ void BufferSequencingEvent::SetSequencingEvent(EventPool::Handle event,
     sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
   }
   defined_status_.emplace(absl::OkStatus());
+}
+
+void BufferSequencingEvent::SetDefinedStatus(absl::Status status) {
+  CHECK(!status.ok());
+  defined_status_.emplace(status);
 }
 
 bool BufferSequencingEvent::EventHasBeenRecorded() const {
@@ -240,7 +246,7 @@ ShapedBuffer TrackedDeviceBuffer::AsShapedBuffer(
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
     PjRtDevice* device, tsl::RCReference<RawSEDeviceMemory> device_memory,
-    absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events)
+    absl::Span<const BufferSequencingEventRef> definition_events)
     : device_(device),
       device_memory_(std::move(device_memory)),
       definition_events_(std::make_move_iterator(definition_events.begin()),
@@ -260,9 +266,9 @@ void TrackedDeviceBuffer::ConfirmDonation() {
   ReleaseDeviceMemory();
 }
 
-void TrackedDeviceBuffer::AddUsageEvent(
-    se::Stream* usage_stream, std::shared_ptr<BufferSequencingEvent> event,
-    bool reference_held) {
+void TrackedDeviceBuffer::AddUsageEvent(se::Stream* usage_stream,
+                                        BufferSequencingEventRef event,
+                                        bool reference_held) {
   CHECK(in_use_);
 
   // If the event is 0, it means that the event is not recorded yet and the task
@@ -294,22 +300,43 @@ TrackedDeviceBuffer::LockUseAndTransferUsageEvents() {
   return std::move(usage_events_);
 }
 
+std::vector<tsl::RCReference<tsl::AsyncValue>>
+TrackedDeviceBuffer::GetAsyncValueDefinitionEvents() {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
+  avs.reserve(definition_events_.size());
+  for (const auto& ev : definition_events_) {
+    avs.push_back(ev.CopyRCRef());
+  }
+  return avs;
+}
+
+tsl::RCReference<CommonPjRtRawBuffer> TrackedDeviceBuffer::GetRawBuffer(
+    PjRtMemorySpace* memory_space) {
+  return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
+      tensorflow::down_cast<PjRtStreamExecutorClient*>(memory_space->client()),
+      memory_space,
+      tensorflow::down_cast<PjRtStreamExecutorDevice*>(
+          memory_space->devices()[0])
+          ->local_device_state(),
+      device_memory_);
+}
+
 void GetDeviceBufferEvents(
     const TrackedDeviceBuffer& buffer, bool get_usage_events,
     absl::flat_hash_set<BufferSequencingEvent*>* events) {
   if (get_usage_events) {
     for (const auto& e : buffer.usage_events()) {
-      events->insert(e.event.get());
+      events->insert(&*e.event);
     }
   } else {
     for (const auto& e : buffer.definition_events()) {
-      events->insert(e.get());
+      events->insert(&*e);
     }
   }
 }
 
 void WaitForBufferDefinitionEventsOnStream(
-    absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events,
+    absl::Span<const BufferSequencingEventRef> definition_events,
     se::Stream* stream) {
   if (definition_events.size() <= 1) {
     for (const auto& event : definition_events) {
@@ -318,7 +345,7 @@ void WaitForBufferDefinitionEventsOnStream(
   } else {
     absl::flat_hash_set<BufferSequencingEvent*> events;
     for (const auto& event : definition_events) {
-      if (events.emplace(event.get()).second) {
+      if (events.emplace(&*event).second) {
         event->WaitForEventOnStream(stream);
       }
     }

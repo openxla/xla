@@ -107,6 +107,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_sharding_util",
@@ -426,5 +427,26 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:tile_assignment",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "dot_handler_test",
+    srcs = ["dot_handler_test.cc"],
+    deps = [
+        ":stateful_rng_spmd_partitioner",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_verifier",
+        "//xla/service:sharding_propagation",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
     ],
 )

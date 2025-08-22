@@ -274,7 +274,7 @@ absl::StatusOr<CommandBufferCmdExecutor> CommandBufferCmdExecutor::Create(
   // In automatic synchronization mode construct an execution graph for the
   // sequence of commands and derive the structure of command dependencies
   // from the buffer use conflicts.
-  if (synchronization_mode == SynchronizationMode::kAutomatic) {
+  if (synchronization_mode == SynchronizationMode::kConcurrent) {
     auto operations = CreateCommandOperations(commands);
     TF_ASSIGN_OR_RETURN(execution_graph,
                         ExecutionGraph::Create<CommandOperation>(operations));
@@ -495,6 +495,7 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
 
     // Skip updating command if it doesn't use any of the updated allocations.
     if (skip_command_update(id)) {
+      VLOG(3) << "Skip updating command " << command->ToString();
       ++num_skipped_command_updates;
       continue;
     }
@@ -543,7 +544,10 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
                                        se::CommandBuffer* command_buffer,
                                        CommandId id) const {
   // Source commands have no dependencies.
+  VLOG(2) << "CommandSequence is :\n" << commands_.ToString();
   if (IsSource(id)) {
+    VLOG(2) << "Command ID " << id
+            << " is a source command, empty dependencies";
     return {};
   }
 
@@ -553,6 +557,54 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
     for (const ExecutionGraph::NodeEdge& in_edge :
          execution_graph_->in_edges(id)) {
       dependencies_ids.push_back(in_edge.id);
+    }
+  } else if (synchronization_mode_ == SynchronizationMode::kLHS) {
+    CHECK(id < commands_.size());
+    auto is_async_start = [](const CommandBufferCmd* cmd) -> bool {
+      return cmd->command_type() == CommandBufferCmdType::kAllGatherCmd ||
+             cmd->command_type() == CommandBufferCmdType::kAllReduceCmd ||
+             cmd->command_type() == CommandBufferCmdType::kReduceScatterCmd ||
+             cmd->command_type() == CommandBufferCmdType::kAllToAllCmd;
+    };
+
+    auto find_async_start_cmd_id =
+        [&](const AsyncDoneCmd* async_done_cmd) -> CommandId {
+      CHECK(async_done_cmd->async_events() != nullptr);
+      for (CommandId i = id - 1; i >= 0; --i) {
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())
+                    ->async_events() == async_done_cmd->async_events()) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
+    if (commands_[id]->command_type() == CommandBufferCmdType::kAsyncDone) {
+      // Add dependency on the async start command.
+      auto async_start_cmd_id = find_async_start_cmd_id(
+          static_cast<const AsyncDoneCmd*>(commands_[id].get()));
+      CHECK_NE(async_start_cmd_id, -1);
+      dependencies_ids.push_back(async_start_cmd_id);
+
+      // Add dependency on the last command in async region.
+      for (CommandId i = id - 1; i > async_start_cmd_id; --i) {
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())->IsAsync()) {
+          continue;
+        }
+        dependencies_ids.push_back(i);
+        break;
+      }
+    } else {
+      for (CommandId i = id - 1; i >= 0; --i) {
+        if (is_async_start(commands_[i].get()) &&
+            static_cast<const CollectiveCmd*>(commands_[i].get())->IsAsync()) {
+          continue;
+        }
+        dependencies_ids.push_back(i);
+        break;
+      }
     }
   } else {
     dependencies_ids.push_back(id - 1);
@@ -598,10 +650,10 @@ absl::StatusOr<std::string> CommandBufferCmdExecutor::RenderExecutionGraph() {
     return Unimplemented("No execution graph renderer registered");
   }
 
-  if (synchronization_mode_ != SynchronizationMode::kAutomatic) {
+  if (synchronization_mode_ != SynchronizationMode::kConcurrent) {
     return Unimplemented(
         "Execution graph rendering is only supported for "
-        "automatic synchronization mode");
+        "concurrent synchronization mode");
   }
 
   auto operations = CreateCommandOperations(commands_);
@@ -728,10 +780,13 @@ TracedCommandBufferCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -753,6 +808,30 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
       },
       [&](const se::CommandBuffer::Command* command) {
         // Empty command is not updatable.
+        return absl::OkStatus();
+      });
+}
+
+//===----------------------------------------------------------------------===//
+// AsyncDoneCmd
+//===----------------------------------------------------------------------===//
+
+AsyncDoneCmd::AsyncDoneCmd(
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
+    : CommandBufferCmd(CommandBufferCmdType::kAsyncDone, std::move(resources)),
+      async_events_(std::move(async_events)) {}
+
+absl::StatusOr<const se::CommandBuffer::Command*> AsyncDoneCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  return Handle(
+      std::move(record_action),
+      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+        return command_buffer->CreateEmptyCmd(dependencies, priority());
+      },
+      [&](const se::CommandBuffer::Command* command) {
         return absl::OkStatus();
       });
 }
@@ -1111,6 +1190,57 @@ absl::StatusOr<const se::CommandBuffer::Command*> Memset32Cmd::Record(
 
 CommandBufferCmd::BufferUseVector Memset32Cmd::buffers() const {
   return {{dst_, MemoryAccess::kWrite}};
+}
+
+//===----------------------------------------------------------------------===//
+// ChildCmd
+//===----------------------------------------------------------------------===//
+
+ChildCmd::ChildCmd(CommandBufferCmdExecutor child_commands,
+                   ResourceUseVector resources)
+    : CommandBufferCmd(CommandBufferCmdType::kChildCmd, std::move(resources)),
+      child_commands_(std::move(child_commands)) {}
+
+bool ChildCmd::requires_initialization() {
+  return child_commands_.requires_initialization();
+}
+
+bool ChildCmd::force_update() { return child_commands_.force_update(); }
+
+CommandBufferCmd::BufferUseVector ChildCmd::buffers() const {
+  return {child_commands_.buffers().begin(), child_commands_.buffers().end()};
+}
+
+absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params,
+                                  StateManager& state) {
+  TF_RETURN_IF_ERROR(child_commands_.Initialize(params, state));
+  if (child_command_buffer_ == nullptr) {
+    TF_ASSIGN_OR_RETURN(child_command_buffer_,
+                        params.stream->parent()->CreateCommandBuffer(
+                            se::CommandBuffer::Mode::kNested));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
+  CHECK(child_command_buffer_ != nullptr);
+  TF_RETURN_IF_ERROR(child_commands_.Record(execute_params, record_params,
+                                            child_command_buffer_.get()));
+  return Handle(
+      std::move(record_action),
+      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kMoved, *child_command_buffer_,
+            dependencies);
+      },
+      [&](const se::CommandBuffer::Command* command) {
+        // Moved child command does not need to be updated.
+        return absl::OkStatus();
+      });
 }
 
 //===----------------------------------------------------------------------===//
@@ -1539,10 +1669,13 @@ CustomCallCmd::RecordLegacyCustomCall(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1618,10 +1751,13 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1641,11 +1777,13 @@ CommandBufferCmd::BufferUseVector CustomCallCmd::buffers() const {
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
-CollectiveCmd::CollectiveCmd(CommandBufferCmdType cmd_type,
-                             CollectiveConfig config,
-                             ResourceUseVector resources)
+CollectiveCmd::CollectiveCmd(
+    CommandBufferCmdType cmd_type, CollectiveConfig config,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CommandBufferCmd(cmd_type, std::move(resources)),
-      config_(std::move(config)) {}
+      config_(std::move(config)),
+      async_events_(std::move(async_events)) {}
 
 absl::Status CollectiveCmd::Prepare(
     const Thunk::PrepareParams& params,
@@ -1678,10 +1816,13 @@ CollectiveCmd::RecordTracedCommand(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_cmd, dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
+            dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command, *nested_cmd);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command, *nested_cmd);
       });
 }
 
@@ -1689,12 +1830,13 @@ CollectiveCmd::RecordTracedCommand(
 // AllReduceCmd
 //===----------------------------------------------------------------------===//
 
-AllReduceCmd::AllReduceCmd(CollectiveConfig config,
-                           ReductionKind reduction_kind,
-                           absl::Span<const CollectiveThunk::Buffer> buffers,
-                           ResourceUseVector resources)
+AllReduceCmd::AllReduceCmd(
+    CollectiveConfig config, ReductionKind reduction_kind,
+    absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllReduceCmd, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1734,7 +1876,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
         return RunAllReduce(reduction_kind_, device_buffers, *stream,
-                            comm_handle.comm);
+                            comm_handle.comm, config().use_symmetric_buffer);
       });
 }
 
@@ -1754,9 +1896,10 @@ CommandBufferCmd::BufferUseVector AllReduceCmd::buffers() const {
 ReduceScatterCmd::ReduceScatterCmd(
     CollectiveConfig config, ReductionKind reduction_kind,
     absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kReduceScatterCmd, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1795,9 +1938,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
 
   return RecordTracedCommand(execute_params, record_params, record_action,
                              command_buffer, [&](se::Stream* stream) {
-                               return RunReduceScatter(reduction_kind_,
-                                                       device_buffers, *stream,
-                                                       comm_handle.comm);
+                               return RunReduceScatter(
+                                   reduction_kind_, device_buffers, *stream,
+                                   comm_handle.comm,
+                                   config().use_symmetric_buffer);
                              });
 }
 
@@ -1814,11 +1958,13 @@ CommandBufferCmd::BufferUseVector ReduceScatterCmd::buffers() const {
 // AllToAllCmd
 //===----------------------------------------------------------------------===//
 
-AllToAllCmd::AllToAllCmd(CollectiveConfig config, bool has_split_dimension,
-                         absl::Span<const CollectiveThunk::Buffer> buffers,
-                         ResourceUseVector resources)
+AllToAllCmd::AllToAllCmd(
+    CollectiveConfig config, bool has_split_dimension,
+    absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllToAllCmd, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       has_split_dimension_(has_split_dimension),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1857,7 +2003,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
         return RunAllToAll(has_split_dimension_, device_buffers, *stream,
-                           comm_handle.comm);
+                           comm_handle.comm, config().use_symmetric_buffer);
       });
 }
 
@@ -1874,11 +2020,12 @@ CommandBufferCmd::BufferUseVector AllToAllCmd::buffers() const {
 // AllGatherCmd
 //===----------------------------------------------------------------------===//
 
-AllGatherCmd::AllGatherCmd(CollectiveConfig config,
-                           absl::Span<const CollectiveThunk::Buffer> buffers,
-                           ResourceUseVector resources)
+AllGatherCmd::AllGatherCmd(
+    CollectiveConfig config, absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
+    ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kAllGatherCmd, std::move(config),
-                    std::move(resources)),
+                    std::move(async_events), std::move(resources)),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
@@ -1916,7 +2063,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunAllGather(device_buffers, *stream, comm_handle.comm);
+        return RunAllGather(device_buffers, *stream, comm_handle.comm,
+                            config().use_symmetric_buffer);
       });
 }
 
@@ -1935,9 +2083,11 @@ CommandBufferCmd::BufferUseVector AllGatherCmd::buffers() const {
 
 CollectiveBroadcastCmd::CollectiveBroadcastCmd(
     CollectiveConfig config, absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     ResourceUseVector resources)
     : CollectiveCmd(CommandBufferCmdType::kCollectiveBroadcastCmd,
-                    std::move(config), std::move(resources)),
+                    std::move(config), std::move(async_events),
+                    std::move(resources)),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*>
@@ -2235,12 +2385,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
   return Handle(
       std::move(record_action),
       [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateNestedCommand(*nested_command_buffer,
-                                                   dependencies);
+        return command_buffer->CreateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned,
+            *nested_command_buffer, dependencies);
       },
       [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateNestedCommand(command,
-                                                   *nested_command_buffer);
+        return command_buffer->UpdateChildCommand(
+            se::CommandBuffer::ChildCommandType::kCloned, command,
+            *nested_command_buffer);
       });
 }
 

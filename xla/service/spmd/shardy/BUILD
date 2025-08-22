@@ -72,6 +72,7 @@ cc_library(
     deps = [
         ":constants",
         "//xla/hlo/ir:hlo_sharding",
+        "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/service/spmd/shardy/extensions:mhlo_extensions",
         "@com_google_absl//absl/log:check",
@@ -137,6 +138,7 @@ xla_cc_binary(
         "//xla/service/spmd/shardy/round_trip_common:import_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
+        "//xla/service/spmd/shardy/sdy_round_trip:clone_manual_computation_calls",
         "//xla/service/spmd/shardy/sdy_round_trip:dedup_meshes",
         "//xla/service/spmd/shardy/sdy_round_trip:export_ops",
         "//xla/service/spmd/shardy/sdy_round_trip:export_shardy_attrs",

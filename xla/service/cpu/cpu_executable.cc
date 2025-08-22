@@ -157,8 +157,13 @@ CpuExecutable::CpuExecutable(
                  std::move(hlo_profile_index_map)),
       assignment_(std::move(assignment)) {
   if (assignment_ && has_module()) {
-    XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
-                                               assignment_->ToProto());
+    XlaDebugInfoManager::Get()->RegisterModule(shared_module(), assignment_);
+  }
+
+  // Once we compiled HLO module to CPU executable, we don't need to keep the
+  // pass metadata around.
+  if (has_module()) {
+    shared_module()->metadata()->ClearPassMetadata();
   }
 }
 
@@ -318,6 +323,12 @@ absl::Status CpuExecutable::ExecuteThunks(
   TF_ASSIGN_OR_RETURN(Thunk::CustomCallExecuteParams custom_call_execute_params,
                       Thunk::CustomCallExecuteParams::Create(run_options));
 
+  // Prepare for executing XNNPACK fusions.
+  std::optional<Thunk::XnnParams> xnn_params;
+  if (has_xnn_fusions()) {
+    TF_ASSIGN_OR_RETURN(xnn_params, Thunk::XnnParams::Create(run_options));
+  }
+
   // Use the intra-op thread pool to offload thunk executor tasks.
   auto* intra_op_thread_pool = run_options->intra_op_thread_pool();
   ThreadPoolTaskRunner task_runner(
@@ -330,7 +341,8 @@ absl::Status CpuExecutable::ExecuteThunks(
       intra_op_thread_pool,
       &task_runner,
       &collective_execute_params,
-      &custom_call_execute_params};
+      &custom_call_execute_params,
+      xnn_params ? &*xnn_params : nullptr};
 
   auto executed_event = thunks_->Execute(execute_params);
 
