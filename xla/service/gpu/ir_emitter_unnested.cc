@@ -2490,6 +2490,12 @@ absl::Status IrEmitterUnnested::EmitNvshmemThunk(
         thunk_info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
+    const ExecutionStreamAssignment& stream_assignment =
+      ir_emitter_context_->execution_stream_assignment();
+    TF_ASSIGN_OR_RETURN(
+      ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+      stream_assignment.GetAsyncExecutionStreamIds(async_start));
+    thunk->set_execution_stream_id(streams.destination_stream_id);
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
