@@ -79,6 +79,13 @@ class SourceTargetPairs {
     return res;
   }
 
+  static SourceTargetPairs Join(SourceTargetPairs a, SourceTargetPairs b) {
+    SourceTargetPairs res;
+    res.pairs_.insert(res.pairs_.end(), a.pairs_.begin(), a.pairs_.end());
+    res.pairs_.insert(res.pairs_.end(), b.pairs_.begin(), b.pairs_.end());
+    return res;
+  }
+
   // Returns a cannoical string such as {{0,1},{1,2},{2,3},{3,0}}.
   std::string ToString() const {
     auto formatter = [](std::string* out, const SourceTargetPair& pair) {
