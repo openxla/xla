@@ -795,7 +795,7 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
     ]) + if_google([
-        "@com_google_protobuf//:wrappers_cc_proto",
+        "//google/protobuf:wrappers_cc_proto",
     ]),
 )
 

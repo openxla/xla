@@ -1214,8 +1214,8 @@ cc_library(
             "@com_google_absl//absl/status:statusor",
             "@com_google_absl//absl/strings",
             "@com_google_absl//absl/strings:str_format",
+            "@com_google_protobuf//:protobuf",
             "@tsl//tsl/platform:platform_port",
-            "@tsl//tsl/platform:protobuf",
         ],
 )
 
@@ -1267,7 +1267,7 @@ xla_cc_test(
             "@com_google_absl//absl/status:statusor",
             "@com_google_absl//absl/strings",
             "@com_google_googletest//:gtest",
-            "@tsl//tsl/platform:protobuf",
+            "@com_google_protobuf//:protobuf_lite",
         ],
 )
 

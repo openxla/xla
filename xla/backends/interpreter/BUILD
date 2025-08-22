@@ -73,7 +73,7 @@ cc_library(
     hdrs = ["platform_id.h"],
     deps = ["//xla/stream_executor:platform"] + if_google(
         ["@com_google_protobuf//:any_cc_proto"],
-        ["@com_google_protobuf//:protobuf_headers"],
+        ["//google/protobuf:protobuf_headers"],
     ),
 )
 
