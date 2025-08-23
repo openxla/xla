@@ -120,7 +120,7 @@ bool IsAtLeastCuda12300(const se::StreamExecutor* stream_executor) {
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &device_description.gpu_compute_capability());
   if (cuda_cc != nullptr) {
-    if (device_description.driver_version() >=
+    if (device_description.runtime_version() >=
         stream_executor::SemanticVersion(12, 3, 0)) {
       return true;
     }
@@ -134,7 +134,7 @@ bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &device_description.gpu_compute_capability());
   if (cuda_cc != nullptr) {
-    if (device_description.driver_version() >=
+    if (device_description.runtime_version() >=
         stream_executor::SemanticVersion(12, 9, 0)) {
       return true;
     }
