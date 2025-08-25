@@ -292,6 +292,9 @@ bool IsDynamicSliceOrDynamicUpdateSlice(const HloInstruction* instr) {
 // can be computed on host. while_op is the possible while op surrounding the
 // fusion. indvar_idx is the possible tuple index of the induction variable in
 // the while body.
+// Note that when there is a wrapping while loop, we may not have an index
+// variable for the loop, in case when the loop count is not naively controlled
+// by a single loop index, so we will have the while op but no indvar_idx.
 absl::Status CollectSliceInfo(
     const BufferAssignment& buffer_assignment,
     const HloInstruction& fusion_instr,
@@ -540,7 +543,7 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
   std::optional<HloInstruction*> while_op =
       GetParentWhileOp(fusion, call_graph);
   std::unique_ptr<HloModule> init_module, update_module;
-  std::optional<int64_t> indvar_idx = std::nullopt;
+  std::optional<int64_t> indvar_idx;
   if (while_op != std::nullopt) {
     CHECK(while_op.value() != nullptr)
         << "GetWhileOp is not expected to return nullptr.";
