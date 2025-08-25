@@ -20,7 +20,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <tuple>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -34,6 +33,7 @@
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/transforms/simplifiers/hlo_rematerialization_data_structures.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
@@ -187,8 +187,13 @@ class HloRematerialization : public HloModulePass {
     RematAlgorithm remat_algorithm;
   };
 
-  explicit HloRematerialization(Options options, RematerializationSizes& sizes)
-      : options_(std::move(options)), sizes_(sizes) {}
+  explicit HloRematerialization(
+      Options options, RematerializationSizes& sizes,
+      absl::AnyInvocable<absl::Status(HloInstruction*, HloInstruction*)>
+          on_rematerialized = nullptr)
+      : options_(std::move(options)),
+        sizes_(sizes),
+        on_rematerialized_(std::move(on_rematerialized)) {}
 
   ~HloRematerialization() override = default;
 
@@ -222,6 +227,54 @@ class HloRematerialization : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
+  int64_t GetBlockSizeLimit() const { return options_.block_size_limit; }
+
+  // Holds references to data structures and some constants that are used during
+  // rematerialization. This struct is used to avoid long function signatures.
+  struct RematerializationStateData {
+    HloRematInstructionList* instruction_list;
+    HloComputation* computation;
+    HloSchedule* schedule;
+    const int64_t memory_limit_bytes;
+    const int64_t cost_estimate_memory_limit_bytes;
+    absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map;
+    absl::flat_hash_set<const HloInstruction*>* remat_move_instructions;
+    const absl::flat_hash_set<absl::string_view>* execution_threads;
+  };
+
+  // Holds the result of a single rematerialization step. The module_changed
+  // field indicates whether the module was changed by the rematerialization
+  // step. The net_instructions_added field indicates the net number of
+  // instructions of any kind added to the module by the rematerialization step.
+  // The remat_instructions_count field indicates the number of instructions
+  // that were rematerialized in the rematerialization step.
+  struct RematerializationStepResult {
+    bool module_changed;
+    int64_t net_instructions_added;
+    int64_t remat_instructions_count;
+  };
+
+  enum class RematSubpassResult : char {
+    kUnchanged,
+    kChangedButOverMemoryLimit,
+    kChangedAndUnderMemoryLimit,
+  };
+
+  // Holds the memory usage and instruction at a given program point (usually
+  // the peak memory).
+  struct MemoryUsageAndInstruction {
+    int64_t memory_usage;
+    const HloInstruction* instruction;
+  };
+
+  absl::Status on_rematerialized(HloInstruction* original,
+                                 HloInstruction* remat) {
+    if (on_rematerialized_ != nullptr) {
+      return on_rematerialized_(original, remat);
+    }
+    return absl::OkStatus();
+  }
+
  protected:
   // Updates the schedule to mirror the provided instruction sequence. This is
   // used to update the schedule after each rematerialization due to the memory
@@ -236,6 +289,15 @@ class HloRematerialization : public HloModulePass {
   // runs DCE and updates the schedule.
   static absl::StatusOr<bool> CleanupRematerializedInstructions(
       HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
+  // Updates the peak memory and instruction variables based on the new
+  // instruction list and schedule, this includes updating the schedule to
+  // reflect the new instructions, updating the instruction list to reflect
+  // the new schedule, and computing the new peak memory and instruction.
+  absl::StatusOr<MemoryUsageAndInstruction> PeakPriorityUpdateVariables(
+      HloRematInstructionList& instruction_list, HloComputation* computation,
+      HloSchedule* schedule,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
   // Rematerializes instructions within the given computation. 'schedule'
@@ -264,6 +326,17 @@ class HloRematerialization : public HloModulePass {
       int64_t memory_limit_bytes, int64_t min_remat_size,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
+  // Runs a single sub-pass of the peak priority rematerialization algorithm.
+  // Returns whether the module was changed and whether the rematerialization
+  // should be stopped.
+  absl::StatusOr<RematSubpassResult> PeakPrioritySubPass(
+      const HloInstruction* peak_memory_instruction,
+      HloRematerialization::RematerializationStateData& state,
+      HloComputation* computation, const CallGraphNode& call_graph_node,
+      int64_t min_remat_size, int64_t peak_memory_during_remat,
+      int64_t memory_limit_bytes,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
   // Returns the rematerialization algorithm function corresponding to the given
   // rematerialization algorithm enum.
   virtual absl::StatusOr<RematAlgorithmFunction> GetRematAlgorithmFunction(
@@ -279,8 +352,7 @@ class HloRematerialization : public HloModulePass {
 
   // Computes and returns the peak memory used by the given computation and the
   // instruction live at that point in the program.
-  absl::StatusOr<std::tuple<int64_t, const HloInstruction*>>
-  ComputePeakMemoryAndInstruction(
+  absl::StatusOr<MemoryUsageAndInstruction> ComputePeakMemoryAndInstruction(
       const HloComputation* computation, const HloInstructionSequence& order,
       const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
@@ -328,6 +400,11 @@ class HloRematerialization : public HloModulePass {
   // Tracking available channel id numbers to use to apply to rematerialized
   // channel instructions
   int64_t next_channel_id_;
+
+  // Callback set by the user to be called when an instruction is
+  // rematerialized.
+  absl::AnyInvocable<absl::Status(HloInstruction*, HloInstruction*)>
+      on_rematerialized_;
 };
 
 }  // namespace xla

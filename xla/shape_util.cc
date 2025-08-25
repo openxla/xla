@@ -271,7 +271,7 @@ static std::vector<bool> MakeDynamicDimensions(
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedBufferShape(
     Shape element_shape) {
-  TF_RET_CHECK(element_shape.IsArray())
+  TF_RET_CHECK(element_shape.IsArrayExcludingBuffer())
       << "element_shape must be an array shape to create a buffer shape.";
   Shape shape(BUFFER);
   *shape.buffer_state().buffer_shape = std::move(element_shape);
@@ -420,9 +420,8 @@ ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
     }
     dims[i] = shape.dimensions(dim);
   }
-  TF_ASSIGN_OR_RETURN(Shape new_shape,
-                      MakeValidatedShapeWithDescendingLayout(
-                          shape.array_or_buffer_element_type(), dims));
+  TF_ASSIGN_OR_RETURN(Shape new_shape, MakeValidatedShapeWithDescendingLayout(
+                                           shape.element_type(), dims));
   if (shape.IsBuffer()) {
     TF_ASSIGN_OR_RETURN(new_shape, MakeValidatedBufferShape(new_shape));
   }
@@ -800,7 +799,9 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
     return;
   }
   PrintHumanString(printer, shape);
-  if (!shape.IsArray()) return;
+  if (!shape.IsArrayExcludingBuffer()) {
+    return;
+  }
   if (!shape.has_layout()) return;
   if (IsScalar(shape)) {
     std::string layout_str = LayoutUtil::HumanString(shape.layout());
@@ -944,7 +945,7 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   if (shape.IsBuffer()) {
     return ByteSizeOfElements(shape.buffer_shape());
   }
-  if (shape.IsArray()) {
+  if (shape.IsArrayExcludingBuffer()) {
     return ByteSizeOfElements(shape);
   }
   if (shape.element_type() == TOKEN) {
@@ -1073,14 +1074,15 @@ absl::Status ValidateDimensions(const Shape& shape) {
 // Validates all of the non-layout properties of the shape -- this is a helper
 // used by both the layout-optional and layout-required public method.
 absl::Status ValidateNonLayoutProperties(const Shape& shape) {
+  PrimitiveType element_type = shape.element_type_including_buffer();
   // Make sure the element type is valid.
-  if (shape.element_type() == PRIMITIVE_TYPE_INVALID ||
-      !PrimitiveType_IsValid(shape.element_type())) {
+  if (element_type == PRIMITIVE_TYPE_INVALID ||
+      !PrimitiveType_IsValid(element_type)) {
     return ShapeError(shape, "Invalid element type.");
   }
 
   // Validate tuple shapes.
-  if (shape.element_type() == TUPLE) {
+  if (element_type == TUPLE) {
     if (!shape.if_tuple_state()) {
       return ShapeError(shape, "This type must have a tuple state.");
     }
@@ -1090,7 +1092,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
     return absl::OkStatus();
   }
 
-  if (shape.element_type() == BUFFER) {
+  if (element_type == BUFFER) {
     if (!shape.if_buffer_state()) {
       return ShapeError(shape, "This type must have a buffer state.");
     }
@@ -1098,7 +1100,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
   }
 
   // Validate token shapes.
-  if (shape.element_type() == TOKEN) {
+  if (element_type == TOKEN) {
     if (!shape.if_token_state()) {
       return ShapeError(shape, "This type must have a token state.");
     }
@@ -1106,7 +1108,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
   }
 
   // Validate opaque shapes.
-  if (shape.element_type() == OPAQUE_TYPE) {
+  if (element_type == OPAQUE_TYPE) {
     if (!shape.if_opaque_state()) {
       return ShapeError(shape, "This type must have an opaque state.");
     }
@@ -1114,7 +1116,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
   }
 
   // Validate array shapes.
-  if (primitive_util::IsArrayType(shape.element_type())) {
+  if (primitive_util::IsArrayType(element_type)) {
     if (!shape.if_array_state()) {
       return ShapeError(shape, "This type must have an array state.");
     }
@@ -1661,7 +1663,7 @@ ShapeUtil::DeduceTransposeDimensionsForBitcast(const Shape& input_shape,
       LayoutPerm(input_shape), InversePermutation(LayoutPerm(output_shape)));
 
   std::vector<int64_t> new_dims =
-      ComposePermutations(input_shape.dimensions(), transpose_perm);
+      Permute(input_shape.dimensions(), transpose_perm);
   if (!absl::c_equal(output_shape.dimensions(), new_dims)) {
     return std::nullopt;
   }

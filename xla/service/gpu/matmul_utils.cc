@@ -39,8 +39,8 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/matmul_indexing_utils.h"
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -214,9 +214,6 @@ std::vector<int64_t> NormalizedRelativeOrder(absl::Span<const int64_t> dims) {
 
 absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                                     int64_t operand_idx) {
-  if (Cast<HloDotInstruction>(&dot)->sparse_operands()) {
-    return false;
-  }
   TF_RET_CHECK(dot.opcode() == HloOpcode::kDot);
   TF_RET_CHECK(dot.operand_count() > operand_idx);
 
@@ -889,7 +886,7 @@ bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
   }
 }
 
-PrimitiveType GetGemmAccumulatorType(HloDotInstruction* dot) {
+PrimitiveType GetGemmAccumulatorType(const HloDotInstruction* dot) {
   // Return the accumulator type if it is explicitly specified as dot algorithm.
   auto accumulator_type = algorithm_util::GetDotAccumulatorType(
       dot->precision_config().algorithm());

@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -56,8 +57,6 @@ limitations under the License.
 #include "xla/service/memory_annotations.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
-#include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/test_utils.h"
@@ -287,7 +286,7 @@ TEST_F(AlgebraicSimplifierTest, AddZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, FactorIntegerAddition) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = s32[8] parameter(0)
@@ -309,7 +308,7 @@ TEST_F(AlgebraicSimplifierTest, FactorIntegerAddition) {
 
 // A*C + B*C => (A+B)*C if C is a floating-point power of 2.
 TEST_F(AlgebraicSimplifierTest, FactorFpAddition) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -330,7 +329,7 @@ TEST_F(AlgebraicSimplifierTest, FactorFpAddition) {
 
 // (Abs(A)) * (Abs(A)) => (A*A)
 TEST_F(AlgebraicSimplifierTest, SquareOfAbs) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = f32[] parameter(0)
@@ -346,7 +345,7 @@ TEST_F(AlgebraicSimplifierTest, SquareOfAbs) {
 
 // (A*C1) * (B*C2) => (A*B)*(C1*C2)
 TEST_F(AlgebraicSimplifierTest, MultiplyChain) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -369,7 +368,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyChain) {
 
 // (a*C1)*C2 => a*(C1*C2)
 TEST_F(AlgebraicSimplifierTest, MultiplyChain2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -390,7 +389,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyChain2) {
 // MUL(MUL(X, BROADCAST(constant)), BROADCAST(Y)) ==>
 // MUL(X, BROADCAST(MUL(Y, BROADCAST(constant))))
 TEST_F(AlgebraicSimplifierTest, MultiplyBroadcastReassoc) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[2,2] parameter(0)
@@ -413,7 +412,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyBroadcastReassoc) {
 // Mul(Add(Conv(input, filter), bias), Broadcast(constant)) => Conv(input,
 // Mul(filter, Broadcast(constant))), Mul(bias, Broadcast(constant)))
 TEST_F(AlgebraicSimplifierTest, ReorderConvAddMul) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       input = f32[5,4,4,1] parameter(0)
@@ -441,7 +440,7 @@ TEST_F(AlgebraicSimplifierTest, ReorderConvAddMul) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DoNotReorderConvAddMulWhenDisabled) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       input = f32[5,4,4,1] parameter(0)
@@ -464,7 +463,7 @@ TEST_F(AlgebraicSimplifierTest, DoNotReorderConvAddMulWhenDisabled) {
 
 TEST_F(AlgebraicSimplifierTest,
        DoNotReorderConvAddMulWithUnmatchingOutputFeatureDimension) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       input = f32[5,3,3,1] parameter(0)
@@ -487,7 +486,7 @@ TEST_F(AlgebraicSimplifierTest,
 
 // A*C + B*C => (A+B)*C if C is a broadcast of a floating-point power of 2.
 TEST_F(AlgebraicSimplifierTest, FactorFpAdditionWithBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -510,7 +509,7 @@ TEST_F(AlgebraicSimplifierTest, FactorFpAdditionWithBroadcast) {
 // A*C + B*C => (A+B)*C simplification should not happen if C is not a
 // floating-point power of 2.
 TEST_F(AlgebraicSimplifierTest, FactorFpAdditionNotPowerOf2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -528,7 +527,7 @@ TEST_F(AlgebraicSimplifierTest, FactorFpAdditionNotPowerOf2) {
 // A*C + B*C => (A+B)*C simplification should not happen if A, B, and C are
 // complex numbers.
 TEST_F(AlgebraicSimplifierTest, FactorFpAdditionComplex) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = c64[8] parameter(0)
@@ -545,7 +544,7 @@ TEST_F(AlgebraicSimplifierTest, FactorFpAdditionComplex) {
 
 // A*C + B*C => (A+B)*C simplification is OK if A, B, and C are complex.
 TEST_F(AlgebraicSimplifierTest, FactorFpAdditionBfloat16) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[4] parameter(0)
@@ -566,7 +565,7 @@ TEST_F(AlgebraicSimplifierTest, FactorFpAdditionBfloat16) {
 }
 
 TEST_F(AlgebraicSimplifierTest, UnsignedDivideByPowerOf2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = u32[4] parameter(0)
@@ -583,7 +582,7 @@ TEST_F(AlgebraicSimplifierTest, UnsignedDivideByPowerOf2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SignedDivideByPowerOf2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = s32[4] parameter(0)
@@ -606,7 +605,7 @@ TEST_F(AlgebraicSimplifierTest, SignedDivideByPowerOf2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, UnsignedRemainderByPowerOf2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = u32[4] parameter(0)
@@ -623,7 +622,7 @@ TEST_F(AlgebraicSimplifierTest, UnsignedRemainderByPowerOf2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SignedRemainderByPowerOf2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = s32[4] parameter(0)
@@ -687,7 +686,7 @@ TEST_F(AlgebraicSimplifierTest, FastMulZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeConstants) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -706,7 +705,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeConstants) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeBroadcastedConstants) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -728,7 +727,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeBroadcastedConstants) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsScalar) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -747,7 +746,7 @@ TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsScalar) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsConstantMix) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -765,7 +764,7 @@ TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsConstantMix) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsNonScalar) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -783,7 +782,7 @@ TEST_F(AlgebraicSimplifierTest, ElementwiseSinkMultipleBroadcastsNonScalar) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ElementwiseNoSinkBroadcastsDifferentDims) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -802,7 +801,7 @@ TEST_F(AlgebraicSimplifierTest, ElementwiseNoSinkBroadcastsDifferentDims) {
 
 TEST_F(AlgebraicSimplifierTest,
        MultiplyReassociateMultiplyOfConstantAndBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       c0 = f32[4] constant({2.0, 3.0, 4.0, 5.0})
@@ -1068,7 +1067,7 @@ TEST_F(AlgebraicSimplifierTest, SelectLtCompare) {
 
 // select(compare(a, b, EQ), a, b) => b,   a,b ∈ PRED
 TEST_F(AlgebraicSimplifierTest, SelectEqCompare) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = pred[8]{0} parameter(0)
@@ -1085,7 +1084,7 @@ TEST_F(AlgebraicSimplifierTest, SelectEqCompare) {
 
 // select(compare(a, b, NE), a, b) => a,   a,b ∈ PRED
 TEST_F(AlgebraicSimplifierTest, SelectNeCompare) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = pred[8]{0} parameter(0)
@@ -1102,7 +1101,7 @@ TEST_F(AlgebraicSimplifierTest, SelectNeCompare) {
 
 // select(compare(a, b, NE), b, a) ≠> a - wrong operands order
 TEST_F(AlgebraicSimplifierTest, SelectNeCompare_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = pred[8]{0} parameter(0)
@@ -1118,7 +1117,7 @@ TEST_F(AlgebraicSimplifierTest, SelectNeCompare_NegativeTestCase) {
 // Test that select(pred, xs, dynamic_update_slice(xs, x, i)) is simplified
 // to dynamic_update_slice(xs, select(pred, dynamic_slice(xs, i), x), i)
 TEST_F(AlgebraicSimplifierTest, SelectDUSWithShapedPred) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = pred[8] parameter(0)
@@ -1142,7 +1141,7 @@ TEST_F(AlgebraicSimplifierTest, SelectDUSWithShapedPred) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReverseSelectDUSWithShapedPred) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = pred[8] parameter(0)
@@ -1166,7 +1165,7 @@ TEST_F(AlgebraicSimplifierTest, ReverseSelectDUSWithShapedPred) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SelectDUSNotTriggering) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = pred[8] parameter(0)
@@ -1228,7 +1227,7 @@ TEST_F(AlgebraicSimplifierTest, TwoReducesToOne) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceOfMergeNoncontractingDims) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add_f32 {
       p0 = f32[] parameter(0)
@@ -1258,7 +1257,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceOfMergeNoncontractingDims) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceOfSplitNoncontractingDims) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add_f32 {
       p0 = f32[] parameter(0)
@@ -1288,7 +1287,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceOfSplitNoncontractingDims) {
 
 TEST_F(AlgebraicSimplifierTest,
        ReduceOfReshapeOfContractingAndNoncontractingDims) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add_f32 {
       p0 = f32[] parameter(0)
@@ -1309,7 +1308,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceOfNegate) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add_f32 {
       p0 = f32[] parameter(0)
@@ -1334,7 +1333,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceOfNegate) {
 
 TEST_F(AlgebraicSimplifierTest, ReduceBroadcastOfScalar) {
   // Test Reduce(Broadcast(x), a, Max)
-  const char* kModuleStrForMax = R"(
+  constexpr absl::string_view kModuleStrForMax = R"(
     HloModule m
     max_f32 {
       p0 = f32[] parameter(0)
@@ -1358,7 +1357,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceBroadcastOfScalar) {
       GmockMatch(m::MaximumAnyOrder(m::Parameter(0), m::ConstantScalar(0))));
 
   // Test Reduce(Broadcast(x), a, And)
-  const char* kModuleStrForAnd = R"(
+  constexpr absl::string_view kModuleStrForAnd = R"(
     HloModule m
     and_u4 {
       p0 = u4[] parameter(0)
@@ -1430,7 +1429,7 @@ TEST_F(AlgebraicSimplifierTest, AddReassociateMergeConstants) {
 }
 
 TEST_F(AlgebraicSimplifierTest, AddReassociateMergeBroadcastedConstants) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -1451,7 +1450,7 @@ TEST_F(AlgebraicSimplifierTest, AddReassociateMergeBroadcastedConstants) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReplaceSubtractOfEqualOperandsWithZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -1469,7 +1468,7 @@ TEST_F(AlgebraicSimplifierTest, ReplaceSubtractOfEqualOperandsWithZero) {
 
 TEST_F(AlgebraicSimplifierTest,
        ReplaceSubtractOfEqualOperandsWithBroadcastZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[512,20] parameter(0)
@@ -1486,7 +1485,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, SubAddReassociateMergeConstants) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -1522,7 +1521,7 @@ TEST_F(AlgebraicSimplifierTest, ExpOfZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SubAddReassociateMergeBroadcastedConstants) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -1603,7 +1602,7 @@ TEST_F(AlgebraicSimplifierTest, InlineTrivialMap) {
 }
 
 TEST_F(AlgebraicSimplifierTest, KeepNontrivialMap) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     fusion {
       x = f32[] parameter(0)
@@ -1739,7 +1738,7 @@ TEST_F(AlgebraicSimplifierTest, SubConstCanonicalization) {
 
 // Test that A - Broadcast(Const) is canonicalized to A + Broadcast(-Const).
 TEST_F(AlgebraicSimplifierTest, SubBroadcastConstCanonicalization) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -1758,7 +1757,7 @@ TEST_F(AlgebraicSimplifierTest, SubBroadcastConstCanonicalization) {
 
 // Test that A - A is simplified to 0.
 TEST_F(AlgebraicSimplifierTest, SubSame) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = s32[2] parameter(0)
@@ -1774,7 +1773,7 @@ TEST_F(AlgebraicSimplifierTest, SubSame) {
 // Test that Broadcast(x) where x has degenerate dimensions first removes the
 // degenerate dimensions.
 TEST_F(AlgebraicSimplifierTest, DegenerateDimsInOperandRemovedFromBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       c = f32[1,4] parameter(0)
@@ -1790,7 +1789,7 @@ TEST_F(AlgebraicSimplifierTest, DegenerateDimsInOperandRemovedFromBroadcast) {
 // Test to catch a crash where we were overshooting the reshaped_dimensions
 // vector.
 TEST_F(AlgebraicSimplifierTest, ArrayOvershootTest) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param0 = f32[18,18,2,1,1,128]{1,0,5,2,4,3} parameter(0)
@@ -2025,7 +2024,7 @@ TEST_F(AlgebraicSimplifierTest, DivideByConstant) {
 
 // A / Broadcast(Const) => A * Broadcast(InvertedConst)
 TEST_F(AlgebraicSimplifierTest, DivideByBroadcastedConstant) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = f32[4] parameter(0)
@@ -2599,7 +2598,7 @@ TEST_F(AlgebraicSimplifierTest, PowNegative1) {
 
 // pow(A, 0.5) => sqrt(A), for A >= 0
 TEST_F(AlgebraicSimplifierTest, PowHalf) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -2618,7 +2617,7 @@ TEST_F(AlgebraicSimplifierTest, PowHalf) {
 // pow(A, 0.5) ≠> sqrt(A)
 // if A is arbitrary number - no simplification
 TEST_F(AlgebraicSimplifierTest, PowHalf_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -2762,7 +2761,7 @@ TEST_F(AlgebraicSimplifierTest, ZeroSizedReduceWindow) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ZeroSizedVariadicReduceWindow) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule ZeroSizedVariadicReduceWindow
 
 ZeroSizedVariadicReduceWindow.add {
@@ -2794,7 +2793,7 @@ ENTRY ZeroSizedReduceWindow {
 }
 
 TEST_F(AlgebraicSimplifierTest, NopMax) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY test {
@@ -2879,7 +2878,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, NopMin) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY test {
@@ -2966,7 +2965,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityLhs) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -2983,7 +2982,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityLhsAndRhsF16Type) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -2998,7 +2997,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityRhs) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3015,7 +3014,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityRhsAndLhsF16Type) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3030,7 +3029,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumOfMinimum1) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3048,7 +3047,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumOfMinimum2) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3066,7 +3065,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumOfMinimum3) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3084,7 +3083,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinimumOfMinimum4) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3102,7 +3101,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityLhs) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3119,7 +3118,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityLhsAndRhsF16Type) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3134,7 +3133,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityRhs) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3151,7 +3150,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityRhsAndLhsF16Type) {
-  const char* const kHloString = R"(
+  constexpr absl::string_view kHloString = R"(
 HloModule test
 
 ENTRY main {
@@ -3166,7 +3165,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumOfMaximum1) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3184,7 +3183,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumOfMaximum2) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3202,7 +3201,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumOfMaximum3) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3220,7 +3219,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumOfMaximum4) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 ENTRY main {
@@ -3238,7 +3237,7 @@ ENTRY main {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindow_Add) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 add {
@@ -3264,7 +3263,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindow_Min) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 min {
@@ -3291,7 +3290,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindow_Max) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 max {
@@ -3318,7 +3317,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindowWithPad) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 max {
@@ -3348,7 +3347,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindowWithUnsupported) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule test
 
 max {
@@ -3699,7 +3698,7 @@ TEST_F(AlgebraicSimplifierTest, DoNotRemoveUnaryConcatenateWithCtrlDep) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceReverse) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY test {
@@ -3737,7 +3736,7 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceReverseNonUnitEvenOddStrides) {
-  const char* const hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY test {
@@ -3902,7 +3901,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyReduceOfConcat) {
 // Test that reduce of concat is simplified if the concat operand shapes
 // differ and enable_unconditional_reduce_of_concat_replacement() is true.
 TEST_F(AlgebraicSimplifierTest, SimplifyReduceOfConcatWithDifferentShapes) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add {
       p0 = f32[] parameter(0)
@@ -3932,7 +3931,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyReduceOfConcatWithDifferentShapes) {
 // differ and enable_unconditional_reduce_of_concat_replacement() is false.
 TEST_F(AlgebraicSimplifierTest,
        DoNotSimplifyReduceOfConcatBecauseShapesDiffer) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     add {
       p0 = f32[] parameter(0)
@@ -4490,7 +4489,7 @@ TEST_F(AlgebraicSimplifierTest, TransposesMerged) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfBroadcast) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -4509,7 +4508,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfBroadcastPreserveLayout) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -4531,7 +4530,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfBroadcastPreserveLayout) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfBroadcast) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -4554,7 +4553,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfBroadcastPreserveLayout) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -4580,7 +4579,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfBroadcastPreserveLayout) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeIsReshape) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6797,7 +6796,7 @@ TEST_F(AlgebraicSimplifierTest, MergeBroadcastAndIota2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfDot) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6823,7 +6822,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfDot) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotAssociativeReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6852,7 +6851,7 @@ TEST_F(AlgebraicSimplifierTest, DotAssociativeReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotLeftDotSharedBatchReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6882,7 +6881,7 @@ TEST_F(AlgebraicSimplifierTest, DotLeftDotSharedBatchReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotRightDotSharedBatchReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6912,7 +6911,7 @@ TEST_F(AlgebraicSimplifierTest, DotRightDotSharedBatchReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotRightDotContractBatchReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6940,7 +6939,7 @@ TEST_F(AlgebraicSimplifierTest, DotRightDotContractBatchReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotReverseLeftReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6965,7 +6964,7 @@ TEST_F(AlgebraicSimplifierTest, DotReverseLeftReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotReverseRightReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -6991,7 +6990,7 @@ TEST_F(AlgebraicSimplifierTest, DotReverseRightReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotPadLeftReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7017,7 +7016,7 @@ TEST_F(AlgebraicSimplifierTest, DotPadLeftReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotPadRightReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7045,7 +7044,7 @@ TEST_F(AlgebraicSimplifierTest, DotPadRightReorder) {
 
 // This pattern appears in translate_inference_bnmt_v15_vf_lite_execution_test
 TEST_F(AlgebraicSimplifierTest, DotBroadcastLeftReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7072,7 +7071,7 @@ TEST_F(AlgebraicSimplifierTest, DotBroadcastLeftReorder) {
 
 // This pattern appears in waymo_bp_omnipath_vf_lite_execution_test
 TEST_F(AlgebraicSimplifierTest, DotBroadcastRightReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7098,7 +7097,7 @@ TEST_F(AlgebraicSimplifierTest, DotBroadcastRightReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceDotReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     add {
@@ -7132,7 +7131,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceDotReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceDotReorder) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7156,7 +7155,7 @@ TEST_F(AlgebraicSimplifierTest, SliceDotReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceDotReorderWithStrides) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7181,7 +7180,7 @@ TEST_F(AlgebraicSimplifierTest, SliceDotReorderWithStrides) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBatchDot) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7216,7 +7215,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBatchDot) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBatchDimsInBatchDotCantSimplify) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7242,7 +7241,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBatchDimsInBatchDotCantSimplify) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfNonCanonicalBatchDotCantSimplify) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7269,7 +7268,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTranspose) {
   set_verifier_layout_sensitive(false);
   set_instruction_can_change_layout_func({});
 
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7295,7 +7294,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTranspose) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTrivialReshape) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7323,7 +7322,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTrivialReshape) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadLow) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7344,7 +7343,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadLow) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadHigh) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7365,7 +7364,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadHigh) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadMidNonScalar) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7386,7 +7385,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadMidNonScalar) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPad) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7408,7 +7407,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPad) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadMidScalarConstant) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7429,7 +7428,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadMidScalarConstant) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadMidScalar) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7450,7 +7449,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadMidScalar) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfPadSomeDimsInPadding) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY entry () -> f32[1]{0} {
@@ -7473,7 +7472,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfPadSomeDimsInPadding) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfConcatScalarInput) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7495,7 +7494,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfConcatScalarInput) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfConcatNonScalarInput) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7519,7 +7518,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfConcatNonScalarInput) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowOneReduceDim) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
     HloModule m
     Add.1 {
       p0 = s32[] parameter(0)
@@ -7549,7 +7548,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowOneReduceDim) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowTwoReduceDims) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
     HloModule m
     Add.1 {
       p0 = s32[] parameter(0)
@@ -7579,7 +7578,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowTwoReduceDims) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ConcatToBroadcast) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7598,7 +7597,7 @@ TEST_F(AlgebraicSimplifierTest, ConcatToBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, NegateNegate) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7618,7 +7617,7 @@ TEST_F(AlgebraicSimplifierTest, NegateNegate) {
 }
 
 TEST_F(AlgebraicSimplifierTest, NotNot) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7638,7 +7637,7 @@ TEST_F(AlgebraicSimplifierTest, NotNot) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BatchDotTransposeOperands) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7669,7 +7668,7 @@ TEST_F(AlgebraicSimplifierTest, BatchDotTransposeOperands) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BatchDotTransposeBatchDims) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -7700,7 +7699,7 @@ TEST_F(AlgebraicSimplifierTest, BatchDotTransposeBatchDims) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BatchDotTransposeBatchDimsAndOperands) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY test {
@@ -8139,7 +8138,7 @@ DotOfConcatTestSpec kDotOfConcatTestSpecs[] = {
 };
 
 TEST_F(DotOfConcatSimplificationTest, ConcatIntoScalarDot) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param0 = f32[4] parameter(0)
@@ -8156,7 +8155,7 @@ TEST_F(DotOfConcatSimplificationTest, ConcatIntoScalarDot) {
 }
 
 TEST_F(DotOfConcatSimplificationTest, UnnestConcatenate) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[2,10] parameter(0)
@@ -8199,7 +8198,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceZeroUpdate) {
 
 // Test that dynamic-update-slice with a scalar broadcast becomes a pad.
 TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceOfBroadcastToPad) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule AddBroadcastZeroWithDynamicSlice
 
 ENTRY AddBroadcastZeroWithDynamicSlice {
@@ -8421,7 +8420,7 @@ ENTRY DynamicUpdateSliceOfBroadcastToPadHostOffloadMultiLevel {
 // Test of dynamic-update-slice with dims where update and result have the same
 // size so we can replace indices to 0.
 TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceTrivialIndices) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule DynamicUpdateSliceTrivialIndices
 
 ENTRY DynamicUpdateSliceTrivialIndices {
@@ -8444,7 +8443,7 @@ ENTRY DynamicUpdateSliceTrivialIndices {
 }
 
 TEST_F(AlgebraicSimplifierTest, AddDynamicUpdateSliceToAddSlice) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule AddDynamicUpdateSliceToAddSlice
 
 ENTRY AddDynamicUpdateSliceToAddSlice {
@@ -8481,7 +8480,7 @@ ENTRY AddDynamicUpdateSliceToAddSlice {
 }
 
 TEST_F(AlgebraicSimplifierTest, AddDynamicUpdateSliceToAddSliceOnLhs) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule AddDynamicUpdateSliceToAddSlice
 
 ENTRY AddDynamicUpdateSliceToAddSlice {
@@ -8511,7 +8510,7 @@ ENTRY AddDynamicUpdateSliceToAddSlice {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScalarMultiplyReduction) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule ConstScalarMultiply
 ENTRY ConstScalarMultiply {
   param0 = f32[16,512,4096]{2,1,0} parameter(0)
@@ -8541,7 +8540,7 @@ ENTRY ConstScalarMultiply {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScalarMultiplyReductionMultiUser) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule ConstScalarMultiply
 ENTRY ConstScalarMultiply {
   param0 = f32[16,512,1024] parameter(0)
@@ -8778,7 +8777,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(DotOfGatherPositiveNegativeTests()));
 
 TEST_F(AlgebraicSimplifierTest, GatherOfScalarToBroadcast) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule repeat
 
   ENTRY main {
@@ -8802,7 +8801,7 @@ TEST_F(AlgebraicSimplifierTest, GatherOfScalarToBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPad) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY %entry {
@@ -8831,7 +8830,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPadWithBatchDims) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY %entry {
@@ -8865,7 +8864,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPadStartIndicesPaddedMoreDims) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule module
 
   ENTRY %entry {
@@ -8893,7 +8892,7 @@ TEST_F(AlgebraicSimplifierTest, GatherOfPadStartIndicesPaddedMoreDims) {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPadStartIndicesPaddedDifferently) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule module
 
   ENTRY %entry {
@@ -8921,7 +8920,7 @@ TEST_F(AlgebraicSimplifierTest, GatherOfPadStartIndicesPaddedDifferently) {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPadWithPaddedBatchDims) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule module
 
   ENTRY %entry {
@@ -8966,7 +8965,7 @@ TEST_F(AlgebraicSimplifierTest, GatherOfPadWithPaddedBatchDims) {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfReshapeOfPad) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 ENTRY %entry {
   reshape.17992 = f32[64,393216,32]{2,1,0} parameter(0)
   constant.31700 = f32[] constant(0)
@@ -8991,7 +8990,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfReshapeOfPad2) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY %entry {
@@ -9018,7 +9017,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfReshapeOfPad3) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY %entry {
@@ -9045,7 +9044,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfReshapeOfPad4) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY %entry {
@@ -9076,7 +9075,7 @@ ENTRY %entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, TupleReduceReshape) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 reducer {
@@ -9110,7 +9109,7 @@ ENTRY entry {
 }
 
 TEST_F(AlgebraicSimplifierTest, TupleReduceBroadcast) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 reducer {
@@ -9197,7 +9196,7 @@ TEST_F(AlgebraicSimplifierTest, DividedByConstantInstructionWithoutLayout) {
 
 // Test that 1/sqrt(X) is simplified to rsqrt(X).
 TEST_F(AlgebraicSimplifierTest, RecipSqrt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -9215,7 +9214,7 @@ TEST_F(AlgebraicSimplifierTest, RecipSqrt) {
 
 // Test that 1/rsqrt(X) is simplified to sqrt(X).
 TEST_F(AlgebraicSimplifierTest, RecipRsqrt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -9232,7 +9231,7 @@ TEST_F(AlgebraicSimplifierTest, RecipRsqrt) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyReshape) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[168,168,48,48]{3,2,1,0} parameter(0)
@@ -9251,7 +9250,7 @@ TEST_F(AlgebraicSimplifierTest, CopyReshape) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_RL) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[6, 2] constant({{1, 2},{3, 4},{5, 6},{1, 1},{1, 1},{1, 1}})
@@ -9280,7 +9279,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_RL) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_RR) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[2, 6] constant({{1, 2, 3, 4, 5, 6},
@@ -9305,7 +9304,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_RR) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_LR) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[2, 6] constant({{1, 2, 3, 4, 5, 6},
@@ -9330,7 +9329,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_LR) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_LR2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[8, 2] constant({{1, 1},{2, 2},{3, 3},{4, 4},{5, 5},{6, 6},{7, 7},{8, 8}})
@@ -9357,7 +9356,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_LR2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_MM) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[2, 6, 2] constant({{{1, 1},{2, 2},{3, 3},{4, 4},{5, 5},{6, 6}},
@@ -9386,7 +9385,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_MM) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegTranspose) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[12, 2] constant({{1, 1},{2, 2},{3, 3},{4, 4},{5, 5},{6, 6},{1, 1},{2, 2},{3, 3},{4, 4},{5, 5},{6, 6}})
@@ -9403,7 +9402,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegTranspose) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegReshape) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[8, 2] constant({{1, 1},{2, 2},{3, 3},{4, 4},{1, 1},{2, 2},{3, 3},{4, 4}})
@@ -9420,7 +9419,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegReshape) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegConstant) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       t0 = f32[2, 3, 4] parameter(0)
@@ -9436,7 +9435,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegConstant) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_NegLayout) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       rhs = f32[6, 2] constant({{1, 2},{3, 4},{5, 6},{1, 1},{1, 1},{1, 1}})
@@ -9463,7 +9462,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_SizeOneDimsNoChange) {
   // This isn't transformed (notice that the relative order of the `2` and `3`
   // dims doesn't change, so there's no opportunity here), but it's nonetheless
   // an interesting testcase because of the presence of the size-1 dimensions.
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
      param = f32[1,2,5,3] parameter(0)
@@ -9479,7 +9478,7 @@ TEST_F(AlgebraicSimplifierTest, DotContractingReorder_SizeOneDimsNoChange) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DotContractingReorder_SizeOneDims) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
      param = f32[1,2,3,5] parameter(0)
@@ -9510,7 +9509,7 @@ TEST_F(AlgebraicSimplifierTest,
        DotContractingReorder_NoChangeInContractingDimsOrder) {
   // No optimization opportunity here because the transpose does not reorder the
   // contracting dims.
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param = f32[2,5,1,3] parameter(0)
@@ -9527,7 +9526,7 @@ TEST_F(AlgebraicSimplifierTest,
 
 TEST_F(AlgebraicSimplifierTest, CompareGtMaxA) {
   // Gt(Max(a,b), a) -> Gt(b,a)
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4] parameter(0)
@@ -9545,7 +9544,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGtMaxA) {
 
 TEST_F(AlgebraicSimplifierTest, CompareGtMaxB) {
   // Gt(Max(a,b), b) -> Gt(a,b)
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4] parameter(0)
@@ -9563,7 +9562,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGtMaxB) {
 
 TEST_F(AlgebraicSimplifierTest, CompareGtAMin) {
   // Gt(a, Min(a,b)) -> Gt(a,b)
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4] parameter(0)
@@ -9581,7 +9580,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGtAMin) {
 
 TEST_F(AlgebraicSimplifierTest, CompareGtBMin) {
   // Gt(b, Min(a,b)) -> Gt(b,a)
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4] parameter(0)
@@ -9598,7 +9597,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGtBMin) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareIota) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = s32[] constant(0)
@@ -9628,7 +9627,7 @@ m {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareLtZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9642,7 +9641,7 @@ TEST_F(AlgebraicSimplifierTest, CompareLtZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareLeZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9657,7 +9656,7 @@ TEST_F(AlgebraicSimplifierTest, CompareLeZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareGeZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9671,7 +9670,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGeZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareGtZero) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9685,7 +9684,7 @@ TEST_F(AlgebraicSimplifierTest, CompareGtZero) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareZeroGt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9699,7 +9698,7 @@ TEST_F(AlgebraicSimplifierTest, CompareZeroGt) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareZeroGe) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9714,7 +9713,7 @@ TEST_F(AlgebraicSimplifierTest, CompareZeroGe) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareZeroLe) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9728,7 +9727,7 @@ TEST_F(AlgebraicSimplifierTest, CompareZeroLe) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareZeroLt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       zero = u32[] constant(0)
@@ -9743,7 +9742,7 @@ TEST_F(AlgebraicSimplifierTest, CompareZeroLt) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareSame) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param = s32[123] parameter(0)
@@ -9756,7 +9755,7 @@ TEST_F(AlgebraicSimplifierTest, CompareSame) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareSimplified) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param = s32[] parameter(0)
@@ -9775,7 +9774,7 @@ TEST_F(AlgebraicSimplifierTest, CompareSimplified) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareSimplifiedReversed) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param = s32[] parameter(0)
@@ -9880,7 +9879,7 @@ TEST_F(AlgebraicSimplifierTest, EqTrue2) {
 TEST_F(AlgebraicSimplifierTest, CompareSelectCompare) {
   // Causal mask suboptimal HLO simplification
   // Ne(select(Ge(a, b), ones, zeros), zeros) -> Ge(a, b)
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = s32[4,4] parameter(0)
@@ -9904,7 +9903,7 @@ TEST_F(AlgebraicSimplifierTest, CompareSelectCompare) {
 TEST_F(AlgebraicSimplifierTest, CanDisableDotToMultiplyRewrite) {
   // Some backends may have better performance by treating an outer product as a
   // Dot, rather than a broadcast Multiply
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       param1 = f32[64] parameter(0)
@@ -9928,7 +9927,7 @@ TEST_F(AlgebraicSimplifierTest, CanDisableDotToMultiplyRewrite) {
 
 TEST_F(AlgebraicSimplifierTest,
        NoDotToMultiplyRewriteWithPrecisionConfigAlgorithm) {
-  constexpr char kModuleStr[] = R"(
+  constexpr absl::string_view kModuleStr = R"(
 HloModule test
 ENTRY dot {
  a = f32[128]{0} parameter(0)
@@ -9942,7 +9941,7 @@ ENTRY dot {
 
 TEST_F(AlgebraicSimplifierTest,
        NoDotToMultiplyRewriteZeroContractingDimWithPrecisionConfigAlgorithm) {
-  constexpr char kModuleStr[] = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule test
     ENTRY dot {
     a = f32[] parameter(0)
@@ -9955,7 +9954,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, RemainderOfIota) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       iota = s32[5,1000] iota(), iota_dimension=0
@@ -9970,7 +9969,7 @@ TEST_F(AlgebraicSimplifierTest, RemainderOfIota) {
 }
 
 TEST_F(AlgebraicSimplifierTest, RemainderOfNPlusIota) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       iota = s32[5,1000] iota(), iota_dimension=0
@@ -9987,7 +9986,7 @@ TEST_F(AlgebraicSimplifierTest, RemainderOfNPlusIota) {
 
 // No simplification because 125 + 5 overflows S8.
 TEST_F(AlgebraicSimplifierTest, RemainderOfNPlusIotaOverflow) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       iota = s8[126] iota(), iota_dimension=0
@@ -10001,7 +10000,7 @@ TEST_F(AlgebraicSimplifierTest, RemainderOfNPlusIotaOverflow) {
 }
 
 TEST_F(AlgebraicSimplifierTest, RepeatedRemainder) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = s32[1000] parameter(0)
@@ -10016,7 +10015,7 @@ TEST_F(AlgebraicSimplifierTest, RepeatedRemainder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SlicePadLayout) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       %param.0 = f32[128,9,9,1024]{0,3,2,1} parameter(0)
@@ -10036,7 +10035,7 @@ TEST_F(AlgebraicSimplifierTest, SlicePadLayout) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MinOfMaxToClamp) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -10057,7 +10056,7 @@ TEST_F(AlgebraicSimplifierTest, MinOfMaxToClamp) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaxOfMinToClamp) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[4] parameter(0)
@@ -10078,7 +10077,7 @@ TEST_F(AlgebraicSimplifierTest, MaxOfMinToClamp) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ClampOfClamp) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -10096,7 +10095,7 @@ TEST_F(AlgebraicSimplifierTest, ClampOfClamp) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaxOfClamp) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -10114,7 +10113,7 @@ TEST_F(AlgebraicSimplifierTest, MaxOfClamp) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfConcat) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[100,50] parameter(0)
@@ -10130,7 +10129,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfConcat) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfMultipleConcatOperands) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[50,50] parameter(0)
@@ -10153,7 +10152,7 @@ TEST_F(AlgebraicSimplifierTest, SliceOfMultipleConcatOperands) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SqrtOfSelfMultiply) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[32]{0} parameter(0)
@@ -10168,7 +10167,7 @@ TEST_F(AlgebraicSimplifierTest, SqrtOfSelfMultiply) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceOfBatchDotToContractingDimension) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     a {
       p0 = f32[] parameter(0)
@@ -10197,7 +10196,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceOfBatchDotToContractingDimension) {
 // false.
 TEST_F(AlgebraicSimplifierTest,
        ReduceOfBatchDotToContractingDimensionDisabled) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     a {
       p0 = f32[] parameter(0)
@@ -10223,7 +10222,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, ReduceAddIsCommutative) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     fn1 {
       p0 = f32[] parameter(0)
@@ -10250,7 +10249,7 @@ TEST_F(AlgebraicSimplifierTest, ReduceAddIsCommutative) {
 
 // rsqrt(pow(x, -2)) => x, for x >= 0
 TEST_F(AlgebraicSimplifierTest, RsqrtOfRPower2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10270,7 +10269,7 @@ TEST_F(AlgebraicSimplifierTest, RsqrtOfRPower2) {
 // rsqrt(pow(x, -2)) => x
 // if x is arbitrary number - no simplification
 TEST_F(AlgebraicSimplifierTest, RsqrtOfRPower2_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10286,7 +10285,7 @@ TEST_F(AlgebraicSimplifierTest, RsqrtOfRPower2_NegativeTestCase) {
 
 // rsqrt(1/x) => sqrt(x), for x >= 0
 TEST_F(AlgebraicSimplifierTest, RsqrtDivide) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10306,7 +10305,7 @@ TEST_F(AlgebraicSimplifierTest, RsqrtDivide) {
 // rsqrt(1/x) => sqrt(x)
 // if x is arbitrary number - no simplification
 TEST_F(AlgebraicSimplifierTest, RsqrtDivide_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10322,7 +10321,7 @@ TEST_F(AlgebraicSimplifierTest, RsqrtDivide_NegativeTestCase) {
 
 // sqrt(x) * sqrt(x) => x, for x >= 0
 TEST_F(AlgebraicSimplifierTest, MultiplySelfSqrt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10339,7 +10338,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplySelfSqrt) {
 
 // sqrt(x) * sqrt(y) is not simplified.
 TEST_F(AlgebraicSimplifierTest, MultiplySqrtDifferentOperands) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10357,7 +10356,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplySqrtDifferentOperands) {
 // sqrt(x) * sqrt(x) ≠> x
 // if x is arbitrary number - no simplification
 TEST_F(AlgebraicSimplifierTest, MultiplySelfSqrt_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10371,7 +10370,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplySelfSqrt_NegativeTestCase) {
 
 // rsqrt(x) * rsqrt(x) -> 1/x, for x >= 0
 TEST_F(AlgebraicSimplifierTest, MultiplySelfRsqrt) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10389,7 +10388,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplySelfRsqrt) {
 
 // rsqrt(x) * rsqrt(y) is not simplified.
 TEST_F(AlgebraicSimplifierTest, MultiplyRsqrtDifferentOperands) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10407,7 +10406,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyRsqrtDifferentOperands) {
 // rsqrt(x) * rsqrt(x) -> 1/x
 // if x is arbitrary number - no simplification
 TEST_F(AlgebraicSimplifierTest, MultiplySelfRsqrt_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[1,32] parameter(0)
@@ -10420,7 +10419,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplySelfRsqrt_NegativeTestCase) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MultiplyNegateNegate) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[] parameter(0)
@@ -10437,7 +10436,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyNegateNegate) {
 }
 
 TEST_F(AlgebraicSimplifierTest, AbsEliminationBatchnormTraining) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[128,32,2,112]{3,2,1,0} parameter(0)
@@ -10465,7 +10464,7 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationBatchnormTraining) {
 
 TEST_F(AlgebraicSimplifierTest,
        AbsEliminationBatchnormTraining_NegativeTestCase) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[128,32,2,112]{3,2,1,0} parameter(0)
@@ -10489,7 +10488,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, AbsEliminationMultiply) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p = f32[32]{0} parameter(0)
@@ -10504,7 +10503,7 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationMultiply) {
 }
 
 TEST_F(AlgebraicSimplifierTest, AbsEliminationPower2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[32]{0} parameter(0)
@@ -10523,7 +10522,7 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationPower2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombined) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10567,7 +10566,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombined) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedSwapped) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10611,7 +10610,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedSwapped) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWeirdDnums) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10654,7 +10653,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWeirdDnums) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWeirdDnums2) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10697,7 +10696,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWeirdDnums2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWithBatchDim) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10749,7 +10748,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWithBatchDim) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWithBatchDim2) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10801,7 +10800,7 @@ TEST_F(AlgebraicSimplifierTest, ScatterAddCombinedWithBatchDim2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScalarScatter) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   apply {
    a = f32[] parameter(0)
@@ -10837,7 +10836,7 @@ TEST_F(AlgebraicSimplifierTest, ScalarScatter) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SwapConvOperands) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
   HloModule m
   test {
     a = f32[3,3,160,160] parameter(0)
@@ -10864,7 +10863,7 @@ TEST_F(AlgebraicSimplifierTest, SwapConvOperands) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ScalarDividePredicate) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = pred[2] parameter(0)
@@ -10884,7 +10883,7 @@ TEST_F(AlgebraicSimplifierTest, ScalarDividePredicate) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MultipleDotStrengthReductions) {
-  constexpr char kModuleStr[] = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule test
     ENTRY test {
       a = c64[2,2] parameter(0)
@@ -10903,7 +10902,7 @@ TEST_F(AlgebraicSimplifierTest, MultipleDotStrengthReductions) {
 
 TEST_F(AlgebraicSimplifierTest,
        NoDotStrengthReductionWithPrecisionConfigAlgorithm) {
-  constexpr char kModuleStr[] = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule test
     ENTRY dot {
       a = f32[128,2]{1,0} parameter(0)
@@ -10916,7 +10915,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, UnaryVariadicReduce) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     fn {
       p0 = f32[] parameter(0)
@@ -10950,7 +10949,7 @@ TEST_F(AlgebraicSimplifierTest, UnaryVariadicReduce) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReplaceReduceSumOfConstantBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
   HloModule ReplaceReduceSumOfConstantBroadcast
 
   add_f32 {
@@ -10978,7 +10977,7 @@ TEST_F(AlgebraicSimplifierTest, ReplaceReduceSumOfConstantBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReplaceReduceMaxWithReduceArgMax) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
 HloModule ReplaceReduceMaxWithReduceArgMax
 
 %reduction_computation__1.25287 (parameter.25288: bf16[], parameter.25289: s32[], parameter.25290: bf16[], parameter.25291: s32[]) -> (bf16[], s32[]) {
@@ -11039,7 +11038,7 @@ ENTRY %main {
 }
 
 TEST_F(AlgebraicSimplifierTest, ReplaceReduceMinWithReduceArgMin) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
 HloModule ReplaceReduceMinWithReduceArgMin
 
 %region_3.84 (Arg_0.85: bf16[], Arg_1.86: s32[], Arg_2.87: bf16[], Arg_3.88: s32[]) -> (bf16[], s32[]) {
@@ -11099,7 +11098,7 @@ ENTRY %main {
 }
 
 TEST_F(AlgebraicSimplifierTest, UnaryVariadicReduceWindow) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     fn {
       p0 = f32[] parameter(0)
@@ -11133,7 +11132,7 @@ TEST_F(AlgebraicSimplifierTest, UnaryVariadicReduceWindow) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorder) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       c1 = pred[] constant(true)
@@ -11150,7 +11149,7 @@ TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorder) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorderWithUse) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       c1 = pred[] constant(true)
@@ -11168,7 +11167,7 @@ TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorderWithUse) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorderWithNonScalar) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       c1 = pred[32] parameter(0)
@@ -11188,7 +11187,7 @@ TEST_F(AlgebraicSimplifierTest, BroadcastAndPadReorderWithNonScalar) {
 // Test that dynamic-update-slice with a scalar broadcast becomes a pad when the
 // start_indices are too big.
 TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceOfBroadcastToPadOob) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11216,7 +11215,7 @@ ENTRY f {
 
 // Test folding of dynamic_slice(iota, index) -> clamp(index, 0, size-1)
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfIota) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11240,7 +11239,7 @@ ENTRY f {
 
 // Test of converting dynamic-slice indices to zeros on dims with the full size.
 TEST_F(AlgebraicSimplifierTest, DynamicSliceTrivialIndices) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11264,7 +11263,7 @@ ENTRY f {
 
 // Test folding of clamp(pid, 0, limit) -> pid
 TEST_F(AlgebraicSimplifierTest, ClampOfPartitionId) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11287,7 +11286,7 @@ ENTRY f {
 }
 
 TEST_F(AlgebraicSimplifierTest, ConstantToIota) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11306,7 +11305,7 @@ ENTRY f {
 }
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfStridedIota) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 ENTRY f {
@@ -11328,7 +11327,7 @@ ENTRY f {
 }
 
 TEST_F(AlgebraicSimplifierTest, AbsEliminationSelMaxBcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[32]{0} parameter(0)
@@ -11362,7 +11361,7 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationIota) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyRedundantBitcastConvert) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11381,7 +11380,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyRedundantBitcastConvert) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyTautologicalBitcastConvert) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11395,8 +11394,46 @@ TEST_F(AlgebraicSimplifierTest, SimplifyTautologicalBitcastConvert) {
               GmockMatch(m::Parameter(0)));
 }
 
+TEST_F(AlgebraicSimplifierTest,
+       SimplifyBitcastConvertWithSameShapeIgnoringElementType) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    ENTRY test {
+      p0 = s32[10] parameter(0)
+      ROOT out = u32[10] bitcast-convert(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+  options.set_is_layout_sensitive(true);
+  ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+  options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  ASSERT_TRUE(AlgebraicSimplifier(options).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast()));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoNotSimplifyBitcastConvertIfDifferentBitwidth) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    ENTRY test {
+      p0 = s32[10] parameter(0)
+      ROOT out = s16[10,2] bitcast-convert(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  EXPECT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, SimplifyBitcastConvertChain) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11415,7 +11452,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyBitcastConvertChain) {
 
 TEST_F(AlgebraicSimplifierTest,
        DoNotSimplifyRedundantBitcastConvertWithControlDep) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11434,7 +11471,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY entry {
@@ -11468,7 +11505,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DoNotSimplifyOptimizationBarrierSideEffects) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY entry {
@@ -11496,7 +11533,7 @@ TEST_F(AlgebraicSimplifierTest, DoNotSimplifyOptimizationBarrierSideEffects) {
 
 TEST_F(AlgebraicSimplifierTest, GTETupleShardingLoss) {
   // Verify the gte(tuple) folding does not happen if it loses sharding info.
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11511,7 +11548,7 @@ TEST_F(AlgebraicSimplifierTest, GTETupleShardingLoss) {
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceShapeLayout) {
   // Verify we maintain layout when optimizing dynamic-slice
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11531,7 +11568,7 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceShapeLayout) {
 
 // Fold a sequence of copy bitcast copy
 TEST_F(AlgebraicSimplifierTest, CopyBitcastCopy) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11551,7 +11588,7 @@ TEST_F(AlgebraicSimplifierTest, CopyBitcastCopy) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyBitcastCopyDimSize1) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11573,7 +11610,7 @@ TEST_F(AlgebraicSimplifierTest, CopyBitcastCopyDimSize1) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyBitcastCopy2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
 
     ENTRY test {
@@ -11591,7 +11628,7 @@ TEST_F(AlgebraicSimplifierTest, CopyBitcastCopy2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyReshapeCopy3) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
 
   ENTRY main {
@@ -11609,7 +11646,7 @@ TEST_F(AlgebraicSimplifierTest, CopyReshapeCopy3) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyReshapeCopy4) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
 
   ENTRY main {
@@ -11627,7 +11664,7 @@ TEST_F(AlgebraicSimplifierTest, CopyReshapeCopy4) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BitcastCopyChain) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
 
   ENTRY main {
@@ -11654,7 +11691,7 @@ TEST_F(AlgebraicSimplifierTest, BitcastCopyChain) {
 // SwapCopyBitcastCopy function. If SwapCopyBitcastCopy does not fire, in this
 // case, the last copy will be turned into a bitcast by HandleCopy.
 TEST_F(AlgebraicSimplifierTest, BitcastCopyChainSmall) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    ENTRY %main (para.0: f32[4,1,1,32,32]) -> f32[1024,4,1,1] {
     %para.0 = f32[4,1,1,32,32]{3,4,0,1,2} parameter(0)
@@ -11677,7 +11714,7 @@ TEST_F(AlgebraicSimplifierTest, BitcastCopyChainSmall) {
 }
 
 TEST_F(AlgebraicSimplifierTest, BitcastUndoesBitcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    ENTRY %main (p0: f32[32]) -> f32[1, 32, 32] {
     %p0 = f32[32]{0} parameter(0)
@@ -11701,7 +11738,7 @@ TEST_F(AlgebraicSimplifierTest, BitcastUndoesBitcast) {
 
 // Reverse(Reverse(A)) ==> A.
 TEST_F(AlgebraicSimplifierTest, RemoveIdenticalNestedReverse) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[100,1,100,512] parameter(0)
@@ -11722,7 +11759,7 @@ TEST_F(AlgebraicSimplifierTest, RemoveIdenticalNestedReverse) {
 
 // Reverse(Reverse(A)) ==> Reverse(A).
 TEST_F(AlgebraicSimplifierTest, ShrinkNestedReverse) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[100,1,100,512] parameter(0)
@@ -11744,7 +11781,7 @@ TEST_F(AlgebraicSimplifierTest, ShrinkNestedReverse) {
 // reverse(ElementWiseBinOp(x, constant)) ==> ElementWiseBinOp(reverse(x),
 // constant)
 TEST_F(AlgebraicSimplifierTest, SwapConstantEwboWithReverse) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[100,1,100,512] parameter(0)
@@ -11769,7 +11806,7 @@ TEST_F(AlgebraicSimplifierTest, SwapConstantEwboWithReverse) {
 // reverse(ElementWiseBinOp(constant, x)) ==> ElementWiseBinOp(constant,
 // reverse(x))
 TEST_F(AlgebraicSimplifierTest, SwapConstantEwboWithReverse2) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[100,1,100,512] parameter(0)
@@ -11792,7 +11829,7 @@ TEST_F(AlgebraicSimplifierTest, SwapConstantEwboWithReverse2) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SquaredComplexSqrtIsFloat) {
-  const char* const kModuleStr = R"(
+  const absl::string_view kModuleStr = R"(
   HloModule module
 
   ENTRY entry {
@@ -11816,7 +11853,7 @@ TEST_F(AlgebraicSimplifierTest, SquaredComplexSqrtIsFloat) {
 // Don't replace root instruction with the copy-to-operand optimization if
 // sharding is applied.
 TEST_F(AlgebraicSimplifierTest, RootCopySharding) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = bf16[8] parameter(0)
@@ -11909,7 +11946,7 @@ TEST_F(AlgebraicSimplifierTest,
 // Make sure the optimization for reshape(dynamic-update-slice) does not more
 // forward if the dus has multiple users.
 TEST_F(AlgebraicSimplifierTest, ReshapeOfDupDoNotCloneMultiUserDup) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[128,1184,1,128]{3,2,1,0} parameter(0)
@@ -11931,7 +11968,7 @@ TEST_F(AlgebraicSimplifierTest, ReshapeOfDupDoNotCloneMultiUserDup) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MultiplyOfConvertedPred) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      p = pred[2,2]{0,1} parameter(0)
@@ -11957,7 +11994,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyOfConvertedPred) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      bcast = f32[10,2,3,4] broadcast(f32[2,4] parameter(0)), dimensions={1,3}
@@ -11977,7 +12014,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      bcast = f32[10,2,3,4]{3,2,1,0} broadcast(f32[2,4]{1,0} parameter(0)), dimensions={1,3}
@@ -11998,7 +12035,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastWithLayoutCheckSkipped) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      bcast = f32[10,2,3,4]{3,2,1,0} broadcast(f32[2,4]{1,0} parameter(0)), dimensions={1,3}
@@ -12012,7 +12049,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastWithLayoutCheckSkipped) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastSkipped) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      bcast = f32[10,2,3,4] broadcast(f32[2,4] parameter(0)), dimensions={1,3}
@@ -12027,7 +12064,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastSkipped) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DontSinkInstructionsInDUSAsyncComputation) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      %param_0 = f32[1]{0} parameter(0)
@@ -12050,7 +12087,7 @@ TEST_F(AlgebraicSimplifierTest, DontSinkInstructionsInDUSAsyncComputation) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DontSinkInstructionsInDSAsyncComputation) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
    HloModule m
    test {
      %param_0 = f32[10]{0} parameter(0)
@@ -12072,7 +12109,7 @@ TEST_F(AlgebraicSimplifierTest, DontSinkInstructionsInDSAsyncComputation) {
 }
 
 TEST_F(AlgebraicSimplifierTest, NoOpSliceToDynamicOfPadToStatic) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[<=512] parameter(0)
@@ -12089,7 +12126,7 @@ TEST_F(AlgebraicSimplifierTest, NoOpSliceToDynamicOfPadToStatic) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DiffShapeSliceToDynamicOfPadToStatic) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[<=512] parameter(0)
@@ -12104,7 +12141,7 @@ TEST_F(AlgebraicSimplifierTest, DiffShapeSliceToDynamicOfPadToStatic) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DiffShapeSliceToDynamicDifferentPadToStatic) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[<=512] parameter(0)
@@ -12121,7 +12158,7 @@ TEST_F(AlgebraicSimplifierTest, DiffShapeSliceToDynamicDifferentPadToStatic) {
 }
 
 TEST_F(AlgebraicSimplifierTest, NotPadToStaticSizeDynamicDifferentPadToStatic) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f32[<=512] parameter(0)
@@ -12263,270 +12300,6 @@ auto SparseDotMatcher(Arg0&& arg0, Arg1&& arg1, Arg2&& arg2) {
       .WithOperand(2, std::forward<Arg2>(arg2));
 }
 
-TEST_F(AlgebraicSimplifierTest, SparseDotRemoveDegenerateDimensions) {
-  const char* kHlo = R"(
-    HloModule m
-    ENTRY test {
-      %lhs = f32[1,5,10,16,1] parameter(0)
-      %rhs = f32[5,1,20,1,32] parameter(1)
-      %meta = u16[1,5,10,2,1] parameter(2)
-      ROOT %dot = f32[1,5,10,20] dot(%lhs, %rhs, %meta),
-          lhs_batch_dims={0,1}, rhs_batch_dims={1,0},
-          lhs_contracting_dims={3,4}, rhs_contracting_dims={4,3},
-          sparsity=L.3@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(
-      root, GmockMatch(m::Reshape(SparseDotMatcher(m::Reshape(m::Parameter(0)),
-                                                   m::Reshape(m::Parameter(1)),
-                                                   m::Reshape(m::Parameter(2)))
-                                      .WithShape(F32, {5, 10, 20}))));
-  auto dot = Cast<HloDotInstruction>(root->operand(0));
-  auto descriptor = dot->sparsity().front();
-  EXPECT_EQ(descriptor.index(), 0);
-  EXPECT_EQ(descriptor.dimension(), 2);
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotMoveSliceToOperands) {
-  const char* kHlo = R"(
-    HloModule m
-    ENTRY test {
-      %lhs = f32[7,12,16] parameter(0)
-      %rhs = f32[7,22,32] parameter(1)
-      %meta = u16[7,12,2] parameter(2)
-      %dot = f32[7,12,22] dot(%lhs, %rhs, %meta),
-          lhs_batch_dims={0}, rhs_batch_dims={0},
-          lhs_contracting_dims={2}, rhs_contracting_dims={2},
-          sparsity=L.2@2:4
-      ROOT %slice = f32[5,10,20] slice(%dot), slice={[0:5], [0:10], [0:20]}
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_raise_slice_and_reduce_through_dot(true);
-  ASSERT_TRUE(AlgebraicSimplifier(options).Run(module.get()).value());
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, GmockMatch(SparseDotMatcher(m::Slice(m::Parameter(0)),
-                                                m::Slice(m::Parameter(1)),
-                                                m::Slice(m::Parameter(2)))
-                                   .WithShape(F32, {5, 10, 20})));
-  auto dot = Cast<HloDotInstruction>(root);
-  auto descriptor = dot->sparsity().front();
-  EXPECT_EQ(descriptor.index(), 0);
-  EXPECT_EQ(descriptor.dimension(), 2);
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotKeepTranspose) {
-  const char* hlo_string = R"(
-    HloModule m
-    ENTRY test {
-      %lhs = f32[10,16] parameter(0)
-      %rhs = f32[32,20] parameter(1)
-      %meta = u16[10,2] parameter(2)
-      %dot = f32[10,20] dot(%lhs, %rhs, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0},
-          sparsity=L.1@2:4
-      ROOT %transpose = f32[20,10] transpose(%dot), dimensions={1,0}
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  auto options = default_options_;
-
-  options.set_supports_non_canonical_dots(false);
-  AlgebraicSimplifier simplifier1(options);
-  ASSERT_THAT(RunHloPass(&simplifier1, module.get()), IsOkAndHolds(false));
-
-  options.set_supports_non_canonical_dots(true);
-  AlgebraicSimplifier simplifier2(options);
-  ASSERT_THAT(RunHloPass(&simplifier2, module.get()), IsOkAndHolds(false));
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotKeepOperandsTranspose) {
-  const char* hlo_string = R"(
-    HloModule m
-    ENTRY test {
-      %lhs = f32[10,20,30,16] parameter(0)
-      %rhs = f32[10,20,32,40] parameter(1)
-      %lhs_t = f32[20,10,30,16] transpose(%lhs), dimensions={1,0,2,3}
-      %rhs_t = f32[20,10,32,40] transpose(%rhs), dimensions={1,0,2,3}
-      %meta = u16[20,10,30,2] parameter(2)
-      ROOT %root = dot(%lhs_t, %rhs_t, %meta),
-          lhs_batch_dims={0,1}, rhs_batch_dims={0,1},
-          lhs_contracting_dims={3}, rhs_contracting_dims={2}, sparsity=L.3@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_THAT(RunHloPass(&simplifier, module.get()), IsOkAndHolds(false));
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotNoAssociativeReorderOuter) {
-  const char* hlo_string = R"(
-    HloModule m
-    ENTRY test {
-      %a = f32[10,5] parameter(0)
-      %b = f32[5,32] parameter(1)
-      %c = f32[64,20] parameter(2)
-      %meta = u16[10,4] parameter(3)
-      %inner = f32[10,32] dot(%a, %b),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}
-      ROOT %outer = f32[10,20] dot(%inner, %c, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_use_associative_reordering(true);
-  options.set_associative_reordering_threshold(0);
-  AlgebraicSimplifier simplifier(options);
-  EXPECT_FALSE(simplifier.Run(module.get()).value());
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotNoAssociativeReorderInner) {
-  const char* hlo_string = R"(
-    HloModule m
-    ENTRY test {
-      %a = f32[10,64] parameter(0)
-      %b = f32[128,32] parameter(1)
-      %c = f32[32,20] parameter(2)
-      %meta = u16[10,8] parameter(3)
-      %inner = f32[10,32] dot(%a, %b, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-      ROOT %outer = f32[10,20] dot(%inner, %c),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_use_associative_reordering(true);
-  options.set_associative_reordering_threshold(0);
-  AlgebraicSimplifier simplifier(options);
-  EXPECT_FALSE(simplifier.Run(module.get()).value());
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotNoAssociativeReorderReduce) {
-  const char* hlo_string = R"(
-    HloModule m
-    add {
-      %p0 = f32[] parameter(0)
-      %p1 = f32[] parameter(1)
-      ROOT %add = f32[] add(p0, p1)
-    }
-    ENTRY test {
-      %a = f32[10,16] parameter(0)
-      %b = f32[32,20] parameter(1)
-      %meta = u16[10,2] parameter(2)
-      %dot = f32[10,20] dot(%a, %b, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-      %c = f32[] constant(0)
-      ROOT %reduce = f32[10] reduce(%dot, %c), dimensions={1}, to_apply=add
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_use_associative_reordering(true);
-  options.set_associative_reordering_threshold(0);
-  AlgebraicSimplifier simplifier(options);
-  EXPECT_FALSE(simplifier.Run(module.get()).value());
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotNoAssociativeReorderOther) {
-  const char* hlo_string = R"(
-    HloModule m
-    ENTRY test {
-      %a = f32[10,16] parameter(0)
-      %b = f32[32,20] parameter(1)
-      %meta = u16[10,2] parameter(2)
-      %reverse = f32[10,16] reverse(%a), dimensions={1}
-      ROOT %dot = f32[10,20] dot(%reverse, %b, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_use_associative_reordering(true);
-  options.set_associative_reordering_threshold(0);
-  AlgebraicSimplifier simplifier(options);
-  EXPECT_FALSE(simplifier.Run(module.get()).value());
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotReduceBatchDimension) {
-  const char* kModuleStr = R"(
-    HloModule m
-    add {
-      %p0 = f32[] parameter(0)
-      %p1 = f32[] parameter(1)
-      ROOT %add = f32[] add(%p0, %p1)
-    }
-    ENTRY test {
-      %p0 = f32[32,8,5,64] parameter(0)
-      %p1 = f32[8,32,128,7] parameter(1)
-      %meta = u16[32,8,5,8] parameter(2)
-      %dot = f32[32,8,5,7] dot(%p0, %p1, %meta),
-          lhs_batch_dims={0,1}, rhs_batch_dims={1,0},
-          lhs_contracting_dims={3}, rhs_contracting_dims={2}, sparsity=L.3@2:4
-      %c = f32[] constant(0)
-      ROOT %r = f32[8,5,7] reduce(%dot, %c), dimensions={0}, to_apply=add
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(SparseDotMatcher(m::Parameter(0), m::Parameter(1),
-                                          m::Parameter(2))));
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotNoContractingReorder) {
-  const char* kModuleStr = R"(
-    HloModule m
-    ENTRY test {
-      %lhs = f32[2,8] constant({{1,2,3,4,5,6,7,8},{9,10,11,12,13,14,15,16}})
-      %meta = u16[2,1] constant({{0},{1}})
-      %t0 = f32[5,2,8] parameter(0)
-      %t1 = f32[5,8,2] transpose(%t0), dimensions={0,2,1}
-      %rhs = f32[5,16] reshape(t1)
-      ROOT %dot = f32[2,5] dot(%lhs, %rhs, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={1}, sparsity=L.1@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
-}
-
-TEST_F(AlgebraicSimplifierTest, SparseDotOfConcat) {
-  const char* kModuleStr = R"(
-    HloModule m
-    ENTRY test {
-      %a = f32[2,4] parameter(0)
-      %b = f32[2,4] parameter(1)
-      %lhs = f32[2,8] concatenate(%a, %b), dimensions={1}
-      %meta = u16[2,1] constant({{0},{1}})
-      %rhs = f32[16,2] constant({
-          {0,1},{2,3},{4,5},{6,7},{8,9},{10,11},{12,13},{14,15},
-          {16,17},{18,19},{20,21},{22,23},{24,25},{26,27},{28,29},{30,31}})
-      ROOT %dot = f32[2,2] dot(%lhs, %rhs, %meta),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
-}
-
 TEST_F(AlgebraicSimplifierTest, BroadcastToTranspose) {
   const std::string hlo_string = R"(
   HloModule broadcast_module
@@ -12640,7 +12413,7 @@ TEST_F(AlgebraicSimplifierTest, PreserveSdySharding) {
               IsOkAndHolds(true));
   EXPECT_EQ(
       m->entry_computation()->parameter_instruction(0)->get_frontend_attribute(
-          sdy::toStringView(sdy::kShardingRoundTripAttr)),
+          HloSharding::kShardingFrontendAttrName),
       "#sdy.sharding<@mesh, [{\"x\"}, {}]>");
 }
 
@@ -12865,7 +12638,7 @@ TEST_F(AlgebraicSimplifierTest, SinkCbrtThroughMax) {
 
 TEST_F(AlgebraicSimplifierTest,
        DynamicSlicePreservedWithTrivialConstantIndices) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY f {
@@ -12893,7 +12666,7 @@ TEST_F(AlgebraicSimplifierTest,
 
 TEST_F(AlgebraicSimplifierTest,
        DynamicSliceConvertedToConstantSliceWithConstantIndices) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY f {
@@ -12921,7 +12694,7 @@ TEST_F(AlgebraicSimplifierTest,
 // Bitcast of broadcast is not simplified if the layouts are different.
 // TransposeBitcastOfBroadcast is a simplified example.
 TEST_F(AlgebraicSimplifierTest, BitcastBroadcastDifferentLayout) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule module
 
     ENTRY f {
@@ -12942,7 +12715,7 @@ TEST_F(AlgebraicSimplifierTest, BitcastBroadcastDifferentLayout) {
 }
 
 TEST_F(AlgebraicSimplifierTest, AllGatherOfBroadcast) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       z = f32[] constant(0)
@@ -12956,7 +12729,7 @@ TEST_F(AlgebraicSimplifierTest, AllGatherOfBroadcast) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialMin) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4,4] parameter(0)
@@ -12969,7 +12742,7 @@ TEST_F(AlgebraicSimplifierTest, TrivialMin) {
 }
 
 TEST_F(AlgebraicSimplifierTest, TrivialMax) {
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = f32[4,4] parameter(0)
@@ -12984,7 +12757,7 @@ TEST_F(AlgebraicSimplifierTest, TrivialMax) {
 TEST_F(AlgebraicSimplifierTest, PathologicalComplexity) {
   // Without replacing min(x,x)->x, the algorithmic recursion complexity is
   // O(2^n).
-  const char* kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       a = s32[4,4] parameter(0)
@@ -13034,7 +12807,7 @@ TEST_F(AlgebraicSimplifierTest, PathologicalComplexity) {
 }
 
 TEST_F(AlgebraicSimplifierTest, RespectHostOffloadingcopies) {
-  const char* hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"(
     HloModule m
     ENTRY test {
       param0 = f32[16384,126]{1,0:T(8,128)S(5)} parameter(0), sharding={replicated}
@@ -13053,7 +12826,7 @@ TEST_F(AlgebraicSimplifierTest, RespectHostOffloadingcopies) {
 
 TEST_F(AlgebraicSimplifierTest,
        ReducePrecisionWithSamePrecisionAsOperandIsRemovedIfRemoveNoOpIsSet) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
   HloModule test
   ENTRY main {
     p0 = bf16[64]{0} parameter(0)
@@ -13070,7 +12843,7 @@ TEST_F(AlgebraicSimplifierTest,
 
 TEST_F(AlgebraicSimplifierTest,
        ReducePrecisionWithDifferentPrecisionFromOperandIsNotModifiedByDefault) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
   HloModule test
   ENTRY main {
     p0 = bf16[64]{0} parameter(0)
@@ -13084,7 +12857,7 @@ TEST_F(AlgebraicSimplifierTest,
 }
 
 TEST_F(AlgebraicSimplifierTest, TestWithControlDependencies) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
   HloModule extracted, entry_computation_layout={((s8[2]{0}, s8[]))->s8[]}
 
   inner_body (p.1: (s8[2], s8[])) -> (s8[2], s8[]) {
@@ -13119,7 +12892,7 @@ TEST_F(AlgebraicSimplifierTest, TestWithControlDependencies) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyReshapeToReshapeCopyWithHostCopies) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
   HloModule module
 
   ENTRY main {
@@ -13141,7 +12914,7 @@ TEST_F(AlgebraicSimplifierTest, CopyReshapeToReshapeCopyWithHostCopies) {
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyShardedPad) {
-  const char* hlo = R"(
+  constexpr absl::string_view hlo = R"(
 HloModule test, num_partitions=4
 
 ENTRY main {

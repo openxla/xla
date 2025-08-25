@@ -93,10 +93,6 @@ struct HloVerifierOpts {
     return std::move(*this);
   }
 
-  HloVerifierOpts&& WithVerifyS4U4Usage(bool verify) {
-    return std::move(*this);
-  }
-
   HloVerifierOpts&& WithAllowUnboundedDynamism(bool allow) {
     allow_unbounded_dynamism = allow;
     return std::move(*this);
@@ -118,6 +114,11 @@ struct HloVerifierOpts {
     return std::move(*this);
   }
 
+  HloVerifierOpts&& WithCheckReplicaGroups(bool check_replica_groups_p) {
+    check_replica_groups = check_replica_groups_p;
+    return std::move(*this);
+  }
+
   bool IsLayoutSensitive() const { return layout_sensitive; }
 
   bool CheckForCollectiveDeadlocks() const {
@@ -136,6 +137,8 @@ struct HloVerifierOpts {
   }
 
   int64_t ShapeSize(const Shape& shape) const { return shape_size(shape); }
+
+  bool ShouldCheckReplicaGroups() const { return check_replica_groups; }
 
   // If the verifier is layout-sensitive, shapes must be equal to what's
   // expected.  Otherwise, the shapes must simply be compatible.
@@ -177,6 +180,10 @@ struct HloVerifierOpts {
 
   // Check if collectives in the given module will result in a deadlock.
   bool verify_no_collective_deadlocks = false;
+
+  // Check if replica groups in collectives are consistent with replica count
+  // and partition count.
+  bool check_replica_groups = true;
 
   HloPredicate instruction_can_change_layout;
 
@@ -227,6 +234,7 @@ class ShapeVerifier : public DfsHloVisitor {
   absl::Status HandleCollectivePermuteDone(HloInstruction* hlo) override;
   absl::Status HandlePartitionId(HloInstruction* hlo) override;
   absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override;
+  absl::Status HandleScaledDot(HloInstruction* scaled_dot) override;
   absl::Status HandleReplicaId(HloInstruction* hlo) override;
   absl::Status HandleReducePrecision(HloInstruction* reduce_precision) override;
   absl::Status HandleInfeed(HloInstruction*) override;

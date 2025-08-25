@@ -52,6 +52,8 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -111,7 +113,7 @@ void handleFuncResultSharding(CustomCallOp funcResultSharding, FuncOp funcOp,
   // func result. When importing we want to move that sharding to the
   // func result and delete the CustomCallOp.
   auto shardingPerValueAttr = parseStringAttr<TensorShardingPerValueAttr>(
-      dictAttr, kShardingRoundTripAttr);
+      dictAttr, xla::ToStringRef(HloSharding::kShardingFrontendAttrName));
 
   auto resultUses = funcResultSharding->getUses();
   auto x64CombineOp = getX64CombineOnFuncResultSharding(funcResultSharding);
@@ -139,12 +141,6 @@ void handleFuncResultSharding(CustomCallOp funcResultSharding, FuncOp funcOp,
     } else if (use.getOwner() != funcResultSharding &&
                !dynCastX64CombineCustomCall(use.getOwner())) {
       hasNonFuncReturnUses = true;
-      LOG(WARNING) << std::string_view(  // non-absl ok
-                          kFuncResultShardingTargetName)
-                   << " custom-call has a user that isn't `func.return` ("
-                   << std::string_view(  // non-absl ok
-                          use.getOwner()->getName().getStringRef())
-                   << "). Please file a bug with a reproducer.";
     }
   }
   if (hasNonFuncReturnUses && !x64CombineOp) {
@@ -175,9 +171,12 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter) {
     // the function argument/result.
     if (DictionaryAttr dictAttr = getFuncArgFrontendAttrs(funcOp, argNum)) {
       if (auto sharding = parseStringAttr<TensorShardingAttr>(
-              dictAttr, kShardingRoundTripAttr)) {
+              dictAttr,
+              xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
         funcOp.setArgAttr(argNum, kShardingAttr, sharding);
-        removeFrontendAttribute(funcOp, kShardingRoundTripAttr, argNum);
+        removeFrontendAttribute(
+            funcOp, xla::ToStringRef(HloSharding::kShardingFrontendAttrName),
+            argNum);
       }
     }
   }
@@ -201,16 +200,17 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter) {
     if (mlir::isa<stablehlo::SendOp, stablehlo::RecvOp, stablehlo::AfterAllOp>(
             op)) {
       if (auto sharding = parseStringAttr<TensorShardingPerValueAttr>(
-              dictAttr, kShardingRoundTripAttr)) {
+              dictAttr,
+              xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
         op->setAttr(kShardingAttr, sharding);
       }
     }
     // NOTE: we are only setting the sharding on known custom-calls. For any
-    // other op that has a `kShardingRoundTripAttr` we discard it. XLA sometimes
-    // creates new instructions, copying over the operand's frontend attrs,
-    // which may mean the shapes are wrong when the new instruction is a reshape
-    // for example. This does mean we can't fully round-trip b/w HLO and MLIR
-    // after SDY propagation.
+    // other op that has a `HloSharding::kShardingFrontendAttrName` we discard
+    // it. XLA sometimes creates new instructions, copying over the operand's
+    // frontend attrs, which may mean the shapes are wrong when the new
+    // instruction is a reshape for example. This does mean we can't fully
+    // round-trip b/w HLO and MLIR after SDY propagation.
     if (auto customCallOp = mlir::dyn_cast<CustomCallOp>(op)) {
       StringRef targetName = customCallOp.getCallTargetName();
       if (targetName == kFuncResultShardingTargetName) {
@@ -219,12 +219,15 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter) {
       }
       if (targetName == kShardingCustomCallTargetName ||
           isPythonCallbackCustomCall(customCallOp)) {
-        customCallOp->setAttr(kShardingAttr,
-                              parseStringAttr<TensorShardingPerValueAttr>(
-                                  dictAttr, kShardingRoundTripAttr));
+        customCallOp->setAttr(
+            kShardingAttr,
+            parseStringAttr<TensorShardingPerValueAttr>(
+                dictAttr,
+                xla::ToStringRef(HloSharding::kShardingFrontendAttrName)));
       }
     }
-    removeFrontendAttribute(op, kShardingRoundTripAttr);
+    removeFrontendAttribute(
+        op, xla::ToStringRef(HloSharding::kShardingFrontendAttrName));
 
     // Import sharding rules.
     if (auto shardingRuleAttr = parseStringAttr<OpShardingRuleAttr>(

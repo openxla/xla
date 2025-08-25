@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
@@ -196,7 +197,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                            ? run_options.run_options()
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
-                           : false);
+                           : false,
+                       run_options.run_options().run_id().ToInt());
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -219,7 +221,8 @@ Thunk::ExecuteParams::ExecuteParams(
     SendDeviceMemoryFunction* send_device_memory_function,
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
-    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives)
+    ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
+    int64_t execution_id)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -231,7 +234,8 @@ Thunk::ExecuteParams::ExecuteParams(
       recv_device_memory_function(recv_device_memory_function),
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
-      mock_collectives(mock_collectives) {}
+      mock_collectives(mock_collectives),
+      execution_id(execution_id) {}
 
 //===----------------------------------------------------------------------===//
 
@@ -274,6 +278,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kGemm);
     CASE(kGroupDone);
     CASE(kGroupStart);
+    CASE(kHostExecuteDone);
+    CASE(kHostExecuteStart);
     CASE(kHostRecv);
     CASE(kHostRecvDone);
     CASE(kHostSend);

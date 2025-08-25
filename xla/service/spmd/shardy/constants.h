@@ -61,14 +61,6 @@ inline constexpr llvm::StringRef kXlaBackendConfigAttr = "backend_config";
 // The attribute name for inlineable.
 inline constexpr llvm::StringRef kXlaInlineableAttr = "inlineable";
 
-// Attribute name for temporarily storing the Shardy sharding during HLO
-// sdy-round-trip. It cannot match the name `kShardingAttr` ("sdy.sharding"), as
-// during sdy-round-trip, going from HLO to StableHLO, the code removes
-// attributes in the `frontend_attributes` field, making them top level. And
-// Shardy verification expects `kShardingAttr` to be of type
-// TensorShardingAttr/TensorShardingPerValueAttr - not a StringAttr.
-inline constexpr llvm::StringRef kShardingRoundTripAttr = "xla.sdy.sharding";
-
 // Attribute name for temporarily storing the Shardy sharding rule during HLO
 // sdy-round-trip. It cannot match the name `kShardingRuleAttr`
 // ("sdy.sharding_rule"), as during sdy-round-trip, going from HLO to StableHLO,
@@ -110,6 +102,7 @@ inline constexpr llvm::StringRef kFrontendAttributesAttr =
 
 // Attribute name for determining whether we need to import StableHLO shardings,
 // i.e., the input module doesn't contain SDY shardings as frontend attributes.
+// This is only used for testing.
 inline constexpr llvm::StringRef kImportMhloShardings =
     "xla.sdy.import_mhlo_shardings";
 
@@ -156,6 +149,9 @@ inline constexpr llvm::StringRef kLocalToGlobalShapeCallTargetName =
 
 // The name of the global mesh.
 inline constexpr llvm::StringRef kGlobalMeshName = "mesh";
+
+// Keyword for enabling the dumping of propagation debug information.
+inline constexpr llvm::StringRef kShardyVerbose = "shardy-verbose";
 
 }  //  namespace sdy
 }  //  namespace xla

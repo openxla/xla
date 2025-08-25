@@ -223,6 +223,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kRngGetAndUpdateState:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRsqrt:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSend:
@@ -795,13 +796,16 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
   }
   fusion_instruction->set_called_computations_execution_thread(
-      computation->execution_thread(),
-      /*skip_async_execution_thread_overwrite=*/false);
+      computation->execution_thread());
   return fusion_instruction;
 }
 
 HloInstruction* InstructionFusion::FuseInstruction(
     HloInstruction* fusion_instruction, HloInstruction* producer) {
+  if (producer->opcode() == HloOpcode::kFusion) {
+    fusion_instruction->MergeFusionInstruction(producer);
+    return fusion_instruction;
+  }
   return fusion_instruction->FuseInstruction(producer);
 }
 
@@ -1104,7 +1108,8 @@ FusionDecision InstructionFusion::ShouldFuse(
     HloInstruction* consumer, int64_t operand_index,
     std::function<FusionDecision(const HloInstruction*, const HloInstruction*,
                                  std::optional<const InPlaceFusionOptions>)>
-        inplace_op_fusion_decider) {
+        inplace_op_fusion_decider,
+    bool legality_check_only /*=false*/) {
   HloInstruction* producer = consumer->mutable_operand(operand_index);
 
   // Don't fuse across a root instruction.
@@ -1114,7 +1119,7 @@ FusionDecision InstructionFusion::ShouldFuse(
   }
 
   // Cost condition: don't duplicate expensive instructions.
-  if (FusionWouldDuplicate(*producer, *consumer) &&
+  if (!legality_check_only && FusionWouldDuplicate(*producer, *consumer) &&
       (!may_duplicate_ || is_expensive_(*producer)) &&
       !IsAlwaysDuplicable(*producer)) {
     return FusionDecision::Forbid(may_duplicate_

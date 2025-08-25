@@ -105,13 +105,6 @@ class CoordinationService {
     Stop();
   }
 
-  // This function is invoked after each task's local devices are appended in a
-  // deterministic order during WaitForAllTasks(). This is useful to convert the
-  // result into another message, or set global device ids.
-  void SetDeviceAggregationFunction(std::function<tensorflow::DeviceInfo(
-                                        const tensorflow::DeviceInfo& devices)>
-                                        post_aggregate_device_fn);
-
   // Register a task to the service.
   // Possible service errors:
   //   - Internal: Service has shut down.
@@ -185,6 +178,12 @@ class CoordinationService {
   // Get a configuration key-value from the coordination service. If the key
   // does not exist, return NotFound error.
   absl::StatusOr<std::string> TryGetKeyValue(absl::string_view key);
+
+  // Increment a configuration key-value by the provided increment. If the key
+  // does not exist, the value is initialized to 0 and then incremented. The
+  // result after incrementing is returned.
+  absl::StatusOr<std::string> IncrementKeyValue(absl::string_view key,
+                                                int64_t increment);
 
   // Gets all values under a directory (key).
   // A value is considered to be in the directory if its key is prefixed with

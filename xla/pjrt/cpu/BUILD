@@ -179,6 +179,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt:semaphore",
+        "//xla/pjrt:thread_pool_async_work_runner",
         "//xla/pjrt:transpose",
         "//xla/pjrt:utils",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
@@ -272,6 +273,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
     ],
 )
 
