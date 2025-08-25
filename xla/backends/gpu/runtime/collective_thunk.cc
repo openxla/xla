@@ -372,33 +372,37 @@ absl::Status RegisterBufferOnce(se::StreamExecutor* executor,
   // of which chunks we have registered.
   TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase base_buffer,
                       executor->GetMemoryRange(buffer));
+  se::DeviceMemoryBase buffer_to_register =
+      use_symmetric_buffer ? base_buffer : buffer;
   bool need_reg = false;
   {
     absl::MutexLock lock(&all_registered.mu);
     if (!all_registered.records.contains({executor->device_ordinal(),
-                                          buffer.size(), comm,
-                                          buffer.opaque()})) {
+                                          buffer_to_register.size(), comm,
+                                          buffer_to_register.opaque()})) {
       need_reg = true;
     } else {
-      VLOG(5) << "Buffer: " << buffer.opaque()
-              << " with size: " << buffer.size()
+      VLOG(5) << "Buffer: " << buffer_to_register.opaque()
+              << " with size: " << buffer_to_register.size()
               << " and base pointer: " << base_buffer.opaque()
               << " is already registered.";
     }
   }
   if (need_reg) {
-    VLOG(5) << "Registering " << buffer.opaque()
-            << " with size: " << buffer.size()
+    VLOG(5) << "Registering " << buffer_to_register.opaque()
+            << " with size: " << buffer_to_register.size()
             << " and base pointer: " << base_buffer.opaque()
             << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
     // Symmetric buffer registration is a collective operation,
     // we need to do that before locking on a global.
-    TF_ASSIGN_OR_RETURN(auto handle,
-                        comm->RegisterBuffer(buffer, use_symmetric_buffer));
+    TF_ASSIGN_OR_RETURN(
+        auto handle,
+        comm->RegisterBuffer(buffer_to_register, use_symmetric_buffer));
     absl::MutexLock lock(&all_registered.mu);
     all_registered.handles.push_back(std::move(handle));
-    all_registered.records.insert(
-        {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()});
+    all_registered.records.insert({executor->device_ordinal(),
+                                   buffer_to_register.size(), comm,
+                                   buffer_to_register.opaque()});
   }
   return absl::OkStatus();
 }
