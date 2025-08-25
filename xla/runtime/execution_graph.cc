@@ -290,8 +290,8 @@ std::string ExecutionGraph::ToString() const {
 
   for (NodeId i = 0; i < nodes_defs_.size(); ++i) {
     const NodeDef& def = nodes_defs_[i];
-    absl::StrAppendFormat(&out, "node %d (priority=%d): in=[%s] out=[%s]\n",
-                          i, def.priority, edges_to_string(def.in_edges),
+    absl::StrAppendFormat(&out, "node %d (priority=%d): in=[%s] out=[%s]\n", i,
+                          def.priority, edges_to_string(def.in_edges),
                           edges_to_string(def.out_edges));
   }
 
