@@ -101,7 +101,7 @@ class CallInliner : public HloModulePass {
       should_inline_;
 };
 
-// Returns true if the computation has instructioin that is inlinable.
+// Returns true if the computation has instructions that are inlinable.
 bool IsInlineableComputation(HloComputation* computation);
 
 struct InlinedModule {
@@ -111,8 +111,8 @@ struct InlinedModule {
   const HloInstruction* get_inlined_inst(const HloInstruction* inst);
 };
 
-// Given a module, this function first clone the module, then inline the module,
-// and return the inlined module, clone context and inlined map in InlinedModule
+// Given a module, this function first clones the module, then inlines the module,
+// and returns the inlined module, clone context and inlined map in InlinedModule
 // struct.
 absl::StatusOr<InlinedModule> GetInlinedModule(HloModule* module);
 

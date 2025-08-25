@@ -349,7 +349,6 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     absl::Span<HloInstruction* const> instruction_sequence,
     std::optional<InlinedInstructionMap*> inline_map) {
   HloModule* module = computation->parent();
-  VLOG(0) << "module has schedule: " << module->has_schedule();
   bool did_node_mutate = false;
   std::vector<HloInstruction*> inlined_instructions;
   for (HloInstruction* instruction : instruction_sequence) {
