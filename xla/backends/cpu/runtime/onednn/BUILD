@@ -90,6 +90,7 @@ onednn_graph_cc_library(
 onednn_graph_cc_test(
     name = "onednn_threadpool_test",
     srcs = ["onednn_threadpool_test.cc"],
+    copts = tsl_copts(),
     deps = [
         ":onednn_interop",
         ":onednn_threadpool",
@@ -107,5 +108,40 @@ onednn_graph_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_library(
+    name = "onednn_thunk",
+    srcs = ["onednn_thunk.cc"],
+    hdrs = ["onednn_thunk.h"],
+    copts = tsl_copts(),
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/backends/cpu/runtime:custom_call_thunk",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
+        "//xla/ffi:attribute_map",
+        "//xla/ffi:call_frame",
+        "//xla/ffi:execution_state",
+        "//xla/ffi:ffi_api",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:object_pool",
+        "//xla/service:buffer_assignment",
+        "//xla/service:custom_call_status",
+        "//xla/service/cpu:onednn_memory_util",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@eigen_archive//:eigen3",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
     ],
 )

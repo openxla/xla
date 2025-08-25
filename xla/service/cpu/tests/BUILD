@@ -356,6 +356,28 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "onednn_thunk_test",
+    srcs = ["onednn_thunk_test.cc"],
+    copts = tsl_copts(),
+    deps = [
+        "//xla:literal_util",
+        "//xla/backends/cpu/runtime:custom_call_thunk",
+        "//xla/backends/cpu/runtime:thunk_testlib",
+        "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
+        "//xla/backends/cpu/runtime/onednn:onednn_thunk",
+        "//xla/ffi",
+        "//xla/ffi:execution_context",
+        "//xla/ffi:ffi_api",
+        "//xla/service/cpu:onednn_util",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
+    ]
+)
+
+xla_cc_test(
     name = "onednn_layer_norm_test",
     srcs = ["onednn_layer_norm_test.cc"],
     copts = tsl_copts(),
