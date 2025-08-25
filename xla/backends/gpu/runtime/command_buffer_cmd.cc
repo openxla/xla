@@ -334,7 +334,7 @@ static std::vector<CommandOperation> CreateCommandOperations(
       for (int64_t j = async_done_cmd_id - 1; j >= 0; --j) {
         if (is_async_start(operations[j])) {
           auto* async_start_cmd =
-              dynamic_cast<const CollectiveCmd*>(operations[i].cmd());
+              dynamic_cast<const CollectiveCmd*>(operations[j].cmd());
           if (async_start_cmd->IsAsync() &&
               async_start_cmd->async_events() ==
                   async_done_cmd->async_events()) {
