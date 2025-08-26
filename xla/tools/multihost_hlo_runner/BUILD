@@ -6,6 +6,8 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_cuda_or_rocm", "if_google")
 load("//xla/tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:pytype.bzl", "pytype_strict_library")
+load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -32,15 +34,7 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "hlo_runner_main_lib",
-    testonly = True,
-    srcs = ["hlo_runner_main.cc"],
-    compatible_with = None,
-    tags = [
-        "no_mac",
-    ],
-    deps = [
+hlo_runner_deps = [
         ":create_client",
         ":functional_hlo_runner",
         ":profiler_interface",
@@ -81,7 +75,17 @@ cc_library(
         ],
     )) + if_rocm([
         "//xla/stream_executor:rocm_platform",
-    ]),
+    ])
+
+cc_library(
+    name = "hlo_runner_main_lib",
+    testonly = True,
+    srcs = ["hlo_runner_main.cc"],
+    compatible_with = None,
+    tags = [
+        "no_mac",
+    ],
+    deps = hlo_runner_deps,
     alwayslink = True,
 )
 
@@ -278,4 +282,16 @@ xla_test(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
+)
+
+tsl_pybind_extension(
+    name = "py_hlo_multihost_runner",
+    srcs = ["python_hlo_runner.cc"],
+    pytype_deps = ["//third_party/py/numpy"],
+    deps = [
+        "//xla/pjrt:status_casters",
+        "//xla/python:logging",
+        "//xla/python:types",
+        "@nanobind",
+    ] + hlo_runner_deps,
 )
