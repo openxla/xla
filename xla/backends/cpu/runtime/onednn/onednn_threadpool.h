@@ -54,30 +54,23 @@ class OneDnnThreadPool final
 
   bool get_in_parallel() const final {
     if (is_async_) {
-      // TODO(intel-tf): this is a temporary fix without which
-      // oneDNN runs single-threaded.
+      // TODO(intel-tf): this is a temporary fix without which oneDNN runs
+      // single-threaded.
       return false;
     }
     return thread_pool_->CurrentThreadId() >= 0;
   }
 
-  uint64_t get_flags() const final {
-    if (is_async_) {
-      // set the ASYNCHRONOUS flag when using oneDNN
-      // with asynchronous execution support.
-      return ASYNCHRONOUS;
-    }
-    return 0;
-  }
+  uint64_t get_flags() const final { return is_async_ ? ASYNCHRONOUS : 0; }
 
 #ifdef ENABLE_ONEDNN_ASYNC
-  // The wait() method only exists with oneDNN's experimental support
-  // for asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
+  // The wait() method only exists with oneDNN's experimental support for
+  // asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
   void wait() override {
     if (is_async_) {
-      // While performing asynchronous execution, wait() method is
-      // needed to notify the user that the output is ready.
-      // oneDNN will not call wait() inside the library to avoid deadlock.
+      // While performing asynchronous execution, wait() method is needed to
+      // notify the user that the output is ready. oneDNN will not call wait()
+      // inside the library to avoid deadlock.
       tsl::BlockUntilReady(done_event_);
     }
   }
@@ -85,9 +78,9 @@ class OneDnnThreadPool final
 
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
     if (is_async_) {
-      // If we are using oneDNN with async support, we need to
-      // schedule the parallel loop using the done_event_.
-      // This allows us to return immediately and not block the caller thread.
+      // If we are using oneDNN with async support, we need to schedule the
+      // parallel loop using the done_event_. This allows us to return
+      // immediately and not block the caller thread.
       auto parallelize = [this, n, fn](tsl::Chain) {
         return Worker::Parallelize(
             thread_pool_, thread_pool_->NumThreads(), n,
@@ -98,10 +91,10 @@ class OneDnnThreadPool final
       return;
     }
 
-    // If we are not using oneDNN with async support, it is perfectly safe
-    // to block here as Worker implements work stealing
-    // that guarantees forward progress and deadlock freedom, even if we are
-    // running in the same thread pool as the Eigen thread_pool.
+    // If we are not using oneDNN with async support, it is perfectly safe to
+    // block here as Worker implements work stealing that guarantees forward
+    // progress and deadlock freedom, even if we are running in the same thread
+    // pool as the Eigen thread_pool.
     tsl::BlockUntilReady(Worker::Parallelize(thread_pool_,
                                              thread_pool_->NumThreads(), n,
                                              [fn, n](size_t i) { fn(i, n); }));
@@ -111,16 +104,13 @@ class OneDnnThreadPool final
     thread_pool_ = thread_pool;
   }
 
-  tsl::AsyncValueRef<tsl::Chain> done_event() const {
-    return done_event_;
-  }
+  tsl::AsyncValueRef<tsl::Chain> done_event() const { return done_event_; }
 
  private:
   Eigen::ThreadPoolInterface* thread_pool_;
 
-  // indicates if we are using oneDNN with async support.
-  // TODO(intel-tf): Remove this flag when
-  // oneDNN supports asynchronous execution by default.
+  // Indicates if we are using oneDNN with async support. TODO(intel-tf): Remove
+  // this flag when oneDNN supports asynchronous execution by default.
   bool is_async_ = false;
 
   // Async value that signals completion of the last scheduled parallel loop.
