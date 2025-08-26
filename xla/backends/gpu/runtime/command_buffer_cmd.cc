@@ -275,7 +275,6 @@ class CommandOperation : public ExecutionGraph::Operation {
   CommandBufferCmd::BufferUseVector buffers_;
   const CommandBufferCmd* cmd_;
   ResourceUseVector resources_;
-  const CommandBufferCmd* cmd_;
 
   // The token resource is used to specify dependency other than buffer data
   // flow, e.g, LHS topology will use token resouce to specify dependency across
