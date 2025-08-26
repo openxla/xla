@@ -5,7 +5,7 @@ An HLO dump is a textual representation of the HLO modules at different stages o
 - **HloProto:** Protocol buffer files, which are a more structured, machine-readable format.
 - **HloSnapshot**: HLO module plus its inputs. For replaying HLOs, you sometimes require the actual inputs fed to a given computation rather than random data.
 
-You can use XLA flags to specify and get dumps. In most cases, you can set it with an environment variable. JAX also offers an programmatic way to print the HLO dump.
+You can use XLA flags to specify and get dumps. In most cases, you can set it with an environment variable. JAX also offers a programmatic way to print the HLO dump.
 
 ## Local Execution
 
@@ -83,7 +83,7 @@ XLA_FLAGS="--xla_dump_to=DIRECTORY_PATH --xla_dump_hlo_pass_re=.*"
 
 #### Programmatically in JAX
 
-Instead of passing flags or environment variables, you can also programmatically dump HLO using JAX’s `lower` and `compil`e APIs.
+Instead of passing flags or environment variables, you can also programmatically dump HLO using JAX’s `lower` and `compile` APIs.
 
 Locally fetch the unoptimized original lowered HLO with:
 
@@ -105,7 +105,7 @@ jax.jit(f).lower(*args).compile(compilation_args)
 
 #### Dump jaxprs
 
-`jaxpr`s are JAX's intermediate representation for program traces. To dump this, set the environment variables:
+[`jaxpr`s](https://docs.jax.dev/en/latest/jaxpr.html) are JAX's intermediate representation for program traces. To dump this, set the environment variables:
 
 ```shell
 JAX_DUMP_IR_TO="DIRECTORY_PATH" JAX_DUMP_IR_MODES=jaxpr
@@ -121,10 +121,11 @@ In the first executed cell of your notebook (because environment variables and c
 
 ```python
 import os
-os.environ['XLA_FLAGS'] = "--xla_dump_to=CNS_DIRECTORY_PATH"
+os.environ['XLA_FLAGS'] = "--xla_dump_to=DIRECTORY_PATH"
 ```
 
-This will dump the computation to `CNS_DIRECTORY_PATH`, (example path: `/cns/el-d/home/jaxian/xladump.`)
+This will dump the computation to `DIRECTORY_PATH`, for example `/tmp`.
+On Colab, navigate to the "Files" browser in the left sidebar, to view and access this directory.
 
 You can use all the flags mentioned in the Local Execution section.
 
@@ -179,7 +180,7 @@ Check out the [JAX documentation on Pallas and Mosaic](https://docs.jax.dev/en/l
 
 ## More with HLO Dumps
 
-### Find the right computation
+### Finding the right computation
 
 Usually, many computations get dumped. The dumped files are explicitly named with the JAX, Tensorflow, or PyTorch/XLA "computation name” that are called out in the logs, making it easy to identify the relevant HLO files. For example:
 
@@ -189,17 +190,18 @@ Usually, many computations get dumped. The dumped files are explicitly named wit
 
 Otherwise, you can use `ripgrep` to quickly identify which module holds particular symbols or computations.
 
-**Tip:** Include the 3 dumped before/after/buffer-assignment files of interest to your bug reports.
+**Tip:** Include the 3 dumped before/after/buffer-assignment files of interest in your bug reports.
 
 ### HLO Conversion
 
-Sometimes you may have HLOProto buffer dumps and want readable HLO text, or vice-versa.
+A tool called `hlo-opt` that can translate between HLOProto and text formats.
+It's useful in cases where you have one format, but need the other for debugging.
 
-A tool called `hlo-opt` that can translate between HLO proto and text formats. Learn to use it: [XLA Tooling documentation: hlo-opt](tools.md#hlo-opt-convert-hlo-module-formats).
+Learn to use it: [XLA Tooling documentation: hlo-opt](tools.md#hlo-opt-convert-hlo-module-formats).
 
 ### Replay
 
-The dumped computations can be run it on fake data or input snapshots, which is useful as a simple reproducible example for XLA developers.
+You can run (replay) the dumped computations on a specified XLA backend with fake data or input snapshots. This is a convenient way to reproduce, iterate, and debug issues in XLA.
 
 The following commands use fake data.
 If you have saved HLO Snapshots, you can pass those in instead, and the data from the snapshot will be used.
@@ -209,11 +211,12 @@ CPU backend:
 
 ```shell
 bazel run -c opt //xla/hlo/tools:run_hlo_module -- --platform=cpu
-/tmp/xladump/module_4561.before_optimizations.txt
+ /tmp/xladump/module_4561.before_optimizations.txt
 ```
 
 GPU backend:
 
 ```shell
-bazel run -c opt //xla/hlo/tools:run_hlo_module \
+bazel run -c opt //xla/hlo/tools:run_hlo_module -- --platform=CUDA
+ /tmp/xladump/module_4561.before_optimizations.txt
 ```
