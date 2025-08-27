@@ -16,16 +16,15 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_TRITON_EXTENSION_H_
 #define XLA_PJRT_C_PJRT_C_API_TRITON_EXTENSION_H_
 
+#include "xla/pjrt/c/pjrt_c_api.h"
 #include <stddef.h>
 #include <stdint.h>
-
-#include "xla/pjrt/c/pjrt_c_api.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define PJRT_API_TRITON_EXTENSION_VERSION 1
+#define PJRT_API_TRITON_EXTENSION_VERSION 2
 
 struct PJRT_Triton_Compile_Args {
   size_t struct_size;
@@ -39,8 +38,10 @@ struct PJRT_Triton_Compile_Args {
   const char* out_asm;  // owned
   size_t out_asm_size;
   int64_t out_smem_bytes;
+  const char* out_path;  // owned
+  size_t out_path_size;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Triton_Compile_Args, out_smem_bytes);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Triton_Compile_Args, out_path_size);
 
 // Compiles a given Triton kernel.
 typedef PJRT_Error* PJRT_Triton_Compile(PJRT_Triton_Compile_Args* args);
