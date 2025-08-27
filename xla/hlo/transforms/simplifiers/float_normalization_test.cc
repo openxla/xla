@@ -587,7 +587,7 @@ TEST_F(FloatNormalizationTest, DoNotChangeBitcast) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(R"(
 m {
-  a = s4[4,2] parameter(0)
+  a = s4[4,2]{1,0:E(4)} parameter(0)
   b = s8[4] bitcast(a)
 })"));
   EXPECT_FALSE(Normalize(module.get(), S4));
