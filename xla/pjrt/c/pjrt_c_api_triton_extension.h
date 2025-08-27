@@ -38,6 +38,8 @@ struct PJRT_Triton_Compile_Args {
   int num_stages;
   const char* out_asm;  // owned
   size_t out_asm_size;
+  const char* out_path;  // owned
+  size_t out_path_size;
   int64_t out_smem_bytes;
   int out_cluster_dim_x;
   int out_cluster_dim_y;
