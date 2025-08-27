@@ -102,7 +102,7 @@ absl::Status CreateTritonPipeline(
     pm->addPass(mlir::createCanonicalizerPass());
     pm->addPass(mlir::createLoopInvariantCodeMotionPass());
     pm->addPass(mt::gpu::createTritonGPUOptimizeAccumulatorInit());
-    pm->addPass(mt::gpu::createTritonGPUHoistTMEMAlloc());
+    pm->addPass(mt::gpu::createTritonGPUHoistTMEMAlloc({false}));
     pm->addPass(ttng::createTritonNvidiaGPUPromoteLHSToTMemPass());
     pm->addPass(mt::gpu::createTritonGPUAssignLatencies({num_stages}));
     pm->addPass(mt::gpu::createTritonGPUScheduleLoops());
@@ -110,6 +110,7 @@ absl::Status CreateTritonPipeline(
         mt::gpu::createTritonGPUAutomaticWarpSpecialization({num_stages}));
     pm->addPass(mt::gpu::createTritonGPUPipeline({num_stages}));
     pm->addPass(mt::gpu::createTritonGPUCombineTensorSelectAndIf());
+    pm->addPass(mt::gpu::createTritonGPUHoistTMEMAlloc({true}));
     pm->addPass(ttng::createTritonNvidiaGPURemoveTMEMTokensPass());
   } else {
     pm->addPass(mlir::createLoopInvariantCodeMotionPass());
@@ -144,13 +145,15 @@ absl::Status CreateTritonPipeline(
   pm->addPass(mt::gpu::createTritonGPUCombineTensorSelectAndIf());
   pm->addPass(mt::gpu::createTritonGPUAllocateWarpGroups());
   pm->addPass(mlir::createSCFToControlFlowPass());
-  pm->addPass(mt::gpu::createAllocateSharedMemory());
+  pm->addPass(mt::createAllocateSharedMemoryNvPass(
+      ccAsInt, mlir::triton::AllocateSharedMemoryNvOptions{}.ptxVersion));
   pm->addPass(ttng::createTritonTensorMemoryAllocationPass());
   // We could add a flag to XLA to optionally enable the following pass:
   // pm->addPass(mt::instrument::createTritonInstrumentConcurrencySanitizer());
   pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
   pm->addPass(ttng::createTritonGPUProxyFenceInsertion({ccAsInt}));
-  pm->addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt));
+  pm->addPass(mt::createConvertTritonGPUToLLVMPass(
+      ccAsInt, mlir::triton::ConvertTritonGPUToLLVMOptions{}.ptxVersion));
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mt::createConvertNVGPUToLLVM());

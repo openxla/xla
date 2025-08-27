@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
+#include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuning/redzone_buffers.h"
@@ -35,6 +36,9 @@ limitations under the License.
 #include "xla/service/maybe_owning_device_memory.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
+#include "xla/shape.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
@@ -85,20 +89,25 @@ int GetScratchBytes(const Executable* executable) {
 }  // namespace
 
 std::unique_ptr<GpuProfiler> GpuProfiler::Create(
-    se::StreamExecutor* stream_executor, ProfileOptions options) {
+    se::StreamExecutor* stream_executor, ProfileOptions options,
+    se::DeviceMemoryAllocator* external_allocator) {
+  std::unique_ptr<se::DeviceMemoryAllocator> owned_allocator;
+  se::DeviceMemoryAllocator* active_allocator = external_allocator;
+
+  if (active_allocator == nullptr) {
+    owned_allocator =
+        std::make_unique<se::StreamExecutorMemoryAllocator>(stream_executor);
+    active_allocator = owned_allocator.get();
+  }
+
   auto stream = stream_executor->CreateStream();
-  auto allocator =
-      std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
-          stream_executor);
   if (!stream.ok()) {
     LOG(ERROR) << "Failed to create stream: " << stream.status();
     return nullptr;
   }
-  return absl::WrapUnique(new GpuProfiler(
-      stream_executor,
-      std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
-          stream_executor),
-      std::move(stream.value()), options));
+  return absl::WrapUnique(new GpuProfiler(stream_executor, active_allocator,
+                                          std::move(owned_allocator),
+                                          std::move(stream.value()), options));
 }
 
 absl::StatusOr<std::unique_ptr<InputBuffers>> GpuProfiler::CreateInputBuffers(
@@ -111,8 +120,8 @@ absl::StatusOr<std::unique_ptr<InputBuffers>> GpuProfiler::CreateInputBuffers(
   TF_ASSIGN_OR_RETURN(
       RedzoneBuffers buffers,
       RedzoneBuffers::FromComputation(
-          *executable->module().entry_computation(), allocator_.get(),
-          stream_.get(), RedzoneBuffers::BuffersToCreate::kAllInputs,
+          *executable->module().entry_computation(), allocator_, stream_.get(),
+          RedzoneBuffers::BuffersToCreate::kAllInputs,
           options_.should_init_buffers,
           /*should_check_correctness=*/true, options_.redzone_padding_bytes));
   auto gpu_buffers = std::make_unique<GpuInputBuffers>();
@@ -150,9 +159,14 @@ absl::StatusOr<ProfileResult> GpuProfiler::Profile(
       Execute(executable, std::move(execution_inputs), &profile));
 
   result.duration = absl::Nanoseconds(profile.compute_time_ns());
-  if (options_.should_populate_output_buffer) {
-    result.output_buffer = execution_output.Commit().ConsumeResult();
+  ScopedShapedBuffer output_buffers = execution_output.Commit().ConsumeResult();
+  if (output_buffers.on_device_shape().IsTuple() &&
+      !output_buffers.on_device_shape().tuple_shapes().empty()) {
+    result.output_buffer = output_buffers.TakeSubTree({0});
+  } else {
+    result.output_buffer = std::move(output_buffers);
   }
+
   return result;
 }
 
@@ -166,7 +180,7 @@ absl::StatusOr<ExecutionOutput> GpuProfiler::Execute(
   ExecutableRunOptions run_options;
   run_options.set_device_ordinal(stream_executor_->device_ordinal());
   run_options.set_stream(stream_.get());
-  run_options.set_allocator(allocator_.get());
+  run_options.set_allocator(allocator_);
   run_options.set_gpu_executable_run_options(&gpu_opts);
   run_options.set_execution_profile(profile);
   ServiceExecutableRunOptions service_run_options(run_options);

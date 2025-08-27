@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stack>
@@ -95,6 +96,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
+#include "xla/backends/cpu/transforms/collectives/all_reduce_combiner.h"
 #include "xla/backends/cpu/transforms/dot_library_rewriter.h"
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 #include "xla/backends/cpu/xnn_support.h"
@@ -473,6 +475,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
   options.set_enable_onednn_support(is_onednn_compatible);
+  options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
   pipeline->AddPass<SortSimplifier>();
   pipeline->AddPass<HloDCE>();
@@ -926,6 +929,12 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<CallInliner>(/*single_call_site=*/true);
   }
 
+  // Combine collective operations to maximize network bandwidth usage.
+  constexpr int64_t kCombineBytes = std::numeric_limits<int64_t>::max();
+  constexpr int64_t kCombineCount = 256;
+  pipeline.AddPass<CpuAllReduceCombiner>(kCombineBytes, kCombineCount);
+  pipeline.AddPass<TupleSimplifier>();
+
   // The LayoutAssignment pass may leave behind kCopy instructions which are
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   // Run this to a fixed point.
@@ -947,6 +956,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_executing_on_cpu(true);
     // oneDNN support is currently enabled only when thunk runtime is turned off
     options.set_enable_onednn_support(is_onednn_compatible);
+    options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
@@ -1816,7 +1826,10 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   AliasInfo alias_info;
   cpu_executable->set_debug_info(
       cpu_executable->buffer_assignment().StatsString(&alias_info));
+
   VLOG(1) << "Compilation finished";
+  cpu_executable->Finalize();
+
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
 
