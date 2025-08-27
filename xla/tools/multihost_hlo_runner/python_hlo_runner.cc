@@ -210,7 +210,7 @@ absl::Status RunHlos(const std::vector<std::string>& hlo_files,
           raw_compile_options, hlo_file, opts.input_format, opts.task_id));
     }
     for (int i = 0; i < execution_profiles.size(); ++i) {
-      std::cout << "## Execution time, file=" << hlo_file << " repeat=" << i
+      LOG(INFO) << "## Execution time, file=" << hlo_file << " repeat=" << i
                 << " duration=" << execution_profiles[i].compute_time_ns()
                 << "ns" << std::endl;
     }
@@ -320,6 +320,20 @@ nb::dict GetRegisteredCustomCallTargets(const std::string& platform) {
   return targets;
 }
 
+absl::Status RegisterCustomTypeId(std::string_view type_name,
+                                  nb::object type_id) {
+  nb::capsule capsule;
+  if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
+    return absl::InvalidArgumentError(
+        "The type_id argument to register_custom_call_type_id must be a "
+        "PyCapsule object holding a pointer to a XLA_FFI_TypeId.");
+  }
+  XLA_FFI_TypeId* type_id_ptr =
+      reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
+  return ffi::TakeStatus(ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(),
+                                                  type_name, type_id_ptr));
+}
+
 NB_MODULE(py_hlo_multihost_runner, m) {
   InitializeAbslLogging();
 
@@ -336,6 +350,12 @@ NB_MODULE(py_hlo_multihost_runner, m) {
       nb::arg("api_version") = 0, nb::arg("traits") = 0);
   m.def("custom_call_targets", GetRegisteredCustomCallTargets,
         nb::arg("platform"));
+  m.def(
+      "register_custom_type_id",
+      [](std::string_view type_name, nb::object type_id) {
+        xla::ThrowIfError(RegisterCustomTypeId(type_name, type_id));
+      },
+      nb::arg("type_name"), nb::arg("type_id"));
 
   nb::class_<HloRunnerConfig>(m, "HloRunnerConfig")
       .def(nb::init<>())
