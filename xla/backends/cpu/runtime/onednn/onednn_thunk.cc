@@ -49,112 +49,6 @@ namespace xla::cpu {
 
 using AttributesMap = ffi::CallFrameBuilder::AttributesMap;
 
-// TODO(intel-tf): Replace this parsing function
-// with a more oneDNN-specific attribute parser that can
-// parse config protos like OneDnnMatMulConfig
-static absl::StatusOr<AttributesMap> ParseAttributes(
-    absl::string_view backend_config) {
-  AttributesMap attributes;
-  if (!backend_config.empty() && backend_config != "{}") {
-    // Parse backend config into an MLIR dictionary.
-    mlir::MLIRContext mlir_context;
-    mlir::Attribute attr = mlir::parseAttribute(backend_config, &mlir_context);
-    if (auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr)) {
-      // Convert the MLIR dictionary to FFI attributes.
-      TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
-    } else {
-      return Internal(
-          "Unsupported backend config. Expected a string parsable into "
-          "dictionary attribute");
-    }
-
-    VLOG(3) << absl::StreamFormat("  attributes: %s", backend_config);
-  }
-
-  return attributes;
-}
-
-// Call `instantiate` callback if passed. This function needs its own copy of
-// attributes, that's what AttributesBuilder expects, there's no way around it.
-static absl::Status InstantiateHandlerState(
-    ffi::HandlerRegistration& handler, ffi::ExecutionState* execution_state,
-    AttributesMap attributes) {
-  // Initialize FFI handler state if it has an instantiate callback.
-  if (handler.bundle.instantiate) {
-    // At FFI handler instantiation time, we don't have any arguments or results
-    ffi::CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
-
-    ffi::CallFrameBuilder::AttributesBuilder attrs;
-    attrs.Append(std::move(attributes));
-
-    builder.AddAttributes(attrs.Build());
-    ffi::CallFrame instantiate_call_frame = builder.Build();
-
-    ffi::CallOptions options;
-    options.execution_state = execution_state;
-    TF_RETURN_IF_ERROR(Call(handler.bundle.instantiate, instantiate_call_frame,
-                            options, XLA_FFI_ExecutionStage_INSTANTIATE));
-  }
-
-  return absl::OkStatus();
-}
-
-// Builds a call frame prototype for typed-FFI oneDNN thunk calls with dummy
-// device memory addresses. This is called once when creating the OneDnn thunk,
-// then the thunk will need to update the addresses at runtime.
-static absl::StatusOr<ffi::CallFrame> BuildCallFrameForTypedFFI(
-    const CustomCallApiVersion version, const OpBuffers& op_buffers,
-    const absl::string_view backend_config, AttributesMap attributes) {
-  ffi::CallFrameBuilder builder(
-      /*num_args=*/op_buffers.arguments_buffers.size(),
-      /*num_rets=*/op_buffers.results_buffers.size());
-
-  // Add prototype input buffers with actual data types and shapes. Device
-  // memory addresses will be updated at runtime.
-  for (int i = 0; i < op_buffers.arguments_buffers.size(); ++i) {
-    auto& shape = op_buffers.arguments_shapes[i];
-
-    if (shape.IsToken()) {
-      builder.AddTokenArg();
-      continue;
-    }
-
-    auto elements = absl::c_accumulate(shape.dimensions(), 1ULL,
-                                       std::multiplies<int64_t>());
-    auto dtype_bytes = primitive_util::ByteWidth(shape.element_type());
-    se::DeviceMemoryBase placeholder_arg(nullptr, elements * dtype_bytes);
-    builder.AddBufferArg(placeholder_arg, shape.element_type(),
-                         shape.dimensions());
-  }
-
-  // Add prototype output buffers with actual data types and shapes. Device
-  // memory addresses will be updated at runtime.
-  for (int i = 0; i < op_buffers.results_buffers.size(); ++i) {
-    auto& shape = op_buffers.results_shapes[i];
-
-    if (shape.IsToken()) {
-      builder.AddTokenRet();
-      continue;
-    }
-
-    auto elements = absl::c_accumulate(shape.dimensions(), 1ULL,
-                                       std::multiplies<int64_t>());
-    auto dtype_bytes = primitive_util::ByteWidth(shape.element_type());
-    se::DeviceMemoryBase placeholder_ret(nullptr, elements * dtype_bytes);
-    builder.AddBufferRet(placeholder_ret, shape.element_type(),
-                         shape.dimensions());
-  }
-
-  // Add attributes if any.
-  if (!attributes.empty()) {
-    ffi::CallFrameBuilder::AttributesBuilder attrs;
-    attrs.Append(std::move(attributes));
-    builder.AddAttributes(attrs.Build());
-  }
-
-  return builder.Build();
-}
-
 absl::StatusOr<std::unique_ptr<OneDnnThunk>> OneDnnThunk::Create(
     Info info, absl::string_view target_name, OpBuffers op_buffers,
     absl::string_view backend_config, CustomCallApiVersion api_version) {
@@ -198,15 +92,9 @@ OneDnnThunk::OneDnnThunk(
     OpBuffers op_buffers, CustomCallApiVersion api_version,
     absl::string_view backend_config, std::optional<ffi::CallFrame> call_frame,
     std::unique_ptr<ffi::ExecutionState> execution_state)
-    : Thunk(Kind::kCustomCall, std::move(info)),
-      target_name_(target_name),
-      target_(std::move(target)),
-      op_buffers_(std::move(op_buffers)),
-      api_version_(api_version),
-      backend_config_(std::move(backend_config)),
-      call_frame_(std::move(call_frame)),
-      call_frames_([this] { return call_frame_->Copy(); }),
-      execution_state_(std::move(execution_state)) {}
+    : CustomCallThunk(std::move(info), target_name, std::move(target),
+                      std::move(op_buffers), api_version, backend_config,
+                      std::move(call_frame), std::move(execution_state)) {}
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> OneDnnThunk::Execute(
     const ExecuteParams& params) {
@@ -276,13 +164,13 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> OneDnnThunk::Execute(
   TF_ASSIGN_OR_RETURN(auto call_frame, call_frames_.GetOrCreate());
   TF_RETURN_IF_ERROR(call_frame->UpdateWithBuffers(arguments, results));
 
-  // Do a heap allocation of the ExecutionContext, to ensure that
-  // the context remains valid until the execution is complete.
+  // Do a heap allocation of the ExecutionContext, to ensure that the context
+  // remains valid until the execution is complete.
   auto owned_context = std::make_unique<ffi::ExecutionContext>();
 
-  // Insert the oneDNN-related objects into the execution context.
-  // This allows the FFI handler to safely access the oneDNN engine, stream,
-  // and resources until the execution of the custom call is complete.
+  // Insert the oneDNN-related objects into the execution context. This allows
+  // the FFI handler to safely access the oneDNN engine, stream, and resources
+  // until the execution of the custom call is complete.
   auto status = owned_context->Insert(&runtime->cpu_engine);
   if (!status.ok()) {
     return Internal("Failed to add oneDNN engine to the execution context: %s",
@@ -295,8 +183,9 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> OneDnnThunk::Execute(
   }
   status = owned_context->Insert(runtime->threadpool.get());
   if (!status.ok()) {
-    return Internal("Failed to add oneDNN threadpool to the execution context: %s",
-                    status.message());
+    return Internal(
+        "Failed to add oneDNN threadpool to the execution context: %s",
+        status.message());
   }
   status = owned_context->Insert(&runtime->resources);
   if (!status.ok()) {

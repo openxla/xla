@@ -40,15 +40,9 @@ limitations under the License.
 
 namespace xla::cpu {
 
-typedef CustomCallThunk::OpBuffers OpBuffers;
-
 // Handles XLA's oneDNN custom calls operations.
-class OneDnnThunk final : public Thunk {
+class OneDnnThunk final : public CustomCallThunk {
  public:
-  // Function signature for legacy untyped custom call API.
-  using CustomCallTarget = std::function<void(void*, const void**, const char*,
-                                              size_t, XlaCustomCallStatus*)>;
-
   static absl::StatusOr<std::unique_ptr<OneDnnThunk>> Create(
       Info info, absl::string_view target_name, OpBuffers op_buffers,
       absl::string_view backend_config, CustomCallApiVersion api_version);
@@ -56,13 +50,6 @@ class OneDnnThunk final : public Thunk {
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;
-
-  const std::string& target_name() const { return target_name_; }
-  const OpBuffers& op_buffers() const { return op_buffers_; }
-  const CustomCallApiVersion& api_version() const { return api_version_; }
-  const std::string& backend_config() const { return backend_config_; }
-
-  bool ExecuteMayBlock() const final { return true; }
 
  private:
   struct OneDnnRuntime {
@@ -79,9 +66,8 @@ class OneDnnThunk final : public Thunk {
     dnnl::stream onednn_stream;
     // We initialize the resources struct here to default values, so that we can
     // keep the primitive and memory objects alive for the duration of the
-    // runtime. Otherwise, they would be destroyed as soon as we exit the
-    // ExecuteOneDnn<primitive> FFI handler. This is a requirement of
-    // oneDNN library's asynchronous execution model.
+    // runtime. This is a requirement of oneDNN library's asynchronous execution
+    // model.
     OneDnnResources resources;
   };
 
@@ -96,23 +82,6 @@ class OneDnnThunk final : public Thunk {
   OneDnnThunk& operator=(const OneDnnThunk&) = delete;
   OneDnnThunk(OneDnnThunk&&) = default;
   OneDnnThunk& operator=(OneDnnThunk&&) = default;
-
-  std::string target_name_;
-  std::variant<CustomCallTarget, ffi::HandlerRegistration> target_;
-
-  OpBuffers op_buffers_;
-  CustomCallApiVersion api_version_;
-  std::string backend_config_;
-
-  // Reference call frame pre-initialized at construction time.
-  std::optional<ffi::CallFrame> call_frame_;
-
-  // A pool of call frames used at run time. Newly created call frames are
-  // copied from the reference call frame and updated with buffer addresses.
-  ObjectPool<ffi::CallFrame> call_frames_;
-
-  // Execution state bound to the FFI handler. Optional.
-  std::unique_ptr<ffi::ExecutionState> execution_state_;
 };
 
 }  // namespace xla::cpu
