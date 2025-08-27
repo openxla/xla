@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_RUNTIME_ONEDNN_THUNK_H_
 #define XLA_BACKENDS_CPU_RUNTIME_ONEDNN_THUNK_H_
 
-#if defined(INTEL_MKL)
-
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -86,5 +84,4 @@ class OneDnnThunk final : public CustomCallThunk {
 
 }  // namespace xla::cpu
 
-#endif  // INTEL_MKL
 #endif  // XLA_BACKENDS_CPU_RUNTIME_ONEDNN_THUNK_H_

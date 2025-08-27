@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if defined(INTEL_MKL)
 #include "xla/backends/cpu/runtime/onednn/onednn_thunk.h"
 
 #include <cstdint>
@@ -227,4 +226,3 @@ OneDnnThunk::BufferUses OneDnnThunk::buffer_uses() const {
 }
 
 }  // namespace xla::cpu
-#endif  // INTEL_MKL
