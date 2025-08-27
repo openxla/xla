@@ -30,7 +30,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// SPIRCompiler generates efficient GPU executables for SPIRV target.
 class IntelGpuCompiler : public GpuCompiler {
  public:
   IntelGpuCompiler();
