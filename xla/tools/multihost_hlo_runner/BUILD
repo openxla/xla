@@ -287,11 +287,9 @@ xla_test(
 tsl_pybind_extension(
     name = "py_hlo_multihost_runner",
     srcs = ["python_hlo_runner.cc"],
-    pytype_deps = ["//third_party/py/numpy"],
     deps = [
         "//xla/pjrt:status_casters",
         "//xla/python:logging",
-        "//xla/python:types",
         "@nanobind",
-    ] + hlo_runner_deps,
+    ] +  hlo_runner_deps,
 )
