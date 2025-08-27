@@ -9,6 +9,11 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load(
+    "//xla/stream_executor:build_defs.bzl",
+    "if_cuda_or_rocm_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1171,9 +1176,13 @@ cc_library(
 
 cc_library(
     name = "triton",
-    srcs = if_cuda_is_configured(
-        ["triton_cuda.cc"],
+    srcs = if_cuda_or_rocm_is_configured(
+        [],
         ["triton_stub.cc"],
+    ) + if_cuda_is_configured(
+        ["triton_cuda.cc"]
+    ) + if_rocm_is_configured(
+        ["triton_rocm.cc"]
     ),
     hdrs = ["triton.h"],
     visibility = internal_visibility([":friends"]),
@@ -1185,7 +1194,10 @@ cc_library(
         "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:cuda_root_path",
         "@tsl//tsl/platform:path",
-    ] + if_cuda_is_configured(
+    ] + if_cuda_or_rocm_is_configured(
+        [],
+        ["@com_google_absl//absl/status"],
+    ) + if_cuda_is_configured(
         [
             "@com_google_absl//absl/base",
             "@com_google_absl//absl/status",
@@ -1228,8 +1240,28 @@ cc_library(
             "@triton//:TritonTransforms",
             "@triton//third_party/nvidia:NVGPUToLLVM",
             "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
-        ],
-        ["@com_google_absl//absl/status"],
+        ]
+    ) + if_rocm_is_configured(
+        [
+            "@com_google_absl//absl/strings",
+            "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
+            "@llvm-project//llvm:Core",
+            "@llvm-project//mlir:ConversionPasses",
+            "@llvm-project//mlir:FuncExtensions",
+            "@llvm-project//mlir:IR",
+            "@llvm-project//mlir:LLVMIRTransforms",
+            "@llvm-project//mlir:LLVMToLLVMIRTranslation",
+            "@llvm-project//mlir:Parser",
+            "@llvm-project//mlir:Pass",
+            "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
+            "@llvm-project//mlir:Transforms",
+            "//xla:debug_options_flags",
+            "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+            "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
+            "//xla/service/gpu:target_constants",
+            "//xla/tsl/platform:errors",
+            "//xla/tsl/platform:statusor",
+        ]
     ),
 )
 
