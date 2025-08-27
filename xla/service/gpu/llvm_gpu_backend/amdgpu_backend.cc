@@ -188,9 +188,9 @@ void HsacoCache::Add(const std::string& ir, uint64_t hash,
 
 // Emits the given module to HSA Code Object. target_machine is an initialized
 // TargetMachine for the AMDGPU target.
-absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
+absl::StatusOr<std::string> EmitModuleToHsaco(
     llvm::Module* module, llvm::TargetMachine* target_machine,
-    const DebugOptions& debug_options) {
+    const DebugOptions& debug_options, bool keep_tempfiles) {
   auto* env = tsl::Env::Default();
   std::vector<std::string> tempdir_vector;
   env->GetLocalTempDirectories(&tempdir_vector);
@@ -201,9 +201,6 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   std::string tempdir_name = tempdir_vector.front();
   VLOG(1) << "Compile-time artifacts located at: " << tempdir_name;
 
-  bool keep_tempfiles = false;
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_KEEP_XLA_TEMPFILES",
-                                      /*default_val=*/false, &keep_tempfiles));
   // Prepare filenames for all stages of compilation:
   // IR, binary ISA, and HSACO.
   std::string random_number = std::to_string(tsl::random::New64());
@@ -314,20 +311,11 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     }
   }
 
-  // Read HSACO.
-  std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
-  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
-
-  std::vector<uint8_t> hsaco(hsaco_file_size);
-  hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
-  hsaco_file.close();
   if (!keep_tempfiles) {
     remove(ir_path.c_str());
     remove(isabin_path.c_str());
-    remove(hsaco_path.c_str());
   }
-  return hsaco;
+  return hsaco_path;
 }
 
 // Links ROCm-Device-Libs into the given module if the module needs it.
@@ -506,17 +494,10 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
     llvm::Module* module, se::GpuComputeCapability gpu_version,
     const DebugOptions& debug_options,
     const std::string& module_config_cache_key) {
-  static absl::once_flag backend_init_flag;
-  // TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
-  // changes.
-  static std::string rocdl_dir_path;  // NOLINT: static/global vars forbidden
-  absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
-                  rocdl_dir_path);
   auto llvm_opts = GetAMDGPUBackendOptions(debug_options);
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
 
   std::vector<uint8_t> hsaco;
-  std::unique_ptr<llvm::TargetMachine> target_machine;
   std::string str;
   llvm::raw_string_ostream stream(str);
   stream << *module;
@@ -561,24 +542,57 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
       ofs.close();
     }
 
-    llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
-    // Construct LLVM TargetMachine for AMDGPU.
-    std::unique_ptr<llvm::TargetMachine> target_machine =
-        AMDGPUGetTargetMachine(default_target_triple, gpu_version,
-                               debug_options);
-
-    // Link with ROCm-Device-Libs, and optimize the LLVM module.
-    TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
-        module, gpu_version, debug_options, rocdl_dir_path,
-        AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
-        kAMDGPUInlineThreshold));
-
-    // Lower optimized LLVM module to HSA code object.
+    bool keep_tempfiles = false;
+    TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_KEEP_XLA_TEMPFILES",
+                                        /*default_val=*/false,
+                                        &keep_tempfiles));
     TF_ASSIGN_OR_RETURN(
-        hsaco, EmitModuleToHsaco(module, target_machine.get(), debug_options));
+        auto hsaco_output_path,
+        CompileToHsaco(module, gpu_version, debug_options, keep_tempfiles));
+
+    // Read HSACO.
+    std::ifstream hsaco_file(hsaco_output_path,
+                             std::ios::binary | std::ios::ate);
+    std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
+    hsaco.resize(hsaco_file_size);
+    hsaco_file.seekg(0, std::ios::beg);
+    hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
+    hsaco_file.close();
+    if (!keep_tempfiles) {
+      remove(hsaco_output_path.c_str());
+    }
     HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
   }
   return hsaco;
+}
+
+absl::StatusOr<std::string> CompileToHsaco(llvm::Module* module,
+                                           se::GpuComputeCapability gpu_version,
+                                           const DebugOptions& debug_options,
+                                           bool keep_tempfiles) {
+  static absl::once_flag backend_init_flag;
+  // TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
+  // changes.
+  static std::string rocdl_dir_path;  // NOLINT: static/global vars forbidden
+  absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
+                  rocdl_dir_path);
+
+  llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
+  // Construct LLVM TargetMachine for AMDGPU.
+  std::unique_ptr<llvm::TargetMachine> target_machine =
+      AMDGPUGetTargetMachine(default_target_triple, gpu_version, debug_options);
+
+  // Link with ROCm-Device-Libs, and optimize the LLVM module.
+  TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
+      module, gpu_version, debug_options, rocdl_dir_path,
+      AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
+      kAMDGPUInlineThreshold));
+
+  // Lower optimized LLVM module to HSA code object.
+  TF_ASSIGN_OR_RETURN(auto hsaco_path,
+                      EmitModuleToHsaco(module, target_machine.get(),
+                                        debug_options, keep_tempfiles));
+  return hsaco_path;
 }
 
 }  // namespace amdgpu
