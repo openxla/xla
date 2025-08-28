@@ -240,6 +240,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
+  opts.set_xla_gpu_command_buffer_unroll_loops(false);
   opts.set_xla_cmd_buffer_trace_cache_size(16);
 
   opts.set_xla_gpu_collectives_use_persistent_cliques(false);
@@ -2032,6 +2033,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "GEMM fusions. (You can get such textprotos from the debug logs of the "
       "GEMM autotuner.) "));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_command_buffer_unroll_loops",
+      bool_setter_for(&DebugOptions::set_xla_gpu_command_buffer_unroll_loops),
+      debug_options->xla_gpu_command_buffer_unroll_loops(),
+      "During command buffer lowering, unroll the loop command if loop has "
+      "known loop count."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_copy_insertion_use_region_analysis",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_copy_insertion_use_region_analysis),
@@ -2653,8 +2660,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",
