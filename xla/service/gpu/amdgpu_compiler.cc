@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/conv_algorithm_picker.h"
 #include "xla/service/gpu/autotuning/gemm_algorithm_picker.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
@@ -172,7 +173,11 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
   // CudnnConvPadForTensorCores may add instructions which can be simplified
   // by constant folding.
   pipeline.AddPass<HloConstantFolding>();
-  TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  TF_RETURN_IF_ERROR(
+      pipeline
+          .Run(hlo_module,
+               /*execution_threads=*/{HloInstruction::kMainExecutionThread})
+          .status());
 
   return absl::OkStatus();
 }
@@ -195,7 +200,11 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   // Padding a gemm operand that's a constant results in pad(constant).  Run
   // constant-folding to simplify this into a new constant.
   pre_pipeline.AddPass<HloConstantFolding>();
-  TF_RETURN_IF_ERROR(pre_pipeline.Run(hlo_module).status());
+  TF_RETURN_IF_ERROR(
+      pre_pipeline
+          .Run(hlo_module,
+               /*execution_threads=*/{HloInstruction::kMainExecutionThread})
+          .status());
 
   TF_RETURN_IF_ERROR(GpuCompiler::OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, alias_info,
@@ -207,7 +216,11 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   // memory.
   post_pipeline.AddPass<TriangularSolveRewriter>();
 
-  TF_RETURN_IF_ERROR(post_pipeline.Run(hlo_module).status());
+  TF_RETURN_IF_ERROR(
+      post_pipeline
+          .Run(hlo_module,
+               /*execution_threads=*/{HloInstruction::kMainExecutionThread})
+          .status());
 
   return absl::OkStatus();
 }
@@ -254,10 +267,15 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
   if (debug_options.xla_gpu_experimental_use_autotuner_pass()) {
     backends.push_back(
         std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
+    auto should_autotune = [](const HloInstruction& instruction) -> bool {
+      return instruction.opcode() == HloOpcode::kCustomCall &&
+             IsCublasGemm(instruction);
+    };
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
-                              thread_pool));
+        AutotunerPass::Create(std::move(backends), debug_options,
+                              options.device_allocator, stream_exec,
+                              thread_pool, should_autotune));
     pipeline->AddPass(std::move(autotuner_pass));
   } else {
     pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);

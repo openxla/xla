@@ -35,11 +35,14 @@
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/tools/hlo_diff/hlo_diff_result.h"
 #include "xla/hlo/tools/hlo_diff/hlo_diff_summary.h"
 #include "xla/hlo/tools/hlo_diff/render/graph_url_generator.h"
 #include "xla/hlo/tools/hlo_diff/render/hlo_gumgraph_renderer_util.h"
 #include "xla/hlo/tools/hlo_diff/render/op_metric_getter.h"
+#include "xla/printer.h"
+#include "xla/shape_util.h"
 #include "tsl/platform/fingerprint.h"
 
 namespace xla {
@@ -64,7 +67,12 @@ std::string PrintCss() {
     .section > .header {
       font-size: 16px;
       font-weight: bold;
-      margin-bottom: 5px;
+      padding: 0.5rem;
+      background-color: white; /* Add a background to cover content while sticking */
+      position: sticky;
+      top: 0;
+      z-index: 2; /* Ensure it stays above other content */
+      border-bottom: 1px solid #cccccc;
     }
     .section > .content {
       font-size: 14px;
@@ -208,6 +216,87 @@ std::string PrintCss() {
     span.grey {
       color: #999999;
     }
+
+    span.hlo-instruction {
+      display: inline-block;
+      cursor: pointer;
+    }
+    span.hlo-instruction:hover {
+      border: 2px solid #4285F4;
+    }
+    span.bordered {
+      border: 2px solid #4285F4;
+    }
+
+    span.red-highlight {
+      background-color: #fad2cf;
+    }
+    span.green-highlight {
+      background-color: #ceead6;
+    }
+    span.yellow-highlight {
+      background-color: #feefc3;
+    }
+    span.temp-highlight {
+      background-color: #a8c7fa;
+      opacity: 0.7;
+      animation: breathe-highlight 1s infinite alternate;
+    }
+    @keyframes breathe-highlight {
+      0% { opacity: 0.7; }
+      50% { opacity: 0.9; }
+      100% { opacity: 0.7; }
+    }
+
+    .hlo-instruction.hidden {
+      display: none;
+    }
+    button {
+      background-color: #3f51b5;
+      color: white;
+      font-weight: bold;
+      padding: 0.2rem 0.5rem;
+      margin-left: 1rem;
+      border-radius: 0.5rem;
+      transition: all 0.2s ease-in-out;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    }
+    button:hover {
+      transform: translateY(-1px) scale(1.02);
+    }
+
+    /* Styles for the system message pop-up */
+    .system-message-container {
+        /* Position fixed at the bottom of the viewport */
+        position: fixed;
+        bottom: 7px;
+        left: 50%;
+        transform: translateX(-50%) translateY(100%);
+
+        /* Appearance and transitions */
+        background-color: #F5F3FF;
+        border: 2px solid #8B5CF6;
+        opacity: 0;
+        visibility: hidden;
+        transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out, visibility 0s 0.3s;
+        z-index: 1000;
+    }
+
+    /* Class to show the message */
+    .system-message-container.show-message {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+        visibility: visible;
+        transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+    }
+
+    .system-message-container.show-message span {
+      color: #4C1D95;
+      font-weight: 500;
+      font-size: 16px;
+      padding: 1.5rem;
+    }
+
     </style>
   )html";
 }
@@ -224,16 +313,175 @@ std::string PrintJavascript() {
       tooltip.textContent = 'Click to copy';
     }, 2000);
   }
+  </script>
+  )html";
+}
 
-  function TextboxOnScroll(event) {
-    const textbox = event.target;
-    const idParts = textbox.id.split('-');
-    const id = idParts[0];
-    const isLeft = idParts[1] == 'left';
-    const sibling = document.getElementById(id + '-' + (isLeft ? 'right' : 'left'));
-    sibling.scrollTop = textbox.scrollTop;
-    sibling.scrollLeft = textbox.scrollLeft;
+std::string PrintJavascriptForHoverEvent() {
+  return R"html(
+  <script>
+  function ShowSystemMessage(message) {
+      const messageContainer = document.getElementById('system-message');
+      const messageText = messageContainer.querySelector('span');
+      messageText.textContent = message;
+
+      // Show the message pop-up
+      messageContainer.classList.add('show-message');
+
+      // Automatically hide the message after 3 seconds
+      setTimeout(() => {
+      messageContainer.classList.remove('show-message');
+      }, 3000);
   }
+
+  const allSpans = document.querySelectorAll('span[data-diffid]');
+  allSpans.forEach(span => {
+      span.addEventListener('mouseover', handleMouseOver);
+      span.addEventListener('mouseout', handleMouseOut);
+      span.addEventListener('click', handleSpanClick);
+      span.addEventListener('dblclick', handleSpanDoubleClick);
+  });
+  function handleMouseOver(event) {
+      const diffId = event.target.getAttribute('data-diffid');
+      if (!diffId) {
+          return;
+      }
+      const relatedSpans = document.querySelectorAll(`span[data-diffid="${diffId}"]`);
+      relatedSpans.forEach(relatedSpan => {
+          relatedSpan.classList.add('bordered');
+      });
+  }
+
+  function handleMouseOut(event) {
+      const diffId = event.target.getAttribute('data-diffid');
+      if (!diffId) {
+          return;
+      }
+      const relatedSpans = document.querySelectorAll(`span[data-diffid="${diffId}"]`);
+      relatedSpans.forEach(relatedSpan => {
+          relatedSpan.classList.remove('bordered');
+      });
+  }
+
+  function handleSpanClick(event) {
+      const diffId = event.target.getAttribute('data-diffid');
+      if (!diffId) {
+          return;
+      }
+
+      const clickedSpan = event.target;
+      const clickedPre = clickedSpan.closest('.hlo-textbox').querySelector('pre');
+      if (!clickedPre) return;
+
+      const idParts = clickedPre.id.split('-');
+      const fingerprint = idParts[0];
+      const isLeft = idParts[1] === 'left';
+      const siblingPreId = fingerprint + '-' + (isLeft ? 'right' : 'left');
+      const siblingPre = document.getElementById(siblingPreId);
+
+      if (siblingPre) {
+          const targetSpan = siblingPre.querySelector(`span[data-diffid="${diffId}"]`);
+          if (targetSpan) {
+              // Calculate the vertical offset of the clicked span from the top of its visible area.
+              const clickedSpanViewportOffset = clickedSpan.offsetTop - clickedPre.scrollTop;
+
+              // Calculate the percentage of this offset within the clickedPre's visible height.
+              const percentage = clickedPre.clientHeight > 0 ?
+                  clickedSpanViewportOffset / clickedPre.clientHeight : 0;
+
+              // Calculate the desired offset for the targetSpan within the siblingPre's visible area.
+              const desiredSiblingViewportOffset = percentage * siblingPre.clientHeight;
+
+              // Calculate the new scrollTop for siblingPre to achieve this alignment.
+              const newScrollTop = targetSpan.offsetTop - desiredSiblingViewportOffset;
+
+              // Scroll the siblingPre element smoothly.
+              siblingPre.scrollTo({
+                  top: Math.max(0, newScrollTop),
+                  behavior: 'smooth'
+              });
+
+              // Temporarily highlight the target span
+              targetSpan.classList.add('temp-highlight');
+              setTimeout(() => {
+                  targetSpan.classList.remove('temp-highlight');
+              }, 2000); // Remove highlight after 2 seconds
+          } else {
+              ShowSystemMessage("Corresponding instruction is in another computation, double click to jump to it.");
+          }
+      }
+  }
+
+  function handleSpanDoubleClick(event) {
+      const diffId = event.target.getAttribute('data-diffid');
+      if (!diffId) {
+          return;
+      }
+
+      const clickedSpan = event.target;
+      const clickedPre = clickedSpan.closest('.hlo-textbox').querySelector('pre');
+      if (!clickedPre) return;
+
+      const idParts = clickedPre.id.split('-');
+      const fingerprint = idParts[0];
+      const isLeft = idParts[1] === 'left';
+      const siblingPreId = fingerprint + '-' + (isLeft ? 'right' : 'left');
+      const siblingPre = document.getElementById(siblingPreId);
+
+      if (siblingPre) {
+          const targetSpan = siblingPre.querySelector(`span[data-diffid="${diffId}"]`);
+          if (!targetSpan) {
+              // Case 2: Corresponding span NOT found in siblingPre.
+              // Search for the span with the same diffId in other hlo-textbox-pairs.
+              const allMatchingSpans = document.querySelectorAll(`span[data-diffid="${diffId}"]`);
+              let foundSpanInOtherPre = null;
+              allMatchingSpans.forEach(span => {
+                  if (span !== clickedSpan) {
+                      foundSpanInOtherPre = span;
+                  }
+              });
+
+              if (foundSpanInOtherPre) {
+                  const foundPre = foundSpanInOtherPre.closest('.hlo-textbox').querySelector('pre');
+                  if (foundPre) {
+                      // Find ancestor detail and open it.
+                      let parentDetails = foundSpanInOtherPre.closest('details');
+                      while (parentDetails) {
+                          parentDetails.open = true;
+                          parentDetails = parentDetails.parentElement ? parentDetails.parentElement.closest('details') : null;
+                      }
+
+                      // Scroll the foundPre to make the foundSpanInOtherPre visible.
+                      foundSpanInOtherPre.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                      // Temporarily highlight the found span
+                      foundSpanInOtherPre.classList.add('temp-highlight');
+                      setTimeout(() => {
+                          foundSpanInOtherPre.classList.remove('temp-highlight');
+                      }, 3000);
+                  }
+              }
+          }
+      }
+  }
+  </script>
+  )html";
+}
+
+std::string PrintJavascriptForToggleButton() {
+  return R"html(
+  <script>
+  const toggleButton = document.getElementById('toggleButton');
+    const hloInstructions = document.querySelectorAll('.hlo-instruction:not(.highlighted)');
+    let isHidden = false;
+
+    toggleButton.addEventListener('click', () => {
+      isHidden = !isHidden;
+      hloInstructions.forEach(instruction => {
+        instruction.classList.toggle('hidden', isHidden);
+      });
+      toggleButton.textContent = isHidden ? 'Show Unchanged Instructions' : 'Hide Unchanged Instructions';
+    });
   </script>
   )html";
 }
@@ -268,9 +516,11 @@ std::string EscapeStringForHtmlAttribute(absl::string_view str) {
 
 // Prints the div html block.
 std::string PrintDiv(absl::string_view content,
-                     absl::Span<const absl::string_view> class_names) {
-  return absl::StrFormat(R"html(<div class="%s">%s</div>)html",
-                         absl::StrJoin(class_names, " "), content);
+                     absl::Span<const absl::string_view> class_names,
+                     absl::string_view id = "") {
+  std::string div_id = id.empty() ? "" : absl::StrCat(" id=\"", id, "\"");
+  return absl::StrFormat(R"html(<div class="%s"%s>%s</div>)html",
+                         absl::StrJoin(class_names, " "), div_id, content);
 }
 
 // Print the span html block.
@@ -301,6 +551,12 @@ std::string PrintSectionWithHeader(absl::string_view header,
                   {"section"});
 }
 
+// Prints a system message placeholder.
+std::string PrintSystemMessagePlaceholder() {
+  return PrintDiv(PrintSpan("System message placeholder", {}),
+                  {"system-message-container"}, "system-message");
+}
+
 // Prints a list of items.
 std::string PrintList(absl::Span<const std::string> items) {
   return PrintDiv(absl::StrJoin(items, "",
@@ -319,6 +575,12 @@ std::string PrintAttributesList(absl::Span<const std::string> items) {
                                                   PrintDiv(item, {"item"}));
                                 }),
                   {"attributes-list"});
+}
+
+// Prints a button
+std::string PrintButton(absl::string_view id, absl::string_view text) {
+  return absl::StrFormat(
+      R"html(<button id="%s" class="button">%s</button>)html", id, text);
 }
 
 // The position of the tooltip.
@@ -350,29 +612,145 @@ std::string PrintTextbox(absl::string_view title, absl::string_view content,
                          absl::string_view id = "") {
   return absl::StrCat(
       PrintDiv(title, {"title"}),
-      PrintDiv(
-          absl::StrCat(
-              absl::StrFormat(
-                  R"html(<pre onscroll="TextboxOnScroll(event)" id="%s">%s</pre>)html",
-                  id, content),
-              PrintClickToCopyButton("📋", content)),
-          {"textbox"}));
+      PrintDiv(absl::StrCat(absl::StrFormat(R"html(<pre id="%s">%s</pre>)html",
+                                            id, content),
+                            PrintClickToCopyButton("📋", content)),
+               {"textbox"}));
 }
 
 /*** Summary logic ***/
 
+// The attributes of an instruction that will be applied to the corresponding
+// span element in the HTML output.
+struct Attributes {
+  std::string highlight;
+  std::string diffid;
+};
+
+// Generate span attributes for all instructions given diff result.
+absl::flat_hash_map<const HloInstruction*, Attributes> GenerateSpanAttributes(
+    const DiffResult& diff_result) {
+  absl::flat_hash_map<const HloInstruction*, Attributes> span_attributes;
+  for (auto& instruction : diff_result.left_module_unmatched_instructions) {
+    span_attributes[instruction] = {"red-highlight"};
+  }
+  for (auto& instruction : diff_result.right_module_unmatched_instructions) {
+    span_attributes[instruction] = {"green-highlight"};
+  }
+  for (const auto& [l_instruction, r_instruction] :
+       diff_result.changed_instructions) {
+    span_attributes[l_instruction] = {
+        "yellow-highlight",
+        absl::StrCat(l_instruction->name(), "::", r_instruction->name())};
+    span_attributes[r_instruction] = {
+        "yellow-highlight",
+        absl::StrCat(l_instruction->name(), "::", r_instruction->name())};
+  }
+  for (const auto& [l_instruction, r_instruction] :
+       diff_result.unchanged_instructions) {
+    span_attributes[l_instruction] = {
+        "", absl::StrCat(l_instruction->name(), "::", r_instruction->name())};
+    span_attributes[r_instruction] = {
+        "", absl::StrCat(l_instruction->name(), "::", r_instruction->name())};
+  }
+  return span_attributes;
+};
+
+// Generates HTML for a single HloComputation with diff highlights.
+std::string PrintHloComputationToHtml(
+    const HloComputation* comp,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes) {
+  if (comp == nullptr) {
+    return "";
+  }
+  StringPrinter printer;
+
+  // Mimic HloComputation::Print structure with default options.
+  printer.Append("%");
+  printer.Append(comp->name());
+  printer.Append(" ");
+  ShapeUtil::PrintHumanString(&printer,
+                              comp->ComputeProgramShape(/*include_ids=*/true));
+  printer.Append(" ");
+  printer.Append("{\n");
+
+  // Print instructions in this computation.
+  {
+    // Options for printing individual instructions.
+    // Default indent_amount + 1 = 1. is_in_nested_computation = true.
+    HloPrintOptions instruction_print_options = HloPrintOptions::Default();
+    instruction_print_options.set_indent_amount(1);
+    instruction_print_options.set_is_in_nested_computation(true);
+
+    CanonicalNameMap name_map;
+    name_map.Reserve(comp->instruction_count());
+
+    // Iterate through instructions in the default order: post-order.
+    std::vector<HloInstruction*> instruction_order =
+        comp->MakeInstructionPostOrder();
+    for (const HloInstruction* instruction : instruction_order) {
+      DCHECK_EQ(comp, instruction->parent());
+
+      auto it = span_attributes.find(instruction);
+      std::string highlight_class =
+          it != span_attributes.end() && !it->second.highlight.empty()
+              ? std::string(it->second.highlight) + " highlighted"
+              : "";
+      std::string diffid =
+          it != span_attributes.end() && !it->second.diffid.empty()
+              ? absl::StrCat("data-diffid=\"",
+                             EscapeStringForHtmlAttribute(it->second.diffid),
+                             "\"")
+              : "";
+      printer.Append(absl::StrCat("<span class=\"hlo-instruction ",
+                                  highlight_class, "\"", diffid, " >"));
+      printer.Append("  ");  // Instruction indentation (2 spaces)
+      if (instruction == comp->root_instruction()) {
+        printer.Append("ROOT ");
+      }
+      instruction->PrintWithCanonicalNameMap(
+          &printer, instruction_print_options, &name_map);
+      printer.Append("</span>");
+    }
+  }
+
+  printer.Append("}");  // Closing brace for computation.
+
+  // Default print_ids is true, so execution thread is printed if not main.
+  if (!comp->IsMainThread()) {
+    printer.Append(", execution_thread=\"");
+    printer.Append(comp->execution_thread());
+    printer.Append("\"");
+  }
+
+  return std::move(printer).ToString();
+}
+
 // Prints a pair of instructions or computations in a text box.
 template <typename T>
-std::string PrintHloTextboxPair(const T* left_node, const T* right_node) {
+std::string PrintHloTextboxPair(
+    const T* left_node, const T* right_node,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes) {
   std::string left_title = "None", right_title = "None", left_text, right_text;
   if (left_node != nullptr) {
     left_title = left_node->name();
-    left_text = left_node->ToString();
+    if constexpr (std::is_same_v<T, HloComputation>) {
+      left_text = PrintHloComputationToHtml(left_node, span_attributes);
+    } else {
+      left_text = left_node->ToString();
+    }
   }
   if (right_node != nullptr) {
     right_title = right_node->name();
-    right_text = right_node->ToString();
+    if constexpr (std::is_same_v<T, HloComputation>) {
+      right_text = PrintHloComputationToHtml(right_node, span_attributes);
+    } else {
+      right_text = right_node->ToString();
+    }
   }
+
   uint64_t fingerprint =
       tsl::Fingerprint64(absl::StrCat(left_text, right_text));
   return PrintDiv(
@@ -392,26 +770,33 @@ template <typename T>
 using DecorationPrinter = std::string(const T*, const T*);
 
 template <typename T>
-std::string PrintNodePairContent(const T* left_node, const T* right_node,
-                                 GraphUrlGenerator* url_generator) {
+std::string PrintNodePairContent(
+    const T* left_node, const T* right_node,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes,
+    GraphUrlGenerator* url_generator) {
   std::string url;
   if (url_generator != nullptr) {
     url = url_generator->GenerateWithSelectedNodes(left_node, right_node);
   }
-  return absl::StrCat(PrintHloTextboxPair(left_node, right_node),
-                      url.empty() ? ""
-                                  : PrintDiv(PrintLink("Model Explorer", url),
-                                             {"model-explorer-url"}));
+  return absl::StrCat(
+      PrintHloTextboxPair(left_node, right_node, span_attributes),
+      url.empty()
+          ? ""
+          : PrintDiv(PrintLink("Model Explorer", url), {"model-explorer-url"}));
 }
 
 // Prints a pair of instructions or computations. If url_generator is not
 // null, a link to the pair of instructions or computations in model
 // explorer will be printed.
 template <typename T>
-std::string PrintNodePair(const T* left_node, const T* right_node,
-                          GraphUrlGenerator* url_generator,
-                          std::optional<absl::FunctionRef<DecorationPrinter<T>>>
-                              decoration_printer = std::nullopt) {
+std::string PrintNodePair(
+    const T* left_node, const T* right_node,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes,
+    GraphUrlGenerator* url_generator,
+    std::optional<absl::FunctionRef<DecorationPrinter<T>>> decoration_printer =
+        std::nullopt) {
   std::vector<std::string> nodes;
   if (left_node != nullptr) {
     nodes.push_back(std::string(left_node->name()));
@@ -425,9 +810,9 @@ std::string PrintNodePair(const T* left_node, const T* right_node,
     decoration =
         PrintSpan((*decoration_printer)(left_node, right_node), {"decoration"});
   }
-  return PrintDetails(
-      absl::StrCat(text, " ", decoration),
-      PrintNodePairContent<T>(left_node, right_node, url_generator));
+  return PrintDetails(absl::StrCat(text, " ", decoration),
+                      PrintNodePairContent<T>(left_node, right_node,
+                                              span_attributes, url_generator));
 }
 
 // The location of the instruction in the diff result.
@@ -442,11 +827,12 @@ std::string PrintInstructionsAsList(
   for (const HloInstruction* inst : instructions) {
     std::string link;
     if (location == InstructionLocation::kLeft) {
-      link = PrintNodePair<HloInstruction>(inst, /*right_node=*/nullptr,
-                                           url_generator);
+      link =
+          PrintNodePair<HloInstruction>(inst, /*right_node=*/nullptr,
+                                        /*span_attributes=*/{}, url_generator);
     } else {
       link = PrintNodePair<HloInstruction>(
-          /*left_node=*/nullptr, inst, url_generator);
+          /*left_node=*/nullptr, inst, /*span_attributes=*/{}, url_generator);
     }
     instructions_list.push_back(link);
   }
@@ -461,7 +847,8 @@ std::string PrintNodePairsAsList(
     std::optional<absl::FunctionRef<DecorationPrinter<T>>> decoration_printer) {
   std::vector<std::string> pair_list;
   for (const auto& pair : node_pairs) {
-    pair_list.push_back(PrintNodePair(pair.first, pair.second, url_generator,
+    pair_list.push_back(PrintNodePair(pair.first, pair.second,
+                                      /*span_attributes=*/{}, url_generator,
                                       decoration_printer));
   }
   return PrintList(pair_list);
@@ -640,7 +1027,7 @@ std::string PrintUnmatchedMetricsDiff(
       right_inst = inst;
     }
     metrics_diff_list.push_back(PrintNodePair<HloInstruction>(
-        left_inst, right_inst, url_generator,
+        left_inst, right_inst, /*span_attributes=*/{}, url_generator,
         [&metrics_diff](const HloInstruction* inst,
                         const HloInstruction*) -> std::string {
           return absl::StrFormat("%.2f (us)", metrics_diff / 1e6);
@@ -679,7 +1066,7 @@ std::string PrintMatchedMetricsDiff(
     const HloInstruction* right_inst = entry.first.second;
     double metrics_diff = entry.second;
     metrics_diff_list.push_back(PrintNodePair<HloInstruction>(
-        left_inst, right_inst, url_generator,
+        left_inst, right_inst, /*span_attributes=*/{}, url_generator,
         [&metrics_diff](const HloInstruction* left_inst,
                         const HloInstruction* right_inst) -> std::string {
           return absl::StrFormat("%+.2f (us)", metrics_diff / 1e6);
@@ -747,8 +1134,11 @@ std::string PrintDiffMetrics(const DiffMetrics& diff_metrics) {
 }
 
 // Prints the computation summary
-std::string PrintComputationSummary(const ComputationDiffPattern& diff_pattern,
-                                    GraphUrlGenerator* url_generator) {
+std::string PrintComputationSummary(
+    const ComputationDiffPattern& diff_pattern,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes,
+    GraphUrlGenerator* url_generator) {
   const ComputationGroup& sample = diff_pattern.computation_groups[0];
   // We only support unmatched computation and one-to-one computation pairs.
   if (sample.left_computations.size() > 1 ||
@@ -769,7 +1159,7 @@ std::string PrintComputationSummary(const ComputationDiffPattern& diff_pattern,
             ? nullptr
             : computation_group.right_computations[0];
     computation_pair_list[i - 1] = PrintNodePair<HloComputation>(
-        left_computation, right_computation, url_generator);
+        left_computation, right_computation, span_attributes, url_generator);
   }
   const HloComputation* left_computation =
       sample.left_computations.empty() ? nullptr : sample.left_computations[0];
@@ -777,8 +1167,8 @@ std::string PrintComputationSummary(const ComputationDiffPattern& diff_pattern,
                                                 ? nullptr
                                                 : sample.right_computations[0];
   std::vector<std::string> contents;
-  contents.push_back(
-      PrintNodePairContent(left_computation, right_computation, url_generator));
+  contents.push_back(PrintNodePairContent(left_computation, right_computation,
+                                          span_attributes, url_generator));
   if (!computation_pair_list.empty()) {
     contents.push_back(
         PrintDetails(absl::StrFormat("%d other similar computations",
@@ -801,6 +1191,8 @@ std::string PrintComputationSummary(const ComputationDiffPattern& diff_pattern,
 // Prints the summary of the repetitive diff patterns.
 std::string PrintRepetitiveDiffPatterns(
     absl::Span<const ComputationDiffPattern> diff_patterns,
+    const absl::flat_hash_map<const HloInstruction*, Attributes>&
+        span_attributes,
     GraphUrlGenerator* url_generator) {
   // Sort the diff patterns by the number of computations in each group in
   // descending order.
@@ -826,8 +1218,9 @@ std::string PrintRepetitiveDiffPatterns(
       });
   std::string computation_group_list;
   for (const ComputationDiffPattern& diff_pattern : sorted_diff_patterns) {
-    absl::StrAppend(&computation_group_list,
-                    PrintComputationSummary(diff_pattern, url_generator));
+    absl::StrAppend(
+        &computation_group_list,
+        PrintComputationSummary(diff_pattern, span_attributes, url_generator));
   }
   return computation_group_list;
 }
@@ -844,6 +1237,9 @@ void RenderHtml(const DiffResult& diff_result, const DiffSummary& diff_summary,
 
   DiffResult filtered_diff_result =
       FilterDiffResultByOpcode(diff_result, ignored_opcodes);
+
+  absl::flat_hash_map<const HloInstruction*, Attributes> span_attributes =
+      GenerateSpanAttributes(diff_result);
 
   out << PrintCss() << PrintJavascript();
 
@@ -879,9 +1275,10 @@ void RenderHtml(const DiffResult& diff_result, const DiffSummary& diff_summary,
 
   // Print repetitive computation groups
   out << PrintSectionWithHeader(
-      "Diffs grouped by computation (Ordered by # of different instructions)",
+      "Diffs grouped by computation (Ordered by # of different instructions) " +
+          PrintButton("toggleButton", "Hide Unchanged Instructions"),
       PrintRepetitiveDiffPatterns(diff_summary.computation_diff_patterns,
-                                  url_generator));
+                                  span_attributes, url_generator));
 
   // Print full diff results
   out << PrintSectionWithHeader(
@@ -908,6 +1305,10 @@ void RenderHtml(const DiffResult& diff_result, const DiffSummary& diff_summary,
                               filtered_diff_result.changed_instructions.size()),
               PrintChangedInstructions(
                   filtered_diff_result.changed_instructions, url_generator))));
+
+  out << PrintSystemMessagePlaceholder();
+  out << PrintJavascriptForHoverEvent();
+  out << PrintJavascriptForToggleButton();
 }
 
 }  // namespace hlo_diff

@@ -24,6 +24,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -68,7 +69,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -401,8 +401,9 @@ GetPossibleMatmulAutotuneTritonConfigs(
     const se::CudaComputeCapability& compute_capability,
     const se::SemanticVersion& toolkit_version,
     const DebugOptions& debug_options) {
-  se::DeviceDescription device_description(
-      se::GpuDeviceInfoProto::default_instance());
+  TF_ASSIGN_OR_RETURN(se::DeviceDescription device_description,
+                      se::DeviceDescription::FromProto(
+                          se::GpuDeviceInfoProto::default_instance()));
   device_description.set_gpu_compute_capability(compute_capability);
   // Using H100 numbers as the most relevant example here.
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/#features-and-technical-specifications-technical-specifications-per-compute-capability
@@ -552,10 +553,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: reduce
 ; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: kCustom
-; CHECK-NEXT: {{kLoop|kInput}}
+; CHECK: ROOT {{.*}} fusion({{.*}}), kind=kLoop
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));
@@ -578,9 +576,14 @@ ENTRY e {
 })";
 
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: f{{(16|32)}}[3,55,20]
-; CHECK: {"block_m":16,"block_n":64,"block_k":32,"split_k":3,"num_stages":1,"num_warps":2,"num_ctas":1}
-; CHECK: f16[55,20]{1,0} {{(reduce|fusion)}}
+; CHECK: f16[55,3,40]{2,1,0} fusion
+; CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
+; CHECK-SAME: "sizes":["16","1","32"]
+; CHECK: f16[3,40,20]{2,1,0} fusion
+; CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
+; CHECK-SAME: "sizes":["1","32","64"]
+; CHECK: ENTRY
+; CHECK: ROOT {{.*}} f16[55,20]{1,0} fusion({{.*}}), kind=kLoop
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -733,7 +736,7 @@ ENTRY main {
       DeviceOrDevicelessConfig{DeviceConfig{backend().default_stream_executor(),
                                             backend().memory_allocator()}},
       opts);
-  AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
+  AutotuneCacheKey cache_key(autotune_config.GetDeviceDescription(),
                              *module->entry_computation()->root_instruction());
 
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
@@ -1469,7 +1472,7 @@ TEST_F(
 
   const int kProcessCount = 2;
   AutotuneConfig autotune_config = GetAutotuneConfigForTest();
-  AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
+  AutotuneCacheKey cache_key(autotune_config.GetDeviceDescription(),
                              *module->entry_computation()->root_instruction());
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
                           GetDummyAutotuneResultsForCacheKey(cache_key));
@@ -1553,7 +1556,7 @@ TEST_F(
 
   const int kProcessCount = 2;
   AutotuneConfig autotune_config = GetAutotuneConfigForTest();
-  AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
+  AutotuneCacheKey cache_key(autotune_config.GetDeviceDescription(),
                              *module1->entry_computation()->root_instruction());
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
                           GetDummyAutotuneResultsForCacheKey(cache_key));
@@ -1610,7 +1613,7 @@ TEST_F(GemmFusionAutotunerTest, RewritesGemmFusionToCustomKernelFusion) {
       DeviceOrDevicelessConfig{DeviceConfig{backend().default_stream_executor(),
                                             backend().memory_allocator()}},
       opts);
-  AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
+  AutotuneCacheKey cache_key(autotune_config.GetDeviceDescription(),
                              *module->entry_computation()->root_instruction());
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,
                           GetDummyAutotuneResultsForCacheKey(cache_key));
@@ -1767,6 +1770,43 @@ TEST_F(GemmFusionAutotunerEnableTma,
         [](const TritonGemmConfig& config) { return config.is_tma_allowed; });
   };
   EXPECT_EQ(count_tma_allowed(hopper_configs), hopper_configs.size() / 2);
+
+  EXPECT_TRUE(RunAndCompare(std::move(module),
+                            ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
+}
+
+TEST_F(GemmFusionAutotunerEnableTma,
+       TmaConfigsGeneratedAndRunCorrectlyForDotsOfBroadcasts) {
+  if (isRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
+
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+    ENTRY e {
+      p0 = f32[64] parameter(0)
+      p0b = f32[64,64] broadcast(p0), dimensions={0}
+      p1 = f32[64,64] parameter(1)
+      ROOT r = f32[64,64] dot(p0b, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })")
+                                                  .value();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> hopper_configs,
+      GetPossibleMatmulAutotuneTritonConfigs(
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          se::CudaComputeCapability(se::CudaComputeCapability::kHopper, 0),
+          GetToolkitVersion(), GetDebugOptionsForTest()));
+
+  auto is_disallowed_tma_config = [](const TritonGemmConfig& c) {
+    return c.num_stages > 2 && c.is_tma_allowed;
+  };
+  auto is_allowed_tma_config = [](const TritonGemmConfig& c) {
+    return c.num_stages <= 2 && c.is_tma_allowed;
+  };
+  EXPECT_FALSE(absl::c_any_of(hopper_configs, is_disallowed_tma_config));
+  EXPECT_TRUE(absl::c_any_of(hopper_configs, is_allowed_tma_config));
 
   EXPECT_TRUE(RunAndCompare(std::move(module),
                             ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));

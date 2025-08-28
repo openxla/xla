@@ -704,9 +704,9 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
     return false;
   }
 
-  const HloInstruction* while_init = while_op->mutable_operand(0);
-  const HloComputation* while_body = while_op->while_body();
-  const HloInstruction* while_body_root = while_body->root_instruction();
+  HloInstruction* while_init = while_op->mutable_operand(0);
+  HloComputation* while_body = while_op->while_body();
+  HloInstruction* while_body_root = while_body->root_instruction();
 
   if (!while_init->shape().IsTuple() ||
       while_init->opcode() != HloOpcode::kTuple) {
@@ -746,8 +746,27 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
     const HloInstruction* init_elem = while_init->operand(index);
     if (gte_at_index(body_elem, index)) {
       init_to_indices[init_elem].push_back(index);
-    } else if (body_elem->opcode() == HloOpcode::kDynamicUpdateSlice &&
-               gte_at_index(body_elem->operand(0), index)) {
+    }
+  }
+
+  // Only keep one index for each equivalence set.
+  HloInstruction* original_while_op = while_op;
+  TF_ASSIGN_OR_RETURN(
+      while_op, RemoveRepeatedWhileTupleIndices(while_op, init_to_indices,
+                                                /*replace_with_init=*/true));
+
+  // In theory, we could handle the "simple" case and the "dynamic-update-slice"
+  // case in one go, but it's probably not worth the added complexity, so do it
+  // separately.
+  while_init = while_op->mutable_operand(0);
+  while_body = while_op->while_body();
+  while_body_root = while_body->root_instruction();
+  for (int index = 0; index < while_init->shape().tuple_shapes().size();
+       ++index) {
+    const HloInstruction* body_elem = while_body_root->operand(index);
+    const HloInstruction* init_elem = while_init->operand(index);
+    if (body_elem->opcode() == HloOpcode::kDynamicUpdateSlice &&
+        gte_at_index(body_elem->operand(0), index)) {
       const HloDynamicIndexInstruction* dus =
           Cast<HloDynamicIndexInstruction>(body_elem);
       dus_key_to_indices[RepeatedWhileTupleIndicesKey{
@@ -758,16 +777,6 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
           .push_back(index);
     }
   }
-
-  // Only keep one index for each equivalence set.
-  // In theory, we could handle the "simple" case and the "dynamic-update-slice"
-  // case in one go, but it's probably not worth the added complexity, so do it
-  // seprately.
-  HloInstruction* original_while_op = while_op;
-  TF_ASSIGN_OR_RETURN(
-      while_op, RemoveRepeatedWhileTupleIndices(while_op, init_to_indices,
-                                                /*replace_with_init=*/true));
-  // TODO: Do something about replace_with_init.
   TF_ASSIGN_OR_RETURN(
       while_op, RemoveRepeatedWhileTupleIndices(while_op, dus_key_to_indices,
                                                 /*replace_with_init=*/false));

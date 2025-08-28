@@ -25,8 +25,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/transforms/import/passes.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/spmd/shardy/round_trip_common/export_named_computations.h"
 #include "xla/service/spmd/shardy/round_trip_common/pipeline_passes.h"
+#include "xla/service/spmd/shardy/sdy_round_trip/clone_manual_computation_calls.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/dedup_meshes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardy_attrs.h"
@@ -49,7 +49,6 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
     pm.addPass(mlir::sdy::createLiftInlinedMeshesPass());
   }
   pm.addPass(createSdyRoundTripDedupMeshesPass());
-  pm.addPass(createExportNamedComputationsPass());
   pm.addPass(createSdyRoundTripExportOpsPass());
   pm.addPass(createSdyRoundTripShardMapExportPass());
   // Preserve the SDY shardings for `createExportStablehloShardingsPass` so that
@@ -61,12 +60,15 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
 
 void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport,
-                                   bool importOnlyUninlineableFuncCalls,
+                                   bool importFuncCalls,
                                    bool liftAndDedupMeshes) {
   addCommonPreImportPasses(pm, enableConstantImport);
   pm.addPass(createSdyRoundTripImportShardyAttrsPass());
+  // TODO(b/430894772): Drop the pass and handle cloning inside shard map import
+  // pass.
+  pm.addPass(createSdyRoundTripCloneManualComputationCallsPass());
   pm.addPass(createSdyRoundTripShardMapImportPass());
-  addCommonPostImportPasses(pm, importOnlyUninlineableFuncCalls);
+  addCommonPostImportPasses(pm, importFuncCalls);
   if (liftAndDedupMeshes) {
     // Lift and dedup meshes required here because of sdy shardings added
     // directly to hlo in tf2xla.
@@ -107,11 +109,9 @@ struct SdyRoundTripImportPipelineOptions
   Option<bool> enableConstantImport{*this, "enable-constant-import",
                                     llvm::cl::desc("Enable constant import."),
                                     llvm::cl::init(true)};
-  // TODO(b/430894772): Drop the flag and import all func calls always.
-  Option<bool> importOnlyUninlineableFuncCalls{
-      *this, "import-only-uninlineable-func-calls",
-      llvm::cl::desc("Import only unlineable func calls."),
-      llvm::cl::init(true)};
+  Option<bool> importFuncCalls{*this, "import-func-calls",
+                               llvm::cl::desc("Import func calls."),
+                               llvm::cl::init(false)};
   Option<bool> liftAndDedupMeshes{*this, "lift-and-dedup-meshes",
                                   llvm::cl::desc("Lift and dedup meshes."),
                                   llvm::cl::init(false)};
@@ -120,7 +120,7 @@ struct SdyRoundTripImportPipelineOptions
 void sdyRoundTripImportPipeline(
     mlir::OpPassManager& pm, const SdyRoundTripImportPipelineOptions& options) {
   addSdyRoundTripImportPipeline(pm, options.enableConstantImport,
-                                options.importOnlyUninlineableFuncCalls,
+                                options.importFuncCalls,
                                 options.liftAndDedupMeshes);
 }
 

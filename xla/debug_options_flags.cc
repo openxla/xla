@@ -406,6 +406,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
+  opts.set_xla_gpu_experimental_autotuner_cache_dir("");
+
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
   opts.set_xla_enable_command_buffers_during_profiling(false);
@@ -445,7 +447,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
-  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(false);
+  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
   return opts;
@@ -677,6 +679,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->set_xla_partitioning_algorithm(partitioning_algorithm);
         return true;
       };
+
+  // Custom "sub-parser" lambda for xla_gpu_graph_level.
+  auto setter_for_xla_gpu_graph_level = [debug_options](const int32_t level) {
+    debug_options->clear_xla_gpu_enable_command_buffer();
+    if (level >= 1) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+    }
+    if (level >= 2) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+    }
+    if (level >= 3) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    }
+    return true;
+  };
 
   auto command_types_to_string =
       [](tsl::protobuf::RepeatedField<int> command_types) -> std::string {
@@ -1106,7 +1123,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "  `XNN_GRAPH_FUSION_MODE_GREEDY` - greedy extraction of "
       "XNNPACK-compatible subgraphs starting from root instructions,\n"
       "  `XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY` - same as GREEDY plus "
-      "operations that are only supported with slinky."));
+      "operations that are only supported with slinky,"
+      "  `XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL` - test-only value for "
+      "disabling XNNPACK cost models."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_parallel_codegen_split_count",
       int32_setter_for(&DebugOptions::set_xla_cpu_parallel_codegen_split_count),
@@ -1586,6 +1605,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_collectives_use_persistent_cliques),
       debug_options->xla_gpu_collectives_use_persistent_cliques(),
       "Use persistent per-process XLA:GPU collectives cliques"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_graph_level", setter_for_xla_gpu_graph_level, 1,
+      "The legacy flag for setting GPU graph level. Use "
+      "xla_gpu_enable_command_buffer in new use cases. 0 = off; 1 = capture "
+      "fusions and memcpys; 2 = capture gemms; 3 = capture convolutions."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_command_buffer",
       SetterForRepeatedEnum<DebugOptions::CommandBufferCmdType>(

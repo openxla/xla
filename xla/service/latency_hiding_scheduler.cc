@@ -659,7 +659,8 @@ void AsyncTracker::SetConcurrentResourceLimits(
        GetTargetDefinedResourceTypeBegin() + GetNumTargetDefinedResources();
        ++resource_type) {
     CHECK_GT(GetNumAvailableResources(resource_type), 0)
-        << "Target-defined resource with id " << resource_type
+        << "Target-defined resource " << GetResourceName(resource_type)
+        << " with id " << resource_type
         << " has a concurrency limit of 0. Please set it to a positive value "
            "by making sure GetNumTargetDefinedResources returns the correct "
            "limit.";
@@ -1255,10 +1256,24 @@ class ReadySetLt {
     // the heuristic algorithm.
     CMP_PROPERTY(GetPreference(), "kPreference");
 
+    const SchedulerConfig& config = sched_state_.config;
+    if (config.force_delay_over_memory_pressure) {
+      if (ABSL_PREDICT_FALSE(has_early_target_scheduling_rule_)) {
+        if (auto value = InvokeTargetSchedulingFunction(
+                early_target_scheduling_rule_, a, b, reason)) {
+          return *value;
+        }
+      }
+
+      // Schedule according to ForceDelayAfterTarget when we executed the
+      // early target scheduling rule.
+      CMP_EXPLICIT(!an->GetForceDelayAfterTarget(),
+                   !bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
+    }
+
     std::pair<int64_t, int64_t> a_increase = {0, 0};
     std::pair<int64_t, int64_t> b_increase = {0, 0};
     bool computed_memory_increases = true;
-
     if (config_has_memory_limit_ &&
         sched_state_.memory_pressure_tracker->memory_usage() >
             (config_memory_limit_ / 2)) {
@@ -1272,21 +1287,20 @@ class ReadySetLt {
       }
     }
 
-    const SchedulerConfig& config = sched_state_.config;
-    const bool aggressive_scheduling_policies =
-        config.aggressive_scheduling_policies;
-
-    if (ABSL_PREDICT_FALSE(has_early_target_scheduling_rule_)) {
-      if (auto value = InvokeTargetSchedulingFunction(
-              early_target_scheduling_rule_, a, b, reason)) {
-        return *value;
+    if (!config.force_delay_over_memory_pressure) {
+      if (ABSL_PREDICT_FALSE(has_early_target_scheduling_rule_)) {
+        if (auto value = InvokeTargetSchedulingFunction(
+                early_target_scheduling_rule_, a, b, reason)) {
+          return *value;
+        }
       }
+
+      // Schedule according to ForceDelayAfterTarget when we executed the
+      // early target scheduling rule.
+      CMP_EXPLICIT(!an->GetForceDelayAfterTarget(),
+                   !bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
     }
 
-    // Schedule according to ForceDelayAfterTarget when we executed the
-    // early target scheduling rule.
-    CMP_EXPLICIT(!an->GetForceDelayAfterTarget(),
-                 !bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget");
     // Some heuristic that try to prioritize unlocking "done" instructions
     // so that we can perform overlap. More fancy heuristics can be used by
     // discovering the closest "done" to every instruction and prioritize
@@ -1311,7 +1325,8 @@ class ReadySetLt {
         return *value;
       }
     }
-
+    const bool aggressive_scheduling_policies =
+        config.aggressive_scheduling_policies;
     if (aggressive_scheduling_policies &&
         config.prioritize_async_depth_over_stall) {
       // If an instruction releasing a resource is not resource constrained and

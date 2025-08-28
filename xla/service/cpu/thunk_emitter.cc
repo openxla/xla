@@ -224,6 +224,34 @@ absl::StatusOr<std::string> GetFusionFingerprint(
 
 }  // namespace
 
+static FusionCompiler::CompilationHooks FusionCompilerHooks(
+    const HloModule& hlo_module) {
+  if (!DumpingEnabledForHloModule(hlo_module)) {
+    return {};
+  }
+
+  auto callback_factory = [&hlo_module](std::string stage_name) {
+    return [&hlo_module, stage_name](mlir::ModuleOp module) {
+      std::optional<llvm::StringRef> name = module.getName();
+      if (!name.has_value()) {
+        return;
+      }
+
+      DumpToFileInDirOrStdout(
+          hlo_module, "",
+          absl::StrCat(absl::string_view(*name), "-", stage_name, ".mlir"),
+          mlir::debugString(module));
+    };
+  };
+
+  FusionCompiler::CompilationHooks hooks;
+  hooks.pre_optimization = callback_factory("pre-optimization");
+  hooks.post_optimization = callback_factory("post-optimization");
+  hooks.post_lowering = callback_factory("post-lowering");
+
+  return hooks;
+}
+
 static FusionCompiler::Options FusionCompilerOptions(
     const HloModuleConfig& config) {
   const DebugOptions& debug_options = config.debug_options();
@@ -237,28 +265,8 @@ static FusionCompiler FusionCompilerFactory(mlir::MLIRContext* context,
                                             const HloModule& hlo_module) {
   FusionCompiler::Options options = FusionCompilerOptions(hlo_module.config());
 
-  FusionCompiler::CompilationHooks hooks;
-  if (DumpingEnabledForHloModule(hlo_module)) {
-    auto callback_factory = [&hlo_module](std::string stage_name) {
-      return [&hlo_module, stage_name](mlir::ModuleOp module) {
-        std::optional<llvm::StringRef> name = module.getName();
-        if (!name.has_value()) {
-          return;
-        }
-
-        DumpToFileInDirOrStdout(
-            hlo_module, "",
-            absl::StrCat(absl::string_view(*name), "-", stage_name, ".mlir"),
-            mlir::debugString(module));
-      };
-    };
-
-    hooks.pre_optimization = callback_factory("pre-optimization");
-    hooks.post_optimization = callback_factory("post-optimization");
-    hooks.post_lowering = callback_factory("post-lowering");
-  }
-
-  return FusionCompiler(context, std::move(options), std::move(hooks));
+  return FusionCompiler(context, std::move(options),
+                        FusionCompilerHooks(hlo_module));
 }
 
 ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
@@ -277,7 +285,7 @@ ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
       fusion_compiler_(FusionCompilerFactory(mlir_context_.get(), hlo_module)),
       parallel_fusion_emitter_(
           thread_pool, FusionCompilerOptions(hlo_module_config_),
-          &buffer_assignment,
+          FusionCompilerHooks(hlo_module), &buffer_assignment,
           hlo_module_config_.debug_options()
               .xla_cpu_generate_unique_c_style_kernel_entry_points()) {}
 
@@ -1149,17 +1157,21 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       // Decide whether to use XNNPACK or Eigen.
       bool use_xnn = hlo_module_config_.debug_options().xla_cpu_use_xnnpack();
       if (use_xnn) {
+        const bool use_cost_model =
+            hlo_module_config_.debug_options()
+                .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+            DebugOptions::XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL;
         TF_ASSIGN_OR_RETURN(
-            use_xnn, IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
-                                         instruction->shape(),
-                                         &target_machine_features_));
+            use_xnn,
+            IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
+                                instruction->shape(), &target_machine_features_,
+                                use_cost_model));
       }
 
       if (use_xnn) {
-        XnnDotThunk::Options options = {XnnShouldUseThreadPool(instruction)};
         bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(rhs);
         return ThunkSequence::Of<XnnDotThunk>(
-            std::move(options), ThunkInfo(instruction), dnums, lhs_slice,
+            XnnDotThunk::Options{}, ThunkInfo(instruction), dnums, lhs_slice,
             lhs->shape(), rhs_slice, rhs->shape(), out_slice,
             instruction->shape(), capture_rhs);
       } else {
@@ -1526,9 +1538,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitXnnFusionThunk(
   // Construct XNNPACK subgraph builder from the fusion computation.
   TF_ASSIGN_OR_RETURN(auto builder, EmitXnnFusionBuilder(computation));
 
-  XnnFusionThunk::Options options = {XnnShouldUseThreadPool(computation)};
   return ThunkSequence::Of<XnnFusionThunk>(
-      std::move(options), ThunkInfo(instruction), std::move(arguments),
+      XnnFusionThunk::Options{}, ThunkInfo(instruction), std::move(arguments),
       std::move(results),
       [b = std::move(builder)](auto, auto) mutable { return b(); });
 }

@@ -373,11 +373,11 @@ absl::Status runShardingPropagation(HloModule* hloModule,
         /*allowPropagationToResults=*/
         spanToArrayRef(
             hloModule->config().allow_spmd_sharding_propagation_to_output()),
-        /*importOnlyUninlineableFuncCalls=*/false);
+        /*importFuncCalls=*/true);
   } else {
     // This branch is in production.
     addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
-                                  /*importOnlyUninlineableFuncCalls=*/false,
+                                  /*importFuncCalls=*/true,
                                   /*liftAndDedupMeshes=*/true);
   }
 

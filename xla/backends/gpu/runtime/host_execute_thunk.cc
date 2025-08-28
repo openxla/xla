@@ -78,6 +78,16 @@ bool IsBufferOnDevice(se::Stream* stream, const void* ptr) {
   return memory_type.ok() && *memory_type == se::MemoryType::kDevice;
 }
 
+// We ignore memory spaces in shape comparison since the memory can be on device
+// or host, and both are valid for the host offloading case.
+// If the memory is on device we copy it to host memory, and if it is on host
+// memory we use it as is.
+bool CompareShapesIgnoringMemorySpace(const Shape& shape1,
+                                      const Shape& shape2) {
+  auto eq = Shape::Equal().IgnoreMemorySpaceInLayout();
+  return eq(shape1, shape2);
+}
+
 class HostExecuteCallFrame {
  public:
   static absl::StatusOr<HostExecuteCallFrame> Create(
@@ -127,12 +137,14 @@ absl::Status HostExecuteCallFrame::ValidateArgsAndResults(
     absl::Span<const HostExecuteStartThunk::SliceAndShape> args,
     absl::Span<const HostExecuteStartThunk::SliceAndShape> results,
     const ProgramShape& program_shape) {
+  tsl::profiler::TraceMe trace("HostExecuteCallFrame::ValidateArgsAndResults");
   if (args.size() != program_shape.parameters_size()) {
     return InvalidArgument("Number of arguments does not match program shape.");
   }
 
   for (int i = 0; i < args.size(); ++i) {
-    if (args[i].shape != program_shape.parameters(i)) {
+    if (!CompareShapesIgnoringMemorySpace(args[i].shape,
+                                          program_shape.parameters(i))) {
       return InvalidArgument(
           "Argument shape %s does not match program shape %s.",
           args[i].shape.ToString(/*print_layout=*/true),
@@ -144,7 +156,8 @@ absl::Status HostExecuteCallFrame::ValidateArgsAndResults(
 
   if (program_result_shape.IsTuple()) {
     for (int i = 0; i < results.size(); ++i) {
-      if (results[i].shape != program_result_shape.tuple_shapes(i)) {
+      if (!CompareShapesIgnoringMemorySpace(
+              results[i].shape, program_result_shape.tuple_shapes(i))) {
         return InvalidArgument(
             "Result shape %s does not match program shape %s at index %d.",
             results[i].shape.ToString(/*print_layout=*/true),
@@ -166,7 +179,8 @@ absl::Status HostExecuteCallFrame::ValidateArgsAndResults(
         program_result_shape.ToString(/*print_layout=*/true), results.size());
   }
 
-  if (results[0].shape != program_shape.result()) {
+  if (!CompareShapesIgnoringMemorySpace(results[0].shape,
+                                        program_shape.result())) {
     return InvalidArgument(
         "Result shape %s does not match program shape %s.",
         results[0].shape.ToString(/*print_layout=*/true),
@@ -183,6 +197,7 @@ absl::StatusOr<HostExecuteCallFrame> HostExecuteCallFrame::Create(
     absl::Span<HostExecuteStartThunk::SliceAndShape> args,
     absl::Span<HostExecuteStartThunk::SliceAndShape> results,
     const ProgramShape& program_shape) {
+  tsl::profiler::TraceMe trace("HostExecuteCallFrame::Create");
   TF_RETURN_IF_ERROR(ValidateArgsAndResults(args, results, program_shape));
 
   std::vector<ShapeTree<HostOffloadingBuffer>> parameters;
@@ -190,26 +205,30 @@ absl::StatusOr<HostExecuteCallFrame> HostExecuteCallFrame::Create(
   parameters.reserve(args.size());
   buffers.reserve(args.size() + results.size());
 
-  for (const auto& [slice, shape] : args) {
-    auto buffer_allocation = buffer_allocations->GetDeviceAddress(slice);
-    if (IsBufferOnDevice(device_to_host_stream, buffer_allocation.opaque())) {
-      // Copy device memory to host memory.
-      TF_ASSIGN_OR_RETURN(
-          buffers.emplace_back(),
-          allocator.AllocateTransferBuffer(ShapeUtil::ByteSizeOf(shape)));
+  {
+    tsl::profiler::TraceMe trace(
+        "HostExecuteCallFrame::Create Allocating Args");
+    for (const auto& [slice, shape] : args) {
+      auto buffer_allocation = buffer_allocations->GetDeviceAddress(slice);
+      if (IsBufferOnDevice(device_to_host_stream, buffer_allocation.opaque())) {
+        // Copy device memory to host memory.
+        TF_ASSIGN_OR_RETURN(
+            buffers.emplace_back(),
+            allocator.AllocateTransferBuffer(ShapeUtil::ByteSizeOf(shape)));
 
-      parameters.push_back(ShapeTree<HostOffloadingBuffer>(
-          shape, HostOffloadingBuffer(buffers.back()->untyped_data(),
-                                      buffers.back()->size_bytes())));
+        parameters.push_back(ShapeTree<HostOffloadingBuffer>(
+            shape, HostOffloadingBuffer(buffers.back()->untyped_data(),
+                                        buffers.back()->size_bytes())));
 
-      TF_RETURN_IF_ERROR(device_to_host_stream->Memcpy(
-          buffers.back()->untyped_data(), buffer_allocation,
-          buffers.back()->size_bytes()));
-    } else {
-      // We don't allocate as buffer is already in host memory.
-      parameters.push_back(ShapeTree<HostOffloadingBuffer>(
-          shape, HostOffloadingBuffer(buffer_allocation.opaque(),
-                                      buffer_allocation.size())));
+        TF_RETURN_IF_ERROR(device_to_host_stream->Memcpy(
+            buffers.back()->untyped_data(), buffer_allocation,
+            buffers.back()->size_bytes()));
+      } else {
+        // We don't allocate as buffer is already in host memory.
+        parameters.push_back(ShapeTree<HostOffloadingBuffer>(
+            shape, HostOffloadingBuffer(buffer_allocation.opaque(),
+                                        buffer_allocation.size())));
+      }
     }
   }
 
@@ -217,20 +236,24 @@ absl::StatusOr<HostExecuteCallFrame> HostExecuteCallFrame::Create(
 
   size_t result_leaf_index = 0;
 
-  for (auto& [index, result_buffer] : result.leaves()) {
-    const auto& [slice, shape] = results[result_leaf_index++];
-    auto buffer_allocation = buffer_allocations->GetDeviceAddress(slice);
+  {
+    tsl::profiler::TraceMe trace(
+        "HostExecuteCallFrame::Create Allocating Results");
+    for (auto& [index, result_buffer] : result.leaves()) {
+      const auto& [slice, shape] = results[result_leaf_index++];
+      auto buffer_allocation = buffer_allocations->GetDeviceAddress(slice);
 
-    if (IsBufferOnDevice(host_to_device_stream, buffer_allocation.opaque())) {
-      TF_ASSIGN_OR_RETURN(
-          buffers.emplace_back(),
-          allocator.AllocateTransferBuffer(ShapeUtil::ByteSizeOf(shape)));
-      result_buffer = HostOffloadingBuffer(buffers.back()->untyped_data(),
-                                           buffers.back()->size_bytes());
-    } else {
-      // We don't allocate as buffer is already in host memory.
-      result_buffer = HostOffloadingBuffer(buffer_allocation.opaque(),
-                                           buffer_allocation.size());
+      if (IsBufferOnDevice(host_to_device_stream, buffer_allocation.opaque())) {
+        TF_ASSIGN_OR_RETURN(
+            buffers.emplace_back(),
+            allocator.AllocateTransferBuffer(ShapeUtil::ByteSizeOf(shape)));
+        result_buffer = HostOffloadingBuffer(buffers.back()->untyped_data(),
+                                             buffers.back()->size_bytes());
+      } else {
+        // We don't allocate as buffer is already in host memory.
+        result_buffer = HostOffloadingBuffer(buffer_allocation.opaque(),
+                                             buffer_allocation.size());
+      }
     }
   }
 
@@ -254,6 +277,7 @@ HostExecuteCallFrame::HostExecuteCallFrame(
       allocated_buffers_(std::move(buffers)) {}
 
 absl::Status HostExecuteCallFrame::PublishResult() && {
+  tsl::profiler::TraceMe trace("HostExecuteCallFrame::PublishResult");
   size_t result_leaf_index = 0;
   for (const auto& [index, buffer] : result_.leaves()) {
     auto result_buffer = buffer_allocations_->GetDeviceAddress(
@@ -287,6 +311,7 @@ absl::Status HostExecuteCallFrame::PublishResult() && {
 absl::StatusOr<HostExecuteAsyncEvents::HostExecuteEvent>
 HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
                                     RunId run_id) {
+  tsl::profiler::TraceMe trace("HostExecuteAsyncEvents::CreateEvent");
   VLOG(6) << "Adding event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 
@@ -311,6 +336,7 @@ HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
 absl::StatusOr<HostExecuteAsyncEvents::HostExecuteEvent>
 HostExecuteAsyncEvents::ExtractEvent(se::StreamExecutor* executor,
                                      RunId run_id) {
+  tsl::profiler::TraceMe trace("HostExecuteAsyncEvents::ExtractEvent");
   VLOG(6) << "Extracting event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 

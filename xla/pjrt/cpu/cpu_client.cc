@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/dump/dump.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -589,6 +590,8 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCpuClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
+  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module, topology_));
+
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
@@ -1321,7 +1324,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     TrackedCpuDeviceBuffer* tracked_buffer;
     auto get_buffer = [&](int i) -> absl::Status {
       bool must_donate = donate_it != parameters_that_must_be_donated_.end() &&
-                         *donate_it == i;
+                         *donate_it == i &&
+                         !options.non_donatable_input_indices.contains(i);
       TF_RETURN_IF_ERROR(TestBufferDonationClashes(
           cpu_buffer, donation_clashes, must_donate, i, replica, partition));
       if (must_donate) {
@@ -1535,6 +1539,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
           cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
 
+      std::optional<cpu::Thunk::XnnParams> xnn_params;
+      if (cpu_executable->has_xnn_fusions()) {
+        TF_ASSIGN_OR_RETURN(xnn_params,
+                            cpu::Thunk::XnnParams::Create(&run_options));
+      }
+
       cpu::ThreadPoolTaskRunner task_runner(
           run_options.intra_op_thread_pool()->getPool());
 
@@ -1545,7 +1555,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           run_options.intra_op_thread_pool(),
           &task_runner,
           &collective_params,
-          &custom_call_execute_params};
+          &custom_call_execute_params,
+          xnn_params ? &*xnn_params : nullptr};
 
       thunks_execute_event = cpu_executable->thunks().Execute(execute_params);
 
@@ -1658,6 +1669,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                 custom_call_params =
                     cpu::Thunk::CustomCallExecuteParams::Create(&run_options);
 
+            absl::StatusOr<std::optional<cpu::Thunk::XnnParams>> xnn_params(
+                std::nullopt);
+            if (cpu_executable->has_xnn_fusions()) {
+              xnn_params = cpu::Thunk::XnnParams::Create(&run_options);
+            }
+
             cpu::ThreadPoolTaskRunner task_runner(
                 run_options.intra_op_thread_pool()->getPool());
 
@@ -1669,7 +1686,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                   run_options.intra_op_thread_pool(),
                   &task_runner,
                   &*collective_params,
-                  &*custom_call_params};
+                  &*custom_call_params,
+                  *xnn_params ? &**xnn_params : nullptr};
 
               auto thunks_execute_event =
                   cpu_executable->thunks().Execute(execute_params);

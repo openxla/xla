@@ -380,6 +380,7 @@ void PjRtCApiClient::UpdateGlobalProcessInfo(
   std::vector<PJRT_ProcessInfo> process_infos;
   for (const tensorflow::CoordinatedTaskStateInfo& info : infos) {
     PJRT_ProcessInfo process_info;
+    process_info.struct_size = PJRT_ProcessInfo_STRUCT_SIZE;
     process_info.task_id = info.task().task_id();
     process_info.incarnation_id = info.incarnation();
     process_info.state = translate_state(info.state());
@@ -805,34 +806,34 @@ absl::Status PjRtCApiClient::DmaUnmap(void* data) {
 }
 
 PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
-    const PJRT_Api* c_api, const xla::PjRtCrossHostRecvNotifier& cpp_notifier,
-    PjRtCApiClient::CrossHostRecvNotifierFunction* notifier_function) {
-  *notifier_function = [&cpp_notifier, c_api](
-                           PJRT_Error* error,
-                           const char** serialized_descriptors,
-                           size_t* descriptors_sizes, size_t num_descriptors) {
-    if (error != nullptr) {
-      absl::Status state = ::pjrt::PjrtErrorToStatus(error, c_api);
-      return cpp_notifier(std::move(state));
-    }
-    xla::PjRtCrossHostRecvState state;
-    state.descriptors.reserve(num_descriptors);
-    for (int i = 0; i < num_descriptors; ++i) {
-      xla::PjRtCrossHostRecvDescriptors descriptors;
-      descriptors.serialized_descriptors.push_back(
-          std::string(serialized_descriptors[i], descriptors_sizes[i]));
-      state.descriptors.push_back(std::move(descriptors));
-    }
+    const PJRT_Api* c_api, xla::PjRtCrossHostRecvNotifier cpp_notifier) {
+  auto notifier_function = new PjRtCApiClient::CrossHostRecvNotifierFunction(
+      [cpp_notifier = std::move(cpp_notifier), c_api](
+          PJRT_Error* error, const char** serialized_descriptors,
+          size_t* descriptors_sizes, size_t num_descriptors) {
+        if (error != nullptr) {
+          absl::Status state = ::pjrt::PjrtErrorToStatus(error, c_api);
+          return cpp_notifier(std::move(state));
+        }
+        xla::PjRtCrossHostRecvState state;
+        state.descriptors.reserve(num_descriptors);
+        for (int i = 0; i < num_descriptors; ++i) {
+          xla::PjRtCrossHostRecvDescriptors descriptors;
+          descriptors.serialized_descriptors.push_back(
+              std::string(serialized_descriptors[i], descriptors_sizes[i]));
+          state.descriptors.push_back(std::move(descriptors));
+        }
 
-    // TODO(emilyaf): Support cancellation.
-    xla::PjRtCrossHostSendCancelNotifier cancel_notifier =
-        [](absl::string_view, absl::Status, std::function<void(absl::Status)>) {
-          LOG(FATAL) << "MakeCrossHostReceiveBuffers: Cancellation is not "
-                        "supported in PJRT C API.";
-        };
-    state.cancel_notifier = cancel_notifier;
-    return cpp_notifier(std::move(state));
-  };
+        // TODO(emilyaf): Support cancellation.
+        xla::PjRtCrossHostSendCancelNotifier cancel_notifier =
+            [](absl::string_view, absl::Status,
+               std::function<void(absl::Status)>) {
+              LOG(FATAL) << "MakeCrossHostReceiveBuffers: Cancellation is not "
+                            "supported in PJRT C API.";
+            };
+        state.cancel_notifier = cancel_notifier;
+        return cpp_notifier(std::move(state));
+      });
   return PJRT_Transfers_CrossHostRecvNotifierInfo{
       /*user_arg=*/notifier_function,
       /*notifier=*/
@@ -841,8 +842,9 @@ PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
         PjRtCApiClient::CrossHostRecvNotifierFunction* notifier_fn =
             reinterpret_cast<PjRtCApiClient::CrossHostRecvNotifierFunction*>(
                 user_arg);
-        return (*notifier_fn)(error, serialized_descriptors, descriptors_sizes,
-                              num_descriptors);
+        (*notifier_fn)(error, serialized_descriptors, descriptors_sizes,
+                       num_descriptors);
+        delete notifier_fn;
       }};
 }
 
@@ -893,9 +895,7 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
   args.element_types = element_type_list.data();
   args.layouts = layout_list.data();
 
-  CrossHostRecvNotifierFunction notifier_function;
-  args.notifier =
-      CppCrossHostRecvNotifierToC(c_api, notifier, &notifier_function);
+  args.notifier = CppCrossHostRecvNotifierToC(c_api, std::move(notifier));
   args.device = tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
 
   std::vector<PJRT_Buffer*> temp_buffers(shapes.size());
@@ -908,7 +908,6 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
   for (int i = 0; i < args.num_buffers; ++i) {
     buffers.emplace_back(std::unique_ptr<PjRtBuffer>(
         std::make_unique<PjRtCApiBuffer>(this, args.buffers[i])));
-    buffers.back()->GetReadyFuture().Await();
   }
   return buffers;
 }
@@ -2747,23 +2746,15 @@ PjRtCApiTopologyDescription::PjRtCApiTopologyDescription(
     const PJRT_Api* c_api, PJRT_TopologyDescription* c_topology, bool owned)
     : compiler_(std::make_unique<PjRtCApiCompiler>(c_api)),
       c_api_(c_api),
-      c_topology_(c_topology) {
+      c_topology_(c_topology),
+      platform_name_(::pjrt::PlatformName(c_api, c_topology)),
+      platform_id_(tsl::Fingerprint64(platform_name_)) {
   if (owned) {
     owned_c_topology_ = std::unique_ptr<PJRT_TopologyDescription,
                                         pjrt::PJRT_TopologyDescriptionDeleter>(
         c_topology, pjrt::MakeTopologyDescriptionDeleter(c_api));
   }
   InitAttributes();
-}
-
-absl::string_view PjRtCApiTopologyDescription::platform_name() const {
-  PJRT_TopologyDescription_PlatformName_Args args;
-  args.topology = c_topology_;
-  args.struct_size = PJRT_TopologyDescription_PlatformName_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  pjrt::LogFatalIfPjrtError(
-      c_api_->PJRT_TopologyDescription_PlatformName(&args), c_api_);
-  return absl::string_view(args.platform_name, args.platform_name_size);
 }
 
 absl::string_view PjRtCApiTopologyDescription::platform_version() const {

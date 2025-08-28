@@ -95,9 +95,10 @@ using absl::StrAppend;
 using absl::StrCat;
 using absl::StrJoin;
 
-// Empty static object
+// Empty static objects
 const HloInstruction::Rare* const HloInstruction::kEmptyRare =
     new HloInstruction::Rare;
+const OpMetadata* const HloInstruction::kEmptyMetadata = new OpMetadata;
 
 HloInstruction::Users::~Users() = default;
 
@@ -1356,7 +1357,10 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   TF_RET_CHECK(!proto.name().empty());
   instruction->SetAndSanitizeName(proto.name());
-  *instruction->metadata_ = proto.metadata();
+  if (!tsl::protobuf::util::MessageDifferencer::Equals(proto.metadata(),
+                                                       *kEmptyMetadata)) {
+    instruction->mutable_metadata() = proto.metadata();
+  }
   instruction->backend_config_ = BackendConfigWrapper(proto.backend_config());
 
   TF_RET_CHECK(proto.id() >= 0)
@@ -2371,7 +2375,7 @@ void HloInstruction::SetupDerivedInstruction(
   } else if (!ShapeUtil::CompatibleKind(shape_, derived_instruction->shape())) {
     derived_instruction->clear_sharding();
   }
-  derived_instruction->set_metadata(*metadata_);
+  derived_instruction->set_metadata(metadata());
   if (has_rare()) {
     derived_instruction->set_result_accuracy(result_accuracy());
     derived_instruction->set_frontend_attributes(frontend_attributes());
@@ -2696,6 +2700,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kIota:
     case HloOpcode::kDot:
     case HloOpcode::kRaggedDot:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kDomain:
     case HloOpcode::kGetDimensionSize:
     case HloOpcode::kSetDimensionSize:
@@ -4377,7 +4382,7 @@ HloInstructionProto HloInstruction::ToProto() const {
     proto.add_control_predecessor_ids(control->unique_id_64_bits());
   }
 
-  *proto.mutable_metadata() = *metadata_;
+  *proto.mutable_metadata() = metadata();
   proto.set_backend_config(backend_config_.GetRawString());
   if (opcode() != HloOpcode::kFusion) {
     for (const HloComputation* computation : called_computations()) {
@@ -5898,10 +5903,14 @@ void HloInstruction::set_async_execution_thread(
 }
 
 void HloInstruction::set_called_computations_execution_thread(
-    absl::string_view async_execution_thread,
-    bool skip_async_execution_thread_overwrite) {
+    absl::string_view async_execution_thread) {
+  if (GetInstructionCallContext(this->opcode()) == CallContext::kEmbedded) {
+    // There is no need to set the thread name for embedded computations
+    // recursively, because they cannot be executed asynchronously.
+    return;
+  }
   Cast<HloCallableInstruction>(this)->RecursivelySetComputationsThreadName(
-      async_execution_thread, skip_async_execution_thread_overwrite);
+      async_execution_thread);
 }
 
 std::optional<int> HloInstruction::cross_program_prefetch_index() const {

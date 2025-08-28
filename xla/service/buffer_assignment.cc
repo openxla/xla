@@ -404,8 +404,10 @@ std::string BufferAllocation::ToShortString(bool human_readable_size) const {
   if (is_entry_computation_parameter()) {
     const HloInstruction* param = GetEntryParameterInstruction(*this);
     StrAppend(&output, ", parameter ", parameter_number(), ", shape |",
-              param ? param->shape().ToString(/*print_layout=*/false)
-                    : "<unknown shape>",
+              param
+                  ? ShapeUtil::GetSubshape(param->shape(), param_shape_index())
+                        .ToString(/*print_layout=*/false)
+                  : "<unknown shape>",
               "| at ShapeIndex ", param_shape_index().ToString());
   }
   if (const HloInstruction* instr = GetOutputInstruction(*this)) {
@@ -1303,6 +1305,16 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
         *id_to_logical_buffer[logical_buffer_proto.id()]));
   }
   return buffer_assignment;
+}
+
+void BufferAssignment::Finalize() {
+  hlo_ordering_.reset();
+  hlo_live_range_.reset();
+
+  for (BufferAllocation& allocation : allocations_) {
+    allocation.heap_traces_.clear();
+    allocation.heap_traces_.shrink_to_fit();
+  }
 }
 
 /* static */

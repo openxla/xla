@@ -84,6 +84,9 @@ absl::Status DumpCompileInputs(absl::string_view dump_to_path,
   std::string options_file_name =
       tsl::io::JoinPath(dump_sub_dir, "compile_options.pb");
   LOG(INFO) << "Dumping compile options to " << options_file_name;
+  // Unset xla_dump_to when dumping so that reproducers don't dump by default
+  compile_options.executable_build_options.mutable_debug_options()
+      ->clear_xla_dump_to();
   TF_RETURN_IF_ERROR(tsl::WriteStringToFile(
       tsl::Env::Default(), options_file_name,
       compile_options.ToProto().value().SerializeAsString()));
@@ -96,6 +99,33 @@ absl::Status DumpCompileInputs(absl::string_view dump_to_path,
   TF_RETURN_IF_ERROR(
       tsl::WriteStringToFile(tsl::Env::Default(), topology_file_name,
                              topology_proto.SerializeAsString()));
+  return absl::OkStatus();
+}
+
+absl::Status MaybeDumpCompileInputs(
+    xla::CompileOptions compile_options, mlir::ModuleOp module,
+    const xla::PjRtTopologyDescription& topology) {
+  LOG(INFO) << "[MaybeDumpCompileInputs] Dumping PJRT inputs for module: "
+            << module.getName().value_or("unknown_module").str();
+
+  // Dump compile inputs to the specified path if populated.
+  const auto& executable_build_options =
+      compile_options.executable_build_options;
+  if (!executable_build_options.has_debug_options()) {
+    LOG(INFO) << "  Debug options not set, skipping dump.";
+    return absl::OkStatus();
+  }
+  std::string dump_path(executable_build_options.debug_options().xla_dump_to());
+  if (dump_path.empty()) {
+    LOG(INFO) << "  Dump path not set via xla_dump_to, skipping dump.";
+    return absl::OkStatus();
+  }
+  LOG(INFO) << "  Dumping compile inputs to " << dump_path;
+  auto dump_status =
+      pjrt::DumpCompileInputs(dump_path, compile_options, module, topology);
+  if (!dump_status.ok()) {
+    LOG(WARNING) << "  Failed to dump compile inputs: " << dump_status;
+  }
   return absl::OkStatus();
 }
 

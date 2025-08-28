@@ -9,10 +9,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "59d7eb36a02cbe3c2e2fa67fda5e8f1ab7e274bc4773bbd207c51fe199e11c19",
-    strip_prefix = "rules_ml_toolchain-ffd9e3d7b84e43c2686c803cb08ce790ffd58baa",
+    sha256 = "e7e44c4e349a1c1f31398bd2257c51432e73ea0e7e24cce67090b68b0b50007e",
+    strip_prefix = "rules_ml_toolchain-55dcd0a52c7e0f9eec9927a32512229c09ac3b3e",
     urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/ffd9e3d7b84e43c2686c803cb08ce790ffd58baa.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/55dcd0a52c7e0f9eec9927a32512229c09ac3b3e.tar.gz",
     ],
 )
 
@@ -52,6 +52,7 @@ load("//third_party/py:python_init_repositories.bzl", "python_init_repositories"
 python_init_repositories(
     requirements = {
         "3.11": "//:requirements_lock_3_11.txt",
+        "3.12": "//:requirements_lock_3_12.txt",
     },
 )
 

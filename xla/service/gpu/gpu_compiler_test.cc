@@ -25,7 +25,6 @@ limitations under the License.
 #include <ostream>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -35,8 +34,8 @@ limitations under the License.
 #include "absl/base/log_severity.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/log/log_sink.h"
 #include "absl/log/scoped_mock_log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -1831,7 +1830,7 @@ TEST_F(GpuCompilerTest,
                                                .set_print_operand_shape(false)
                                                .set_print_metadata(false)),
                    kExpected),
-      ::tsl::testing::IsOkAndHolds(true));
+      absl_testing::IsOkAndHolds(true));
 
   if (test_runner().device_count() < 2) {
     GTEST_SKIP() << "Skipping test as it requires at least 2 devices.";
@@ -1875,7 +1874,7 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
     // CHECK: ENTRY
   )";
   EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
-              ::tsl::testing::IsOkAndHolds(true));
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {
@@ -1907,15 +1906,12 @@ ENTRY %main {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo, config));
-  // absl::ScopedMockLog only works if we're actually using ABSL logging, and
-  // TSL supports a homegrown logging implementation, so we should only check
-  // the log is emitted when ABSL logging is used.
+
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
-  if constexpr (std::is_same_v<absl::LogSink, tsl::TFLogSink>) {
-    EXPECT_CALL(mock_log,
-                Log(absl::LogSeverity::kWarning, EndsWith("/gpu_compiler.cc"),
-                    StartsWith("Using fallback sort algorithm")));
-  }
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kWarning, EndsWith("/gpu_compiler.cc"),
+                  StartsWith("Using fallback sort algorithm")));
+
   // StartCapturingLogs has to be called even if we expect not to capture any
   // logs.
   mock_log.StartCapturingLogs();
@@ -2019,6 +2015,40 @@ ENTRY main {
   const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
   ASSERT_EQ(thunks.size(), 1);
   EXPECT_EQ(thunks[0]->kind(), Thunk::Kind::kCommandBuffer);
+}
+
+TEST_F(GpuCompilerTest, NoCudnnVectorizationOnHopperAndBeyond) {
+  bool is_hopper_or_beyond = backend()
+                                 .default_stream_executor()
+                                 ->GetDeviceDescription()
+                                 .cuda_compute_capability()
+                                 .IsAtLeastHopper();
+
+  auto module = ParseAndReturnVerifiedModule(R"(
+  HloModule TestModule
+
+  ENTRY TestComputation {
+    input = f32[10,20,30,64] parameter(0)
+    filter = f32[2,2,64,64] parameter(1)
+    ROOT result = f32[10,19,29,64] convolution(input, filter),
+                  window={size=2x2}, dim_labels=b01f_01io->b01f
+  })")
+                    .value();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                          GetOptimizedModule(std::move(module)));
+
+  constexpr absl::string_view kVectorizationdExpected = R"(
+    CHECK: (f32[10,64,19,29]{3,2,1,0}, u8[{{[0-9]*}}]{0}) custom-call
+  )";
+  constexpr absl::string_view kNoVectorizationExpected = R"(
+    CHECK: (f32[10,19,29,64]{3,2,1,0}, u8[{{[0-9]*}}]{0}) custom-call
+  )";
+  absl::string_view expected =
+      is_hopper_or_beyond ? kNoVectorizationExpected : kVectorizationdExpected;
+
+  EXPECT_THAT(RunFileCheck(optimized_module->ToString(), expected),
+              absl_testing::IsOkAndHolds(true));
 }
 
 }  // namespace

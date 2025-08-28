@@ -751,12 +751,12 @@ void registerStablehloImportShardingsPass() {
 void addStablehloImportPipeline(mlir::OpPassManager& pm,
                                 ArrayRef<bool> allowPropagationToArgs,
                                 ArrayRef<bool> allowPropagationToResults,
-                                bool importOnlyUninlineableFuncCalls) {
+                                bool importFuncCalls) {
   addCommonPreImportPasses(pm);
   pm.addPass(createImportShardingsPass(allowPropagationToArgs,
                                        allowPropagationToResults));
   pm.addPass(createStablehloRoundTripShardMapImportPass());
-  addCommonPostImportPasses(pm, importOnlyUninlineableFuncCalls);
+  addCommonPostImportPasses(pm, importFuncCalls);
 }
 
 void registerStablehloImportPipeline() {

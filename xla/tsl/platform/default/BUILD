@@ -16,6 +16,10 @@ load(
     "tsl_grpc_cc_dependencies",
 )
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_newer_than",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -70,9 +74,11 @@ cc_library(
     srcs = ["cuda_root_path.cc"],
     hdrs = ["@tsl//tsl/platform:cuda_root_path.h"],
     compatible_with = [],
-    data = if_cuda_tools([
-        "@cuda_nvcc//:nvvm",
-    ]),
+    data = if_cuda_tools(if_cuda_newer_than(
+        "13_0",
+        if_false = ["@cuda_nvcc//:nvvm"],
+        if_true = ["@cuda_nvvm//:nvvm"],
+    )),
     tags = [
         "manual",
         "no_oss",
@@ -82,6 +88,7 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
@@ -283,32 +290,6 @@ cc_library(
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_rpath",
     ]),
-)
-
-cc_library(
-    name = "logging",
-    srcs = ["logging.cc"],
-    hdrs = ["//xla/tsl/platform:logging.h"],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    textual_hdrs = ["logging.h"],
-    deps = [
-        "//xla/tsl/platform:env_time",
-        "//xla/tsl/platform:macros",
-        "//xla/tsl/platform:types",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:log_severity",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform",
-    ],
 )
 
 filegroup(
@@ -656,7 +637,6 @@ exports_files(
         ["*"],
         exclude = [
             "integral_types.h",
-            "logging.h",
             "test.cc",
         ],
     ),
@@ -666,7 +646,6 @@ exports_files(
 exports_files(
     srcs = [
         "integral_types.h",
-        "logging.h",
         "test.cc",
     ],
     visibility = internal_visibility([
