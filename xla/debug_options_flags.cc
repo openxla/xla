@@ -1617,7 +1617,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "Comma-separated list of custom call targets with legacy "
                 "registry API (non FFI API), whose targets supports lowering "
                 "to command buffer custom command, i.e., custom call target "
-                "supports cuda-graph capturing for CUDA devices."));
+                "supports cuda-graph capturing for CUDA devices. This also "
+                "includes convolution custom call targets which support "
+                "graph capture. By default the graph capture of convolutions "
+                "is disabled."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_graph_min_graph_size",
