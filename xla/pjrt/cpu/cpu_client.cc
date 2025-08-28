@@ -473,7 +473,7 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
     }
   }
 
-  // Propagate env_option_overrides-> debug_options
+  // Propagate env_option_overrides -> debug_options
   TF_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
   // Override the debug_options() embedded in the module with those
   // explicitly passed in when deserializing. This allows options such as
