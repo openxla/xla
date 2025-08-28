@@ -57,6 +57,7 @@ namespace xla::gpu {
   V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")         \
   V(kCublasLtCmd, "CublasLtCmd")                             \
   V(kCuDnnCmd, "CuDnnCmd")                                   \
+  V(kConvolutionCmd, "ConvolutionCmd")                       \
   V(kGemmCmd, "GemmCmd")                                     \
   V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd")     \
   V(kMemzeroCmd, "MemzeroCmd")                               \

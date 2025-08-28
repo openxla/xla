@@ -1181,6 +1181,54 @@ Command::BufferUses CublasLtCmd::buffer_uses() const {
 }
 
 //===----------------------------------------------------------------------===//
+// ConvolutionCmd
+//===----------------------------------------------------------------------===//
+
+ConvolutionCmd::ConvolutionCmd(
+    const ConvolutionThunk& thunk)
+    : TracedCommandBufferCmd(CommandType::kConvolutionCmd),
+      operand_buffers_(thunk.operand_buffers_),
+      result_buffers_(thunk.result_buffers_),
+      scratch_buffer_(thunk.scratch_buffer_),
+      config_(thunk.config_) {}
+
+absl::Status ConvolutionCmd::Initialize(const Thunk::InitializeParams& params) {
+  // populate cache of ConvRunner
+  cache_.GetOrCreate(config_, params.stream);
+  return absl::OkStatus();
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> ConvolutionCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  
+  VLOG(5) << "ConvolutionCmd";
+
+  return RecordTracedCommand(
+      execute_params, record_params, std::move(record_action), command_buffer,
+      [&](se::Stream* stream) {
+         return RunConvolutionOnStream(execute_params, operand_buffers_, 
+            result_buffers_, scratch_buffer_, config_, cache_, stream);
+      });
+}
+
+Command::BufferUses ConvolutionCmd::buffer_uses() const {
+  BufferUses buffer_usage;
+  buffer_usage.reserve(operand_buffers_.size() + result_buffers_.size() + 1);
+
+  for (const auto& buffer : operand_buffers_) {
+    buffer_usage.push_back(BufferUse::Read(buffer.slice, buffer.shape));
+  }
+  for (const auto& buffer : result_buffers_) {
+    buffer_usage.push_back(BufferUse::Write(buffer.slice, buffer.shape));
+  }
+  buffer_usage.push_back(BufferUse::Scratch(
+        scratch_buffer_, ShapeUtil::MakeShape(U8, {scratch_buffer_.size()})));
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
 // CuDnnCmd
 //===----------------------------------------------------------------------===//
 

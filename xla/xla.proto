@@ -79,7 +79,7 @@ message DebugOptions {
 
   // Commands are categorized into 5 types:
   // FUSION represents regular fusion kernels.
-  // CUBLAS/CUBLASLT, CUDNN, and COLLECTIVES represent library calls.
+  // CUBLAS/CUBLASLT, CUDNN/CONVOLUTION, and COLLECTIVES represent library calls.
   // CONDITIONALS represents control flow.
   enum CommandBufferCmdType {
     INVALID = 0;
@@ -93,6 +93,7 @@ message DebugOptions {
     CUBLASLT = 8;
     DYNAMIC_SLICE_FUSION = 9;
     DYNAMIC_SLICE_COPY_FUSION = 10;
+    CONVOLUTION = 11;
   }
 
   enum LibNvJitLinkMode {
