@@ -40,8 +40,6 @@ namespace nb = ::nanobind;
 
 namespace xla {
 
-namespace {
-
 enum DeviceType {
   kHost = 0,
   kGpu = 1,
@@ -216,7 +214,6 @@ absl::Status RunHlos(const std::vector<std::string>& hlo_files,
     }
   }
 }
-}  // namespace
 
 absl::Status RegisterCustomCallTarget(const std::string& fn_name, nb::object fn,
                                       const std::string& platform,
