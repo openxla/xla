@@ -45,7 +45,7 @@ enum DeviceType {
   kGpu = 1,
 };
 
-struct HloRunnerConfig {
+struct PyHloRunnerConfig {
   InputFormat input_format = InputFormat::kProtoText;
   FunctionalHloRunner::ModuleOutputMode output_mode =
       FunctionalHloRunner::ModuleOutputMode::kReturnOutputs;
@@ -83,7 +83,7 @@ struct HloRunnerConfig {
 };
 
 absl::StatusOr<FunctionalHloRunner::PreprocessingOptions>
-PreprocessingOptionsFromFlags(const HloRunnerConfig& opts) {
+PreprocessingOptionsFromFlags(const PyHloRunnerConfig& opts) {
   FunctionalHloRunner::PreprocessingOptions out;
   out.spmd_partitioned_mode =
       opts.is_spmd_partitioned_module
@@ -99,7 +99,7 @@ PreprocessingOptionsFromFlags(const HloRunnerConfig& opts) {
 }
 
 absl::StatusOr<FunctionalHloRunner::RunningOptions> RunningOptionsFromFlags(
-    const HloRunnerConfig& opts) {
+    const PyHloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   out.module_argument_mode = opts.hlo_argument_mode;
   out.module_output_mode = opts.output_mode;
@@ -111,7 +111,7 @@ absl::StatusOr<FunctionalHloRunner::RunningOptions> RunningOptionsFromFlags(
 }
 
 absl::StatusOr<FunctionalHloRunner::RawCompileOptions>
-RawCompileOptionsFromFlags(const HloRunnerConfig& opts) {
+RawCompileOptionsFromFlags(const PyHloRunnerConfig& opts) {
   FunctionalHloRunner::RawCompileOptions out;
   out.hlo_passes_mode = opts.hlo_pass_mode;
   out.spmd_mode = opts.spmd_mode;
@@ -139,8 +139,8 @@ RawCompileOptionsFromFlags(const HloRunnerConfig& opts) {
   return out;
 }
 
-absl::Status RunHlos(const std::vector<std::string>& hlo_files,
-                     const HloRunnerConfig& opts) {
+absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
+                         const PyHloRunnerConfig& opts) {
   TF_ASSIGN_OR_RETURN(FunctionalHloRunner::PreprocessingOptions preproc_options,
                       PreprocessingOptionsFromFlags(opts));
   preproc_options.annotate_while_loop_trip_count = true;
@@ -210,187 +210,55 @@ absl::Status RunHlos(const std::vector<std::string>& hlo_files,
     for (int i = 0; i < execution_profiles.size(); ++i) {
       LOG(INFO) << "## Execution time, file=" << hlo_file << " repeat=" << i
                 << " duration=" << execution_profiles[i].compute_time_ns()
-                << "ns" << std::endl;
+                << "ns";
     }
   }
-}
-
-absl::Status RegisterCustomCallTarget(const std::string& fn_name, nb::object fn,
-                                      const std::string& platform,
-                                      int api_version,
-                                      XLA_FFI_Handler_Traits traits) {
-  // Register legacy custom call target (untyped void* API).
-  if (api_version == 0) {
-    if (traits != 0) {
-      return absl::InvalidArgumentError(
-          "Custom call target registration with traits is not supported for "
-          "api_version=0");
-    }
-
-    nb::capsule capsule;
-    if (!nb::try_cast<nb::capsule>(fn, capsule)) {
-      return absl::InvalidArgumentError(
-          "Custom call target registration with api_version=0 requires a "
-          "PyCapsule fn object");
-    }
-
-    CustomCallTargetRegistry::Global()->Register(fn_name, capsule.data(),
-                                                 platform);
-    return absl::OkStatus();
-  }
-
-  if (api_version == 1) {
-    // Register a single execute handler
-    nb::capsule capsule;
-    if (nb::try_cast<nb::capsule>(fn, capsule)) {
-      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
-          ffi::GetXlaFfiApi(), fn_name, platform,
-          reinterpret_cast<XLA_FFI_Handler*>(capsule.data())));
-    }
-
-    // Register a bundle of handlers
-    nb::dict bundle;
-    if (nb::try_cast<nb::dict>(fn, bundle)) {
-      auto handler = [&](const char* name) -> absl::StatusOr<XLA_FFI_Handler*> {
-        if (!bundle.contains(name)) {
-          return nullptr;
-        }
-
-        nb::capsule capsule;
-        if (nb::try_cast<nb::capsule>(bundle[name], capsule)) {
-          return reinterpret_cast<XLA_FFI_Handler*>(capsule.data());
-        }
-        return absl::InvalidArgumentError(
-            "Custom call target registration with api_version=1 requires a "
-            "PyCapsule fn object for all dict keys");
-      };
-
-      XLA_FFI_Handler_Bundle bundle;
-      TF_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
-      TF_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
-      TF_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
-      TF_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
-
-      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
-          ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
-    }
-
-    return absl::InvalidArgumentError(
-        "Unsupported custom call target type for api_version=1");
-  }
-
-  return absl::UnimplementedError(absl::StrFormat(
-      "API version %d is not supported by RegisterCustomCallTarget. Supported "
-      "versions are 0 and 1.",
-      api_version));
-}
-
-nb::dict GetRegisteredCustomCallTargets(const std::string& platform) {
-  nb::dict targets;
-
-  // version 0 handlers
-  for (const auto& [name, target] :
-       CustomCallTargetRegistry::Global()->registered_symbols(platform)) {
-    targets[nb::str(name.data(), name.size())] = nb::capsule(target);
-  }
-
-  // version 1 handlers
-  auto ffi_handlers = ffi::StaticRegisteredHandlers(platform);
-  if (!ffi_handlers.ok()) {
-    return targets;
-  }
-
-  for (const auto& [name, registration] : *ffi_handlers) {
-    nb::dict bundle;
-    auto export_handler = [&](std::string_view name, XLA_FFI_Handler* h) {
-      if (h != nullptr) {
-        bundle[nb::str(name.data(), name.size())] =
-            nb::capsule(reinterpret_cast<void*>(h));
-      }
-    };
-    export_handler("instantiate", registration.bundle.instantiate);
-    export_handler("prepare", registration.bundle.prepare);
-    export_handler("initialize", registration.bundle.initialize);
-    export_handler("execute", registration.bundle.execute);
-    targets[nb::str(name.data(), name.size())] = std::move(bundle);
-  }
-  return targets;
-}
-
-absl::Status RegisterCustomTypeId(std::string_view type_name,
-                                  nb::object type_id) {
-  nb::capsule capsule;
-  if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
-    return absl::InvalidArgumentError(
-        "The type_id argument to register_custom_call_type_id must be a "
-        "PyCapsule object holding a pointer to a XLA_FFI_TypeId.");
-  }
-  XLA_FFI_TypeId* type_id_ptr =
-      reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
-  return ffi::TakeStatus(ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(),
-                                                  type_name, type_id_ptr));
 }
 
 NB_MODULE(py_hlo_multihost_runner, m) {
   InitializeAbslLogging();
 
-  m.def("RunHlos", ThrowIfErrorWrapper(RunHlos));
+  m.def("RunHloFiles", ThrowIfErrorWrapper(RunHloFiles));
 
-  m.def(
-      "register_custom_call_target",
-      [](const std::string& fn_name, nb::object fn, const std::string& platform,
-         int api_version, XLA_FFI_Handler_Traits traits) {
-        ThrowIfError(RegisterCustomCallTarget(fn_name, std::move(fn), platform,
-                                              api_version, traits));
-      },
-      nb::arg("fn_name"), nb::arg("fn"), nb::arg("platform"),
-      nb::arg("api_version") = 0, nb::arg("traits") = 0);
-  m.def("custom_call_targets", GetRegisteredCustomCallTargets,
-        nb::arg("platform"));
-  m.def(
-      "register_custom_type_id",
-      [](std::string_view type_name, nb::object type_id) {
-        xla::ThrowIfError(RegisterCustomTypeId(type_name, type_id));
-      },
-      nb::arg("type_name"), nb::arg("type_id"));
-
-  nb::class_<HloRunnerConfig>(m, "HloRunnerConfig")
+  nb::class_<PyHloRunnerConfig>(m, "PyHloRunnerConfig")
       .def(nb::init<>())
-      .def_rw("input_format", &HloRunnerConfig::input_format)
-      .def_rw("output_mode", &HloRunnerConfig::output_mode)
-      .def_rw("should_run", &HloRunnerConfig::should_run)
-      .def_rw("enable_mock_nccl", &HloRunnerConfig::enable_mock_nccl)
+      .def_rw("input_format", &PyHloRunnerConfig::input_format)
+      .def_rw("output_mode", &PyHloRunnerConfig::output_mode)
+      .def_rw("should_run", &PyHloRunnerConfig::should_run)
+      .def_rw("enable_mock_nccl", &PyHloRunnerConfig::enable_mock_nccl)
       .def_rw("dump_output_literal_to",
-              &HloRunnerConfig::dump_output_literal_to)
-      .def_rw("task_id", &HloRunnerConfig::task_id)
-      .def_rw("num_nodes", &HloRunnerConfig::num_nodes)
-      .def_rw("device_type", &HloRunnerConfig::device_type)
-      .def_rw("address", &HloRunnerConfig::address)
-      .def_rw("num_replicas", &HloRunnerConfig::num_replicas)
-      .def_rw("num_partitions", &HloRunnerConfig::num_partitions)
-      .def_rw("log_output", &HloRunnerConfig::log_output)
-      .def_rw("hlo_pass_mode", &HloRunnerConfig::hlo_pass_mode)
-      .def_rw("spmd_mode", &HloRunnerConfig::spmd_mode)
+              &PyHloRunnerConfig::dump_output_literal_to)
+      .def_rw("task_id", &PyHloRunnerConfig::task_id)
+      .def_rw("num_nodes", &PyHloRunnerConfig::num_nodes)
+      .def_rw("device_type", &PyHloRunnerConfig::device_type)
+      .def_rw("address", &PyHloRunnerConfig::address)
+      .def_rw("num_replicas", &PyHloRunnerConfig::num_replicas)
+      .def_rw("num_partitions", &PyHloRunnerConfig::num_partitions)
+      .def_rw("log_output", &PyHloRunnerConfig::log_output)
+      .def_rw("hlo_pass_mode", &PyHloRunnerConfig::hlo_pass_mode)
+      .def_rw("spmd_mode", &PyHloRunnerConfig::spmd_mode)
       .def_rw("is_spmd_partitioned_module",
-              &HloRunnerConfig::is_spmd_partitioned_module)
-      .def_rw("xla_dump_to", &HloRunnerConfig::xla_dump_to)
-      .def_rw("xla_dump_as_text", &HloRunnerConfig::xla_dump_as_text)
-      .def_rw("xla_dump_as_proto", &HloRunnerConfig::xla_dump_as_proto)
-      .def_rw("hlo_argument_mode", &HloRunnerConfig::hlo_argument_mode)
-      .def_rw("while_execution_count", &HloRunnerConfig::while_execution_count)
-      .def_rw("remove_infeed_outfeed", &HloRunnerConfig::remove_infeed_outfeed)
-      .def_rw("compile_as_stablehlo", &HloRunnerConfig::compile_as_stablehlo)
+              &PyHloRunnerConfig::is_spmd_partitioned_module)
+      .def_rw("xla_dump_to", &PyHloRunnerConfig::xla_dump_to)
+      .def_rw("xla_dump_as_text", &PyHloRunnerConfig::xla_dump_as_text)
+      .def_rw("xla_dump_as_proto", &PyHloRunnerConfig::xla_dump_as_proto)
+      .def_rw("hlo_argument_mode", &PyHloRunnerConfig::hlo_argument_mode)
+      .def_rw("while_execution_count",
+              &PyHloRunnerConfig::while_execution_count)
+      .def_rw("remove_infeed_outfeed",
+              &PyHloRunnerConfig::remove_infeed_outfeed)
+      .def_rw("compile_as_stablehlo", &PyHloRunnerConfig::compile_as_stablehlo)
       .def_rw("use_layouts_from_hlo_module",
-              &HloRunnerConfig::use_layouts_from_hlo_module)
-      .def_rw("force_auto_layout", &HloRunnerConfig::force_auto_layout)
-      .def_rw("num_repeats", &HloRunnerConfig::num_repeats)
+              &PyHloRunnerConfig::use_layouts_from_hlo_module)
+      .def_rw("force_auto_layout", &PyHloRunnerConfig::force_auto_layout)
+      .def_rw("num_repeats", &PyHloRunnerConfig::num_repeats)
       .def_rw("gpu_client_initialization_timeout_sec",
-              &HloRunnerConfig::gpu_client_initialization_timeout_sec)
+              &PyHloRunnerConfig::gpu_client_initialization_timeout_sec)
       .def_rw("gpu_client_mem_fraction",
-              &HloRunnerConfig::gpu_client_mem_fraction)
-      .def_rw("profile_execution", &HloRunnerConfig::profile_execution)
+              &PyHloRunnerConfig::gpu_client_mem_fraction)
+      .def_rw("profile_execution", &PyHloRunnerConfig::profile_execution)
       .def_rw("xla_gpu_dump_xspace_to",
-              &HloRunnerConfig::xla_gpu_dump_xspace_to);
+              &PyHloRunnerConfig::xla_gpu_dump_xspace_to);
 
   nb::enum_<InputFormat>(m, "InputFormat")
       .value("Text", InputFormat::kText)
