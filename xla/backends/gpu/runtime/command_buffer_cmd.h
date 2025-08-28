@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
+#include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
@@ -622,6 +623,34 @@ class CublasLtCmd : public TracedCommandBufferCmd, public CublasLtMatmulThunk {
   BufferUseVector buffers() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
+};
+
+//===----------------------------------------------------------------------===//
+// ConvolutionCmd
+//===----------------------------------------------------------------------===//
+
+class ConvolutionCmd : public TracedCommandBufferCmd {
+ public:
+  ConvolutionCmd(const ConvolutionThunk& conv_thunk);
+
+  absl::Status Initialize(const Thunk::InitializeParams& params,
+                          StateManager& state) override;
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  BufferUseVector buffers() const override;
+
+  bool IsNestedCommandBuffer() const final { return true; }
+
+private:
+  std::vector<ShapedSlice> operand_buffers_;
+  std::vector<ShapedSlice> result_buffers_;
+  BufferAllocation::Slice scratch_buffer_;
+  GpuConvConfig config_;
+  ConvRunnerCache cache_;
 };
 
 //===----------------------------------------------------------------------===//
