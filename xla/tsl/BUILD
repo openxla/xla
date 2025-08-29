@@ -575,6 +575,7 @@ bzl_library(
         "@local_config_cuda//cuda:build_defs_bzl",
         "@local_config_rocm//rocm:build_defs_bzl",
         "@local_config_tensorrt//:build_defs_bzl",
+        "@rules_cc//cc/common",
         "@xla//third_party/py/rules_pywrap:pywrap_bzl",
     ],
 )

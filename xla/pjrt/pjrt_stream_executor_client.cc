@@ -1359,10 +1359,8 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
       device, tsl::RCReference<RawSEDeviceMemory>(),
       absl::MakeSpan(&definition_event, 1));
 
-  auto py_buffer = std::make_unique<PjRtStreamExecutorBuffer>(
-      shape, std::move(dummy_device_buffer), this, device,
-      device->default_memory_space().value_or(nullptr));
-  return py_buffer;
+  return std::make_unique<PjRtStreamExecutorBuffer>(
+      shape, std::move(dummy_device_buffer), this, device, memory);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
@@ -2494,8 +2492,8 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
   executables_.reserve(executables.size());
   tsl::Fprint128 fingerprint = tsl::Fingerprint128(fingerprint_);
   for (auto& executable : executables) {
-    const auto& computation_layout =
-        executable->executable()->module().entry_computation_layout();
+    ComputationLayout computation_layout =
+        executable->executable()->compute_computation_layout();
     std::vector<Shape> parameter_shapes;
     parameter_shapes.reserve(computation_layout.parameter_count());
     for (int i = 0; i < computation_layout.parameter_count(); ++i) {
