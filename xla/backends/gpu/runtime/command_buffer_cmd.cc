@@ -1448,7 +1448,8 @@ absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
   TF_RETURN_IF_ERROR(cond_commands_.Initialize(params, state));
   TF_RETURN_IF_ERROR(body_commands_.Initialize(params, state));
   if (enable_loop_unroll_ && body_commands_.support_loop_unroll() &&
-      cond_commands_.support_loop_unroll() && trip_count_ != std::nullopt) {
+      cond_commands_.support_loop_unroll() && trip_count_ != std::nullopt &&
+      child_command_buffer_ == nullptr) {
     is_unrolled_loop_ = true;
     TF_ASSIGN_OR_RETURN(child_command_buffer_,
                         params.stream->parent()->CreateCommandBuffer(
