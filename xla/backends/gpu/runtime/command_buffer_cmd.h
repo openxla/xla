@@ -483,7 +483,6 @@ class CommandBufferCmdExecutor {
                           [](const auto& cmd) { return cmd->force_update(); });
   }
 
-
   bool support_loop_unroll() const {
     return absl::c_any_of(
         commands_, [](const auto& cmd) { return cmd->support_loop_unroll(); });
