@@ -299,6 +299,14 @@ void CompiledMemoryStats::PopulateBufferStatsFromAllocations(
       }
     }
 
+    // In the case where all assignments in an allocation are tuples, prevent
+    // custom colorer from setting their color to host.
+    if (alloc_memory_space == -1) {
+      CHECK_EQ(alloc.color(), 0)
+          << "allocation contains only tuples, must be on device.";
+      alloc_memory_space = 0;
+    }
+
     bool is_host = alloc_memory_space == Layout::kHostMemorySpace;
     int64_t size = alloc.size();
     if (alloc.is_entry_computation_parameter()) {
