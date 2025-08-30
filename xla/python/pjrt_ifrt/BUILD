@@ -331,6 +331,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:unbounded_work_queue",
     ],
 )
 
