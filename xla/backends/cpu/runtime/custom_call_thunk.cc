@@ -62,7 +62,7 @@ namespace xla::cpu {
 
 using AttributesMap = ffi::CallFrameBuilder::AttributesMap;
 
-static absl::StatusOr<AttributesMap> ParseAttributes(
+absl::StatusOr<AttributesMap> CustomCallThunk::ParseAttributes(
     absl::string_view backend_config) {
   AttributesMap attributes;
   if (!backend_config.empty() && backend_config != "{}") {
@@ -86,7 +86,7 @@ static absl::StatusOr<AttributesMap> ParseAttributes(
 
 // Call `instantiate` callback if passed. This function needs its own copy of
 // attributes, that's what AttributesBuilder expects, there's no way around it.
-static absl::Status InstantiateHandlerState(
+absl::Status CustomCallThunk::InstantiateHandlerState(
     ffi::HandlerRegistration& handler, ffi::ExecutionState* execution_state,
     AttributesMap attributes) {
   // Initialize FFI handler state if it has an instantiate callback.
@@ -112,7 +112,7 @@ static absl::Status InstantiateHandlerState(
 // Builds a call frame prototype for typed-FFI custom calls with dummy device
 // memory addresses. This is called once when creating the CustomCall thunk,
 // then the thunk will need to update the addresses at runtime.
-static absl::StatusOr<ffi::CallFrame> BuildCallFrameForTypedFFI(
+absl::StatusOr<ffi::CallFrame> CustomCallThunk::BuildCallFrameForTypedFFI(
     const CustomCallApiVersion version,
     const CustomCallThunk::OpBuffers& op_buffers,
     const absl::string_view backend_config, AttributesMap attributes) {
