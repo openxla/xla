@@ -2251,7 +2251,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
   std::vector<MsaBufferInterval> sorted_buffer_intervals =
       GetSortedBufferIntervals();
 
-  if (options_.explicit_pinning_mode) {
+  if (options_.reserved_bytes_for_block_allocated_weights > 0) {
     const auto& instruction_schedule = hlo_live_range_.instruction_schedule();
     auto get_instruction_time = [&](const HloInstruction* inst,
                                     int64_t default_time) {
