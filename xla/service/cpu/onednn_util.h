@@ -57,6 +57,31 @@ inline bool HasAMXTile() {
   return TestCPUFeature(tsl::port::CPUFeature::AMX_TILE);
 }
 
+// Define a nested struct to encapsulate oneDNN memory, primitive objects, and
+// post-op arguments.
+struct OneDnnResources {
+  dnnl::primitive primitive;
+  dnnl::memory src_mem;
+  dnnl::memory wei_mem;
+  dnnl::memory dst_mem;
+  dnnl::memory scratch_mem;
+  dnnl::memory scale_mem;
+  dnnl::memory shift_mem;
+  std::vector<std::pair<int, dnnl::memory>>
+      postop_args;  // Added post-op arguments.
+
+  // Constructor to initialize all members to default values.
+  OneDnnResources()
+      : primitive(dnnl::primitive()),
+        src_mem(dnnl::memory()),
+        wei_mem(dnnl::memory()),
+        dst_mem(dnnl::memory()),
+        scratch_mem(dnnl::memory()),
+        scale_mem(dnnl::memory()),  // for onednn_layer_norm
+        shift_mem(dnnl::memory()),  // for onednn_layer_norm
+        postop_args() {}  // postop_args is initialized as an empty vector.
+};
+
 struct FusedOperandsRef {
   const std::vector<void*>& bufs;
   std::vector<std::pair<int, dnnl::memory>>& postop_args;
