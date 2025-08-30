@@ -200,7 +200,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-    ] + if_google(["@com_google_protobuf//:wrappers_cc_proto"]),
+    ] + if_google(["//google/protobuf:wrappers_cc_proto"]),
 )
 
 cc_library(
@@ -389,7 +389,7 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + if_google(["@com_google_protobuf//:wrappers_cc_proto"]),
+    ] + if_google(["//google/protobuf:wrappers_cc_proto"]),
 )
 
 tf_proto_library(
