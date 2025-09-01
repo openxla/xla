@@ -657,7 +657,7 @@ Note that there are the following restrictions on the `source_target_pair`:
 -   If a replica id is not a target in any pair, then the output on that replica
     is a tensor consisting of 0(s) with the same shape as the input.
 
-## ConcatInDim(Concatenate)
+## Concatenate
 
 See also
 [`XlaBuilder::ConcatInDim`](https://github.com/openxla/xla/tree/main/xla/hlo/builder/xla_builder.h).
