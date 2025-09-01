@@ -202,7 +202,7 @@ Arguments       | Type    | Semantics
 `operand`       | `XlaOp` | n dimensional array to be normalized (x)
 `scale`         | `XlaOp` | 1 dimensional array ($\gamma$)
 `batch_mean`    | `XlaOp` | 1 dimensional array ($\mu$)
-`batch_var`      | `XlaOp` | 1 dimensional array ($\sigma^2$)
+`batch_var`     | `XlaOp` | 1 dimensional array ($\sigma^2$)
 `grad_output`   | `XlaOp` | Gradients passed to `BatchNormTraining` ($\nabla y$)
 `epsilon`       | `float` | Epsilon value ($\epsilon$)
 `feature_index` | `int64` | Index to feature dimension in `operand`
