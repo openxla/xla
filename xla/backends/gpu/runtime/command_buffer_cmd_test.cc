@@ -60,6 +60,24 @@ static se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
+// Some of the tests rely on CUDA 12.9+ features.
+bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
+  const auto& device_description = stream_executor->GetDeviceDescription();
+  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
+      &device_description.gpu_compute_capability());
+  if (cuda_cc != nullptr) {
+    // We need a recent driver to support the feature at runtime and we need a
+    // recent version of the toolkit at compile time, so that we have access to
+    // the driver's headers.
+    if (std::min(device_description.driver_version(),
+                 device_description.compile_time_toolkit_version()) >=
+        stream_executor::SemanticVersion(12, 9, 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Give a short alias to synchronization mode.
 static constexpr auto serialize =
     CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
@@ -686,6 +704,10 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
 }
 
 TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
+  if (!IsAtLeastCuda12900(stream_executor)) {
+    GTEST_SKIP() << "Child command is not supported for CUDA < 12.9";
+  }
+
   se::StreamExecutor* stream_executor = GpuExecutor();
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
 
