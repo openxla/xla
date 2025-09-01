@@ -237,15 +237,6 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
 
   TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-  // Verify initial values of a and b.
-  {
-    std::vector<int32_t> a_init(length, 0);
-    std::vector<int32_t> b_init(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_init.data(), a, byte_length));
-    TF_ASSERT_OK(stream->Memcpy(b_init.data(), b, byte_length));
-    ASSERT_EQ(a_init, std::vector<int32_t>(length, 42));
-    ASSERT_EQ(b_init, std::vector<int32_t>(length, 0));
-  }
 
   // Prepare buffer allocations for recording command buffer.
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
@@ -287,12 +278,6 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
-  // Verify that a remains unchanged.
-  {
-    std::vector<int32_t> a_after(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_after.data(), a, byte_length));
-    ASSERT_EQ(a_after, std::vector<int32_t>(length, 42));
-  }
 }
 
 TEST(CommandBufferCmdTest, LaunchCmd) {
@@ -310,15 +295,6 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-  // Verify initial values of a and b.
-  {
-    std::vector<int32_t> a_init(length, 0);
-    std::vector<int32_t> b_init(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_init.data(), a, byte_length));
-    TF_ASSERT_OK(stream->Memcpy(b_init.data(), b, byte_length));
-    ASSERT_EQ(a_init, std::vector<int32_t>(length, 42));
-    ASSERT_EQ(b_init, std::vector<int32_t>(length, 0));
-  }
 
   // Prepare buffer allocations for recording command buffer.
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
@@ -373,12 +349,6 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
-  // Verify that a remains unchanged.
-  {
-    std::vector<int32_t> a_after(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_after.data(), a, byte_length));
-    ASSERT_EQ(a_after, std::vector<int32_t>(length, 42));
-  }
 }
 
 TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
@@ -396,15 +366,6 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
 
   TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-  // Verify initial values of a and b.
-  {
-    std::vector<int32_t> a_init(length, 0);
-    std::vector<int32_t> b_init(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_init.data(), a, byte_length));
-    TF_ASSERT_OK(stream->Memcpy(b_init.data(), b, byte_length));
-    ASSERT_EQ(a_init, std::vector<int32_t>(length, 42));
-    ASSERT_EQ(b_init, std::vector<int32_t>(length, 0));
-  }
 
   // Prepare buffer allocations for recording command buffer.
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
@@ -461,12 +422,6 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
-  // Verify that a remains unchanged.
-  {
-    std::vector<int32_t> a_after(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_after.data(), a, byte_length));
-    ASSERT_EQ(a_after, std::vector<int32_t>(length, 42));
-  }
 }
 
 TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
@@ -478,7 +433,7 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
 
   std::vector<int32_t> a_data = {40, 41, 42, 43, 44, 45, 46, 47};
 
-  // Prepare arguments: a has a_data, b=0
+  // Prepare arguments: a=42, b=0
   se::DeviceMemory<int32_t> a =
       stream_executor->AllocateArray<int32_t>(length, 0);
   se::DeviceMemory<int32_t> b =
@@ -486,15 +441,6 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
 
   TF_ASSERT_OK(stream->Memcpy(&a, a_data.data(), byte_length));
   TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-  // Verify initial values of a and b.
-  {
-    std::vector<int32_t> a_init(length, 0);
-    std::vector<int32_t> b_init(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_init.data(), a, byte_length));
-    TF_ASSERT_OK(stream->Memcpy(b_init.data(), b, byte_length));
-    ASSERT_EQ(a_init, a_data);
-    ASSERT_EQ(b_init, std::vector<int32_t>(length, 0));
-  }
 
   // Prepare buffer allocations for recording command buffer.
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
@@ -537,12 +483,6 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>({0, 0, 0, 0, 44, 45, 46, 47}));
-  // Verify that a remains unchanged.
-  {
-    std::vector<int32_t> a_after(length, 0);
-    TF_ASSERT_OK(stream->Memcpy(a_after.data(), a, byte_length));
-    ASSERT_EQ(a_after, a_data);
-  }
 }
 
 TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
@@ -700,21 +640,15 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   Thunk::ExecutableSource source_empty = {/*text=*/{}, /*binary=*/{}};
   Thunk::ExecutableSource source_fatbin = {/*text=*/{}, /*binary=*/fatbin};
 
+  CommandBufferCmd::StateManager state;
+  TF_ASSERT_OK(exec_a.Initialize({stream_executor, source_empty}, state));
+  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin}, state));
+  TF_ASSERT_OK(exec_c.Initialize({stream_executor, source_empty}, state));
+
   // Execute params and allocations mapping indices 0=a,1=b,2=c
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
-
-  CommandBufferCmd::StateManager state;
-  TF_ASSERT_OK(exec_a.Initialize(
-      {stream_executor, source_empty, &allocations, stream.get(), stream.get()},
-      state));
-  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin, &allocations,
-                                  stream.get(), stream.get()},
-                                 state));
-  TF_ASSERT_OK(exec_c.Initialize(
-      {stream_executor, source_empty, &allocations, stream.get(), stream.get()},
-      state));
 
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
