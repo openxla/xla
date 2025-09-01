@@ -700,15 +700,21 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   Thunk::ExecutableSource source_empty = {/*text=*/{}, /*binary=*/{}};
   Thunk::ExecutableSource source_fatbin = {/*text=*/{}, /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
-  TF_ASSERT_OK(exec_a.Initialize({stream_executor, source_empty}, state));
-  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin}, state));
-  TF_ASSERT_OK(exec_c.Initialize({stream_executor, source_empty}, state));
-
   // Execute params and allocations mapping indices 0=a,1=b,2=c
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
+
+  CommandBufferCmd::StateManager state;
+  TF_ASSERT_OK(exec_a.Initialize(
+      {stream_executor, source_empty, &allocations, stream.get(), stream.get()},
+      state));
+  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin, &allocations,
+                                  stream.get(), stream.get()},
+                                 state));
+  TF_ASSERT_OK(exec_c.Initialize(
+      {stream_executor, source_empty, &allocations, stream.get(), stream.get()},
+      state));
 
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
@@ -801,10 +807,13 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   // nested buffer.
   CommandBufferCmd::StateManager state;
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(outer_executor.Initialize({stream_executor, source}, state));
-
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
+  TF_ASSERT_OK(outer_executor.Initialize(
+      {stream_executor, source, &allocations, stream.get(), stream.get()},
+      state));
+
+  // allocations already created above
   ServiceExecutableRunOptions run_options;
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
