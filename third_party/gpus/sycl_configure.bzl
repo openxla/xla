@@ -77,11 +77,11 @@ def _sycl_include_path(repository_ctx, sycl_config, bash_bin):
 
 def enable_sycl(repository_ctx):
     """Returns whether to build with SYCL support."""
-    return bool(repository_ctx.getenv("TF_NEED_SYCL", "").strip())
+    return bool(get_host_environ(repository_ctx, "TF_NEED_SYCL", "").strip())
 
 def _use_icpx_and_clang(repository_ctx):
     """Returns whether to use ICPX for SYCL and Clang for C++."""
-    return repository_ctx.getenv("TF_ICPX_CLANG", "").strip()
+    return get_host_environ(repository_ctx, "TF_ICPX_CLANG", "").strip()
 
 def auto_configure_fail(msg):
     """Output failure message when auto configuration fails."""
@@ -100,7 +100,6 @@ def find_cc(repository_ctx):
         target_cc_name = "gcc"
         cc_path_envvar = _GCC_HOST_COMPILER_PATH
     cc_name = target_cc_name
-
     cc_name_from_env = get_host_environ(repository_ctx, cc_path_envvar)
     if cc_name_from_env:
         cc_name = cc_name_from_env
@@ -402,26 +401,64 @@ load("//crosstool:error_gpu_disabled.bzl", "error_gpu_disabled")
 error_gpu_disabled()
 """
 
-def _create_dummy_repository(repository_ctx):
-    # Set up BUILD file for sycl/.
-    _tpl(repository_ctx, "sycl:build_defs.bzl")
-    _tpl(repository_ctx, "sycl:BUILD")
+def _create_dummy_repository(
+        repository_ctx,
+        sycl_libs = None,
+        mkl_sycl_libs = None,
+        copy_rules = None,
+        level_zero_libs = None,
+        level_zero_headers = None):
+    """
+    Create a minimal SYCL layout that intercepts --config=sycl when SYCL
+    isn't configured, emitting a clear, actionable error.
+    """
 
-    # If sycl_configure is not configured to build with SYCL support, and the user
-    # attempts to build with --config=sycl, add a dummy build rule to intercept
-    # this and fail with an actionable error message.
+    # Normalize optional params
+    sycl_libs = sycl_libs or []
+    mkl_sycl_libs = mkl_sycl_libs or []
+    copy_rules = copy_rules or []
+    level_zero_libs = level_zero_libs or []
+    level_zero_headers = level_zero_headers or []
+
+    # Intercept attempts to build with --config=sycl when SYCL is not configured.
     repository_ctx.file(
         "crosstool/error_gpu_disabled.bzl",
         _DUMMY_CROSSTOOL_BZL_FILE,
     )
-    repository_ctx.file("crosstool/BUILD", _DUMMY_CROSSTOOL_BUILD_FILE)
+    repository_ctx.file(
+        "crosstool/BUILD",
+        _DUMMY_CROSSTOOL_BUILD_FILE,
+    )
 
+    # Materialize templated files under sycl/.
     _tpl(
         repository_ctx,
         "sycl:build_defs.bzl",
         {
             "%{sycl_is_configured}": "False",
             "%{sycl_build_is_configured}": "False",
+        },
+    )
+
+    _tpl(
+        repository_ctx,
+        "sycl:BUILD",
+        {
+            # Dummy placeholders: each expands to full item or "".
+            "%{mkl_intel_ilp64_src}": "",
+            "%{mkl_sequential_src}": "",
+            "%{mkl_core_src}": "",
+            "%{mkl_sycl_srcs}": "",
+
+            # Keep these for back-compat.
+            "%{mkl_intel_ilp64_lib}": "",
+            "%{mkl_sequential_lib}": "",
+            "%{mkl_core_lib}": "",
+            "%{mkl_sycl_libs}": "",
+            "%{level_zero_libs}": "",
+            "%{level_zero_headers}": "",
+            "%{sycl_headers}": "",
+            "%{copy_rules}": "\n".join(copy_rules) if copy_rules else "",
         },
     )
 
@@ -438,7 +475,7 @@ def _download_and_extract_archive(repository_ctx, archive_info, distribution_pat
 
     repository_ctx.report_progress("Installing oneAPI Basekit to: %s" % distribution_path)
 
-    archive_override = repository_ctx.getenv("oneAPI_ARCHIVE_OVERRIDE")
+    archive_override = get_host_environ(repository_ctx, "oneAPI_ARCHIVE_OVERRIDE", "")
     if archive_override:
         repository_ctx.report_progress("Using overridden archive: %s" % archive_override)
         repository_ctx.extract(archive_override, distribution_path)
@@ -463,10 +500,10 @@ def _create_local_sycl_repository(repository_ctx):
 
     bash_bin = get_bash_bin(repository_ctx)
 
-    hermetic = repository_ctx.getenv("SYCL_BUILD_HERMETIC") == "1"
+    hermetic = get_host_environ(repository_ctx, "SYCL_BUILD_HERMETIC", "") == "1"
     if hermetic:
-        oneapi_version = repository_ctx.getenv("ONEAPI_VERSION", "")
-        os_id = repository_ctx.getenv("OS", "")
+        oneapi_version = get_host_environ(repository_ctx, "ONEAPI_VERSION", "")
+        os_id = get_host_environ(repository_ctx, "OS", "")
         if not oneapi_version or not os_id:
             fail("ONEAPI_VERSION and OS must be set via --repo_env for hermetic build.")
         redist_info = sycl_redist.get(os_id, {}).get(oneapi_version, {}).get("sycl_dl_essential")
@@ -501,7 +538,7 @@ def _create_local_sycl_repository(repository_ctx):
             l0_library_dir = install_path + "/lib",
         )
     else:
-        install_path = repository_ctx.getenv("SYCL_TOOLKIT_PATH") or "/opt/intel/oneapi/compiler/2025.1"
+        install_path = get_host_environ(repository_ctx, "SYCL_TOOLKIT_PATH", "") or "/opt/intel/oneapi/compiler/2025.1"
         repository_ctx.report_progress("Falling back to default SYCL path: %s" % install_path)
         sycl_config = _get_sycl_config(repository_ctx, bash_bin)
 
@@ -566,15 +603,24 @@ def _create_local_sycl_repository(repository_ctx):
             "sycl/lib/" + sycl_libs["mkl_sycl_data_fitting"].file_name,
         )
     level_zero_libs = '"{}",\n'.format("sycl/lib/" + sycl_libs["ze_loader"].file_name)
+
+    def _fmt_src(path):
+        return '"%s",\n' % path
+
     repository_dict = {
+        # New placeholders used by the template
+        "%{mkl_intel_ilp64_src}": _fmt_src("sycl/lib/" + sycl_libs["mkl_intel_ilp64"].file_name),
+        "%{mkl_sequential_src}": _fmt_src("sycl/lib/" + sycl_libs["mkl_sequential"].file_name),
+        "%{mkl_core_src}": _fmt_src("sycl/lib/" + sycl_libs["mkl_core"].file_name),
+        "%{mkl_sycl_srcs}": mkl_sycl_libs,
         "%{mkl_intel_ilp64_lib}": sycl_libs["mkl_intel_ilp64"].file_name,
         "%{mkl_sequential_lib}": sycl_libs["mkl_sequential"].file_name,
         "%{mkl_core_lib}": sycl_libs["mkl_core"].file_name,
         "%{mkl_sycl_libs}": mkl_sycl_libs,
         "%{copy_rules}": "\n".join(copy_rules),
-        "%{sycl_headers}": ('":mkl-include",\n":sycl-include",\n'),
+        "%{sycl_headers}": '":mkl-include",\n":sycl-include",\n',
         "%{level_zero_libs}": level_zero_libs,
-        "%{level_zero_headers}": ('":level-zero-include"'),
+        "%{level_zero_headers}": '":level-zero-include"',
     }
     repository_ctx.template(
         "sycl/BUILD",
