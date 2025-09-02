@@ -194,18 +194,18 @@ for a detailed description of the algorithm.
 
 Calculates gradients of batch norm.
 
-**`BatchNormGrad(operand, scale, mean, variance, grad_output, epsilon,
+**`BatchNormGrad(operand, scale, batch_mean, batch_var, grad_output, epsilon,
                  feature_index)`**
 
-Arguments       | Type    | Semantics
---------------- | ------- | ----------------------------------------------------
-`operand`       | `XlaOp` | n dimensional array to be normalized (x)
-`scale`         | `XlaOp` | 1 dimensional array ($\gamma$)
-`mean`          | `XlaOp` | 1 dimensional array ($\mu$)
-`variance`      | `XlaOp` | 1 dimensional array ($\sigma^2$)
-`grad_output`   | `XlaOp` | Gradients passed to `BatchNormTraining` ($\nabla y$)
-`epsilon`       | `float` | Epsilon value ($\epsilon$)
-`feature_index` | `int64` | Index to feature dimension in `operand`
+| Arguments       | Type    | Semantics                                            |
+| --------------- | ------- | ---------------------------------------------------- |
+| `operand`       | `XlaOp` | n dimensional array to be normalized (x)             |
+| `scale`         | `XlaOp` | 1 dimensional array ($\gamma$)                       |
+| `batch_mean`    | `XlaOp` | 1 dimensional array ($\mu$)                          |
+| `batch_var`     | `XlaOp` | 1 dimensional array ($\sigma^2$)                     |
+| `grad_output`   | `XlaOp` | Gradients passed to `BatchNormTraining` ($\nabla y$) |
+| `epsilon`       | `float` | Epsilon value ($\epsilon$)                           |
+| `feature_index` | `int64` | Index to feature dimension in `operand`              |
 
 For each feature in the feature dimension (`feature_index` is the index for the
 feature dimension in `operand`), the operation calculates the gradients with
@@ -235,19 +235,16 @@ d_l&=
 \end{split}
 $$
 
-The inputs `mean` and `variance` represent moments values across batch and
+The inputs `batch_mean` and `batch_var` represent moments values across batch and
 spatial dimensions.
 
 The output type is a tuple of three handles:
 
-| Outputs        | Type    | Semantics                                         |
-| -------------- | ------- | ------------------------------------------------- |
-| `grad_operand` | `XlaOp` | gradient with respect to input `operand` ($\nabla |
-:                :         : x$)                                               :
-| `grad_scale`   | `XlaOp` | gradient with respect to input `scale` ($\nabla   |
-:                :         : \gamma$)                                          :
-| `grad_offset`  | `XlaOp` | gradient with respect to input `offset`($\nabla   |
-:                :         : \beta$)                                           :
+| Outputs        | Type    | Semantics                                               |
+| -------------- | ------- | ------------------------------------------------------- |
+| `grad_operand` | `XlaOp` | gradient with respect to input `operand` ($\nabla x$)   |
+| `grad_scale`   | `XlaOp` | gradient with respect to input `scale` ($\nabla\gamma$) |
+| `grad_offset`  | `XlaOp` | gradient with respect to input `offset`($\nabla\beta$)  |
 
 ## BatchNormInference
 
