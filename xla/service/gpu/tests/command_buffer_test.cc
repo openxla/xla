@@ -533,7 +533,8 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-3, 2e-3}));
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-3, 2e-3}));
 }
 
 INSTANTIATE_TEST_SUITE_P(CommandBufferTests, CommandBufferTest,
