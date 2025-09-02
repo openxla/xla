@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/map_util.h"
 #include "xla/service/dump.h"
@@ -97,11 +98,12 @@ bool IsFusible(const HloInstruction& instr) {
     case HloOpcode::kFusion:
       return IsGenericTritonFusion(instr) ||
              instr.fusion_kind() != HloInstruction::FusionKind::kCustom;
+    case HloOpcode::kBitcast:
+      return hlo_instruction_utils::KeepsBitwidth(instr);
     case HloOpcode::kCopy:
     case HloOpcode::kIota:
     case HloOpcode::kConstant:
     case HloOpcode::kReduce:
-    case HloOpcode::kBitcast:
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:
     case HloOpcode::kDynamicSlice:
