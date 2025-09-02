@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/types.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 #define DEBUG_TYPE "xla-translate"
@@ -1349,6 +1350,7 @@ void BuildGetTupleElementsForTupleResults(mlir::Operation* op, xla::XlaOp tuple,
 
 namespace mlir {
 
+// (-- LINT.IfChange(stablehlo_optimization_path) --)
 namespace stablehlo {
 namespace {
 
@@ -1666,6 +1668,13 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
     }
   }
 
+  // HLO GetTupleElement needs a single sharding,
+  std::optional<xla::OpSharding> sharding = ctx.builder->sharding();
+  if (sharding.has_value() && sharding->type() == xla::OpSharding::TUPLE) {
+    CHECK_GE(ctx.builder->sharding()->tuple_shardings_size(), 2);
+    sharding = ctx.builder->sharding()->tuple_shardings(1);
+  }
+  xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, sharding);
   value_map[op.getResult(num_results - 1)] =
       xla::GetTupleElement(xla_result, 1);
 
@@ -1899,9 +1908,9 @@ LogicalResult ExportXlaOp(CaseOp op, OpLoweringContext ctx) {
     if (failed(GetXlaOps(op, implicit_operands, ctx, args))) return failure();
 
     llvm::SmallVector<std::optional<xla::OpSharding>> arg_shardings;
-    if (!ret_shardings.empty()) {
-      // We only add arg shardings if there are result shardings, otherwise it
-      // means sharding propagation hasn't been done yet.
+    if (!ret_shardings.empty() || op->getNumResults() == 0) {
+      // We only add arg shardings if there are result shardings or no results,
+      // otherwise it means sharding propagation hasn't been done yet.
       arg_shardings = GetXlaOpShardings(args);
     }
 
@@ -2906,10 +2915,14 @@ LogicalResult ExportXlaOp(ReduceWindowOp op, OpLoweringContext ctx) {
     return failure();
   }
 
+  constexpr ArrayRef<int64_t> kEmptyArray = {};
+
   xla::XlaOp result = xla::ReduceWindowWithGeneralPadding(
       operands, init_values, body, op.getWindowDimensions(),
-      op.getWindowStrides().value(), op.getBaseDilations().value(),
-      op.getWindowDilations().value(), Convert_padding(op.getPadding()));
+      op.getWindowStrides().value_or(kEmptyArray),
+      op.getBaseDilations().value_or(kEmptyArray),
+      op.getWindowDilations().value_or(kEmptyArray),
+      Convert_padding(op.getPadding()));
 
   if (op.getNumResults() == 1) {
     value_map[op.getResult(0)] = result;
@@ -3000,10 +3013,12 @@ LogicalResult ExportXlaOp(SelectAndScatterOp op, OpLoweringContext ctx) {
   if (failed(GetXlaOp(op.getInitValue(), value_map, &init_value, op)))
     return failure();
 
+  constexpr ArrayRef<int64_t> kEmptyArray = {};
+
   value_map[op] = xla::SelectAndScatterWithGeneralPadding(
-      operand, select, op.getWindowDimensions().value(),
-      op.getWindowStrides().value(), Convert_padding(op.getPadding()), source,
-      init_value, scatter);
+      operand, select, op.getWindowDimensions().value_or(kEmptyArray),
+      op.getWindowStrides().value_or(kEmptyArray),
+      Convert_padding(op.getPadding()), source, init_value, scatter);
   return success();
 }
 
@@ -3059,9 +3074,12 @@ LogicalResult ExportXlaOp(UniformDequantizeOp op, OpLoweringContext ctx) {
 
 }  // namespace
 }  // namespace stablehlo
+// (-- LINT.ThenChange(:mhlo_optimization_path) --)
 
+// (-- LINT.IfChange(mhlo_optimization_path) --)
 namespace mhlo {
 namespace {
+
 LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
@@ -3793,9 +3811,9 @@ LogicalResult ExportXlaOp(IfOp op, OpLoweringContext ctx) {
 
   llvm::SmallVector<std::optional<xla::OpSharding>> true_arg_shardings,
       false_arg_shardings;
-  if (!ret_shardings.empty()) {
-    // We only add arg shardings if there are result shardings, otherwise it
-    // means sharding propagation hasn't been done yet.
+  if (!ret_shardings.empty() || op->getNumResults() == 0) {
+    // We only add arg shardings if there are result shardings or no results,
+    // otherwise it means sharding propagation hasn't been done yet.
     true_arg_shardings = GetXlaOpShardings(true_args);
     false_arg_shardings = GetXlaOpShardings(false_args);
   }
@@ -5198,6 +5216,8 @@ LogicalResult ExportXlaOp(MinimumBroadcastShapesOp op, OpLoweringContext ctx) {
 
 }  // namespace
 }  // namespace mhlo
+// (-- LINT.ThenChange(:stablehlo_optimization_path) --)
+
 }  // namespace mlir
 
 #include "xla/hlo/translate/mhlo_to_hlo/hlo_op_writer.inc"
@@ -5921,6 +5941,21 @@ LogicalResult ConvertToHloModule::RunOnFunction(mlir::func::FuncOp f) {
     }
   }
   if (!parameter_replication.empty()) {
+    if (options_.use_tuple_args) {
+      parameter_replication.clear();
+      auto& replicated_at_leaf_buffers = parameter_replication[0];
+      for (int i = 0; i < f.getNumArguments(); ++i) {
+        if (auto pr = f.getArgAttrOfType<mlir::ArrayAttr>(
+                i, kParameterReplicationAttr)) {
+          for (auto b : pr.getValue()) {
+            replicated_at_leaf_buffers.push_back(
+                cast<mlir::BoolAttr>(b).getValue());
+          }
+        } else {
+          replicated_at_leaf_buffers.push_back(false);
+        }
+      }
+    }
     absl::Status status =
         xla::internal::XlaBuilderFriend::SetParameterReplication(
             &module_builder_, computation, parameter_replication);
@@ -6011,6 +6046,11 @@ xla::OpMetadata GetOpNameMetadataFromLocation(Value value) {
   xla::OpMetadata m;
   m.set_op_name(mhlo::GetDebugNameFromLocation(value.getLoc()));
   return m;
+}
+
+std::string SanitizeOpName(std::string name) {
+  name = llvm::sys::path::filename(name);
+  return xla::SanitizeOpName(name, '.', "_");
 }
 
 }  // namespace
@@ -6114,7 +6154,7 @@ LogicalResult ConvertToHloModule::LowerBasicBlockAsFunction(
         // otherwise use the default prefix.
         std::string name = mhlo::GetDebugNameFromLocation(arg.getLoc());
         if (!name.empty()) {
-          name = llvm::sys::path::stem(name);
+          name = SanitizeOpName(name);
         } else {
           name = kArgPrefix;
         }
@@ -6146,7 +6186,7 @@ LogicalResult ConvertToHloModule::LowerBasicBlockAsFunction(
         // otherwise use the default prefix.
         std::string name = mhlo::GetDebugNameFromLocation(arg.getLoc());
         if (!name.empty()) {
-          name = llvm::sys::path::stem(name);
+          name = SanitizeOpName(name);
         } else {
           name = absl::StrCat(kArgPrefix, num);
         }
@@ -6180,7 +6220,6 @@ LogicalResult ConvertToHloModule::LowerBasicBlockAsFunction(
     return failure();
   }
   computation = computation_or.value();
-  // LLVM_DEBUG(llvm::dbgs() << "Created: " << result->name() << "\n");
   return success();
 }
 
@@ -6444,12 +6483,7 @@ std::optional<xla::OriginalValueProto> CreateOriginalValueFromOp(
   if (!original_value_attr) {
     return std::nullopt;
   }
-  mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(op);
-  if (failed(shape_or)) {
-    return std::nullopt;
-  }
-  return xla::ConvertOriginalValue(original_value_attr.getValue(),
-                                   shape_or.value());
+  return xla::ConvertOriginalValue(original_value_attr.getValue());
 }
 
 }  // namespace mlir

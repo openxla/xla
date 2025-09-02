@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/custom_call_status.h"
@@ -84,7 +85,7 @@ namespace cpu {
 
 absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
     std::unique_ptr<FunctionLibrary> function_library,
-    std::unique_ptr<const BufferAssignment> assignment,
+    std::unique_ptr<BufferAssignment> assignment,
     std::unique_ptr<HloModule> hlo_module,
     const std::string& entry_function_name,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
@@ -112,7 +113,7 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
 
 absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
     std::unique_ptr<FunctionLibrary> function_library,
-    std::unique_ptr<const BufferAssignment> assignment,
+    std::unique_ptr<BufferAssignment> assignment,
     std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
     std::vector<ConstantAllocation> constants,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
@@ -152,7 +153,7 @@ CpuExecutable::CpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
     std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
-    std::unique_ptr<const BufferAssignment> assignment)
+    std::unique_ptr<BufferAssignment> assignment)
     : Executable(std::move(hlo_module), std::move(hlo_profile_printer_data),
                  std::move(hlo_profile_index_map)),
       assignment_(std::move(assignment)) {
@@ -161,9 +162,9 @@ CpuExecutable::CpuExecutable(
   }
 
   // Once we compiled HLO module to CPU executable, we don't need to keep the
-  // pass metadata around.
+  // HLO module metadata around.
   if (has_module()) {
-    shared_module()->metadata()->ClearPassMetadata();
+    *shared_module()->metadata() = HloModuleMetadata(tsl::Env::Default());
   }
 }
 
@@ -558,6 +559,13 @@ const InstructionValueSet& CpuExecutable::GetRootValueSet() const {
 int64_t CpuExecutable::SizeOfGeneratedCodeInBytes() const {
   // TODO(ezhulenev): Delete this function, it's not really used anywhere.
   return 0;
+}
+
+void CpuExecutable::Finalize() {
+  if (has_module()) {
+    shared_module()->Finalize();
+  }
+  assignment_->Finalize();
 }
 
 }  // namespace cpu

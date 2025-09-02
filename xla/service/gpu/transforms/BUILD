@@ -1,3 +1,5 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -5,6 +7,10 @@ load(
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "tf_gpu_tests_tags",
+)
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -468,6 +474,10 @@ cc_library(
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -475,10 +485,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -499,8 +505,10 @@ xla_cc_test(
         "//xla/service:shape_inference",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -508,9 +516,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1519,6 +1524,8 @@ cc_library(
         "//xla/service/gpu:triton_fusion_analysis",
         "//xla/service/gpu:triton_tiling_propagation",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -1907,6 +1914,31 @@ xla_cc_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+lit_test_suite(
+    name = "hlo_lit_tests",
+    srcs = enforce_glob(
+        [
+            "layout_assignment_v100.hlo",
+            "layout_assignment_a100.hlo",
+            "layout_assignment_h100.hlo",
+        ],
+        include = [
+            "*.hlo",
+        ],
+    ),
+    cfg = "//xla:lit.cfg.py",
+    data = [
+        "//xla/tools/hlo_opt:gpu_specs/a100_pcie_80.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
+    ],
+    default_tags = tf_gpu_tests_tags(),
+    tools = [
+        "//xla/tools:hlo-opt",
+        "@llvm-project//llvm:FileCheck",
     ],
 )
 

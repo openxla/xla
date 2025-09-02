@@ -120,7 +120,11 @@ bool IsAtLeastCuda12300(const se::StreamExecutor* stream_executor) {
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &device_description.gpu_compute_capability());
   if (cuda_cc != nullptr) {
-    if (device_description.driver_version() >=
+    // We need a recent driver to support the feature at runtime and we need a
+    // recent version of the toolkit at compile time, so that we have access to
+    // the driver's headers.
+    if (std::min(device_description.driver_version(),
+                 device_description.compile_time_toolkit_version()) >=
         stream_executor::SemanticVersion(12, 3, 0)) {
       return true;
     }
@@ -134,7 +138,11 @@ bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
       &device_description.gpu_compute_capability());
   if (cuda_cc != nullptr) {
-    if (device_description.driver_version() >=
+    // We need a recent driver to support the feature at runtime and we need a
+    // recent version of the toolkit at compile time, so that we have access to
+    // the driver's headers.
+    if (std::min(device_description.driver_version(),
+                 device_description.compile_time_toolkit_version()) >=
         stream_executor::SemanticVersion(12, 9, 0)) {
       return true;
     }
@@ -846,7 +854,7 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
       CommandBufferCmdExecutor::Create(std::move(child_commands), serialize));
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<ChildCmd>(std::move(child_executor), ResourceUseVector{});
+  commands.Emplace<ChildCmd>(std::move(child_executor));
 
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,
@@ -1125,11 +1133,12 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
   commands.Emplace<CublasLtCmd>(CublasLtMatmulThunk(
-      nullptr, config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a,
-      slice_b, slice_c, slice_d, BufferAllocation::Slice(),
+      Thunk::ThunkInfo(), /*canonical_hlo=*/"", config.value(),
+      se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a, slice_b, slice_c,
+      slice_d, BufferAllocation::Slice(), BufferAllocation::Slice(),
       BufferAllocation::Slice(), BufferAllocation::Slice(),
       BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(), slice_workspace));
+      BufferAllocation::Slice(), slice_workspace));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,
       CommandBufferCmdExecutor::Create(std::move(commands), serialize));

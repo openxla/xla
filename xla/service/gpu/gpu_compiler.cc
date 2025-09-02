@@ -63,8 +63,9 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
+#include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
-#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -102,6 +103,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/host_offload_legalize.h"
 #include "xla/hlo/transforms/host_offloader.h"
+#include "xla/hlo/transforms/host_offloading_prepare.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
@@ -511,9 +513,12 @@ GpuThunkAotCompilationResult::LoadExecutable(
       std::move(ir_emitter_context.constants());
   TF_ASSIGN_OR_RETURN(auto output_info,
                       GetOutputInfo(*hlo_module, *buffer_assignment));
-  const Shape& output_shape = hlo_module->result_shape();
+  ProgramShape program_shape =
+      hlo_module->entry_computation_layout().ComputeProgramShape();
+  *program_shape.mutable_result() = hlo_module->result_shape();
   DebugOptions debug_options = hlo_module->config().debug_options();
   std::string hlo_module_name = hlo_module->name();
+
   {
     tsl::profiler::TraceMe traceme("CreateGpuExecutable");
     std::unique_ptr<GpuAliasInfo> alias_info =
@@ -528,7 +533,7 @@ GpuThunkAotCompilationResult::LoadExecutable(
         /*constants=*/std::move(constants),
         /*output_info=*/std::move(output_info),
         /*module_name=*/std::move(hlo_module_name),
-        /*output_shape=*/std::move(output_shape),
+        /*program_shape=*/std::move(program_shape),
         /*mlir_allocations=*/std::nullopt,
         /*buffer_assignment=*/std::move(buffer_assignment),
         /*alias_info=*/std::move(alias_info),
@@ -683,6 +688,36 @@ absl::Status RunSPMDPasses(
         .status();
   }
 }
+
+namespace {
+
+absl::Status SetHostDeviceType(HloInstruction* instr) {
+  TF_ASSIGN_OR_RETURN(auto backend_config,
+                      instr->backend_config<GpuBackendConfig>());
+  backend_config.set_device_type(DEVICE_TYPE_HOST);
+  TF_RETURN_IF_ERROR(instr->set_backend_config(backend_config));
+  return absl::OkStatus();
+}
+
+absl::Status ClearBackendConfigDeviceType(HloInstruction* instr) {
+  TF_ASSIGN_OR_RETURN(auto backend_config,
+                      instr->backend_config<GpuBackendConfig>());
+  backend_config.clear_device_type();
+  return instr->set_backend_config(backend_config);
+}
+
+bool BackendConfigDeviceTypeIsHost(HloInstruction* instr) {
+  if (!instr->has_backend_config()) {
+    return false;
+  }
+  auto backend_config = instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    return false;
+  }
+  return backend_config->device_type() == DEVICE_TYPE_HOST;
+}
+
+}  // namespace
 
 absl::Status RunOptimizationPasses(
     HloModule* hlo_module, stream_executor::StreamExecutor* stream_exec,
@@ -1196,7 +1231,8 @@ void AddCollectiveCombinerPasses(
 
   bool enable_heuristic_collective_combining =
       opts.xla_gpu_experimental_enable_heuristic_collective_combining() &&
-      IsNVLinkConnected(module.config(), options.slice_size);
+      !IsNVLinkConnected(module.config(), device_description,
+                         options.slice_size);
 
   if (enable_heuristic_collective_combining) {
     pipeline.AddPass<CollectiveCombinerAnnotator>(device_description,
@@ -1387,6 +1423,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   // GPU only supports canonical convolutions.
   opts.set_supports_non_canonical_dots(false);
   opts.set_enable_unconditional_reduce_of_concat_replacement(false);
+  opts.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
 
   switch (mode) {
     case AlgebraicSimplifierMode::kPostFusionSimplification:
@@ -1466,6 +1503,19 @@ absl::Status GpuCompiler::OptimizeHloModule(
                                     hlo_module->config().debug_options(),
                                     gpu_target_config.platform_name == "ROCM");
 
+  {
+    HloPassPipeline pipeline("annotate-host-compute");
+    HloHostDeviceTypeCallWrapper::Options
+        hlo_host_device_type_call_wrapper_options;
+    hlo_host_device_type_call_wrapper_options.set_backend_config_fn =
+        SetHostDeviceType;
+    hlo_host_device_type_call_wrapper_options.clear_backend_config_device_type =
+        ClearBackendConfigDeviceType;
+    pipeline.AddPass<HloHostDeviceTypeCallWrapper>(
+        hlo_host_device_type_call_wrapper_options);
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
+
   TF_RETURN_IF_ERROR(RunPreSPMDPartitionerPasses(hlo_module));
   // Set max_windowed_einsum_iteration to slice_size, as there will be
   // significant overhead when scaled beyond the maximum size of the
@@ -1474,6 +1524,14 @@ absl::Status GpuCompiler::OptimizeHloModule(
       RunSPMDPasses(hlo_module, gpu_target_config, alias_info,
                     layout_insensitive_algsimp_opts,
                     /*max_windowed_einsum_iteration=*/options.slice_size));
+
+  {
+    HloPassPipeline pipeline("host-compute");
+    pipeline.AddPass<HostComputeAsyncifier>(BackendConfigDeviceTypeIsHost);
+    pipeline.AddPass<HostOffloadingPrepare>(
+        HostOffloadingPrepare::Rewrite::kConvertToCustomCall);
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
 
   // Dump the HLO module after SPMD partitioning. There should be no more Python
   // callbacks at this point.
@@ -2621,7 +2679,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*constants=*/std::move(res.compile_module_results.constants),
           /*output_info=*/std::move(res.compile_module_results.output_info),
           /*module_name=*/std::move(res.compile_module_results.module_name),
-          /*output_shape=*/std::move(res.compile_module_results.output_shape),
+          /*program_shape=*/
+          module->compute_computation_layout().ComputeProgramShape(),
           /*mlir_allocations=*/
           (res.compile_module_results.use_original_allocations
                ? std::optional<std::vector<BufferAllocation>>()
@@ -2868,8 +2927,18 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
       CreateHloAnalysisOpts(*module, gpu_device_info, ShapeSizeBytesFunction());
   HloCostAnalysis hlo_cost_analysis(hlo_cost_analysis_opts);
   // `HloRematerialization` options initialization.
+  // `scheduler_mem_limit` cannot directly be reused for HloRematerialization.
+  // It reduces the memory limit by the size of the output, which is done again
+  // in HloRematerialization. So to account for that, add back the size of the
+  // output.
+  int64_t remat_mem_limit = scheduler_mem_limit;
+  ShapeUtil::ForEachSubshape(
+      module->result_shape(),
+      [&](const Shape& subshape, const ShapeIndex& /*index*/) {
+        remat_mem_limit += ShapeSizeBytesFunction()(subshape);
+      });
   HloRematerialization::Options remat_opts = CreateRematOpts(
-      *module, gpu_device_info, hlo_cost_analysis, scheduler_mem_limit);
+      *module, gpu_device_info, hlo_cost_analysis, remat_mem_limit);
   {
     HloPassPipeline& pipeline =
         main_pipeline.AddPass<HloPassPipeline>("remat-pipeline");

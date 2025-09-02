@@ -84,17 +84,6 @@ TEST(CudaComputeCapabilityTest, FromString) {
               StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
-TEST(CudaComputeCapabilityTest, FromIntWithAutoFeatureExtension) {
-  EXPECT_EQ(CudaComputeCapability::FromIntWithAutoFeatureExtension(8, 0),
-            CudaComputeCapability(8, 0));
-  EXPECT_EQ(
-      CudaComputeCapability::FromIntWithAutoFeatureExtension(9, 0),
-      CudaComputeCapability(
-          9, 0, CudaComputeCapability::FeatureExtension::kAcceleratedFeatures));
-  EXPECT_EQ(CudaComputeCapability::FromIntWithAutoFeatureExtension(100, 52),
-            CudaComputeCapability(100, 52));
-}
-
 TEST(CudaComputeCapabilityTest, ToProto) {
   CudaComputeCapabilityProto proto0 =
       CudaComputeCapability(100, 5,
@@ -287,6 +276,24 @@ TEST(CudaComputeCapabilityTest, GetPtxAsTargetName) {
           CudaComputeCapability::FeatureExtension::kForwardCompatibleFeatures)
           .GetPtxAsTargetName(),
       "sm_100f");
+}
+
+TEST(CudaComputeCapabilityTest, WithoutAnyFeatureExtension) {
+  EXPECT_EQ(CudaComputeCapability(
+                100, 52, CudaComputeCapability::FeatureExtension::kNone)
+                .WithoutAnyFeatureExtension(),
+            CudaComputeCapability(100, 52));
+  EXPECT_EQ(CudaComputeCapability(
+                100, 52,
+                CudaComputeCapability::FeatureExtension::kAcceleratedFeatures)
+                .WithoutAnyFeatureExtension(),
+            CudaComputeCapability(100, 52));
+  EXPECT_EQ(
+      CudaComputeCapability(
+          100, 52,
+          CudaComputeCapability::FeatureExtension::kForwardCompatibleFeatures)
+          .WithoutAnyFeatureExtension(),
+      CudaComputeCapability(100, 52));
 }
 
 }  // namespace

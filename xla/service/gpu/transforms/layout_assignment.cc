@@ -563,6 +563,22 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           auto indices_buffer,
           points_to_analysis_->GetBufferDefinedAt(instruction, {1}));
       TF_RETURN_IF_ERROR(SetBufferLayout(default_layout, *indices_buffer));
+    } else if (HloPredicateIsOp<HloOpcode::kBitcastConvert>(instruction)) {
+      Shape operand_shape = instruction->operand(0)->shape();
+      Shape output_shape = instruction->shape();
+      // Make the added or removed dimension the minor most to give the
+      // operation a chance to become a no-op (bitcast).
+      if (operand_shape.dimensions().size() >
+          output_shape.dimensions().size()) {
+        *operand_shape.mutable_layout() = LayoutUtil::MoveDimToMinor(
+            operand_shape.layout(), operand_shape.dimensions().size() - 1);
+        TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
+      } else if (operand_shape.dimensions().size() <
+                 output_shape.dimensions().size()) {
+        *output_shape.mutable_layout() = LayoutUtil::MoveDimToMinor(
+            output_shape.layout(), output_shape.dimensions().size() - 1);
+        TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
+      }
     } else if (HloPredicateIsOp<HloOpcode::kTriangularSolve>(instruction)) {
       // TODO(phawkins): Ideally we would relax this constraint. What we
       // actually want is that:
@@ -629,6 +645,37 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       LayoutUtil::SetToDefaultLayout(&operand_shape);
       TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
       TF_RETURN_IF_ERROR(SetInstructionLayout(operand_shape, instruction));
+    } else if (instruction->opcode() == HloOpcode::kAsyncStart) {
+      HloComputation* called_computation =
+          instruction->async_wrapped_computation();
+
+      if (called_computation->execution_thread() !=
+          HloInstruction::kHostThread) {
+        continue;
+      }
+
+      Shape new_shape = instruction->shape();
+      *new_shape.mutable_tuple_shapes(0) = ShapeUtil::MakeTupleShape(
+          called_computation->ComputeProgramShape().parameters());
+      *new_shape.mutable_tuple_shapes(1) =
+          called_computation->ComputeProgramShape().result();
+      TF_RETURN_IF_ERROR(SetInstructionLayout(new_shape, instruction,
+                                              /*mandatory=*/true, /*dfs=*/true,
+                                              /*allow_alias=*/true));
+    } else if (instruction->opcode() == HloOpcode::kAsyncDone) {
+      HloComputation* called_computation =
+          instruction->async_wrapped_computation();
+
+      if (called_computation->execution_thread() !=
+          HloInstruction::kHostThread) {
+        continue;
+      }
+
+      Shape new_shape = called_computation->root_instruction()->shape();
+
+      TF_RETURN_IF_ERROR(SetInstructionLayout(new_shape, instruction,
+                                              /*mandatory=*/true, /*dfs=*/true,
+                                              /*allow_alias=*/true));
     }
   }
   return absl::OkStatus();

@@ -293,12 +293,17 @@ absl::Status BufferAllocation::AddAssignment(const HloValue& buffer,
   assigned_buffers_.emplace(&buffer, offset_size);
   // For debugging purposes, store the assigned memory space in the
   // instruction's layout.
-  for (HloPosition position : buffer.positions()) {
-    Shape* shape = ShapeUtil::GetMutableSubshape(
-        position.instruction->mutable_shape(), position.index);
-    if (shape->has_layout()) {
-      shape->mutable_layout()->set_memory_space(buffer.color());
+  for (const HloPosition& position : buffer.positions()) {
+    const Shape& shape =
+        ShapeUtil::GetSubshape(position.instruction->shape(), position.index);
+    if (!shape.has_layout() ||
+        shape.layout().memory_space() == buffer.color()) {
+      continue;
     }
+
+    Shape* mutable_shape = ShapeUtil::GetMutableSubshape(
+        position.instruction->mutable_shape(), position.index);
+    mutable_shape->mutable_layout()->set_memory_space(buffer.color());
   }
   return absl::OkStatus();
 }
@@ -1305,6 +1310,16 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
         *id_to_logical_buffer[logical_buffer_proto.id()]));
   }
   return buffer_assignment;
+}
+
+void BufferAssignment::Finalize() {
+  hlo_ordering_.reset();
+  hlo_live_range_.reset();
+
+  for (BufferAllocation& allocation : allocations_) {
+    allocation.heap_traces_.clear();
+    allocation.heap_traces_.shrink_to_fit();
+  }
 }
 
 /* static */

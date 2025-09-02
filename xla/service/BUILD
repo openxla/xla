@@ -18,7 +18,7 @@ load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gp
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility", "tsl_copts")
-load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -989,6 +989,7 @@ cc_library(
         "//xla/service/spmd/shardy:constants",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -1021,7 +1022,9 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
@@ -1503,13 +1506,11 @@ cc_library(
         ":computation_layout",
         ":dump",
         ":hlo_execution_profile",
-        ":hlo_graph_dumper",
         ":hlo_module_config",
         ":hlo_proto_cc",
         ":maybe_owning_device_memory",
         ":shaped_buffer",
         ":stream_pool",
-        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:shape_tree",
         "//xla:shape_util",
@@ -1518,16 +1519,23 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/strings:proto_serialization",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
@@ -1536,7 +1544,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + internal_hlo_deps(),
+    ],
 )
 
 xla_cc_test(
@@ -3452,6 +3460,7 @@ xla_cc_test(
         "//xla:debug_options_flags",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:tuple_tree",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
@@ -3549,7 +3558,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -3938,6 +3946,7 @@ xla_cc_test(
     srcs = ["layout_assignment_test.cc"],
     deps = [
         ":computation_layout",
+        ":hlo_verifier",
         ":layout_assignment",
         ":logical_buffer",
         ":pattern_matcher",
@@ -4197,8 +4206,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    # TODO(b/332870133): Enable when it passes on H100.
-    disabled_backends = ["h100"],
     tags = [
         "no_windows",  # TODO(b/152037541)
     ],
@@ -5288,6 +5295,7 @@ xla_cc_test(
         ":computation_placer",
         ":global_device_id",
         ":hlo_module_config",
+        ":source_target_pairs",
         "//xla:array2d",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -6174,6 +6182,7 @@ cc_library(
     srcs = ["sharding_config.cc"],
     hdrs = ["sharding_config.h"],
     deps = [
+        "//xla:printer",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo_sharding",

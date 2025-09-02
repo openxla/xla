@@ -1,5 +1,7 @@
 """Provides build configuration for TSL"""
 
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
 load(
@@ -11,7 +13,6 @@ load(
     "if_enable_mkl",
     "if_mkl",
     "if_mkldnn_aarch64_acl",
-    "if_mkldnn_aarch64_acl_openmp",
     "if_mkldnn_openmp",
     "if_onednn_async",
     "onednn_v3_define",
@@ -345,7 +346,6 @@ def tsl_copts(
         if_onednn_async(["-DENABLE_ONEDNN_ASYNC"]) +
         onednn_v3_define() +
         if_mkldnn_aarch64_acl(["-DDNNL_AARCH64_USE_ACL=1"]) +
-        if_mkldnn_aarch64_acl_openmp(["-DENABLE_ONEDNN_OPENMP"]) +
         if_enable_acl(["-DXLA_CPU_USE_ACL=1", "-fexceptions"]) +
         if_android_arm(["-mfpu=neon", "-fomit-frame-pointer"]) +
         if_linux_x86_64(["-msse3"]) +
@@ -499,9 +499,6 @@ def get_compatible_with_libtpu_portable():
 
 def filegroup(**kwargs):
     native.filegroup(**kwargs)
-
-def internal_hlo_deps():
-    return []
 
 # Config setting selector used when building for products
 # which requires restricted licenses to be avoided.
