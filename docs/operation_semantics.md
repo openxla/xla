@@ -1352,9 +1352,22 @@ XlaBuilder supports these element-wise unary functions:
 <!-- disableFinding(HTML_FORMAT) -->
 <b>`Abs(operand)`</b> Element-wise abs `x -> |x|`.
 
+<b>`Cbrt(operand)`</b> Element-wise cubic root operation `x -> cbrt(x)`.
+
 <b>`Ceil(operand)`</b> Element-wise ceil `x -> ⌈x⌉`.
 
 <b>`Clz(operand)`</b> Element-wise count leading zeros.
+
+<b>`Cos(operand)`</b> Element-wise cosine `x -> cos(x)`.
+
+<b>`Erf(operand)`</b> Element-wise error function `x -> erf(x)` where
+
+$$\text{erf}(x) = \frac{2}{\sqrt{\pi}}\int_0^x e^{-t^2} \, dt$$.
+
+<b>`Exp(operand)`</b> Element-wise natural exponential `x -> e^x`.
+
+<b>`Expm1(operand)`</b> Element-wise natural exponential minus one
+`x -> e^x - 1`.
 
 <b>`Floor(operand)`</b> Element-wise floor `x -> ⌊x⌋`.
 
@@ -1365,6 +1378,13 @@ shape. `x -> imag(x)`. If the operand is a floating point type, returns 0.
 i.e., is not positive or negative infinity, and is not `NaN`. Returns an array
 of `PRED` values with the same shape as the input, where each element is `true`
 if and only if the corresponding input element is finite.
+
+<b>`Log(operand)`</b> Element-wise natural logarithm `x -> ln(x)`.
+
+<b>`Log1p(operand)`</b> Element-wise shifted natural logarithm `x -> ln(1+x)`.
+
+<b>`Logistic(operand)`</b> Element-wise logistic function computation `x ->
+logistic(x)`.
 
 <b>`Neg(operand)`</b> Element-wise negation `x -> -x`.
 
@@ -1380,12 +1400,23 @@ element of `operand`.
 
 <b>`RoundNearestEven(operand)`</b> Element-wise rounding, ties to nearest even.
 
+<b>`Rsqrt(operand)`</b> Element-wise reciprocal of square root operation
+`x -> 1.0 / sqrt(x)`.
+
 <b>`Sign(operand)`</b> Element-wise sign operation `x -> sgn(x)` where
 
 $$\text{sgn}(x) = \begin{cases} -1 & x < 0\\ -0 & x = -0\\ NaN & x = NaN\\ +0 &
 x = +0\\ 1 & x > 0 \end{cases}$$
 
 using the comparison operator of the element type of `operand`.
+
+<b>`Sin(operand)`</b> Element-wise sine `x -> sin(x)`.
+
+<b>`Sqrt(operand)`</b> Element-wise square root operation `x -> sqrt(x)`.
+
+<b>`Tan(operand)`</b> Element-wise tangent `x -> tan(x)`.
+
+<b>`Tanh(operand)`</b> Element-wise hyperbolic tangent `x -> tanh(x)`.
 
 | Arguments | Type    | Semantics                   |
 | --------- | ------- | --------------------------- |
@@ -1430,7 +1461,6 @@ logistic(x)`.
 
 <b>`Tanh(operand, result_accuracy)`</b> Element-wise hyperbolic tangent `x -> tanh(x)`.
 
-using the comparison operator of the element type of `operand`.
 
 | Arguments         | Type                      | Semantics                                                                              |
 | ----------------- | ------------------------- | -------------------------------------------------------------------------------------- |
