@@ -215,10 +215,144 @@ absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
   }
 }
 
+absl::Status RegisterCustomCallTarget(const std::string& fn_name, nb::object fn,
+                                      const std::string& platform,
+                                      int api_version,
+                                      XLA_FFI_Handler_Traits traits) {
+  // Register legacy custom call target (untyped void* API).
+  if (api_version == 0) {
+    if (traits != 0) {
+      return absl::InvalidArgumentError(
+          "Custom call target registration with traits is not supported for "
+          "api_version=0");
+    }
+
+    nb::capsule capsule;
+    if (!nb::try_cast<nb::capsule>(fn, capsule)) {
+      return absl::InvalidArgumentError(
+          "Custom call target registration with api_version=0 requires a "
+          "PyCapsule fn object");
+    }
+
+    CustomCallTargetRegistry::Global()->Register(fn_name, capsule.data(),
+                                                 platform);
+    return absl::OkStatus();
+  }
+
+  if (api_version == 1) {
+    // Register a single execute handler
+    nb::capsule capsule;
+    if (nb::try_cast<nb::capsule>(fn, capsule)) {
+      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+          ffi::GetXlaFfiApi(), fn_name, platform,
+          reinterpret_cast<XLA_FFI_Handler*>(capsule.data())));
+    }
+
+    // Register a bundle of handlers
+    nb::dict bundle;
+    if (nb::try_cast<nb::dict>(fn, bundle)) {
+      auto handler = [&](const char* name) -> absl::StatusOr<XLA_FFI_Handler*> {
+        if (!bundle.contains(name)) {
+          return nullptr;
+        }
+
+        nb::capsule capsule;
+        if (nb::try_cast<nb::capsule>(bundle[name], capsule)) {
+          return reinterpret_cast<XLA_FFI_Handler*>(capsule.data());
+        }
+        return absl::InvalidArgumentError(
+            "Custom call target registration with api_version=1 requires a "
+            "PyCapsule fn object for all dict keys");
+      };
+
+      XLA_FFI_Handler_Bundle bundle;
+      TF_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
+      TF_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
+      TF_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
+      TF_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
+
+      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+          ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
+    }
+
+    return absl::InvalidArgumentError(
+        "Unsupported custom call target type for api_version=1");
+  }
+
+  return absl::UnimplementedError(absl::StrFormat(
+      "API version %d is not supported by RegisterCustomCallTarget. Supported "
+      "versions are 0 and 1.",
+      api_version));
+}
+
+nb::dict GetRegisteredCustomCallTargets(const std::string& platform) {
+  nb::dict targets;
+
+  // version 0 handlers
+  for (const auto& [name, target] :
+       CustomCallTargetRegistry::Global()->registered_symbols(platform)) {
+    targets[nb::str(name.data(), name.size())] = nb::capsule(target);
+  }
+
+  // version 1 handlers
+  auto ffi_handlers = ffi::StaticRegisteredHandlers(platform);
+  if (!ffi_handlers.ok()) {
+    return targets;
+  }
+
+  for (const auto& [name, registration] : *ffi_handlers) {
+    nb::dict bundle;
+    auto export_handler = [&](std::string_view name, XLA_FFI_Handler* h) {
+      if (h != nullptr) {
+        bundle[nb::str(name.data(), name.size())] =
+            nb::capsule(reinterpret_cast<void*>(h));
+      }
+    };
+    export_handler("instantiate", registration.bundle.instantiate);
+    export_handler("prepare", registration.bundle.prepare);
+    export_handler("initialize", registration.bundle.initialize);
+    export_handler("execute", registration.bundle.execute);
+    targets[nb::str(name.data(), name.size())] = std::move(bundle);
+  }
+  return targets;
+}
+
+absl::Status RegisterCustomTypeId(std::string_view type_name,
+                                  nb::object type_id) {
+  nb::capsule capsule;
+  if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
+    return absl::InvalidArgumentError(
+        "The type_id argument to register_custom_call_type_id must be a "
+        "PyCapsule object holding a pointer to a XLA_FFI_TypeId.");
+  }
+  XLA_FFI_TypeId* type_id_ptr =
+      reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
+  return ffi::TakeStatus(ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(),
+                                                  type_name, type_id_ptr));
+}
+
+
 NB_MODULE(py_hlo_multihost_runner, m) {
   InitializeAbslLogging();
 
   m.def("RunHloFiles", ThrowIfErrorWrapper(RunHloFiles));
+  m.def(
+      "register_custom_call_target",
+      [](const std::string& fn_name, nb::object fn, const std::string& platform,
+         int api_version, XLA_FFI_Handler_Traits traits) {
+        ThrowIfError(RegisterCustomCallTarget(fn_name, std::move(fn), platform,
+                                              api_version, traits));
+      },
+      nb::arg("fn_name"), nb::arg("fn"), nb::arg("platform"),
+      nb::arg("api_version") = 0, nb::arg("traits") = 0);
+  m.def("custom_call_targets", GetRegisteredCustomCallTargets,
+        nb::arg("platform"));
+  m.def(
+      "register_custom_type_id",
+      [](std::string_view type_name, nb::object type_id) {
+        xla::ThrowIfError(RegisterCustomTypeId(type_name, type_id));
+      },
+      nb::arg("type_name"), nb::arg("type_id"));
 
   nb::class_<PyHloRunnerConfig>(m, "PyHloRunnerConfig")
       .def(nb::init<>())
