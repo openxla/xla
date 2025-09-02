@@ -187,6 +187,39 @@ xla_test(
 )
 
 sycl_library(
+    name = "sycl_event",
+    srcs = ["sycl_event.cc"],
+    hdrs = ["sycl_event.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_test(
+    name = "sycl_event_test",
+    srcs = ["sycl_event_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_event",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+sycl_library(
     name = "sycl_gpu_runtime",
     srcs = ["sycl_gpu_runtime.cc"],
     hdrs = ["sycl_gpu_runtime.h"],

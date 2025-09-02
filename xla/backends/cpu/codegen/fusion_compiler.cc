@@ -132,7 +132,6 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::mhlo::createConvertToSignlessPass());
   pm.addPass(emitters::CreatePropagateSliceIndicesPass());
   pm.addPass(emitters::CreateFlattenTensorsPass());
-  pm.addPass(emitters::createPropagateAliasScopesPass());
   // We need LICM before unswitching loops, because our loop unswitcher only
   // detects for loops with a single if inside them.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
@@ -146,6 +145,7 @@ static void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   //     emitters::CreateVectorizeLoadsAndStoresPass(/*target_type=*/"cpu"));
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
+  pm.addNestedPass<mlir::func::FuncOp>(CreateAddLoopUnrollFlagsPass());
 }
 
 static void AddLoweringPasses(mlir::OpPassManager& pm, int32_t vector_width,

@@ -2025,7 +2025,8 @@ int64_t MsaAlgorithm::MaxReservedScopedMemory() {
 }
 
 std::optional<int64_t> MsaAlgorithm::EarliestBlockAllocatedWeightStartTime(
-    int64_t definition_time, int64_t use_time, int64_t buffer_size,
+    int64_t earliest_start_time_candidate, int64_t first_use_time,
+    int64_t last_use_time, int64_t buffer_size,
     int64_t block_allocated_weights_bytes_limit,
     std::vector<int64_t>& prefetch_end_times) {
   auto can_find_chunk_within_limit =
@@ -2042,20 +2043,21 @@ std::optional<int64_t> MsaAlgorithm::EarliestBlockAllocatedWeightStartTime(
         return chunk_candidate.chunk_end() <=
                block_allocated_weights_bytes_limit;
       };
-  if (can_find_chunk_within_limit(definition_time, use_time, buffer_size,
+  if (can_find_chunk_within_limit(earliest_start_time_candidate, last_use_time,
+                                  buffer_size,
                                   block_allocated_weights_bytes_limit)) {
-    return definition_time;
+    return earliest_start_time_candidate;
   }
   // Find the first start_time = end_time + 1, where end_time comes from the
   // prefetch_end_times list.
   auto it_begin =
       std::upper_bound(prefetch_end_times.begin(), prefetch_end_times.end(),
-                       definition_time - 1);
+                       earliest_start_time_candidate - 1);
   auto it_end = std::upper_bound(prefetch_end_times.begin(),
-                                 prefetch_end_times.end(), use_time - 1);
+                                 prefetch_end_times.end(), first_use_time - 1);
   for (auto it = it_begin; it != it_end; ++it) {
     int64_t start_time = *it + 1;
-    if (can_find_chunk_within_limit(start_time, use_time, buffer_size,
+    if (can_find_chunk_within_limit(start_time, last_use_time, buffer_size,
                                     block_allocated_weights_bytes_limit)) {
       return start_time;
     }
@@ -2137,13 +2139,14 @@ void MsaAlgorithm::AllocateBlockAllocatedWeights() {
     int64_t buffer_size = buffer_intervals_.at(value).size;
     int64_t earliest_start_time_candidate =
         std::max(definition_time, previous_start_time);
-
+    CHECK_LE(earliest_start_time_candidate, first_use_time);
     // Find the earliest start time for which a chunk can be allocated for the
     // block allocated weight.
     std::optional<int64_t> optional_start_time =
         EarliestBlockAllocatedWeightStartTime(
-            earliest_start_time_candidate, end_time, buffer_size,
-            block_allocated_weights_bytes_limit, prefetch_end_times);
+            earliest_start_time_candidate, first_use_time, end_time,
+            buffer_size, block_allocated_weights_bytes_limit,
+            prefetch_end_times);
 
     if (!optional_start_time.has_value()) {
       LOG(WARNING) << "Could not find a chunk for block allocated weight: "
@@ -2199,7 +2202,9 @@ void MsaAlgorithm::AllocateBlockAllocatedWeights() {
         /*resource=*/0.0);
 
     previous_start_time = start_time;
-    prefetch_end_times.push_back(end_time);
+    auto const sorted_position = std::lower_bound(
+        prefetch_end_times.begin(), prefetch_end_times.end(), end_time);
+    prefetch_end_times.insert(sorted_position, end_time);
 
     // Bookkeeping Checklist:
     // Commit the chunk to the alternate memory.
@@ -6175,11 +6180,31 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
              !edge_time_indices_.contains(next_eviction_end_time));
     return next_eviction_end_time;
   };
+  int64_t original_end_time = eviction_mem_interval.end;
   for (; eviction_mem_interval.end > eviction_end_time;
        eviction_mem_interval.end = next_eviction_end_time_candidate()) {
-    Chunk chunk_candidate =
-        FindChunkCandidate(eviction_mem_interval, preferred_offset);
-    if (chunk_candidate.offset == preferred_offset) {
+    Chunk chunk_candidate;
+    // If the buffer has no colocations, then use the fast algorithm to find
+    // the earliest end time with a free chunk at the preferred offset.
+    if (GetTransitiveColocations(eviction_mem_interval).empty()) {
+      int64_t earliest_end_with_free_chunk =
+          FindLatestEndWithFreeChunkAtPreferredOffset(eviction_mem_interval,
+                                                      preferred_offset);
+      if (earliest_end_with_free_chunk <= eviction_end_time) {
+        eviction_mem_interval.end = eviction_end_time;
+        break;
+      }
+      eviction_mem_interval.end = earliest_end_with_free_chunk;
+      chunk_candidate =
+          Chunk::FromOffsetSize(preferred_offset, eviction_mem_interval.size);
+    } else {
+      chunk_candidate =
+          FindChunkCandidate(eviction_mem_interval, preferred_offset);
+    }
+
+    if (chunk_candidate.offset == preferred_offset &&
+        (eviction_mem_interval.end == original_end_time ||
+         edge_time_indices_.contains(eviction_mem_interval.end))) {
       AddToPendingChunks(eviction_mem_interval, chunk_candidate);
       break;
     }

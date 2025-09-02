@@ -14,7 +14,7 @@
 # limitations under the License.
 # ==============================================================================
 
-# This script builds and executes tests. It can be run only on a system that 
+# This script builds and executes tests. It can be run only on a system that
 # has an Intel GPU with the appropriate driver and oneAPI tools installed.
 # Hermetic build is not currently fully supported for executing tests.
 ./configure.py --backend=SYCL --host_compiler=CLANG --sycl_compiler=ICPX

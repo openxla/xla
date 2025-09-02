@@ -1,6 +1,7 @@
 # Description:
 #    Tests for LLVM-based CPU backend for XLA.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -152,6 +153,7 @@ xla_cc_test(
         "//xla/tests:pjrt_cpu_client_registry",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
     ],
 )
