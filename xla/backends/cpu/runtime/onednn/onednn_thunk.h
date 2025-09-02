@@ -47,8 +47,6 @@ class OneDnnThunk final : public CustomCallThunk {
 
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
-  BufferUses buffer_uses() const final;
-
  private:
   struct OneDnnRuntime {
     OneDnnRuntime(Eigen::ThreadPoolInterface* thread_pool);

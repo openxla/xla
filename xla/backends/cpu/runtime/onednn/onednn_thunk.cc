@@ -214,15 +214,4 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> OneDnnThunk::Execute(
   return executed;
 }
 
-OneDnnThunk::BufferUses OneDnnThunk::buffer_uses() const {
-  BufferUses buffer_uses;
-  for (const auto& argument : op_buffers_.arguments_buffers) {
-    buffer_uses.emplace_back(argument, BufferUse::kRead);
-  }
-  for (const auto& result : op_buffers_.results_buffers) {
-    buffer_uses.emplace_back(result, BufferUse::kWrite);
-  }
-  return buffer_uses;
-}
-
 }  // namespace xla::cpu
