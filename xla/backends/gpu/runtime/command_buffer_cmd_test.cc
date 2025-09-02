@@ -704,11 +704,11 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
 }
 
 TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
   if (!IsAtLeastCuda12900(stream_executor)) {
     GTEST_SKIP() << "Child command is not supported for CUDA < 12.9";
   }
 
-  se::StreamExecutor* stream_executor = GpuExecutor();
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
 
   // Prepare device memory for three buffers.
