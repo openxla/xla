@@ -5567,8 +5567,8 @@ diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFold
 -          dyn_cast_or_null<DenseElementsAttr>(inputConstantOp.getValue());
 -      if (!inputConstantAttr)
 +      SplatElementsAttr constantSplatAttr;
-+      matchPattern(inputValue, m_Constant(&constantSplatAttr));
-+      if (!constantSplatAttr)
++      if (!matchPattern(inputValue, m_Constant(&constantSplatAttr)) ||
++          !constantSplatAttr)
          return rewriter.notifyMatchFailure(op,
                                             "Input must be a splat constant.");
  

@@ -59,7 +59,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
@@ -1894,6 +1893,38 @@ backend_config={
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
+// Parameterized the test to make sure that non-canonical layouts are handled
+// correctly when TMA is enabled.
+TEST_P(
+    TmaParameterizedTritonEmitterTest,
+    SimpleBitcastNonNormalizedOutputLayoutAndBitcastConvertIsLoweredCorrectly) {
+  constexpr absl::string_view kHloTextTemplate = R"(
+triton_computation {
+p = f32[64,15] parameter(0)
+bitcast = s32[15,64]{0,1} bitcast(p)
+ROOT negate = s32[15,64]{0,1} negate(bitcast)
+}
+
+ENTRY entry_computation {
+p = f32[64,15] parameter(0)
+ROOT fusion = s32[15,64]{0,1} fusion(p), kind=kCustom, calls=triton_computation,
+backend_config={
+"fusion_backend_config":{
+ "kind":"__triton",
+ "block_level_fusion_config":{
+   "output_tiles":[{"sizes":["15","32"]}],
+   "num_warps":"1",
+   "num_ctas":"1",
+   "num_stages":"1",
+   "is_tma_allowed":"$0"}}}
+})";
+
+  const bool is_tma_allowed = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
+}
+
 // When TMA is enabled, it is important to test this in an end-to-end fashion.
 // This test covers the logic that adjusts box_dims based on the swizzle mode.
 // See tensorflow/compiler/xla/backends/gpu/codegen/triton/tma_utils.cc.
@@ -2981,6 +3012,18 @@ ENTRY entry {
           "num_ctas":"1",
           "num_stages":"1"}}}
 })";
+
+  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fdot", R"(
+  // Ensure that masking is applied only conditionally to both operands.
+  CHECK:      %[[MASKED_OPERAND0:.*]] = scf.if
+  CHECK:        %[[SELECT0:.*]] = arith.select
+  CHECK-NEXT:   scf.yield %[[SELECT0]]
+  CHECK:      %[[MASKED_OPERAND1:.*]] = scf.if
+  CHECK:        %[[SELECT1:.*]] = arith.select
+  CHECK-NEXT:   scf.yield %[[SELECT1]]
+  CHECK:      tt.dot %[[MASKED_OPERAND0]], %[[MASKED_OPERAND1]]
+)"));
+
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
@@ -3676,6 +3719,27 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
                        ::testing::ValuesIn(AllXlaDataTypes())),
     DotUnsetAlgorithmEmitterTest::ParamToString);
+
+TEST_F(TritonEmitterTest, ScaledDotIsSupportedByReferencePlatform) {
+  if (!std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
+    GTEST_SKIP() << "Ignore scaled dot test on ROCM.";
+  }
+  constexpr absl::string_view kHloText = R"(
+    HloModule ScaledDotIsSupportedByReferencePlatform
+
+    ENTRY entry {
+     lhs = bf16[4,4] parameter(0)
+     lhs_scale = bf16[1,1] parameter(1)
+     rhs = bf16[4,4] parameter(2)
+     rhs_scale = bf16[1,1] parameter(3)
+     ROOT dot = bf16[4,4] scaled-dot(lhs, lhs_scale, rhs, rhs_scale),
+         lhs_contracting_dims={1},
+         rhs_contracting_dims={1}
+    }
+  )";
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
 
 TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   if (std::get_if<se::CudaComputeCapability>(&GpuComputeCapability())) {
