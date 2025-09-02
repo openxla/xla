@@ -59,9 +59,6 @@ GPU_NAME=(`rocminfo | grep -m 1 gfx`)
 GPU_NAME=${GPU_NAME[1]}
 
 EXCLUDED_TESTS=(
-# //xla/service/gpu/tests:gpu_kernel_tiling_test_gpu_amd_any
-GpuKernelTilingTest.ColumnReductionWithLayoutChangeTiled
-GpuKernelTilingTest.ReductionInputTooLarge
 # //xla/pjrt/c:pjrt_c_api_gpu_test_gpu_amd_any
 PjrtCAPIGpuExtensionTest.TritonCompile
 # //xla/backends/gpu/codegen/triton:fusion_emitter_device_test_gpu_amd_any
