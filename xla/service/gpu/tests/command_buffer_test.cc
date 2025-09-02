@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -28,9 +29,11 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-class CommandBufferTest : public HloPjRtTestBase,
-                          public ::testing::WithParamInterface<
-                              DebugOptions::CommandBufferSchedulingMode> {
+class CommandBufferTest
+    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+      public ::testing::WithParamInterface<
+          DebugOptions::CommandBufferSchedulingMode> {
+ protected:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloPjRtTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_command_buffer_scheduling_mode(GetParam());
@@ -530,8 +533,7 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  EXPECT_TRUE(
-      RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-3, 2e-3}));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-3, 2e-3}));
 }
 
 INSTANTIATE_TEST_SUITE_P(CommandBufferTests, CommandBufferTest,
