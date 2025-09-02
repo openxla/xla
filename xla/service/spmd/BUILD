@@ -30,6 +30,7 @@ cc_library(
     hdrs = [
         "convolution_handler.h",
         "custom_call_handler.h",
+        "dot_handler.h",
         "spmd_partitioner.h",
         "spmd_partitioner_util.h",
     ],
@@ -439,6 +440,8 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla:literal_util",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
         "//xla/service:sharding_propagation",
