@@ -260,7 +260,7 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
 
 Value EmitterBase::EmitWorkGroupId(mlir::ImplicitLocOpBuilder& builder,
                                    WorkGroupDimension dim) const {
-  const auto& counts = launch_dimensions().block_counts();
+  const auto counts = launch_dimensions().block_counts();
   int64_t count = dim == WorkGroupDimension::x   ? counts.x
                   : dim == WorkGroupDimension::y ? counts.y
                                                  : counts.z;
@@ -271,7 +271,7 @@ Value EmitterBase::EmitWorkGroupId(mlir::ImplicitLocOpBuilder& builder,
 
 Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
                                int dim) const {
-  const auto& counts = launch_dimensions().block_counts();
+  const auto counts = launch_dimensions().block_counts();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
   auto block_id = builder.create<mlir::gpu::BlockIdOp>(
       static_cast<mlir::gpu::Dimension>(dim));
@@ -281,7 +281,7 @@ Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
 
 Value EmitterBase::EmitThreadId(mlir::ImplicitLocOpBuilder& builder,
                                 int dim) const {
-  const auto& counts = launch_dimensions().thread_counts_per_block();
+  const auto counts = launch_dimensions().thread_counts_per_block();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
   auto thread_id = builder.create<mlir::gpu::ThreadIdOp>(
       static_cast<mlir::gpu::Dimension>(dim));
