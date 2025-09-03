@@ -169,21 +169,48 @@ replica_groups)`**
 | `replica_groups`   | `ReplicaGroup` vector | Each group contains a list of   |
 :                    :                       : replica ids.                    :
 
-Below shows an example of Alltoall.
+### AllToAll - Example 1.
 
 ```cpp
 XlaBuilder b("alltoall");
 auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {4, 16}), "x");
-AllToAll(x, /*split_dimension=*/1, /*concat_dimension=*/0, /*split_count=*/4);
+AllToAll(
+    x,
+    /*split_dimension=*/ 1, 
+    /*concat_dimension=*/ 0, 
+    /*split_count=*/ 4);
 ```
 
 ![](images/ops_alltoall.png)
 
-In this example, there are 4 cores participating in the Alltoall. On each core,
+In the above example, there are 4 cores participating in the Alltoall. On each core,
 the operand is split into 4 parts along dimension 1, so each part has shape
 f32[4,4]. The 4 parts are scattered to all cores. Then each core concatenates
 the received parts along dimension 0, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
+
+### AllToAll - Example 2
+```cpp
+XlaBuilder b("alltoall");
+auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 4}), "x");
+
+AllToAll(
+    x,
+    /*split_dimension=*/1,
+    /*concat_dimension=*/0,
+    /*split_count=*/2,
+    /*replica_groups=*/{ReplicaGroup({0, 1})});
+```
+![](images/ops_alltoall_2.svg) 
+
+In the above example, there are 2 replicas participating in the AllToAll. On
+each replica, the operand has shape f32[2,4]. The operand is split into 2 parts
+along dimension 1, so each part has shape f32[2,2]. The 2 parts are then
+exchanged across the replicas according to their position in the replica group.
+Each replica collects its corresponding part from both operands and concatenates
+them along dimension 0. As a result, the output on each replica has shape
+f32[4,2].
+
 
 ## BatchNormGrad
 
@@ -1917,6 +1944,11 @@ interior padding values are all 0. The figure below shows examples of different
 See also
 [`XlaBuilder::Recv`](https://github.com/openxla/xla/tree/main/xla/hlo/builder/xla_builder.h).
 
+`Recv`, `RecvWithTokens`, `RecvToHost` are operations that serve as
+communication primitives in HLO. These ops typically appear in HLO dumps as part
+of low-level input/output or cross-device transfer, but they are not intended to
+be constructed manually by end users.
+
 **`Recv(shape, channel_handle)`**
 
 | Arguments        | Type            | Semantics                            |
@@ -2691,6 +2723,11 @@ context of [`Reduce`](#reduce) for more details.
 See also
 [`XlaBuilder::Send`](https://github.com/openxla/xla/tree/main/xla/hlo/builder/xla_builder.h).
 
+`Send`, `SendWithTokens`, `SendToHost` are operations that serve as
+communication primitives in HLO. These ops typically appear in HLO dumps as part
+of low-level input/output or cross-device transfer, but they are not intended to
+be constructed manually by end users.
+
 **`Send(operand, channel_handle)`**
 
 Arguments        | Type            | Semantics
@@ -2736,6 +2773,8 @@ communicates via channel instructions, there must not be cycles across the
 computations. For example, below schedules lead to deadlocks.
 
 ![](images/send_recv_schedule.png)
+
+
 
 ## Slice
 
