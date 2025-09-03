@@ -3053,12 +3053,12 @@ let t: (f32[10], s32) = tuple(v, s);
 Tuples can be deconstructed (accessed) via the [`GetTupleElement`]
 (#gettupleelement) operation.
 
-**Note:** In HLO, tuples are needed for most ops that return >1 result. While in
-StableHLO/MLIR, variadic results can be expressed and tuples are not used, except
-in custom_calls/get_tuple_element.
-
 For more information see
 [StableHLO Tuple](https://openxla.org/stablehlo/spec#tuple)
+
+>**Note:** In HLO, tuples are needed for most ops that return >1 result. While in
+>StableHLO/MLIR, variadic results can be expressed and tuples are not used, except
+>in custom_calls/get_tuple_element.
 
 ## While
 
