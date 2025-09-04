@@ -139,9 +139,21 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module,
     results.llvm_module_constants->setDataLayout(data_layout);
   }
 
+  ExecutionStreamAssignment execution_stream_assignment(
+      hlo_module,
+      {
+          /*number_of_compute_execution_streams=*/4,
+          /*number_of_collective_execution_streams=*/
+          hlo_module->config()
+                  .debug_options()
+                  .xla_gpu_experimental_enable_collective_multi_streaming()
+              ? 2
+              : 1,
+      });
+
   results.use_original_allocations = true;
   results.execution_stream_assignment =
-      std::make_unique<ExecutionStreamAssignment>(hlo_module);
+      std::make_unique<ExecutionStreamAssignment>(execution_stream_assignment);
   return results;
 }
 
