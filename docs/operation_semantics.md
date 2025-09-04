@@ -2901,8 +2901,6 @@ computations. For example, below schedules lead to deadlocks.
 
 ![](images/send_recv_schedule.png)
 
-
-
 ## Slice
 
 See also
