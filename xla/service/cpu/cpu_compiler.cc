@@ -673,6 +673,12 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 #endif  // INTEL_MKL
 
+#ifdef ENABLE_ONEDNN_ASYNC
+  // TODO(intel-tf): Remove this ifdef after enabling the OneDnnOpsRewriter with
+  // thunk runtime.
+  is_onednn_compatible = !is_aot_compile;
+#endif  // ENABLE_ONEDNN_ASYNC
+
   // Promote BF16 all-reduce to F32.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
       {BF16, F32}};
@@ -881,8 +887,13 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 
 #if defined(INTEL_MKL)
   // AOT compiled code runs in single thread.
-  bool is_thunk_runtime = true;
-  is_onednn_compatible = !is_aot_compile && !is_thunk_runtime;
+#ifdef ENABLE_ONEDNN_ASYNC
+  // TODO(intel-tf): Use a oneDNN runtime flag to determine whether to enable
+  // the OneDnnContractionRewriter pass instead of using the ifdef.
+  is_onednn_compatible = !is_aot_compile;
+#else
+  is_onednn_compatible = false;
+#endif  // ENABLE_ONEDNN_ASYNC
   if (is_onednn_compatible) {
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.

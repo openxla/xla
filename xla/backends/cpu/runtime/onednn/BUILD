@@ -1,5 +1,6 @@
 load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/tsl/mkl:graph.bzl",
     "onednn_graph_cc_library",
@@ -108,5 +109,36 @@ onednn_graph_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_library(
+    name = "onednn_op_thunk",
+    srcs = ["onednn_op_thunk.cc"],
+    hdrs = [
+        "onednn_op_thunk.h",
+    ],
+    copts = tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onednn_threadpool",
+        "//xla/backends/cpu/runtime:custom_call_thunk",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:object_pool",
+        "//xla/service:buffer_assignment",
+        "//xla/service/cpu:onednn_memory_util",
+        "//xla/service/cpu:onednn_matmul",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
