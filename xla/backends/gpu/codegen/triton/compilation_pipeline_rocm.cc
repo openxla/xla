@@ -162,11 +162,8 @@ absl::Status CreateTritonPipeline(
 
 std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
                              const se::DeviceDescription& device_info) {
-  std::string libdevice_dir = tsl::RocdlRoot();
-  auto compute_capability = device_info.rocm_compute_capability();
-  const std::string libdevice_path =
-      amdgpu::LibDevicePath(compute_capability.gcn_arch_name(), libdevice_dir);
-  return libdevice_path;
+  // We really on amdgpu_backend to link in bitcode implementation
+  return "";
 }
 
 }  // namespace gpu
