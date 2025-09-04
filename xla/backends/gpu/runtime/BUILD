@@ -1907,6 +1907,7 @@ xla_test(
     backend_tags = {
         "gpu": [
             "multi_gpu_h100",
+            "xla_amdgpu_any",
             "no_oss",
         ],
     },
