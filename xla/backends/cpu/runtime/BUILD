@@ -166,6 +166,8 @@ cc_library(
         "//xla:executable_run_options",
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/backends/cpu/collectives:in_process_collectives",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_interop",
+        "//xla/backends/cpu/runtime/xnnpack:xnn_threadpool",
         "//xla/ffi:execution_context",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
@@ -1211,7 +1213,6 @@ cc_library(
     hdrs = ["work_queue.h"],
     deps = [
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:fixed_array",

@@ -187,6 +187,7 @@ xla_cc_test(
         "//xla/hlo/ir:tile_assignment",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
+        "//xla/service:call_graph",
         "//xla/service:dot_as_convolution_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
@@ -277,6 +278,12 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
+)
+
+cc_library(
+    name = "pointer_utils",
+    hdrs = ["pointer_utils.h"],
+    deps = ["@com_google_absl//absl/hash"],
 )
 
 xla_cc_test(

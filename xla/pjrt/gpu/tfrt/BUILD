@@ -17,12 +17,20 @@ xla_gpu_internal_packages()
 cc_library(
     name = "tfrt_gpu_client",
     srcs = [
+        "tfrt_gpu_async_host_to_device_transfer_manager.cc",
         "tfrt_gpu_buffer.cc",
         "tfrt_gpu_client.cc",
+        "tfrt_gpu_device.cc",
+        "tfrt_gpu_executable.cc",
+        "utils.cc",
     ],
     hdrs = [
+        "tfrt_gpu_async_host_to_device_transfer_manager.h",
         "tfrt_gpu_buffer.h",
         "tfrt_gpu_client.h",
+        "tfrt_gpu_device.h",
+        "tfrt_gpu_executable.h",
+        "utils.h",
     ],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
     visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
@@ -67,6 +75,7 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:topology_util",
+        "//xla/pjrt/dump",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:gpu_topology_proto_cc",

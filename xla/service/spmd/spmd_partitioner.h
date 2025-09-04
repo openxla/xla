@@ -426,6 +426,13 @@ class SpmdPartitioner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
+  // Preprocesses the graph to make sure that computations called in
+  // control-flow contexts (call, while, conditional) have matching sharding
+  // annotations on callee parameters and the caller arguments.
+  absl::StatusOr<bool> PreprocessCallSites(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
   void set_execution_threads(
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
     execution_threads_ = execution_threads;
@@ -704,11 +711,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
 
   // Sets the PartitionedHlo for the original hlo.
   void SetPartitionedHlo(const HloInstruction* hlo,
-                         PartitionedHlo&& partitioned_hlo) {
-    CHECK_EQ(partitioned_instructions_.count(hlo), 0);
-    partitioned_instructions_.emplace(hlo, partitioned_hlo);
-    changed_ = true;
-  }
+                         PartitionedHlo&& partitioned_hlo);
 
   // Convenient wrapper that creates PartitionedHlo from the result of the func
   // and maps it to the given original hlo.

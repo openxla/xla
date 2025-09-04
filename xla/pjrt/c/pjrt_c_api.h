@@ -66,6 +66,7 @@ typedef enum {
   PJRT_Extension_Type_Example,
   PJRT_Extension_Type_Unknown,
   PJRT_Extension_Type_CrossHostTransfers,
+  PJRT_Extension_Type_ExecutableMetadata,
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -592,6 +593,7 @@ typedef enum {
 // TODO: mwhittaker - Add the remaining fields from
 // tensorflow::CoordinatedTaskStateInfo.
 struct PJRT_ProcessInfo {
+  size_t struct_size;
   int task_id;
   uint64_t incarnation_id;
   PJRT_ProcessState state;
@@ -661,8 +663,7 @@ struct PJRT_Client_Compile_Args {
   // `program->format` and `program->format_size` are owned by the caller.
   const PJRT_Program* program;
   // TODO(b/240560013): consider putting some of option fields in priv.
-  // Serialized CompileOptionsProto
-  // (https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/pjrt/compile_options.proto)
+  // Serialized CompileOptionsProto.
   const char* compile_options;
   size_t compile_options_size;
   PJRT_LoadedExecutable* executable;  // out
@@ -1866,7 +1867,6 @@ struct PJRT_Executable_DeserializeAndLoad_Args {
   PJRT_LoadedExecutable* loaded_executable;  // out
   // Serialized CompileOptionsProto or null (to use the options
   // from the serialized executable).
-  // (https://github.com/openxla/xla/blob/main/xla/pjrt/compile_options.proto)
   const char* overridden_serialized_compile_options;
   size_t overridden_serialized_compile_options_size;
 };
@@ -2421,8 +2421,7 @@ struct PJRT_Compile_Args {
   // `program->format` and `program->format_size` are owned by the caller.
   const PJRT_Program* program;
   // TODO(b/240560013): consider putting some of option fields in priv.
-  // Serialized CompileOptionsProto
-  // (https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/pjrt/compile_options.proto)
+  // Serialized CompileOptionsProto.
   const char* compile_options;
   size_t compile_options_size;
   // Optionally provided for performance-guided optimizations.

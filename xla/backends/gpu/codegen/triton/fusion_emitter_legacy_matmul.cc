@@ -111,25 +111,9 @@ using ::mlir::ValueRange;
 
 namespace {
 
+// Internal indices for the corresponding input scopes.
 const int kLhsIndex = 0;
 const int kRhsIndex = 1;
-const int kMetaIndex = 2;
-const int kOutputIndex = 3;
-
-// Returns the index of the operand in the fusion's parameter list. This
-// might work better as a map from Scope->X, but it needs more refactoring.
-size_t GetOperandIndex(TritonFusionAnalysis::Scope scope) {
-  switch (scope) {
-    case TritonFusionAnalysis::Scope::LHS:
-      return kLhsIndex;
-    case TritonFusionAnalysis::Scope::RHS:
-      return kRhsIndex;
-    case TritonFusionAnalysis::Scope::META:
-      return kMetaIndex;
-    case TritonFusionAnalysis::Scope::OUTPUT:
-      return kOutputIndex;
-  }
-}
 
 absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
   switch (t) {
@@ -493,7 +477,8 @@ absl::StatusOr<Value> EmitBroadcast(EmitterLocOpBuilder b,
     const TensorIterationSpec::DimIterationSpec* spec =
         analysis->IterSpec(side.scope, &broadcast, dim.index);
     if (spec != nullptr && spec->at(0).stride > 0) {
-      out_shape.push_back(dim.block_size);
+      out_shape.push_back(
+          (spec->at(0).broadcast_multiplier != 1) ? 1 : dim.block_size);
       non_trivial_broadcast |= spec->at(0).subfragments.size() != 1;
     }
   }
@@ -1619,16 +1604,10 @@ class Scopes {
     out_.batch_dim_idx = dims.out_batch_dim_idx;
   }
 
-  std::vector<const Side*> input_scopes() const {
-    if (meta_.has_value()) {
-      return {&lhs_, &rhs_, &meta_.value()};
-    }
-    return {&lhs_, &rhs_};
-  }
+  std::vector<const Side*> input_scopes() const { return {&lhs_, &rhs_}; }
   const Side& lhs() const { return lhs_; }
   const Side& rhs() const { return rhs_; }
   const Side& out() const { return out_; }
-  const std::optional<Side>& meta() const { return meta_; }
   const Value& pid_m() const { return pid_m_; }
   const Value& pid_k() const { return pid_k_; }
   const Value& pid_n() const { return pid_n_; }
@@ -1637,7 +1616,6 @@ class Scopes {
   Side lhs_;
   Side rhs_;
   Side out_;
-  std::optional<Side> meta_;
 
   Value pid_m_;
   Value pid_k_;
@@ -1662,24 +1640,19 @@ class IterableInput {
         block_k_(block_k),
         hlo_instr_(hlo_instr),
         side_(side),
-        boundary_checks_(boundary_checks) {};
+        boundary_checks_(boundary_checks) {}
 
   static absl::StatusOr<IterableInput> CreateIterableInput(
       size_t iter_arg_index, EmitterLocOpBuilder& b, const MatMulDims& dims,
       const Side* side, const HloInstruction* hlo_instr, int64_t block_k) {
-    Type input_ty;
-    if (side->scope == TritonFusionAnalysis::Scope::META) {
-      input_ty = b.getI16Type();
-    } else {
-      TF_ASSIGN_OR_RETURN(input_ty,
-                          TritonType(b, hlo_instr->shape().element_type()));
-    }
+    TF_ASSIGN_OR_RETURN(Type input_ty,
+                        TritonType(b, hlo_instr->shape().element_type()));
     int contracting_dimension =
         (side->scope == TritonFusionAnalysis::Scope::RHS)
             ? dims.rhs_contracting_dim_idx
             : dims.lhs_contracting_dim_idx;
 
-    return IterableInput(iter_arg_index, GetOperandIndex(side->scope),
+    return IterableInput(iter_arg_index, static_cast<int>(side->scope),
                          contracting_dimension, input_ty,
                          StorageType(b, input_ty), hlo_instr, side,
                          /*boundary_checks=*/{}, block_k);
@@ -1709,7 +1682,7 @@ class IterableInput {
 
   // Index of the iter_arg of the ForOp associated with this input.
   size_t iter_arg_index_;
-  // Index used to differentiate it between LHS, RHS, and META inputs.
+  // Index used to differentiate it between LHS and RHS inputs.
   size_t operand_index_;
   // Index of the contracting dimension in the input.
   int contracting_dimension_;
@@ -1850,7 +1823,7 @@ absl::Status EmitForLoopBody(EmitterLocOpBuilder& b,
                              const llvm::SmallVector<IterableInput>& inputs,
                              Value ki, ValueRange iter_args) {
   SmallVector<Value> args_for_yield;
-  std::array<absl::flat_hash_map<const HloInstruction*, Value>, 3> values;
+  std::array<absl::flat_hash_map<const HloInstruction*, Value>, 2> values;
 
   // Load tiles of all parameters of LHS and RHS scopes and advance pointers.
   for (const IterableInput& input : inputs) {
@@ -1881,8 +1854,6 @@ absl::Status EmitForLoopBody(EmitterLocOpBuilder& b,
     dot_rhs = EmitMaskOnInput(b, MaskExpandDimension::kMinor, dot_rhs, 1, ki,
                               dims.k, dims.config.block_k, scopes.pid_k(),
                               dims.config.block_n);
-    // Masking the metadata is not necessary, as the inputs are masked
-    // (i.e. zeroed out), so the padded metadata can hold any values.
   }
 
   TF_ASSIGN_OR_RETURN(
@@ -1912,7 +1883,12 @@ absl::Status EmitMatMul(EmitterLocOpBuilder& b,
                       TritonFusionAnalysis::Execute(
                           *fusion->called_computation(), config.split_k));
 
-  TF_RETURN_IF_ERROR(CheckGemmTilingComplexityHeuristic(config));
+  absl::Status status = CheckGemmTilingComplexityHeuristic(config);
+  if (!status.ok()) {
+    VLOG(1) << "EmitMatMul heuristic check failed: "
+            << fusion->called_computation()->ToString() << status.message();
+    return status;
+  }
 
   const HloComputation* computation = fusion->fused_instructions_computation();
   const HloInstruction* instr =
@@ -1944,7 +1920,7 @@ absl::Status EmitMatMul(EmitterLocOpBuilder& b,
   ma::ConstantOp accumulator_init =
       CreateConst(b, acc_ty, 0, {block_m, block_n});
 
-  // Calculate the sizes of the lhs, rhs, meta, and output sides.
+  // Calculate the sizes of the lhs, rhs, and output sides.
   Scopes scopes(b, dot_instr, analysis, dims, config, launch_config);
 
   llvm::SmallVector<IterableInput> inputs;

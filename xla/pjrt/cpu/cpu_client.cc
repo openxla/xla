@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/dump/dump.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -92,6 +93,7 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
@@ -137,49 +139,6 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"
 
 namespace xla {
-namespace {
-
-void EnqueueWork(tsl::thread::ThreadPool* pool,
-                 absl::AnyInvocable<void() &&> callee) {
-  // TSL TheadPool expects std::function that must be copyable, so we are
-  // forced to do a little bit of manual memory management here.
-  pool->Schedule(
-      [ptr = new absl::AnyInvocable<void() &&>(std::move(callee))]() {
-        std::move (*ptr)();
-        delete ptr;
-      });
-}
-
-// Enqueue to PjRtClient pool when all `values` are ready.
-void EnqueueWorkWhenReady(
-    tsl::thread::ThreadPool* pool,
-    absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-    absl::AnyInvocable<void() &&> callee) {
-  RunWhenReady(values, [pool, callee = std::move(callee)]() mutable {
-    EnqueueWork(pool, std::move(callee));
-  });
-}
-
-class ThreadPoolAsyncWorkRunner : public AsyncWorkRunner {
- public:
-  explicit ThreadPoolAsyncWorkRunner(tsl::thread::ThreadPool* pool)
-      : pool_(pool) {}
-
-  void Schedule(absl::AnyInvocable<void() &&> work) override {
-    EnqueueWork(pool_, std::move(work));
-  }
-
-  void ScheduleWhenReady(
-      absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-      absl::AnyInvocable<void() &&> work) override {
-    EnqueueWorkWhenReady(pool_, values, std::move(work));
-  }
-
- private:
-  tsl::thread::ThreadPool* pool_;
-};
-
-}  // namespace
 
 static int CpuDeviceCount() {
   // By default we fix the number of devices to one.  However we do let the user
@@ -253,8 +212,8 @@ PjRtCpuClient::PjRtCpuClient(
       pjrt_client_thread_pool_(
           new tsl::thread::ThreadPool(tsl::Env::Default(), GetThreadOptions(),
                                       "XLAPjRtCpuClient", num_threads)),
-      async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
-          pjrt_client_thread_pool_.get())),
+      async_work_runner_(
+          MakeThreadPoolAsyncWorkRunner(pjrt_client_thread_pool_.get())),
       last_collective_launch_event_(
           tsl::MakeAvailableAsyncValueRef<CpuEvent>()),
       transpose_cache_(1024),
@@ -514,6 +473,18 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
     }
   }
 
+  // Propagate env_option_overrides-> debug_options
+  TF_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
+  // Override the debug_options() embedded in the module with those
+  // explicitly passed in when deserializing. This allows options such as
+  // --xla_dump_to to be changed.
+  if (executable->has_module()) {
+    DumpHloModuleIfEnabled(executable->module(), kAfterOptimizationsDumpName,
+                           build_options.has_debug_options()
+                               ? &build_options.debug_options()
+                               : nullptr);
+  }
+
   auto cpu_executable = std::make_unique<PjRtCpuExecutable>(
       num_replicas, num_partitions, std::move(device_assignment),
       compile_options.parameter_is_tupled_arguments, std::move(input_options),
@@ -631,6 +602,8 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCpuClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
+  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module, topology_));
+
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
@@ -893,7 +866,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
           absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4>{
               tsl::AsyncValueRef<CpuEvent>(
                   tsl::MakeErrorAsyncValueRef(std::move(error)))}),
-      *device->default_memory_space());
+      memory_space);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -1289,7 +1262,14 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     const RunId& run_id, const ExecuteOptions& options,
     PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
     bool fill_future, PjRtCpuDevice* device) const {
-  tsl::profiler::TraceMe traceme("PjRtCpuExecutable::ExecuteHelper");
+  tsl::profiler::TraceMe traceme([&]() {
+    return tsl::profiler::TraceMeEncode("PjRtCpuExecutable::ExecuteHelper",
+                                        {
+                                            {"run_id", run_id.ToInt()},
+                                            {"replica", replica},
+                                            {"partition", partition},
+                                        });
+  });
 
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
@@ -1363,7 +1343,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     TrackedCpuDeviceBuffer* tracked_buffer;
     auto get_buffer = [&](int i) -> absl::Status {
       bool must_donate = donate_it != parameters_that_must_be_donated_.end() &&
-                         *donate_it == i;
+                         *donate_it == i &&
+                         !options.non_donatable_input_indices.contains(i);
       TF_RETURN_IF_ERROR(TestBufferDonationClashes(
           cpu_buffer, donation_clashes, must_donate, i, replica, partition));
       if (must_donate) {
@@ -1577,6 +1558,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
           cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
 
+      std::optional<cpu::Thunk::XnnParams> xnn_params;
+      if (cpu_executable->has_xnn_fusions()) {
+        TF_ASSIGN_OR_RETURN(xnn_params,
+                            cpu::Thunk::XnnParams::Create(&run_options));
+      }
+
       cpu::ThreadPoolTaskRunner task_runner(
           run_options.intra_op_thread_pool()->getPool());
 
@@ -1587,12 +1574,17 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           run_options.intra_op_thread_pool(),
           &task_runner,
           &collective_params,
-          &custom_call_execute_params};
+          &custom_call_execute_params,
+          xnn_params ? &*xnn_params : nullptr};
 
       thunks_execute_event = cpu_executable->thunks().Execute(execute_params);
 
-      tsl::profiler::TraceMe trace(
-          "ThunkExecutor::Execute (wait for completion)");
+      tsl::profiler::TraceMe trace([&] {
+        return tsl::profiler::TraceMeEncode(
+            "ThunkExecutor::Execute (wait for completion)",
+            {{"run_id", run_options.run_id().ToInt()},
+             {"device_ordinal", run_options.device_ordinal()}});
+      });
       tsl::BlockUntilReady(thunks_execute_event);
 
     } else {
@@ -1635,8 +1627,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     CpuScopedAsyncExecution scoped_async_execution =
         device->async_execution_tracker()->NewAsyncExecution(
             run_id.ToInt(), std::move(ready_on_exit).Release());
-    EnqueueWorkWhenReady(
-        client()->pjrt_client_thread_pool(), input_deps,
+    client()->async_work_runner()->ScheduleWhenReady(
+        input_deps,
         [cpu_executable, buffer_alloc = std::move(buffer_alloc),
          buffer_alloc_and_copy = std::move(buffer_alloc_and_copy),
          buffer_table = std::move(buffer_table),
@@ -1700,6 +1692,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                 custom_call_params =
                     cpu::Thunk::CustomCallExecuteParams::Create(&run_options);
 
+            absl::StatusOr<std::optional<cpu::Thunk::XnnParams>> xnn_params(
+                std::nullopt);
+            if (cpu_executable->has_xnn_fusions()) {
+              xnn_params = cpu::Thunk::XnnParams::Create(&run_options);
+            }
+
             cpu::ThreadPoolTaskRunner task_runner(
                 run_options.intra_op_thread_pool()->getPool());
 
@@ -1711,13 +1709,18 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                   run_options.intra_op_thread_pool(),
                   &task_runner,
                   &*collective_params,
-                  &*custom_call_params};
+                  &*custom_call_params,
+                  *xnn_params ? &**xnn_params : nullptr};
 
               auto thunks_execute_event =
                   cpu_executable->thunks().Execute(execute_params);
 
-              tsl::profiler::TraceMe trace(
-                  "ThunkExecutor::Execute (wait for completion)");
+              tsl::profiler::TraceMe trace([&] {
+                return tsl::profiler::TraceMeEncode(
+                    "ThunkExecutor::Execute (wait for completion)",
+                    {{"run_id", run_options.run_id().ToInt()},
+                     {"device_ordinal", run_options.device_ordinal()}});
+              });
               tsl::BlockUntilReady(thunks_execute_event);
               status = thunks_execute_event.IsError()
                            ? thunks_execute_event.GetError()
@@ -1835,9 +1838,7 @@ PjRtCpuExecutable::Execute(
     const ExecuteOptions& options,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) const {
   RunId run_id(options.launch_id);
-  tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::Execute",
-                                          tsl::profiler::ContextType::kPjRt,
-                                          run_id.ToInt());
+  tsl::profiler::TraceMe trace_me("PjRtCpuExecutable::Execute");
   if (!options.untuple_result && cpu_executable_->module()
                                      .config()
                                      .entry_computation_layout()
@@ -1925,8 +1926,7 @@ PjRtCpuExecutable::Execute(
       const int replica = addressable_device_logical_ids_[i].replica;
       const int partition = addressable_device_logical_ids_[i].partition;
 
-      auto* thread_pool = client()->pjrt_client_thread_pool();
-      EnqueueWork(thread_pool, [&, replica, partition, i] {
+      client()->async_work_runner()->Schedule([&, replica, partition, i] {
         auto statusor = ExecuteHelper(
             argument_handles[i], replica, partition, run_id, options,
             last_collective_launch_event, returned_futures.has_value());
@@ -1976,9 +1976,7 @@ PjRtCpuExecutable::ExecuteSharded(
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
     bool fill_future) const {
   RunId run_id(options.launch_id);
-  tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::ExecuteSharded",
-                                          tsl::profiler::ContextType::kPjRt,
-                                          run_id.ToInt());
+  tsl::profiler::TraceMe trace_me("PjRtCpuExecutable::ExecuteSharded");
   if (device_assignment_ == nullptr) {
     return InvalidArgument("ExecuteShard expects a non-null device_assignment");
   }
@@ -2017,9 +2015,7 @@ PjRtCpuExecutable::ExecutePortable(
     const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
     bool fill_future) const {
   RunId run_id(options.launch_id);
-  tsl::profiler::TraceMeProducer activity("PjRtCpuExecutable::ExecutePortable",
-                                          tsl::profiler::ContextType::kPjRt,
-                                          run_id.ToInt());
+  tsl::profiler::TraceMe trace_me("PjRtCpuExecutable::ExecutePortable");
   if (device_assignment_ != nullptr) {
     return InvalidArgument("ExecutePortable gets a non-portable executable");
   }

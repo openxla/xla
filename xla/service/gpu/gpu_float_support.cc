@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/float_support.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
 
@@ -38,6 +39,11 @@ bool GpuFloatSupport::SupportsMixedPrecisions(const HloInstruction& hlo) const {
   if (FloatSupport::SupportsMixedPrecisions(hlo)) return true;
 
   switch (hlo.opcode()) {
+    // Handled by Triton GEMM or cuBLAS.
+    case HloOpcode::kScaledDot:
+      // We accept any scaled dot, because there is a rewrite pass that will
+      // lower it to a dot + multiply for unsupported types.
+      return true;
     // Handled by Triton GEMM or cuBLAS.
     case HloOpcode::kDot: {
       const PrimitiveType lhs_type = hlo.operand(0)->shape().element_type();
@@ -62,20 +68,22 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kReduceScatter:
-    // Handled by Triton GEMM.
-    case HloOpcode::kDot:
-      using TypeAndCC = std::pair<
-          PrimitiveType,
-          stream_executor::CudaComputeCapability::CudaComputeCapabilities>;
+    case HloOpcode::kScaledDot:
+      // We accept any scaled dot, because there is a rewrite pass that will
+      // lower it to a dot + multiply for unsupported types.
+      return true;
+    case HloOpcode::kDot:  // Handled by Triton GEMM.
+      using TypeAndCC =
+          std::pair<PrimitiveType, stream_executor::CudaComputeCapability>;
       for (auto [type, cc] :
-           {TypeAndCC(F8E4M3FN, se::CudaComputeCapability::kAmpere),
-            TypeAndCC(F8E5M2, se::CudaComputeCapability::kHopper)}) {
+           {TypeAndCC(F8E4M3FN, se::CudaComputeCapability::Ampere()),
+            TypeAndCC(F8E5M2, se::CudaComputeCapability::Hopper())}) {
         if (LowPrecisionType() == type) {
           auto* cuda_compute_capability =
               std::get_if<se::CudaComputeCapability>(&compute_capability_);
           // Do not normalize supported types inside Triton fused computations.
           return cuda_compute_capability &&
-                 cuda_compute_capability->IsAtLeast(cc) &&
+                 cuda_compute_capability->SupportsAllFeaturesOf(cc) &&
                  IsTritonFusedComputation(*hlo.parent());
         }
       }

@@ -1626,6 +1626,16 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcastConvert(
   if (replaced) {
     return absl::OkStatus();
   }
+  if (options_.is_layout_sensitive() &&
+      options_.rewrite_no_op_bitcast_convert_to_bitcast() &&
+      // Equal shape ignoring element type implies same bitwidth, as for
+      // different bitwidth shape inference would yield a different shape for
+      // the output. A bitcast-convert with same shape but different bitwidth
+      // would fail the HloVerifier.
+      ShapeUtil::EqualIgnoringElementType(bitcast->shape(), operand->shape())) {
+    ReplaceWithBitcast(bitcast);
+    return absl::OkStatus();
+  }
   // Eliminate bitcast converts between same shape.
   ReplaceInstructionIfCompatible(bitcast, bitcast->mutable_operand(0));
   return absl::OkStatus();
@@ -4918,21 +4928,29 @@ absl::Status AlgebraicSimplifierVisitor::HandleMultiply(
 
   VLOG(10) << "trying transform [sqrt(x) * sqrt(x) => x], for x >= 0 "
            << multiply->ToString();
-  if (Match(multiply,
-            m::Multiply(m::Sqrt(m::Op(&lhs)), m::Sqrt(m::Op(&rhs)))) &&
-      lhs == rhs && IsNonNegative(lhs, options_)) {
-    return ReplaceInstruction(multiply, lhs);
+  UniqueHloInstruction sqrt_x;
+  if (Match(
+          multiply,
+          m::Multiply(
+              m::Sqrt(m::Op().WithPredicate(sqrt_x.capture_or_verify_fn())),
+              m::Sqrt(m::Op().WithPredicate(sqrt_x.capture_or_verify_fn())))) &&
+      IsNonNegative(sqrt_x.instr(), options_)) {
+    return ReplaceInstruction(multiply, sqrt_x.instr());
   }
 
   VLOG(10) << "trying transform [rsqrt(x) * rsqrt(x) => 1/x], for x >= 0 "
            << multiply->ToString();
+  UniqueHloInstruction rsqrt_x;
   if (Match(multiply,
-            m::Multiply(m::Rsqrt(m::Op(&lhs)), m::Rsqrt(m::Op(&rhs)))) &&
-      lhs == rhs && IsNonNegative(lhs, options_)) {
+            m::Multiply(
+                m::Rsqrt(m::Op().WithPredicate(rsqrt_x.capture_or_verify_fn())),
+                m::Rsqrt(
+                    m::Op().WithPredicate(rsqrt_x.capture_or_verify_fn())))) &&
+      IsNonNegative(rsqrt_x.instr(), options_)) {
     return ReplaceWithNewInstruction(
-        multiply,
-        HloInstruction::CreateBinary(multiply->shape(), HloOpcode::kDivide,
-                                     MakeScalarLike(lhs, 1), lhs));
+        multiply, HloInstruction::CreateBinary(
+                      multiply->shape(), HloOpcode::kDivide,
+                      MakeScalarLike(rsqrt_x.instr(), 1), rsqrt_x.instr()));
   }
 
   return TryToReorderConvAddMultiply(multiply);
@@ -5225,17 +5243,18 @@ absl::Status AlgebraicSimplifierVisitor::HandleBroadcast(
       HloInstruction* replaced_inst = operand;
       if (replaced_inst->original_value()) {
         HloInstruction* replacing_inst = operand->mutable_operand(0);
-        auto recovery_computation = [](xla::HloComputation::Builder& builder,
-                                       const xla::Shape& input_shape,
-                                       const xla::Shape& output_shape) {
+        auto build_entry_computation = [](xla::HloComputation::Builder& builder,
+                                          const xla::Shape& input_shape,
+                                          const xla::Shape& output_shape) {
           xla::HloInstruction* param = builder.AddInstruction(
               xla::HloInstruction::CreateParameter(0, input_shape, "p"));
           return builder.AddInstruction(
               xla::HloInstruction::CreateReshape(output_shape, param));
         };
         HloModule* module = broadcast->parent()->parent();
-        module->mutable_original_value_recovery_table().AddRecoveryComputation(
-            replaced_inst, replacing_inst, recovery_computation);
+        module->mutable_original_value_recovery_table()
+            .BuildAndAddRecoveryModule(replaced_inst, replacing_inst,
+                                       build_entry_computation);
       }
 
       return ReplaceWithNewInstruction(

@@ -19,6 +19,7 @@ cc_library(
     srcs = ["xnn_interop.cc"],
     hdrs = ["xnn_interop.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:util",
         "//xla/tsl/platform:logging",
         "@XNNPACK",
@@ -26,6 +27,19 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "xnn_threadpool",
+    srcs = ["xnn_threadpool.cc"],
+    hdrs = ["xnn_threadpool.h"],
+    deps = [
+        ":xnn_interop",
+        "@XNNPACK",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -60,6 +74,8 @@ xla_cc_test(
     srcs = ["xnn_convolution_thunk_test.cc"],
     deps = [
         ":xnn_convolution_thunk",
+        ":xnn_interop",
+        ":xnn_threadpool",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
@@ -118,6 +134,8 @@ xla_cc_test(
     srcs = ["xnn_dot_thunk_test.cc"],
     deps = [
         ":xnn_dot_thunk",
+        ":xnn_interop",
+        ":xnn_threadpool",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -142,6 +160,7 @@ cc_library(
     deps = [
         ":xnn_interop",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/runtime:buffer_use",
         "//xla/runtime:object_pool",
@@ -153,6 +172,8 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/functional:bind_front",
@@ -164,7 +185,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -174,6 +194,7 @@ xla_cc_test(
     deps = [
         ":xnn_fusion_thunk",
         ":xnn_interop",
+        ":xnn_threadpool",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",

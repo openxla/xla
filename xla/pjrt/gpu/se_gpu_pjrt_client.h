@@ -144,16 +144,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
                                       int64_t offset,
                                       int64_t transfer_size) override;
 
-  PjRtFuture<> CopyRawHostToDevice(
-      LocalDeviceState* local_device,
-      tsl::RCReference<RawSEDeviceMemory> device_buffer, const void* src,
-      int64_t offset, int64_t transfer_size) override;
-
-  PjRtFuture<> CopyRawDeviceToHost(
-      LocalDeviceState* local_device,
-      tsl::RCReference<RawSEDeviceMemory> device_buffer, void* dst,
-      int64_t offset, int64_t transfer_size) override;
-
   void CopyToRemoteDevice(PjRtBuffer* buffer,
                           absl::string_view serialized_descriptor,
                           PjRtBuffer::RemoteSendCallback on_done) override;
@@ -164,9 +154,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
                               PjRtCrossHostRecvNotifier notifier) override;
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
-      const override {
-    return &topology_;
-  }
+      const override;
 
   absl::StatusOr<Layout> GetDefaultLayout(
       PrimitiveType element_type, absl::Span<const int64_t> dims) override;
@@ -196,7 +184,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;
-  xla::StreamExecutorGpuTopologyDescription topology_;
+  std::optional<xla::StreamExecutorGpuTopologyDescription> topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
   std::shared_ptr<DistributedRuntimeClient> distributed_client_;
 

@@ -208,7 +208,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_use_acl(true);
 #endif
   opts.set_xla_cpu_use_fusion_emitters(true);
-  opts.set_xla_cpu_use_thunk_runtime(true);
   opts.set_xla_cpu_use_xnnpack(true);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
@@ -276,6 +275,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
+  opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
@@ -405,6 +405,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
+  opts.set_xla_gpu_experimental_autotuner_cache_dir("");
+
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
   opts.set_xla_enable_command_buffers_during_profiling(false);
@@ -441,10 +443,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
   opts.set_xla_gpu_experimental_enable_heuristic_collective_combining(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_silent_hlo_change(false);
+  opts.set_xla_disable_automatic_host_compute_offload(false);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
-  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(false);
+  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
   return opts;
@@ -676,6 +679,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->set_xla_partitioning_algorithm(partitioning_algorithm);
         return true;
       };
+
+  // Custom "sub-parser" lambda for xla_gpu_graph_level.
+  auto setter_for_xla_gpu_graph_level = [debug_options](const int32_t level) {
+    debug_options->clear_xla_gpu_enable_command_buffer();
+    if (level >= 1) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+    }
+    if (level >= 2) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+    }
+    if (level >= 3) {
+      debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    }
+    return true;
+  };
 
   auto command_types_to_string =
       [](tsl::protobuf::RepeatedField<int> command_types) -> std::string {
@@ -1067,13 +1085,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       tsl::Flag("xla_cpu_use_fusion_emitters",
                 bool_setter_for(&DebugOptions::set_xla_cpu_use_fusion_emitters),
                 debug_options->xla_cpu_use_fusion_emitters(),
-                "Use fusion emitters for code generation in the CPU backend. "
-                "Note: only works with --xla_cpu_use_thunk_runtime=true."));
-  flag_list->push_back(
-      tsl::Flag("xla_cpu_use_thunk_runtime",
-                bool_setter_for(&DebugOptions::set_xla_cpu_use_thunk_runtime),
-                debug_options->xla_cpu_use_thunk_runtime(),
-                "Use Thunk-based runtime for the CPU backend."));
+                "Use fusion emitters for code generation in the CPU backend."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_use_thunk_runtime",
+      [](bool) {
+        LOG(WARNING) << "\"xla_cpu_use_thunk_runtime\" is no longer supported "
+                        "and will be removed in a future release.";
+        return true;
+      },
+      true, "Deprecated."));
   flag_list->push_back(
       tsl::Flag("xla_cpu_use_xnnpack",
                 bool_setter_for(&DebugOptions::set_xla_cpu_use_xnnpack),
@@ -1105,7 +1125,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "  `XNN_GRAPH_FUSION_MODE_GREEDY` - greedy extraction of "
       "XNNPACK-compatible subgraphs starting from root instructions,\n"
       "  `XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY` - same as GREEDY plus "
-      "operations that are only supported with slinky."));
+      "operations that are only supported with slinky,"
+      "  `XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL` - test-only value for "
+      "disabling XNNPACK cost models."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_parallel_codegen_split_count",
       int32_setter_for(&DebugOptions::set_xla_cpu_parallel_codegen_split_count),
@@ -1586,6 +1608,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_collectives_use_persistent_cliques(),
       "Use persistent per-process XLA:GPU collectives cliques"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_graph_level", setter_for_xla_gpu_graph_level, 1,
+      "The legacy flag for setting GPU graph level. Use "
+      "xla_gpu_enable_command_buffer in new use cases. 0 = off; 1 = capture "
+      "fusions and memcpys; 2 = capture gemms; 3 = capture convolutions."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_command_buffer",
       SetterForRepeatedEnum<DebugOptions::CommandBufferCmdType>(
           "xla_gpu_enable_command_buffer",
@@ -1693,6 +1720,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enables NCCL User Buffer Registration. collective_memory_size in the "
       "allocator config must also be set to a non-zero value that is large "
       "enough to meet peak collective memory usage."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_nccl_symmetric_buffers",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_nccl_symmetric_buffers),
+      debug_options->xla_gpu_experimental_enable_nccl_symmetric_buffers(),
+      "Enables NCCL symmetric buffer registration."));
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_nvshmem",
       bool_setter_for(&DebugOptions::set_xla_gpu_experimental_enable_nvshmem),
@@ -2459,6 +2494,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "tables for collectives. Expects `xla.gpu.DeviceHloInstructionProfiles` "
       "proto."));
   flag_list->push_back(tsl::Flag(
+      "xla_unsupported_crash_on_hlo_pass_noop_change",
+      bool_setter_for(
+          &DebugOptions::set_xla_unsupported_crash_on_hlo_pass_noop_change),
+      debug_options->xla_unsupported_crash_on_hlo_pass_noop_change(),
+      "Crash if a pass reports that it did change the HLO but in fact it "
+      "did not."));
+  flag_list->push_back(tsl::Flag(
       "xla_unsupported_crash_on_hlo_pass_silent_hlo_change",
       bool_setter_for(
           &DebugOptions::
@@ -2467,12 +2509,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Crash if a pass reports that it did not change the HLO but in fact it "
       "did."));
   flag_list->push_back(tsl::Flag(
-      "xla_unsupported_crash_on_hlo_pass_noop_change",
+      "xla_disable_automatic_host_compute_offload",
       bool_setter_for(
-          &DebugOptions::set_xla_unsupported_crash_on_hlo_pass_noop_change),
-      debug_options->xla_unsupported_crash_on_hlo_pass_noop_change(),
-      "Crash if a pass reports that it did change the HLO but in fact it "
-      "did not."));
+          &DebugOptions::set_xla_disable_automatic_host_compute_offload),
+      debug_options->xla_disable_automatic_host_compute_offload(),
+      "Return an error if HostOffloader would have automatically offloaded some"
+      " compute to the host."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_matmul_perf_table_path",
       string_setter_for(

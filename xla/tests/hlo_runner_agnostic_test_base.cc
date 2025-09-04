@@ -125,25 +125,6 @@ absl::StatusOr<Literal> HloRunnerAgnosticTestBase::Execute(
   return test_runner_->Execute(std::move(module), arguments, run_hlo_passes);
 }
 
-Literal HloRunnerAgnosticTestBase::ExecuteNoHloPasses(
-    std::unique_ptr<HloModule> module,
-    absl::Span<const Literal* const> arguments) {
-  absl::StatusOr<Literal> result = Execute(std::move(module), arguments,
-                                           /*run_hlo_passes=*/false);
-  CHECK_OK(result.status());
-  return *std::move(result);
-}
-
-Literal HloRunnerAgnosticTestBase::ExecuteAndTransfer(
-    std::unique_ptr<HloModule> module,
-    absl::Span<const Literal* const> arguments) {
-  CHECK_OK(PreprocessModuleForTestRunner(module.get()));
-  absl::StatusOr<Literal> result = test_runner_->Execute(
-      std::move(module), arguments, /*run_hlo_passes=*/true);
-  CHECK_OK(result.status());
-  return *std::move(result);
-}
-
 absl::StatusOr<std::vector<Literal>>
 HloRunnerAgnosticTestBase::ExecuteReplicated(
     std::unique_ptr<HloModule> module,
@@ -291,7 +272,9 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoModulesReplicated(
       /*use_large_range=*/false,
       /*treat_gte_as_data_formatting=*/false,
       /*max_bits_of_precision=*/std::nullopt);
-  CHECK_OK(fake_arguments);
+  if (!fake_arguments.ok()) {
+    return ::testing::AssertionFailure() << fake_arguments.status();
+  }
 
   return RunAndCompareTwoModulesReplicated(std::move(module_0),
                                            std::move(module_1), *fake_arguments,
@@ -368,7 +351,9 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoModulesReplicated(
   const absl::StatusOr<std::vector<Literal>> fake_arguments = MakeFakeArguments(
       module_0.get(), /*pseudo_random=*/true, /*use_large_range=*/false,
       /*treat_gte_as_data_formatting=*/false, args_max_bits_of_precision);
-  CHECK_OK(fake_arguments);
+  if (!fake_arguments.ok()) {
+    return ::testing::AssertionFailure() << fake_arguments.status();
+  }
 
   std::vector<Literal*> fake_argument_ptrs;
   absl::c_transform(

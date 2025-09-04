@@ -18,11 +18,12 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/StorageUniquer.h"
@@ -58,17 +59,32 @@ class SymbolicExpr {
   bool operator!() const { return impl_ == nullptr; }
   bool operator==(SymbolicExpr other) const { return impl_ == other.impl_; }
   bool operator!=(SymbolicExpr other) const { return !(*this == other); }
+  bool operator<(const SymbolicExpr& other) const;
 
   SymbolicExprContext* GetContext() const;
   SymbolicExprType GetType() const;
   SymbolicExpr GetLHS() const;
   SymbolicExpr GetRHS() const;
   int64_t GetValue() const;
-  std::string ToString() const;
+  // If num_dims is provided, then the first num_dims variables are dimensions,
+  // and the rest are symbols.
+  std::string ToString(int64_t num_dims = -1) const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
-  SymbolicExpr ReplaceVariables(absl::Span<const SymbolicExpr> substitutions,
-                                SymbolicExprContext* ctx) const;
+  SymbolicExpr ReplaceVariables(
+      absl::Span<const SymbolicExpr> substitutions) const;
   SymbolicExpr Canonicalize() const;
+
+  /// Sparse replace method. Replace `expr` by `replacement` and return the
+  /// modified expression tree.
+  SymbolicExpr Replace(SymbolicExpr expr, SymbolicExpr replacement) const;
+
+  /// Sparse replace method. If `*this` appears in `map` replaces it by
+  /// `map[*this]` and return the modified expression tree. Otherwise traverse
+  /// `*this` and apply replace with `map` on its subexpressions.
+  SymbolicExpr Replace(
+      const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& replacements) const;
+
+  void GetUsedVariables(llvm::DenseSet<VariableID>& used_vars) const;
 
   SymbolicExpr operator+(int64_t v) const;
   SymbolicExpr operator+(SymbolicExpr other) const;
@@ -94,6 +110,11 @@ class SymbolicExpr {
 
   const ImplType* GetImpl() const { return impl_; }
 
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const SymbolicExpr expr) {
+    sink.Append(expr.ToString());
+  }
+
  private:
   const ImplType* impl_ = nullptr;
 };
@@ -101,14 +122,6 @@ class SymbolicExpr {
 inline ::llvm::hash_code hash_value(SymbolicExpr expr) {
   return ::llvm::hash_value(expr.GetImpl());
 }
-
-// Maps a set of input variables to a set of output SymbolicExpr trees.
-struct SymbolicMap {
-  int64_t num_dimensions;
-  int64_t num_ranges;
-  int64_t num_symbols;
-  std::vector<SymbolicExpr> exprs;
-};
 
 class SymbolicExprContext {
  public:

@@ -60,11 +60,13 @@ limitations under the License.
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/literal_pool.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
+#include "xla/shape_pool.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
@@ -1208,10 +1210,34 @@ class HloInstruction {
   virtual bool HasSideEffect() const;
 
   // Returns the result shape of this instruction.
-  const Shape& shape() const;
+  const Shape& shape() const {
+    DCHECK(shape_) << "Instruction shape must be set";
+    return *shape_;
+  }
 
   // Returns the (mutable) result shape of this instruction.
-  Shape* mutable_shape() { return &shape_; }
+  Shape* mutable_shape() {
+    DCHECK(shape_) << "Instruction shape must be set";
+    if (shape_is_canonicalized_) {
+      shape_ = std::make_shared<Shape>(*shape_);
+      shape_is_canonicalized_ = false;
+    }
+    return &*shape_;
+  }
+
+  // Canonicalize instruction shape using the given shape pool.
+  bool Canonicalize(ShapePool* shape_pool) {
+    DCHECK(shape_) << "Instruction shape must be set";
+    if (shape_pool) {
+      std::shared_ptr<Shape> canonical = shape_pool->GetCanonicalShape(shape_);
+      shape_is_canonicalized_ = true;
+      if (canonical != shape_) {
+        shape_ = std::move(canonical);
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Returns the ith operand to this instruction.
   const HloInstruction* operand(int64_t i) const;
@@ -1981,6 +2007,10 @@ class HloInstruction {
   }
 
   void set_statistics_viz(StatisticsViz statistics_viz) {
+    if (!has_rare() && statistics_viz.stat_index_to_visualize() == 0 &&
+        statistics_viz.statistics().empty()) {
+      return;
+    }
     mutable_rare()->statistics_viz = std::move(statistics_viz);
   }
 
@@ -2041,26 +2071,43 @@ class HloInstruction {
 
   // Sets the debug metadata for this instruction, excluding creation_pass_id,
   // which should never be copied anywhere.
-  void set_metadata(const OpMetadata& metadata) { *metadata_ = metadata; }
+  void set_metadata(const OpMetadata& metadata) {
+    if (&metadata == kEmptyMetadata) {
+      metadata_.reset();
+    } else {
+      mutable_metadata() = metadata;
+    }
+  }
 
   void set_size_of_generated_code_in_bytes(int64_t code_size_in_bytes) {
-    metadata_->set_size_of_generated_code_in_bytes(code_size_in_bytes);
+    mutable_metadata().set_size_of_generated_code_in_bytes(code_size_in_bytes);
   }
   void set_size_of_memory_working_set_in_bytes(
       int64_t working_set_size_in_bytes) {
-    metadata_->set_size_of_memory_working_set_in_bytes(
+    mutable_metadata().set_size_of_memory_working_set_in_bytes(
         working_set_size_in_bytes);
   }
   void set_metadata_op_name(const std::string& name) {
-    metadata_->set_op_name(name);
+    mutable_metadata().set_op_name(name);
   }
   void set_metadata_deduplicated_name(std::string deduplicated_name) {
-    metadata_->set_deduplicated_name(std::move(deduplicated_name));
+    mutable_metadata().set_deduplicated_name(std::move(deduplicated_name));
   }
   void set_metadata_scheduling_name(absl::string_view name) {
-    metadata_->set_scheduling_name(std::string(name));
+    mutable_metadata().set_scheduling_name(name);
   }
-  const OpMetadata& metadata() const { return *metadata_; }
+
+  const OpMetadata& metadata() const {
+    OpMetadata* m = metadata_.get();
+    return (m == nullptr) ? *kEmptyMetadata : *m;
+  }
+
+  OpMetadata& mutable_metadata() {
+    if (metadata_ == nullptr) {
+      metadata_ = std::make_unique<OpMetadata>();
+    }
+    return *metadata_;
+  }
 
   // Get the computation containing this instruction.
   const HloComputation* parent() const { return parent_; }
@@ -2370,8 +2417,7 @@ class HloInstruction {
   // Delegates to
   // HloCallableInstruction::RecursivelySetComputationsThreadName().
   void set_called_computations_execution_thread(
-      absl::string_view async_execution_thread,
-      bool skip_async_execution_thread_overwrite);
+      absl::string_view async_execution_thread);
 
   // Delegates to HloCopyStartInstruction::is_cross_program_prefetch_index().
   std::optional<int> cross_program_prefetch_index() const;
@@ -2553,8 +2599,6 @@ class HloInstruction {
     ResultAccuracy result_accuracy;
   };
 
-  static const Rare* const kEmptyRare;
-
   bool has_rare() const { return rare_ != nullptr; }
 
   // Return the allocated rare state, or the pointer to the static empty rare
@@ -2633,11 +2677,15 @@ class HloInstruction {
   // True if this instruction is the root of a computation.
   bool is_root_ : 1;
 
+  // True if the shape of this instruction has been canonicalized.
+  bool shape_is_canonicalized_ : 1;
+
   // Instruction operands.
   InstructionVector operands_;
 
   // If needed, points off to allocated struct holding out-of-line info
   // for things that are rarely filled
+  static const Rare* const kEmptyRare;
   std::unique_ptr<Rare> rare_;
 
   // The users of this instruction. Users are HLOs where this instruction is an
@@ -2654,7 +2702,7 @@ class HloInstruction {
   std::shared_ptr<const HloSharding> sharding_;
 
   // Result shape of this instruction.
-  Shape shape_;
+  std::shared_ptr<Shape> shape_;
 
   // The backend-specific configuration for how a backend should compile this
   // HLO. See the documentation on backend_config().
@@ -2669,7 +2717,8 @@ class HloInstruction {
 
   // Metadata for debugging.  Allocate it on heap, so that it does not increase
   // the memory footprint of HloInstruction.
-  std::unique_ptr<OpMetadata> metadata_ = std::make_unique<OpMetadata>();
+  static const OpMetadata* const kEmptyMetadata;
+  std::unique_ptr<OpMetadata> metadata_;
 };
 
 // Explicit instantiations in hlo_instruction.cc.

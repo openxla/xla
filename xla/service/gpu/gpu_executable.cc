@@ -39,15 +39,18 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/annotation.h"
+#include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -108,8 +111,33 @@ static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
   return stream_ids;
 }
 
+static absl::Status RunThunkPasses(const DebugOptions& debug_options,
+                                   const se::DeviceDescription& device_info,
+                                   SequentialThunk* root_thunk,
+                                   HloModule* hlo_module) {
+  ThunkPassPipeline pipeline("thunk-passes");
+  if (debug_options.xla_gpu_experimental_enable_command_buffer_on_thunks()) {
+    pipeline.AddPass(std::make_unique<CommandBufferConversionPass>());
+  }
+  TF_ASSIGN_OR_RETURN(bool changed,
+                      pipeline.Run(root_thunk, debug_options, device_info));
+  if (changed) {
+    VLOG(3) << "Thunk passes changed the thunk tree.";
+    if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
+      DumpToFileInDirOrStdout(
+          *hlo_module, "",
+          absl::StrCat("thunk_sequence_after_thunk_passes", ".txt"),
+          root_thunk->ToString(/*indent=*/0));
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     Params params) {
+  TF_RETURN_IF_ERROR(
+      RunThunkPasses(params.debug_options, params.device_description,
+                     params.executable.get(), params.debug_module.get()));
   return std::unique_ptr<GpuExecutable>(new GpuExecutable(std::move(params)));
 }
 
@@ -120,16 +148,16 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
       text_(std::move(params.asm_text)),
       binary_(std::move(params.binary)),
       dnn_compiled_graphs_(std::move(params.dnn_compiled_graphs)),
-      gpu_version_(params.gpu_version),
+      gpu_version_(params.device_description.gpu_compute_capability()),
       thunks_(std::move(params.executable)),
       execution_stream_ids_(GetExecutionStreamIds(*thunks_)),
       module_name_(params.module_name),
-      output_shape_(params.output_shape),
+      program_shape_(params.program_shape),
       allocations_(std::move(params.mlir_allocations)),
       buffer_assignment_(std::move(params.buffer_assignment)),
       alias_info_(std::move(params.alias_info)),
       debug_buffer_assignment_show_max_(
-          params.debug_buffer_assignment_show_max),
+          params.debug_options.xla_debug_buffer_assignment_show_max()),
       constants_(std::move(params.constants)),
       output_info_(std::move(params.output_info)),
       enable_debug_info_manager_(params.enable_debug_info_manager) {
@@ -143,7 +171,7 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
   }
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
-                                               buffer_assignment_->ToProto());
+                                               buffer_assignment_);
   }
 }
 
@@ -716,8 +744,9 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   const int device_ordinal = run_options->device_ordinal() != -1
                                  ? run_options->device_ordinal()
                                  : executor->device_ordinal();
-  ExecutionOutput result(/*on_device_shape=*/output_shape_, memory_allocator,
-                         device_ordinal, executor->device_ordinal());
+  ExecutionOutput result(/*on_device_shape=*/program_shape_.result(),
+                         memory_allocator, device_ordinal,
+                         executor->device_ordinal());
 
   TF_ASSIGN_OR_RETURN(
       BufferAllocations buffer_allocations,
@@ -796,14 +825,15 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         // result, if the ExecutionOutput is not committed.
         result.AddAliasedIndex(index);
       } else if (!output_info.passthrough &&
-                 !ShapeUtil::GetSubshape(output_shape_, index).IsTuple()) {
+                 !ShapeUtil::GetSubshape(program_shape_.result(), index)
+                      .IsTuple()) {
         // The guard is above is not to insert copy-protection when aliasing
         // pass-through params, as we do not need to write into the output
         // buffer.
         VLOG(3) << "Using copy-protection: aliasing is specified, but the "
                    "buffer is not donated; allocating a fresh buffer";
-        int64_t allocation_size =
-            ShapeUtil::ByteSizeOf(ShapeUtil::GetSubshape(output_shape_, index));
+        int64_t allocation_size = ShapeUtil::ByteSizeOf(
+            ShapeUtil::GetSubshape(program_shape_.result(), index));
         absl::StatusOr<se::OwningDeviceMemory> allocated_buffer =
             memory_allocator->Allocate(device_ordinal, allocation_size,
                                        /*retry_on_failure=*/true,

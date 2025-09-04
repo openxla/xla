@@ -9,10 +9,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "59d7eb36a02cbe3c2e2fa67fda5e8f1ab7e274bc4773bbd207c51fe199e11c19",
-    strip_prefix = "rules_ml_toolchain-ffd9e3d7b84e43c2686c803cb08ce790ffd58baa",
+    sha256 = "f4f41445e4652e7e3c8e719121a4ed31dd161aa495f6704b6d972082a262658c",
+    strip_prefix = "rules_ml_toolchain-353817f8f851f3291be221fc72ad0fcb00a4500c",
     urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/ffd9e3d7b84e43c2686c803cb08ce790ffd58baa.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/353817f8f851f3291be221fc72ad0fcb00a4500c.tar.gz",
     ],
 )
 
@@ -26,6 +26,10 @@ cc_toolchain_deps()
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
 # Initialize the XLA repository and all dependencies.
 #
@@ -52,6 +56,7 @@ load("//third_party/py:python_init_repositories.bzl", "python_init_repositories"
 python_init_repositories(
     requirements = {
         "3.11": "//:requirements_lock_3_11.txt",
+        "3.12": "//:requirements_lock_3_12.txt",
     },
 )
 

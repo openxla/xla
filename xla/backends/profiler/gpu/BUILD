@@ -37,6 +37,7 @@ cc_library(
     deps = [
         ":cupti_collector",
         ":cupti_tracer",
+        ":cupti_tracer_options_utils",
         "//xla/tsl/platform:errors",
         "//xla/tsl/profiler/utils:time_utils",
         "//xla/tsl/util:env_var",
@@ -155,9 +156,7 @@ xla_test(
         ":cupti_wrapper",
         ":mock_cupti",
         "//xla/tsl/profiler/utils:time_utils",
-        "@com_google_absl//absl/memory",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -223,6 +222,8 @@ cc_library(
         "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "//xla/tsl/profiler/utils:lock_free_queue",
         "//xla/tsl/profiler/utils:per_thread",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -258,6 +259,7 @@ cc_library(
         "cuda-only",
         "gpu",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":cupti_collector",
         ":cupti_interface",
@@ -284,9 +286,9 @@ cc_library(
         "cuda-only",
         "gpu",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":cupti_collector",
-        ":cupti_interface",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
     ],
@@ -305,6 +307,7 @@ cc_library(
         "gpu",
         "manual",  # This target requires CUDA 12.6+, therefore we only built it if it was requested via a dependency.
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":cupti_collector",
         ":cupti_interface",
@@ -544,6 +547,56 @@ cc_library(
 )
 
 cc_library(
+    name = "ondevice_event_exporter",
+    srcs = ["ondevice_event_exporter.cc"],
+    hdrs = ["ondevice_event_exporter.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cupti_buffer_events",
+        "//xla/tsl/profiler/backends/gpu:ondevice_event_collector",
+        "//xla/tsl/profiler/backends/gpu:ondevice_trace_event",
+        "//xla/tsl/profiler/utils:lock_free_queue",
+        "//xla/tsl/profiler/utils:trace_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "ondevice_event_exporter_test",
+    srcs = ["ondevice_event_exporter_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_mac",
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        ":ondevice_event_exporter",
+        "//xla/tsl/profiler/backends/gpu:ondevice_event_receiver",
+        "//xla/tsl/profiler/backends/gpu:ondevice_trace_event",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+cc_library(
     name = "cupti_status",
     srcs = ["cupti_status.cc"],
     hdrs = ["cupti_status.h"],
@@ -652,6 +705,7 @@ xla_test(
     deps = [
         ":cupti_collector",
         ":cupti_error_manager",
+        ":cupti_pm_sampler_stub",
         ":cupti_tracer",
         ":cupti_utils",
         ":cupti_wrapper",
@@ -660,5 +714,28 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "cupti_tracer_options_utils",
+    srcs = ["cupti_tracer_options_utils.cc"],
+    hdrs = ["cupti_tracer_options_utils.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cupti_collector",
+        ":cupti_tracer",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/profiler/utils:profiler_options_util",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
 )

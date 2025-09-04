@@ -147,12 +147,14 @@ absl::Status RunRaggedAllToAll(
     int64_t ragged_row_element_size, int64_t num_total_updates,
     const std::vector<DeviceBufferPair>& original_buffers, se::Stream& stream,
     Communicator* comm, const std::vector<int64_t*>& ragged_metadata_allocs,
-    const se::DeviceMemoryBase& output_offsets_device_buffer) {
+    const se::DeviceMemoryBase& output_offsets_device_buffer,
+    bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing ragged-all-to-all from device ordinal: "
+  VLOG(3) << "[" << device_ordinal
+          << "] Performing ragged-all-to-all from device ordinal: "
           << device_ordinal;
-  TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(stream.parent(), original_buffers, comm));
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), original_buffers,
+                                          comm, use_symmetric_buffer));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
@@ -322,8 +324,7 @@ absl::Status RunMemCpyRaggedAllToAll(
     Communicator* comm, const std::vector<int64_t*>& ragged_metadata_allocs,
     se::Event* start_event, se::Event* end_event) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing mem-copy-ragged-all-to-all from device ordinal: "
-          << device_ordinal;
+  VLOG(3) << "[" << device_ordinal << "] Performing mem-copy-ragged-all-to-all";
   TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, comm));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
@@ -379,8 +380,8 @@ absl::Status RunOneShotRaggedAllToAll(
     RankId rank, Communicator* comm, se::Event* start_event,
     se::Event* end_event) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing one-shot ragged-all-to-all from device ordinal: "
-          << device_ordinal << ", rank: " << rank.value();
+  VLOG(3) << "[" << device_ordinal
+          << "] Performing one-shot ragged-all-to-all rank: " << rank.value();
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
@@ -595,10 +596,10 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
     return false;
   }
 
-  TF_RETURN_IF_ERROR(
-      RunRaggedAllToAll(config_.num_row_elements, config_.num_total_updates,
-                        device_buffers, stream, comm_handle.comm,
-                        ragged_metadata_allocs, output_offsets_device_buffer));
+  TF_RETURN_IF_ERROR(RunRaggedAllToAll(
+      config_.num_row_elements, config_.num_total_updates, device_buffers,
+      stream, comm_handle.comm, ragged_metadata_allocs,
+      output_offsets_device_buffer, config_.config.use_symmetric_buffer));
   return true;
 }
 

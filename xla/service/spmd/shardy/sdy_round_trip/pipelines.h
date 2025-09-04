@@ -45,7 +45,7 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
 // `kMeshesRoundTripAttr`.
 void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport = true,
-                                   bool importOnlyUninlineableFuncCalls = true,
+                                   bool importFuncCalls = false,
                                    bool liftAndDedupMeshes = false);
 
 // Register the xla-sdy-round-trip-export-pipeline.
@@ -53,13 +53,6 @@ void registerSdyRoundTripExportPipeline();
 
 // Register the xla-sdy-round-trip-import-pipeline.
 void registerSdyRoundTripImportPipeline();
-
-// Register the xla-sdy-round-trip-testing-pipeline.
-// This takes an SDY module, exports it to StableHLO while saving the SDY attrs
-// and meshes, goes to HLO, back to StableHLO, and then back to SDY.
-// This is for testing roundtripping SDY modules, but should be eventually
-// removed as part of b/335666088.
-void registerSdyRoundTripTestingPipeline();
 
 }  // namespace sdy
 }  // namespace xla

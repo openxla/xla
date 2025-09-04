@@ -118,7 +118,8 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
   device_count_ = params.local_device_count;
   CHECK_GT(device_count_, 0);
-  VLOG(5) << "Local device count: " << device_count_;
+  VLOG(5) << "[" << params.executor->device_ordinal()
+          << "] Local device count : " << device_count_;
 
   if (is_local() && p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
@@ -240,7 +241,8 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
     return false;
   }
   TF_RETURN_IF_ERROR(xla::gpu::RunAllToAll(
-      config_.has_split_dimension, device_buffers, stream, comm_handle.comm));
+      config_.has_split_dimension, device_buffers, stream, comm_handle.comm,
+      config_.config.use_symmetric_buffer));
   return true;
 }
 
@@ -266,11 +268,14 @@ bool AllToAllStartThunk::is_local() const {
 
 absl::Status RunAllToAll(bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
-                         se::Stream& stream, Communicator* comm) {
+                         se::Stream& stream, Communicator* comm,
+                         bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing all-to-all from device ordinal: " << device_ordinal
-          << ", has_split_dimension: " << has_split_dimension;
-  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, comm));
+  VLOG(3) << "[" << device_ordinal
+          << "] Performing all-to-all, has_split_dimension: "
+          << has_split_dimension;
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, comm,
+                                          use_symmetric_buffer));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
@@ -391,8 +396,7 @@ absl::Status RunMemCpyAllToAll(bool has_split_dimension,
                                se::Event* event,
                                std::vector<se::Event*>& events) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing mem-copy-all-to-all from device ordinal: "
-          << device_ordinal;
+  VLOG(3) << "[" << device_ordinal << "] Performing mem-copy-all-to-all";
   TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, comm));
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
   TF_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key, rank,

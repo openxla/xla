@@ -447,6 +447,9 @@ absl::Status XlaBuilderFriend::SetParameterReplication(
   TF_ASSIGN_OR_RETURN(HloComputationProto * computation_proto,
                       builder->GetSubcomputation(computation));
   for (auto& instr : *computation_proto->mutable_instructions()) {
+    if (instr.opcode() != HloOpcodeString(HloOpcode::kParameter)) {
+      continue;
+    }
     auto it = replication.find(instr.parameter_number());
     if (it != replication.end()) {
       instr.mutable_parameter_replication()
@@ -4948,9 +4951,6 @@ absl::StatusOr<XlaOp> XlaBuilder::AddInstruction(
   const int64_t handle = GetNextId();
   instr.set_id(handle);
   *instr.mutable_opcode() = std::string(HloOpcodeString(opcode));
-  if (instr.name().empty()) {
-    instr.set_name(instr.opcode());
-  }
   for (const auto& operand : operands) {
     if (operand.builder_ == nullptr) {
       return InvalidArgument("invalid XlaOp with handle %d", operand.handle());
@@ -4968,6 +4968,24 @@ absl::StatusOr<XlaOp> XlaBuilder::AddInstruction(
   } else {
     *instr.mutable_metadata() = metadata_;
   }
+
+  if (instr.name().empty()) {
+    if (!instr.metadata().op_name().empty()) {
+      // The op_name from metadata often includes a prefix, often having the
+      // form "stack_trace/opname" or "module_name/opname".
+      // We aim to extract the base operation name.
+      absl::string_view op_name = instr.metadata().op_name();
+      size_t last_slash_pos = op_name.find_last_of('/');
+      absl::string_view name = (last_slash_pos == absl::string_view::npos)
+                                   ? op_name
+                                   : op_name.substr(last_slash_pos + 1);
+      instr.set_name(
+          xla::SanitizeOpName(std::string(name), kNameSeparator, "_"));
+    } else {
+      instr.set_name(instr.opcode());
+    }
+  }
+
   if (sharding_) {
     TF_RETURN_IF_ERROR(NormalizeAndAssignSharing(&instr, *sharding_));
   }

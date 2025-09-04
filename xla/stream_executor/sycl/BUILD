@@ -4,12 +4,14 @@
 load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
+    "sycl_library",
 )
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -146,4 +148,73 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = 1,
+)
+
+sycl_library(
+    name = "sycl_kernel",
+    srcs = ["sycl_kernel.cc"],
+    hdrs = ["sycl_kernel.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_test(
+    name = "sycl_kernel_test",
+    srcs = ["sycl_kernel_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:launch_dim",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+sycl_library(
+    name = "sycl_event",
+    srcs = ["sycl_event.cc"],
+    hdrs = ["sycl_event.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_test(
+    name = "sycl_event_test",
+    srcs = ["sycl_event_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_event",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_googletest//:gtest_main",
+    ],
 )

@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -97,16 +98,16 @@ class GpuExecutable : public Executable {
     std::string asm_text;
     std::vector<uint8_t> binary;
     BinaryMap dnn_compiled_graphs;
-    se::GpuComputeCapability gpu_version;
     std::unique_ptr<SequentialThunk> executable;
     std::vector<ConstantInfo> constants;
     absl::flat_hash_map<ShapeIndex, OutputInfo> output_info;
     std::string module_name;
-    xla::Shape output_shape;
+    ProgramShape program_shape;
     std::optional<std::vector<BufferAllocation>> mlir_allocations;
     std::unique_ptr<const BufferAssignment> buffer_assignment;
     std::unique_ptr<GpuAliasInfo> alias_info;
-    int64_t debug_buffer_assignment_show_max;
+    DebugOptions debug_options;
+    se::DeviceDescription device_description;
     std::unique_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
   };
@@ -121,10 +122,14 @@ class GpuExecutable : public Executable {
 
   const std::string& module_name() const { return module_name_; }
 
-  const xla::Shape& output_shape() const { return output_shape_; }
+  xla::Shape result_shape() const override { return program_shape_.result(); }
 
   const absl::flat_hash_map<ShapeIndex, OutputInfo>& output_info() const {
     return output_info_;
+  }
+
+  ComputationLayout compute_computation_layout() const override {
+    return ComputationLayout(program_shape_, /*ignore_layouts=*/false);
   }
 
   // This should be called before ExecuteOnStream.
@@ -265,7 +270,7 @@ class GpuExecutable : public Executable {
 
   std::string module_name_;
 
-  xla::Shape output_shape_;
+  ProgramShape program_shape_;
 
   // The allocations_ object contains allocations that **may** be used to
   // provide information for allocating memory for every output/temp buffer.
@@ -277,7 +282,7 @@ class GpuExecutable : public Executable {
   // See the comment on GetAllocations().
   //
   // This object is also used for dumping debug info.
-  std::unique_ptr<const xla::BufferAssignment> buffer_assignment_;
+  std::shared_ptr<const xla::BufferAssignment> buffer_assignment_;
 
   // Backend specific aliasing information whether operands can/should share the
   // buffer with the user.

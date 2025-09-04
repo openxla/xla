@@ -226,6 +226,12 @@ CollectiveConfig GetCollectiveConfig(
                                                use_global_device_ids)
                           .value();
 
+  config.use_symmetric_buffer =
+      hlo->GetModule() &&
+      hlo->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_enable_nccl_symmetric_buffers();
   return config;
 }
 
@@ -346,8 +352,8 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 }
 
 absl::Status RegisterBufferOnce(se::StreamExecutor* executor,
-                                Communicator* comm,
-                                se::DeviceMemoryBase buffer) {
+                                Communicator* comm, se::DeviceMemoryBase buffer,
+                                bool use_symmetric_buffer) {
   // Keep track of which communicators we have registered for already.
   // Each ncclMemAlloc'd buffer needs to be registered once per comm.
   struct RegisteredBuffers {
@@ -366,38 +372,50 @@ absl::Status RegisterBufferOnce(se::StreamExecutor* executor,
   // of which chunks we have registered.
   TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase base_buffer,
                       executor->GetMemoryRange(buffer));
-
-  absl::MutexLock lock(&all_registered.mu);
-  if (!all_registered.records.contains(
-          {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()})) {
-    // ncclCommRegister will internally get and use the base address/size of the
-    // address we provide.
-    VLOG(5) << "Registering " << buffer.opaque()
-            << " with size: " << buffer.size()
-            << " and base pointer: " << base_buffer.opaque();
-    TF_ASSIGN_OR_RETURN(auto handle, comm->RegisterBuffer(buffer));
+  bool need_reg = false;
+  {
+    absl::MutexLock lock(&all_registered.mu);
+    if (!all_registered.records.contains({executor->device_ordinal(),
+                                          buffer.size(), comm,
+                                          buffer.opaque()})) {
+      need_reg = true;
+    } else {
+      VLOG(5) << "[" << executor->device_ordinal()
+              << "] Buffer: " << buffer.opaque()
+              << " with size: " << buffer.size()
+              << " and base pointer: " << base_buffer.opaque()
+              << " is already registered.";
+    }
+  }
+  if (need_reg) {
+    VLOG(5) << "[" << executor->device_ordinal() << "] Registering "
+            << buffer.opaque() << " with size: " << buffer.size()
+            << " and base pointer: " << base_buffer.opaque()
+            << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
+    // Symmetric buffer registration is a collective operation,
+    // we need to do that before locking on a global.
+    TF_ASSIGN_OR_RETURN(auto handle,
+                        comm->RegisterBuffer(buffer, use_symmetric_buffer));
+    absl::MutexLock lock(&all_registered.mu);
     all_registered.handles.push_back(std::move(handle));
     all_registered.records.insert(
         {executor->device_ordinal(), buffer.size(), comm, buffer.opaque()});
-  } else {
-    VLOG(5) << "Buffer: " << buffer.opaque() << " with size: " << buffer.size()
-            << " and base pointer: " << base_buffer.opaque()
-            << " is already registered.";
   }
   return absl::OkStatus();
 }
 
 absl::Status MaybeRegisterBuffers(se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
-                                  Communicator* comm) {
+                                  Communicator* comm,
+                                  bool use_symmetric_buffer) {
   for (int i = 0; i < buffers.size(); ++i) {
     if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
-      TF_RETURN_IF_ERROR(
-          RegisterBufferOnce(executor, comm, buffers[i].source_buffer));
+      TF_RETURN_IF_ERROR(RegisterBufferOnce(
+          executor, comm, buffers[i].source_buffer, use_symmetric_buffer));
     }
     if (buffers[i].destination_memory_space == kCollectiveMemorySpaceColor) {
-      TF_RETURN_IF_ERROR(
-          RegisterBufferOnce(executor, comm, buffers[i].destination_buffer));
+      TF_RETURN_IF_ERROR(RegisterBufferOnce(
+          executor, comm, buffers[i].destination_buffer, use_symmetric_buffer));
     }
   }
   return absl::OkStatus();
@@ -446,8 +464,9 @@ absl::Status CollectiveThunk::Initialize(const InitializeParams& params) {
 }
 
 absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
-  VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",
-                                Thunk::KindToString(kind()));
+  VLOG(1) << absl::StreamFormat(
+      "[%d] Starting %s %s.", params.stream->parent()->device_ordinal(),
+      IsAsync() ? "async" : "sync", Thunk::KindToString(kind()));
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
@@ -491,7 +510,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     auto global_device_id = params.collective_params->global_device_id;
     RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
-    VLOG(1) << "Do a rendezvous after a first call to "
+    VLOG(1) << "[" << global_device_id.value()
+            << "] Do a rendezvous after a first call to "
             << Thunk::KindToString(kind())
             << "; run_id=" << params.collective_params->run_id.ToInt()
             << "; op_id=" << config().op_id
@@ -501,7 +521,7 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     auto rendezvous_key = FirstCallRendezvousKey{std::move(clique_key)};
     auto rendezvous_name = absl::StrFormat(
-        "first call to collective operation %d; run_id=%d", config().op_id,
+        "first call to collective operation %d; run_id=%ld", config().op_id,
         params.collective_params->run_id.ToInt());
 
     const xla::DebugOptions debug_options = xla::GetDebugOptionsFromFlags();

@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -41,11 +42,14 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/proto/execute_options.pb.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -83,7 +87,9 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
                       executable_build_options.ToProto());
   output.set_compile_portable_executable(compile_portable_executable);
   output.set_profile_version(profile_version);
-  if (multi_slice_config != nullptr) {
+  if (!serialized_multi_slice_config.empty()) {
+    output.set_serialized_multi_slice_config(serialized_multi_slice_config);
+  } else if (multi_slice_config != nullptr) {
     output.set_serialized_multi_slice_config(multi_slice_config->Serialize());
   }
   for (auto& env_option_override : env_option_overrides) {
@@ -101,12 +107,13 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
 
 absl::StatusOr<CompileOptions> CompileOptions::FromProto(
     const CompileOptionsProto& proto) {
+  CompileOptions output;
   if (!proto.serialized_multi_slice_config().empty()) {
-    return Unimplemented(
-        "multi_slice_config not supported in CompileOptions::FromProto.");
+    LOG(WARNING) << "Multi slice config from proto, must deserialize to use.";
+    output.serialized_multi_slice_config =
+        proto.serialized_multi_slice_config();
   }
 
-  CompileOptions output;
   if (proto.argument_layouts_size() > 0) {
     std::vector<Shape> output_argument_layouts;
     output_argument_layouts.reserve(proto.argument_layouts_size());
@@ -127,7 +134,8 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
                       LoadEnvOptionOverrides(proto.env_option_overrides()));
 
   if (proto.has_target_config()) {
-    output.target_config = xla::Compiler::TargetConfig(proto.target_config());
+    TF_ASSIGN_OR_RETURN(output.target_config, Compiler::TargetConfig::FromProto(
+                                                  proto.target_config()));
   }
   return output;
 }
