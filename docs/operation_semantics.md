@@ -109,7 +109,7 @@ Computing the result of `AllReduce` requires having one input from each replica,
 so if one replica executes an `AllReduce` node more times than another, then the
 former replica will wait forever. Since the replicas are all running the same
 program, there are not a lot of ways for that to happen, but it is possible when
-a while loop's condition depends on data from infeed and the data that is infed
+a while loop's condition depends on data from infeed and the data that is infeed
 causes the while loop to iterate more times on one replica than another.
 
 ## AllToAll
@@ -146,7 +146,7 @@ Prerequisites:
 -   The operand's shape is not tuple.
 
 **`AllToAll(operand, split_dimension, concat_dimension, split_count,
-replica_groups)`**
+replica_groups, layout, channel_id)`**
 
 | Arguments          | Type                  | Semantics                       |
 | ------------------ | --------------------- | ------------------------------- |
@@ -168,6 +168,10 @@ replica_groups)`**
 :                    :                       : of replicas in each group.      :
 | `replica_groups`   | `ReplicaGroup` vector | Each group contains a list of   |
 :                    :                       : replica ids.                    :
+| `layout`           | optional `Layout`| user-specified memory layout |
+| `ChannelHandle`    | optional `ChannelHandle`|unique identifier for each send/recv pair |
+
+See [xla::shapes for more information on shapes and layouts.](https://openxla.org/xla/shapes)
 
 ### AllToAll - Example 1.
 
@@ -189,7 +193,7 @@ f32[4,4]. The 4 parts are scattered to all cores. Then each core concatenates
 the received parts along dimension 0, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
 
-### AllToAll - Example 2
+### AllToAll - StableHLO - Example 2
 ```cpp
 XlaBuilder b("alltoall");
 auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 4}), "x");
@@ -1084,7 +1088,7 @@ emulating f32 on a TPU that only supports bf16 matmuls). Values may be
 
 `preferred_element_type` is a scalar element of higher/lower precision output
 types used for accumulation. `preferred_element_type` recommends the
-accumulation type for the given operaiton, however it is not guaranteed. This
+accumulation type for the given operation, however it is not guaranteed. This
 allows for some hardware backends to instead accumulate in a different type and
 convert to the preferred output type.
 
@@ -1190,7 +1194,7 @@ emulating f32 on a TPU that only supports bf16 matmuls). Values may be
 
 `preferred_element_type` is a scalar element of higher/lower precision output
 types used for accumulation. `preferred_element_type` recommends the
-accumulation type for the given operaiton, however it is not guaranteed. This
+accumulation type for the given operation, however it is not guaranteed. This
 allows for some hardware backends to instead accumulate in a different type and
 convert to the preferred output type.
 
@@ -2177,17 +2181,20 @@ then scatters the result by splitting it into `shard_count` blocks along the
 `scatter_dimension` and replica `i` in the replica group receives the `ith`
 shard.
 
-**`ReduceScatter(operand, computation, scatter_dim, shard_count,
-replica_group_ids, channel_id)`**
+**`ReduceScatter(operand, computation, scatter_dimension, shard_count, replica_groups, 
+channel_id, layout, use_global_device_ids)`**
 
-| Arguments           | Type                 | Semantics                     |
-| ------------------- | -------------------- | ----------------------------- |
-| `operand`           | `XlaOp`              | Array or a non-empty tuple of arrays to reduce across replicas. |
-| `computation`       | `XlaComputation`     | Reduction computation         |
-| `scatter_dimension` | `int64`              | Dimension to scatter.         |
-| `shard_count`       | `int64`              | Number of blocks to split `scatter_dimension`  |
-| `replica_groups`    | vector of vectors of  `int64` | Groups between which the reductions are performed |
-| `channel_id`        | optional `int64`     | Optional channel ID for cross-module communication |
+| Arguments               | Type                          | Semantics                                                       |
+| ----------------------- | ----------------------------- | --------------------------------------------------------------- |
+| `operand`               | `XlaOp`                       | Array or a non-empty tuple of arrays to reduce across replicas. |
+| `computation`           | `XlaComputation`              | Reduction computation                                           |
+| `scatter_dimension`     | `int64`                       | Dimension to scatter.                                           |
+| `shard_count`           | `int64`                       | Number of blocks to split `scatter_dimension`                   |
+| `replica_groups`        | vector of vectors of  `int64` | Groups between which the reductions are performed               |
+| `channel_id`            | optional `int64`              | Optional channel ID for cross-module communication              |
+| `layout`                | optional `Layout`             | user-specified memory layout                                    |
+| `use_global_device_ids` | optional `bool`               | user-specified flag                                             |
+
 
 -   When `operand` is a tuple of arrays, the reduce-scatter is performed on each
     element of the tuple.
@@ -2205,12 +2212,36 @@ replica_group_ids, channel_id)`**
     must be equal to the size of each replica group.
 -   `channel_id` is used for cross-module communication: only `reduce-scatter`
     operations with the same `channel_id` can communicate with each other.
+-   `layout` See [xla::shapes for more information on layouts.](https://openxla.org/xla/shapes)
+-   `use_global_device_ids` is a user-specified flag. When `false`(default) the
+    numbers in `replica_groups` are [`ReplicaId`](#replicaid) when `true` the
+    `replica_groups` represent a global id of (`ReplicaID`*`partition_count` +
+    `partition_id`). For example:
+    - With 2 replicas and 4 partitions,
+    - replica_groups={{0,1,4,5},{2,3,6,7}} and use_global_device_ids=true 
+    - group[0] = (0,0), (0,1), (1,0), (1,1)
+    - group[1] = (0,2), (0,3), (1,2), (1,3)
+    - where each pair is (replica_id, partition_id).
+
 
 The output shape is the input shape with the `scatter_dimension` made
 `shard_count` times smaller. For example, if there are two replicas and the
 operand has the value `[1.0, 2.25]` and `[3.0, 5.25]` respectively on the two
 replicas, then the output value from this op where `scatter_dim` is `0` will be
 `[4.0]` for the first replica and `[7.5]` for the second replica.
+
+### ReduceScatter Example
+
+![](images/ops_reduce_scatter_1.svg) 
+
+In the above example, there are 2 replicas participating in the ReduceScatter.
+On each replica, the operand has shape f32[2,4]. An all-reduce (sum) is
+performed across the replicas, producing a reduced value of shape f32[2,4] on
+each replica. This reduced value is then split into 2 parts along dimension 1,
+so each part has shape f32[2,2]. Each replica within the process group receives
+the part corresponding to its position in the group. As a result, the output on
+each replica has shape f32[2,2].
+
 
 ## ReduceWindow
 
@@ -2246,9 +2277,9 @@ Where:
 *   If `N > 1`, `Collate(T_0, ..., T_{N-1})` is a tuple of `N` elements of type
     `(T0,...T{N-1})`.
 
-Below code and figure shows an example of using `ReduceWindow`. Input is a
-matrix of size [4x6] and both window_dimensions and window_stride_dimensions are
-[2x3].
+### ReduceWindow - Example 1
+Input is a matrix of size [4x6] and both window_dimensions and
+window_stride_dimensions are [2x3].
 
 ```cpp
 // Create a computation for the reduction (maximum).
@@ -2301,6 +2332,68 @@ The evaluation order of the reduction function is arbitrary and may be
 non-deterministic. Therefore, the reduction function should not be overly
 sensitive to reassociation. See the discussion about associativity in the
 context of [`Reduce`](#reduce) for more details.
+
+### ReduceWindow - Example 2
+```cpp
+// Build the reduction computation: (a, b) -> a + b  on s32 scalars.
+XlaComputation add;
+{
+  XlaBuilder b(client_, "add_s32");
+  auto a = b.Parameter(0, ShapeUtil::MakeShape(S32, {}), "a");
+  auto c = b.Parameter(1, ShapeUtil::MakeShape(:S32, {}), "b");
+  b.Add(a, c);
+  add = b.Build().value();
+}
+
+// Build the ReduceWindow using explicit padding and dilations.
+XlaBuilder builder(client_, "reduce_window_sum_demo");
+
+// Input is a parameter: tensor<3x2xi32>
+auto in_shape = ShapeUtil::MakeShape(S32, {3, 2});
+auto input = ConstantR2<int32_t>(&builder, {{1,2},{3,4},{5,6}});
+
+
+// ReduceWindow with sum, window/stride/padding/dilations as in the figure.
+builder.ReduceWindow(
+    /*operand=*/input,
+    /*init_value=*/builder.ConstantLiteral(LiteralUtil::CreateR0<int32_t>(0)),// Init value = 0
+    /*computation=*/add,
+    /*window_dimensions=*/{2, 1},
+    /*window_stride_dimensions=*/{4, 1},
+    /*padding=*/{{2, 1}, {0, 0}},         // low/high per dimension
+    /*base_dilations=*/{2, 1},
+    /*window_dilations=*/{3, 1});
+```
+
+
+![](images/ops_reduce_window_2.svg)
+
+In the above example:
+
+Input) The operand has a input shape of S32[3,2]. With a values of
+`[[1,2],[3,4],[5,6]]`
+
+Step 1) Base dilation with factor 2 along the row dimension inserts holes between each
+row of the operand. Padding of 2 rows at the top and 1 row at the bottom is
+applied after dilation. As a result, the tensor becomes taller.
+
+Step 2) A window of shape [2,1] is defined, with window dilation [3,1]. This
+means each window selects two elements from the same column, but the second
+element is taken three rows below the first rather than directly beneath it.
+
+Step 3) The windows are then slid across the operand with stride [4,1]. This
+causes the window to move down four rows at a time, while shifting one column at
+a time horizontally. Padding cells are filled with the `init_value` (in this
+case `init_value = 0`). Values 'falling into' dilation cells are ignored.
+Because of the stride and padding, some windows overlap only zeros and holes,
+while others overlap real input values.
+
+Step 4) Within each window, the elements are combined using the reduction
+function (a, b) → a + b, starting from an initial value of 0. The top two
+windows see only padding and holes, so their results are 0. The bottom windows
+capture the values 3 and 4 from the input and return those as results.
+
+Results) The final output has shape S32[2,2], with values: `[[0,0],[3,4]]`
 
 ## ReplicaId
 
@@ -2475,22 +2568,22 @@ of the input array `operands`, with several slices (at indices specified by
 See also
 [`XlaBuilder::Scatter`](https://github.com/openxla/xla/tree/main/xla/hlo/builder/xla_builder.h).
 
-**`scatter(operands..., scatter_indices, updates..., update_computation,
-index_vector_dim, update_window_dims, inserted_window_dims,
-scatter_dims_to_operand_dims)`**
+**`Scatter(operands..., scatter_indices, updates..., update_computation,
+dimension_numbers, indices_are_sorted, unique_indices)`**
 
-Arguments                      | Type                  | Semantics
------------------------------- | --------------------- | ---------
-`operands`                     | Sequence of N `XlaOp` | N arrays of types `T_0, ..., T_N` to be scattered into.
-`scatter_indices`              | `XlaOp`               | Array containing the starting indices of the slices that must be scattered to.
-`updates`                      | Sequence of N `XlaOp` | N arrays of types `T_0, ..., T_N`. `updates[i]` contains the values that must be used for scattering `operands[i]`.
-`update_computation`           | `XlaComputation`      | Computation to be used for combining the existing values in the input array and the updates during scatter. This computation should be of type `T_0, ..., T_N, T_0, ..., T_N -> Collate(T_0, ..., T_N)`.
-`index_vector_dim`             | `int64`               | The dimension in `scatter_indices` that contains the starting indices.
-`update_window_dims`           | `ArraySlice<int64>`   | The set of dimensions in `updates` shape that are *window dimensions*.
-`inserted_window_dims`         | `ArraySlice<int64>`   | The set of *window dimensions* that must be inserted into `updates` shape.
-`scatter_dims_to_operand_dims` | `ArraySlice<int64>`   | A dimensions map from the scatter indices to the operand index space. This array is interpreted as mapping `i` to `scatter_dims_to_operand_dims[i]` . It has to be one-to-one and total.
-`indices_are_sorted`           | `bool`                | Whether the indices are guaranteed to be sorted by the caller.
-`unique_indices`               | `bool`                | Whether the indices are guaranteed to be unique by the caller.
+| Arguments                      | Type                      | Semantics                                                                                                                                                                                                |
+| ------------------------------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `operands`                     | Sequence of N `XlaOp`     | N arrays of types `T_0, ..., T_N` to be scattered into.                                                                                                                                                  |
+| `scatter_indices`              | `XlaOp`                   | Array containing the starting indices of the slices that must be scattered to.                                                                                                                           |
+| `updates`                      | Sequence of N `XlaOp`     | N arrays of types `T_0, ..., T_N`. `updates[i]` contains the values that must be used for scattering `operands[i]`.                                                                                      |
+| `update_computation`           | `XlaComputation`          | Computation to be used for combining the existing values in the input array and the updates during scatter. This computation should be of type `T_0, ..., T_N, T_0, ..., T_N -> Collate(T_0, ..., T_N)`. |
+| `index_vector_dim`             | `int64`                   | The dimension in `scatter_indices` that contains the starting indices.                                                                                                                                   |
+| `update_window_dims`           | `ArraySlice<int64>`       | The set of dimensions in `updates` shape that are *window dimensions*.                                                                                                                                   |
+| `inserted_window_dims`         | `ArraySlice<int64>`       | The set of *window dimensions* that must be inserted into `updates` shape.                                                                                                                               |
+| `scatter_dims_to_operand_dims` | `ArraySlice<int64>`       | A dimensions map from the scatter indices to the operand index space. This array is interpreted as mapping `i` to `scatter_dims_to_operand_dims[i]` . It has to be one-to-one and total.                 |
+| `dimension_number`             | `ScatterDimensionNumbers` | Dimension numbers for scatter operation                                                                                                                                                                                                         |
+| `indices_are_sorted`           | `bool`                    | Whether the indices are guaranteed to be sorted by the caller.                                                                                                                                           |
+| `unique_indices`               | `bool`                    | Whether the indices are guaranteed to be unique by the caller.                                                                                                                                           |
 
 Where:
 
@@ -2605,6 +2698,40 @@ corresponding gather op.
 
 For a detailed informal description and examples, refer to the
 "Informal Description" section under `Gather`.
+
+### Scatter - StableHLO - Example 1
+![](images/ops_scatter_1.svg)
+
+In the above image, each row of the table is an example of one update index
+example. Let's review stepwise from left(Update Index) to right(Result Index):
+
+Input) `input` has shape S32[2,3,4,2]. `scatter_indices` have shape S64[2,2,3,2]. `updates` have shape S32[2,2,3,1,2].
+
+Update Index) As part of the input we are given `update_window_dims:[3,4]`. This
+tell us that `updates`'s dim 3 and dim 4 are window dimensions, highlighted in yellow.
+This allows us to derive that `update_scatter_dims` = [0,1,2].
+
+Update Scatter Index) Shows us the extracted `updated_scatter_dims` for each. (The non-yellow of column Update Index)
+
+Start Index) Looking at the `scatter_indices` tensor image we can see that our values
+from the previous step (Update scatter Index), give us the location of the start
+index. From `index_vector_dim` we are also told the dimension of the
+`starting_indices` that contains the starting indices, which for
+`scatter_indices` is dim 3 with a size 2.
+
+Full Start Index) `scatter_dims_to_operand_dims` = [2,1] tells us the first
+element of the index vector goes to operand dim 2. The second element of the index
+vector goes to operand dim 1. The remaining operand dimensions are filled with 0. 
+
+Full Batching Index) We can see the purple highlighted area is shown in this
+column(full batching index), the update scatter index column, and update index
+column.
+
+Full Window Index) Computed from the `update_window_dimensions` [3,4]. 
+
+Result Index) The addition of Full Start Index, Full Batching Index, and Full
+Window Index in the `operand` tensor. Notice the green highlighted regions correspond to the `operand`
+figure as well. The last row is skipped because it falls outside of `operand` tensor. 
 
 ## Select
 
@@ -2987,7 +3114,7 @@ See also
 
 | Arguments   | Type             | Semantics                                |
 | ----------- | ---------------- | ---------------------------------------- |
-| `condition` | `XlaComputation` | XlaComputation of type `T -> PRED` which defines the termination condition of theloop. |
+| `condition` | `XlaComputation` | XlaComputation of type `T -> PRED` which defines the termination condition of the loop. |
 | `body`      | `XlaComputation` | XlaComputation of type `T -> T` which defines the body of the loop. |
 | `init`      | `T`              | Initial value for the parameter of `condition` and `body`. |
 
