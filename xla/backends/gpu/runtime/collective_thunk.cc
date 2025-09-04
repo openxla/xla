@@ -244,8 +244,7 @@ CollectiveThunk::CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, bool is_p2p,
-    bool use_nccl) {
+    CollectiveOpGroupMode group_mode, bool is_p2p, bool use_nccl) {
   GlobalDeviceId global_device_id = params.global_device_id;
 
   if (params.device_assn == nullptr) {
@@ -292,8 +291,7 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
                                           unique_incarnations.end());
   absl::c_sort(incarnations);
 
-  return GpuCliqueKey(std::move(participants), num_local_participants,
-                      is_p2p,
+  return GpuCliqueKey(std::move(participants), num_local_participants, is_p2p,
                       std::move(participant_groups), GlobalDeviceId(-1),
                       incarnations);
 }
@@ -304,8 +302,7 @@ absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       CollectiveThunk::GetGpuCollectives(params));
   return GetGpuCliqueKey(collectives, params, collective_config.replica_groups,
-                         collective_config.group_mode,
-                         false, use_nccl);
+                         collective_config.group_mode, false, use_nccl);
 }
 
 absl::StatusOr<CommunicatorHandle> GetComm(
@@ -313,9 +310,9 @@ absl::StatusOr<CommunicatorHandle> GetComm(
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, bool is_p2p) {
-  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                      GetGpuCliqueKey(collectives, params, replica_groups,
-                                      group_mode, is_p2p));
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(collectives, params, replica_groups, group_mode, is_p2p));
 
   std::optional<RankId> rank = clique_key.rank(params.global_device_id);
   TF_ASSIGN_OR_RETURN(Communicator * comm,
@@ -412,11 +409,10 @@ absl::StatusOr<se::Event*> CollectiveThunk::AsyncEvents::GetEvent(
 absl::Status CollectiveThunk::Prepare(
     const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(collectives, *params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      IsP2PCollective()));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(collectives, *params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, IsP2PCollective()));
   return resource_requests.AddClique(clique_key);
 }
 
@@ -441,10 +437,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   bool is_first_rendezvous_needed = false;
   if (IsAsync()) {
-    TF_ASSIGN_OR_RETURN(
-      se::Stream* stream_ptr,
-      GetStreamForExecution(Thunk::execution_stream_id(), params));
-    se::Stream& async_stream = *stream_ptr;
+    se::Stream& async_stream = *params.collective_params->async_streams.at(
+        Thunk::execution_stream_id().value());
 
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
