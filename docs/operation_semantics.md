@@ -193,7 +193,7 @@ f32[4,4]. The 4 parts are scattered to all cores. Then each core concatenates
 the received parts along dimension 0, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
 
-### AllToAll - StableHLO - Example 2
+### AllToAll - Example 2 - StableHLO
 ```cpp
 XlaBuilder b("alltoall");
 auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 4}), "x");
@@ -2230,7 +2230,7 @@ operand has the value `[1.0, 2.25]` and `[3.0, 5.25]` respectively on the two
 replicas, then the output value from this op where `scatter_dim` is `0` will be
 `[4.0]` for the first replica and `[7.5]` for the second replica.
 
-### ReduceScatter Example
+### ReduceScatter - Example 1 - StableHLO
 
 ![](images/ops_reduce_scatter_1.svg) 
 
@@ -2333,7 +2333,7 @@ non-deterministic. Therefore, the reduction function should not be overly
 sensitive to reassociation. See the discussion about associativity in the
 context of [`Reduce`](#reduce) for more details.
 
-### ReduceWindow - Example 2
+### ReduceWindow - Example 2 - StableHLO
 ```cpp
 // Build the reduction computation: (a, b) -> a + b  on s32 scalars.
 XlaComputation add;
@@ -2699,7 +2699,7 @@ corresponding gather op.
 For a detailed informal description and examples, refer to the
 "Informal Description" section under `Gather`.
 
-### Scatter - StableHLO - Example 1
+### Scatter - Example 1 - StableHLO 
 ![](images/ops_scatter_1.svg)
 
 In the above image, each row of the table is an example of one update index
