@@ -122,7 +122,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":onednn_threadpool",
-        "//xla/backends/cpu/runtime:custom_call_thunk",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",

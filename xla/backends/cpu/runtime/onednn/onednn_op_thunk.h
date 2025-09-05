@@ -22,7 +22,6 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/cpu/runtime/custom_call_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/object_pool.h"
 #include "xla/service/cpu/onednn_memory_util.h"
@@ -31,11 +30,19 @@ limitations under the License.
 
 namespace xla::cpu {
 
-typedef CustomCallThunk::OpBuffers OpBuffers;
-
 class OneDnnOpThunk : public Thunk {
  public:
   ~OneDnnOpThunk() override;
+
+  // Buffer allocation slices and shapes.
+  struct OpBuffers {
+    std::vector<BufferAllocation::Slice> arguments_buffers;
+    std::vector<Shape> arguments_shapes;
+
+    std::vector<BufferAllocation::Slice> results_buffers;
+    std::vector<Shape> results_shapes;
+    bool is_tuple_result;
+  };
 
   static absl::StatusOr<std::unique_ptr<OneDnnOpThunk>> Create(
       const std::string& custom_call_target, Info info, OpBuffers buffers,

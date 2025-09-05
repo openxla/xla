@@ -1254,7 +1254,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFftThunk(
       /*output_shape=*/instruction->shape());
 }
 
-static absl::StatusOr<CustomCallThunk::OpBuffers> GetCustomCallOpBuffers(
+// Generic helper to collect argument/result slices for different OpBuffers
+template <typename OpBuffers>
+static absl::StatusOr<OpBuffers> GetOpBuffers(
     const HloInstruction* instruction,
     const BufferAssignment& buffer_assignment) {
   // Collect buffer slices for all operands.
@@ -1279,13 +1281,27 @@ static absl::StatusOr<CustomCallThunk::OpBuffers> GetCustomCallOpBuffers(
     results_shapes.push_back(indexed.shape);
   }
 
-  return CustomCallThunk::OpBuffers{
+  return OpBuffers{
       /*arguments_buffers=*/std::move(arguments_buffers),
       /*arguments_shapes=*/std::move(arguments_shapes),
       /*results_buffers=*/std::move(results_buffers),
       /*results_shapes=*/std::move(results_shapes),
       /*is_tuple_result=*/instruction->shape().IsTuple(),
   };
+}
+
+static absl::StatusOr<CustomCallThunk::OpBuffers> GetCustomCallOpBuffers(
+  const HloInstruction* instruction,
+  const BufferAssignment& buffer_assignment) {
+  return GetOpBuffers<CustomCallThunk::OpBuffers>(instruction,
+                            buffer_assignment);
+}
+
+static absl::StatusOr<OneDnnOpThunk::OpBuffers> GetOneDnnOpBuffers(
+  const HloInstruction* instruction,
+  const BufferAssignment& buffer_assignment) {
+  return GetOpBuffers<OneDnnOpThunk::OpBuffers>(instruction,
+                            buffer_assignment);
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
@@ -1306,7 +1322,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   }
 
   TF_ASSIGN_OR_RETURN(auto op_buffers,
-                      GetCustomCallOpBuffers(instruction, buffer_assignment_));
+                      GetOneDnnOpBuffers(instruction, buffer_assignment_));
   return ThunkSequence::Of<OneDnnOpThunk>(
       custom_call_target, ThunkInfo(custom_call), op_buffers, config_str);
 }
@@ -1340,7 +1356,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
     return EmitTopKThunk(custom_call);
   } else if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
-  } else if (custom_call_target.find("__onednn$") != std::string::npos) {
+  } else if (absl::StartsWith(custom_call->custom_call_target(), "__onednn$")) {
     return EmitOneDnnOpThunk(instruction);
   }
 
