@@ -82,10 +82,17 @@ BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 
+ASAN_ARGS=()
+ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
+ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+ASAN_ARGS+=("--config=asan")
+
 bazel \
     test \
-    --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
+    --define xnn_enable_avxvnniint8=false \
+    --define xnn_enable_avx512fp16=false \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --profile=/tf/pkg/profile.json.gz \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
     --config=rocm_ci \
@@ -100,13 +107,13 @@ bazel \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
     --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
-    --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
-    --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
+    --action_env=XLA_FLAGS="--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16" \
     --run_under=//build_tools/ci:parallel_gpu_execute \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
-    -- //xla/... \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${ASAN_ARGS[@]}" \
+    -- //xla/... 
 
 # clean up bazel disk_cache
 bazel shutdown \
