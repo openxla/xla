@@ -194,17 +194,6 @@ the received parts along dimension 0, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
 
 ### AllToAll - Example 2 - StableHLO
-```cpp
-XlaBuilder b("alltoall");
-auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {2, 4}), "x");
-
-AllToAll(
-    x,
-    /*split_dimension=*/1,
-    /*concat_dimension=*/0,
-    /*split_count=*/2,
-    /*replica_groups=*/{ReplicaGroup({0, 1})});
-```
 ![](images/ops_alltoall_2.svg) 
 
 In the above example, there are 2 replicas participating in the AllToAll. On
@@ -2334,38 +2323,6 @@ sensitive to reassociation. See the discussion about associativity in the
 context of [`Reduce`](#reduce) for more details.
 
 ### ReduceWindow - Example 2 - StableHLO
-```cpp
-// Build the reduction computation: (a, b) -> a + b  on s32 scalars.
-XlaComputation add;
-{
-  XlaBuilder b(client_, "add_s32");
-  auto a = b.Parameter(0, ShapeUtil::MakeShape(S32, {}), "a");
-  auto c = b.Parameter(1, ShapeUtil::MakeShape(:S32, {}), "b");
-  b.Add(a, c);
-  add = b.Build().value();
-}
-
-// Build the ReduceWindow using explicit padding and dilations.
-XlaBuilder builder(client_, "reduce_window_sum_demo");
-
-// Input is a parameter: tensor<3x2xi32>
-auto in_shape = ShapeUtil::MakeShape(S32, {3, 2});
-auto input = ConstantR2<int32_t>(&builder, {{1,2},{3,4},{5,6}});
-
-
-// ReduceWindow with sum, window/stride/padding/dilations as in the figure.
-builder.ReduceWindow(
-    /*operand=*/input,
-    /*init_value=*/builder.ConstantLiteral(LiteralUtil::CreateR0<int32_t>(0)),// Init value = 0
-    /*computation=*/add,
-    /*window_dimensions=*/{2, 1},
-    /*window_stride_dimensions=*/{4, 1},
-    /*padding=*/{{2, 1}, {0, 0}},         // low/high per dimension
-    /*base_dilations=*/{2, 1},
-    /*window_dilations=*/{3, 1});
-```
-
-
 ![](images/ops_reduce_window_2.svg)
 
 In the above example:
