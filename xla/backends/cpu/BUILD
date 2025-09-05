@@ -66,7 +66,7 @@ onednn_graph_cc_library(
     deps = ["//xla/tsl/mkl:onednn"],
 )
 
-onednn_graph_cc_library(
+cc_library(
     name = "onednn_support",
     srcs = ["onednn_support.cc"],
     hdrs = ["onednn_support.h"],
