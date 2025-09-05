@@ -395,6 +395,10 @@ message DebugOptions {
   optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode =
       404;
 
+  // During command buffer lowering, unroll the loop command if loop has known
+  // loop count and the loop body does not have unsupported commands.
+  optional bool xla_gpu_command_buffer_unroll_loops = 409;
+
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
   // Crashes the program when any kind of verification fails, instead of just
