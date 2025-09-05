@@ -1281,8 +1281,7 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
       auto collective_done_thunk = std::make_unique<CollectiveDoneThunk>(
           /*kind=*/collective_done_thunk_kind,
           /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
-          /*async_events=*/async_events,
-          /*async_stream_kind=*/AsyncStreamKind::kCollective);
+          /*async_events=*/async_events);
       seq.emplace_back(std::move(collective_done_thunk));
     }
   } else {

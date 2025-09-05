@@ -117,13 +117,12 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
     const ExecuteParams& params) {
   VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",
                                 Thunk::KindToString(kind()));
-  AsyncStreamKind stream_kind = GetAsyncStreamKind();
   se::StreamExecutor* executor = params.stream->parent();
 
   if (IsAsync()) {
     TF_ASSIGN_OR_RETURN(
-      se::Stream* stream_ptr,
-      GetStreamForExecution(Thunk::execution_stream_id(), params));
+        se::Stream * stream_ptr,
+        GetStreamForExecution(Thunk::execution_stream_id(), params));
     se::Stream& async_stream = *stream_ptr;
 
     // Wait for main compute stream to make sure all buffers are ready.
@@ -144,11 +143,8 @@ absl::Status NvshmemCollectiveThunk::ExecuteOnStream(
 
 NvshmemCollectiveDoneThunk::NvshmemCollectiveDoneThunk(
     Thunk::Kind kind, ThunkInfo thunk_info,
-    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
-    AsyncStreamKind async_stream_kind)
-    : Thunk(kind, std::move(thunk_info)),
-      async_events_(async_events),
-      async_stream_kind_(async_stream_kind) {}
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events)
+    : Thunk(kind, std::move(thunk_info)), async_events_(async_events) {}
 
 absl::Status NvshmemCollectiveDoneThunk::ExecuteOnStream(
     const ExecuteParams& params) {

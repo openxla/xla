@@ -28,32 +28,11 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// In XLA:GPU we use different streams for different kinds of collective
-// operations, and include the async stream kind into the GPU clique key.
-//
-// We carefully isolate different kinds of collectives using separate
-// communicators and guarantee that all collective operations have a total order
-// that will not create a deadlock.
-enum class AsyncStreamKind : int64_t {
-  kCollective = 0,  // Stream for asynchronous collective ops.
-  kP2P0 = 1,        // One Stream for P2P Send and Recv ops.
-  kP2P1 = 2,        // Another Stream for P2P Send and Recv ops.
-  kMemCpyP2P = 3,   // Stream for MemCpyP2P
-};
-
-bool IsP2PStreamKind(AsyncStreamKind stream_kind);
-
-// 7 = 1 (main) + 4 (compute) + 2 (collective).
-inline constexpr int64_t kAsyncStreamTotal = 7;
+// There are 4 total streams.
+inline constexpr int64_t kAsyncStreamTotal = 4;
 
 // Strongly-typed wrapper to represent collective stream ID.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
-
-// Assigns a unique ID to a stream for asynchronous or synchronous execution.
-// These IDs can be used, for example, to look up the NCCL communicator.
-CollectiveStreamId GetCollectiveStreamId(
-    bool is_async, CollectiveStreamId stream_id = CollectiveStreamId(1),
-    AsyncStreamKind stream_kind = AsyncStreamKind::kCollective);
 
 // Clique key for identifying a particular collectives clique on a GPU backend.
 class GpuCliqueKey : public CliqueKey {
