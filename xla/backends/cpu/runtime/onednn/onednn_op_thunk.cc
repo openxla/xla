@@ -50,8 +50,8 @@ struct OneDnnOpThunk::OneDnnRuntime {
   tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> Invoke(
       Eigen::ThreadPoolInterface* thread_pool,
       absl::Span<MemrefInfoHandler> arguments,
-      absl::Span<MemrefInfoHandler> results, const OneDnnOpThunk::OneDnnOpConfig& config,
-      const std::string& target);
+      absl::Span<MemrefInfoHandler> results,
+      const OneDnnOpThunk::OneDnnOpConfig& config, const std::string& target);
 
   std::unique_ptr<OneDnnThreadPool> threadpool;
 
@@ -75,11 +75,11 @@ OneDnnOpThunk::OneDnnRuntime::OneDnnRuntime(
       resources() {}
 
 tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent>
-OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
-                                     absl::Span<MemrefInfoHandler> arguments,
-                                     absl::Span<MemrefInfoHandler> results,
-                                     const OneDnnOpThunk::OneDnnOpConfig& config,
-                                     const std::string& target) {
+OneDnnOpThunk::OneDnnRuntime::Invoke(
+    Eigen::ThreadPoolInterface* thread_pool,
+    absl::Span<MemrefInfoHandler> arguments,
+    absl::Span<MemrefInfoHandler> results,
+    const OneDnnOpThunk::OneDnnOpConfig& config, const std::string& target) {
   // Update threadpool
   threadpool->set_thread_pool(thread_pool);
 
@@ -93,7 +93,8 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
 
   if (target == "__onednn$matmul") {
     const auto& matmul_config = absl::get<OneDnnMatMulConfig>(config);
-    ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine, onednn_stream, resources);
+    ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine,
+                        onednn_stream, resources);
   } else {
     return absl::InvalidArgumentError(
         absl::StrFormat("Unsupported oneDNN operation target: `%s`", target));

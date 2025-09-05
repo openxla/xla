@@ -1291,17 +1291,16 @@ static absl::StatusOr<OpBuffers> GetOpBuffers(
 }
 
 static absl::StatusOr<CustomCallThunk::OpBuffers> GetCustomCallOpBuffers(
-  const HloInstruction* instruction,
-  const BufferAssignment& buffer_assignment) {
+    const HloInstruction* instruction,
+    const BufferAssignment& buffer_assignment) {
   return GetOpBuffers<CustomCallThunk::OpBuffers>(instruction,
-                            buffer_assignment);
+                                                  buffer_assignment);
 }
 
 static absl::StatusOr<OneDnnOpThunk::OpBuffers> GetOneDnnOpBuffers(
-  const HloInstruction* instruction,
-  const BufferAssignment& buffer_assignment) {
-  return GetOpBuffers<OneDnnOpThunk::OpBuffers>(instruction,
-                            buffer_assignment);
+    const HloInstruction* instruction,
+    const BufferAssignment& buffer_assignment) {
+  return GetOpBuffers<OneDnnOpThunk::OpBuffers>(instruction, buffer_assignment);
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
