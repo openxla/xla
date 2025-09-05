@@ -251,8 +251,8 @@ void ExecuteOneDnnMatMul(absl::Span<MemrefInfoHandler> arguments,
                      weights_md.get_data_type(), weight_format);
   }
 
-  const int64_t num_fused_operands =
-      arguments.size() - 2;  // excluding input and weights operands
+  // Excluding input and weight operands.
+  const int64_t num_fused_operands = arguments.size() - 2;
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
@@ -295,6 +295,7 @@ void ExecuteOneDnnMatMul(absl::Span<MemrefInfoHandler> arguments,
 
   resources.primitive.execute(onednn_stream, matmul_args);
 }
+
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
     void* result, void* scratch, void** args) {
   // args[0]: ptr to nargs

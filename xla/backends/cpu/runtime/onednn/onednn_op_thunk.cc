@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -83,13 +84,12 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
   threadpool->set_thread_pool(thread_pool);
 
   // TODO(intel-tf): Add support for more oneDNN operations as needed.
-  static bool logged_once = false;
-  if (!logged_once) {
-    logged_once = true;
+  static absl::once_flag log_once_flag;
+  absl::call_once(log_once_flag, [&] {
     VLOG(0) << absl::StreamFormat(
         "Executing oneDNN thunk with target `%s`: num_args=%d, num_results=%d",
         target, arguments.size(), results.size());
-  }
+  });
 
   if (target == "__onednn$matmul") {
     ExecuteOneDnnMatMul(arguments, results, config, cpu_engine, onednn_stream,
