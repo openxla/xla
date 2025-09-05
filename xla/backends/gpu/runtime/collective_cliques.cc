@@ -108,10 +108,11 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
   VLOG(2) << absl::StreamFormat(
       "[%d] Acquire %d collective cliques for global device id %v; "
       "run_id=%d; max number of channels for collectives %d; max number of "
-      "channels for p2p %d",
+      "channels for p2p %d; use_minimal_resource=%s",
       params.executor->device_ordinal(), ordered_cliques.size(),
       params.global_device_id, params.run_id.ToInt(),
-      params.collective_max_nchannels, params.p2p_max_nchannels);
+      params.collective_max_nchannels, params.p2p_max_nchannels,
+      params.collective_use_minimal_resource ? "true" : "false");
 
   for (size_t i = 0; i < ordered_cliques.size(); ++i) {
     const CollectiveCliqueRequests::CliqueRequest& r = ordered_cliques[i];
@@ -166,7 +167,8 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                          r.key,
                          params.clique_id_callback ? *params.clique_id_callback
                                                    : default_clique_id_callback,
-                         *rank, cliques_map, max_channels));
+                         *rank, cliques_map, max_channels,
+                         params.collective_use_minimal_resource));
 
     cliques_map[r.key] = std::move(clique);
   }
