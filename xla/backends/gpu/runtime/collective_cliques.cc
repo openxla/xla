@@ -118,7 +118,9 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
           << "; max number of channels for collectives "
           << params.collective_max_nchannels
           << "; max number of channels for p2p " << params.p2p_max_nchannels
-          << "; use_persistent_cliques=" << use_persistent_cliques;
+          << "; use_persistent_cliques=" << use_persistent_cliques
+          << "; use_minimal_resource="
+          << params.collective_use_minimal_resource;
 
   for (size_t i = 0; i < ordered_cliques.size(); ++i) {
     const CollectiveCliqueRequests::CliqueRequest& r = ordered_cliques[i];
@@ -173,7 +175,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         std::shared_ptr<LockableGpuClique::Lock> clique,
         AcquireGpuClique(params.collectives, params.executor, params.run_id,
                          r.key, *clique_id_callback, *rank, cliques_map,
-                         max_channels));
+                         max_channels, params.collective_use_minimal_resource));
     ++num_transient_cliques;
 
     // Take a copy of the clique lock, so that we can reuse it. This is
