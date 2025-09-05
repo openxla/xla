@@ -44,9 +44,13 @@ class OneDnnOpThunk : public Thunk {
     bool is_tuple_result;
   };
 
+  // Variant config for supported oneDNN ops.
+  // TODO(intel-tf): Add more oneDNN operation configs as needed.
+  using OneDnnOpConfig = std::variant<OneDnnMatMulConfig>;
+
   static absl::StatusOr<std::unique_ptr<OneDnnOpThunk>> Create(
       const std::string& custom_call_target, Info info, OpBuffers buffers,
-      const std::string& config);
+      OneDnnOpConfig config);
 
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
@@ -54,13 +58,13 @@ class OneDnnOpThunk : public Thunk {
 
  private:
   OneDnnOpThunk(const std::string& custom_call_target, Info info,
-                OpBuffers buffers, const std::string& config);
+                OpBuffers buffers, OneDnnOpConfig config);
 
   // oneDNN runtime instantiated for the oneDNN operation.
   struct OneDnnRuntime;
 
   OpBuffers op_buffers_;
-  std::string config_;
+  OneDnnOpConfig config_;
   std::string target_;
 };
 

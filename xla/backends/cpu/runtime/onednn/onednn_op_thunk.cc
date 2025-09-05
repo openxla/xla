@@ -50,7 +50,7 @@ struct OneDnnOpThunk::OneDnnRuntime {
   tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> Invoke(
       Eigen::ThreadPoolInterface* thread_pool,
       absl::Span<MemrefInfoHandler> arguments,
-      absl::Span<MemrefInfoHandler> results, const std::string& config,
+      absl::Span<MemrefInfoHandler> results, const OneDnnOpThunk::OneDnnOpConfig& config,
       const std::string& target);
 
   std::unique_ptr<OneDnnThreadPool> threadpool;
@@ -78,7 +78,7 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent>
 OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
                                      absl::Span<MemrefInfoHandler> arguments,
                                      absl::Span<MemrefInfoHandler> results,
-                                     const std::string& config,
+                                     const OneDnnOpThunk::OneDnnOpConfig& config,
                                      const std::string& target) {
   // Update threadpool
   threadpool->set_thread_pool(thread_pool);
@@ -92,8 +92,8 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
   });
 
   if (target == "__onednn$matmul") {
-    ExecuteOneDnnMatMul(arguments, results, config, cpu_engine, onednn_stream,
-                        resources);
+    const auto& matmul_config = absl::get<OneDnnMatMulConfig>(config);
+    ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine, onednn_stream, resources);
   } else {
     return absl::InvalidArgumentError(
         absl::StrFormat("Unsupported oneDNN operation target: `%s`", target));
@@ -104,14 +104,14 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(Eigen::ThreadPoolInterface* thread_pool,
 
 absl::StatusOr<std::unique_ptr<OneDnnOpThunk>> OneDnnOpThunk::Create(
     const std::string& custom_call_target, Info info, OpBuffers buffers,
-    const std::string& config) {
+    OneDnnOpConfig config) {
   return absl::WrapUnique(new OneDnnOpThunk(std::move(custom_call_target),
                                             std::move(info), std::move(buffers),
                                             std::move(config)));
 }
 
 OneDnnOpThunk::OneDnnOpThunk(const std::string& custom_call_target, Info info,
-                             OpBuffers buffers, const std::string& config)
+                             OpBuffers buffers, OneDnnOpConfig config)
     : target_(custom_call_target),
       Thunk(Thunk::Kind::kCustomCall, std::move(info)),
       op_buffers_(std::move(buffers)),

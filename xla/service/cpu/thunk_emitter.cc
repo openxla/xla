@@ -1310,11 +1310,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   auto custom_call_target = custom_call->custom_call_target();
   auto backend_config = custom_call->backend_config<BackendConfig>();
 
-  std::string config_str;
+  OneDnnOpThunk::OneDnnOpConfig config;
   if (custom_call_target == "__onednn$matmul") {
-    OneDnnMatMulConfig matmul_config;
-    matmul_config.CopyFrom(backend_config->onednn_matmul_config());
-    matmul_config.SerializeToString(&config_str);
+    config = backend_config->onednn_matmul_config();
   } else {
     return Unimplemented(
         "Custom call target %s is not supported in thunk runtime",
@@ -1324,7 +1322,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   TF_ASSIGN_OR_RETURN(auto op_buffers,
                       GetOneDnnOpBuffers(instruction, buffer_assignment_));
   return ThunkSequence::Of<OneDnnOpThunk>(
-      custom_call_target, ThunkInfo(custom_call), op_buffers, config_str);
+      custom_call_target, ThunkInfo(custom_call), op_buffers, config);
 }
 
 static bool IsValidCustomCallApiVersion(CustomCallApiVersion api_version) {

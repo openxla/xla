@@ -37,7 +37,7 @@ Shape OneDnnMatMulOptWeightsShape(const Shape& input_shape,
 
 void ExecuteOneDnnMatMul(absl::Span<MemrefInfoHandler> arguments,
                          absl::Span<MemrefInfoHandler> results,
-                         const std::string& config,
+                         OneDnnMatMulConfig matmul_config,
                          const dnnl::engine& cpu_engine,
                          dnnl::stream& onednn_stream,
                          OneDnnResources& resources);

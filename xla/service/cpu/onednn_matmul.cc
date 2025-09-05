@@ -214,14 +214,10 @@ CreateOneDnnPrimDesc<dnnl::matmul::primitive_desc>(HloInstruction* instr) {
 
 void ExecuteOneDnnMatMul(absl::Span<MemrefInfoHandler> arguments,
                          absl::Span<MemrefInfoHandler> results,
-                         const std::string& config,
+                         OneDnnMatMulConfig matmul_config,
                          const dnnl::engine& cpu_engine,
                          dnnl::stream& onednn_stream,
                          OneDnnResources& resources) {
-  // Parse the OneDnnMatMulConfig from the config string.
-  OneDnnMatMulConfig matmul_config;
-  matmul_config.ParseFromString(config);
-
   MemrefInfo input_minfo(arguments[0].get());
   MemrefInfo weights_minfo(arguments[1].get());
   MemrefInfo output_minfo(results[0].get());
