@@ -614,7 +614,8 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
     GpuCollectives* collectives, se::StreamExecutor* device, RunId run_id,
     const GpuCliqueKey& clique_key,
     const GpuCollectives::CliqueIdCallback& clique_id_callback, RankId rank,
-    const AcquiredCliquesMap& acquired_cliques, int64_t max_nchannels) {
+    const AcquiredCliquesMap& acquired_cliques, int64_t max_nchannels,
+    bool use_minimal_resource) {
   int64_t num_local_participants = clique_key.num_local_participants();
   VLOG(2) << "Acquire GPU clique " << clique_key.ToString() << "; run"
           << run_id.ToString() << "; rank " << rank
@@ -677,7 +678,7 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
       xla::GetDebugOptionsFromFlags().xla_gpu_nccl_blocking_communicators();
   config.async_execution =
       xla::GetDebugOptionsFromFlags().xla_gpu_nccl_async_execution();
-
+  config.use_minimal_resource = use_minimal_resource;
   if (enable_nccl_comm_splitting) {
     for (auto& [acquired_clique_key, acquired_clique] : acquired_cliques) {
       if (clique_key.IsSubsetOf(acquired_clique_key)) {

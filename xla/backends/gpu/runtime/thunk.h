@@ -298,7 +298,8 @@ class Thunk {
         const ServiceExecutableRunOptions& run_options,
         absl::Span<se::Stream* const> async_streams,
         int64_t local_device_ordinal, int64_t collective_max_nchannels = 0,
-        int64_t p2p_max_nchannels = 0);
+        int64_t p2p_max_nchannels = 0,
+        bool collective_use_minimal_resource = true);
 
     // A mapping from local device ordinals to global device IDs.
     using GlobalDeviceIdMap = std::map<int32_t, GlobalDeviceId>;
@@ -325,6 +326,7 @@ class Thunk {
     int64_t p2p_max_nchannels;
 
     bool need_barrier = false;
+    bool collective_use_minimal_resource;
 
    private:
     CollectiveExecuteParams(
@@ -335,7 +337,8 @@ class Thunk {
         const GlobalDeviceIdMap* global_device_id_map,
         const CliqueIdCallback* nccl_clique_id_callback,
         const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
-        int64_t collective_max_nchannels, int64_t p2p_max_nchannels);
+        int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
+        bool collective_use_minimal_resource);
   };
 
   //===--------------------------------------------------------------------===//
@@ -545,13 +548,13 @@ class Thunk {
 
   // A helper function to get the `GpuCollectives*` pointer from the
   // CollectiveExecuteParams.
-  static absl::StatusOr<GpuCollectives* absl_nonnull> GetGpuCollectives(
+  static absl::StatusOr<GpuCollectives * absl_nonnull> GetGpuCollectives(
       CollectiveExecuteParams const& params);
 
   // A helper function to get the `GpuCollectives*` pointer from the
   // thunk parameters. Returns an error if collectives API is not provided.
   template <typename Params>
-  static absl::StatusOr<GpuCollectives* absl_nonnull> GetGpuCollectives(
+  static absl::StatusOr<GpuCollectives * absl_nonnull> GetGpuCollectives(
       const Params& params) {
     if (params.collective_params == nullptr) {
       return Internal("Collective params are not provided");
