@@ -1229,12 +1229,8 @@ void AddCollectiveCombinerPasses(
     const GpuCompiler::CompileOptions& options) {
   const DebugOptions& opts = module.config().debug_options();
 
-  bool enable_heuristic_collective_combining =
-      opts.xla_gpu_experimental_enable_heuristic_collective_combining() &&
-      !IsNVLinkConnected(module.config(), device_description,
-                         options.slice_size);
-
-  if (enable_heuristic_collective_combining) {
+  if (EnableHeuristicCollectiveCombining(module.config(), device_description,
+                                         options.slice_size)) {
     pipeline.AddPass<CollectiveCombinerAnnotator>(device_description,
                                                   alias_info, pointer_size);
   }
@@ -1601,6 +1597,13 @@ absl::Status GpuCompiler::OptimizeHloModule(
       RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec));
 
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
+  {
+    HloPassPipeline pipeline("autotune-fusion-emitters");
+    TF_RETURN_IF_ERROR(AddFusionAutotuningPass(
+        &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
+        ShapeSizeBytesFunction()));
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
 
   return absl::OkStatus();
 }  // NOLINT(readability/fn_size)

@@ -194,7 +194,7 @@ message DebugOptions {
   optional bool xla_cpu_enable_fast_min_max = 140;
 
   // Call oneDNN custom call thunks in the CPU backend
-  optional bool xla_cpu_experimental_onednn_custom_call = 409;
+  optional bool xla_cpu_experimental_onednn_custom_call = 411;
 
   // Stores the fusion types enabled for oneDNN in DotLibraryRewriter pass.
   repeated LibraryFusionType xla_cpu_experimental_onednn_fusion_type = 399;
@@ -606,6 +606,9 @@ message DebugOptions {
 
   // Enables an experimental feature for command buffer conversion on thunks.
   optional bool xla_gpu_experimental_enable_command_buffer_on_thunks = 394;
+
+  // If true, enable autotuning between the native & triton fusion emitters.
+  optional bool xla_gpu_experimental_enable_fusion_autotuner = 409;
 
   // Enabling this flag will attempt to redirect every already-constructed
   // fusion possible to the Triton emitter.
@@ -1330,10 +1333,14 @@ message DebugOptions {
   // layouts.
   optional bool xla_early_exit_with_layouts = 397;
 
+  // If true, the triton fusion emitter will ignore IsTritonSupportedInstruction
+  // We need this to enable triton scaled dot emitter for testing.
+  optional bool xla_gpu_experimental_scaled_dot_with_triton = 410;
+
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 410
+  // Next id: 412
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
