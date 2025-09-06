@@ -186,6 +186,22 @@ absl::Status FusionContext::PropagateDimensionOrdersToParameters(
   return absl::OkStatus();
 }
 
+std::optional<int64_t> GetBlockSize(const HloInstruction& dot,
+                                    TritonFusionAnalysis::Scope scope) {
+  CHECK(dot.opcode() == HloOpcode::kScaledDot);
+  CHECK(scope == TritonFusionAnalysis::Scope::LHS ||
+        scope == TritonFusionAnalysis::Scope::RHS);
+  int operand_number = scope == TritonFusionAnalysis::Scope::LHS ? 0 : 2;
+  const Shape& input = dot.operand(operand_number)->shape();
+  const Shape& scale = dot.operand(operand_number + 1)->shape();
+
+  if (!ShapeUtil::IsScalar(scale)) {
+    int dim_idx = ContractingDimensionIndex(dot, operand_number).value();
+    return input.dimensions(dim_idx) / scale.dimensions(dim_idx);
+  }
+  return std::nullopt;
+}
+
 }  // namespace triton_fusion
 
 absl::StatusOr<TritonFusionAnalysis> TritonFusionAnalysis::Execute(
@@ -238,6 +254,10 @@ bool TritonFusionAnalysis::IsBatchDimMinorForInt4Parameter(
 absl::Status TritonFusionAnalysis::ExecuteForDotFusion(
     const HloInstruction& dot, const int split_k) {
   is_scaled_dot_ = dot.opcode() == HloOpcode::kScaledDot;
+  if (is_scaled_dot_) {
+    lhs_block_size_ = triton_fusion::GetBlockSize(dot, Scope::LHS);
+    rhs_block_size_ = triton_fusion::GetBlockSize(dot, Scope::RHS);
+  }
 
   DotRequirements lhs_requirements(kNoSplitRequirement);
   for (const Scope scope :
@@ -246,9 +266,16 @@ absl::Status TritonFusionAnalysis::ExecuteForDotFusion(
     if (operand_number >= dot.operand_count()) {
       continue;  // Scale operands are optional.
     }
-    if (is_scaled_dot_ && (operand_number == 1 || operand_number == 2)) {
+    if (is_scaled_dot_) {
       // Operands for scaled dot: (lhs, lhs_scale, rhs, rhs_scale)
-      operand_number = 3 - operand_number;
+      if (operand_number == 1 || operand_number == 2) {
+        operand_number = 3 - operand_number;
+      }
+      // Scalar scales are skipped.
+      if ((scope == Scope::LHS_SCALE || scope == Scope::RHS_SCALE) &&
+          ShapeUtil::IsScalar(dot.operand(operand_number)->shape())) {
+        continue;
+      }
     }
     TF_ASSIGN_OR_RETURN(auto context, FusionContext::FromDotOperand(
                                           dot, operand_number, split_k));
