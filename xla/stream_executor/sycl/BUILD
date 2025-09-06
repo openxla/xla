@@ -218,3 +218,69 @@ xla_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+sycl_library(
+    name = "sycl_gpu_runtime",
+    srcs = ["sycl_gpu_runtime.cc"],
+    hdrs = ["sycl_gpu_runtime.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util:env_var",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_test(
+    name = "sycl_gpu_runtime_test",
+    srcs = ["sycl_gpu_runtime_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_gpu_runtime",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+sycl_library(
+    name = "sycl_context",
+    srcs = ["sycl_context.cc"],
+    hdrs = ["sycl_context.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_gpu_runtime",
+        "//xla/stream_executor/gpu:context",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_test(
+    name = "sycl_context_test",
+    srcs = ["sycl_context_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_context",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
