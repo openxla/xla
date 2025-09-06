@@ -11,10 +11,11 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
+
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 
 namespace stream_executor {
 namespace gpu {
