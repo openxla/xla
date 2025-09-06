@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/hlo/translate/register.h"
+#include "xla/mlir_hlo/utils/unregistered_attributes.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_proto_util.h"
@@ -52,8 +53,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-
-constexpr char kParameterReplicationAttr[] = "mhlo.parameter_replication";
 
 namespace xla {
 
@@ -129,7 +128,7 @@ absl::Status ConvertMlirHloToHloViaBuilder(
   }
   for (int i = 0; i < main.getNumArguments(); ++i)
     if (auto pr = main.getArgAttrOfType<mlir::ArrayAttr>(
-            i, kParameterReplicationAttr))
+            i, xla::kMhloParameterReplication))
       for (auto b : pr.getValue())
         computation.mutable_proto()
             ->mutable_computations(0)
