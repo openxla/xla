@@ -288,16 +288,23 @@ void CompiledMemoryStats::PopulateBufferStatsFromAllocations(
     int64_t alloc_memory_space = -1;
     for (const auto& [value, _] : alloc.assigned_buffers()) {
       const HloPosition& defining_position = value->defining_position();
-      int64_t memory_space = Layout::kDefaultMemorySpace;
-      if (defining_position.shape().has_layout()) {
-        memory_space = defining_position.shape().layout().memory_space();
-      }
+      if (defining_position.shape().IsTuple()) continue;
+      CHECK(defining_position.shape().has_layout());
+      int64_t memory_space = defining_position.shape().layout().memory_space();
       if (alloc_memory_space == -1) {
         alloc_memory_space = memory_space;
       } else {
         CHECK(alloc_memory_space == memory_space &&
               "expected same memory space for all assignments in allocation");
       }
+    }
+
+    // In the case where all assignments in an allocation are tuples, prevent
+    // custom colorer from setting their color to host.
+    if (alloc_memory_space == -1) {
+      CHECK_EQ(alloc.color(), 0)
+          << "allocation contains only tuples, must be on device.";
+      alloc_memory_space = 0;
     }
 
     bool is_host = alloc_memory_space == Layout::kHostMemorySpace;
