@@ -202,8 +202,12 @@ class GcsFileSystem : public FileSystem {
   absl::Status GetFileSize(const string& fname, TransactionToken* token,
                            uint64* file_size) override;
 
+  absl::Status IsHnsEnabled(const string& bucket, bool* is_hns); 
+
   absl::Status RenameFile(const string& src, const string& target,
                           TransactionToken* token) override;
+
+  absl::Status RenameFolderHns(const string& src, const string& target);
 
   absl::Status IsDirectory(const string& fname,
                            TransactionToken* token) override;
