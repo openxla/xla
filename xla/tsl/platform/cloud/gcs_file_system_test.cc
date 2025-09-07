@@ -2495,6 +2495,10 @@ TEST(GcsFileSystemTest, RenameFile_Folder) {
            "Timeouts: 5 1 10\n",
            "{\"items\": [ "
            "  { \"name\": \"path1/subfolder/file1.txt\" }]}"),
+       new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket\n"
+          "Auth Token: fake_token\nTimeouts: 5 1 10\n",
+          R"({"name": "bucket"})"), // No "hierarchicalNamespace" field
        // Requesting the full list of files in the folder.
        new FakeHttpRequest(
            "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
@@ -2567,6 +2571,103 @@ TEST(GcsFileSystemTest, RenameFile_Folder) {
 
   TF_EXPECT_OK(
       fs.RenameFile("gs://bucket/path1", "gs://bucket/path2/", nullptr));
+}
+
+TEST(GcsFileSystemTest, RenameFile_HnsFolder) {
+  std::vector<HttpRequest*> requests({
+      // 1. Mock the IsDirectory() check. 
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+          "fields=items%2Fname%2CnextPageToken&prefix=path1%2F&maxResults=1\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"items": [{"name": "path1/some_file.txt"}]})"),
+
+      // 2. Mock the IsHnsEnabled() check. The response contain the `hierarchicalNamespace` object.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "bucket", "hierarchicalNamespace": {"enabled": true}})"),
+
+      // 3. Mock the initial POST request for the fast RenameFolderHns API.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/folders/"
+          "path1%2F/renameTo/folders/path2%2F\n"
+          "Auth Token: fake_token\n"
+          "Post: yes\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-rename-op"})"),
+
+      // 4. Mock the polling GET request for the long-running operation.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/operations/hns-rename-op\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"done": true})")
+  });
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   nullptr, 16, 64, 0, 3600, 0, 0, 0,
+                   kTestRetryConfig, kTestTimeoutConfig,
+                   *kAllowedLocationsDefault, nullptr, false);
+
+  TF_EXPECT_OK(
+      fs.RenameFile("gs://bucket/path1/", "gs://bucket/path2/", nullptr));
+}
+
+TEST(GcsFileSystemTest, RenameFile_NonHnsBucket_Fallback) {
+  std::vector<HttpRequest*> requests({
+      // 1. Mock the IsDirectory() check.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+          "fields=items%2Fname%2CnextPageToken&prefix=folder%2F&maxResults=1\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"items": [{"name": "folder/file1.txt"}]})"),
+
+      // 2. Mock the IsHnsEnabled() check, returning a Non-HNS response.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "bucket"})"), // No "hierarchicalNamespace" field
+
+      // 3. Mock the GetChildren() call for the iterative fallback.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+          "fields=items%2Fname%2CnextPageToken&prefix=folder%2F\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"items": [{"name": "folder/file1.txt"}]})"),
+
+      // 4. Mock the RenameObject (copy + delete) for the child object.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/o/"
+          "folder%2Ffile1.txt/rewriteTo/b/bucket/o/new_folder%2Ffile1.txt\n"
+          "Auth Token: fake_token\n"
+          "Post: yes\n"
+          "Timeouts: 5 1 10\n",
+          R"({"done": true})"),
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/o/folder%2Ffile1.txt\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n"
+          "Delete: yes\n",
+          "")
+  });
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   nullptr, 16, 64, 0, 3600, 0, 0, 0,
+                   kTestRetryConfig, kTestTimeoutConfig,
+                   *kAllowedLocationsDefault, nullptr, false);
+      
+  TF_EXPECT_OK(fs.RenameFile("gs://bucket/folder/",
+                               "gs://bucket/new_folder/", nullptr));
 }
 
 TEST(GcsFileSystemTest, RenameFile_Object) {
@@ -2854,6 +2955,108 @@ TEST(GcsFileSystemTest, RenameFile_Object_Incomplete) {
 
   EXPECT_TRUE(absl::IsUnimplemented(fs.RenameFile(
       "gs://bucket/path/src.txt", "gs://bucket/path/dst.txt", nullptr)));
+}
+
+TEST(GcsFileSystemTest, RenameFolderHns_Success) {
+  std::vector<HttpRequest*> requests({
+      // 1. The initial POST request.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/folders/"
+          "path%2Fsource-folder%2F/renameTo/folders/path%2Fdest-folder%2F\n"
+          "Auth Token: fake_token\n"
+          "Post: yes\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/rename-op-12345"})"),
+
+      // 2. The polling GET request to match the GCS v1 operations endpoint.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/operations/rename-op-12345\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "operations/rename-op-12345", "done": true})")});
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   nullptr, 16, 64, 0, 3600, 0, 0, 0,
+                   kTestRetryConfig, kTestTimeoutConfig,
+                   *kAllowedLocationsDefault, nullptr, false);
+
+  TF_EXPECT_OK(fs.RenameFolderHns("gs://bucket/path/source-folder/",
+                               "gs://bucket/path/dest-folder/"));
+}
+
+TEST(GcsFileSystemTest, RenameFolderHns_SucceedsOnSecondPoll) {
+  std::vector<HttpRequest*> requests({
+      // 1. The initial POST request to start the rename.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/folders/"
+          "path%2Fsource%2F/renameTo/folders/path%2Fdest%2F\n"
+          "Auth Token: fake_token\n"
+          "Post: yes\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-op-1"})"),
+
+      // 2. The FIRST poll, which returns "done: false".
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/operations/hns-op-1\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-op-1", "done": false})"),
+
+      // 3. The SECOND poll, which returns "done: true".
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/operations/hns-op-1\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-op-1", "done": true})")
+  });
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   nullptr, 16, 64, 0, 3600, 0, 0, 0,
+                   kTestRetryConfig, kTestTimeoutConfig,
+                   *kAllowedLocationsDefault, nullptr, false);
+
+  TF_EXPECT_OK(fs.RenameFolderHns("gs://bucket/path/source/",
+                                    "gs://bucket/path/dest/"));
+}
+
+TEST(GcsFileSystemTest, RenameFolderHns_FailsDuringPolling) {
+  std::vector<HttpRequest*> requests({
+      // 1. The initial POST request.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/folders/"
+          "path%2Fsource%2F/renameTo/folders/path%2Fdest%2F\n"
+          "Auth Token: fake_token\n"
+          "Post: yes\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-op-2"})"),
+
+      // 2. The failing poll response, which contains an "error" object.
+      new FakeHttpRequest(
+          "Uri: https://www.googleapis.com/storage/v1/b/bucket/operations/hns-op-2\n"
+          "Auth Token: fake_token\n"
+          "Timeouts: 5 1 10\n",
+          R"({"name": "projects/_/buckets/bucket/operations/hns-op-2", "done": true,
+              "error": {"code": 13, "message": "An internal error occurred."}})")
+  });
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   nullptr, 16, 64, 0, 3600, 0, 0, 0,
+                   kTestRetryConfig, kTestTimeoutConfig,
+                   *kAllowedLocationsDefault, nullptr, false);
+
+  auto status = fs.RenameFolderHns("gs://bucket/path/source/",
+                                     "gs://bucket/path/dest/");
+
+  // Verify that the function returns an Internal error.
+  EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("An internal error occurred."));
 }
 
 TEST(GcsFileSystemTest, Stat_Object) {

@@ -67,6 +67,7 @@ limitations under the License.
 #endif
 #endif
 
+
 namespace tsl {
 namespace {
 constexpr char kGcsUriBase[] = "https://www.googleapis.com/storage/v1/";
@@ -1653,6 +1654,28 @@ absl::Status GcsFileSystem::GetBucketMetadata(
   return request->Send();
 }
 
+absl::Status GcsFileSystem::IsHnsEnabled(const string& bucket, bool* is_hns) {
+  *is_hns = false;
+  std::vector<char> result_buffer;
+
+  absl::Status status = GetBucketMetadata(bucket, &result_buffer);
+  if (!status.ok()) {
+    return absl::OkStatus();
+  }
+
+  Json::Value result;
+  TF_RETURN_IF_ERROR(ParseJson(result_buffer, &result));
+
+  const auto hns_node = result.get("hierarchicalNamespace", Json::Value::null);
+  if (!hns_node.isNull() && hns_node.isObject()) {
+    bool enabled = false;
+    TF_RETURN_IF_ERROR(GetBoolValue(hns_node, "enabled", &enabled));
+    *is_hns = enabled;
+  }
+  
+  return absl::OkStatus();
+}
+
 absl::Status GcsFileSystem::FolderExists(const string& dirname, bool* result) {
   StatCache::ComputeFunc compute_func = [this](const string& dirname,
                                                GcsFileStat* stat) {
@@ -1994,7 +2017,28 @@ absl::Status GcsFileSystem::RenameFile(const string& src, const string& target,
   if (!IsDirectory(src, token).ok()) {
     return RenameObject(src, target);
   }
-  // Rename all individual objects in the directory one by one.
+
+  // It's a directory. Parse both source and target to check the buckets.
+  string src_bucket, src_object;
+  TF_RETURN_IF_ERROR(ParseGcsPath(src, true, &src_bucket, &src_object));
+  
+  string target_bucket, target_object;
+  TF_RETURN_IF_ERROR(ParseGcsPath(target, true, &target_bucket, &target_object));
+
+  // If buckets are the same, we can check for HNS and use the fast rename API.
+  if (src_bucket == target_bucket) {
+    bool hns_enabled = false;
+    TF_RETURN_IF_ERROR(IsHnsEnabled(src_bucket, &hns_enabled));
+    
+    if (hns_enabled) {
+      return RenameFolderHns(src, target);
+    }
+  }
+
+  // FALLBACK: Use the iterative rename in two cases:
+  // 1. The buckets are different (cross-bucket rename).
+  // 2. The buckets are the same, but HNS is not enabled.
+  VLOG(1) << "Falling back to iterative rename for directory " << src;
   std::vector<string> children;
   TF_RETURN_IF_ERROR(
       GetChildrenBounded(src, UINT64_MAX, &children, true /* recursively */,
@@ -2119,6 +2163,99 @@ absl::Status GcsFileSystem::DeleteRecursively(const string& dirname,
       }
     }
   }
+  return absl::OkStatus();
+}
+
+absl::Status GcsFileSystem::RenameFolderHns(const string& src, const string& target) {
+  VLOG(1) << "GcsFileSystem::RenameFolderHns invoked. From: '" << src
+          << "' to: '" << target << "'";
+
+  string src_bucket, src_object, target_bucket, target_object;
+  TF_RETURN_IF_ERROR(ParseGcsPath(src, false, &src_bucket, &src_object));
+  TF_RETURN_IF_ERROR(
+      ParseGcsPath(target, false, &target_bucket, &target_object));
+
+  std::unique_ptr<HttpRequest> request;
+  TF_RETURN_IF_ERROR(CreateHttpRequest(&request));
+
+  const std::string uri_to_send = absl::StrCat(
+      kGcsUriBase, "b/", src_bucket, "/folders/",
+      request->EscapeString(src_object), "/renameTo/folders/",
+      request->EscapeString(target_object));
+
+  request->SetUri(uri_to_send);
+  request->SetPostEmptyBody();  
+  request->SetTimeouts(timeouts_.connect, timeouts_.idle, timeouts_.metadata);
+  std::vector<char> output_buffer;
+  request->SetResultBuffer(&output_buffer);
+
+  VLOG(2) << "Sending rename folder request to URI: " << uri_to_send;
+
+  TF_RETURN_WITH_CONTEXT_IF_ERROR(
+      request->Send(), " when initiating rename for folder ", src);
+
+  // Parse the long-running operation object from the response.
+  Json::Value operation_response;
+  TF_RETURN_IF_ERROR(ParseJson(output_buffer, &operation_response));
+
+  bool done = false;
+  if (operation_response.isMember("done")) {
+    TF_RETURN_IF_ERROR(GetBoolValue(operation_response, "done", &done));
+    if (done) {
+      if (operation_response.isMember("error")) {
+        return errors::Internal("RenameFolderHns for '", src,
+                                "' failed immediately with an error: ",
+                                operation_response["error"].toStyledString());
+      }
+      VLOG(1) << "RenameFolderHns finished immediately for " << src;
+      return absl::OkStatus();
+    }
+  }
+
+  std::string operation_name;
+  TF_RETURN_IF_ERROR(
+      GetStringValue(operation_response, "name", &operation_name));
+
+  absl::string_view operation_id = io::Basename(operation_name);
+
+  VLOG(2) << "RenameFolderHns: polling operation ID '" << operation_id << "'";
+
+  const absl::Duration kPollingInterval = absl::Seconds(20);
+
+  while (true) {
+    absl::SleepFor(kPollingInterval);
+    std::unique_ptr<HttpRequest> poll_request;
+    TF_RETURN_IF_ERROR(CreateHttpRequest(&poll_request));
+
+    poll_request->SetUri(absl::StrCat(kGcsUriBase, "b/", src_bucket,
+                                      "/operations/", operation_id));
+    poll_request->SetTimeouts(timeouts_.connect, timeouts_.idle,
+                              timeouts_.metadata);
+    std::vector<char> poll_output_buffer;
+    poll_request->SetResultBuffer(&poll_output_buffer);
+
+    TF_RETURN_WITH_CONTEXT_IF_ERROR(poll_request->Send(),
+                                    " when polling operation ", operation_id);
+
+    TF_RETURN_IF_ERROR(ParseJson(poll_output_buffer, &operation_response));
+
+    if (operation_response.isMember("error")) {
+      return errors::Internal("RenameFolderHns for '", src,
+                              "' failed with an error: ",
+                              operation_response["error"].toStyledString());
+    }
+
+    if (operation_response.isMember("done")) {
+      bool done = false;
+      TF_RETURN_IF_ERROR(GetBoolValue(operation_response, "done", &done));
+      if (done) {
+        break; 
+      }
+    }
+     VLOG(3) << "Polling rename folder operation...";
+  }
+
+  VLOG(1) << "RenameFolderHns: finished successfully for " << src;
   return absl::OkStatus();
 }
 
