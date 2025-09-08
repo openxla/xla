@@ -1145,6 +1145,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "dir, or, if no dir is specified, to stdout. Ignored unless "
                 "xla_dump_hlo_as_text is true."));
   flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_triton_softmax_fusion",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_softmax_fusion),
+                debug_options->xla_gpu_enable_triton_softmax_fusion(),
+                "Enable fusion of the softmax function to triton"
+                "default value is true"));
+  flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_proto",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_proto),
                 debug_options->xla_dump_hlo_as_proto(),
