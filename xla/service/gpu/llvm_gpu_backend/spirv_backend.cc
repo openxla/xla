@@ -158,7 +158,7 @@ absl::StatusOr<std::string> CompileToSPIRV(
   bool spirv_success = llvm::SPIRVTranslateModule(
       module, spirv_str, spirv_err_msg, spirv_extensions, spirv_options);
   if (!spirv_success) {
-    return absl::AbortedError("Could translate LLVM module to SPIRV.");
+    return absl::AbortedError("Failed to translate LLVM module to SPIRV.");
   }
   return spirv_str;
 }
