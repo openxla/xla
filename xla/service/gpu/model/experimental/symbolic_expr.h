@@ -26,6 +26,7 @@ limitations under the License.
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/StorageUniquer.h"
 
@@ -80,12 +81,10 @@ class SymbolicExpr {
   // rest.
   SymbolicExpr ReplaceSymbols(absl::Span<const SymbolicExpr> replacements,
                               int64_t num_dims) const;
-  // ReplaceDimsAndSymbols assumes the total number of dimensions and symbols in
-  // the expression is the same the size of dim_replacements and
-  // symbol_replacements.
   SymbolicExpr ReplaceDimsAndSymbols(
       absl::Span<const SymbolicExpr> dim_replacements,
-      absl::Span<const SymbolicExpr> symbol_replacements) const;
+      absl::Span<const SymbolicExpr> symbol_replacements,
+      int64_t num_dims) const;
 
   SymbolicExpr Canonicalize() const;
 
@@ -132,6 +131,12 @@ class SymbolicExpr {
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const SymbolicExpr expr) {
     sink.Append(expr.ToString());
+  }
+
+  friend llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
+                                       const SymbolicExpr expr) {
+    os << expr.ToString();
+    return os;
   }
 
  private:

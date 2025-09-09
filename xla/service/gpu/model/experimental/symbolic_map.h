@@ -25,6 +25,11 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "xla/service/gpu/model/experimental/symbolic_expr.h"
 
+namespace mlir {
+class AffineMap;
+class MLIRContext;
+}  // namespace mlir
+
 namespace xla {
 namespace gpu {
 
@@ -33,9 +38,20 @@ class SymbolicExprContext;
 // Maps a set of input variables to a set of output SymbolicExpr trees.
 class SymbolicMap {
  public:
+  SymbolicMap() = default;
   static SymbolicMap Get(SymbolicExprContext* ctx, int64_t num_dimensions,
                          int64_t num_symbols,
                          llvm::SmallVector<SymbolicExpr> exprs);
+
+  // Converts an mlir::AffineMap to a SymbolicMap.
+  static SymbolicMap FromAffineMap(SymbolicExprContext* ctx,
+                                   const mlir::AffineMap& affine_map);
+
+  // Converts the SymbolicMap to an mlir::AffineMap.
+  // Returns a null AffineMap if the conversion is not possible (e.g., if the
+  // SymbolicMap contains expressions like max or min which are not supported
+  // by AffineMap).
+  mlir::AffineMap ToAffineMap(mlir::MLIRContext* mlir_context) const;
 
   SymbolicExprContext* GetContext() const { return ctx_; }
   int64_t GetNumDims() const { return num_dimensions_; }
