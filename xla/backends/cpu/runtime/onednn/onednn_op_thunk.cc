@@ -113,10 +113,10 @@ absl::StatusOr<std::unique_ptr<OneDnnOpThunk>> OneDnnOpThunk::Create(
 
 OneDnnOpThunk::OneDnnOpThunk(const std::string& custom_call_target, Info info,
                              OpBuffers buffers, OneDnnOpConfig config)
-    : target_(custom_call_target),
-      Thunk(Thunk::Kind::kCustomCall, std::move(info)),
+    : Thunk(Thunk::Kind::kCustomCall, std::move(info)),
       op_buffers_(std::move(buffers)),
-      config_(std::move(config)) {}
+      config_(std::move(config)),
+      target_(custom_call_target) {}
 
 OneDnnOpThunk::~OneDnnOpThunk() = default;
 
@@ -176,13 +176,9 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
     runtime->resources.result_memrefs.push_back(std::move(memref));
   }
 
-  auto executed =
-      runtime->Invoke(thread_pool,
-                      absl::Span(runtime->resources.arg_memrefs.data(),
-                                 runtime->resources.arg_memrefs.size()),
-                      absl::Span(runtime->resources.result_memrefs.data(),
-                                 runtime->resources.result_memrefs.size()),
-                      config_, target_);
+  auto executed = runtime->Invoke(
+      thread_pool, absl::MakeSpan(runtime->resources.arg_memrefs),
+      absl::MakeSpan(runtime->resources.result_memrefs), config_, target_);
 
   // Do not return runtime to the pool until the execution is done.
   executed.AndThen([runtime = std::move(runtime)]() {
