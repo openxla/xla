@@ -67,7 +67,6 @@ limitations under the License.
 #endif
 #endif
 
-
 namespace tsl {
 namespace {
 constexpr char kGcsUriBase[] = "https://www.googleapis.com/storage/v1/";
@@ -104,6 +103,11 @@ constexpr size_t kMatchingPathsCacheDefaultMaxEntries = 1024;
 // Number of bucket locations cached, most workloads wont touch more than one
 // bucket so this limit is set fairly low
 constexpr size_t kBucketLocationCacheMaxEntries = 10;
+// Number of bucket storage layout cached, most workloads wont touch more than one
+// bucket so this limit is set fairly low
+constexpr size_t kStorageLayoutCacheMaxEntries = 10;
+// LRUCache that has 30 mins expiration.
+constexpr uint64 kStorageLayoutCacheMaxAgeSecs = 30 * 60;
 // ExpiringLRUCache doesnt support any "cache forever" option
 constexpr size_t kCacheNeverExpire = std::numeric_limits<uint64>::max();
 // The file statistics returned by Stat() for directories.
@@ -892,6 +896,9 @@ GcsFileSystem::GcsFileSystem(bool make_default_cache,
   bucket_location_cache_.reset(new ExpiringLRUCache<string>(
       kCacheNeverExpire, kBucketLocationCacheMaxEntries));
 
+  storage_layout_cache_.reset(new ExpiringLRUCache<Json::Value>(
+      kStorageLayoutCacheMaxAgeSecs, kStorageLayoutCacheMaxEntries));
+
   int64_t resolve_frequency_secs;
   if (GetEnvVar(kResolveCacheSecs, strings::safe_strto64,
                 &resolve_frequency_secs)) {
@@ -1009,6 +1016,8 @@ GcsFileSystem::GcsFileSystem(
           matching_paths_cache_max_age, matching_paths_cache_max_entries)),
       bucket_location_cache_(new BucketLocationCache(
           kCacheNeverExpire, kBucketLocationCacheMaxEntries)),
+      storage_layout_cache_(new StorageLayoutCache(
+          kStorageLayoutCacheMaxAgeSecs, kStorageLayoutCacheMaxEntries)),
       allowed_locations_(allowed_locations),
       compose_append_(compose_append),
       additional_header_(additional_header) {}
@@ -1654,26 +1663,58 @@ absl::Status GcsFileSystem::GetBucketMetadata(
   return request->Send();
 }
 
-absl::Status GcsFileSystem::IsHnsEnabled(const string& bucket, bool* is_hns) {
-  *is_hns = false;
-  std::vector<char> result_buffer;
+absl::Status GcsFileSystem::GetStorageLayout(const string& bucket,
+                                             std::vector<char>* result_buffer) {
+  std::unique_ptr<HttpRequest> request;
+  TF_RETURN_IF_ERROR(CreateHttpRequest(&request));
 
-  absl::Status status = GetBucketMetadata(bucket, &result_buffer);
-  if (!status.ok()) {
-    return absl::OkStatus();
+  request->SetUri(
+      strings::StrCat(kGcsUriBase, "b/", bucket, "/storageLayout"));
+
+  if (result_buffer != nullptr) {
+    request->SetResultBuffer(result_buffer);
   }
 
-  Json::Value result;
-  TF_RETURN_IF_ERROR(ParseJson(result_buffer, &result));
+  request->SetTimeouts(timeouts_.connect, timeouts_.idle, timeouts_.metadata);
+  return request->Send();
+}
 
-  const auto hns_node = result.get("hierarchicalNamespace", Json::Value::null);
+absl::Status GcsFileSystem::ParseIsHnsEnabled(const Json::Value& storage_layout_json,
+                               bool* is_hns) {
+  *is_hns = false;
+  const auto hns_node =
+      storage_layout_json.get("hierarchicalNamespace", Json::Value::null);
+
   if (!hns_node.isNull() && hns_node.isObject()) {
     bool enabled = false;
-    TF_RETURN_IF_ERROR(GetBoolValue(hns_node, "enabled", &enabled));
-    *is_hns = enabled;
+    if (hns_node.isMember("enabled")) {
+      TF_RETURN_IF_ERROR(GetBoolValue(hns_node, "enabled", &enabled));
+      
+      *is_hns = enabled;
+    }
   }
-  
   return absl::OkStatus();
+}
+
+absl::Status GcsFileSystem::IsBucketHnsEnabled(const string& bucket,
+                                               bool* is_hns) {
+  Json::Value storage_layout;
+
+  auto compute_func = [this](const string& bucket,
+                             Json::Value* layout_json) {
+    std::vector<char> layout_buffer;
+    absl::Status layout_status = GetStorageLayout(bucket, &layout_buffer);
+    if (!layout_status.ok()) {
+      return layout_status; // Propagate all errors.
+    }
+    return ParseJson(layout_buffer, layout_json);
+  };
+
+  // Look up the full JSON object in the new cache.
+  TF_RETURN_IF_ERROR(storage_layout_cache_->LookupOrCompute(
+      bucket, &storage_layout, compute_func));
+
+  return ParseIsHnsEnabled(storage_layout, is_hns);
 }
 
 absl::Status GcsFileSystem::FolderExists(const string& dirname, bool* result) {
@@ -2028,7 +2069,7 @@ absl::Status GcsFileSystem::RenameFile(const string& src, const string& target,
   // If buckets are the same, we can check for HNS and use the fast rename API.
   if (src_bucket == target_bucket) {
     bool hns_enabled = false;
-    TF_RETURN_IF_ERROR(IsHnsEnabled(src_bucket, &hns_enabled));
+    TF_RETURN_IF_ERROR(IsBucketHnsEnabled(src_bucket, &hns_enabled));
     
     if (hns_enabled) {
       return RenameFolderHns(src, target);
@@ -2268,6 +2309,7 @@ void GcsFileSystem::FlushCaches(TransactionToken* token) {
   stat_cache_->Clear();
   matching_paths_cache_->Clear();
   bucket_location_cache_->Clear();
+  storage_layout_cache_->Clear();
 }
 
 void GcsFileSystem::SetStats(GcsStatsInterface* stats) {

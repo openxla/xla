@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_TSL_PLATFORM_CLOUD_GCS_FILE_SYSTEM_H_
 
 #include <cstddef>
+#include "json/json.h"
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -202,12 +203,10 @@ class GcsFileSystem : public FileSystem {
   absl::Status GetFileSize(const string& fname, TransactionToken* token,
                            uint64* file_size) override;
 
-  absl::Status IsHnsEnabled(const string& bucket, bool* is_hns); 
+  absl::Status IsBucketHnsEnabled(const string& bucket, bool* is_hns); 
 
   absl::Status RenameFile(const string& src, const string& target,
                           TransactionToken* token) override;
-
-  absl::Status RenameFolderHns(const string& src, const string& target);
 
   absl::Status IsDirectory(const string& fname,
                            TransactionToken* token) override;
@@ -402,6 +401,20 @@ class GcsFileSystem : public FileSystem {
   absl::Status GetBucketMetadata(const string& bucket,
                                  std::vector<char>* result_buffer);
 
+  /// \brief Retrieves the `storageLayout` metadata for a given GCS bucket.
+  /// The raw JSON response is stored in `result_buffer`.
+  absl::Status GetStorageLayout(const string& bucket,
+                                std::vector<char>* result_buffer);
+
+  /// \brief Parses the `storageLayout` JSON to determine if HNS is enabled.
+  /// Sets the `is_hns` output parameter to the result.
+  absl::Status ParseIsHnsEnabled(const Json::Value& storage_layout_json,
+                                 bool* is_hns);
+
+  /// \brief Renames a folder on an HNS-enabled bucket using a fast, server-side
+  /// GCS API. This function polls the long-running operation for completion.
+  absl::Status RenameFolderHns(const string& src, const string& target);
+
   /// \brief Checks if the object exists. Returns OK if the check succeeded.
   ///
   /// 'result' is set if the function returns OK. 'result' cannot be nullptr.
@@ -464,6 +477,10 @@ class GcsFileSystem : public FileSystem {
 
   using BucketLocationCache = ExpiringLRUCache<string>;
   std::unique_ptr<BucketLocationCache> bucket_location_cache_;
+
+  using StorageLayoutCache = ExpiringLRUCache<Json::Value>;
+  std::unique_ptr<StorageLayoutCache> storage_layout_cache_;
+  
   std::unordered_set<string> allowed_locations_;
   bool compose_append_;
 
