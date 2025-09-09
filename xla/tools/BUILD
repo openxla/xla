@@ -30,6 +30,10 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -554,12 +558,14 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
-    ] + if_cuda_or_rocm([
+    ] + if_gpu_is_configured([
         "//xla/service:gpu_plugin",
     ]) + if_cuda([
         "//xla/stream_executor:cuda_platform",
     ]) + if_rocm([
         "//xla/stream_executor:rocm_platform",
+    ]) + if_sycl_is_configured([
+        "//xla/stream_executor:sycl_platform",
     ]),
 )
 

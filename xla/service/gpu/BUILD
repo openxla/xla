@@ -3175,6 +3175,7 @@ cc_library(
     ],
     deps = [
         ":gpu_compiler",
+        "//xla/service/gpu/llvm_gpu_backend:spirv_backend",
     ],
 )
 
