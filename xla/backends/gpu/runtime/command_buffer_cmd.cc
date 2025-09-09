@@ -2616,17 +2616,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
   // manager relies on command buffer pointer as an identity for command
   // buffers, and it means that command buffer commands sequence should not
   // create ephemeral command buffers at run time.
-  auto nested_command_buffer =
-      execute_params.stream->parent()
-          ->CreateCommandBuffer(se::CommandBuffer::Mode::kNested)
-          .value();
+  TF_ASSIGN_OR_RETURN(auto nested_command_buffer,
+                      execute_params.stream->parent()->CreateCommandBuffer(
+                          se::CommandBuffer::Mode::kNested));
 
   StateManager state;
   RecordParams nested_record_params = {state, std::nullopt, false};
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, nested_record_params,
                                                CommandBufferCmd::RecordCreate{},
                                                nested_command_buffer.get(),
-                                               /*finalize=*/false));
+                                               /*finalize=*/true));
 
   // For command buffer instantiation ran by CommandBufferThunk::Initialize, we
   // must not step the Indvar, because it is not a real run.
