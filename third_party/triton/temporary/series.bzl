@@ -14,6 +14,7 @@ those to this list.
 """
 
 temporary_patch_list = [
+    "//third_party/triton:temporary/launcher_overflow_fix.patch",
     # Add new patches just above this line
     "//third_party/triton:temporary/verify_nvmma_encoding.patch",
 ]
