@@ -571,8 +571,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     CHECK(inlined_while_op != nullptr)
         << "While loop is not found in the inlined module.";
     indvar_idx = GetLoopInductionVarTupleIdx(inlined_while_op);
-    VLOG(3) << "Found loop index variable: " << indvar_idx.value();
     if (indvar_idx != std::nullopt) {
+      VLOG(3) << "Found loop index variable: " << indvar_idx.value();
       init_module =
           ExtractWhileInitModule(inlined_while_op, indvar_idx.value());
       update_module =
@@ -794,8 +794,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
     CHECK(inlined_while_op != nullptr)
         << "While loop is not found in the inlined module.";
     indvar_idx = GetLoopInductionVarTupleIdx(inlined_while_op);
-    VLOG(3) << "Found loop index variable: " << indvar_idx.value();
     if (indvar_idx != std::nullopt) {
+      VLOG(3) << "Found loop index variable: " << indvar_idx.value();
       init_module =
           ExtractWhileInitModule(inlined_while_op, indvar_idx.value());
       update_module =
@@ -1110,8 +1110,8 @@ CollectSliceArgumentMetadataForCollectives(
     CHECK(inlined_while_op != nullptr)
         << "While loop is not found in the inlined module.";
     indvar_idx = GetLoopInductionVarTupleIdx(inlined_while_op);
-    VLOG(3) << "Found loop index variable: " << indvar_idx.value();
     if (indvar_idx != std::nullopt) {
+      VLOG(3) << "Found loop index variable: " << indvar_idx.value();
       slice_data.init_module =
           ExtractWhileInitModule(inlined_while_op, indvar_idx.value());
       slice_data.update_module =
