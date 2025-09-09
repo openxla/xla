@@ -14,6 +14,7 @@ those to this list.
 """
 
 temporary_patch_list = [
+    "//third_party/triton:temporary/small_n_wgmma_support.patch",
     # Add new patches just above this line
     "//third_party/triton:temporary/verify_nvmma_encoding.patch",
 ]
