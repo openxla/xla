@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <iterator>
@@ -128,10 +129,11 @@ AllToAllStartThunk::AllToAllStartThunk(
 
 absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  device_count_ = params.local_device_count;
-  CHECK_GT(device_count_, 0);
+
+  device_count_.store(params.local_device_count, std::memory_order_relaxed);
+  CHECK_GT(params.local_device_count, 0);
   XLA_VLOG_DEVICE(5, params.executor->device_ordinal())
-      << "Local device count : " << device_count_;
+      << "Local device count : " << params.local_device_count;
 
   if (is_local() && p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(
@@ -262,11 +264,12 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
 }
 
 bool AllToAllStartThunk::is_local() const {
+  const auto device_count = device_count_.load(std::memory_order_relaxed);
   for (const auto& replica_group : config_.config.replica_groups) {
-    const int64_t node_id = replica_group.replica_ids().at(0) / device_count_;
+    const int64_t node_id = replica_group.replica_ids().at(0) / device_count;
     if (!absl::c_all_of(replica_group.replica_ids(),
-                        [this, node_id](const int64_t rank) {
-                          return rank / device_count_ == node_id;
+                        [node_id, device_count](const int64_t rank) {
+                          return rank / device_count == node_id;
                         })) {
       return false;
     }
