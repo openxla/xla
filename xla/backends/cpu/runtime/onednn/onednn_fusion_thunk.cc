@@ -214,9 +214,8 @@ tsl::AsyncValueRef<OneDnnFusionThunk::ExecuteEvent> OneDnnFusionThunk::Execute(
   auto executed =
       runtime->Invoke(thread_pool, absl::MakeSpan(arguments_buffers),
                       absl::MakeSpan(results_buffers));
-  executed.AndThen([runtime = std::move(runtime)]() mutable {
-    // runtime will be destroyed here
-  });
+  // Destroy the runtime after the task is done.
+  executed.AndThen([runtime = std::move(runtime)] {});
 
   return executed;
 }
