@@ -182,6 +182,8 @@ xla_cc_test(
     srcs = ["memory_space_propagation_test.cc"],
     deps = [
         ":memory_space_propagation",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tsl/lib/core:status_test_util",
@@ -247,6 +249,7 @@ cc_library(
         "//xla/service:hlo_value",
         "//xla/service:host_offload_utils",
         "//xla/service:memory_annotations_hdr",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -546,9 +549,11 @@ cc_library(
     deps = [
         "//xla:side_effect_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
