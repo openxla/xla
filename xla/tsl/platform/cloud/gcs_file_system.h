@@ -203,7 +203,7 @@ class GcsFileSystem : public FileSystem {
   absl::Status GetFileSize(const string& fname, TransactionToken* token,
                            uint64* file_size) override;
 
-  absl::Status IsBucketHnsEnabled(const string& bucket, bool* is_hns); 
+  absl::Status IsBucketHnsEnabled(const string& bucket, bool* is_hns);
 
   absl::Status RenameFile(const string& src, const string& target,
                           TransactionToken* token) override;
@@ -480,7 +480,7 @@ class GcsFileSystem : public FileSystem {
 
   using StorageLayoutCache = ExpiringLRUCache<Json::Value>;
   std::unique_ptr<StorageLayoutCache> storage_layout_cache_;
-  
+
   std::unordered_set<string> allowed_locations_;
   bool compose_append_;
 
