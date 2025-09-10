@@ -375,5 +375,13 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
   fn(this);
 }
 
+absl::StatusOr<GpuCollectives*> Thunk::GetGpuCollectives(
+    CollectiveExecuteParams const& params) {
+  if (params.collectives == nullptr) {
+    return Internal("Collectives API is not provided");
+  }
+  return params.collectives;
+}
+
 }  // namespace gpu
 }  // namespace xla

@@ -412,14 +412,20 @@ bool GetDeviceProperties(hipDeviceProp_t* device_properties,
 }
 
 // Allocates memory on the GPU device.
-void* DeviceAllocate(Context* context, uint64_t bytes) {
+void* DeviceAllocate(Context* context, uint64_t bytes, bool is_fine_grained) {
   if (bytes == 0) {
     return nullptr;
   }
 
   ScopedActivateContext activated(context);
-  hipDeviceptr_t result = 0;
-  hipError_t res = wrap::hipMalloc(&result, bytes);
+  hipDeviceptr_t device_mem = 0;
+  hipError_t res;
+  if (is_fine_grained) {
+    res = wrap::hipExtMallocWithFlags(&device_mem, bytes,
+                                      hipDeviceMallocFinegrained);
+  } else {
+    res = wrap::hipMalloc(&device_mem, bytes);
+  }
   if (res != hipSuccess) {
     // LOG(INFO) because this isn't always important to users (e.g. BFCAllocator
     // implements a retry if the first allocation fails).
@@ -428,7 +434,7 @@ void* DeviceAllocate(Context* context, uint64_t bytes) {
               << " bytes) from device: " << ToString(res);
     return nullptr;
   }
-  void* ptr = reinterpret_cast<void*>(result);
+  void* ptr = reinterpret_cast<void*>(device_mem);
   VLOG(2) << "allocated " << ptr << " for device " << context->device_ordinal()
           << " of " << bytes << " bytes";
   return ptr;
@@ -735,7 +741,11 @@ DeviceMemoryBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
   switch (static_cast<MemoryType>(memory_space)) {
     case MemoryType::kCollective:
     case MemoryType::kDevice:
-      return DeviceMemoryBase(DeviceAllocate(rocm_context_, size), size);
+      return DeviceMemoryBase(
+          DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ false), size);
+    case MemoryType::kP2PTempBuf:
+      return DeviceMemoryBase(
+          DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ true), size);
     case MemoryType::kHost:
       if (auto result = HostAllocate(rocm_context_, size); result.ok()) {
         return DeviceMemoryBase(*result, size);

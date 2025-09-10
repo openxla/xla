@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -81,10 +82,6 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
   static CollectiveOpGroupMode GetGroupMode(
       const HloAllReduceInstruction* inst);
 
-  absl::StatusOr<bool> ShouldUseOneShotAllReduceKernel(
-      const GpuCliqueKey& clique_key,
-      const CollectiveCliques* collective_cliques);
-
   absl::Status Initialize(const InitializeParams& params) override;
 
  protected:
@@ -92,6 +89,8 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
                              CommunicatorHandle comm_handle) override;
 
  private:
+  CollectiveKernelThunk collective_kernel_thunk_;
+
   bool one_shot_kernel_enabled_ = false;
 
   absl::Mutex mutex_;

@@ -1153,9 +1153,12 @@ rocm_library(
     ],
     deps = [
         ":rocm_platform_id",
+        "//xla:types",
+        "//xla/service:collective_ops_utils",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:all_reduce_kernel",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "@com_google_absl//absl/base",
         "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,

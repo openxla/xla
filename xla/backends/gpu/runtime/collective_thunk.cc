@@ -269,6 +269,16 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
                       kNoStreamId, stream_kind, std::move(participant_groups));
 }
 
+absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
+    const Thunk::CollectiveExecuteParams& params,
+    const CollectiveConfig& collective_config, bool use_nccl) {
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      CollectiveThunk::GetGpuCollectives(params));
+  return GetGpuCliqueKey(collectives, params, collective_config.replica_groups,
+                         collective_config.group_mode,
+                         AsyncStreamKind::kCollective);
+}
+
 absl::StatusOr<CommunicatorHandle> GetComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
