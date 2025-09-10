@@ -35,6 +35,8 @@ limitations under the License.
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/test.h"
 
+#include <hip/hip_runtime_api.h>
+
 namespace xla {
 namespace gpu {
 namespace {
@@ -393,37 +395,82 @@ TEST_F(BufferComparatorTest, BF16) {
                    .value());
 }
 
-TEST_F(BufferComparatorTest, VeryLargeArray) {
-  constexpr PrimitiveType number_type = U16;
-  using NT = primitive_util::PrimitiveTypeToNative< number_type >::type;
+// ROCm-only: CI-safe very-large compare using *device* memory and U8 type.
+// - No HMM / mapped host memory
+// - 64-bit indexing stress (N > 2^31)
+// - Alignment-friendly aliasing offset
+TEST_F(BufferComparatorTest, VeryLargeArray_Device_U8_Aligned) {
+  // Force 64-bit indexing without exceeding ~4 GiB VRAM.
+  constexpr PrimitiveType number_type = U8;
+  using NT = primitive_util::PrimitiveTypeToNative<number_type>::type;
+  static_assert(sizeof(NT) == 1, "This test expects 8-bit elements.");
 
-  // Set non-power-of-two element count on purpose
-  int64_t element_count = (1LL << 34) - 11;
-  auto stream = stream_exec_->CreateStream().value();
+  // N just above 2^31 so 32-bit indexing overflows.
+  const uint64_t element_count = (1ull << 31) + 4096;  // 2,147,488,744
+  // Shift rhs by a cacheline (64 B) to keep accesses aligned even if
+  // vectorized.
+  constexpr size_t kShiftBytes = 64;
 
-  // Use host memory here since there is a limitation of 4GB per test on
-  // device memory alloc
-  TF_ASSERT_OK_AND_ASSIGN(
-    auto base, 
-    stream_exec_->HostMemoryAllocate((element_count + 1) * sizeof(NT)));
+  // Total device allocation: N + shift (≈ 2.15 GiB)
+  const size_t bytes_total = static_cast<size_t>(element_count) + kShiftBytes;
 
-  // We use overlapping lhs and rhs arrays to reduce memory usage, also this 
-  // serves as an extra test for possible pointer aliasing problems
-  se::DeviceMemoryBase lhs(base->opaque(), base->size() - sizeof(NT)),
-                       rhs(static_cast< NT *>(base->opaque()) + 1, lhs.size());
+  // Create stream.
+  auto stream_or = stream_exec_->CreateStream();
+  ASSERT_TRUE(stream_or.ok()) << stream_or.status();
+  std::unique_ptr<se::Stream> stream = std::move(stream_or.value());
 
-  TF_CHECK_OK(stream->Memset32(&lhs, 0xABCDABCD, base->size()));
+  // Single device allocation of (N + shift) bytes.
+  void* dev_ptr = nullptr;
+  hipError_t herr = hipMalloc(&dev_ptr, bytes_total);
+  if (herr == hipErrorMemoryAllocation) {
+    GTEST_SKIP() << "Insufficient VRAM for ~"
+                 << (bytes_total / (1024.0 * 1024 * 1024))
+                 << " GiB device alloc.";
+  }
+  ASSERT_EQ(herr, hipSuccess) << "hipMalloc failed: " << static_cast<int>(herr);
 
-  // Disable host comparison here since it could take a while for ~8GB array
-  BufferComparator comparator(ShapeUtil::MakeShape(number_type, {element_count}),
-       /*tolerance*/0.1, /* verbose */false, /*run_host_compare*/false);
-  EXPECT_TRUE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
+  // Views:
+  //   base: whole allocation
+  //   lhs : [0 .. N-1]
+  //   rhs : [shift .. shift + N-1]
+  se::DeviceMemoryBase base(dev_ptr, bytes_total);
+  se::DeviceMemoryBase lhs(dev_ptr,
+                           static_cast<size_t>(element_count));  // bytes for U8
+  se::DeviceMemoryBase rhs(static_cast<char*>(dev_ptr) + kShiftBytes,
+                           lhs.size());
 
-  // Change only the very last entry of rhs to verify that the whole arrays are 
-  // compared (if the grid dimensions are not computed correctly, this might
-  // not be the case)
-  *(static_cast< NT *>(rhs.opaque()) + element_count - 1) = 1777;
-  EXPECT_FALSE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
+  // Initialize with zeros (MemZero works for any size/alignment).
+  ASSERT_TRUE(stream->MemZero(&base, bytes_total).ok());
+  ASSERT_TRUE(stream->BlockHostUntilDone().ok());
+
+  // Comparator: force device path (exercise kernel indexing).
+  BufferComparator comparator(
+      ShapeUtil::MakeShape(number_type, {static_cast<int64_t>(element_count)}),
+      /*tolerance=*/0.0, /*verbose=*/false, /*run_host_compare=*/false);
+
+  // Pass 1: both views read zeros -> equal.
+  {
+    auto eq_or = comparator.CompareEqual(stream.get(), lhs, rhs);
+    ASSERT_TRUE(eq_or.ok()) << eq_or.status();
+    EXPECT_TRUE(eq_or.value());
+  }
+
+  // Flip the very last element of rhs via stream-sequenced memcpy
+  // (host->device).
+  const NT new_val = static_cast<NT>(0xA5);
+  se::DeviceMemoryBase rhs_last(
+      static_cast<char*>(rhs.opaque()) + (element_count - 1), sizeof(NT));
+  ASSERT_TRUE(stream->Memcpy(&rhs_last, &new_val, sizeof(NT)).ok());
+  ASSERT_TRUE(stream->BlockHostUntilDone().ok());
+
+  // Pass 2: must detect tail mismatch.
+  {
+    auto eq_or = comparator.CompareEqual(stream.get(), lhs, rhs);
+    ASSERT_TRUE(eq_or.ok()) << eq_or.status();
+    EXPECT_FALSE(eq_or.value());
+  }
+
+  ASSERT_EQ(hipFree(dev_ptr), hipSuccess);
 }
 
 }  // namespace
