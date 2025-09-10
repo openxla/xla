@@ -92,7 +92,7 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(
   });
 
   if (target == "__onednn$matmul") {
-    const auto& matmul_config = absl::get<OneDnnMatMulConfig>(config);
+    const auto& matmul_config = std::get<OneDnnMatMulConfig>(config);
     ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine,
                         onednn_stream, resources);
   } else {

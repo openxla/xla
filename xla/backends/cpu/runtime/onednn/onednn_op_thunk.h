@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THUNK_H_
-#define XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THUNK_H_
+#ifndef XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_OP_THUNK_H_
+#define XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_OP_THUNK_H_
 
 #include <memory>
 #include <string>
@@ -70,4 +70,4 @@ class OneDnnOpThunk : public Thunk {
 
 }  // namespace xla::cpu
 
-#endif  // XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THUNK_H_
+#endif  // XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_OP_THUNK_H_
