@@ -78,7 +78,7 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
 
   const RaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  int64_t device_count_ = -1;
+  std::atomic<int64_t> device_count_ = -1;
   const bool p2p_memcpy_enabled_;
   const bool one_shot_kernel_enabled_;
 

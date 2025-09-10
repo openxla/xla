@@ -126,7 +126,7 @@ class CollectivePermuteStartThunk : public CollectiveThunk {
       sender_barrier_events_;
 
   bool p2p_memcpy_enabled_ = false;
-  int64_t device_count_;
+  std::atomic<int64_t> device_count_;
 };
 
 absl::Status RunCollectivePermute(

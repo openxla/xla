@@ -76,7 +76,7 @@ class AllToAllStartThunk : public CollectiveThunk {
  private:
   const AllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  int64_t device_count_ = 1;
+  std::atomic<int64_t> device_count_ = 1;
   bool p2p_memcpy_enabled_ = false;
   absl::Mutex pointer_maps_mutex_;
   // Maps from a device to a uint64_t array of size num_devices. The array is
