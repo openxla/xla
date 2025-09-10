@@ -28,8 +28,8 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// There are 4 total streams.
-inline constexpr int64_t kAsyncStreamTotal = 4;
+// Upper limit of total number of streams for main, compute, and collectives.
+inline constexpr int64_t kAsyncStreamTotal = 16;
 
 // Strongly-typed wrapper to represent collective stream ID.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
