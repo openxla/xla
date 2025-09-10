@@ -103,8 +103,8 @@ constexpr size_t kMatchingPathsCacheDefaultMaxEntries = 1024;
 // Number of bucket locations cached, most workloads wont touch more than one
 // bucket so this limit is set fairly low
 constexpr size_t kBucketLocationCacheMaxEntries = 10;
-// Number of bucket storage layout cached, most workloads wont touch more than one
-// bucket so this limit is set fairly low
+// Number of bucket storage layout cached, most workloads wont touch more than
+// one bucket so this limit is set fairly low
 constexpr size_t kStorageLayoutCacheMaxEntries = 10;
 // LRUCache that has 30 mins expiration.
 constexpr uint64 kStorageLayoutCacheMaxAgeSecs = 30 * 60;
@@ -1668,8 +1668,7 @@ absl::Status GcsFileSystem::GetStorageLayout(const string& bucket,
   std::unique_ptr<HttpRequest> request;
   TF_RETURN_IF_ERROR(CreateHttpRequest(&request));
 
-  request->SetUri(
-      strings::StrCat(kGcsUriBase, "b/", bucket, "/storageLayout"));
+  request->SetUri(absl::StrCat(kGcsUriBase, "b/", bucket, "/storageLayout"));
 
   if (result_buffer != nullptr) {
     request->SetResultBuffer(result_buffer);
@@ -1679,8 +1678,8 @@ absl::Status GcsFileSystem::GetStorageLayout(const string& bucket,
   return request->Send();
 }
 
-absl::Status GcsFileSystem::ParseIsHnsEnabled(const Json::Value& storage_layout_json,
-                               bool* is_hns) {
+absl::Status GcsFileSystem::ParseIsHnsEnabled(
+    const Json::Value& storage_layout_json, bool* is_hns) {
   *is_hns = false;
   const auto hns_node =
       storage_layout_json.get("hierarchicalNamespace", Json::Value::null);
@@ -1689,7 +1688,7 @@ absl::Status GcsFileSystem::ParseIsHnsEnabled(const Json::Value& storage_layout_
     bool enabled = false;
     if (hns_node.isMember("enabled")) {
       TF_RETURN_IF_ERROR(GetBoolValue(hns_node, "enabled", &enabled));
-      
+
       *is_hns = enabled;
     }
   }
@@ -1700,12 +1699,11 @@ absl::Status GcsFileSystem::IsBucketHnsEnabled(const string& bucket,
                                                bool* is_hns) {
   Json::Value storage_layout;
 
-  auto compute_func = [this](const string& bucket,
-                             Json::Value* layout_json) {
+  auto compute_func = [this](const string& bucket, Json::Value* layout_json) {
     std::vector<char> layout_buffer;
     absl::Status layout_status = GetStorageLayout(bucket, &layout_buffer);
     if (!layout_status.ok()) {
-      return layout_status; // Propagate all errors.
+      return layout_status;  // Propagate all errors.
     }
     return ParseJson(layout_buffer, layout_json);
   };
@@ -2062,15 +2060,16 @@ absl::Status GcsFileSystem::RenameFile(const string& src, const string& target,
   // It's a directory. Parse both source and target to check the buckets.
   string src_bucket, src_object;
   TF_RETURN_IF_ERROR(ParseGcsPath(src, true, &src_bucket, &src_object));
-  
+
   string target_bucket, target_object;
-  TF_RETURN_IF_ERROR(ParseGcsPath(target, true, &target_bucket, &target_object));
+  TF_RETURN_IF_ERROR(
+      ParseGcsPath(target, true, &target_bucket, &target_object));
 
   // If buckets are the same, we can check for HNS and use the fast rename API.
   if (src_bucket == target_bucket) {
     bool hns_enabled = false;
     TF_RETURN_IF_ERROR(IsBucketHnsEnabled(src_bucket, &hns_enabled));
-    
+
     if (hns_enabled) {
       return RenameFolderHns(src, target);
     }
@@ -2207,7 +2206,8 @@ absl::Status GcsFileSystem::DeleteRecursively(const string& dirname,
   return absl::OkStatus();
 }
 
-absl::Status GcsFileSystem::RenameFolderHns(const string& src, const string& target) {
+absl::Status GcsFileSystem::RenameFolderHns(const string& src,
+                                            const string& target) {
   VLOG(1) << "GcsFileSystem::RenameFolderHns invoked. From: '" << src
           << "' to: '" << target << "'";
 
@@ -2219,21 +2219,21 @@ absl::Status GcsFileSystem::RenameFolderHns(const string& src, const string& tar
   std::unique_ptr<HttpRequest> request;
   TF_RETURN_IF_ERROR(CreateHttpRequest(&request));
 
-  const std::string uri_to_send = absl::StrCat(
-      kGcsUriBase, "b/", src_bucket, "/folders/",
-      request->EscapeString(src_object), "/renameTo/folders/",
-      request->EscapeString(target_object));
+  const std::string uri_to_send =
+      absl::StrCat(kGcsUriBase, "b/", src_bucket, "/folders/",
+                   request->EscapeString(src_object), "/renameTo/folders/",
+                   request->EscapeString(target_object));
 
   request->SetUri(uri_to_send);
-  request->SetPostEmptyBody();  
+  request->SetPostEmptyBody();
   request->SetTimeouts(timeouts_.connect, timeouts_.idle, timeouts_.metadata);
   std::vector<char> output_buffer;
   request->SetResultBuffer(&output_buffer);
 
   VLOG(2) << "Sending rename folder request to URI: " << uri_to_send;
 
-  TF_RETURN_WITH_CONTEXT_IF_ERROR(
-      request->Send(), " when initiating rename for folder ", src);
+  TF_RETURN_WITH_CONTEXT_IF_ERROR(request->Send(),
+                                  " when initiating rename for folder ", src);
 
   // Parse the long-running operation object from the response.
   Json::Value operation_response;
@@ -2290,10 +2290,10 @@ absl::Status GcsFileSystem::RenameFolderHns(const string& src, const string& tar
       bool done = false;
       TF_RETURN_IF_ERROR(GetBoolValue(operation_response, "done", &done));
       if (done) {
-        break; 
+        break;
       }
     }
-     VLOG(3) << "Polling rename folder operation...";
+    VLOG(3) << "Polling rename folder operation...";
   }
 
   VLOG(1) << "RenameFolderHns: finished successfully for " << src;
