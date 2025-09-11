@@ -1,0 +1,36 @@
+diff --git a/transformer_engine/common/util/cuda_runtime.cpp b/transformer_engine/common/util/cuda_runtime.cpp
+index 2e5ef8b..95c43be 100644
+--- a/transformer_engine/common/util/cuda_runtime.cpp
++++ b/transformer_engine/common/util/cuda_runtime.cpp
+@@ -13,18 +13,12 @@
+ #include "../util/cuda_driver.h"
+ #include "../util/system.h"
+ #include "common/util/cuda_runtime.h"
++#include "tsl/platform/cuda_root_path.h"
+
+ namespace transformer_engine {
+
+ namespace cuda {
+
+-namespace {
+-
+-// String with build-time CUDA include path
+-#include "string_path_cuda_include.h"
+-
+-}  // namespace
+-
+ int num_devices() {
+   auto query_num_devices = []() -> int {
+     int count;
+@@ -149,8 +143,10 @@ const std::string &include_directory(bool required) {
+     std::vector<std::pair<std::string, Path>> search_paths = {{"NVTE_CUDA_INCLUDE_DIR", ""},
+                                                               {"CUDA_HOME", ""},
+                                                               {"CUDA_DIR", ""},
+-                                                              {"", string_path_cuda_include},
+                                                               {"", "/usr/local/cuda"}};
++    for (auto &candidate : tsl::CandidateCudaRoots()) {
++      search_paths.push_back({"", candidate})
++    }
+     for (auto &[env, p] : search_paths) {
+       if (p.empty()) {
+         p = getenv<Path>(env.c_str());

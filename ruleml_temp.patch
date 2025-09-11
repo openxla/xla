@@ -1,0 +1,29 @@
+diff --git a/cc/impls/linux_x86_64_linux_x86_64_cuda/wrappers/nvcc_wrapper b/cc/impls/linux_x86_64_linux_x86_64_cuda/wrappers/nvcc_wrapper
+index 2ea9fac..7b44b53 100755
+--- cc/impls/linux_x86_64_linux_x86_64_cuda/wrappers/nvcc_wrapper
++++ cc/impls/linux_x86_64_linux_x86_64_cuda/wrappers/nvcc_wrapper
+@@ -241,7 +241,7 @@ def invoke_nvcc(argv, cuda_log=False):
+   # Unfortunately, there are other options that have -c prefix too.
+   # So allowing only those look like C/C++ files.
+   src_files = [f for f in src_files if
+-               re.search(r'\.cpp$|\.cc$|\.c$|\.cxx$|\.C$', f)]
++               re.search(r'\.cpp$|\.cc$|\.c$|\.cxx$|\.C$|\.cu$', f)]
+   srcs = ' '.join(src_files)
+   out = ' -o ' + out_file[0]
+
+diff --git a/third_party/gpus/cuda/hermetic/BUILD.tpl b/third_party/gpus/cuda/hermetic/BUILD.tpl
+index 3373f9e..ab28858 100644
+--- third_party/gpus/cuda/hermetic/BUILD.tpl
++++ third_party/gpus/cuda/hermetic/BUILD.tpl
+@@ -204,6 +204,11 @@ alias(
+   actual = "@cuda_curand//:curand",
+ )
+
++alias(
++  name = "nvrtc",
++  actual = "@cuda_nvrtc//:nvrtc",
++)
++
+ cc_library(
+     name = "cuda",
+     deps = [
