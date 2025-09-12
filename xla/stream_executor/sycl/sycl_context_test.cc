@@ -20,22 +20,22 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 
-namespace stream_executor::gpu {
+namespace stream_executor::sycl {
 namespace {
 
 class SyclContextTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
-                            stream_executor::PlatformManager::PlatformWithId(
-                                stream_executor::sycl::kSyclPlatformId));
+    TF_ASSERT_OK_AND_ASSIGN(
+        Platform * platform,
+        stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
     TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                             platform->ExecutorForDevice(kDefaultDeviceOrdinal));
   }
 };
 
 TEST_F(SyclContextTest, GetDeviceTotalMemory) {
-  TF_ASSERT_OK_AND_ASSIGN(auto device,
+  TF_ASSERT_OK_AND_ASSIGN(::sycl::device device,
                           SyclDevicePool::GetDevice(kDefaultDeviceOrdinal));
   TF_ASSERT_OK_AND_ASSIGN(uint64_t total_memory,
                           SyclContext::GetDeviceTotalMemory(device));
@@ -44,7 +44,7 @@ TEST_F(SyclContextTest, GetDeviceTotalMemory) {
 }
 
 TEST_F(SyclContextTest, CreateAndSynchronizeContext) {
-  TF_ASSERT_OK_AND_ASSIGN(auto sycl_context_ptr,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclContext> sycl_context_ptr,
                           SyclContext::Create(kDefaultDeviceOrdinal));
   EXPECT_NE(sycl_context_ptr, nullptr);
   EXPECT_EQ(sycl_context_ptr->device_ordinal(), kDefaultDeviceOrdinal);
@@ -52,4 +52,4 @@ TEST_F(SyclContextTest, CreateAndSynchronizeContext) {
 }
 
 }  // namespace
-}  // namespace stream_executor::gpu
+}  // namespace stream_executor::sycl

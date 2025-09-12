@@ -26,14 +26,14 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_status.h"
 #include "xla/tsl/platform/statusor.h"
 
-namespace stream_executor::gpu {
+namespace stream_executor::sycl {
 
-const int kDefaultDeviceOrdinal = 0;
+constexpr int kDefaultDeviceOrdinal = 0;
 
-// The SYCL context constructor expects a std::vector<sycl::device> as input.
-// Therefore, we define DevicePool as a vector of sycl::device.
+// The SYCL context constructor expects a std::vector<::sycl::device> as input.
+// Therefore, we define DevicePool as a vector of ::sycl::device.
 // <https://github.khronos.org/SYCL_Reference/iface/context.html#constructors>
-using DevicePool = std::vector<sycl::device>;
+using DevicePool = std::vector<::sycl::device>;
 
 // SyclDevicePool is a utility class for managing SYCL devices.
 // It provides methods to access devices, their contexts, and device counts.
@@ -42,16 +42,16 @@ using DevicePool = std::vector<sycl::device>;
 class SyclDevicePool {
  public:
   // Returns the SYCL context associated with the device pool.
-  static absl::StatusOr<sycl::context> GetDeviceContext();
+  static absl::StatusOr<::sycl::context> GetDeviceContext();
 
   // Returns the number of devices in the pool.
   static absl::StatusOr<int> GetDeviceCount();
 
   // Returns the device ordinal for a given device.
-  static absl::StatusOr<int> GetDeviceOrdinal(const sycl::device& device);
+  static absl::StatusOr<int> GetDeviceOrdinal(const ::sycl::device& device);
 
   // Returns the SYCL device for a given device ordinal.
-  static absl::StatusOr<sycl::device> GetDevice(int device_ordinal);
+  static absl::StatusOr<::sycl::device> GetDevice(int device_ordinal);
 
  private:
   // The underlying device pool.
@@ -65,5 +65,5 @@ class SyclDevicePool {
   SyclDevicePool() = delete;
 };
 
-}  // namespace stream_executor::gpu
+}  // namespace stream_executor::sycl
 #endif  // XLA_STREAM_EXECUTOR_SYCL_SYCL_GPU_RUNTIME_H_

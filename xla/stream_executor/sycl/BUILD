@@ -47,14 +47,14 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/platform:initialize",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
     ],
     alwayslink = True,  # Registers itself with the PlatformManager.
 )
@@ -68,9 +68,9 @@ xla_cc_test(
         ":sycl_platform",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -160,8 +160,8 @@ sycl_library(
     ],
     deps = [
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -174,6 +174,7 @@ xla_test(
         "oneapi-only",
     ],
     deps = [
+        ":sycl_platform_id",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -296,9 +297,9 @@ sycl_library(
     deps = [
         ":sycl_gpu_runtime",
         "//xla/stream_executor/gpu:context",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -318,4 +319,3 @@ xla_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
-

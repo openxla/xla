@@ -15,18 +15,18 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_context.h"
 
-namespace stream_executor::gpu {
+namespace stream_executor::sycl {
 
 absl::StatusOr<std::unique_ptr<SyclContext>> SyclContext::Create(
     int device_ordinal) {
-  TF_ASSIGN_OR_RETURN(sycl::context sycl_context,
+  TF_ASSIGN_OR_RETURN(::sycl::context sycl_context,
                       SyclDevicePool::GetDeviceContext());
   return std::make_unique<SyclContext>(sycl_context, device_ordinal);
 }
 
 absl::StatusOr<uint64_t> SyclContext::GetDeviceTotalMemory(
-    const sycl::device& device) {
-  return device.get_info<sycl::info::device::global_mem_size>();
+    const ::sycl::device& device) {
+  return device.get_info<::sycl::info::device::global_mem_size>();
 }
 
 absl::Status SyclContext::Synchronize() {
@@ -35,4 +35,4 @@ absl::Status SyclContext::Synchronize() {
       "SyclContext::Synchronize is not implemented for SYCL platform.");
 }
 
-}  // namespace stream_executor::gpu
+}  // namespace stream_executor::sycl

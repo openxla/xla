@@ -23,39 +23,40 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/util/env_var.h"
 
-namespace stream_executor::gpu {
-
-DevicePool SyclDevicePool::device_pool_;
+namespace stream_executor::sycl {
 
 namespace {
 
 absl::Status IsValidDeviceOrdinal(int device_ordinal,
-                                  const std::string& function_name) {
+                                  const absl::string_view& function_name) {
   TF_ASSIGN_OR_RETURN(int device_count, SyclDevicePool::GetDeviceCount());
   if (device_ordinal >= 0 && device_ordinal < device_count) {
     return absl::OkStatus();
   } else {
     return absl::InvalidArgumentError(absl::StrCat(
-        function_name,
-        ": Invalid device ordinal: ", std::to_string(device_ordinal)));
+        function_name, ": Invalid device ordinal: ", device_ordinal));
   }
 }
 
 }  // namespace
 
-/* static */ absl::Status SyclDevicePool::InitDevicePool() {
+DevicePool SyclDevicePool::device_pool_;
+
+absl::Status SyclDevicePool::InitDevicePool() {
   static absl::once_flag device_init_flag;
   static absl::Status init_status = absl::OkStatus();
   absl::call_once(device_init_flag, []() {
     DevicePool devices;
-    auto platform_list = sycl::platform::get_platforms();
+    std::vector<::sycl::platform> platform_list =
+        ::sycl::platform::get_platforms();
     for (const auto& platform : platform_list) {
-      auto platform_name = platform.get_info<sycl::info::platform::name>();
+      std::string platform_name =
+          platform.get_info<::sycl::info::platform::name>();
       // Add all Level-Zero backend GPUs to the device pool so that it can be
       // used by the SYCL runtime.
       if (platform_name.find("Level-Zero") != std::string::npos) {
         LOG(INFO) << "Selected platform: " << platform_name;
-        auto device_list = platform.get_devices();
+        std::vector<::sycl::device> device_list = platform.get_devices();
         for (const auto& device : device_list) {
           if (device.is_gpu()) {
             devices.push_back(device);
@@ -75,19 +76,19 @@ absl::Status IsValidDeviceOrdinal(int device_ordinal,
   return init_status;
 }
 
-/* static */ absl::StatusOr<sycl::context> SyclDevicePool::GetDeviceContext() {
+absl::StatusOr<::sycl::context> SyclDevicePool::GetDeviceContext() {
   TF_RETURN_IF_ERROR(SyclDevicePool::InitDevicePool());
-  return sycl::context(device_pool_);
+  return ::sycl::context(device_pool_);
 }
 
-/* static */ absl::StatusOr<int> SyclDevicePool::GetDeviceCount() {
+absl::StatusOr<int> SyclDevicePool::GetDeviceCount() {
   TF_RETURN_IF_ERROR(SyclDevicePool::InitDevicePool());
   // Cast to int since device_ordinal is usually an int.
   return static_cast<int>(device_pool_.size());
 }
 
-/* static */ absl::StatusOr<int> SyclDevicePool::GetDeviceOrdinal(
-    const sycl::device& device) {
+absl::StatusOr<int> SyclDevicePool::GetDeviceOrdinal(
+    const ::sycl::device& device) {
   TF_RETURN_IF_ERROR(SyclDevicePool::InitDevicePool());
   auto it = std::find(device_pool_.begin(), device_pool_.end(), device);
   if (it != device_pool_.end()) {
@@ -98,16 +99,11 @@ absl::Status IsValidDeviceOrdinal(int device_ordinal,
   }
 }
 
-/* static */ absl::StatusOr<sycl::device> SyclDevicePool::GetDevice(
-    int device_ordinal) {
+absl::StatusOr<::sycl::device> SyclDevicePool::GetDevice(int device_ordinal) {
   TF_RETURN_IF_ERROR(SyclDevicePool::InitDevicePool());
-  auto device_ordinal_status =
-      IsValidDeviceOrdinal(device_ordinal, "SyclDevicePool::GetDevice");
-  if (device_ordinal_status.ok()) {
-    return device_pool_[device_ordinal];
-  } else {
-    return device_ordinal_status;
-  }
+  TF_RETURN_IF_ERROR(
+      IsValidDeviceOrdinal(device_ordinal, "SyclDevicePool::GetDevice"));
+  return device_pool_[device_ordinal];
 }
 
-}  // namespace stream_executor::gpu
+}  // namespace stream_executor::sycl

@@ -18,16 +18,16 @@ limitations under the License.
 
 #include "xla/tsl/platform/status_matchers.h"
 
-namespace stream_executor::gpu {
+namespace stream_executor::sycl {
 namespace {
 
 TEST(SyclGpuRuntimeTest, GetDeviceCount) {
-  TF_ASSERT_OK_AND_ASSIGN(int device_count, SyclDevicePool::GetDeviceCount());
-  EXPECT_GT(device_count, 0);
+  EXPECT_THAT(SyclDevicePool::GetDeviceCount(),
+              ::absl_testing::IsOkAndHolds(::testing::Gt(0)));
 }
 
 TEST(SyclGpuRuntimeTest, GetDeviceOrdinal) {
-  TF_ASSERT_OK_AND_ASSIGN(sycl::device sycl_device,
+  TF_ASSERT_OK_AND_ASSIGN(::sycl::device sycl_device,
                           SyclDevicePool::GetDevice(kDefaultDeviceOrdinal));
   TF_ASSERT_OK_AND_ASSIGN(int device_ordinal,
                           SyclDevicePool::GetDeviceOrdinal(sycl_device));
@@ -35,4 +35,4 @@ TEST(SyclGpuRuntimeTest, GetDeviceOrdinal) {
 }
 
 }  // namespace
-}  // namespace stream_executor::gpu
+}  // namespace stream_executor::sycl
