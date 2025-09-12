@@ -162,7 +162,6 @@ limitations under the License.
 #include "xla/service/gather_expander.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
-#include "xla/service/gpu/autotuning/custom_kernel_fusion_autotuner.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -375,7 +374,7 @@ class GpuThunkAotCompilationResult : public AotCompilationResult {
     CompilationResultProto proto;
     *proto.mutable_hlo_module_with_config() = hlo_module->ToProtoWithConfig();
     *proto.mutable_buffer_assignment() = buffer_assignment->ToProto();
-    proto.set_asm_text(std::string(asm_text));
+    proto.set_asm_text(asm_text);
     proto.set_binary(binary.data(), binary.size());
     proto.mutable_dnn_compiled_graphs()->insert(dnn_compiled_graphs.cbegin(),
                                                 dnn_compiled_graphs.cend());
@@ -923,23 +922,12 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<WhileLoopSimplifier>();
     pipeline.AddPass<SliceSinker>();
 
-    ReshapeMoverOptions reshape_mover_options;
-    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
-    pipeline.AddPass<ReshapeMover>(reshape_mover_options);
     pipeline.AddPass<HloConstantFolding>();
     pipeline.AddPass<ConditionalSimplifier>();
     pipeline.AddPass<RealImagExpander>();
     pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot);
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
-  }();
-
-  // ConvertMover and ReshapeMover fight with each other: ConvertMover wants
-  // to move some converts down the graph, but ReshapeMover wants to move them
-  // up the graph.  As a compromise, let ReshapeMover run to a fixed point,
-  // and then run ConvertMover + algsimp to a fixed point.
-  [&, &pipeline =
-          pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification-2")] {
     pipeline.AddPass<ConvertMover>();
     pipeline.AddPass<GpuAlgebraicSimplifier>(layout_insensitive_algsimp_opts,
                                              gpu_version);
@@ -1229,12 +1217,8 @@ void AddCollectiveCombinerPasses(
     const GpuCompiler::CompileOptions& options) {
   const DebugOptions& opts = module.config().debug_options();
 
-  bool enable_heuristic_collective_combining =
-      opts.xla_gpu_experimental_enable_heuristic_collective_combining() &&
-      !IsNVLinkConnected(module.config(), device_description,
-                         options.slice_size);
-
-  if (enable_heuristic_collective_combining) {
+  if (EnableHeuristicCollectiveCombining(module.config(), device_description,
+                                         options.slice_size)) {
     pipeline.AddPass<CollectiveCombinerAnnotator>(device_description,
                                                   alias_info, pointer_size);
   }
@@ -1601,6 +1585,13 @@ absl::Status GpuCompiler::OptimizeHloModule(
       RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec));
 
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
+  {
+    HloPassPipeline pipeline("autotune-fusion-emitters");
+    TF_RETURN_IF_ERROR(AddFusionAutotuningPass(
+        &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
+        ShapeSizeBytesFunction()));
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
 
   return absl::OkStatus();
 }  // NOLINT(readability/fn_size)
@@ -1715,16 +1706,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           *r, gpu_target_config.device_description);
     });
 
-    // Greedy pattern matching for custom kernel fusions. We run it before
-    // Triton rewriter or a regular Gemm rewriter to be able to match compatible
-    // GEMMs before they matched into Triton gemm or a cuBLAS custom call.
-    if (debug_options.xla_gpu_enable_custom_fusions()) {
-      pipeline.AddPass<SimplifyFPConversions>();
-      pipeline.AddPass<CustomKernelFusionRewriter>(
-          &gpu_target_config.device_description);
-      pipeline.AddPass<CustomKernelFusionAutotuner>(autotune_config);
-    }
-
     // Rewrite GEMMs into custom calls.
     se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
@@ -1757,7 +1738,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<SimplifyFPConversions>();
       pipeline.AddPass<CustomKernelFusionRewriter>(
           &gpu_target_config.device_description);
-      pipeline.AddPass<CustomKernelFusionAutotuner>(autotune_config);
     }
 
     // Rewrite GEMMs into custom calls.

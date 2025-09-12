@@ -52,7 +52,10 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@tsl//tsl/...",
 )
-_XLA_ONEAPI_TARGET_PATTERNS = ("//xla/stream_executor/sycl/...",)
+_XLA_ONEAPI_TARGET_PATTERNS = (
+    "//xla/stream_executor/sycl/...",
+    "//xla/service/gpu/...",
+)
 _XLA_CPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS = (
     "//xla/tools/multihost_hlo_runner:hlo_runner_main",
     "//xla/tools:compute_xspace_stats_main",
@@ -640,6 +643,9 @@ Build(
         test_lang_filters="cc,py",
         color="yes",
     ),
+    override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+    ),
     repo_env={"USE_PYWRAP_RULES": "True"},
 )
 
@@ -661,6 +667,9 @@ Build(
     ),
     build_tag_filters=tensorflow_gpu_tag_filters,
     test_tag_filters=tensorflow_gpu_tag_filters,
+    override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+    ),
     options=dict(
         verbose_failures=True,
         test_output="errors",
@@ -669,9 +678,7 @@ Build(
         color="yes",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        ["nvidia-smi"],
-    ),
+    extra_setup_commands=(["nvidia-smi"],),
 )
 
 

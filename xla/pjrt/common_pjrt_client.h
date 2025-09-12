@@ -74,6 +74,7 @@ class CommonPjRtClient : public PjRtClient {
   // for when the linearization is complete.
   virtual absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeInto(
       const LiteralSlice& literal, const xla::Layout& layout,
+      HostBufferSemantics host_buffer_semantics,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
     return absl::UnimplementedError("LinearizeInto is not supported");
   }
@@ -201,7 +202,7 @@ class CommonPjRtClient : public PjRtClient {
 class CommonPjRtBufferImpl : public CommonPjRtBuffer {
  public:
   CommonPjRtBufferImpl(
-      Shape on_device_shape,
+      const Shape& on_device_shape,
       std::unique_ptr<AbstractTrackedDeviceBuffer> tracked_device_buffer,
       PjRtMemorySpace* memory_space);
 

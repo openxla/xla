@@ -25,6 +25,10 @@ def TritonXLAExtractInsertToTritonPass : Pass<"triton-xla-extract-insert-to-trit
     Triton ops. It also rewrites `func` args to `tt.ptr` types and removes
     function return args.
   }];
+  let options = [
+    Option<"allow_tma_", "allow_tma", "bool", "false",
+           "Whether to permit lowering to TMA.">,
+  ];
   let dependentDialects = [
     "triton::TritonDialect",
     "::xla::XlaDialect"
@@ -38,7 +42,8 @@ def TritonXLASqueezeDimsPass : Pass<"triton-xla-squeeze-dims", "mlir::ModuleOp">
     This pass tries to remove size-1 dimensions from tensors.
   }];
   let dependentDialects = [
-    "::mlir::triton::xla::XlaTritonDialect"
+    "::mlir::triton::xla::XlaTritonDialect",
+    "triton::TritonDialect"
   ];
   let options = [
     Option<"finalize_", "finalize", "bool", "true",
@@ -102,6 +107,57 @@ def RoundF32ToTF32ForTf32DotRewritePass
     small precision. It is even less than for the dot with BF16 arguments.
   }];
   let constructor = "CreateRoundF32ToTF32ForTf32DotRewritePass()";
+}
+
+def TritonXLALowerGetTidPass
+    : Pass<"triton-xla-get-tid", "mlir::ModuleOp"> {
+  let summary = "Lower get_tid to the PTX intrinsic.";
+  let description = [{
+    This pass lowers get_tid to the PTX intrinsic by loading the thread ID from
+    the register and returning it.
+  }];
+  let constructor = "CreateTritonXLALowerGetTidPass()";
+}
+
+def TritonXLALowerAtomicsPass
+    : Pass<"triton-xla-atomics", "mlir::ModuleOp"> {
+  let summary = "Lower triton_xla.atomic operations.";
+  let description = [{
+    This pass lowers atomic operations to the PTX intrinsic with the given
+    memory semantics.
+  }];
+  let constructor = "CreateTritonXLALowerAtomicsPass()";
+}
+
+def TritonXLALowerBlockBarrierPass
+    : Pass<"triton-xla-block-barrier", "mlir::ModuleOp"> {
+  let summary = "Lower a block barrier to triton_xla/triton operations.";
+  let description = [{
+    This pass lowers a block barrier to Triton IR using atomic write and
+    spin-wait operations.
+  }];
+  let constructor = "CreateTritonXLALowerBlockBarrierPass()";
+}
+
+def TritonXLAConvertUnsupportedTypesPass
+    : Pass<"convert-unsupported-types", "mlir::ModuleOp"> {
+  let summary = "Converts types unsupported by Triton into their supported equivalents.";
+  let description = [{
+    This pass converts types unsupported by Triton into their supported
+    equivalents.
+
+    This is essentially useful to support e.g. flavors of float8 types that
+    Triton decides to represent as int8s from the very beginning, but that have
+    both a proper representation in HLO and upstream MLIR.
+
+    The important invariant of this pass is that the types it converts to have
+    the same bitwidth as the original type.
+
+    This pass may not be replaced by a simple `TypeConverter`, because the type
+    replacement it performs do not preserve semantics in a vacuum (but may for
+    specific ops, such as loads, stores, or bitcasts).
+  }];
+  let constructor = "CreateTritonXLAConvertUnsupportedTypesPass()";
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

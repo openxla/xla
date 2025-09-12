@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/lib/approx_topk.h"
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
+#include "xla/hlo/builder/lib/math.h"
 #include "xla/hlo/builder/lib/matrix.h"  // IWYU pragma: keep
 #include "xla/hlo/builder/lib/slicing.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -216,14 +217,24 @@ bool IsBoundedOrStatic(mlir::Type ty) {
 
   if (ranked_ty.hasStaticShape()) return true;
 
-  auto encoding = mlir::dyn_cast_or_null<mlir::mhlo::TypeExtensionsAttr>(
-      ranked_ty.getEncoding());
-  if (!encoding || encoding.getBounds().empty()) return false;
+  // Allow both StableHLO and MHLO type extensions.
+  std::optional<mlir::ArrayRef<int64_t>> bounds;
+  if (auto encoding =
+          mlir::dyn_cast_or_null<mlir::stablehlo::TypeExtensionsAttr>(
+              ranked_ty.getEncoding())) {
+    bounds = encoding.getBounds();
+  } else if (auto encoding =
+                 mlir::dyn_cast_or_null<mlir::mhlo::TypeExtensionsAttr>(
+                     ranked_ty.getEncoding())) {
+    bounds = encoding.getBounds();
+  }
 
+  if (!bounds.has_value() || bounds->empty()) return false;
+  mlir::ArrayRef<int64_t> bounds_ref = *bounds;
   int64_t rank = ranked_ty.getRank();
   for (int64_t dim = 0; dim < rank; ++dim) {
     if (ranked_ty.isDynamicDim(dim) &&
-        encoding.getBounds()[dim] == mlir::ShapedType::kDynamic)
+        bounds_ref[dim] == mlir::ShapedType::kDynamic)
       return false;
   }
   return true;
@@ -6182,6 +6193,8 @@ LogicalResult ConvertToHloModule::LowerBasicBlockAsFunction(
         // debugging.
         xla::XlaScopedOpMetadataAssignment op_metadata(
             builder, GetOpNameMetadataFromLocation(arg));
+        xla::XlaScopedOriginalValueAssignment original_value(
+            builder, mlir::mhlo::CreateOriginalValueFromLocation(arg.getLoc()));
         // Use the user-specified op_name from the location if available,
         // otherwise use the default prefix.
         std::string name = mhlo::GetDebugNameFromLocation(arg.getLoc());
@@ -6474,16 +6487,6 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
   options.use_tuple_args = use_tuple_args;
   options.return_tuple = return_tuple;
   return ConvertMlirHloToHlo(module, hlo_proto, options);
-}
-
-std::optional<xla::OriginalValueProto> CreateOriginalValueFromOp(
-    mlir::Operation* op) {
-  auto original_value_attr =
-      op->getAttrOfType<mlir::StringAttr>(kOriginalValueAttr);
-  if (!original_value_attr) {
-    return std::nullopt;
-  }
-  return xla::ConvertOriginalValue(original_value_attr.getValue());
 }
 
 }  // namespace mlir

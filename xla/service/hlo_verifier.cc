@@ -44,7 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -1920,6 +1920,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kConvolution:
     case HloOpcode::kDot:
     case HloOpcode::kRaggedDot:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
@@ -2753,37 +2754,6 @@ bool IsOtherCollective(const HloInstruction* instruction) {
   }
 }
 
-absl::Status VerifyNoCollectiveDeadlocksRecursive(
-    const HloComputation* computation, DfaState& current_state,
-    absl::flat_hash_set<const HloSendInstruction*>& send_instructions,
-    absl::flat_hash_set<const HloRecvInstruction*>& recv_instructions) {
-  for (const HloInstruction* instruction : computation->instructions()) {
-    if (instruction->called_computations().empty()) {
-      if (instruction->opcode() == HloOpcode::kSend) {
-        TF_RETURN_IF_ERROR(CheckDeadlocksForSend(
-            DynCast<HloSendInstruction>(instruction), current_state,
-            send_instructions, recv_instructions));
-      } else if (instruction->opcode() == HloOpcode::kRecv) {
-        TF_RETURN_IF_ERROR(CheckDeadlocksForRecv(
-            DynCast<HloRecvInstruction>(instruction), current_state,
-            send_instructions, recv_instructions));
-      } else if (IsOtherCollective(instruction)) {
-        TF_RETURN_IF_ERROR(CheckDeadlocksForOtherCollectives(
-            instruction, current_state, send_instructions, recv_instructions));
-      } else {
-        continue;
-      }
-    } else {
-      for (const HloComputation* computation :
-           instruction->called_computations()) {
-        TF_RETURN_IF_ERROR(VerifyNoCollectiveDeadlocksRecursive(
-            computation, current_state, send_instructions, recv_instructions));
-      }
-    }
-  }
-  return absl::OkStatus();
-}
-
 absl::Status CheckPendingSendRecvDeadlocks(
     absl::flat_hash_set<const HloSendInstruction*>& send_instructions,
     absl::flat_hash_set<const HloRecvInstruction*>& recv_instructions) {
@@ -2817,6 +2787,61 @@ absl::Status CheckPendingSendRecvDeadlocks(
   if (!last_checked_instructions.empty()) {
     return Internal("Deadlock detected. Last checked instructions: %s",
                     last_checked_instructions);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status VerifyNoCollectiveDeadlocksRecursive(
+    const HloComputation* computation, DfaState& current_state,
+    absl::flat_hash_set<const HloSendInstruction*>& send_instructions,
+    absl::flat_hash_set<const HloRecvInstruction*>& recv_instructions) {
+  for (const HloInstruction* instruction : computation->instructions()) {
+    if (instruction->called_computations().empty()) {
+      if (instruction->opcode() == HloOpcode::kSend) {
+        TF_RETURN_IF_ERROR(CheckDeadlocksForSend(
+            DynCast<HloSendInstruction>(instruction), current_state,
+            send_instructions, recv_instructions));
+      } else if (instruction->opcode() == HloOpcode::kRecv) {
+        TF_RETURN_IF_ERROR(CheckDeadlocksForRecv(
+            DynCast<HloRecvInstruction>(instruction), current_state,
+            send_instructions, recv_instructions));
+      } else if (IsOtherCollective(instruction)) {
+        TF_RETURN_IF_ERROR(CheckDeadlocksForOtherCollectives(
+            instruction, current_state, send_instructions, recv_instructions));
+      } else {
+        continue;
+      }
+    } else {
+      for (const HloComputation* computation :
+           instruction->called_computations()) {
+        // special handling for grouped multi-op async collectives
+        if (computation->IsAsyncComputation() &&
+            !computation->CanExpandIntoSingleInstruction()) {
+          // Reset the state machine for async-grouped send and recv. This block
+          // essentially calls the main VerifyNoCollectiveDeadlocks function
+          // on the async computation without recursion. This is necessary for
+          // async-wrapped send and recv instructions that are sandwiched in
+          // between partially pipelined collectives.
+          DfaState async_comp_current_state = DfaState::kNoExpectation;
+          absl::flat_hash_set<const HloSendInstruction*>
+              async_comp_send_instructions;
+          absl::flat_hash_set<const HloRecvInstruction*>
+              async_comp_recv_instructions;
+          TF_RETURN_IF_ERROR(VerifyNoCollectiveDeadlocksRecursive(
+              computation, async_comp_current_state,
+              async_comp_send_instructions, async_comp_recv_instructions));
+          if (current_state != DfaState::kNoExpectation) {
+            TF_RETURN_IF_ERROR(CheckPendingSendRecvDeadlocks(
+                async_comp_send_instructions, async_comp_recv_instructions));
+          }
+        } else {
+          // normal case
+          TF_RETURN_IF_ERROR(VerifyNoCollectiveDeadlocksRecursive(
+              computation, current_state, send_instructions,
+              recv_instructions));
+        }
+      }
+    }
   }
   return absl::OkStatus();
 }
@@ -2871,20 +2896,64 @@ absl::Status VerifyLayoutConstrainedAllReduce(const HloModule& module) {
   return absl::OkStatus();
 }
 
-// Verifies that leaf nodes in an original value contain values.
+namespace {
+std::string FormatShapeIndexValidationError(
+    absl::string_view instruction_name,
+    const absl::flat_hash_set<ShapeIndex>& shape_leaf_indices,
+    const absl::flat_hash_set<ShapeIndex>& ov_leaf_indices) {
+  std::vector<ShapeIndex> shape_only;
+  std::vector<ShapeIndex> ov_only;
+  for (const auto& idx : shape_leaf_indices) {
+    if (!ov_leaf_indices.contains(idx)) {
+      shape_only.push_back(idx);
+    }
+  }
+  for (const auto& idx : ov_leaf_indices) {
+    if (!shape_leaf_indices.contains(idx)) {
+      ov_only.push_back(idx);
+    }
+  }
+  std::sort(shape_only.begin(), shape_only.end());
+  std::sort(ov_only.begin(), ov_only.end());
+  auto shape_index_formatter = [](std::string* out, const ShapeIndex& i) {
+    absl::StrAppend(out, i.ToString());
+  };
+  return absl::StrFormat(
+      "Mismatched tuple structure in original_value for "
+      "instruction %s. Leaf indices in shape and original_value "
+      "do not match.\nIn shape only: {%s}\nIn original_value only: {%s}",
+      instruction_name, absl::StrJoin(shape_only, ", ", shape_index_formatter),
+      absl::StrJoin(ov_only, ", ", shape_index_formatter));
+}
+
+}  // namespace
+
+// Verifies that the original value has the same tuple structure as the
+// instruction shape.
 absl::Status VerifyOriginalValue(const HloModule& module) {
   for (const HloComputation* computation : module.computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
-      if (auto original_value = instruction->original_value()) {
-        // An original value is expected to have intermediate nodes that are
-        // always nullopt and leaves with actual values.
-        for (const auto& pair : original_value->original_arrays()) {
-          if (!pair.second.has_value()) {
-            return Internal(
-                "Leaf nodes in an original value is expected to contain values."
-                " Instruction: %s.",
-                instruction->ToString());
-          }
+      if (instruction->original_value()) {
+        const auto& shape = instruction->shape();
+        const auto& original_value = instruction->original_value();
+        if (original_value->is_synthetic_call()) {
+          continue;
+        }
+        absl::flat_hash_set<ShapeIndex> shape_leaf_indices;
+        ShapeUtil::ForEachLeafShape(
+            shape, [&](const Shape& /*subshape*/, const ShapeIndex& index) {
+              shape_leaf_indices.insert(index);
+            });
+
+        absl::flat_hash_set<ShapeIndex> ov_leaf_indices;
+        for (const auto& [index, value] : original_value->original_arrays()) {
+          ov_leaf_indices.insert(index);
+        }
+
+        if (shape_leaf_indices != ov_leaf_indices) {
+          return Internal("%s", FormatShapeIndexValidationError(
+                                    instruction->name(), shape_leaf_indices,
+                                    ov_leaf_indices));
         }
       }
     }

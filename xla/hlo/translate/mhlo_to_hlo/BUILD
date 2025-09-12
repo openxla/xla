@@ -116,6 +116,10 @@ cc_library(
     deps = [
         ":stack_frame_index_builder",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/translate:attributes",
+        "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -182,6 +186,7 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/builder/lib:approx_topk",
         "//xla/hlo/builder/lib:approx_topk_shape",
+        "//xla/hlo/builder/lib:math",
         "//xla/hlo/builder/lib:matrix",
         "//xla/hlo/builder/lib:quantize",
         "//xla/hlo/builder/lib:slicing",

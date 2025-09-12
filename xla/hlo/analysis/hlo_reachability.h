@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_HLO_ANALYSIS_HLO_REACHABILITY_H_
 #define XLA_HLO_ANALYSIS_HLO_REACHABILITY_H_
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -132,7 +133,13 @@ class HloReachabilityMap {
 
   // Checks if an instruction is in the Reachability map.
   bool IsPresent(const HloInstruction* instruction) const {
-    return indices_.contains(GetKey(instruction));
+    // If we cannot construct the key, then the instruction is not in the
+    // reachability map.
+    return (instruction == nullptr
+                ? false
+                : (instruction->GetModule() != nullptr
+                       ? indices_.contains(GetKey(instruction))
+                       : false));
   }
 
   // Replace the instruction "original" with "replacement" in the reachability
@@ -194,7 +201,7 @@ class HloReachabilityMap {
 
   friend class HloReachabilityMapBitSetBenchmark;
 
-  using Key = std::pair<int, int>;  // module ID, instruction ID.
+  using Key = std::pair<int64_t, int64_t>;  // module ID, instruction ID.
   static Key GetKey(const HloInstruction* instruction) {
     return {instruction->GetModule()->unique_id(), instruction->unique_id()};
   }

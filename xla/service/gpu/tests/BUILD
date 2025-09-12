@@ -78,9 +78,9 @@ xla_test(
     backends = ["gpu"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
-        "notsan",
+        "no-oneapi",  # TODO(intel-tf): Enable this test for SYCL when IntelGpuCompiler is implemented.
         "test_migrated_to_hlo_runner_pjrt",
-    ],  # TODO(b/345034145): Fix tsan error.
+    ],
     deps = if_gpu_is_configured(
         #keep sorted
         [
@@ -152,13 +152,22 @@ xla_test(
     name = "command_buffer_test",
     srcs = ["command_buffer_test.cc"],
     backends = ["gpu"],
+    # TSAN reports a false positive for the test due to noninstrumented CUDA library code.
+    env = {"TSAN_OPTIONS": "ignore_noninstrumented_modules=1"},
     tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:literal",
         "//xla:literal_util",
+        "//xla/service:hlo_module_config",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
@@ -547,10 +556,12 @@ xla_test(
     name = "ragged_dot_test",
     srcs = ["ragged_dot_test.cc"],
     backends = ["gpu"],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
-        ":gpu_codegen_test",
         "//xla:error_spec",
         "//xla:literal_util",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:test_utils",
         "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
@@ -652,15 +663,18 @@ lit_test_suite(
 #     srcs = ["xla-opt.cc"],
 #     deps = [
 #         "@llvm-project//mlir:AllExtensions",
+#         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
 #         "@llvm-project//mlir:FuncDialect",
+#         "@llvm-project//mlir:FuncExtensions",
+#         "@llvm-project//mlir:LLVMIRTransforms",
+#         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@llvm-project//mlir:RegisterAllExtensions",
 #         "@llvm-project//mlir:TensorDialect",
 #         "//xla/backends/gpu/codegen/emitters/transforms:passes",
 #         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
 #         "//xla/backends/gpu/codegen/triton/transforms:passes",
-#         # Needed for xla_ops.h
-#         "//xla/codegen/emitters/ir:xla",  # buildcleaner: keep
+#         "//xla/codegen/emitters/ir:xla",
 #         "//xla/codegen/emitters/transforms:passes",
 #         "@triton//:AllPassesAndDialects",
 #         "@triton//third_party/amd:TestAMDAnalysis",
@@ -816,8 +830,11 @@ cc_library(
     srcs = ["simple_optimization_test.cc"],
     tags = tf_gpu_tests_tags(),
     deps = [
-        "//xla/tests:hlo_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
     ],
     alwayslink = True,  # This library registers test cases at static initialization time.
@@ -835,6 +852,7 @@ xla_test(
     data = ["test_autotune_cache.textproto"],
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=" +
                         "$(execpath test_autotune_cache.textproto)"},
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",
@@ -857,6 +875,7 @@ xla_test(
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/" +
                         package_name() +
                         "/test_autotune_cache.textproto"},
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",
@@ -876,6 +895,7 @@ xla_test(
                         "TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto"},
     # Sharding must be disabled to correctly dump the autotune cache for all test.
     shard_count = 1,
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",

@@ -173,6 +173,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
 
     // Expensive instructions or unusual instructions for which fusion is
     // nonsensical.
+    case HloOpcode::kAcosh:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAfterAll:
     case HloOpcode::kAtan2:
@@ -526,7 +527,7 @@ class ReversePostOrderFusionQueue : public FusionQueue {
 bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
                                    HloInstruction* consumer,
                                    const HloReachabilityMap& reachability) {
-  absl::flat_hash_set<int> operands;
+  absl::flat_hash_set<int64_t> operands;
   auto insert = [&](const HloInstruction* operand) {
     if (operand == producer) {
       return false;
@@ -561,7 +562,7 @@ bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
   std::vector<HloInstruction*> worklist = producer->users();
   worklist.insert(worklist.end(), producer->control_successors().begin(),
                   producer->control_successors().end());
-  absl::flat_hash_set<int> visits;
+  absl::flat_hash_set<int64_t> visits;
   while (!worklist.empty()) {
     const HloInstruction* user = worklist.back();
     worklist.pop_back();

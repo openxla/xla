@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/conv_algorithm_picker.h"
-#include "xla/service/gpu/autotuning/gemm_algorithm_picker.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
@@ -147,27 +146,8 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(algsimp_options,
                                                        gpu_version);
 
-  // tf2xla bridge, DepthwiseConvolutionConverter, ConvRewriter, and
-  // CudnnSimplifyPadding introduce reshapes and transposes.  Run ReshapeMover
-  // to a fixed point.  Include algsimp because ReshapeMover relies on it.
-  [&, &pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
-          "reshape_mover_after_conv_canonicalization")] {
-    ReshapeMoverOptions reshape_mover_options;
-    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
-    pipeline.AddPass<ReshapeMover>(reshape_mover_options);
-    pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
-  }();
-
-  // The reshapes and transposes can possibly be eliminated using
-  // AlgebraicSimplifier. ConvertMover and ReshapeMover fight with each other.
-  // ConvertMover wants to move some converts down the graph, but ReshapeMover
-  // wants to move them up the graph. We run ConvertMover and algsimp to a fixed
-  // point.
-  [&, &pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
-          "simplify_after_conv_canonicalization")] {
-    pipeline.AddPass<ConvertMover>();
-    pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
-  }();
+  pipeline.AddPass<ConvertMover>();
+  pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
 
   // ConvRewriter, ConvPaddingLegalization and
   // CudnnConvPadForTensorCores may add instructions which can be simplified
@@ -253,7 +233,8 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
           .debug_options()
           .xla_gpu_experimental_disable_binary_libraries() ||
       debug_options.xla_gpu_autotune_level() == 0 ||
-      debug_options.xla_gpu_exclude_nondeterministic_ops()) {
+      debug_options.xla_gpu_exclude_nondeterministic_ops() ||
+      stream_exec == nullptr) {
     return absl::OkStatus();
   }
 
@@ -264,22 +245,18 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   // TODO: b/407494793 - Add proper support for ROCM. Currently the Cublas
   // backend uses the same API as rocBLAS.
-  if (debug_options.xla_gpu_experimental_use_autotuner_pass()) {
-    backends.push_back(
-        std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
-    auto should_autotune = [](const HloInstruction& instruction) -> bool {
-      return instruction.opcode() == HloOpcode::kCustomCall &&
-             IsCublasGemm(instruction);
-    };
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(std::move(backends), debug_options,
-                              options.device_allocator, stream_exec,
-                              thread_pool, should_autotune));
-    pipeline->AddPass(std::move(autotuner_pass));
-  } else {
-    pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
-  }
+  backends.push_back(
+      std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
+  auto should_autotune = [](const HloInstruction& instruction) -> bool {
+    return instruction.opcode() == HloOpcode::kCustomCall &&
+           IsCublasGemm(instruction);
+  };
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<AutotunerPass> autotuner_pass,
+      AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
+                            thread_pool, should_autotune,
+                            options.device_allocator));
+  pipeline->AddPass(std::move(autotuner_pass));
 
   return absl::OkStatus();
 }

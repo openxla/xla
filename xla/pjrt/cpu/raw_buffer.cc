@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -76,8 +77,8 @@ void CpuTrackedDeviceEventPromise::SetReady() {
 }
 
 PjRtFuture<> CpuTrackedDeviceEvent::GetReadyFuture() {
-  PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-  event_.AndThen([promise, event = event_]() mutable {
+  auto [promise, future] = PjRtFuture<>::MakePromise();
+  event_.AndThen([promise = std::move(promise), event = event_]() mutable {
     if (auto* error = event.GetErrorIfPresent()) {
       promise.Set(*error);
     } else {
@@ -85,11 +86,10 @@ PjRtFuture<> CpuTrackedDeviceEvent::GetReadyFuture() {
     }
   });
 
-  return PjRtFuture<>(
-      promise,
+  return PjRtFutureHelpers::WithProfiling(
+      std::move(future),
       /*on_block_start=*/
-      [ready_event = FormRef(promise.async_value()),
-       callee_method = callee_method_, callee_type = callee_type_]() {
+      [callee_method = callee_method_, callee_type = callee_type_]() {
         tsl::profiler::TraceMeProducer traceme(
             [&] { return absl::StrCat(callee_type, "::", callee_method); });
         return PjRtFutureHelpers::ProfilingKeys({traceme.GetContextId()});
@@ -104,8 +104,10 @@ PjRtFuture<> CpuTrackedDeviceEvent::GetReadyFuture() {
 }
 
 /*static*/ absl::StatusOr<tsl::RCReference<CpuRawBuffer>>
-CpuRawBuffer::Allocate(PjRtMemorySpace* memory_space, size_t size_bytes) {
-  TF_ASSIGN_OR_RETURN(auto memory, CpuDeviceMemory::Allocate(size_bytes));
+CpuRawBuffer::Allocate(PjRtMemorySpace* memory_space, size_t size_bytes,
+                       const CpuDeviceMemory::Allocator& allocator) {
+  TF_ASSIGN_OR_RETURN(auto memory,
+                      CpuDeviceMemory::Allocate(size_bytes, allocator));
   return tsl::MakeRef<CpuRawBuffer>(memory_space, std::move(memory));
 }
 

@@ -311,13 +311,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:call_inliner",
         "//xla/service:hlo_creation_utils",
-        "//xla/service:hlo_module_config",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

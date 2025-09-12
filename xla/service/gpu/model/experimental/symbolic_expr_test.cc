@@ -123,6 +123,35 @@ TEST_F(SymbolicExprTest, ReplaceVariables) {
   EXPECT_EQ(result.ToString(), "(v0 + (v2 * 10))");
 }
 
+TEST_F(SymbolicExprTest, ReplaceSymbols) {
+  SymbolicExpr d0 = ctx.CreateVariable(0);
+  SymbolicExpr s0 = ctx.CreateVariable(1);
+  SymbolicExpr s1 = ctx.CreateVariable(2);
+  SymbolicExpr c7 = ctx.CreateConstant(7);
+  SymbolicExpr expr_to_sub = (d0 + s0 * 2) * s1;
+  SymbolicExpr result = expr_to_sub.ReplaceSymbols({d0, c7}, /*num_dims=*/1);
+  EXPECT_EQ(result, ((d0 + (d0 * 2)) * c7));
+}
+
+TEST_F(SymbolicExprTest, ReplaceDimsAndSymbols) {
+  SymbolicExpr d0 = ctx.CreateVariable(0);
+  SymbolicExpr s0 = ctx.CreateVariable(1);
+  SymbolicExpr s1 = ctx.CreateVariable(2);
+  SymbolicExpr c7 = ctx.CreateConstant(7);
+  SymbolicExpr expr_to_sub = (d0 + s0 * 2) * s1;
+  SymbolicExpr result =
+      expr_to_sub.ReplaceDimsAndSymbols({s0}, {d0, c7}, /*num_dims=*/1);
+  EXPECT_EQ(result, ((s0 + (d0 * 2)) * c7));
+
+  SymbolicExpr replace_only_dims =
+      expr_to_sub.ReplaceDimsAndSymbols({s0}, {}, /*num_dims=*/1);
+  EXPECT_EQ(replace_only_dims, ((s0 + (s0 * 2)) * s1));
+
+  SymbolicExpr replace_only_symbols =
+      expr_to_sub.ReplaceDimsAndSymbols({}, {d0, c7}, /*num_dims=*/1);
+  EXPECT_EQ(replace_only_symbols, ((d0 + (d0 * 2)) * c7));
+}
+
 TEST_F(SymbolicExprTest, UniquingWorks) {
   SymbolicExpr c1 = ctx.CreateConstant(42);
   SymbolicExpr c2 = ctx.CreateConstant(42);
@@ -264,6 +293,15 @@ TEST_F(SymbolicExprTest, Canonicalization_DivMod) {
             "((v0 floordiv 2) * -1)");
   EXPECT_EQ(((v0 * 6).floorDiv(-3)).Canonicalize().ToString(), "(v0 * -2)");
   EXPECT_EQ(((v0 * 6).ceilDiv(-3)).Canonicalize().ToString(), "(v0 * -2)");
+}
+
+TEST_F(SymbolicExprTest, Walk) {
+  SymbolicExpr expr = (v0 + 42) * v1;
+  std::vector<std::string> visited_exprs;
+  expr.Walk([&](SymbolicExpr e) { visited_exprs.push_back(e.ToString()); });
+
+  EXPECT_THAT(visited_exprs, ::testing::ElementsAre("v0", "42", "(v0 + 42)",
+                                                    "v1", "((v0 + 42) * v1)"));
 }
 
 }  // namespace
