@@ -16,5 +16,7 @@ those to this list.
 temporary_patch_list = [
     "//third_party/triton:temporary/verify_nvmma_encoding.patch",
     "//third_party/triton:temporary/triton-tensor-layout-init-fiasco.patch",
+    "//third_party/triton:temporary/accelerateamdmatmul.patch",
+    "//third_party/triton:temporary/accelerateamdmatmul2.patch",
     # Add new patches just above this line
 ]
