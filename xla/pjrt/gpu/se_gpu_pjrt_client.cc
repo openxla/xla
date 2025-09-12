@@ -1082,7 +1082,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       AllocateDestinationBuffer(shape, device, local_device,
                                 /*copy_stream=*/stream,
                                 /*is_uninitialized_create=*/true, this,
-                                definition_event));
+                                definition_event, /*memory_space=*/nullptr));
 
   // Acquire a hold on the buffer to access the underlying memory.
   PjRtStreamExecutorBuffer::ScopedHold hold = buffer->GetBufferWithUsageHold();

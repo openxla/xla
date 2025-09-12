@@ -1326,7 +1326,7 @@ PjRtStreamExecutorClient::CreateUninitializedBuffer(
       AllocateDestinationBuffer(compact_shape, device, local_device,
                                 /*copy_stream=*/nullptr,
                                 /*is_uninitialized_create=*/true, this,
-                                definition_event));
+                                definition_event, memory_space));
   return std::unique_ptr<PjRtBuffer>(std::move(py_buffer));
 }
 
@@ -1392,7 +1392,8 @@ PjRtStreamExecutorClient::BufferFromHostLiteral(const LiteralSlice& literal,
       std::unique_ptr<PjRtStreamExecutorBuffer> py_buffer,
       AllocateDestinationBuffer(compact_shape, device, local_device,
                                 local_device->host_to_device_stream(),
-                                /*is_uninitialized_create=*/false, this));
+                                /*is_uninitialized_create=*/false, this,
+                                /*definition_event=*/nullptr, memory_space));
 
   PjRtStreamExecutorBuffer::ScopedHold device_buffer(
       py_buffer->GetBufferWithUsageHold());
