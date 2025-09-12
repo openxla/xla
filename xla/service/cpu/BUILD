@@ -1717,9 +1717,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:env",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
 )
