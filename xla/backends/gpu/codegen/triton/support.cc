@@ -325,7 +325,7 @@ bool IsSupportedDotAlgorithm(PrecisionConfig::Algorithm algorithm,
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32:
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X9:
-      if (!std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
+      if (std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
         return true;
       }
     case PrecisionConfig::ALG_DOT_BF16_BF16_BF16:
@@ -370,14 +370,14 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
   auto partially_supported_signed_types = {S4, S8, S16, S32, S64};
   if (absl::c_linear_search(partially_supported_signed_types, input_type)) {
     if ((absl::c_linear_search(partially_supported_signed_types, result_type) &&
-          !std::holds_alternative<se::RocmComputeCapability>(gpu_version)) ||
+          std::holds_alternative<se::CudaComputeCapability>(gpu_version)) ||
         (input_type == S4 &&
           std::holds_alternative<se::RocmComputeCapability>(gpu_version))) {
       return CodegenDecision::Forbid(
           "Dot operation does not support these signed integer types.");
     }
     if (primitive_util::IsFloatingPointType(result_type) &&
-        !std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
+        std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
       return CodegenDecision::Forbid(
           "Dot operation does not support floating point input and signed "
           "integer result types.");
