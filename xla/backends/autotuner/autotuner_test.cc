@@ -272,7 +272,7 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigAndSkipsNonCompilableConfig) {
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(absl::InternalError("test error")))
       .WillOnce(Return(std::unique_ptr<Executable>()));
-  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_1")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
 
@@ -308,7 +308,7 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
   EXPECT_CALL(*backend, Compile(_, _))
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
-  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_1")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
 
