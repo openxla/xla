@@ -37,7 +37,6 @@ _CLANG_HOST_COMPILER_PATH = "CLANG_COMPILER_PATH"
 _CLANG_HOST_COMPILER_PREFIX = "CLANG_HOST_COMPILER_PATH"
 
 def _repo_root(repository_ctx, repo_name):
-    # Use the path to @repo//:BUILD and take its dirname to find the repo root.
     return str(repository_ctx.path(Label("@%s//:BUILD" % repo_name)).dirname)
 
 def _sycl_fixed_config_from_http_archives(repository_ctx):
@@ -49,15 +48,12 @@ def _sycl_fixed_config_from_http_archives(repository_ctx):
     # Read ONEAPI_VERSION from --repo_env=ONEAPI_VERSION=...
     oneapi_version = get_host_environ(repository_ctx, "ONEAPI_VERSION", "")
     if not oneapi_version:
-        # Minimal, safe fallback that matches your current layout.
-        # If you prefer failing hard instead, replace with:
-        #   fail("ONEAPI_VERSION must be set via --repo_env=ONEAPI_VERSION=<X.Y[.Z]>")
         oneapi_version = "2025.1"
 
     return struct(
         sycl_basekit_path = sycl_root + "/oneapi",
         sycl_toolkit_path = sycl_root + "/oneapi/" + oneapi_version,
-        sycl_version_number = "80000",  # keep your existing value
+        sycl_version_number = "80000", 
         sycl_basekit_version_number = oneapi_version,
         mkl_include_dir = sycl_root + "/oneapi/mkl/" + oneapi_version + "/include",
         mkl_library_dir = sycl_root + "/oneapi/mkl/" + oneapi_version + "/lib",
