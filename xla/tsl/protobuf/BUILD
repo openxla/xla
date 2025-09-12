@@ -30,7 +30,7 @@ tf_proto_library(
     make_default_target_header_only = True,
     protodeps = if_google([
         "@com_google_protobuf//:any",
-        "@com_google_protobuf//:wrappers",
+        "//google/protobuf:wrappers",
     ]),
     visibility = ["//visibility:public"],
 )
@@ -39,7 +39,7 @@ tf_proto_library(
     name = "dnn_proto",
     srcs = ["dnn.proto"],
     make_default_target_header_only = True,
-    protodeps = if_google(["@com_google_protobuf//:wrappers"]),
+    protodeps = if_google(["//google/protobuf:wrappers"]),
     visibility = ["//visibility:public"],
 )
 
