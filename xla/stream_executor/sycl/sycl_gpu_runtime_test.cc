@@ -1,35 +1,38 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 
 #include <gtest/gtest.h>
 
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
-#include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/status_matchers.h"
 
 namespace stream_executor::sycl {
+namespace {
 
-static Platform* NewPlatform() {
-  TF_ASSERT_OK_AND_ASSIGN(
-      Platform * platform,
-      stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
-  return platform;
+TEST(SyclGpuRuntimeTest, GetDeviceCount) {
+  EXPECT_THAT(SyclDevicePool::GetDeviceCount(),
+              ::absl_testing::IsOkAndHolds(::testing::Gt(0)));
 }
 
-TEST(SyclPlatformTest, Name) {
-  auto platform = NewPlatform();
-  auto name = platform->Name();
-  EXPECT_EQ(name, "SYCL");
+TEST(SyclGpuRuntimeTest, GetDeviceOrdinal) {
+  TF_ASSERT_OK_AND_ASSIGN(::sycl::device sycl_device,
+                          SyclDevicePool::GetDevice(kDefaultDeviceOrdinal));
+  TF_ASSERT_OK_AND_ASSIGN(int device_ordinal,
+                          SyclDevicePool::GetDeviceOrdinal(sycl_device));
+  EXPECT_EQ(device_ordinal, kDefaultDeviceOrdinal);
 }
 
+}  // namespace
 }  // namespace stream_executor::sycl
