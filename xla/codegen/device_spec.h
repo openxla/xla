@@ -59,6 +59,12 @@ class DeviceSpec {
            std::holds_alternative<stream_executor::CudaComputeCapability>(
                gpu().gpu_compute_capability());
   }
+  bool IsIntelGpu() const {
+    // TODO(intel-gpu): Align with CUDA and ROCM approach of detecting Intel
+    // GPU.
+    auto gpu_name = gpu().name();
+    return absl::StrContains(gpu_name, "Intel");
+  }
 
  private:
   DeviceSpecType type_;
