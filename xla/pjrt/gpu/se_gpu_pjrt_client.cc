@@ -1039,7 +1039,7 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
       on_done(absl::OkStatus(), /*sends_were_enqueued=*/true);
     }
   };
-  thread_pool()->Schedule(send);
+  (*local_device)->execute_thread()->Schedule(send);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -1154,7 +1154,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       SetEventAsError(definition_event, s);
     }
   };
-  thread_pool()->Schedule(recv);
+  local_device->execute_thread()->Schedule(recv);
 
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
   buffers.push_back(std::move(buffer));
