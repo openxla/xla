@@ -48,6 +48,9 @@ enum class GPUTopologyType {
   MULTI_HOST = 2,
 };
 
+// Returns true if all devices are within the same NVLink domain (slice).
+bool IsIntraNVLinkDomain(const HloModuleConfig& config, int64_t slice_size);
+
 // Returns true if heuristic collective combining is enabled.
 // Heuristic collective combining enables more aggressive optimizations based
 // on the platform and HLO's topology.
