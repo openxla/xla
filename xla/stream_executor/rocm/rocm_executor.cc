@@ -745,6 +745,11 @@ DeviceMemoryBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
       return DeviceMemoryBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ false), size);
     case MemoryType::kP2P:
+      // On the ROCm platform, differences in cache design (e.g., coherence
+      // protocol) can cause cache coherence issues for some archs (e.g., MI200)
+      // when using normal device memory. To avoid these problems, we use
+      // fine-grained memory in P2P communication for all archs to make sure of
+      // the correctness.
       return DeviceMemoryBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ true), size);
     case MemoryType::kHost:
