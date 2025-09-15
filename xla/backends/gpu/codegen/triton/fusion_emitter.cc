@@ -117,7 +117,6 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
@@ -2298,8 +2297,7 @@ std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
     return nvptx::LibDevicePath(
         hlo_config.debug_options().xla_gpu_cuda_data_dir());
   }
-  return amdgpu::LibDevicePath(
-      device_info.rocm_compute_capability().gcn_arch_name(), tsl::RocdlRoot());
+  return "";
 }
 
 }  // namespace gpu
