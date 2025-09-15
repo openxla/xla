@@ -413,7 +413,7 @@ bool GetDeviceProperties(hipDeviceProp_t* device_properties,
 }
 
 // Allocates memory on the GPU device.
-void* DeviceAllocate(Context* context, uint64_t bytes, bool is_fine_grained) {
+void* DeviceAllocate(Context* context, uint64_t bytes, bool is_fine_grained = false) {
   if (bytes == 0) {
     return nullptr;
   }
@@ -422,6 +422,9 @@ void* DeviceAllocate(Context* context, uint64_t bytes, bool is_fine_grained) {
   hipDeviceptr_t device_mem = nullptr;
   hipError_t res;
   if (is_fine_grained) {
+    // Fine-grained memory, which has better coherence during the kernel execution.
+    // This type of memory is only used in P2P communication to solve the cache coherence
+    // issue for some archs (e.g., MI200); most of the time, you don't have to use it.
     res = wrap::hipExtMallocWithFlags(&device_mem, bytes,
                                       hipDeviceMallocFinegrained);
   } else {
