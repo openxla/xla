@@ -77,6 +77,7 @@ bazel \
     --define xnn_enable_avxvnniint8=false \
     --define xnn_enable_avx512fp16=false \
     --config=rocm_ci \
+    --config=rocm_rbe \
     --profile=/tf/pkg/profile.json.gz \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \

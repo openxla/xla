@@ -71,9 +71,10 @@ BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 
+SCRIPT_DIR=$(realpath $(dirname $0))
 ASAN_ARGS=()
-ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
-ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$SCRIPT_DIR/asan_ignore_list.txt:use_sigaltstack=0")
+ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$SCRIPT_DIR/lsan_ignore_list.txt:use_sigaltstack=0")
 ASAN_ARGS+=("--config=asan")
 
 bazel \
@@ -85,6 +86,7 @@ bazel \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
     --config=rocm_ci \
+    --config=rocm_rbe \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \
     --test_timeout=920,2400,7200,9600 \
