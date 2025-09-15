@@ -741,7 +741,7 @@ DeviceMemoryBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
     case MemoryType::kDevice:
       return DeviceMemoryBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ false), size);
-    case MemoryType::kP2PTempBuf:
+    case MemoryType::kP2P:
       return DeviceMemoryBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ true), size);
     case MemoryType::kHost:
