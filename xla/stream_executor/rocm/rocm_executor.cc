@@ -403,6 +403,18 @@ std::string GetPCIBusID(hipDevice_t device) {
   return pci_bus_id;
 }
 
+bool IsEccEnabled(hipDevice_t device, bool* result) {
+  int value = -1;
+  auto status = ToStatus(wrap::hipDeviceGetAttribute(
+      &value, hipDeviceAttributeEccEnabled, device));
+  if (!status.ok()) {
+    LOG(ERROR) << "failed to query ECC status: " << status;
+    return false;
+  }
+  *result = value;
+  return true;
+}
+
 bool GetDeviceProperties(hipDeviceProp_t* device_properties,
                          int device_ordinal) {
   hipError_t res =
@@ -1102,8 +1114,11 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     desc.set_l2_cache_size(prop.l2CacheSize);
   }
 
-  // No way to query ECC status from the API.
-  desc.set_ecc_enabled(false);
+  {
+    bool ecc_enabled = false;
+    IsEccEnabled(device, &ecc_enabled);
+    desc.set_ecc_enabled(ecc_enabled);
+  }
 
   uint64_t device_memory_size = -1;
   (void)RocmContext::GetDeviceTotalMemory(device, &device_memory_size);
