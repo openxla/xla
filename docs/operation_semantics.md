@@ -194,7 +194,7 @@ the received parts along dimension 0, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
 
 ### AllToAll - Example 2 - StableHLO
-![](images/ops_alltoall_2.svg) 
+![An example of AllToAll dataflow for StableHLO](images/ops_alltoall_2.svg) 
 
 In the above example, there are 2 replicas participating in the AllToAll. On
 each replica, the operand has shape f32[2,4]. The operand is split into 2 parts
@@ -2221,7 +2221,7 @@ replicas, then the output value from this op where `scatter_dim` is `0` will be
 
 ### ReduceScatter - Example 1 - StableHLO
 
-![](images/ops_reduce_scatter_1.svg) 
+![An example of ReduceScatter dataflow for StableHLO](images/ops_reduce_scatter_1.svg) 
 
 In the above example, there are 2 replicas participating in the ReduceScatter.
 On each replica, the operand has shape f32[2,4]. An all-reduce (sum) is
@@ -2323,7 +2323,7 @@ sensitive to reassociation. See the discussion about associativity in the
 context of [`Reduce`](#reduce) for more details.
 
 ### ReduceWindow - Example 2 - StableHLO
-![](images/ops_reduce_window_2.svg)
+![A example of ReduceWindow dataflow for StableHLO](images/ops_reduce_window_2.svg)
 
 In the above example:
 
@@ -2657,7 +2657,7 @@ For a detailed informal description and examples, refer to the
 "Informal Description" section under `Gather`.
 
 ### Scatter - Example 1 - StableHLO 
-![](images/ops_scatter_1.svg)
+![An example of Scatter dataflow for StableHLO](images/ops_scatter_1.svg)
 
 In the above image, each row of the table is an example of one update index
 example. Let's review stepwise from left(Update Index) to right(Result Index):
