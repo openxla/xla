@@ -71,11 +71,22 @@ BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 
-SCRIPT_DIR=$(realpath $(dirname $0))
-ASAN_ARGS=()
-ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$SCRIPT_DIR/asan_ignore_list.txt:use_sigaltstack=0")
-ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$SCRIPT_DIR/lsan_ignore_list.txt:use_sigaltstack=0")
-ASAN_ARGS+=("--config=asan")
+SANITIZER_ARGS=()
+if [[ $1 == "asan" ]]; then
+    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--config=asan")
+elif [[ $1 == "tsan" ]]; then
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
+    SANITIZER_ARGS+=("--config=tsan")
+    EXCLUDED_TESTS+=(
+        HloTest*
+        FunctionalHloRunnerTest*
+        TopkTest*
+        SimpleOptimizationTest.OptimizeModule
+        OutfeedInNestedComputationTest.OutfeedInConditional
+    )
+fi
 
 bazel \
     test \
@@ -103,8 +114,31 @@ bazel \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
-    "${ASAN_ARGS[@]}" \
-    -- //xla/... 
+    "${SANITIZER_ARGS[@]}" \
+    -- //xla/... \
+       -//xla/tests:collective_ops_e2e_test \
+       -//xla/tests:collective_ops_test \
+       -//xla/tests:collective_pipeline_parallelism_test \
+       -//xla/tests:replicated_io_feed_test \
+       -//xla/backends/gpu/collectives:gpu_clique_key_test \
+       -//xla/backends/gpu/collectives:nccl_communicator_test \
+       -//xla/service:collective_ops_utils_test \
+       -//xla/service:collective_pipeliner_test \
+       -//xla/service:collective_permute_cycle_test \
+       -//xla/service:batched_gather_scatter_normalizer_test \
+       -//xla/service:all_reduce_simplifier_test \
+       -//xla/service:all_gather_simplifier_test \
+       -//xla/service:reduce_scatter_decomposer_test \
+       -//xla/service:reduce_scatter_reassociate_test \
+       -//xla/service:reduce_scatter_combiner_test \
+       -//xla/service:scatter_simplifier_test \
+       -//xla/service:sharding_propagation_test \
+       -//xla/service:sharding_remover_test \
+       -//xla/service:p2p_schedule_preparation_test \
+       -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
+       -//xla/pjrt/distributed:topology_util_test \
+       -//xla/pjrt/distributed:client_server_test \
+       -//xla/backends/gpu/runtime:all_reduce_test
 
 # clean up bazel disk_cache
 bazel shutdown \

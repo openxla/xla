@@ -2,3 +2,4 @@ leak:libhsa-runtime64.so
 leak:libstdc++.so
 leak:libamdhip64.so
 leak:libhiprtc.so
+leak:librccl.so

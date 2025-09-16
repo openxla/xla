@@ -2887,7 +2887,7 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
         [promise = std::move(promise)]() mutable { promise.Set(); });
   }
   TF_RETURN_IF_ERROR(device_state->ThenExecuteCallback(
-      stream, [callbacks{std::move(compute_callbacks)},
+      stream, [callbacks = std::move(compute_callbacks),
                buffers_to_release{std::move(buffers_to_release)}]() mutable {
         for (auto& fn : callbacks) {
           std::move(fn)();

@@ -221,8 +221,16 @@ build:asan --copt -fsanitize=address
 build:asan --copt -DADDRESS_SANITIZER
 build:asan --copt -O1
 build:asan --copt -g
+build:tsan --linkopt -g
 build:asan --copt -fno-omit-frame-pointer
 build:asan --linkopt -fsanitize=address
+
+build:tsan --strip=never
+build:tsan --copt -fsanitize=thread
+build:tsan --copt -g
+build:tsan --copt -fno-omit-frame-pointer
+build:tsan --linkopt -fsanitize=thread
+build:tsan --linkopt -g
 
 build:rocm_base --copt=-Wno-gnu-offsetof-extensions
 build:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain

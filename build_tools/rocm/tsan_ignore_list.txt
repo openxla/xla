@@ -1,0 +1,32 @@
+race:libhsa-runtime64.so
+race:libamdhip64.so
+race:hipStreamSynchronize
+race:libhipblaslt.so
+race:libamd_comgr.so
+
+# Abseil reference counting (DropRef / RefCount init)
+race:tsl::ReferenceCounted
+race:absl::lts_*::Mutex
+race:absl::lts_*::CondVar
+
+# XLA GPU RawSEDeviceMemory RCReference reuse
+race:xla::RawSEDeviceMemory
+race:xla::gpu::AllocateDestinationBuffer
+race:xla::LocalDeviceState::ThenRelease
+
+# To be fixed
+race:xla::LiteralBase::Piece::DeallocateBuffers
+race:xla::PjRtStreamExecutorClient::BufferFromHostBufferInternal
+race:xla::PjRtStreamExecutorLoadedExecutable::ExecuteHelper
+race:xla::HloRunnerPjRt::TransferLiteralsFromDevice
+race:xla::MutableLiteralBase::~MutableLiteralBase
+race:xla::MutableLiteralBase::PopulateR1<int>
+race:xla::xla::gpu::GpuCompiler::CompileSingleModule
+race:xla::LiteralBase::Piece::Storage::Storage
+race:xla::LocalClient::TransferFromOutfeedLocal
+race:llvm::cl::opt_storage<bool, false, false>::setValue<int>
+race:xla::gpu::(anonymous namespace)::RecoverExp2Pattern::initStaticsIfNeeded<std::tuple<mlir::Float32Type, mlir::FloatTF32Type, mlir::BFloat16Type>>
+race:lld::lldMain
+race:xla::Literal xla::LiteralUtil::CreateR1<int>
+race:absl::lts_20230802::inlined_vector_internal::Storage<long, 2ul, std::allocator<long>>::MemcpyFrom
+race:llvm::*

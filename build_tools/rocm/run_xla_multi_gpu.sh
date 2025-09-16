@@ -45,13 +45,8 @@ if [[ $TF_GPU_COUNT -lt 4 ]]; then
     exit
 fi
 
-TF_TESTS_PER_GPU=1
-N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
 amdgpuname=(`rocminfo | grep gfx | head -n 1`)
 AMD_GPU_GFX_ID=${amdgpuname[1]}
-echo ""
-echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s) for gpu ${AMD_GPU_GFX_ID}."
-echo ""
 
 export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
@@ -72,6 +67,16 @@ EXCLUDED_TESTS=(
   RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/async_decomposer
 )
 
+SANITIZER_ARGS=()
+if [[ $1 == "asan" ]]; then
+    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--config=asan")
+elif [[ $1 == "tsan" ]]; then
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
+    SANITIZER_ARGS+=("--config=tsan")
+fi
+
 bazel \
     test \
     --define xnn_enable_avxvnniint8=false \
@@ -89,14 +94,13 @@ bazel \
     --test_output=errors \
     --flaky_test_attempts=3 \
     --keep_going \
-    --local_test_jobs=${N_TEST_JOBS} \
-    --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-    --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
+    --test_strategy=exclusive \
     --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${SANITIZER_ARGS[@]}" \
     -- //xla/tests:collective_ops_e2e_test \
        //xla/tests:collective_ops_test \
        //xla/tests:collective_pipeline_parallelism_test \
