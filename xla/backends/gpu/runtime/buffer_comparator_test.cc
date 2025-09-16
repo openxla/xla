@@ -431,8 +431,10 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
 
   // Change only the very last entry of rhs to verify that the whole arrays are 
   // compared (if the grid dimensions are not computed correctly, this might
-  // not be the case)
-  *(static_cast< NT *>(rhs.opaque()) + element_count - 1) = 1777;
+  // not be the case) 
+  auto slice = rhs.GetByteSlice(element_count*sizeof(NT) - sizeof(uint32_t), 
+        sizeof(uint32_t));
+  TF_CHECK_OK(stream->Memset32(&slice, 0xABCD1777, slice.size()));
   EXPECT_FALSE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 }
 
