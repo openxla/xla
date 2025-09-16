@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
-#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -72,6 +71,9 @@ class PjRtCompatibleLoadedExecutable
     : public llvm::RTTIExtends<PjRtCompatibleLoadedExecutable,
                                LoadedExecutable> {
  public:
+  // Key for the call location attribute in the custom_options attribute map.
+  static constexpr absl::string_view kCallLocation = "call_location";
+
   // APIs that allow direct access to `xla::PjRtLoadedExecutable` for PjRt-only
   // operations.
   virtual xla::PjRtLoadedExecutable* pjrt_loaded_executable() = 0;
@@ -258,6 +260,11 @@ class PjRtLoadedExecutable final
   }
 
   absl::StatusOr<std::optional<std::string>> Fingerprint() const override;
+
+  absl::StatusOr<std::unique_ptr<xla::ifrt::ExecutableVersion>>
+  executable_version() const override {
+    return absl::UnimplementedError("Not implemented");
+  }
 
   absl::StatusOr<std::string> Serialize() const override;
 

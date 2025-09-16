@@ -296,6 +296,8 @@ namespace opcode_matchers {
         ::xla::HloOpcode::k##opcode, {operands...}));                      \
   }
 HLO_MATCHER(Abs);
+HLO_MATCHER(Acos);
+HLO_MATCHER(Acosh);
 HLO_MATCHER(Add);
 HLO_MATCHER(AddDependency);
 HLO_MATCHER(AfterAll);

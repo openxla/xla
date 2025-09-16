@@ -2491,6 +2491,11 @@ absl::Status LayoutAssignment::RunOnComputation(
         } else {
           TF_RETURN_IF_ERROR(SetOperandLayout(
               custom_call->operand_shapes_with_layout()[i], custom_call, i));
+          if (instruction->operand(i)->opcode() == HloOpcode::kCopy) {
+            TF_RETURN_IF_ERROR(
+                SetOperandLayout(custom_call->operand_shapes_with_layout()[i],
+                                 custom_call->operand(i), 0));
+          }
         }
       }
     }
@@ -2838,6 +2843,8 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     const HloInstruction* instruction) {
   switch (instruction->opcode()) {
     case HloOpcode::kAbs:
+    case HloOpcode::kAcos:
+    case HloOpcode::kAcosh:
     case HloOpcode::kAdd:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAnd:

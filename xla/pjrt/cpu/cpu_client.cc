@@ -945,7 +945,13 @@ PjRtCpuClient::LinearizeHostBufferInto(
 
 absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> PjRtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Layout& layout,
+    HostBufferSemantics host_buffer_semantics,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+  if (host_buffer_semantics ==
+      PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall) {
+    return absl::UnimplementedError(
+        "ImmutableOnlyDuringCall semantics is not supported on CPU.");
+  }
   return tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromLiteral(literal, layout, async_work_runner());
 }
@@ -1830,19 +1836,20 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     res.push_back(std::move(output_buffer));
   }
 
-  std::optional<PjRtFuture<>> future;
   if (fill_future) {
-    PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-    execute_event.AndThen([promise, event = execute_event.CopyRef()]() mutable {
+    auto [promise, future] = PjRtFuture<>::MakePromise();
+    execute_event.AndThen([promise = std::move(promise),
+                           event = execute_event.CopyRef()]() mutable {
       if (auto* error = event.GetErrorIfPresent()) {
         promise.Set(Internal("Compute error: %s", error->message()));
       } else {
         promise.Set();
       }
     });
-    future = PjRtFuture<>(std::move(promise));
+    return Result({std::move(future), /*buffers=*/std::move(res)});
   }
-  return Result({/*future=*/std::move(future), /*buffers=*/std::move(res)});
+
+  return Result({/*future=*/std::nullopt, std::move(res)});
 }
 
 static void MaybeDumpHloSnapshot(

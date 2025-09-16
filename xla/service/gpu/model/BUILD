@@ -85,7 +85,6 @@ xla_cc_test(
     srcs = ["sol_latency_estimator_test.cc"],
     deps = [
         ":collective_interpolator",
-        ":gpu_performance_model_base",
         ":sol_gpu_cost_model",
         ":sol_latency_estimator",
         "//xla:literal_util",
@@ -101,6 +100,7 @@ xla_cc_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -1024,10 +1024,12 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_cuda([
         # keep sorted
+        "//xla/backends/profiler/gpu:cupti_buffer_events",
         "//xla/backends/profiler/gpu:cupti_collector",
         "//xla/backends/profiler/gpu:cupti_tracer",
     ]),
@@ -1062,11 +1064,9 @@ xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1089,10 +1089,10 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status_matchers",
     ],
 )
 

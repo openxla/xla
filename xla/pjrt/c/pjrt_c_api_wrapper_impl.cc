@@ -692,15 +692,14 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
       "PJRT_AsyncHostToDeviceTransferManager_TransferData_Args",
       PJRT_AsyncHostToDeviceTransferManager_TransferData_Args_STRUCT_SIZE,
       args->struct_size));
-  xla::PjRtFuture<>::Promise promise = xla::PjRtFuture<>::CreatePromise();
+  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
-      [promise]() mutable { promise.Set(); };
+      [promise = std::move(promise)]() mutable { promise.Set(); };
   PJRT_RETURN_IF_ERROR(
       args->transfer_manager->transfer_manager->TransferRawDataToSubBuffer(
           args->buffer_index, args->data, args->offset, args->transfer_size,
           args->is_last_transfer, std::move(on_done_with_d2h_transfer)));
-  args->done_with_h2d_transfer =
-      new PJRT_Event{xla::PjRtFuture<>(std::move(promise))};
+  args->done_with_h2d_transfer = new PJRT_Event{std::move(future)};
   return nullptr;
 }
 
@@ -975,11 +974,10 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     }
   }
 
-  xla::PjRtFuture<>::Promise promise = xla::PjRtFuture<>::CreatePromise();
+  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
 
-  absl::AnyInvocable<void() &&> on_done_with_host_buffer = [promise]() mutable {
-    promise.Set();
-  };
+  absl::AnyInvocable<void() &&> on_done_with_host_buffer =
+      [promise = std::move(promise)]() mutable { promise.Set(); };
 
   std::unique_ptr<xla::PjRtBuffer> buffer;
   bool has_layout_and_memory = layout.has_value() && args->memory != nullptr;
@@ -1030,8 +1028,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
   }
 
   args->buffer = new PJRT_Buffer{std::move(buffer), args->client};
-  args->done_with_host_buffer =
-      new PJRT_Event{xla::PjRtFuture<>(std::move(promise))};
+  args->done_with_host_buffer = new PJRT_Event{std::move(future)};
 
   return nullptr;
 }
@@ -1734,6 +1731,9 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 
   xla::ExecuteOptions options;
   options.launch_id = args->options->launch_id;
+  if (args->options->call_location) {
+    options.call_location = std::string(args->options->call_location);
+  }
   options.strict_shape_checking = true;
   options.arguments_are_tupled = false;
   options.untuple_result = true;

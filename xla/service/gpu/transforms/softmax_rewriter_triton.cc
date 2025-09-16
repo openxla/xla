@@ -62,11 +62,9 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -253,7 +251,7 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
                       normalization_fusion->backend_config<GpuBackendConfig>());
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonFusionKind));
+  backend_config.set_kind(kTritonFusionKind);
   TF_RETURN_IF_ERROR(normalization_fusion->set_backend_config(gpu_config));
   return xla::Cast<HloFusionInstruction>(normalization_fusion);
 }

@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/device_event.h"
@@ -68,14 +69,25 @@ PjRtFuture<>::Promise CommonPjRtClient::CreateUserPromise(
     PjRtMemorySpace* memory_space, absl::string_view debug_info) {
   return PjRtFuture<>::CreatePromise();
 }
+
 PjRtFuture<> CommonPjRtClient::CreateFutureFromUserPromise(
     PjRtMemorySpace* memory_space, const char* callee_type,
     const char* callee_method, PjRtFuture<>::Promise promise) {
-  return PjRtFuture<>(
-      promise,
+  return CreateProfiledFuture(memory_space, callee_type, callee_method,
+                              PjRtFuture<>(std::move(promise)));
+}
+
+void CommonPjRtClient::TrackFuture(PjRtMemorySpace* memory_space,
+                                   absl::string_view debug_info,
+                                   const PjRtFuture<>& future) {}
+
+PjRtFuture<> CommonPjRtClient::CreateProfiledFuture(
+    PjRtMemorySpace* memory_space, const char* callee_type,
+    const char* callee_method, PjRtFuture<> future) {
+  return PjRtFutureHelpers::WithProfiling(
+      std::move(future),
       /*on_block_start=*/
-      [ready_event = FormRef(promise.async_value()), callee_type,
-       callee_method]() {
+      [callee_type, callee_method] {
         tsl::profiler::TraceMeProducer traceme(
             [&] { return absl::StrCat(callee_type, "::", callee_method); });
         VLOG(1) << callee_type << "::" << callee_method;
@@ -141,48 +153,20 @@ CommonPjRtClient::BufferFromHostLiteral(const LiteralSlice& literal,
   TF_ASSIGN_OR_RETURN(
       Shape device_shape,
       MakeDefaultShapeForMemorySpace(memory_space, shape, device_layout));
+  TF_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
+                      GetOnDeviceBytesCount(memory_space, device_shape));
+  TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                      AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                        /*retry_on_oom=*/true,
+                                        /*allocate_after=*/{}));
   TF_ASSIGN_OR_RETURN(
-      auto promise_and_event,
-      CreateLinkedEventPromise(memory_space, "BufferFromHostLiteral"));
-  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
-  std::unique_ptr<PjRtBuffer> output_buffer;
-  absl::Status s = [&]() {
-    TF_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
-                        GetOnDeviceBytesCount(memory_space, device_shape));
-    TF_ASSIGN_OR_RETURN(raw_buffer,
-                        AllocateRawBuffer(memory_space, on_device_bytes_count,
-                                          /*retry_on_oom=*/true,
-                                          /*allocate_after=*/{}));
-    TF_ASSIGN_OR_RETURN(output_buffer,
-                        DefineBuffer(device_shape, raw_buffer,
-                                     {std::move(promise_and_event.second)},
-                                     /*raw_buffer_is_mutable=*/true));
-    return absl::OkStatus();
-  }();
-  if (!s.ok()) {
-    promise_and_event.first->SetError(s);
-    return s;
-  }
-
-  async_work_runner()->Schedule(
-      [this, shape, literal, raw_buffer = std::move(raw_buffer),
-       definition_event = std::move(promise_and_event.first),
-       device_layout = device_shape.layout(),
-       context_id = producer.GetContextId()]() mutable {
-        tsl::profiler::TraceMeConsumer consumer(
-            "BufferFromHostLiteral H2D Dispatch",
-            tsl::profiler::ContextType::kPjRt, context_id);
-        auto status_or_h2d_transfer_event =
-            LinearizeInto(literal, device_layout, std::move(raw_buffer));
-        CHECK_OK(status_or_h2d_transfer_event);
-        auto h2d_transfer_event = *std::move(status_or_h2d_transfer_event);
-        if (event_tracking_enabled()) {
-          h2d_transfer_event->AppendDescriptionToEvent(
-              " TransferToDevice ", {definition_event.get()});
-        }
-        definition_event->Set(std::move(h2d_transfer_event));
-      });
-  return output_buffer;
+      auto definition_event,
+      LinearizeInto(literal, device_shape.layout(),
+                    HostBufferSemantics::kImmutableUntilTransferCompletes,
+                    raw_buffer));
+  return DefineBuffer(device_shape, std::move(raw_buffer),
+                      {std::move(definition_event)},
+                      /*raw_buffer_is_mutable=*/true);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
@@ -427,7 +411,9 @@ CommonPjRtBufferImpl::CopyToCpuMemorySpace(const xla::Shape& dst_shape,
           status_or_h2d_transfer_event;
       if (needs_second_copy) {
         status_or_h2d_transfer_event = dst_client->LinearizeInto(
-            *literal, dst_shape.layout(), dst_raw_buffer);
+            *literal, dst_shape.layout(),
+            PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
+            dst_raw_buffer);
       } else {
         status_or_h2d_transfer_event =
             dst_raw_buffer->MakeAllocationReadyEvent();
@@ -435,6 +421,8 @@ CommonPjRtBufferImpl::CopyToCpuMemorySpace(const xla::Shape& dst_shape,
       if (!status_or_h2d_transfer_event.ok()) {
         definition_event_promise->SetError(status);
       } else {
+        status_or_h2d_transfer_event.value()->AndThen(
+            [literal = std::move(literal)] {});
         definition_event_promise->Set(*std::move(status_or_h2d_transfer_event));
       }
     }
@@ -637,7 +625,9 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
               std::make_unique<MutableBorrowingLiteral>(
                   reinterpret_cast<char*>(base_ptr), src_shape);
           auto status_or_h2d_transfer_event = dst_client->LinearizeInto(
-              *literal, device_layout, std::move(dst_raw_buffer));
+              *literal, device_layout,
+              PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
+              std::move(dst_raw_buffer));
           CHECK_OK(status_or_h2d_transfer_event);
           auto h2d_transfer_event = *std::move(status_or_h2d_transfer_event);
           h2d_transfer_event->AndThen(
@@ -1216,12 +1206,12 @@ PjRtFuture<> CommonPjRtBufferImpl::GetReadyFuture() {
     return PjRtFuture<>(InvalidArgument(
         "GetReadyFuture() called on deleted or donated buffer"));
   }
-  if (!definition_promise_) {
-    definition_promise_ =
-        device_buffer()->GetReadyFuturePromise(memory_space());
+  if (!definition_future_) {
+    auto future = device_buffer()->GetReadyFuture(memory_space());
+    definition_future_ = client()->CreateProfiledFuture(
+        memory_space(), "CommonPjRtBuffer", "Await", std::move(future));
   }
-  return client()->CreateFutureFromUserPromise(
-      memory_space(), "CommonPjRtBuffer", "Await", definition_promise_);
+  return definition_future_;
 }
 
 }  // namespace xla

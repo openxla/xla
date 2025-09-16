@@ -144,7 +144,8 @@ absl::Status HloCostAnalysis::HandleElementwiseOp(
   // operation can correspond to several floating point ops.
   // kLogistic is included in "trascendental" as it is implemented using
   // trascendental ops (tanh or exp).
-  if (opcode == HloOpcode::kErf || opcode == HloOpcode::kExp ||
+  if (opcode == HloOpcode::kAcos || opcode == HloOpcode::kAcosh ||
+      opcode == HloOpcode::kErf || opcode == HloOpcode::kExp ||
       opcode == HloOpcode::kLog || opcode == HloOpcode::kLogistic ||
       opcode == HloOpcode::kPower || opcode == HloOpcode::kSqrt ||
       opcode == HloOpcode::kCbrt || opcode == HloOpcode::kRsqrt ||

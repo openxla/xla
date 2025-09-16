@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/tools/matmul_perf_table_gen.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "tsl/platform/init_main.h"
 
@@ -275,6 +276,7 @@ int main(int argc, char* argv[]) {
   std::string hlo_scan_path;
   std::string merge_path;
   bool dry_run = false;
+  std::vector<std::string> merge_files;
 
   std::vector<tsl::Flag> flag_list = {
       tsl::Flag("b_spec", &b_spec,
@@ -305,6 +307,13 @@ int main(int argc, char* argv[]) {
       tsl::Flag("dry_run", &dry_run,
                 "For a defined search space does not perform measurements but "
                 "runs everything else."),
+      tsl::Flag(
+          "merge",
+          [&merge_files](std::string file) {
+            merge_files.push_back(file);
+            return true;
+          },
+          "none", "Merge gemm perf tables."),
   };
   const std::string kUsageString =
       absl::StrCat(kUsageText, "\n\n", tsl::Flags::Usage(argv[0], flag_list));
@@ -318,6 +327,20 @@ int main(int argc, char* argv[]) {
       b_spec, m_spec, n_spec, k_spec, dtypes, out, hlo_scan_path, dry_run);
   MatmulPerfTableGen table_gen(std::move(cfg));
 
+  if (!merge_files.empty()) {
+    LOG(INFO) << "Merging matmul perf tables...";
+    std::vector<xla::GemmPerfTable> tables;
+    for (const std::string& file : merge_files) {
+      LOG(INFO) << "Merging in " << file;
+      xla::GemmPerfTable it;
+      CHECK_OK(tsl::ReadTextOrBinaryProto(tsl::Env::Default(), file, &it));
+      tables.push_back(it);
+    }
+    xla::GemmPerfTable perf_table = MatmulPerfTableGen::Merge(tables);
+    CHECK_OK(table_gen.Dump(perf_table));
+    return 0;
+  }
+
   if (!merge_path.empty()) {
     LOG(INFO) << "Merging profiling data from: " << merge_path;
     auto profile_data = table_gen.Merge(merge_path);
@@ -326,10 +349,25 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  // Compute new profiling data.
   xla::gpu::DeviceHloInstructionProfiles result = table_gen.ComputeTable();
   auto compact_result = MatmulPerfTableGen::Compact(result);
   CHECK_OK(compact_result.status());
-  CHECK_OK(table_gen.Dump(*compact_result));
+
+  // Merge with previous results if any.
+  xla::GemmPerfTable perf_table;
+  if (tsl::Env::Default()->FileExists(out).ok()) {
+    xla::GemmPerfTable previous_perf_table;
+    CHECK_OK(tsl::ReadTextOrBinaryProto(tsl::Env::Default(), out,
+                                        &previous_perf_table));
+    perf_table =
+        MatmulPerfTableGen::Merge({previous_perf_table, *compact_result});
+  } else {
+    perf_table = *compact_result;
+  }
+
+  // Dump results.
+  CHECK_OK(table_gen.Dump(perf_table));
 
   return 0;
 }

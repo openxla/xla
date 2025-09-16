@@ -536,7 +536,7 @@ absl::StatusOr<HloInstruction*> MakeReduceHlo(
   CHECK_EQ(operands.size(), init_values.size());
   auto root = reduce_computation->root_instruction();
   if (root->shape().IsTuple()) {
-    CHECK_EQ(root->shape().tuple_shapes_size(), operands.size());
+    CHECK_EQ(root->shape().tuple_shapes().size(), operands.size());
   } else {
     CHECK_EQ(operands.size(), 1);
   }
@@ -917,6 +917,18 @@ absl::StatusOr<HloInstruction*> MakeWithinBounds(HloInstruction* inst,
       HloInstruction * gt,
       MakeCompareHlo(Comparison::Direction::kGt, upper_bound, inst));
   return MakeBinaryHlo(HloOpcode::kAnd, le, gt);
+}
+
+HloInstruction* MakeScalarLikeFromLiteral(HloInstruction* base,
+                                          Literal literal) {
+  auto scalar =
+      base->AddInstruction(HloInstruction::CreateConstant(std::move(literal)));
+  if (base->shape().dimensions().empty()) {
+    *scalar->mutable_shape() = base->shape();
+    return scalar;
+  }
+  return base->AddInstruction(HloInstruction::CreateBroadcast(
+      ShapeUtil::MakeStaticShape(base->shape()), scalar, {}));
 }
 
 }  // namespace xla

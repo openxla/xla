@@ -135,8 +135,9 @@ cc_library(
     ],
     deps = [
         ":pjrt_client_registry",
-        "//xla/pjrt/gpu:gpu_helpers",
-        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
     ],
     alwayslink = True,
 )
@@ -1007,6 +1008,10 @@ xla_test(
     name = "dot_operation_test",
     timeout = "long",
     srcs = ["dot_operation_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     shard_count = 20,
     tags = [
         "optonly",
@@ -1063,6 +1068,10 @@ xla_test(
     name = "dot_operation_test_autotune_disabled",
     srcs = ["dot_operation_test.cc"],
     args = ["--xla_gpu_autotune_level=0"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     shard_count = 20,
     tags = [
@@ -1230,6 +1239,38 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "scatter_deterministic_expander_test",
+    srcs = ["scatter_test.cc"],
+    args = [
+        "--xla_gpu_deterministic_ops",
+        "--xla_gpu_enable_scatter_determinism_expander",
+    ],
+    backends = ["gpu"],
+    tags = [
+        "test_migrated_to_hlo_runner_pjrt",
+    ],
+    deps = [
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
+        ":literal_test_util",
+        ":xla_internal_test_main",
+        "//xla:array2d",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:test",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:xla_test_backend_predicates",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 # Repeat dot_operation_runtime_test with single-threaded eigen.
 xla_test(
     name = "dot_operation_single_threaded_runtime_test",
@@ -1239,6 +1280,10 @@ xla_test(
         "cpu": [
             "--xla_cpu_multi_thread_eigen=false",
         ],
+    },
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
     },
     shard_count = 20,
     tags = [
@@ -2067,6 +2112,7 @@ xla_test(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_runner_interface",
+        "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
@@ -3722,7 +3768,11 @@ cc_library(
         )[0],
     ]),
     visibility = if_google(
-        xla_internal(["tests:__pkg__"]),
+        xla_internal([
+            "tests:__pkg__",
+        ]) + [
+            "//xla/tests/exhaustive:__pkg__",
+        ],
         ["//visibility:public"],
     ),
     deps = [

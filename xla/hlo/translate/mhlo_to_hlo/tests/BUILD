@@ -10,6 +10,7 @@ lit_test_suite(
     name = "all_tests",
     srcs = enforce_glob(
         [
+            "acosh.mlir",
             "add.mlir",
             "attributes.mlir",
             "call.mlir",
@@ -33,6 +34,7 @@ lit_test_suite(
             "int4.mlir",
             "layouts_and_names.mlir",
             "location_to_op_metadata.mlir",
+            "location_to_original_value.mlir",
             "location_to_stacktrace.mlir",
             "missing_main.mlir",
             "module_config.mlir",

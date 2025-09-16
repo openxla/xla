@@ -446,6 +446,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:gpu_blas_lt",
+        "//xla/stream_executor/gpu:tma_metadata",
         "//xla/stream_executor/platform:platform_object_registry",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/platform:errors",
@@ -693,13 +694,16 @@ xla_cc_test(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
@@ -1579,7 +1583,6 @@ cc_library(
         "//xla/service/debug:unstable_reduction_detector",
         "//xla/service/gpu/autotuning:autotuner_pass",
         "//xla/service/gpu/autotuning:autotuner_util",
-        "//xla/service/gpu/autotuning:custom_kernel_fusion_autotuner",
         "//xla/service/gpu/model:collective_ptable_stats_collection",
         "//xla/service/gpu/model:gpu_cost_model_stats_collection",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
@@ -1717,6 +1720,10 @@ cc_library(
 xla_test(
     name = "gpu_compiler_test",
     srcs = ["gpu_compiler_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     deps = [
@@ -2001,6 +2008,10 @@ xla_test(
     srcs = [
         "ptx_compilation_test.cc",
     ],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = [
         "gpu",
     ],
@@ -2237,6 +2248,7 @@ cc_library(
         "//xla/service/gpu/model:sol_latency_estimator",
         "//xla/service/gpu/transforms:pgle_accuracy_checker",
         "//xla/service/gpu/transforms:scheduling_instruction_annotator",
+        "//xla/service/gpu/transforms:stream_attribute_async_wrapper",
         "//xla/service/gpu/transforms/collectives:async_collective_annotator",
         "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/stream_executor:device_description",
@@ -2576,6 +2588,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:util",
+        "//xla/codegen:ir_emission_utils",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_instruction_utils",
@@ -2915,6 +2928,10 @@ xla_cc_test(
 xla_test(
     name = "determinism_test",
     srcs = ["determinism_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     deps = [
         "//xla:literal",
@@ -3175,7 +3192,15 @@ cc_library(
     ],
     deps = [
         ":gpu_compiler",
+        ":target_constants",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
         "//xla/service/gpu/llvm_gpu_backend:spirv_backend",
+        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//llvm:ir_headers",
     ],
 )
 

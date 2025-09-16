@@ -143,7 +143,7 @@ absl::Status FuseInstructionsForConsumer(HloInstruction& root,
   TF_ASSIGN_OR_RETURN(auto gpu_config,
                       fusion->backend_config<GpuBackendConfig>());
   gpu_config.mutable_fusion_backend_config()->set_kind(
-      std::string(kTritonNestedGemmFusionKind));
+      kTritonNestedGemmFusionKind);
   TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
   for (int64_t operand_index : consumer.OperandIndices(&root)) {
@@ -253,10 +253,9 @@ absl::Status FuseAndAnnotateConcatOperands(HloComputation* computation) {
 // Transforms a fusion into an equivalent nested fusion if it has a single dot.
 // Returns ok if the transformation was successful.
 absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
-                                            const TritonGemmConfig& config,
                                             HloDotInstruction* dot,
                                             mlir::MLIRContext* ctx) {
-  DCHECK(GetTritonGemmConfig(*fusion).value() == config);
+  TF_ASSIGN_OR_RETURN(TritonGemmConfig config, GetTritonGemmConfig(*fusion));
 
   HloComputation* computation = fusion->called_computation();
 
@@ -290,7 +289,7 @@ absl::Status MakeNestedFusionFromGemmFusion(HloFusionInstruction* fusion,
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
   backend_config.clear_triton_gemm_config();
-  backend_config.set_kind(std::string(kTritonNestedGemmFusionKind));
+  backend_config.set_kind(kTritonNestedGemmFusionKind);
 
   TF_ASSIGN_OR_RETURN(
       BlockLevelParameters block_level_parameters,
@@ -1189,7 +1188,6 @@ class NestGemmFusionVisitor : public DfsHloRewriteVisitor {
   absl::Status RewriteFusion(HloFusionInstruction* fusion,
                              CallGraph* call_graph) {
     HloComputation* computation = fusion->called_computation();
-    TF_ASSIGN_OR_RETURN(TritonGemmConfig config, GetTritonGemmConfig(*fusion));
     HloInstruction* instr =
         hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
     if (instr == nullptr) {
@@ -1200,8 +1198,7 @@ class NestGemmFusionVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(
         TryHoistBitcastsInComputationToCallers(instr, call_graph));
     HloDotInstruction* dot = Cast<HloDotInstruction>(instr);
-    TF_RETURN_IF_ERROR(
-        MakeNestedFusionFromGemmFusion(fusion, config, dot, ctx_));
+    TF_RETURN_IF_ERROR(MakeNestedFusionFromGemmFusion(fusion, dot, ctx_));
 
     MarkAsChanged();
 

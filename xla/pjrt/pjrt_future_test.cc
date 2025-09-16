@@ -264,8 +264,7 @@ TEST(PjRtFutureTest, MapMoveOnlyWithInplaceConstructor) {
 }
 
 TEST(PjRtFutureTest, MapUnusedResult) {
-  auto promise = PjRtFuture<int>::CreatePromise();
-  PjRtFuture<int> future(promise);
+  auto [promise, future] = PjRtFuture<int>::MakePromise();
 
   bool called = false;
   future.Map([&](int) {
@@ -277,8 +276,7 @@ TEST(PjRtFutureTest, MapUnusedResult) {
 }
 
 TEST(PjRtFutureTest, MapStatusUnusedResult) {
-  auto promise = PjRtFuture<>::CreatePromise();
-  PjRtFuture<> future(promise);
+  auto [promise, future] = PjRtFuture<>::MakePromise();
 
   bool called = false;
   future.Map([&]() {
@@ -380,8 +378,7 @@ TEST(PjRtFutureTest, TryMapMoveOnlyFutureCreateError) {
 }
 
 TEST(PjRtFutureTest, TryMapUnusedResult) {
-  auto promise = PjRtFuture<int>::CreatePromise();
-  PjRtFuture<int> future(promise);
+  auto [promise, future] = PjRtFuture<int>::MakePromise();
 
   bool called = false;
   future.TryMap([&](int) -> absl::StatusOr<int> {
@@ -393,8 +390,7 @@ TEST(PjRtFutureTest, TryMapUnusedResult) {
 }
 
 TEST(PjRtFutureTest, TryMapStatusUnusedResult) {
-  auto promise = PjRtFuture<>::CreatePromise();
-  PjRtFuture<> future(promise);
+  auto [promise, future] = PjRtFuture<>::MakePromise();
 
   bool called = false;
   future.TryMap([&]() -> absl::StatusOr<int> {
@@ -619,6 +615,34 @@ TEST(PjRtFutureTest, WithProfiling) {
 
   EXPECT_TRUE(update_profiling.IsReady());
   EXPECT_EQ(*update_profiling.Await(), 42);
+}
+
+TEST(PjRtFutureTest, MakeSharedPromise) {
+  {  // Stateless future.
+    auto [promise, future] = PjRtFuture<>::MakePromise();
+
+    auto shared_promise = std::move(promise).ToShared();
+    shared_promise->Set();
+
+    // NOLINTNEXTLINE(bugprone-use-after-move)
+    EXPECT_FALSE(static_cast<bool>(promise));
+
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await(), absl::OkStatus());
+  }
+
+  {  // Stateful future.
+    auto [promise, future] = PjRtFuture<int32_t>::MakePromise();
+
+    auto shared_promise = std::move(promise).ToShared();
+    shared_promise->Set(42);
+
+    // NOLINTNEXTLINE(bugprone-use-after-move)
+    EXPECT_FALSE(static_cast<bool>(promise));
+
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(*future.Await(), 42);
+  }
 }
 
 //===----------------------------------------------------------------------===//

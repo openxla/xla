@@ -22,7 +22,6 @@ load("//third_party/gpus:sycl_configure.bzl", "sycl_configure")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
-load("//third_party/kokkos:workspace.bzl", kokkos = "repo")
 load("//third_party/llvm:workspace.bzl", llvm = "repo")
 load("//third_party/mpitrampoline:workspace.bzl", mpitrampoline = "repo")
 load("//third_party/nanobind:workspace.bzl", nanobind = "repo")
@@ -66,7 +65,6 @@ def _initialize_third_party():
     highwayhash()
     hwloc()
     implib_so()
-    kokkos()
     ml_dtypes()
     mpitrampoline()
     nanobind()
@@ -173,14 +171,6 @@ def _tf_repositories():
         sha256 = "516ba8d05c30e016d7fd7af6a7fc74308273883f857faf92bc9bb630ab6dba2c",
         strip_prefix = "pthreadpool-c2ba5c50bb58d1397b693740cf75fad836a0d1bf",
         urls = tf_mirror_urls("https://github.com/google/pthreadpool/archive/c2ba5c50bb58d1397b693740cf75fad836a0d1bf.zip"),
-    )
-
-    tf_http_archive(
-        name = "mkl_dnn_v1",
-        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
-        sha256 = "dc2b9bc851cd8d5a6c4622f7dc215bdb6b32349962875f8bf55cceed45a4c449",
-        strip_prefix = "oneDNN-2.7.1",
-        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v2.7.1.tar.gz"),
     )
 
     tf_http_archive(

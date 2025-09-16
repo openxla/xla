@@ -89,6 +89,7 @@ limitations under the License.
 #include "stablehlo/dialect/TypeInference.h"
 #include "utils/convert_op_folder.h"
 #include "utils/hlo_utils.h"
+#include "utils/unregistered_attributes.h"
 
 namespace mlir {
 #include "hlo_patterns.cc.inc"
@@ -355,6 +356,8 @@ LogicalResult ReduceScatterOp::verify() {
   }
 
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AddOp)
+INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AcosOp)
+INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AcoshOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AndOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(Atan2Op)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CbrtOp)
@@ -4440,6 +4443,9 @@ OpFoldResult SetDimensionSizeOp::fold(FoldAdaptor adaptor) {
   auto ty = dyn_cast<RankedTensorType>(getType());
   if (!ty) return {};
 
+  // If input is dynamic and output is not, we can't fold.
+  if (getOperand().getType() != getType()) return {};
+
   int64_t dimSize = ty.getDimSize(getDimension());
   if (dimSize == size.getSplatValue<IntegerAttr>().getInt())
     return getOperand();
@@ -5111,6 +5117,8 @@ UNARY_FOLDER_INT(NotOp, std::bit_not)
 UNARY_FOLDER_FLOAT(RoundNearestEvenOp, RoundNearestEven)
 UNARY_FOLDER_FLOAT(RoundOp, Round)
 
+UNARY_FOLDER_UPCAST_TO_F64(AcosOp, std::acos, AnyValue)
+UNARY_FOLDER_UPCAST_TO_F64(AcoshOp, std::acosh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(CosineOp, std::cos, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(ErfOp, std::erf, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(ExpOp, std::exp, AnyValue)
@@ -7626,7 +7634,7 @@ LogicalResult MhloDialect::verifyOperationAttribute(Operation* op,
              << "attribute " << attr.getName()
              << " can only be used on function-like operations";
   }
-  if (attr.getName() == "mhlo.cross_program_prefetches") {
+  if (attr.getName() == xla::kMhloCrossProgramPrefetches) {
     auto arrayAttr = dyn_cast<ArrayAttr>(attr.getValue());
     if (!arrayAttr)
       return op->emitOpError() << "cross_program_prefetches must be an array";
@@ -7643,7 +7651,7 @@ LogicalResult MhloDialect::verifyOperationAttribute(Operation* op,
       if (failed(res)) return res;
     }
   }
-  if (attr.getName() == "mhlo.spmd_parameters_sharding") {
+  if (attr.getName() == xla::kMhloSpmdParametersShardings) {
     auto arrayAttr = dyn_cast<ArrayAttr>(attr.getValue());
     if (!arrayAttr)
       return op->emitOpError() << "spmd_parameters_sharding: must be an array";
