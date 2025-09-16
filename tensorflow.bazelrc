@@ -252,6 +252,9 @@ build:rocm_clang_official --action_env=TF_ROCM_CLANG="1"
 build:rocm_clang_official --linkopt="-fuse-ld=lld"
 build:rocm_clang_official --host_linkopt="-fuse-ld=lld"
 
+build:rocm_dev --remote_upload_local_results=false
+build:rocm_dev --remote_cache="https://wardite.cluster.engflow.com"
+
 build:rocm_rbe --bes_backend="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --bes_results_url="https://wardite.cluster.engflow.com/invocation/"
 build:rocm_rbe --remote_executor="grpcs://wardite.cluster.engflow.com"
