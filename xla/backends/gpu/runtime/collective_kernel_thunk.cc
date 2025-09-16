@@ -51,9 +51,10 @@ namespace xla::gpu {
 namespace {
 using se::gpu::AllReduceStrategy;
 
-static constexpr int64_t kMaxOneShotAllReduceSizeBytes = 256 * 1024;  // 256 KB
-static constexpr int64_t kMaxTwoShotAllReduceSizeBytes =
-    2 * 1024 * 1024;  // 2 MB
+// The following thresholds are obtained from experiments on an 8 * Mi300 system.
+// You may need to adjust them based on your system for optimal performance.
+static constexpr int64_t kMaxOneShotAllReduceSizeBytes = 4 * 1024 * 1024;  // 4MB
+static constexpr int64_t kMaxTwoShotAllReduceSizeBytes = 8 * 1024 * 1024;  // 8MB
 
 // Helper for allocating memory on the device.
 absl::StatusOr<se::DeviceMemoryHandle> AllocateMemory(

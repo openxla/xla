@@ -59,8 +59,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-constexpr int64_t kMaxOneShotAllReduceSizeBytes = 256 * 1024;
-
 // Contains the values that are passed between host threads with rendezvous.
 struct RendezvousValue {
   RankId rank;
