@@ -429,12 +429,12 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
        /*tolerance*/0.1, /* verbose */false, /*run_host_compare*/false);
   EXPECT_TRUE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 
-  // Change only the very last entry of rhs to verify that the whole arrays are 
-  // compared (if the grid dimensions are not computed correctly, this might
-  // not be the case) 
   auto slice = rhs.GetByteSlice(element_count*sizeof(NT) - sizeof(uint32_t), 
         sizeof(uint32_t));
-  TF_CHECK_OK(stream->Memset32(&slice, 0xABCD1777, slice.size()));
+  // Change only the very last entry of rhs to verify that the whole arrays are 
+  // compared (if the grid dimensions are not computed correctly, this might
+  // not be the case). Account for little-endian: [CD AB 77 17].
+  TF_CHECK_OK(stream->Memset32(&slice, 0x1777ABCD, slice.size()));
   EXPECT_FALSE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 }
 
