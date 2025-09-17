@@ -1421,10 +1421,13 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
   AutotuneCacheKeySet keys_of_this_rank;
 
   const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
-                                key_value_store_.key_value_store &&
                                 key_value_store_.process_count > 1 &&
                                 autotuner.IsAutotuningEnabled();
   if (shard_autotuning) {
+    if (key_value_store_.key_value_store == nullptr) {
+      return absl::FailedPreconditionError(
+          "Sharded autotuning requested but key-value store is missing.");
+    }
     fusions.keys_and_instructions = fusion_collector.Shard(
         fusions.keys_and_instructions, key_value_store_.process_index,
         key_value_store_.process_count);
