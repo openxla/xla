@@ -97,5 +97,5 @@ absl::string_view AnnotationMap::LookUp(uint32_t correlation_id) {
   return it != map_.correlation_map.end() ? it->second : absl::string_view();
 }
 
-} // namespace profiler
-} // namespace xla
+}  // namespace profiler
+}  // namespace xla
