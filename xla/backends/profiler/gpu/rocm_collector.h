@@ -178,7 +178,7 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
 
   void OnEventsDropped(const std::string& reason,
                        uint32_t correlation_id) override {
-    LOG(INFO) << "RocmTracerEvent dropped (correlation_id=" << correlation_id
+    VLOG(2) << "RocmTracerEvent dropped (correlation_id=" << correlation_id
               << ",) : " << reason << ".";
   }
 

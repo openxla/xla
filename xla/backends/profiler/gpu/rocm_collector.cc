@@ -621,15 +621,14 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
 
     if (api_event == api_events_map_.end()) {
       api_event = auxiliary_api_events_map_.find(activity_event.correlation_id);
-    }
-
-    if (api_event == auxiliary_api_events_map_.end()) {
-      OnEventsDropped(
-          "An event from activity was discarded."
-          "Could not find the counterpart HIP API.",
-          activity_event.correlation_id);
-      PrintRocmTracerEvent(activity_event, ". Dropped!");
-      continue;
+      if (api_event == auxiliary_api_events_map_.end()) {
+        OnEventsDropped(
+            "An event from activity was discarded."
+            "Could not find the counterpart HIP API.",
+            activity_event.correlation_id);
+        PrintRocmTracerEvent(activity_event, ". Dropped!");
+        continue;
+      }
     }
 
     switch (activity_event.type) {
