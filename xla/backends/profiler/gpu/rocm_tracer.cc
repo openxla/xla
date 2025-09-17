@@ -261,7 +261,7 @@ void RocmTracer::MemcpyEvent(const rocprofiler_record_header_t* hdr,
       .async = false,
   };
 
-  LOG(INFO) << "copy bytes: " << trace_event->memcpy_info.num_bytes
+  VLOG(2) << "copy bytes: " << trace_event->memcpy_info.num_bytes
             << " stream: " << trace_event->stream_id << " src_id "
             << trace_event->device_id << " dst_id "
             << trace_event->memcpy_info.destination;
