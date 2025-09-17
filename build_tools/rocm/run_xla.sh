@@ -40,9 +40,6 @@ echo ""
 export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
 export ROCM_PATH="/opt/rocm"
-TAGS_FILTER="gpu,requires-gpu-amd,-multi_gpu,-requires-gpu-nvidia,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-cuda-only"
-UNSUPPORTED_GPU_TAGS="$(echo -requires-gpu-sm{60,70,80,86,89,90}{,-only})"
-TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
 
 GPU_NAME=(`rocminfo | grep -m 1 gfx`)
 GPU_NAME=${GPU_NAME[1]}
@@ -88,18 +85,14 @@ elif [[ $1 == "tsan" ]]; then
     )
 fi
 
-bazel \
-    test \
-    --define xnn_enable_avxvnniint8=false \
-    --define xnn_enable_avx512fp16=false \
+bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --profile=/tf/pkg/profile.json.gz \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
     --config=rocm_ci \
     --config=rocm_rbe \
-    --build_tag_filters=${TAGS_FILTER} \
-    --test_tag_filters=${TAGS_FILTER} \
+    --config=xla_sgpu \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
     --test_output=errors \
@@ -114,31 +107,7 @@ bazel \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
-    "${SANITIZER_ARGS[@]}" \
-    -- //xla/... \
-       -//xla/tests:collective_ops_e2e_test \
-       -//xla/tests:collective_ops_test \
-       -//xla/tests:collective_pipeline_parallelism_test \
-       -//xla/tests:replicated_io_feed_test \
-       -//xla/backends/gpu/collectives:gpu_clique_key_test \
-       -//xla/backends/gpu/collectives:nccl_communicator_test \
-       -//xla/service:collective_ops_utils_test \
-       -//xla/service:collective_pipeliner_test \
-       -//xla/service:collective_permute_cycle_test \
-       -//xla/service:batched_gather_scatter_normalizer_test \
-       -//xla/service:all_reduce_simplifier_test \
-       -//xla/service:all_gather_simplifier_test \
-       -//xla/service:reduce_scatter_decomposer_test \
-       -//xla/service:reduce_scatter_reassociate_test \
-       -//xla/service:reduce_scatter_combiner_test \
-       -//xla/service:scatter_simplifier_test \
-       -//xla/service:sharding_propagation_test \
-       -//xla/service:sharding_remover_test \
-       -//xla/service:p2p_schedule_preparation_test \
-       -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
-       -//xla/pjrt/distributed:topology_util_test \
-       -//xla/pjrt/distributed:client_server_test \
-       -//xla/backends/gpu/runtime:all_reduce_test
+    "${ASAN_ARGS[@]}"
 
 # clean up bazel disk_cache
 bazel shutdown \
