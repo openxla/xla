@@ -51,7 +51,7 @@ namespace wrap {
     static FuncPtrT loaded = []() -> FuncPtrT {                             \
       static const char *kName = TO_STR(hipSymbolName);                     \
       void *f;                                                              \
-      auto s = tsl::Env::Default()->GetSymbolFromLibrary(                   \
+      auto s = tsl::Env::Default() -> GetSymbolFromLibrary(                 \
           tsl::internal::CachedDsoLoader::GetHipDsoHandle().value(), kName, \
           &f);                                                              \
       CHECK(s.ok()) << "could not find " << kName                           \
@@ -100,6 +100,7 @@ namespace wrap {
   __macro(hipGetDeviceCount)                        \
   __macro(hipGetDeviceProperties)                   \
   __macro(hipGetErrorString)                        \
+  __macro(hipGetLastError)                          \
   __macro(hipGraphAddKernelNode)                    \
   __macro(hipGraphAddChildGraphNode)                \
   __macro(hipGraphAddEmptyNode)                     \
