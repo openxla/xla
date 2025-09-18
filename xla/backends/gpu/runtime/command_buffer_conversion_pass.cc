@@ -254,8 +254,7 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   if (!config.enabled_commands.contains(*cmd_type)) {
     VLOG(2) << "Thunk kind " << Thunk::KindToString(thunk.kind())
             << " lowering is not enabled by the user for type "
-            << DebugOptions::CommandBufferCmdType_Name(*cmd_type)
-            << " for module " << module_name_;
+            << DebugOptions::CommandBufferCmdType_Name(*cmd_type);
     return false;  // Thunk kind is not supported for command buffer conversion.
   }
 
@@ -401,6 +400,13 @@ absl::Status FlushCommandBuffer(
         new_thunks.end(),
         std::make_move_iterator(current_command_buffer_thunks.begin()),
         std::make_move_iterator(current_command_buffer_thunks.end()));
+    if (VLOG_IS_ON(2)) {
+      for (const auto& thunk : current_command_buffer_thunks) {
+        VLOG(2) << "Thunk kind " << Thunk::KindToString(thunk->kind())
+                << " is not lowered to command buffer because command size is "
+                   "less than the min graph size";
+      }
+    }
     current_command_buffer_thunks.clear();
     return absl::OkStatus();
   }
