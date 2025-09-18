@@ -77,6 +77,7 @@ elif [[ $1 == "tsan" ]]; then
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
+    "${SANITIZER_ARGS[@]}" \
     --config=rocm_ci \
     --config=rocm_rbe \
     --config=xla_mgpu \
@@ -95,6 +96,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
+    --run_under=//build_tools/rocm:sanitizer_wrapper \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}")
 

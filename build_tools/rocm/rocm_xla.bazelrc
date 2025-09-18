@@ -9,7 +9,7 @@ test:xla_sgpu --config=xla_sgpu_filters -- \
 -//xla/service:collective_ops_utils_test \
 -//xla/service:collective_pipeliner_test \
 -//xla/service:collective_permute_cycle_test \
--//xla/service:batched_gather_scatter_normalizer_test \ 
+-//xla/service:batched_gather_scatter_normalizer_test \
 -//xla/service:all_reduce_simplifier_test \
 -//xla/service:all_gather_simplifier_test \
 -//xla/service:reduce_scatter_decomposer_test \

@@ -83,6 +83,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --profile=/tf/pkg/profile.json.gz \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
+    "${SANITIZER_ARGS[@]}" \
     --config=rocm_ci \
     --config=rocm_rbe \
     --config=xla_sgpu \
@@ -99,8 +100,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --run_under=//build_tools/ci:parallel_gpu_execute \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
-    "${ASAN_ARGS[@]}"
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}")
 
 # clean up bazel disk_cache
 bazel shutdown \
