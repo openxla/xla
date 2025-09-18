@@ -357,6 +357,15 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
     }
   }
 
+  if (input_type == F8E4M3FN || input_type == F8E5M2 ||
+      input_type == F8E5M2FNUZ || input_type == F8E4M3FNUZ) {
+    if (auto* rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version);
+        rocm_cc) {
+      return CodegenDecision::Forbid(
+          "Not supported Dot operation on Rocm.");
+    }
+  }
+
   auto supported_float_types = {BF16, F16, F32, F64, F8E4M3FN, F8E5M2,
                                 F8E4M3FNUZ, F8E5M2FNUZ};
   if (absl::c_linear_search(supported_float_types, input_type)) {
