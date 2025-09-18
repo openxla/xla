@@ -121,7 +121,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "@nanobind",
     ],
 )
@@ -498,7 +498,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/strings:str_format",
-        "@local_config_python//:python_headers",
+        "//third_party/python_runtime:headers",
         "@nanobind",
     ],
 )
@@ -518,7 +518,7 @@ cc_library(
         # copybara:uncomment_begin
         # "//third_party/py/numpy:multiarray",  # build_cleaner: keep
         # copybara:uncomment_end
-        "@local_config_python//:python_headers",
+        "//third_party/python_runtime:headers",
         "//xla/tsl/python/lib/core:numpy",
     ],
 )

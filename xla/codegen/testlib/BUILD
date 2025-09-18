@@ -46,7 +46,7 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@nanobind",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "//xla:comparison_util",
         "//xla:debug_options_flags",
         "//xla:literal",

@@ -2,14 +2,25 @@ licenses(["restricted"])
 
 package(default_visibility = ["//visibility:public"])
 
-alias(
-    name = "numpy",
-    actual = "@pypi_numpy//:pkg",
-)
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:pip.bzl", "whl_filegroup")
 
 alias(
+    name = "numpy",
+    actual = "@pypi//numpy",
+)
+
+whl_filegroup(
+    name = "numpy_includes",
+    pattern = "numpy/core/include/numpy",
+    whl = "@pypi//numpy:whl",
+)
+
+cc_library(
     name = "headers",
-    actual = "@pypi_numpy//:numpy_headers",
+    hdrs = [":numpy_includes"],
+    includes = ["numpy_includes/numpy/core/include"],
+    deps = ["@rules_python//python/cc:current_py_cc_headers"],
 )
 
 genrule(

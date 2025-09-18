@@ -145,7 +145,7 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:IR",
         "@nanobind",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "//xla/backends/cpu/codegen:computation_kernel_emitter",
         "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/backends/cpu/codegen:fusion_emitter",
