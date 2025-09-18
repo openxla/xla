@@ -17,12 +17,20 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_CONVOLUTION_H_
 #if defined(INTEL_MKL)
 
+#include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_util.h"
 
 namespace xla {
 namespace cpu {
 
 constexpr auto kOnednnConvConfig = BackendConfigOneofCase::kOnednnConvConfig;
+
+void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
+                              absl::Span<MemrefInfoHandler> results,
+                              OneDnnConvolutionConfig conv_config,
+                              const dnnl::engine& cpu_engine,
+                              dnnl::stream& onednn_stream,
+                              OneDnnResources& resources);
 
 extern "C" {
 extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void* scratch,
