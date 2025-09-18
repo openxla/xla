@@ -78,7 +78,8 @@ absl::Status SyclDevicePool::InitDevicePool() {
 
 absl::StatusOr<::sycl::context> SyclDevicePool::GetDeviceContext() {
   TF_RETURN_IF_ERROR(SyclDevicePool::InitDevicePool());
-  return ::sycl::context(device_pool_);
+  static ::sycl::context device_context(device_pool_);
+  return device_context;
 }
 
 absl::StatusOr<int> SyclDevicePool::GetDeviceCount() {

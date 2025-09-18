@@ -34,5 +34,15 @@ TEST(SyclGpuRuntimeTest, GetDeviceOrdinal) {
   EXPECT_EQ(device_ordinal, kDefaultDeviceOrdinal);
 }
 
+TEST(SyclGpuRuntimeTest, TestStaticDeviceContext) {
+  // Verify that GetDeviceContext returns the same context instance on multiple
+  // calls.
+  TF_ASSERT_OK_AND_ASSIGN(::sycl::context saved_sycl_context,
+                          SyclDevicePool::GetDeviceContext());
+  TF_ASSERT_OK_AND_ASSIGN(::sycl::context current_sycl_context,
+                          SyclDevicePool::GetDeviceContext());
+  EXPECT_EQ(saved_sycl_context, current_sycl_context);
+}
+
 }  // namespace
 }  // namespace stream_executor::sycl
