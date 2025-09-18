@@ -137,7 +137,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -179,7 +179,8 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
     pipeline.AddPass(std::make_unique<ThunkChecksumTracingPass>());
   }
   if (debug_options.xla_gpu_experimental_enable_command_buffer_on_thunks()) {
-    pipeline.AddPass(std::make_unique<CommandBufferConversionPass>());
+    pipeline.AddPass(std::make_unique<CommandBufferConversionPass>(
+        hlo_module ? hlo_module->name() : "Anonymous"));
   }
   TF_ASSIGN_OR_RETURN(bool changed, pipeline.Run(root_thunk, debug_options,
                                                  device_info, allocator));
