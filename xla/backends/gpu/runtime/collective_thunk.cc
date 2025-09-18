@@ -437,17 +437,27 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   bool is_first_rendezvous_needed = false;
   if (IsAsync()) {
-    se::Stream& async_stream = *params.collective_params->async_streams.at(
-        Thunk::execution_stream_id().value());
+    // Launch collective operation on an async stream.
+    se::Stream* async_stream =
+        params.collective_params->async_streams.at(
+            Thunk::execution_stream_id().value());
+
+    // Override the async stream if set by the thunk.
+    auto stream_id = GetStreamIdOverride();
+    if (stream_id.has_value()) {
+      async_stream =
+          params.collective_params->async_streams.at(stream_id.value().value());
+    }
+
     // Wait for main compute stream to make sure all buffers are ready.
-    TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
+    TF_RETURN_IF_ERROR(async_stream->WaitFor(params.stream));
 
     TF_ASSIGN_OR_RETURN(is_first_rendezvous_needed,
-                        RunCollective(params, async_stream, comm_handle));
+                        RunCollective(params, *async_stream, comm_handle));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
-    TF_RETURN_IF_ERROR(async_stream.RecordEvent(event));
+    TF_RETURN_IF_ERROR(async_stream->RecordEvent(event));
 
   } else {
     // Launch collective operation on a main stream.

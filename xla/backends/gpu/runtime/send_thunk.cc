@@ -56,7 +56,9 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
                                   P2PConfig::ValidationKind::kConditional
                               ? new ExecutionCounters()
                               : nullptr),
-      hlo_name_(instr->name()) {}
+      hlo_name_(instr->name()) {
+  stream_id_override_ = xla::gpu::GetStreamIdOverride(instr);
+}
 
 absl::Status SendThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));

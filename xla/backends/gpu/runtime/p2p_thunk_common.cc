@@ -168,7 +168,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   return p2p_config;
 }
 
-std::optional<ExecutionStreamId> GetStreamIdForP2P(
+std::optional<ExecutionStreamId> GetStreamIdOverride(
     const HloInstruction* instr) {
   const auto& fe_map = instr->frontend_attributes().map();
 
