@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_UTILS_H_
-#define XLA_BACKENDS_PROFILER_GPU_ROCM_UTILS_H_
+#ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_UTILS_H_
+#define XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_UTILS_H_
 
 #include <cstdint>
 #include <cstring>
@@ -203,4 +203,4 @@ class AnnotationMap {
 }  // namespace profiler
 }  // namespace xla
 
-#endif  // XLA_BACKENDS_PROFILER_GPU_ROCM_UTILS_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_UTILS_H_
