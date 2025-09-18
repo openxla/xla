@@ -76,13 +76,6 @@ if [[ $1 == "asan" ]]; then
 elif [[ $1 == "tsan" ]]; then
     SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--config=tsan")
-    EXCLUDED_TESTS+=(
-        HloTest*
-        FunctionalHloRunnerTest*
-        TopkTest*
-        SimpleOptimizationTest.OptimizeModule
-        OutfeedInNestedComputationTest.OutfeedInConditional
-    )
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
