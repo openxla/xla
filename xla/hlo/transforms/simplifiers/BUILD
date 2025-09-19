@@ -1631,6 +1631,7 @@ xla_cc_test(
         ":sub_byte_collective_normalization",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
     ],
 )

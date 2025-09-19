@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 
@@ -24,74 +25,63 @@ class SubByteCollectiveNormalizationTest
     : public HloHardwareIndependentTestBase {};
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipNonSubByteTypes) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
  a = s8[4,8]{1,0} parameter(0)
  b = s8[8,8]{1,0} all-gather(a), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipNonPacked) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
  a = s2[16,32]{1,0} parameter(0)
  b = s2[32,32]{1,0} all-gather(a), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipNonMinorMost) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
  a = s4[32,16]{0,1:E(4)} parameter(0)
  b = s4[32,16]{0,1:E(4)} all-gather(a), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipOddElementCount) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
  a = s4[4,9]{1,0:E(4)} parameter(0)
  b = s4[8,9]{1,0:E(4)} all-gather(a), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipVariadic) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
  a = s4[4,8]{1,0:E(4)} parameter(0)
  b = s16[5,6]{1,0} parameter(1)
  c = (s4[8,8]{1,0:E(4)}, s16[10,6]{1,0}) all-gather(a, b), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, TransformS4AllGather) {
-  SubByteCollectiveNormalization pass;
   RunAndFilecheckHloRewrite(R"(
 e {
  a = s4[4,8]{1,0:E(4)} parameter(0)
  b = s4[8,8]{1,0:E(4)} all-gather(a), dimensions={0}
 })",
-                            std::move(pass), R"(
+                            SubByteCollectiveNormalization(), R"(
 CHECK: s4[4,8]{1,0:E(4)} parameter
 CHECK-NEXT: s4[4,4,2]{2,1,0:E(4)} bitcast
 CHECK-NEXT: s8[4,4]{1,0} bitcast-convert
@@ -102,26 +92,23 @@ CHECK-NEXT: s4[8,8]{1,0:E(4)} bitcast
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, SkipTinyAllToAll) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
+  TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 HloModule m, replica_count=2
 e {
   a = u4[2]{0:E(4)} parameter(0)
   b = u4[2]{0:E(4)} all-to-all(a), dimensions={0}
 })",
-                                    std::move(SubByteCollectiveNormalization{}),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+                                     SubByteCollectiveNormalization(),
+                                     /*expect_change=*/false));
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, TransformF4AllToAll) {
-  SubByteCollectiveNormalization pass;
   RunAndFilecheckHloRewrite(R"(
 e {
  a = f4e2m1fn[3,6,10]{2,1,0:E(4)} parameter(0)
  b = f4e2m1fn[3,6,10]{2,1,0:E(4)} all-to-all(a), dimensions={1}
 })",
-                            std::move(pass), R"(
+                            SubByteCollectiveNormalization(), R"(
 CHECK: f4e2m1fn[3,6,10]{2,1,0:E(4)} parameter
 CHECK-NEXT: f4e2m1fn[3,6,5,2]{3,2,1,0:E(4)} bitcast
 CHECK-NEXT: s8[3,6,5]{2,1,0} bitcast-convert
@@ -132,13 +119,12 @@ CHECK-NEXT: f4e2m1fn[3,6,10]{2,1,0:E(4)} bitcast
 }
 
 TEST_F(SubByteCollectiveNormalizationTest, TransformU2CollectiveBroadcast) {
-  SubByteCollectiveNormalization pass;
   RunAndFilecheckHloRewrite(R"(
 e {
  a = u2[5,9,8]{2,0,1:E(2)} parameter(0)
  b = u2[5,9,8]{2,0,1:E(2)} collective-broadcast(a), replica_groups={}
 })",
-                            std::move(pass), R"(
+                            SubByteCollectiveNormalization(), R"(
 CHECK: u2[5,9,8]{2,0,1:E(2)} parameter
 CHECK-NEXT: u2[5,9,2,4]{3,2,0,1:E(2)} bitcast
 CHECK-NEXT: s8[5,9,2]{2,0,1} bitcast-convert
