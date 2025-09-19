@@ -5118,12 +5118,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleOptimizationBarrier(
   // optimization barrier. Additionally if the operand is a tuple producing
   // instruction it should also be safe to create a sub tuple of only the used
   // components to enable module level dce.
-  std::vector<bool> used_elements(barrier->shape().tuple_shapes().size());
-  bool has_non_gte_use = false;
+  std::vector<bool> used_elements(barrier->shape().tuple_shapes().size(),
+                                  false);
   for (auto use : barrier->users()) {
     if (use->opcode() != HloOpcode::kGetTupleElement) {
-      has_non_gte_use = true;
-      break;
+      return absl::OkStatus();
     }
     used_elements[use->tuple_index()] = true;
   }
@@ -5142,7 +5141,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleOptimizationBarrier(
     }
   }
 
-  if (has_non_gte_use || !absl::c_linear_search(used_elements, false)) {
+  if (absl::c_all_of(used_elements, [](bool v) { return v; })) {
     return absl::OkStatus();
   }
 
@@ -5269,14 +5268,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleBroadcast(
           .BuildAndAddRecoveryComputation(
               operand, operand->mutable_operand(0),
               [](xla::HloComputation::Builder& builder, const ShapeIndex& index,
-                 const OriginalArray& replaced_original_array,
-                 const xla::Shape& replaced_shape,
-                 const xla::Shape& replacing_shape) {
-                xla::HloInstruction* param =
-                    builder.AddInstruction(xla::HloInstruction::CreateParameter(
-                        0, replacing_shape, "p"));
+                 const OriginalArray& old_original_array,
+                 const xla::Shape& old_shape, const xla::Shape& new_shape) {
+                xla::HloInstruction* param = builder.AddInstruction(
+                    xla::HloInstruction::CreateParameter(0, new_shape, "p"));
                 return builder.AddInstruction(
-                    xla::HloInstruction::CreateReshape(replaced_shape, param));
+                    xla::HloInstruction::CreateReshape(old_shape, param));
               });
       return ReplaceWithNewInstruction(
           broadcast,

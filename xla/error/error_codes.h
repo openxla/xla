@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_ERRORS_ERROR_CODES_H_
-#define XLA_ERRORS_ERROR_CODES_H_
+#ifndef XLA_ERROR_ERROR_CODES_H_
+#define XLA_ERROR_ERROR_CODES_H_
 
 #include <string>
 
@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/error/debug_me_context_util.h"
 
 namespace xla::error {
 
@@ -154,10 +155,12 @@ inline std::string GetErrorUrl(ErrorCode code) {
   template <typename... Args>                                            \
   inline absl::Status enum_name(const absl::FormatSpec<Args...>& format, \
                                 const Args&... args) {                   \
-    return absl::Status(                                                 \
+    auto status = absl::Status(                                          \
         status_code,                                                     \
         absl::StrCat(GetErrorCodeAndName(ErrorCode::k##enum_name), ": ", \
                      absl::StrFormat(format, args...)));                 \
+    error::AttachDebugMeContextPayload(status);                          \
+    return status;                                                       \
   }
 
 XLA_ERROR_CODE_LIST(DEFINE_ERROR_FACTORY_FUNCTION)
@@ -165,4 +168,4 @@ XLA_ERROR_CODE_LIST(DEFINE_ERROR_FACTORY_FUNCTION)
 
 }  // namespace xla::error
 
-#endif  // XLA_ERRORS_ERROR_CODES_H_
+#endif  // XLA_ERROR_ERROR_CODES_H_

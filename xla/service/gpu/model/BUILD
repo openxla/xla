@@ -155,11 +155,15 @@ xla_test(
         "amdgpu_any",
     ],
     tags =
-        if_google([
-            # TODO(b/414617899): Reenable once NVML works
-            "manual",
-            "notap",
-        ]),
+        if_google(
+            [
+                # TODO(b/414617899): Reenable once NVML works
+                "manual",
+                "notap",
+            ],
+            # TODO(b/435404154): Reenable once this is fixed.
+            ["no_oss"],
+        ),
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",
@@ -991,6 +995,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -2263,6 +2263,7 @@ Exp also supports the optional `result_accuracy` argument:
 
 **`Exp(operand, result_accuracy)`** 
 
+
 | Arguments         | Type                      | Semantics                   |
 | ----------------- | ------------------------- | --------------------------- |
 | `operand`         | `XlaOp`                   | The operand to the function |
