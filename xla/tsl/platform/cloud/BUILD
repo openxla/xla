@@ -131,6 +131,7 @@ cc_library(
         "//xla/tsl/platform:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@jsoncpp_git//:jsoncpp",
@@ -409,6 +410,7 @@ tsl_cc_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
+        "@com_google_absl//absl/status",
     ],
 )
 

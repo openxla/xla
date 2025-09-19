@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/str_util.h"
 #include "tsl/platform/strcat.h"
+#include "absl/status/status.h"
 
 // Undef DeleteFile macro defined in wndows.h.
 #ifdef PLATFORM_WINDOWS
