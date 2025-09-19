@@ -92,47 +92,48 @@ HloInstruction* CastToNarrowerTypeAndReshape(HloInstruction* input,
       HloInstruction::CreateBitcast(shape, convert));
 }
 
-class SubByteCollectiveNormalizationVisitor : public DfsHloVisitorWithDefault {
+class SubByteCollectiveNormalizationVisitor : public DfsHloRewriteVisitor {
  public:
   SubByteCollectiveNormalizationVisitor() = default;
   absl::Status DefaultAction(HloInstruction*) override;
-  bool changed() const { return changed_; }
-
- private:
-  bool changed_ = false;
 };
+
+bool CanBeRepresentedAs(const Shape& shape, const PrimitiveType casted_type) {
+  const int64_t ratio = primitive_util::BitWidth(casted_type) /
+                        primitive_util::BitWidth(shape.element_type());
+  return primitive_util::IsSubByteNonPredType(shape.element_type()) &&
+         ShapeUtil::LastDimIsMinorMost(shape) &&
+         shape.layout().element_size_in_bits() ==
+             primitive_util::BitWidth(shape.element_type()) &&
+         shape.dimensions().back() % ratio == 0;
+}
 
 absl::Status SubByteCollectiveNormalizationVisitor::DefaultAction(
     HloInstruction* hlo) {
   if (!HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kAllToAll,
                         HloOpcode::kCollectiveBroadcast,
-                        HloOpcode::kCollectivePermute>(hlo) ||
-      hlo->operand_count() != 1) {
+                        HloOpcode::kCollectivePermute>(hlo)) {
+    return absl::OkStatus();
+  }
+  if (hlo->operand_count() != 1) {
     // Variadic ones are not supported yet.
     return absl::OkStatus();
   }
 
-  HloInstruction* input = hlo->mutable_operand(0);
-  const Shape& input_shape = input->shape();
-  const PrimitiveType input_type = input_shape.element_type();
+  const HloInstruction& input = *hlo->operand(0);
   constexpr PrimitiveType casted_type = S8;
   const int64_t ratio = primitive_util::BitWidth(casted_type) /
-                        primitive_util::BitWidth(input_type);
+                        primitive_util::BitWidth(input.shape().element_type());
 
-  if (!(primitive_util::IsSubByteNonPredType(input_type) &&
-        ShapeUtil::LastDimIsMinorMost(input_shape) &&
-        input_shape.layout().element_size_in_bits() ==
-            primitive_util::BitWidth(input_shape.element_type()) &&
-        input_shape.dimensions().back() % ratio == 0)) {
+  if (!CanBeRepresentedAs(input.shape(), casted_type)) {
     return absl::OkStatus();
   }
+
   if (hlo->opcode() == HloOpcode::kAllToAll) {
     const auto* all_to_all = Cast<HloAllToAllInstruction>(hlo);
     if (all_to_all->split_dimension()) {
-      TF_ASSIGN_OR_RETURN(
-          CollectiveOpGroupMode group_mode,
-          GetCollectiveOpGroupMode(all_to_all->channel_id().has_value(),
-                                   std::nullopt));
+      TF_ASSIGN_OR_RETURN(const CollectiveOpGroupMode group_mode,
+                          GetCollectiveOpGroupMode(all_to_all));
       const int64_t split_dimension_size =
           hlo->shape().dimensions(*all_to_all->split_dimension());
       if (split_dimension_size %
@@ -155,11 +156,11 @@ absl::Status SubByteCollectiveNormalizationVisitor::DefaultAction(
   HloInstruction* new_collective =
       hlo->parent()->AddInstruction(hlo->CloneWithNewOperands(
           new_collective_shape,
-          {ReshapeAndCastToWiderType(input, casted_type)}));
+          {ReshapeAndCastToWiderType(hlo->mutable_operand(0), casted_type)}));
   TF_RETURN_IF_ERROR(hlo->parent()->ReplaceInstructionWithDifferentShape(
       hlo, CastToNarrowerTypeAndReshape(new_collective, hlo->shape())));
 
-  changed_ = true;
+  MarkAsChanged();
   return absl::OkStatus();
 }
 
