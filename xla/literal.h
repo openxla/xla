@@ -24,6 +24,7 @@ limitations under the License.
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -1107,6 +1108,7 @@ class LiteralBase {
       Storage(Storage&& other) { *this = std::move(other); }
       Storage& operator=(Storage&& other) {
         rep_ = std::move(other.rep_);
+        std::lock_guard<std::mutex> lock(mutex_);
         data_ = other.data_;
 
         if (auto* inline_rep = GetDenseInlinedRep()) {
@@ -1127,6 +1129,7 @@ class LiteralBase {
       template <typename Rep, typename... Args>
       Rep& Emplace(Args... args) {
         Rep& emplaced = rep_.emplace<Rep>(std::forward<Args>(args)...);
+        std::lock_guard<std::mutex> lock(mutex_);
         if constexpr (std::is_same_v<Rep, DenseRep> ||
                       std::is_same_v<Rep, DenseInlinedRep>) {
           data_ = emplaced.data;
@@ -1157,11 +1160,13 @@ class LiteralBase {
       TupleRep* GetTupleRep() { return std::get_if<TupleRep>(&rep_); }
 
       const char* data() const {
+        std::lock_guard<std::mutex> lock(mutex_);
         DCHECK_EQ(dense_data(), data_) << "cached data pointer is stale";
         return data_;
       }
 
       char* data() {
+        std::lock_guard<std::mutex> lock(mutex_);
         DCHECK_EQ(dense_data(), data_) << "cached data pointer is stale";
         return data_;
       }
@@ -1174,6 +1179,7 @@ class LiteralBase {
       }
 
       std::variant<Uninitialized, TupleRep, DenseRep, DenseInlinedRep> rep_;
+      mutable std::mutex mutex_;
       char* data_ = nullptr;  // cached `rep_.data` value for dense reps
     };
 
