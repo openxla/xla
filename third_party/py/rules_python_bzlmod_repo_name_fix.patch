@@ -1,8 +1,8 @@
 diff --git a/python/private/pypi/pip_repository.bzl b/python/private/pypi/pip_repository.bzl
-index 90cda774..e7a11760 100644
+index 6d539a5f..6c20ee3d 100644
 --- a/python/private/pypi/pip_repository.bzl
 +++ b/python/private/pypi/pip_repository.bzl
-@@ -145,7 +145,7 @@ def _pip_repository_impl(rctx):
+@@ -163,7 +163,7 @@ def _pip_repository_impl(rctx):
      for pkg, annotation in rctx.attr.annotations.items():
          filename = "{}.annotation.json".format(normalize_name(pkg))
          rctx.file(filename, json.encode_indent(json.decode(annotation)))
@@ -11,7 +11,7 @@ index 90cda774..e7a11760 100644
  
      config = {
          "download_only": rctx.attr.download_only,
-@@ -157,24 +157,24 @@ def _pip_repository_impl(rctx):
+@@ -175,24 +175,24 @@ def _pip_repository_impl(rctx):
          "pip_data_exclude": rctx.attr.pip_data_exclude,
          "python_interpreter": _get_python_interpreter_attr(rctx),
          "quiet": rctx.attr.quiet,
@@ -36,12 +36,12 @@ index 90cda774..e7a11760 100644
  
      aliases = render_pkg_aliases(
          aliases = {
--            pkg: [whl_alias(repo = rctx.attr.name + "_" + pkg)]
-+            pkg: [whl_alias(repo = rctx.attr.name.split("~")[-1] + "_" + pkg)]
+-            pkg: rctx.attr.name + "_" + pkg
++            pkg: rctx.attr.name.split("~")[-1] + "_" + pkg
              for pkg in bzl_packages or []
          },
-     )
-@@ -189,7 +189,7 @@ def _pip_repository_impl(rctx):
+         extra_hub_aliases = rctx.attr.extra_hub_aliases,
+@@ -209,7 +209,7 @@ def _pip_repository_impl(rctx):
          name = group_repo,
          repo_prefix = "{name}_",
          groups = all_requirement_groups,
@@ -50,7 +50,7 @@ index 90cda774..e7a11760 100644
          "%%ALL_DATA_REQUIREMENTS%%": render.list([
              macro_tmpl.format(p, "data")
              for p in bzl_packages
-@@ -208,10 +208,10 @@ def _pip_repository_impl(rctx):
+@@ -228,10 +228,10 @@ def _pip_repository_impl(rctx):
          "%%EXTRA_PIP_ARGS%%": json.encode(options),
          "%%IMPORTS%%": "\n".join(imports),
          "%%MACRO_TMPL%%": macro_tmpl,
@@ -64,24 +64,42 @@ index 90cda774..e7a11760 100644
              ],
          ),
 diff --git a/python/private/toolchains_repo.bzl b/python/private/toolchains_repo.bzl
-index d21fb53a..2c5d62d9 100644
+index 93bbb521..f089b2d3 100644
 --- a/python/private/toolchains_repo.bzl
 +++ b/python/private/toolchains_repo.bzl
-@@ -95,7 +95,7 @@ def _toolchains_repo_impl(rctx):
- load("@{rules_python}//python/private:py_toolchain_suite.bzl", "py_toolchain_suite")
+@@ -53,7 +53,7 @@ _WORKSPACE_TOOLCHAINS_BUILD_TEMPLATE = """
+ # python_register_toolchains macro so you don't normally need to interact with
+ # these targets.
  
- """.format(
--        rules_python = rctx.attr._rules_python_workspace.workspace_name,
-+        rules_python = rctx.attr._rules_python_workspace.workspace_name.rstrip("~"),
+-load("@@{rules_python}//python/private:py_toolchain_suite.bzl", "py_toolchain_suite")
++load("@{rules_python}//python/private:py_toolchain_suite.bzl", "py_toolchain_suite")
+ 
+ """.lstrip()
+ 
+@@ -242,7 +242,7 @@ def toolchain_suite_content(
+ 
+ def _toolchains_repo_impl(rctx):
+     build_content = _WORKSPACE_TOOLCHAINS_BUILD_TEMPLATE.format(
+-        rules_python = rctx.attr._rules_python_workspace.repo_name,
++        rules_python = rctx.attr._rules_python_workspace.repo_name.rstrip("~"),
      )
  
      toolchains = python_toolchain_build_file_content(
-@@ -326,7 +326,7 @@ this repo causes an eager fetch of the toolchain for the host platform.
+@@ -285,7 +285,7 @@ def _toolchain_aliases_impl(rctx):
+     rctx.file("defs.bzl", content = _TOOLCHAIN_ALIASES_DEFS_TEMPLATE.format(
+         name = rctx.attr.name,
+         python_version = rctx.attr.python_version,
+-        rules_python = rctx.attr._rules_python_workspace.repo_name,
++        rules_python = rctx.attr._rules_python_workspace.repo_name.rstrip("~"),
+     ))
+ 
+ toolchain_aliases = repository_rule(
+@@ -457,7 +457,7 @@ Major.Minor.Micro format. Keyed by index in `platforms`.
  )
  
  def _multi_toolchain_aliases_impl(rctx):
--    rules_python = rctx.attr._rules_python_workspace.workspace_name
-+    rules_python = rctx.attr._rules_python_workspace.workspace_name.rstrip("~")
+-    rules_python = rctx.attr._rules_python_workspace.repo_name
++    rules_python = rctx.attr._rules_python_workspace.repo_name.rstrip("~")
  
      for python_version, repository_name in rctx.attr.python_versions.items():
          file = "{}/defs.bzl".format(python_version)

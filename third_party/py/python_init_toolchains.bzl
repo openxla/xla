@@ -49,7 +49,6 @@ def python_init_toolchains(name = "python", python_version = None, register_tool
             # Avoid obscure platforms for now just in case
             if "aarch64" in platform or "x86_64" in platform:
                 sha256s[platform] = HERMETIC_PYTHON_SHA256
-
         python_register_toolchains(
             name = get_toolchain_name_per_python_version(name),
             base_url = url_components[0] + "://",

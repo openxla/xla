@@ -1,6 +1,6 @@
 module(name = "xla")
 
-bazel_dep(name = "rules_python", version = "0.39.0")
+bazel_dep(name = "rules_python", version = "1.6.0")
 bazel_dep(name = "rules_cc", version = "0.2.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
 bazel_dep(name = "grpc", version = "1.74.1", repo_name = "com_github_grpc_grpc")
@@ -13,6 +13,12 @@ bazel_dep(name = "google_benchmark", version = "1.8.4", repo_name = "com_google_
 bazel_dep(name = "re2", version = "2024-07-02.bcr.1", repo_name = "com_googlesource_code_re2")
 bazel_dep(name = "snappy", version = "1.2.1")
 bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
+bazel_dep(name = "boringssl", version = "0.20250818.0")
+bazel_dep(name = "curl", version = "8.8.0.bcr.3")
+bazel_dep(name = "or-tools", version = "9.12", repo_name = "com_google_ortools")
+bazel_dep(name = "jsoncpp", version = "1.9.6", repo_name = "jsoncpp_git")
+bazel_dep(name = "pybind11_abseil", version = "202402.0")
+bazel_dep(name = "pybind11_protobuf", version = "0.0.0-20250210-f02a2b7")
 
 bazel_dep(name = "grpc-java", version = "1.75.0", repo_name = "DO_NOT_USE_grpc_java")
 
@@ -21,8 +27,8 @@ bazel_dep(name = "grpc-java", version = "1.75.0", repo_name = "DO_NOT_USE_grpc_j
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/a423a8d14dc7e2a83216ac2e8ba005dabbcad10d.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-a423a8d14dc7e2a83216ac2e8ba005dabbcad10d",
+  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/77fc2f183aba94e7397aeb1d6fdf81aa60fccec3.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-77fc2f183aba94e7397aeb1d6fdf81aa60fccec3",
 )
 
 # TODO: Upstream the patch?
@@ -34,11 +40,9 @@ single_version_override(
 
 single_version_override(
   module_name = "rules_python",
-  version = "0.39.0", # pin rules_python to 0.39.0 so that patches still apply
   patches = [
-      # "//third_party/py:rules_python1.patch",
-      # "//third_party/py:rules_python2.patch",
-      "//third_party/py:rules_python3.patch",
+      "//third_party/py:rules_python_pip_version.patch",
+      "//third_party/py:rules_python_freethreaded.patch",
       "//third_party/py:rules_python_bzlmod_repo_name_fix.patch",
   ],
   patch_strip = 1,
@@ -76,6 +80,7 @@ use_repo(third_party,
     "shardy",
     "ducc",
     "hwloc",
+    "implib_so",
     "onednn",
     "XNNPACK",
     "pthreadpool",
@@ -84,6 +89,13 @@ use_repo(third_party,
     "eigen_archive",
     "llvm-raw",
     "triton",
+    "llvm_openmp",
+    "mpitrampoline",
+    "absl_py",
+    "gloo",
+    "nanobind",
+    "cudnn_frontend_archive",
+    "nvshmem",
 )
 
 ### pybind dependencies
@@ -97,6 +109,9 @@ use_repo(pybind11_internal_configure, "pybind11")
 
 #### Python toolchain and Pypi dependencies setup ####
 
+python_configure = use_extension("//third_party/extensions/python:python_configure.bzl", "python_configure_ext")
+use_repo(python_configure, "local_config_python")
+
 python_init_extension = use_extension("//third_party/extensions/python:python_init_repositories.bzl", "python_init_extension")
 python_init_extension.init(
     requirements = {
@@ -108,12 +123,13 @@ use_repo(python_init_extension, "python_version_repo")
 
 python_init_toolchains = use_extension("//third_party/extensions/python:python_init_toolchains.bzl", "python_init_toolchains_ext")
 use_repo(python_init_toolchains,
-    "python",
-    "python_toolchains",
+    "python_3_11",
+    "python_3_11_host",
+    "python_3_11_toolchains",
     # TODO: what about other platforms?
-    "python_x86_64-unknown-linux-gnu",
+    "python_3_11_x86_64-unknown-linux-gnu",
 )
-register_toolchains("@python_toolchains//:all")
+register_toolchains("@python_3_11_toolchains//:all")
 
 python_init_pip = use_extension("//third_party/extensions/python:python_init_pip.bzl", "python_init_pip_ext")
 use_repo(python_init_pip, "pypi")
