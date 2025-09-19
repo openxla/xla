@@ -1,9 +1,9 @@
 module(name = "xla")
 
-bazel_dep(name = "rules_python", version = "1.0.0")
+bazel_dep(name = "rules_python", version = "0.39.0")
 bazel_dep(name = "rules_cc", version = "0.2.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
-bazel_dep(name = "grpc", version = "1.74.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "grpc", version = "1.74.1", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "protobuf", version = "31.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "abseil-cpp", version = "20250814.0", repo_name = "com_google_absl")
 bazel_dep(name = "googletest", version = "1.17.0", repo_name = "com_google_googletest")
@@ -11,9 +11,10 @@ bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_license", version = "1.0.0")
 bazel_dep(name = "google_benchmark", version = "1.8.4", repo_name = "com_google_benchmark")
 bazel_dep(name = "re2", version = "2024-07-02.bcr.1", repo_name = "com_googlesource_code_re2")
-bazel_dep(name = "pybind11_bazel", version = "2.13.6")
 bazel_dep(name = "snappy", version = "1.2.1")
 bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
+
+bazel_dep(name = "grpc-java", version = "1.75.0", repo_name = "DO_NOT_USE_grpc_java")
 
 # TODO: publish an official version of rules_ml_toolchain to BCR
 # https://github.com/google-ml-infra/rules_ml_toolchain/pull/80
@@ -28,6 +29,18 @@ archive_override(
 single_version_override(
   module_name = "grpc",
   patches = ["//third_party/grpc:grpc.patch"],
+  patch_strip = 1,
+)
+
+single_version_override(
+  module_name = "rules_python",
+  version = "0.39.0", # pin rules_python to 0.39.0 so that patches still apply
+  patches = [
+      # "//third_party/py:rules_python1.patch",
+      # "//third_party/py:rules_python2.patch",
+      "//third_party/py:rules_python3.patch",
+      "//third_party/py:rules_python_bzlmod_repo_name_fix.patch",
+  ],
   patch_strip = 1,
 )
 
@@ -51,6 +64,7 @@ tf_vendored(
     relpath = "third_party/tsl",
 )
 
+### C++ libraries
 # TODO: most of them can be Bazel modules
 third_party = use_extension("//third_party/extensions:third_party.bzl", "third_party_extension")
 use_repo(third_party,
@@ -69,7 +83,45 @@ use_repo(third_party,
     "cpuinfo",
     "eigen_archive",
     "llvm-raw",
+    "triton",
 )
+
+### pybind dependencies
+
+bazel_dep(name = "pybind11_bazel", version = "2.13.6")
+pybind11_internal_configure = use_extension(
+    "@pybind11_bazel//:internal_configure.bzl",
+    "internal_configure_extension",
+)
+use_repo(pybind11_internal_configure, "pybind11")
+
+#### Python toolchain and Pypi dependencies setup ####
+
+python_init_extension = use_extension("//third_party/extensions/python:python_init_repositories.bzl", "python_init_extension")
+python_init_extension.init(
+    requirements = {
+        "3.11": "//:requirements_lock_3_11.txt",
+        "3.12": "//:requirements_lock_3_12.txt",
+    },
+)
+use_repo(python_init_extension, "python_version_repo")
+
+python_init_toolchains = use_extension("//third_party/extensions/python:python_init_toolchains.bzl", "python_init_toolchains_ext")
+use_repo(python_init_toolchains,
+    "python",
+    "python_toolchains",
+    # TODO: what about other platforms?
+    "python_x86_64-unknown-linux-gnu",
+)
+register_toolchains("@python_toolchains//:all")
+
+python_init_pip = use_extension("//third_party/extensions/python:python_init_pip.bzl", "python_init_pip_ext")
+use_repo(python_init_pip, "pypi")
+
+install_deps = use_extension("//third_party/extensions/python:install_deps.bzl", "install_deps_ext")
+use_repo(install_deps, "pypi_numpy", "pypi_lit")
+
+### Other extensions ###
 
 rocm = use_extension("//third_party/extensions:rocm.bzl", "rocm_extension")
 use_repo(rocm, "local_config_rocm")
@@ -82,9 +134,6 @@ use_repo(tensorrt, "local_config_tensorrt")
 
 cuda_extension = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_extension.bzl", "cuda_extension")
 use_repo(cuda_extension, "local_config_cuda")
-
-python = use_extension("//third_party/extensions:python.bzl", "python_extension")
-use_repo(python, "python_version_repo")
 
 llvm = use_extension("//third_party/extensions:llvm.bzl", "llvm_extension")
 use_repo(llvm, "llvm-project")

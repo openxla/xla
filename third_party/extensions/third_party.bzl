@@ -1,15 +1,16 @@
 """Module extension for third party dependencies."""
 
-load("@xla//third_party:repo.bzl", "tf_http_archive")
-load("@xla//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
-load("@xla//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
-load("@xla//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
-load("@xla//third_party/farmhash:workspace.bzl", farmhash = "repo")
-load("@xla//third_party/shardy:workspace.bzl", shardy = "repo")
-load("@xla//third_party/ducc:workspace.bzl", ducc = "repo")
-load("@xla//third_party/hwloc:workspace.bzl", hwloc = "repo")
-load("@xla//third_party/eigen3:workspace.bzl", eigen3 = "repo")
-load("@xla//third_party/llvm:workspace.bzl", llvm = "repo")
+load("//third_party:repo.bzl", "tf_http_archive")
+load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
+load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
+load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
+load("//third_party/farmhash:workspace.bzl", farmhash = "repo")
+load("//third_party/shardy:workspace.bzl", shardy = "repo")
+load("//third_party/ducc:workspace.bzl", ducc = "repo")
+load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
+load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
+load("//third_party/llvm:workspace.bzl", llvm = "repo")
+load("//third_party/triton:workspace.bzl", triton = "repo")
 
 def _third_party_extension_impl(mctx):
     ml_dtypes()
@@ -20,14 +21,15 @@ def _third_party_extension_impl(mctx):
     ducc()
     hwloc()
     eigen3()
+    triton()
     llvm(name = "llvm-raw")
     tf_http_archive(
         name = "onednn",
         sha256 = "071f289dc961b43a3b7c8cbe8a305290a7c5d308ec4b2f586397749abdc88296",
         urls = ["https://storage.googleapis.com/mirror.tensorflow.org/github.com/oneapi-src/oneDNN/archive/refs/tags/v3.7.3.tar.gz", "https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.7.3.tar.gz"],
         strip_prefix = "oneDNN-3.7.3",
-        patch_file = ["@xla//third_party/mkl_dnn:setting_init.patch"],
-        build_file = "@xla//third_party/mkl_dnn:mkldnn_v1.BUILD",
+        patch_file = ["//third_party/mkl_dnn:setting_init.patch"],
+        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
     )
     tf_http_archive(
         name = "XNNPACK",
