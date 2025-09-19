@@ -23,12 +23,12 @@ bazel_dep(name = "pybind11_protobuf", version = "0.0.0-20250210-f02a2b7")
 bazel_dep(name = "grpc-java", version = "1.75.0", repo_name = "DO_NOT_USE_grpc_java")
 
 # TODO: publish an official version of rules_ml_toolchain to BCR
-# https://github.com/google-ml-infra/rules_ml_toolchain/pull/80
+# https://github.com/google-ml-infra/rules_ml_toolchain/pull/85
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/77fc2f183aba94e7397aeb1d6fdf81aa60fccec3.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-77fc2f183aba94e7397aeb1d6fdf81aa60fccec3",
+  urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/bb7915966180d7a1eeac037f755f0923f09bffb8.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-bb7915966180d7a1eeac037f755f0923f09bffb8",
 )
 
 # TODO: Upstream the patch?
@@ -167,3 +167,6 @@ register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
+
+nccl_configure_ext = use_extension("@rules_ml_toolchain//third_party/extensions:nccl_configure_ext.bzl", "nccl_configure_ext")
+use_repo(nccl_configure_ext, "local_config_nccl")
