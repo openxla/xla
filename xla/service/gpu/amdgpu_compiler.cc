@@ -122,8 +122,9 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
       stream_executor::RocmSolverContext::Create);
   pipeline.AddPass<ConvRewriter>(gpu_version);
   pipeline.AddPass<ConvPaddingLegalization>();
-  auto rcc = std::get<se::RocmComputeCapability>(gpu_version);
-  pipeline.AddPass<CudnnFusedConvRewriter>(rcc, dnn_version, toolkit_version);
+  //TODO(rocm): Until #12613 is fixed.
+  // auto rcc = std::get<se::RocmComputeCapability>(gpu_version);
+  // pipeline.AddPass<CudnnFusedConvRewriter>(rcc, dnn_version, toolkit_version);
 
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
