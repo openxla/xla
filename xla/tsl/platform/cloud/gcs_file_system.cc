@@ -23,6 +23,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/retrying_file_system.h"
+#include "absl/time/time.h"
+#include "absl/time/clock.h"
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -896,8 +898,8 @@ GcsFileSystem::GcsFileSystem(bool make_default_cache,
   bucket_location_cache_.reset(new ExpiringLRUCache<string>(
       kCacheNeverExpire, kBucketLocationCacheMaxEntries));
 
-  storage_layout_cache_.reset(new ExpiringLRUCache<Json::Value>(
-      kStorageLayoutCacheMaxAgeSecs, kStorageLayoutCacheMaxEntries));
+  storage_layout_cache_ = std::make_unique<ExpiringLRUCache<Json::Value>>(
+      kStorageLayoutCacheMaxAgeSecs, kStorageLayoutCacheMaxEntries);
 
   int64_t resolve_frequency_secs;
   if (GetEnvVar(kResolveCacheSecs, strings::safe_strto64,
