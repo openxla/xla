@@ -288,7 +288,7 @@ AllToAll(
     /*split_count=*/ 4);
 ```
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_alltoall.png)
+![](images/ops_alltoall.png)
 
 In the above example, there are 4 cores participating in the Alltoall. On each
 core, the operand is split into 4 parts along dimension 1, so each part has
@@ -298,7 +298,7 @@ the output on each core has shape f32[16,4].
 
 ### AllToAll - Example 2 - StableHLO
 
-![An example of AllToAll dataflow for StableHLO](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_alltoall_2.svg)
+![An example of AllToAll dataflow for StableHLO](images/ops_alltoall_2.svg)
 
 In the above example, there are 2 replicas participating in the AllToAll. On
 each replica, the operand has shape f32[2,4]. The operand is split into 2 parts
@@ -1303,7 +1303,7 @@ Concat({a, b}, 0)
 
 Diagram:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_concatenate.png)
+![](images/ops_concatenate.png)
 
 For StableHLO information see [StableHLO - concatenate](https://openxla.org/stablehlo/spec#concatenate)
 
@@ -1524,7 +1524,7 @@ The output shape has these dimensions, in this order:
 *   `spatial_dims`: One value for each valid placement of the convolutional
     window.
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/batch_group_counts.svg)
+![](images/batch_group_counts.svg)
 
 The figure above shows how the `batch_group_count` field works. Effectively, we
 slice each lhs batch into `batch_group_count` groups, and do the same for the
@@ -2318,7 +2318,7 @@ transformation that takes [`G`,`O`<sub>`0`</sub>,`O`<sub>`1`</sub>], an index in
 the output shape, and maps it to an element in the input array in the following
 way:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_xla_gather_0.svg)
+![](images/ops_xla_gather_0.svg)
 
 We first select an (`X`,`Y`) vector from the gather indices array using `G`.
 The element in the output array at index
@@ -2335,7 +2335,7 @@ The gather indices may be multidimensional. For instance, a more general
 version of the example above using a "gather indices" array of shape `[4,5,2]`
 would translate indices like this:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_xla_gather_1.svg)
+![](images/ops_xla_gather_1.svg)
 
 Again, this acts as a batch dynamic slice `G`<sub>`0`</sub> and
 `G`<sub>`1`</sub> as the batch dimensions. The slice size is still `[8,6]`.
@@ -2362,7 +2362,7 @@ the following ways:
 
 As a final example, we use (2) and (3) to implement `tf.gather_nd`:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_xla_gather_2.svg)
+![](images/ops_xla_gather_2.svg)
 
 `G`<sub>`0`</sub> and `G`<sub>`1`</sub> are used to slice out a starting index
 from the gather indices array as usual, except the starting index has only one
@@ -2846,7 +2846,7 @@ This operation is a no-op if the edge padding pairs are all (0, 0) and the
 interior padding values are all 0. The figure below shows examples of different
 `edge_padding` and `interior_padding` values for a two-dimensional array.
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_pad.png)
+![](images/ops_pad.png)
 
 For StableHLO information see [StableHLO - pad](https://openxla.org/stablehlo/spec#pad)
 
@@ -3059,11 +3059,11 @@ for r0 in range(result_shape[0]), r1 in range(result_shape[1]), ...:
 Here's an example of reducing a 2D array (matrix). The shape has 2 dimensions,
 dimension 0 of size 2 and dimension 1 of size 3:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_2d_matrix.png)
+![](images/ops_2d_matrix.png)
 
 Results of reducing dimensions 0 or 1 with an "add" function:
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_from_2d_matrix.png)
+![](images/ops_reduce_from_2d_matrix.png)
 
 Note that both reduction results are 1D arrays. The diagram shows one as column
 and another as row just for visual convenience.
@@ -3072,7 +3072,7 @@ For a more complex example, here is a 3D array. Its number of dimensions is 3,
 dimension 0 of size 4, dimension 1 of size 2 and dimension 2 of size 3. For
 simplicity, the values 1 to 6 are replicated across dimension 0.
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_from_3d_matrix.png)
+![](images/ops_reduce_from_3d_matrix.png)
 
 Similarly to the 2D example, we can reduce just one dimension. If we reduce
 dimension 0, for example, we get a 2-dimensional array where all values across
@@ -3237,7 +3237,7 @@ For StableHLO information see [StableHLO - reduce_scatter](https://openxla.org/s
 
 ### ReduceScatter - Example 1 - StableHLO
 
-![An example of ReduceScatter dataflow for StableHLO](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_scatter_1.svg)
+![An example of ReduceScatter dataflow for StableHLO](images/ops_reduce_scatter_1.svg)
 
 In the above example, there are 2 replicas participating in the ReduceScatter.
 On each replica, the operand has shape f32[2,4]. An all-reduce (sum) is
@@ -3312,7 +3312,7 @@ builder.ReduceWindow(
     Padding::kValid);
 ```
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_window.png)
+![](images/ops_reduce_window.png)
 
 Stride of 1 in a dimension specifies that the position of a window in the
 dimension is 1 element away from its adjacent window. In order to specify that
@@ -3322,7 +3322,7 @@ values. Padding is applied to each dimension of the input and the calculations
 are the same as though the input came in with the dimensions it has after
 padding.
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_window_stride.png)
+![](images/ops_reduce_window_stride.png)
 
 For a non-trivial padding example, consider computing reduce-window minimum
 (initial value is `MAX_FLOAT`) with dimension `3` and stride `2` over the input
@@ -3342,7 +3342,7 @@ context of [`Reduce`](#reduce) for more details.
 
 ### ReduceWindow - Example 2 - StableHLO
 
-![A example of ReduceWindow dataflow for StableHLO](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_reduce_window_2.svg)
+![A example of ReduceWindow dataflow for StableHLO](images/ops_reduce_window_2.svg)
 
 In the above example:
 
@@ -3820,7 +3820,7 @@ For StableHLO information see [StableHLO - scatter](https://openxla.org/stablehl
 
 ### Scatter - Example 1 - StableHLO
 
-![An example of Scatter dataflow for StableHLO](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_scatter_1.svg)
+![An example of Scatter dataflow for StableHLO](images/ops_scatter_1.svg)
 
 In the above image, each row of the table is an example of one update index
 example. Let's review stepwise from left(Update Index) to right(Result Index):
@@ -3964,7 +3964,7 @@ be selected multiple times by different windows. In the figure, the element of
 value 9 is selected by both of the top windows (blue and red) and the binary
 addition `scatter` function produces the output element of value 8 (2 + 6).
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_scatter_to_selected_window_element.png)
+![](images/ops_scatter_to_selected_window_element.png)
 
 The evaluation order of the `scatter` function is arbitrary and may be
 non-deterministic. Therefore, the `scatter` function should not be overly
@@ -4022,7 +4022,7 @@ complete. The instruction does not return any data.
 The execution order of the 4 instructions for each channel (`Recv`, `RecvDone`,
 `Send`, `SendDone`) is as below.
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/send_recv_order.png)
+![](images/send_recv_order.png)
 
 * `Recv` happens before `Send`
 * `Send` happens before `RecvDone`
@@ -4589,7 +4589,7 @@ while (result(0) < 1000) {
 }
 ```
 
-![](/Users/ameliathurdekoos/Documents/quansight/tpusdk/images/ops_while.png)
+![](images/ops_while.png)
 
 For StableHLO information see [StableHLO - while](https://openxla.org/stablehlo/spec#while)
 
