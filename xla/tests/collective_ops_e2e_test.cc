@@ -4212,5 +4212,72 @@ INSTANTIATE_TEST_SUITE_P(
                           std::get<1>(info.param) ? "one_shot" : "nccl");
     });
 
+TEST_F(CollectiveOpsTestE2E, TupleShapeMemoryStatsWithNCCLUserBuffers) {
+  const char* hlo_text = R"(
+    HloModule test_module
+
+    apply_op {
+      x = f32[] parameter(0)
+      y = f32[] parameter(1)
+      ROOT apply_op = f32[] add(x, y)
+    }
+
+    ENTRY main {
+      param0 = f32[8] parameter(0)
+      param1 = f32[8] parameter(1)
+      tuple_data = (f32[8], f32[8]) tuple(param0, param1)
+      elem0 = f32[8] get-tuple-element(tuple_data), index=0
+      elem1 = f32[8] get-tuple-element(tuple_data), index=1
+      ar0 = f32[8] all-reduce(elem0), to_apply=apply_op
+      ar1 = f32[8] all-reduce(elem1), to_apply=apply_op
+      ROOT result = (f32[8], f32[8]) tuple(ar0, ar1)
+    }
+)";
+
+  const int64_t kNumReplicas = 2;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  DebugOptions debug_options = config.debug_options();
+  debug_options.set_xla_gpu_enable_nccl_user_buffers(true);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  auto* entry = module->entry_computation();
+  auto* root = entry->root_instruction();
+  EXPECT_TRUE(root->shape().IsTuple());
+  EXPECT_EQ(root->shape().tuple_shapes_size(), 2);
+
+  std::vector<Literal> args;
+  args.push_back(LiteralUtil::CreateR1<float>({1, 2, 3, 4, 5, 6, 7, 8}));
+  args.push_back(LiteralUtil::CreateR1<float>({8, 7, 6, 5, 4, 3, 2, 1}));
+
+  std::vector<std::vector<Literal*>> replica_args;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    replica_args.push_back({&args[0], &args[1]});
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      HloTestBase::ExecuteReplicated(std::move(module),
+                                     /*arguments=*/replica_args,
+                                     /*num_replicas=*/kNumReplicas,
+                                     /*run_hlo_passes=*/true,
+                                     /*device_assignment=*/nullptr));
+
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  for (const auto& result : results) {
+    EXPECT_TRUE(result.shape().IsTuple());
+    EXPECT_EQ(result.shape().tuple_shapes_size(), 2);
+  }
+}
+
 }  // namespace
 }  // namespace xla

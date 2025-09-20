@@ -54,7 +54,7 @@ limitations under the License.
 namespace stream_executor {
 
 // Identifies the memory space where an allocation resides.
-enum class MemoryType { kDevice = 0, kUnified, kCollective, kHost = 5 };
+enum class MemoryType { kDevice = 0, kCollective = 1, kUnified = 2, kHost = 5 };
 
 /// The StreamExecutor is a single-device abstraction for:
 //
