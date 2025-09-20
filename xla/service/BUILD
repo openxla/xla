@@ -80,7 +80,7 @@ tf_proto_library(
     protodeps = if_google([
         "@com_google_protobuf//:any",
         "@com_google_protobuf//:duration",
-        "@com_google_protobuf//:timestamp",
+        "//google/protobuf:timestamp",
     ]),
     visibility = ["//visibility:public"],
 )
