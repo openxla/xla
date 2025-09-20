@@ -21,11 +21,15 @@ set -x
 CONFIG=$1
 DISK_CACHE_PATH=$2
 
-ASAN_ARGS=()
-if [[ $CONFIG == "rocm_ci_hermetic" ]]; then
-	ASAN_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt")
-	ASAN_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt")
-	ASAN_ARGS+=("--config=asan")
+SANITIZER_ARGS=()
+if [[ $CONFIG == "rocm_ci_hermetic_asan" ]]; then
+	SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt")
+	SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt")
+	SANITIZER_ARGS+=("--config=asan")
+elif [[ $CONFIG == "rocm_ci_hermetic_tsan" ]]; then
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7")
+    SANITIZER_ARGS+=("--strip=never")
+    SANITIZER_ARGS+=("--config=tsan")
 fi
 
 bazel --bazelrc=/usertools/rocm.bazelrc test \
@@ -43,4 +47,4 @@ bazel --bazelrc=/usertools/rocm.bazelrc test \
 	--test_output=errors \
 	--local_test_jobs=2 \
 	--run_under=//tools/ci_build/gpu_build:parallel_gpu_execute \
-	"${ASAN_ARGS[@]}"
+	"${SANITIZER_ARGS[@]}"
