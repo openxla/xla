@@ -50,6 +50,7 @@ namespace {
 using dnnl::algorithm;
 using dnnl::convolution_forward;
 using dnnl::memory;
+using dnnl::primitive;
 using dnnl::prop_kind;
 using dnnl::stream;
 
@@ -206,6 +207,147 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
       dnnl::engine(dnnl::engine::kind::cpu, 0), prop_kind::forward_inference,
       algorithm::convolution_direct, any_inp_md, any_ker_md, bias_md,
       any_res_md, strides, rhs_dilations, pad_left, pad_right, attrs);
+}
+
+void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
+                              absl::Span<MemrefInfoHandler> results,
+                              OneDnnConvolutionConfig conv_config,
+                              const dnnl::engine& cpu_engine,
+                              dnnl::stream& onednn_stream,
+                              OneDnnResources& resources) {
+  MemrefInfo inp_minfo(arguments[0].get());
+  MemrefInfo ker_minfo(arguments[1].get());
+  MemrefInfo res_minfo(results[0].get());
+
+  memory::desc inp_md = inp_minfo.GetOneDnnMemDesc();
+  memory::desc ker_md = ker_minfo.GetOneDnnMemDesc();
+  memory::desc res_md = res_minfo.GetOneDnnMemDesc();
+
+  memory::desc new_inp_md = inp_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.input().data().batch_dim(),
+      conv_config.input().data().feature_dim(),
+      conv_config.input().data().spatial_dims()));
+  memory::desc new_ker_md = ker_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.kernel().filter().output_feature_dim(),
+      conv_config.kernel().filter().input_feature_dim(),
+      conv_config.kernel().filter().spatial_dims()));
+  memory::desc new_res_md = res_md.permute_axes(ComputePermutations(
+      conv_config.dims(), conv_config.output().data().batch_dim(),
+      conv_config.output().data().feature_dim(),
+      conv_config.output().data().spatial_dims()));
+
+  memory::dims strides =
+      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims pad_left =
+      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+  memory::dims pad_right =
+      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+  memory::dims rhs_dilations =
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
+
+  uint64_t groups = conv_config.feature_groups();
+
+  if (groups > 1) {
+    auto corr_dims = new_ker_md.get_dims();
+    corr_dims.insert(corr_dims.begin(), 1, groups);
+    corr_dims[1] = corr_dims[1] / groups;
+    new_ker_md = new_ker_md.reshape(corr_dims);
+  }
+
+  const int64_t num_fused_operands = arguments.size() - 2;
+  std::vector<memory::desc> fused_mds;
+  std::vector<void*> fused_bufs;
+  for (int64_t i = 0; i < num_fused_operands; ++i) {
+    MemrefInfo operand_minfo(arguments[i + 2].get());
+    memory::desc mem_desc = operand_minfo.GetOneDnnMemDesc();
+    if (mem_desc.get_ndims() == new_res_md.get_ndims()) {
+      mem_desc = mem_desc.permute_axes(ComputePermutations(
+          conv_config.dims(), conv_config.output().data().batch_dim(),
+          conv_config.output().data().feature_dim(),
+          conv_config.output().data().spatial_dims()));
+    }
+    fused_mds.push_back(mem_desc);
+    fused_bufs.push_back(operand_minfo.Data());
+  }
+
+  FusedOperandsRef fused_operands_ref{fused_bufs, resources.postop_args};
+
+  memory::desc bias_md = memory::desc();
+
+  dnnl::post_ops post_ops =
+      PopulateOneDnnPostOps(cpu_engine, fused_mds, &conv_config.fusions(),
+                            &fused_operands_ref, &bias_md);
+
+  auto any_ker_md =
+      memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
+                   dnnl::memory::format_tag::any);
+  auto any_inp_md =
+      memory::desc(new_inp_md.get_dims(), new_inp_md.get_data_type(),
+                   GetFormatTag(new_inp_md.get_ndims()));
+  auto any_res_md =
+      memory::desc(new_res_md.get_dims(), new_res_md.get_data_type(),
+                   GetFormatTag(new_res_md.get_ndims()));
+
+  dnnl::primitive_attr attrs;
+
+  if (conv_config.optimization_config().user_scratchpad()) {
+    attrs.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+  }
+
+  if (post_ops.len() > 0) {
+    attrs.set_post_ops(post_ops);
+  }
+
+  auto conv_pd = std::make_unique<convolution_forward::primitive_desc>(
+      cpu_engine, prop_kind::forward_inference, algorithm::convolution_direct,
+      any_inp_md, any_ker_md, bias_md, any_res_md, strides, rhs_dilations,
+      pad_left, pad_right, attrs);
+
+  auto inp_mem = memory(new_inp_md, cpu_engine, inp_minfo.Data());
+  auto ker_mem = memory(new_ker_md, cpu_engine, ker_minfo.Data());
+  auto res_mem = memory(new_res_md, cpu_engine, res_minfo.Data());
+
+  resources.src_mem = (conv_pd->src_desc() == inp_mem.get_desc())
+                          ? inp_mem
+                          : ReorderMemory(cpu_engine, conv_pd->src_desc(),
+                                          inp_mem, onednn_stream);
+  resources.wei_mem = (conv_pd->weights_desc() == ker_mem.get_desc())
+                          ? ker_mem
+                          : ReorderMemory(cpu_engine, conv_pd->weights_desc(),
+                                          ker_mem, onednn_stream);
+  resources.dst_mem = (conv_pd->dst_desc() == res_mem.get_desc())
+                          ? res_mem
+                          : memory(conv_pd->dst_desc(), cpu_engine);
+
+  resources.primitive = primitive(*conv_pd);
+
+  std::unordered_map<int, memory> conv_args{
+      {DNNL_ARG_SRC, resources.src_mem},
+      {DNNL_ARG_WEIGHTS, resources.wei_mem},
+      {DNNL_ARG_DST, resources.dst_mem}};
+
+  if (conv_config.optimization_config().user_scratchpad()) {
+    XLA_LIGHTWEIGHT_CHECK(results.size() > 1);
+    MemrefInfo scratch_minfo(results[1].get());
+
+    size_t required_size = conv_pd->scratchpad_desc().get_size();
+    size_t provided_size = scratch_minfo.GetOneDnnDims()[0];  // bytes (u8)
+    XLA_LIGHTWEIGHT_CHECK(required_size <= provided_size);
+
+    resources.scratch_mem =
+        memory(conv_pd->scratchpad_desc(), cpu_engine, scratch_minfo.Data());
+    conv_args.insert({DNNL_ARG_SCRATCHPAD, resources.scratch_mem});
+  }
+
+  conv_args.insert(resources.postop_args.begin(), resources.postop_args.end());
+  resources.primitive.execute(onednn_stream, conv_args);
+
+  if (conv_pd->dst_desc() == res_mem.get_desc()) {
+    res_mem = resources.dst_mem;
+  } else {
+    dnnl::reorder(resources.dst_mem, res_mem)
+        .execute(onednn_stream, resources.dst_mem, res_mem);
+  }
 }
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(

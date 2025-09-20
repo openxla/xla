@@ -106,6 +106,124 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnMatMulThunk) {
   EXPECT_EQ(out_literal, expected);
 }
 
+// A very small 2D NHWC convolution test exercising the oneDNN convolution path
+// through OneDnnOpThunk. We build a 1x1 kernel with weight=2 so the expected
+// output is input * 2. The configuration mirrors the encoding used in
+// oneDNN convolution runtime (spatial dims stored 1-based; window parameters
+// stored with offsets that the runtime subtracts: stride values stored as
+// (actual+1), pads as (actual+1), dilations as (actual+2)).
+TEST(OneDnnOpThunkTest, SimpleOneDnnConvolutionThunk) {
+  tsl::thread::ThreadPool threads(tsl::Env::Default(), "test", 4);
+  Eigen::ThreadPoolDevice device(threads.AsEigenThreadPool(),
+                                 threads.NumThreads());
+
+  // Input: N=1,H=2,W=2,C=1  (NHWC)
+  // Weights: KH=1, KW=1, IC=1, OC=1
+  // Output: N=1,H=2,W=2,C=1
+  Shape input_shape = ShapeUtil::MakeShape(F32, {1, 2, 2, 1});
+  Shape weight_shape = ShapeUtil::MakeShape(F32, {1, 1, 1, 1});
+  Shape output_shape = ShapeUtil::MakeShape(F32, {1, 2, 2, 1});
+
+  // Input data
+  Literal input_literal = LiteralUtil::CreateR4FromArray4D<float>(
+      Array4D<float>(1, 2, 2, 1,
+                     {/*h0w0*/ 1.f, /*h0w1*/ 2.f, /*h1w0*/ 3.f, /*h1w1*/ 4.f}));
+  // Weight = 2
+  Literal weight_literal = LiteralUtil::CreateR4FromArray4D<float>(
+      Array4D<float>(1, 1, 1, 1, {2.f}));
+  // Output buffer init zeros
+  Literal output_literal = LiteralUtil::CreateR4FromArray4D<float>(
+      Array4D<float>(1, 2, 2, 1, {0.f, 0.f, 0.f, 0.f}));
+
+  // Expected = input * 2
+  Literal expected_literal = LiteralUtil::CreateR4FromArray4D<float>(
+      Array4D<float>(1, 2, 2, 1, {2.f, 4.f, 6.f, 8.f}));
+
+  // Buffer allocations
+  auto input_alloc = CreateBufferAllocation(0, input_literal);
+  auto weight_alloc = CreateBufferAllocation(1, weight_literal);
+  auto output_alloc = CreateBufferAllocation(2, output_literal);
+
+  auto input_slice = CreateBufferAllocationSlice(input_alloc);
+  auto weight_slice = CreateBufferAllocationSlice(weight_alloc);
+  auto output_slice = CreateBufferAllocationSlice(output_alloc);
+
+  BufferAllocations allocations =
+      CreateBufferAllocations(input_literal, weight_literal, output_literal);
+
+  // Build a minimal OneDnnConvolutionConfig proto.
+  OneDnnConvolutionConfig conv_config;
+  conv_config.set_dims(4);  // rank
+  // Input layout NHWC: batch=0, feature=3, spatial (H,W) = (1,2) zero-based.
+  auto* inp = conv_config.mutable_input();
+  inp->set_dims(4);
+  auto* inp_data = inp->mutable_data();
+  inp_data->set_batch_dim(0);
+  inp_data->set_feature_dim(3);
+  // Spatial dims stored as one-based (so 1->2, 2->3).
+  inp_data->add_spatial_dims(2);
+  inp_data->add_spatial_dims(3);
+
+  // Kernel layout assumed HWIO (H,W,In,Out):
+  auto* ker = conv_config.mutable_kernel();
+  ker->set_dims(4);
+  auto* filter = ker->mutable_filter();
+  filter->set_input_feature_dim(2);   // zero-based index of IC
+  filter->set_output_feature_dim(3);  // zero-based index of OC
+  // Spatial dims (H,W) one-based: (0->1,1->2) => 1,2
+  filter->add_spatial_dims(1);
+  filter->add_spatial_dims(2);
+
+  // Output layout NHWC
+  auto* out = conv_config.mutable_output();
+  out->set_dims(4);
+  auto* out_data = out->mutable_data();
+  out_data->set_batch_dim(0);
+  out_data->set_feature_dim(3);
+  out_data->add_spatial_dims(2);
+  out_data->add_spatial_dims(3);
+
+  conv_config.set_feature_groups(1);
+
+  // Window parameters: stride=1, pad=0, dilation=1 encoded with offsets.
+  auto* win = conv_config.mutable_window();
+  // Store (actual + 1) for strides so 2 -> (2 - 1 = 1 real stride).
+  win->add_strides(2);
+  win->add_strides(2);
+  // Pads store (actual +1) so 1 -> 0 actual pad.
+  win->add_pad_left(1);
+  win->add_pad_left(1);
+  win->add_pad_right(1);
+  win->add_pad_right(1);
+  // Dilations store (actual +2) so 3 -> 1 actual dilation.
+  win->add_window_dilations(3);
+  win->add_window_dilations(3);
+
+  // Set up op buffers
+  OneDnnOpThunk::OpBuffers op_buffers;
+  op_buffers.arguments_buffers = {input_slice, weight_slice};
+  op_buffers.arguments_shapes = {input_shape, weight_shape};
+  op_buffers.results_buffers = {output_slice};
+  op_buffers.results_shapes = {output_shape};
+
+  // Wrap config in variant
+  OneDnnOpThunk::OneDnnOpConfig config_variant = conv_config;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto thunk, OneDnnOpThunk::Create("__onednn$convolution", Thunk::Info(),
+                                        op_buffers, config_variant));
+
+  Thunk::ExecuteParams params;
+  params.buffer_allocations = &allocations;
+  params.intra_op_threadpool = &device;
+
+  auto exec_event = thunk->Execute(params);
+  tsl::BlockUntilReady(exec_event);
+  ASSERT_FALSE(exec_event.IsError()) << "OneDnnOpThunk convolution execution failed";
+
+  EXPECT_EQ(output_literal, expected_literal);
+}
+
 }  // namespace
 }  // namespace xla::cpu
 
