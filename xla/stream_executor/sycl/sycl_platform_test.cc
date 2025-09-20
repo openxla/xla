@@ -11,16 +11,18 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/statusor.h"
 
-namespace stream_executor {
-namespace gpu {
+namespace stream_executor::sycl {
 
 static Platform* NewPlatform() {
-  Platform* platform = PlatformManager::PlatformWithName("SYCL").value();
+  TF_ASSERT_OK_AND_ASSIGN(
+      Platform * platform,
+      stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
   return platform;
 }
 
@@ -30,5 +32,4 @@ TEST(SyclPlatformTest, Name) {
   EXPECT_EQ(name, "SYCL");
 }
 
-}  // namespace gpu
-}  // namespace stream_executor
+}  // namespace stream_executor::sycl
