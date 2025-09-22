@@ -70,16 +70,17 @@ if [[ $1 == "asan" ]]; then
     SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=asan")
+    shift
 elif [[ $1 == "tsan" ]]; then
     SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=tsan")
+    shift
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     "${SANITIZER_ARGS[@]}" \
     --config=rocm_ci \
-    --config=rocm_rbe \
     --config=xla_mgpu \
     --profile=/tf/pkg/profile.json.gz \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
@@ -96,9 +97,9 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
-    --run_under=//build_tools/rocm:sanitizer_wrapper \
     --action_env=NCCL_MAX_NCHANNELS=1 \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}")
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "$@"
 
 # clean up bazel disk_cache
 bazel shutdown \

@@ -73,9 +73,11 @@ if [[ $1 == "asan" ]]; then
     SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--config=asan")
+    shift
 elif [[ $1 == "tsan" ]]; then
     SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--config=tsan")
+    shift
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
@@ -85,7 +87,6 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --experimental_guard_against_concurrent_changes \
     "${SANITIZER_ARGS[@]}" \
     --config=rocm_ci \
-    --config=rocm_rbe \
     --config=xla_sgpu \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
@@ -100,7 +101,8 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --run_under=//build_tools/ci:parallel_gpu_execute \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
-    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}")
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "$@"
 
 # clean up bazel disk_cache
 bazel shutdown \
