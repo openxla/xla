@@ -16,29 +16,15 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_UTILS_H_
 #define XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_UTILS_H_
 
-#include <cstdint>
-#include <cstring>
-#include <map>
-#include <mutex>
-#include <sstream>
+#include <cstddef>   
+#include <cstdint>   
+#include <limits> 
 #include <string>
-#include <unordered_map>
-#include <vector>
-#include <time.h>
-#include <unistd.h>
-#include <chrono>
-#include <unistd.h>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/strings/string_view.h"
 #include "absl/container/node_hash_set.h"
-#include "absl/container/node_hash_map.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "xla/tsl/profiler/utils/time_utils.h"
-
-#include "tsl/platform/errors.h"
-#include "tsl/platform/macros.h"
 
 namespace xla {
 namespace profiler {
