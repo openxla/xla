@@ -71,8 +71,7 @@ std::vector<std::string> GetSPIRVBackendOptions(
 
 absl::StatusOr<std::string> CompileToSPIRV(
     llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options,
-    std::function<void(llvm::TargetMachine*)> configure_target) {
+    const DebugOptions& debug_options) {
   static absl::once_flag backend_init_flag;
   absl::call_once(backend_init_flag, SPIRVBackendInit);
   auto llvm_opts = GetSPIRVBackendOptions(debug_options);

@@ -31,8 +31,7 @@ namespace xla::gpu::spirv {
 
 absl::StatusOr<std::string> CompileToSPIRV(
     llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
-    const DebugOptions& debug_options,
-    std::function<void(llvm::TargetMachine*)> configure_target = nullptr);
+    const DebugOptions& debug_options);
 
 // Returns the LLVM command line flags that we use for compilation.
 std::vector<std::string> GetSPIRVBackendOptions(
