@@ -855,9 +855,12 @@ bool IsGenericTritonFusion(const HloInstruction& instr) {
   return instr.opcode() == HloOpcode::kFusion &&
          instr.fusion_kind() == HloInstruction::FusionKind::kCustom &&
          instr.backend_config<GpuBackendConfig>().ok() &&
-         instr.backend_config<GpuBackendConfig>()
-                 ->fusion_backend_config()
-                 .kind() == kTritonFusionKind;
+         (instr.backend_config<GpuBackendConfig>()
+                  ->fusion_backend_config()
+                  .kind() == kTritonFusionKind ||
+          instr.backend_config<GpuBackendConfig>()
+                  ->fusion_backend_config()
+                  .kind() == kTritonNvshmemFusionKind);
 }
 
 bool MayPreventVectorization(const HloFusionAdaptor& fusion) {

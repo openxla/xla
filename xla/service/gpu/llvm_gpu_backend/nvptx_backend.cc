@@ -122,9 +122,10 @@ absl::Status LinkLibdeviceIfNecessary(llvm::Module* module,
 // Returns whether the module could use any NVSHMEM device library functions.
 bool CouldNeedNvshmemBitcode(const llvm::Module& module) {
   for (const llvm::Function& function : module.functions()) {
-    // Check for NVSHMEM function declarations (both nvshmem_ and nvshmemx_ prefixes)
+    // Check for NVSHMEM function declarations (both nvshmem_ and nvshmemx_
+    // prefixes)
     if (!function.isIntrinsic() && function.isDeclaration() &&
-        (function.getName().starts_with("nvshmem_") || 
+        (function.getName().starts_with("nvshmem_") ||
          function.getName().starts_with("nvshmemx_"))) {
       return true;
     }
@@ -134,61 +135,57 @@ bool CouldNeedNvshmemBitcode(const llvm::Module& module) {
 
 // Get the path to NVSHMEM device bitcode library
 std::string GetNvshmemDevicePath(const std::string& cuda_data_dir) {
-  // Check NVSHMEM_HOME environment variable first
-  const char* nvshmem_home_env = std::getenv("NVSHMEM_HOME");
-  if (nvshmem_home_env) {
-    std::string env_path = tsl::io::JoinPath(nvshmem_home_env, "lib", "libnvshmem_device.bc");
-    if (tsl::Env::Default()->FileExists(env_path).ok()) {
-      return env_path;
-    }
+  const std::string kNvshmemLibName = "libnvshmem_device.bc";
+
+  // Check NVSHMEM_HOME environment variable
+  const char* nvshmem_home = std::getenv("NVSHMEM_HOME");
+  if (!nvshmem_home) {
+    LOG(ERROR) << "NVSHMEM_HOME environment variable not set. "
+               << "Please export NVSHMEM_HOME=/path/to/nvshmem";
+    return kNvshmemLibName;
   }
-  
-  // For hermetic NVSHMEM installation - try the same pattern as save version
-  std::string hermetic_path = tsl::io::JoinPath(
-      cuda_data_dir, "..", "..", "nvidia", "nvshmem", "lib", "libnvshmem_device.bc");
-  
-  if (tsl::Env::Default()->FileExists(hermetic_path).ok()) {
-    return hermetic_path;
+
+  std::string nvshmem_device_path =
+      tsl::io::JoinPath(nvshmem_home, "lib", kNvshmemLibName);
+
+  if (!tsl::Env::Default()->FileExists(nvshmem_device_path).ok()) {
+    LOG(ERROR) << "NVSHMEM device library not found at: " << nvshmem_device_path
+               << ". Please check your NVSHMEM_HOME setting.";
+    return nvshmem_device_path;
   }
-  
-  // Fallback paths for different NVSHMEM installations
-  std::vector<std::string> fallback_paths = {
-      "/usr/local/nvshmem/lib/libnvshmem_device.bc",
-      "/opt/nvshmem/lib/libnvshmem_device.bc",
-      tsl::io::JoinPath(cuda_data_dir, "nvshmem", "lib", "libnvshmem_device.bc")
-  };
-  
-  for (const auto& path : fallback_paths) {
-    if (tsl::Env::Default()->FileExists(path).ok()) {
-      return path;
-    }
-  }
-  
-  // Return the user home path as preferred if no files found
-  const char* home_env = std::getenv("HOME");
-  if (home_env) {
-    return tsl::io::JoinPath(home_env, "opt", "nvshmem", "lib", "libnvshmem_device.bc");
-  }
-  return hermetic_path;
+
+  VLOG(2) << "Found NVSHMEM device library at: " << nvshmem_device_path;
+  return nvshmem_device_path;
 }
 
-// Links NVSHMEM device library into the given module if the module needs NVSHMEM.
+// Links NVSHMEM device library into the given module if the module needs
+// NVSHMEM.
 absl::Status LinkNvshmemIfNecessary(llvm::Module* module,
-                                    const std::string& cuda_data_dir) {
+                                    const std::string& cuda_data_dir,
+                                    const DebugOptions& debug_options) {
   if (!CouldNeedNvshmemBitcode(*module)) {
     return absl::OkStatus();
   }
-  
-  std::string nvshmem_device_path = GetNvshmemDevicePath(cuda_data_dir);
-  
-  if (!tsl::Env::Default()->FileExists(nvshmem_device_path).ok()) {
-    LOG(WARNING)
-        << "NVSHMEM device library is required by this HLO module but was not found at "
-        << nvshmem_device_path;
-    return xla::Internal("NVSHMEM device library not found at %s", nvshmem_device_path);
+
+  if (!debug_options.xla_gpu_experimental_enable_nvshmem()) {
+    return xla::Internal(
+        "Module requires NVSHMEM but "
+        "--xla_gpu_experimental_enable_nvshmem=true "
+        "flag is not set. Please enable NVSHMEM support.");
   }
 
-  VLOG(1) << "Linking with NVSHMEM device library from: " << nvshmem_device_path;
+  std::string nvshmem_device_path = GetNvshmemDevicePath(cuda_data_dir);
+
+  if (!tsl::Env::Default()->FileExists(nvshmem_device_path).ok()) {
+    LOG(WARNING) << "NVSHMEM device library is required by this HLO module but "
+                    "was not found at "
+                 << nvshmem_device_path;
+    return xla::Internal("NVSHMEM device library not found at %s",
+                         nvshmem_device_path);
+  }
+
+  VLOG(1) << "Linking with NVSHMEM device library from: "
+          << nvshmem_device_path;
   return LinkWithBitcodeVector(module, {nvshmem_device_path});
 }
 
@@ -201,7 +198,8 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
   TF_RETURN_IF_ERROR(LinkLibdeviceIfNecessary(module, device_bitcode_path));
 
   // Link the input module with NVSHMEM device library if needed
-  TF_RETURN_IF_ERROR(LinkNvshmemIfNecessary(module, debug_options.xla_gpu_cuda_data_dir()));
+  TF_RETURN_IF_ERROR(LinkNvshmemIfNecessary(
+      module, debug_options.xla_gpu_cuda_data_dir(), debug_options));
 
   // Set the flush-denormals-to-zero flag on the module so the NVVM reflect pass
   // can access it.

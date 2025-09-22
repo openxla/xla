@@ -357,6 +357,21 @@ absl::Status CudaStream::DoHostCallbackWithStatus(
 }
 
 namespace {
+
+// Helper function to detect if a kernel requires NVSHMEM cooperative launch
+bool IsNvshmemCooperativeKernel(absl::string_view kernel_name) {
+  // Primary detection: check for nvshmem_ prefix (preferred method)
+  if (absl::StartsWith(kernel_name, "nvshmem_")) {
+    return true;
+  }
+  
+  // Fallback detection: check for specific fusion pattern
+  // (for backward compatibility with kernels not yet using nvshmem_ prefix)
+  return kernel_name.find("triton") != absl::string_view::npos && 
+         kernel_name.find("softmax") != absl::string_view::npos &&
+         kernel_name.find("allreduce") != absl::string_view::npos;
+}
+
 absl::Status LaunchCudaKernel(
     StreamExecutor* executor, absl::string_view kernel_name,
     CUfunction function, unsigned int grid_dim_x, unsigned int grid_dim_y,
@@ -383,15 +398,31 @@ absl::Status LaunchCudaKernel(
         cuFuncSetCacheConfig(function, CU_FUNC_CACHE_PREFER_SHARED)));
   }
 
-  return cuda::ToStatus(
-      cuLaunchKernel(function, grid_dim_x, grid_dim_y, grid_dim_z, block_dim_x,
-                     block_dim_y, block_dim_z, shared_mem_bytes, stream,
-                     kernel_params, extra),
-      absl::StrCat("Failed to launch CUDA kernel: ", kernel_name,
-                   "; block dims: ", block_dim_x, "x", block_dim_y, "x",
-                   block_dim_z, "; grid dims: ", grid_dim_x, "x", grid_dim_y,
-                   "x", grid_dim_z,
-                   "; shared memory size: ", shared_mem_bytes));
+  // Check if this is an NVSHMEM cooperative kernel
+  if (IsNvshmemCooperativeKernel(kernel_name)) {
+    VLOG(2) << "Launching NVSHMEM cooperative kernel: " << kernel_name
+            << " using cuLaunchCooperativeKernel";
+
+    return cuda::ToStatus(
+        cuLaunchCooperativeKernel(function, grid_dim_x, grid_dim_y, grid_dim_z,
+                                  block_dim_x, block_dim_y, block_dim_z,
+                                  shared_mem_bytes, stream, kernel_params),
+        absl::StrCat(
+            "Failed to launch NVSHMEM cooperative kernel: ", kernel_name,
+            "; block dims: ", block_dim_x, "x", block_dim_y, "x", block_dim_z,
+            "; grid dims: ", grid_dim_x, "x", grid_dim_y, "x", grid_dim_z,
+            "; shared memory size: ", shared_mem_bytes));
+  } else {
+    return cuda::ToStatus(
+        cuLaunchKernel(function, grid_dim_x, grid_dim_y, grid_dim_z,
+                       block_dim_x, block_dim_y, block_dim_z, shared_mem_bytes,
+                       stream, kernel_params, extra),
+        absl::StrCat("Failed to launch CUDA kernel: ", kernel_name,
+                     "; block dims: ", block_dim_x, "x", block_dim_y, "x",
+                     block_dim_z, "; grid dims: ", grid_dim_x, "x", grid_dim_y,
+                     "x", grid_dim_z,
+                     "; shared memory size: ", shared_mem_bytes));
+  }
 }
 
 absl::Status LaunchCudaKernel(

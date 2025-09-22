@@ -48,4 +48,4 @@ class AllReduceSoftmaxFusion : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_TRANSFORMS_ALLREDUCE_SOFTMAX_FUSION_H_ 
+#endif  // XLA_SERVICE_GPU_TRANSFORMS_ALLREDUCE_SOFTMAX_FUSION_H_

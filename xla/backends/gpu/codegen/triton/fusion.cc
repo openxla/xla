@@ -103,7 +103,8 @@ TritonFusion::GenerateTritonKernelAndWrapper(
   TritonWrapperResult triton_wrapper_result;
 
   if (fusion_kind == kTritonFusionKind ||
-      fusion_kind == kTritonNestedGemmFusionKind) {
+      fusion_kind == kTritonNestedGemmFusionKind ||
+      fusion_kind == kTritonNvshmemFusionKind) {
     std::optional<LaunchConfig> launch_config = this->launch_config();
     if (!launch_config.has_value()) {
       return absl::InvalidArgumentError(absl::StrCat(
@@ -175,10 +176,19 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
 
     LaunchDimensions launch_dimensions;
     if (fusion_kind == kTritonFusionKind ||
-        fusion_kind == kTritonNestedGemmFusionKind) {
+        fusion_kind == kTritonNestedGemmFusionKind ||
+        fusion_kind == kTritonNvshmemFusionKind) {
       std::optional<LaunchConfig> launch_config = this->launch_config();
       // This check should be enforced by `GenerateTritonKernelWrapper`.
       CHECK(launch_config.has_value());
+
+      if (fusion_kind == kTritonNvshmemFusionKind) {
+        VLOG(3) << "NVSHMEM kernel launch config: "
+                << launch_config->launch_dimensions.num_blocks() << " blocks, "
+                << launch_config->launch_dimensions.num_threads_per_block()
+                << " threads";
+      }
+
       launch_dimensions = std::move(launch_config->launch_dimensions);
     } else {  // Must be a MatMul
       CHECK_EQ(fusion_kind, kTritonGemmFusionKind);

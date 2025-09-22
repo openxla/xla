@@ -9,6 +9,7 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -3351,6 +3352,7 @@ cc_library(
     name = "allreduce_softmax_fusion",
     srcs = ["allreduce_softmax_fusion.cc"],
     hdrs = ["allreduce_softmax_fusion.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -3364,17 +3366,4 @@ cc_library(
     ],
 )
 
-xla_cc_test(
-    name = "allreduce_softmax_fusion_test",
-    srcs = ["allreduce_softmax_fusion_test.cc"],
-    deps = [
-        ":allreduce_softmax_fusion",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:pattern_matcher_gmock",
-        "//xla/service:pattern_matcher",
-        "//xla/tests:hlo_test_base",
-        "//xla/tsl/platform:statusor",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
+# MOVED: allreduce_softmax_fusion_e2e_test moved to //xla/pjrt/gpu:allreduce_softmax_fusion_e2e_test

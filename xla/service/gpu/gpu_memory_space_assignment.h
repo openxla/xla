@@ -82,6 +82,28 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
               instr->custom_call_target() == "mosaic_gpu_v2") &&
              absl::StrContains(instr->raw_backend_config_string(), "nvshmem");
     };
+
+    // Helper function to detect NVSHMEM fusion kernels by checking nvshmem_
+    // prefix
+    auto is_nvshmem_fusion_kernel = [](const HloInstruction* instr) {
+      if (instr->opcode() != HloOpcode::kFusion) {
+        return false;
+      }
+
+      // Check if the fusion computation name starts with "nvshmem_" prefix
+      if (instr->fused_instructions_computation() != nullptr) {
+        absl::string_view comp_name =
+            instr->fused_instructions_computation()->name();
+        if (absl::StartsWith(comp_name, "nvshmem_")) {
+          return true;
+        }
+      }
+
+      // Also check the instruction name itself starts with "nvshmem_" prefix
+      absl::string_view inst_name = instr->name();
+      return absl::StartsWith(inst_name, "nvshmem_");
+    };
+
     auto is_collective_memory_instr = [&](const HloInstruction* instr) {
       if (use_user_buffers) {
         return kSupportedOpcodes->contains(instr->opcode()) ||
@@ -91,10 +113,13 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
                 kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
       }
       if (use_nvshmem) {
-        return is_mosaic_gpu_nvshmem_instr(instr) || is_nvshmem_op(instr);
+        return is_mosaic_gpu_nvshmem_instr(instr) || is_nvshmem_op(instr) ||
+               is_nvshmem_fusion_kernel(
+                   instr);  // ← Add NVSHMEM fusion detection
       }
       return false;
     };
+
     auto has_collective_memory_in_uses = [&](const HloValue* input_alias) {
       // If any use is a collective instruction, we must color the value to use
       // collective memory space.
@@ -105,6 +130,7 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
       }
       return false;
     };
+
     for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
       // If the value has a layout with non-default memory space, use the memory
       // space from the layout.
