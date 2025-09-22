@@ -142,6 +142,8 @@ struct OneDnnResources {
   dnnl::memory wei_mem;
   dnnl::memory dst_mem;
   dnnl::memory scratch_mem;
+  dnnl::memory scale_mem;
+  dnnl::memory shift_mem;
 
   // Post-operation arguments
   std::vector<std::pair<int, dnnl::memory>> postop_args;
@@ -157,6 +159,8 @@ struct OneDnnResources {
         wei_mem(dnnl::memory()),
         dst_mem(dnnl::memory()),
         scratch_mem(dnnl::memory()),
+        scale_mem(dnnl::memory()),
+        shift_mem(dnnl::memory()),
         postop_args(),
         arg_memrefs(),
         result_memrefs() {}

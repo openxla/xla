@@ -126,6 +126,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/runtime:buffer_use",
         "//xla/runtime:object_pool",
+        "//xla/service/cpu:onednn_layer_norm",
         "//xla/service/cpu:onednn_matmul",
         "//xla/service/cpu:onednn_memory_util",
         "//xla/service/cpu:onednn_util",
