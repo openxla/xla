@@ -2222,7 +2222,7 @@ For StableHLO information see [StableHLO - dynamic_update_slice](https://openxla
 
 See also [`XlaBuilder::Erf`](https://github.com/openxla/xla/tree/main/xla/hlo/builder/xla_builder.h)
 
-Element-wise error function `x -> erf(x)` where
+Element-wise error function `x -> erf(x)` where:
 
 $$\text{erf}(x) = \frac{2}{\sqrt{\pi}}\int_0^x e^{-t^2} \, dt$$.
 
@@ -2262,7 +2262,6 @@ Element-wise natural exponential `x -> e^x`.
 Exp also supports the optional `result_accuracy` argument:
 
 **`Exp(operand, result_accuracy)`** 
-
 
 | Arguments         | Type                      | Semantics                   |
 | ----------------- | ------------------------- | --------------------------- |
