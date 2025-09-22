@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
+#include "tsl/platform/logging.h"
 
 // for rocprofiler-sdk
 namespace xla {
