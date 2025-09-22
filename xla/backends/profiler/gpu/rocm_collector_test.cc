@@ -101,9 +101,8 @@ TEST_F(RocmCollectorSanitizerTest, TestAddKernelEventAndExport_TSANSafe) {
     api_event.device_id = 0;  // set explicitly
     api_event.stream_id = 123;
     api_event.kernel_info = {
-        /*.registers_per_thread=*/32,
-        /*.static_shared_memory_usage=*/1024,
-        /*.dynamic_shared_memory_usage=*/0,
+        /*.private_segment_size=*/32,
+        /*.group_segment_size=*/1024,
         /*.block_x=*/256,
         /*.block_y=*/1,
         /*.block_z=*/1,

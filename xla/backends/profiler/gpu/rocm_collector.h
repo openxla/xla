@@ -44,14 +44,24 @@ using tsl::profiler::XSpace;
 
 inline std::string ToXStat(const KernelDetails& kernel_info,
                            double occupancy_pct) {
-  return absl::StrCat(
-      "regs:", kernel_info.registers_per_thread,
-      " static_shared:", kernel_info.static_shared_memory_usage,
-      " dynamic_shared:", kernel_info.dynamic_shared_memory_usage,
-      " grid:", kernel_info.grid_x, ",", kernel_info.grid_y, ",",
-      kernel_info.grid_z, " block:", kernel_info.block_x, ",",
-      kernel_info.block_y, ",", kernel_info.block_z,
-      " occ_pct:", occupancy_pct);
+  // on ROCM 6.4.x/7.0.0 rocprofiler sdk mixed up grid and workgroup size...
+  // only shows them with ROCm-7.x
+  uint32_t grid_x = kernel_info.workgroup_x != 0
+                        ? kernel_info.grid_x / kernel_info.workgroup_x
+                        : 0,
+           grid_y = kernel_info.workgroup_y != 0
+                        ? kernel_info.grid_y / kernel_info.workgroup_y
+                        : 0,
+           grid_z = kernel_info.workgroup_z != 0
+                        ? kernel_info.grid_z / kernel_info.workgroup_z
+                        : 0;
+
+  return absl::StrCat(" grid:", grid_x, ",", grid_y, ",", grid_z,
+                      " block:", kernel_info.workgroup_x, ",",
+                      kernel_info.workgroup_y, ",", kernel_info.workgroup_z,
+                      " private_mem:", kernel_info.private_segment_size,
+                      " group_mem:", kernel_info.group_segment_size,
+                      " occ_pct:", occupancy_pct);
 }
 
 struct RocmDeviceOccupancyParams {
@@ -179,7 +189,7 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
   void OnEventsDropped(const std::string& reason,
                        uint32_t correlation_id) override {
     VLOG(2) << "RocmTracerEvent dropped (correlation_id=" << correlation_id
-              << ",) : " << reason << ".";
+            << ",) : " << reason << ".";
   }
 
  private:

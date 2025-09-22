@@ -287,12 +287,11 @@ void RocmTracer::KernelEvent(const rocprofiler_record_header_t* hdr,
   trace_event->thread_id = rec.thread_id;
   trace_event->stream_id = kinfo.queue_id.handle;
   trace_event->kernel_info = KernelDetails{
-      .registers_per_thread = 0,
-      .static_shared_memory_usage = 0,
-      .dynamic_shared_memory_usage = 0,
-      .block_x = kinfo.workgroup_size.x,
-      .block_y = kinfo.workgroup_size.y,
-      .block_z = kinfo.workgroup_size.z,
+      .private_segment_size = kinfo.private_segment_size,
+      .group_segment_size = kinfo.group_segment_size,
+      .workgroup_x = kinfo.workgroup_size.x,
+      .workgroup_y = kinfo.workgroup_size.y,
+      .workgroup_z = kinfo.workgroup_size.z,
       .grid_x = kinfo.grid_size.x,
       .grid_y = kinfo.grid_size.y,
       .grid_z = kinfo.grid_size.z,

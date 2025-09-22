@@ -226,21 +226,11 @@ void PerDeviceCollector::CreateXEvent(const RocmTracerEvent& event,
 
   if (event.type == RocmTracerEventType::Kernel &&
       event.source == RocmTracerEventSource::Activity) {
-    RocmDeviceOccupancyParams params{};
-    params.attributes.maxThreadsPerBlock = INT_MAX;
-    params.attributes.numRegs =
-        static_cast<int>(event.kernel_info.registers_per_thread);
-    params.attributes.sharedSizeBytes =
-        event.kernel_info.static_shared_memory_usage;
-    // params.attributes.partitionedGCConfig = PARTITIONED_GC_OFF;
-    // params.attributes.shmemLimitConfig = FUNC_SHMEM_LIMIT_DEFAULT;
-    params.attributes.maxDynamicSharedSizeBytes = 0;
-    params.block_size =
-        static_cast<int>(event.kernel_info.block_x * event.kernel_info.block_y *
-                         event.kernel_info.block_z);
-
-    params.dynamic_smem_size = event.kernel_info.dynamic_shared_memory_usage;
-    params.func_ptr = event.kernel_info.func_ptr;
+    xevent.AddStatValue(
+        *plane->GetOrCreateStatMetadata(
+            GetStatTypeStr(StatType::kKernelDetails)),
+        *plane->GetOrCreateStatMetadata(ToXStat(event.kernel_info,
+                                                /*occupancy_pct*/ 0)));
   } else if (event.type == RocmTracerEventType::MemcpyH2D ||
              event.type == RocmTracerEventType::MemcpyD2H ||
              event.type == RocmTracerEventType::MemcpyD2D ||
@@ -601,22 +591,22 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
     api_event.stream_id = item.stream_id;
     switch (api_event.type) {
       case RocmTracerEventType::Kernel:
+        api_event.kernel_info = item.kernel_info;
+        aggregated_events.push_back(api_event);
+        break;
       case RocmTracerEventType::Memset:
       case RocmTracerEventType::MemoryAlloc:
       case RocmTracerEventType::MemoryFree:
-      case RocmTracerEventType::Synchronization: {
+      case RocmTracerEventType::Synchronization:
         aggregated_events.push_back(api_event);
         break;
-      }
       case RocmTracerEventType::MemcpyD2H:
       case RocmTracerEventType::MemcpyH2D:
       case RocmTracerEventType::MemcpyD2D:
-      case RocmTracerEventType::MemcpyOther: {
-        // api_event.memcpy_info.destination = item.device_id;
+      case RocmTracerEventType::MemcpyOther:
         api_event.memcpy_info = item.memcpy_info;
         aggregated_events.push_back(api_event);
         break;
-      }
       default:
         OnEventsDropped("Missing API-Activity information exchange. Dropped!",
                         api_event.correlation_id);
