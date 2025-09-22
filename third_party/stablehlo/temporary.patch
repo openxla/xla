@@ -9,6 +9,212 @@ diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
          ":stablehlo_aggressive_simplification_inc_gen",
          ":stablehlo_ops",
          ":stablehlo_pass_inc_gen",
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir b/stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
+--- stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
++++ stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
+@@ -534,6 +534,19 @@
+   %0 = "stablehlo.sign"(%arg0) : (tensor<2x2xcomplex<f32>>)
+                           -> tensor<2x2xcomplex<f32>>
+   func.return %0 : tensor<2x2xcomplex<f32>>
++}
++
++// -----
++
++// CHECK-LABEL: func @float_tan
++// CHECK-PRIMITIVE-LABEL: func @float_tan
++func.func @float_tan(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> {
++  // CHECK: linalg.generic
++  // CHECK: tan
++  // CHECK-PRIMITIVE: linalg.map
++  // CHECK-PRIMITIVE: tan
++  %0 = "stablehlo.tan"(%arg0) : (tensor<2x2xf32>) -> tensor<2x2xf32>
++  func.return %0 : tensor<2x2xf32>
+ }
+ 
+ // -----
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
+@@ -140,12 +140,11 @@
+   // (any sign-op, or an integral abs-op).
+   // TODO(peiming, ajcbik): these all can potentially be optimized by applying
+   // value transform on sparse_tenosr.value memref
+-  if (isa<mlir::stablehlo::SignOp>(op) || isa<mlir::stablehlo::NegOp>(op) ||
++  if (isa<mlir::stablehlo::SignOp, mlir::stablehlo::NegOp,
++          mlir::stablehlo::TanOp>(op) ||
+       (isa<mlir::stablehlo::AbsOp>(op) && hasIntegralShapeType(op)) ||
+-      isa<chlo::AsinOp>(op) || isa<chlo::AsinhOp>(op) ||
+-      isa<chlo::AtanOp>(op) || isa<chlo::AtanhOp>(op) ||
+-      isa<chlo::BesselI1eOp>(op) || isa<chlo::SinhOp>(op) ||
+-      isa<chlo::TanOp>(op)) {
++      isa<chlo::AsinOp, chlo::AsinhOp, chlo::AtanOp, chlo::AtanhOp,
++          chlo::BesselI1eOp, chlo::SinhOp, chlo::TanOp>(op)) {
+     if (!sparse_tensor::getSparseTensorEncoding(op->getResult(0).getType()) &&
+         !sparse_tensor::getSparseTensorEncoding(op->getOperand(0).getType()))
+       return Value();
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h b/stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
+--- stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
++++ stablehlo/stablehlo/conversions/linalg/transforms/MapStablehloToScalarOp.h
+@@ -153,14 +153,11 @@
+   using FOp = ::mlir::math::SinOp;
+   using COp = ::mlir::complex::SinOp;
+ };
+-// FIXME(Jakub)
+-/*
+ template <>
+ struct StablehloToScalarOp<stablehlo::TanOp> {
+   using FOp = ::mlir::math::TanOp;
+   using COp = ::mlir::complex::TanOp;
+ };
+-*/
+ template <>
+ struct StablehloToScalarOp<stablehlo::Atan2Op> {
+   using FOp = ::mlir::math::Atan2Op;
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
+@@ -145,6 +145,7 @@
+       ScalarHloToArithmeticPattern<mlir::stablehlo::SineOp>,
+       ScalarHloToArithmeticPattern<mlir::stablehlo::SqrtOp>,
+       ScalarHloToArithmeticPattern<mlir::stablehlo::SubtractOp>,
++      ScalarHloToArithmeticPattern<mlir::stablehlo::TanOp>,
+       ScalarHloToArithmeticPattern<mlir::stablehlo::TanhOp>,
+       ScalarHloToArithmeticPattern<mlir::stablehlo::XorOp>>(typeConverter,
+                                                             context, filterFn);
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgPointwise.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgPointwise.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgPointwise.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgPointwise.cpp
+@@ -207,46 +207,87 @@
+ /// Converts a HLO operation to a linalg.generic op that contains the
+ /// corresponding scalar operations.
+ template <typename OpTy>
+-struct PointwiseToLinalgConverter : PointwiseToLinalgMapConverter<OpTy> {
+-  using PointwiseToLinalgMapConverter<OpTy>::PointwiseToLinalgMapConverter;
+-  using OpAdaptor = typename OpTy::Adaptor;
+-
+-  FailureOr<Operation *> createLinalgOp(OpTy &op,
+-                                        ConversionPatternRewriter &rewriter,
+-                                        ArrayRef<Value> mappedInputs,
+-                                        ArrayRef<Value> scalarVals,
+-                                        Value emptyTensor,
+-                                        int64_t maxRank) const override {
++class PointwiseToLinalgConverter : public OpConversionPattern<OpTy> {
++ public:
++  using OpConversionPattern<OpTy>::OpConversionPattern;
++
++  LogicalResult matchAndRewrite(
++      OpTy op, typename OpTy::Adaptor adaptor,
++      ConversionPatternRewriter& rewriter) const final {
++    auto loc = op.getLoc();
++    // Find maximum rank / number of loops.
++    auto getRank = [](Value v) {
++      return mlir::cast<ShapedType>(v.getType()).getRank();
++    };
++    auto isScalar = [&](Value v) { return getRank(v) == 0; };
++    auto it = llvm::find_if_not(adaptor.getOperands(), isScalar);
++    Value maxRankArg =
++        it != adaptor.getOperands().end() ? *it : adaptor.getOperands().front();
++    int64_t nloops = getRank(maxRankArg);
++
++    // Apply only if all operands are scalar or have the same rank. Some ops,
++    // like `stablehlo.select`, support implicit broadcasting of scalars.
++    if (!llvm::all_of(adaptor.getOperands(), [&](Value v) {
++          int64_t r = getRank(v);
++          return r == 0 || r == nloops;
++        })) {
++      return rewriter.notifyMatchFailure(
++          op, "Operands must be os same rank or scalar.");
++    }
++
++    // Find result type, if on tensors.
++    std::optional<ShapedType> resultTy;
++    resultTy = mlir::dyn_cast<ShapedType>(
++        this->typeConverter->convertType(op->getResultTypes().front()));
++
++    // Check result type compatibility.
++    if (!resultTy || !resultTy->hasRank() || resultTy->getRank() != nloops ||
++        !(resultTy->getElementType().isSignlessIntOrFloat() ||
++          isa<ComplexType>(resultTy->getElementType()))) {
++      return rewriter.notifyMatchFailure(
++          op, "mismatched operand/result types or iterator count");
++    }
++
++    if (allOperandsAreScalarTensors(op) && isInBodyOfLinalgOps(op))
++      return failure();
++
++    // Find input/output values and types.
++    ValueRange inputs = adaptor.getOperands();
++    Value output =
++        getEmptyTensorFor(rewriter, loc, *resultTy, op, adaptor.getOperands());
++
+     // Create indexing maps.
+-    AffineMap scalarMap = AffineMap::get(maxRank, 0, rewriter.getContext());
+-    AffineMap idMap = rewriter.getMultiDimIdentityMap(maxRank);
+-    SmallVector<AffineMap> maps;
+-    for (Value v : mappedInputs)
+-      maps.push_back(isScalar(v) ? scalarMap : idMap);
++    AffineMap scalarMap = AffineMap::get(nloops, 0, rewriter.getContext());
++    AffineMap idMap = rewriter.getMultiDimIdentityMap(nloops);
++    SmallVector<AffineMap, 4> maps;
++    for (Value v : inputs) maps.push_back(isScalar(v) ? scalarMap : idMap);
+     maps.push_back(idMap);
++
++    // Build `linalg.generic` op.
+     bool failed = false;
+-    Operation *linalgOp = rewriter.create<linalg::GenericOp>(
+-        op.getLoc(), emptyTensor.getType(), mappedInputs, emptyTensor, maps,
+-        getNParallelLoopsAttrs(maxRank),
+-        [&](OpBuilder &nestedBuilder, Location /*nested_loc*/,
++    auto linalgOp = rewriter.create<linalg::GenericOp>(
++        loc, resultTy ? *resultTy : TypeRange{}, inputs, output, maps,
++        getNParallelLoopsAttrs(nloops),
++        [&](OpBuilder& nestedBuilder, Location /*nested_loc*/,
+             ValueRange args) {
+-          Type innerResultTy = getElementTypeOrSelf(emptyTensor);
+-          auto argvec =
+-              llvm::to_vector<2>(args.take_front(mappedInputs.size()));
+-          Value semiring = preSparsify(op, argvec, innerResultTy, &rewriter);
++          Type innerResultTy = getElementTypeOrSelf(output);
++          auto argvec = llvm::to_vector<2>(args.take_front(inputs.size()));
++          auto semiring = preSparsify(op, argvec, innerResultTy, &rewriter);
+           Value innerResult = mlir::stablehlo::StablehloOpToStdScalarOp::mapOp(
+-              op, innerResultTy, interleaveScalarAndBlockArgs(scalarVals, args),
++              op, innerResultTy, interleaveScalarAndBlockArgs(argvec, args),
+               &rewriter);
+-          if (!innerResult) {
++          if (innerResult == nullptr) {
+             failed = true;
+           } else {
+             innerResult = postSparsify(op, semiring, innerResult, &rewriter);
+-            nestedBuilder.create<linalg::YieldOp>(op.getLoc(), innerResult);
++            nestedBuilder.create<linalg::YieldOp>(loc, innerResult);
+           }
+         },
+         linalg::getPrunedAttributeList(op));
+     if (failed) return failure();
+-    return linalgOp;
++
++    rewriter.replaceOp(op, linalgOp->getResults());
++    return success();
+   }
+ };
+ }  // namespace
+@@ -301,6 +342,7 @@
+         PointwiseToLinalgMapConverter<mlir::stablehlo::SineOp>,
+         PointwiseToLinalgMapConverter<mlir::stablehlo::SqrtOp>,
+         PointwiseToLinalgMapConverter<mlir::stablehlo::SubtractOp>,
++        PointwiseToLinalgMapConverter<mlir::stablehlo::TanOp>,
+         PointwiseToLinalgMapConverter<mlir::stablehlo::TanhOp>,
+         PointwiseToLinalgMapConverter<mlir::stablehlo::XorOp>>(typeConverter,
+                                                                context);
+@@ -352,6 +394,7 @@
+             PointwiseToLinalgConverter<mlir::stablehlo::SineOp>,
+             PointwiseToLinalgConverter<mlir::stablehlo::SqrtOp>,
+             PointwiseToLinalgConverter<mlir::stablehlo::SubtractOp>,
++            PointwiseToLinalgConverter<mlir::stablehlo::TanOp>,
+             PointwiseToLinalgConverter<mlir::stablehlo::TanhOp>,
+             PointwiseToLinalgConverter<mlir::stablehlo::XorOp>>(typeConverter,
+                                                                 context);
 diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir b/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
 --- stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
 +++ stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
