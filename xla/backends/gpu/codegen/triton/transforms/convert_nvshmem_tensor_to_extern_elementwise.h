@@ -32,4 +32,4 @@ std::unique_ptr<mlir::Pass> CreateConvertNvshmemTensorToExternElementwisePass();
 }  // namespace triton
 }  // namespace mlir
 
-#endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_TRANSFORMS_CONVERT_NVSHMEM_TENSOR_TO_EXTERN_ELEMENTWISE_H_ 
+#endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_TRANSFORMS_CONVERT_NVSHMEM_TENSOR_TO_EXTERN_ELEMENTWISE_H_

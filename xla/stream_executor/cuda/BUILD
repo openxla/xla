@@ -23,6 +23,7 @@ load(
     "//xla/tsl:tsl.default.bzl",
     "if_cuda_tools",
 )
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
@@ -978,6 +979,7 @@ cc_library(
     hdrs = [
         "cuda_executor.h",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "cuda-only",
         "gpu",
@@ -1044,6 +1046,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
+        "@nvshmem//:nvshmem_lib",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:numbers",
@@ -1186,6 +1189,7 @@ cc_library(
     name = "cuda_stream",
     srcs = ["cuda_stream.cc"],
     hdrs = ["cuda_stream.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "cuda-only",
         "gpu",

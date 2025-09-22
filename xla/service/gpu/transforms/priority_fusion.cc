@@ -1191,15 +1191,75 @@ absl::StatusOr<bool> PriorityFusion::Run(
         int64_t consumer_operand_index = consumer->operand_index(producer);
 
         fusion_queue->PreFusion(producer, consumer);
+
+        // NVSHMEM fusion detection: Check producer and consumer before fusion
+        bool is_nvshmem_related = false;
+
+        // Check if producer has nvshmem backend config
+        if (producer->opcode() == HloOpcode::kFusion) {
+          auto config = producer->backend_config<GpuBackendConfig>();
+          if (config.ok() && config->has_fusion_backend_config() &&
+              config->fusion_backend_config().kind() ==
+                  kTritonNvshmemFusionKind) {
+            is_nvshmem_related = true;
+          }
+        }
+
+        // Check if consumer has nvshmem backend config
+        if (consumer->opcode() == HloOpcode::kFusion && !is_nvshmem_related) {
+          auto config = consumer->backend_config<GpuBackendConfig>();
+          if (config.ok() && config->has_fusion_backend_config() &&
+              config->fusion_backend_config().kind() ==
+                  kTritonNvshmemFusionKind) {
+            is_nvshmem_related = true;
+          }
+        }
+
+        // Check if producer's operands have NVSHMEM fusion (trace back through
+        // elementwise ops)
+        if (!is_nvshmem_related && producer->opcode() != HloOpcode::kFusion) {
+          for (const HloInstruction* operand : producer->operands()) {
+            if (operand->opcode() == HloOpcode::kFusion) {
+              auto config = operand->backend_config<GpuBackendConfig>();
+              if (config.ok() && config->has_fusion_backend_config() &&
+                  config->fusion_backend_config().kind() ==
+                      kTritonNvshmemFusionKind) {
+                is_nvshmem_related = true;
+                break;
+              }
+            }
+          }
+        }
+
         auto fusion_instruction =
             Fuse(producer, consumer, use_multi_output_fusion);
         auto backend_config_it = block_level_parameters_map.find(consumer);
         if (backend_config_it != block_level_parameters_map.end()) {
+          // Apply Triton auto-optimized backend config for all fusions
           TF_RETURN_IF_ERROR(fusion_instruction->set_backend_config(
               GetTritonGpuBackendConfig(backend_config_it->second)));
+
+          // For NVSHMEM fusions: Set correct kind and name for runtime
+          // detection
+          if (is_nvshmem_related) {
+            auto config =
+                fusion_instruction->backend_config<GpuBackendConfig>();
+            if (config.ok() && config->has_fusion_backend_config()) {
+              auto updated_config = config.value();
+              updated_config.mutable_fusion_backend_config()->set_kind(
+                  kTritonNvshmemFusionKind);
+              TF_RETURN_IF_ERROR(
+                  fusion_instruction->set_backend_config(updated_config));
+
+              // Set NVSHMEM-identifiable name for runtime detection
+              fusion_instruction->SetAndSanitizeName("nvshmem_triton_fusion");
+            }
+          }
+
           fusion_instruction->set_fusion_kind(
               HloInstruction::FusionKind::kCustom);
         }
+
         fusion_queue->OnFusingInstruction(fusion_instruction, producer,
                                           consumer, consumer_operand_index);
 
@@ -1295,14 +1355,56 @@ HloInstruction* PriorityFusion::Fuse(HloInstruction* producer,
 
   HloComputation* computation = consumer->parent();
   auto kind = ChooseKind(producer, consumer);
+
+  // Check if either producer or consumer has nvshmem_ prefix
+  auto has_nvshmem_prefix_in_fusion = [](const HloInstruction* instr) {
+    return instr->opcode() == HloOpcode::kFusion &&
+           absl::StrContains(instr->fused_instructions_computation()->name(),
+                             "nvshmem_");
+  };
+
+  bool has_nvshmem_prefix = has_nvshmem_prefix_in_fusion(producer) ||
+                            has_nvshmem_prefix_in_fusion(consumer);
+
+  auto apply_nvshmem_prefix = [](HloInstruction* fusion_instr) {
+    // Rename the fusion computation if needed
+    auto* computation = fusion_instr->fused_instructions_computation();
+    std::string current_comp_name = std::string(computation->name());
+    if (!absl::StartsWith(current_comp_name, "nvshmem_")) {
+      std::string new_comp_name = "nvshmem_" + current_comp_name;
+      computation->SetAndSanitizeName(new_comp_name);
+      VLOG(1) << "Renamed fusion computation: " << current_comp_name << " -> "
+              << new_comp_name;
+    }
+
+    // Rename the fusion instruction if needed
+    std::string current_inst_name = std::string(fusion_instr->name());
+    if (!absl::StartsWith(current_inst_name, "nvshmem_")) {
+      std::string new_inst_name = "nvshmem_" + current_inst_name;
+      fusion_instr->SetAndSanitizeName(new_inst_name);
+      VLOG(1) << "Renamed fusion instruction: " << current_inst_name << " -> "
+              << new_inst_name;
+    }
+  };
   HloInstruction* fusion_instruction = consumer;
 
   if (HloPredicateIsNotOp<HloOpcode::kFusion>(fusion_instruction)) {
     fusion_instruction = computation->AddInstruction(
         HloInstruction::CreateFusion(consumer->shape(), kind, consumer));
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
+
+    // Apply NVSHMEM prefix if needed
+    if (has_nvshmem_prefix) {
+      apply_nvshmem_prefix(fusion_instruction);
+    }
   } else if (kind != fusion_instruction->fusion_kind()) {
     fusion_instruction->set_fusion_kind(kind);
+  }
+
+  // Apply NVSHMEM prefix to existing fusion if needed
+  if (has_nvshmem_prefix &&
+      fusion_instruction->opcode() == HloOpcode::kFusion) {
+    apply_nvshmem_prefix(fusion_instruction);
   }
 
   fusion_instruction->set_called_computations_execution_thread(

@@ -665,3 +665,59 @@ cc_library(
     ],
     alwayslink = 1,
 )
+
+xla_test(
+    name = "allreduce_softmax_fusion_e2e_test",
+    srcs = ["allreduce_softmax_fusion_e2e_test.cc"],
+    backend_tags = {"gpu": [
+        "multi_gpu_h100",
+        "no_oss",
+        "noasan", 
+        "nomsan",
+    ]},
+    backends = ["gpu"],
+    # CRITICAL: Add GOOGLE_CUDA macro to enable NVSHMEM module management for GPU backend
+    backend_kwargs = {"gpu": {"copts": ["-DGOOGLE_CUDA=1"]}},
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+    },
+    deps = [
+        "//xla/service/gpu/transforms:allreduce_softmax_fusion",  # Your fusion pass
+        ":gpu_topology",  # CRITICAL: GPU topology detection
+        ":se_gpu_pjrt_client",
+        "//xla:debug_options_flags",
+        "//xla:literal",
+        "//xla:literal_util",  # ADDED: Missing literal utilities
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:test",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_executable",  # ADDED: Missing executable support
+        "//xla/pjrt/distributed",  # ADDED: Missing distributed support
+        "//xla/pjrt/distributed:client",
+        "//xla/pjrt/distributed:in_memory_key_value_store",  # ADDED: Missing KV store
+        "//xla/pjrt/distributed:service",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/service:platform_util",  # ADDED: Missing platform utilities
+        "//xla/tests:literal_test_util",  # ADDED: Missing test utilities
+        "//xla/tsl/platform:subprocess",
+        "//xla/tsl/platform:statusor",  # ADDED: Missing statusor
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",  # ADDED: Missing log check
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",  # ADDED: Missing statusor
+        "@com_google_absl//absl/strings",  # ADDED: Missing strings
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",  # ADDED: Missing synchronization
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",  # ADDED: Missing span
+        "@com_google_googletest//:gtest",
+    ],
+)

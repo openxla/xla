@@ -94,6 +94,12 @@ inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 inline constexpr absl::string_view kTritonNestedGemmFusionKind =
     "__triton_nested_gemm_fusion";
 
+// Fusions that use Triton with NVSHMEM have FusionBackendConfig.kind equal to
+// this string. Used for AllReduce+Softmax fusions that require NVSHMEM
+// collective operations.
+inline constexpr absl::string_view kTritonNvshmemFusionKind =
+    "__triton_nvshmem";
+
 inline constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
 
 // Fusions that can be emitted using a dynamic memcpy. A dynamic memcpy depends

@@ -221,9 +221,9 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::FlopsPerElement(
       return 0;
     case HloOpcode::kAllReduce:
       // AllReduce performs reduction across replicas/partitions.
-      // For cost analysis purposes, we treat it as having minimal compute cost
-      // since the actual computation is distributed across devices.
-      return 0;
+      // Treat it as an elementwise operation since reduction has FLOPS.
+      return cost_analysis_.GetFlopsPerElementwiseOpElement(
+          instr->shape().element_type(), HloOpcode::kAdd);
     default:
       break;
   };

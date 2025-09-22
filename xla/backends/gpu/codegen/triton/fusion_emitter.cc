@@ -363,54 +363,61 @@ absl::StatusOr<ScalarOrTensor> EmitScope(
     absl::Span<const HloInstruction* const> instructions,
     absl::flat_hash_map<const HloInstruction*, ScalarOrTensor>& values);
 
-// Helper function to get NVSHMEM function name
-std::string GetNvshmemFunctionName(const HloAllReduceInstruction& allreduce) {
-  // For now, we support only SUM reduction on f32 data
-  const Shape& shape = allreduce.operand(0)->shape();
-  std::string type_suffix = "float";  // Assuming f32 for now
-  std::string op_name = "sum";        // Assuming SUM for now
-  return absl::StrFormat("nvshmem_%s_%s_reduce", type_suffix, op_name);
-}
-
-// Implementation of AllReduce using NVSHMEM placeholder
 absl::StatusOr<ScalarOrTensor> EmitAllReduce(
     EmitterLocOpBuilder& b, const TiledHloInstruction& tiled_hlo_allreduce,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
-  
-  VLOG(2) << "EmitAllReduce (NVSHMEM tensor placeholder): " << tiled_hlo_allreduce.hlo()->ToString();
-  
-  const HloAllReduceInstruction& allreduce = 
+  VLOG(2) << "EmitAllReduce (NVSHMEM tensor placeholder): "
+          << tiled_hlo_allreduce.hlo()->ToString();
+
+  const HloAllReduceInstruction& allreduce =
       *::xla::Cast<HloAllReduceInstruction>(tiled_hlo_allreduce.hlo());
-  
+
+  // NVSHMEM currently only supports F32 SUM reduction
+  const Shape& shape = allreduce.operand(0)->shape();
+  if (shape.element_type() != F32) {
+    return absl::UnimplementedError(
+        absl::StrCat("NVSHMEM AllReduce currently only supports F32, got ",
+                     PrimitiveType_Name(shape.element_type())));
+  }
+
   // Check if we're in AllReduce+Softmax fusion context
-  // In this case, AllReduce has already been emitted on the complete input tensor
+  // In this case, AllReduce has already been emitted on the complete input
+  // tensor
   const HloComputation* parent_computation = allreduce.parent();
-  bool is_in_fusion_context = parent_computation->IsFusionComputation() && 
-                              parent_computation->instruction_count() > 2; // More than just parameter and AllReduce
-  
+  bool is_in_fusion_context = false;
+
+  if (parent_computation->IsFusionComputation()) {
+    // Find the fusion instruction that contains this computation
+    const HloInstruction* fusion_instr =
+        parent_computation->FusionInstruction();
+    if (fusion_instr != nullptr) {
+      auto config = fusion_instr->backend_config<GpuBackendConfig>();
+      is_in_fusion_context =
+          config.ok() && config->has_fusion_backend_config() &&
+          config->fusion_backend_config().kind() == kTritonNvshmemFusionKind;
+    }
+  }
+
   if (is_in_fusion_context) {
-    // In fusion context, AllReduce was already emitted on the complete input tensor
-    // Return the tiled input directly as it now contains AllReduce-modified data
+    // In fusion context, AllReduce was already emitted on the complete input
+    // tensor. Return the tiled input directly as it now contains
+    // AllReduce-modified data
     ScalarOrTensor input = values[tiled_hlo_allreduce.operand(0)];
     return input;
   }
-  
+
   ScalarOrTensor input = values[tiled_hlo_allreduce.operand(0)];
-  
-  // Get the appropriate NVSHMEM function name for later use
-  std::string function_name = GetNvshmemFunctionName(allreduce);
-  
-  // For Triton IR generation, create a placeholder operation.
-  // The actual NVSHMEM library call will be generated in a later pass.
+
+  // Create placeholder operation for later NVSHMEM library call generation
   Value result = b.create<ttir::ExternElementwiseOp>(
-      input.getType(),
-      mlir::ValueRange{input.UnwrapUnsafe()}, 
-      "libdevice",                           // Use libdevice to pass validation
-      "",                                    // library path (unused at this stage)
-      "__xla_nvshmem_allreduce_placeholder", // Use consistent symbol with conversion pass
-      /*pure=*/false                         // AllReduce operations are not pure
+      input.getType(), mlir::ValueRange{input.UnwrapUnsafe()},
+      "libdevice",  // Use libdevice to pass validation
+      "",           // library path (unused at this stage)
+      "__xla_nvshmem_allreduce_placeholder",  // Use consistent symbol with
+                                              // conversion pass
+      /*pure=*/false  // AllReduce operations are not pure
   );
-  
+
   return ScalarOrTensor(result);
 }
 
@@ -1522,7 +1529,8 @@ bool HasAllReduceInstruction(const HloComputation* computation) {
 }
 
 // Helper function to find the AllReduce instruction in computation
-const HloInstruction* FindAllReduceInstruction(const HloComputation* computation) {
+const HloInstruction* FindAllReduceInstruction(
+    const HloComputation* computation) {
   for (const HloInstruction* instr : computation->instructions()) {
     if (instr->opcode() == HloOpcode::kAllReduce) {
       return instr;
@@ -1532,29 +1540,67 @@ const HloInstruction* FindAllReduceInstruction(const HloComputation* computation
 }
 
 // Helper function to emit AllReduce on complete input tensor before tiling
-// This ensures AllReduce operates on the full tensor rather than tiled fragments
+// This ensures AllReduce operates on the full tensor rather than tiled
+// fragments
 absl::StatusOr<Value> EmitAllReduceOnCompleteInput(
-    EmitterLocOpBuilder& b, Value complete_input, const HloInstruction* allreduce_instr) {
-  
-  const HloAllReduceInstruction& allreduce = 
+    EmitterLocOpBuilder& b, Value complete_input,
+    const HloInstruction* allreduce_instr,
+    const TiledHloComputation& tiled_hlo_computation) {
+  const HloAllReduceInstruction& allreduce =
       *::xla::Cast<HloAllReduceInstruction>(allreduce_instr);
-  
-  // Get the appropriate NVSHMEM function name for later use
-  std::string function_name = GetNvshmemFunctionName(allreduce);
-  
-  // Create a placeholder operation that can pass Triton validation
-  // We use a tensor→tensor format to satisfy Triton's validation rule:
-  // "if an operand is non-scalar, then there must be at least one non-scalar result"
-  // The ConvertNvshmemTensorToExternElementwisePass will convert this to actual NVSHMEM calls
+
+  // Validate supported configurations
+  const Shape& shape = allreduce.operand(0)->shape();
+  if (shape.element_type() != F32) {
+    return absl::UnimplementedError(
+        absl::StrCat("NVSHMEM AllReduce currently only supports F32, got ",
+                     PrimitiveType_Name(shape.element_type())));
+  }
+
+  // Get tiling information for the AllReduce instruction
+  const TiledHloInstruction* tiled_allreduce = nullptr;
+  for (const auto& tiled_instr : tiled_hlo_computation.instructions()) {
+    if (tiled_instr->hlo() == allreduce_instr) {
+      tiled_allreduce = tiled_instr;
+      break;
+    }
+  }
+
+  TF_RET_CHECK(tiled_allreduce != nullptr)
+      << "Could not find tiled AllReduce instruction";
+
+  // Calculate elements per block from tile sizes
+  int64_t elements_per_block = 1;
+  for (int64_t tile_size : tiled_allreduce->tile_sizes()) {
+    elements_per_block *= tile_size;
+  }
+
+  VLOG(3) << "EmitAllReduceOnCompleteInput: elements_per_block = "
+          << elements_per_block;
+
+  // Generate program_id
+  Value pid = b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X);
+
+  // Create tile_size constant
+  Value tile_size_i32 = b.create<mlir::arith::ConstantOp>(
+      b.getI32Type(),
+      b.getI32IntegerAttr(static_cast<int32_t>(elements_per_block)));
+
+  // Create team_id constant (fixed to 0 for now)
+  Value team_id =
+      b.create<mlir::arith::ConstantOp>(b.getI32Type(), b.getI32IntegerAttr(0));
+
+  // Create extended placeholder operation with all required parameters
+  // Format: (tensor_input, program_id, tile_size, team_id) -> tensor_output
   Value result = b.create<ttir::ExternElementwiseOp>(
-      complete_input.getType(),    // Return same tensor type to satisfy validation (tensor<32xf32>)
-      mlir::ValueRange{complete_input}, 
-      "libdevice",                 // Use standard libdevice to pass validation
-      "",                          // library path (unused at this stage)
-      "__xla_nvshmem_allreduce_placeholder",  // Custom but recognizable placeholder symbol
-      /*pure=*/false               // AllReduce operations are not pure (in-place)
+      complete_input.getType(),  // Return same tensor type (tensor<32xf32>)
+      mlir::ValueRange{complete_input, pid, tile_size_i32, team_id},
+      "libdevice",  // Use standard libdevice to pass validation
+      "",           // library path (unused at this stage)
+      "__xla_nvshmem_allreduce_placeholder",  // Custom placeholder symbol
+      /*pure=*/false  // AllReduce operations are not pure (in-place)
   );
-  
+
   return result;
 }
 
@@ -1682,26 +1728,23 @@ absl::StatusOr<SmallVector<Value>> EmitGeneric(
   Value pid_i64 = Cast(b, b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X),
                        b.getI64Type());
   Value pid = Cast(b, pid_i64, b.getIndexType());
-  
+
   // Special handling for AllReduce+Softmax fusion:
   // Emit AllReduce on complete input tensor before tiled computation
-  if (HasAllReduceInstruction(computation)) {
-    const HloInstruction* allreduce_instr = FindAllReduceInstruction(computation);
-    TF_RET_CHECK(allreduce_instr != nullptr) << "AllReduce instruction not found";
-    
+  if (const HloInstruction* allreduce_instr =
+          FindAllReduceInstruction(computation)) {
     // Get the complete input tensor (first function argument)
     Value complete_input = fn.getArguments()[0];
-    
-    // Emit AllReduce on the complete input tensor before any tiling
-    // This is an in-place operation that modifies the content of complete_input
-    TF_ASSIGN_OR_RETURN(Value dummy_result, 
-                        EmitAllReduceOnCompleteInput(b, complete_input, allreduce_instr));
-    
-    // Note: dummy_result is ignored as AllReduce is an in-place operation
-    // Subsequent tiled operations will read from the AllReduce-modified complete_input
-    (void)dummy_result;  // Suppress unused variable warning
+
+    // Emit AllReduce on complete input tensor before tiling
+    TF_ASSIGN_OR_RETURN(
+        Value dummy_result,
+        EmitAllReduceOnCompleteInput(b, complete_input, allreduce_instr,
+                                     tiled_hlo_computation));
+
+    (void)dummy_result;  // AllReduce is in-place, result unused
   }
-  
+
   absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor> values;
   TF_ASSIGN_OR_RETURN(
       auto results,
@@ -1968,7 +2011,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
                                   block_level_parameters));
   } else if (fusion_kind == kTritonFusionKind ||
-             fusion_kind == kTritonNestedGemmFusionKind) {
+             fusion_kind == kTritonNestedGemmFusionKind ||
+             fusion_kind == kTritonNvshmemFusionKind) {
     TF_ASSIGN_OR_RETURN(insert_results,
                         EmitGeneric(b, libdevice_path, device_info, fusion, fn,
                                     block_level_parameters));
@@ -2138,7 +2182,8 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       device_info, block_level_parameters.is_tma_allowed));
 
   // Convert NVSHMEM tensor placeholders to standard format
-  pm.addPass(mlir::triton::xla::CreateConvertNvshmemTensorToExternElementwisePass());
+  pm.addPass(
+      mlir::triton::xla::CreateConvertNvshmemTensorToExternElementwisePass());
   pm.addPass(mlir::triton::xla::CreateTritonXLASqueezeDimsPass());
 
   // Lower affine expressions into arithmetic ops.

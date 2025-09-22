@@ -31,6 +31,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/numeric/int128.h"
@@ -47,6 +48,10 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#ifdef GOOGLE_CUDA
+#include "third_party/nvshmem/nvshmem.h"   // IWYU pragma: keep
+#include "third_party/nvshmem/nvshmemx.h"  // IWYU pragma: keep
+#endif
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/stream_executor/activate_context.h"
@@ -97,6 +102,27 @@ limitations under the License.
 
 namespace stream_executor {
 namespace gpu {
+
+#ifdef GOOGLE_CUDA
+// Helper function to detect if a kernel requires NVSHMEM cooperative launch
+inline bool IsNvshmemCooperativeKernel(absl::string_view kernel_name) {
+  // Primary detection: check for nvshmem_ prefix (preferred method)
+  if (absl::StartsWith(kernel_name, "nvshmem_")) {
+    return true;
+  }
+
+  // Fallback detection: check for specific fusion pattern
+  // (for backward compatibility with kernels not yet using nvshmem_ prefix)
+  return kernel_name.find("triton") != absl::string_view::npos &&
+         kernel_name.find("softmax") != absl::string_view::npos &&
+         kernel_name.find("allreduce") != absl::string_view::npos;
+}
+
+// Track NVSHMEM-initialized modules to avoid double initialization
+static absl::Mutex nvshmem_modules_mutex;
+static absl::flat_hash_set<CUmodule> nvshmem_initialized_modules
+    ABSL_GUARDED_BY(nvshmem_modules_mutex);
+#endif
 
 namespace {
 bool ShouldLaunchDelayKernel() {
@@ -791,6 +817,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   const std::string& kernel_name = spec.kernel_name();
 
   if (spec.has_cuda_cubin_in_memory()) {
+    VLOG(2) << "LoadKernel: Using CUBIN path for kernel: " << kernel_name;
     absl::MutexLock lock{&in_memory_modules_mu_};
     const char* cubin = reinterpret_cast<const char*>(
         spec.cuda_cubin_in_memory()->cubin_bytes.data());
@@ -798,6 +825,50 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     kernel_to_gpu_binary_[cuda_kernel.get()] = module_handle;
 
     CUmodule module = gpu_binary_to_module_.at(module_handle).first;
+
+#ifdef GOOGLE_CUDA
+    // NVSHMEM module initialization for cooperative kernels
+    if (IsNvshmemCooperativeKernel(kernel_name)) {
+      // Check if this module has already been initialized
+      {
+        absl::MutexLock lock(&nvshmem_modules_mutex);
+        if (nvshmem_initialized_modules.contains(module)) {
+          VLOG(2) << "NVSHMEM module already initialized for kernel: "
+                  << kernel_name;
+          // Module already initialized, skip initialization
+        } else {
+          VLOG(2) << "Initializing NVSHMEM module for kernel: " << kernel_name;
+
+          // Check NVSHMEM initialization status
+          int init_status = nvshmemx_init_status();
+          if (init_status != NVSHMEM_STATUS_IS_INITIALIZED) {
+            // Clean up the module mapping on initialization failure
+            kernel_to_gpu_binary_.erase(cuda_kernel.get());
+            return absl::InternalError(absl::StrCat(
+                "NVSHMEM is not initialized for kernel: ", kernel_name,
+                ". nvshmemx_init_status() returned: ", init_status,
+                " expected: ", NVSHMEM_STATUS_IS_INITIALIZED));
+          }
+
+          // Initialize NVSHMEM module
+          int cumodule_result = nvshmemx_cumodule_init(module);
+          if (cumodule_result != 0) {
+            // Clean up the module mapping on initialization failure
+            kernel_to_gpu_binary_.erase(cuda_kernel.get());
+            return absl::InternalError(absl::StrCat(
+                "Failed to initialize NVSHMEM module for kernel: ", kernel_name,
+                ". nvshmemx_cumodule_init() returned: ", cumodule_result));
+          }
+
+          // Mark module as initialized
+          nvshmem_initialized_modules.insert(module);
+          VLOG(2) << "NVSHMEM module initialization successful for kernel: "
+                  << kernel_name;
+        }
+      }
+    }
+#endif
+
     VLOG(2) << "getting function " << kernel_name << " from module " << module;
     TF_ASSIGN_OR_RETURN(
         CUfunction function,
@@ -805,6 +876,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     cuda_kernel->set_gpu_function(function);
 
   } else if (spec.has_cuda_ptx_in_memory()) {
+    VLOG(2) << "LoadKernel: Using PTX path for kernel: " << kernel_name;
     if (cc_major_ == 0 && cc_minor_ == 0) {
       return absl::InternalError("Compute capability not set");
     }
@@ -819,6 +891,46 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     kernel_to_gpu_binary_[cuda_kernel.get()] = module_handle;
 
     CUmodule module = gpu_binary_to_module_.at(module_handle).first;
+
+#ifdef GOOGLE_CUDA
+    // NVSHMEM module initialization for cooperative kernels
+    if (IsNvshmemCooperativeKernel(kernel_name)) {
+      // Check if this module has already been initialized
+      {
+        absl::MutexLock lock(&nvshmem_modules_mutex);
+        if (nvshmem_initialized_modules.contains(module)) {
+          VLOG(2) << "NVSHMEM module already initialized for kernel: "
+                  << kernel_name;
+          // Module already initialized, skip initialization
+        } else {
+          VLOG(2) << "Initializing NVSHMEM module for kernel: " << kernel_name;
+
+          // Check NVSHMEM initialization status
+          if (nvshmemx_init_status() != NVSHMEM_STATUS_IS_INITIALIZED) {
+            return absl::InternalError(absl::StrCat(
+                "NVSHMEM is not initialized for kernel: ", kernel_name,
+                ". nvshmemx_init_status() returned non-initialized status."));
+          }
+
+          // Initialize NVSHMEM module
+          int ptx_cumodule_result = nvshmemx_cumodule_init(module);
+          if (ptx_cumodule_result != 0) {
+            // Clean up the module mapping on initialization failure
+            kernel_to_gpu_binary_.erase(cuda_kernel.get());
+            return absl::InternalError(absl::StrCat(
+                "Failed to initialize NVSHMEM module for kernel: ", kernel_name,
+                ". nvshmemx_cumodule_init() returned: ", ptx_cumodule_result));
+          }
+
+          // Mark module as initialized
+          nvshmem_initialized_modules.insert(module);
+          VLOG(2) << "NVSHMEM module initialization successful for kernel: "
+                  << kernel_name;
+        }
+      }
+    }
+#endif
+
     VLOG(2) << "getting function " << kernel_name << " from module " << module;
     TF_ASSIGN_OR_RETURN(
         CUfunction function,
@@ -826,6 +938,8 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     cuda_kernel->set_gpu_function(function);
 
   } else if (spec.has_in_process_symbol()) {
+    VLOG(2) << "LoadKernel: Using in-process symbol path for kernel: "
+            << kernel_name;
     void* symbol = spec.in_process_symbol()->symbol;
 
     VLOG(2) << "Resolve CUDA kernel " << kernel_name
@@ -906,6 +1020,29 @@ void CudaExecutor::UnloadKernel(const Kernel* kernel) {
   }
   VLOG(3) << "Kernel " << kernel << " : " << kernel->name()
           << " has loaded GPU code " << gpu_binary_it->second;
+
+#ifdef GOOGLE_CUDA
+  // NVSHMEM module finalization for cooperative kernels
+  if (IsNvshmemCooperativeKernel(kernel->name())) {
+    VLOG(2) << "Finalizing NVSHMEM module for kernel: " << kernel->name();
+
+    ModuleHandle module_handle = gpu_binary_it->second;
+    auto module_it = gpu_binary_to_module_.find(module_handle);
+    if (module_it != gpu_binary_to_module_.end()) {
+      CUmodule module = module_it->second.first;
+
+      // Finalize NVSHMEM module
+      if (nvshmemx_cumodule_finalize(module) != 0) {
+        LOG(ERROR) << "Failed to finalize NVSHMEM module for kernel: "
+                   << kernel->name();
+      } else {
+        VLOG(2) << "NVSHMEM module finalization successful for kernel: "
+                << kernel->name();
+      }
+    }
+  }
+#endif
+
   UnloadGpuBinary(gpu_binary_it->second);
   kernel_to_gpu_binary_.erase(gpu_binary_it);
 }
