@@ -65,8 +65,7 @@ void ExecuteOneDnnLayerNorm(absl::Span<MemrefInfoHandler> arguments,
   resources.scale_mem = memory(scaleshift_md, cpu_engine, gamma_minfo.Data());
   resources.shift_mem = memory(scaleshift_md, cpu_engine, beta_minfo.Data());
 
-  float epsilon;
-  *(reinterpret_cast<int32_t*>(&epsilon)) = ln_config.epsilon_typecast();
+  float epsilon = absl::bit_cast<float>(ln_config.epsilon_typecast());
 
   auto lnorm_pd = layer_normalization_forward::primitive_desc(
       cpu_engine, prop_kind::forward_inference, src_md, dst_md, epsilon,
@@ -74,11 +73,12 @@ void ExecuteOneDnnLayerNorm(absl::Span<MemrefInfoHandler> arguments,
 
   resources.primitive = primitive(lnorm_pd);
 
-  std::unordered_map<int, memory> ln_args;
-  ln_args.insert({DNNL_ARG_SRC, resources.src_mem});
-  ln_args.insert({DNNL_ARG_SCALE, resources.scale_mem});
-  ln_args.insert({DNNL_ARG_SHIFT, resources.shift_mem});
-  ln_args.insert({DNNL_ARG_DST, resources.dst_mem});
+  std::unordered_map<int, memory> ln_args = {
+      {DNNL_ARG_SRC, resources.src_mem},
+      {DNNL_ARG_SCALE, resources.scale_mem},
+      {DNNL_ARG_SHIFT, resources.shift_mem},
+      {DNNL_ARG_DST, resources.dst_mem},
+  };
 
   resources.primitive.execute(onednn_stream, ln_args);
 }
