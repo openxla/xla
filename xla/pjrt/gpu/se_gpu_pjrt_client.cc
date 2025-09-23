@@ -1873,7 +1873,8 @@ StreamExecutorGpuClient::RunAsync(
         globals, gpu_exec->ResolveConstantGlobals(run_options->stream()));
   }
 
-  absl::Span<const BufferAllocation> allocations = gpu_exec->GetAllocations();
+  absl::Span<const BufferAllocation* const> allocations =
+      gpu_exec->GetAllocations();
 
   std::vector<se::DeviceMemoryBase> buffers(allocations.size());
   {
@@ -1882,7 +1883,7 @@ StreamExecutorGpuClient::RunAsync(
         tsl::profiler::TraceMeLevel::kInfo);
     const int64_t num_buffers = allocations.size();
     for (int64_t i = 0; i < num_buffers; ++i) {
-      const BufferAllocation& allocation = allocations[i];
+      const BufferAllocation& allocation = *allocations[i];
       se::DeviceMemoryBase& buffer = buffers[i];
       if (allocation.is_thread_local()) {
         // buffer = se::DeviceMemoryBase{};
@@ -1940,7 +1941,7 @@ StreamExecutorGpuClient::RunAsync(
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
     const BufferAllocation* allocation =
-        &allocations[output_info.allocation_index];
+        allocations[output_info.allocation_index];
     se::DeviceMemoryBase result_buffer;
 
     VLOG(4) << "Looking at: allocation " << output_info.allocation_index
