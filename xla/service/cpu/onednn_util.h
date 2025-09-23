@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_ONEDNN_UTIL_H_
 #define XLA_SERVICE_CPU_ONEDNN_UTIL_H_
 
-#if defined(INTEL_MKL)
-
 #define EIGEN_USE_THREADS
 
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -57,6 +55,8 @@ inline bool HasAMXTile() {
   return TestCPUFeature(tsl::port::CPUFeature::AMX_TILE);
 }
 
+#if defined(INTEL_MKL)
+
 struct FusedOperandsRef {
   const std::vector<void*>& bufs;
   std::vector<std::pair<int, dnnl::memory>>& postop_args;
@@ -90,8 +90,9 @@ dnnl::post_ops PopulateOneDnnPostOps(
     FusedOperandsRef* fused_operands_ref = nullptr,
     dnnl::memory::desc* bias_md = nullptr);
 
+#endif  // INTEL_MKL
+
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // INTEL_MKL
 #endif  // XLA_SERVICE_CPU_ONEDNN_UTIL_H_

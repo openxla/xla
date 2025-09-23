@@ -205,6 +205,20 @@ TEST_P(CpuLibraryFullParamTest, MatMul) {
   RunTest(hlo_template, {HloOpcode::kDot, 2, 3, IsDotEnabledOnCPU()});
 }
 
+TEST_P(CpuLibraryFullParamTest, Gemv) {
+  const absl::string_view hlo_template = R"(
+    HloModule matmul
+
+    ENTRY %main {
+      %input = $in_dtype[64,128]{1,0} parameter(0)
+      %weight = $in_dtype[128]{0} parameter(1)
+      ROOT %dot = $out_dtype[64]{0} dot(%input, %weight),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  RunTest(hlo_template, {HloOpcode::kDot, 2, 3, IsDotEnabledOnCPU()});
+}
+
 TEST_P(CpuLibraryFullParamTest, MatMulTransposeRHS) {
   const absl::string_view hlo_template = R"(
     HloModule matmul
@@ -252,11 +266,7 @@ TEST_P(CpuLibraryFullParamTest, MatMulDimSizeUnqual) {
                   rhs_batch_dims={0,1}, rhs_contracting_dims={2}
     })";
 
-  DotRewriteTestSpec spec = GetParam();
-  FusionProperties expected = {HloOpcode::kDot, 0, 0, false};
-  if (spec.lib == "xnn" && IsDotEnabledOnCPU()) {
-    expected = FusionProperties{HloOpcode::kDot, 2, 3, true};
-  }
+  FusionProperties expected = {HloOpcode::kDot, 2, 3, IsDotEnabledOnCPU()};
   RunTest(hlo_template, expected);
 }
 

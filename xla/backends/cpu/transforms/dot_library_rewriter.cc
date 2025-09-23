@@ -320,6 +320,8 @@ absl::StatusOr<bool> DotLibraryRewriter::ProcessComputation(
       continue;
     }
 
+    centroid = lib->PreprocessFusionStarter(centroid);
+
     // Start a fusion node.
     fused_.insert(centroid);
     VLOG(3) << "Starting a fusion with: " << centroid->ToString();

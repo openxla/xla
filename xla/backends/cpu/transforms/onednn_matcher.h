@@ -74,6 +74,11 @@ class OneDnnMatcher : public LibraryMatcher {
     return instr->opcode() == HloOpcode::kDot;
   }
 
+  HloInstruction* PreprocessFusionStarter(HloInstruction* instr) override {
+    if (instr->opcode() != HloOpcode::kDot) return instr;
+    return ReconfigureDotDimensions(instr).value();
+  }
+
   // Returns a prefix string for the fusion op's name.
   std::string fusion_prefix() const override { return "onednn_"; }
 

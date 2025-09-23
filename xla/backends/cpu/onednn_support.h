@@ -29,7 +29,6 @@ namespace xla::cpu {
 
 inline constexpr absl::string_view kOneDnnFusionKind = "__onednn_fusion";
 
-bool IsOneDnnSupportedDType(PrimitiveType dtype);
 bool IsOneDnnSupportedDType(PrimitiveType dtype,
                             const TargetMachineFeatures* cpu_features);
 
@@ -39,6 +38,9 @@ absl::StatusOr<bool> IsOneDnnDotSupported(
     const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
     const Shape& rhs_shape, const Shape& out_shape,
     const TargetMachineFeatures* cpu_features = nullptr);
+
+absl::StatusOr<HloInstruction*> ReconfigureDotDimensions(
+    HloInstruction* dot_instr);
 
 }  // namespace xla::cpu
 

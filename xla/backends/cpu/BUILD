@@ -76,6 +76,7 @@ onednn_graph_cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/service/cpu:onednn_util",
         "//xla/tsl/mkl:onednn",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",

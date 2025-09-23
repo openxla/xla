@@ -71,6 +71,11 @@ class LibraryMatcher {
     return instr->shape().element_type();
   }
 
+  // Preprocesses the fusion starter before adding it to the library fusion
+  virtual HloInstruction* PreprocessFusionStarter(HloInstruction* instr) {
+    return instr;
+  }
+
   // Returns a prefix string for the fusion op's name.
   virtual std::string fusion_prefix() const { return ""; }
 
