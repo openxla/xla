@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/cpu/onednn_matmul.h"
+#include "xla/service/cpu/onednn_softmax.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -97,6 +98,10 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(
     const auto& matmul_config = std::get<OneDnnMatMulConfig>(config);
     ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine,
                         onednn_stream, resources);
+  } else if (target == "__onednn$softmax") {
+    const auto& softmax_config = std::get<OneDnnSoftmaxConfig>(config);
+    ExecuteOneDnnSoftmax(arguments, results, softmax_config, cpu_engine,
+                         onednn_stream, resources);
   } else {
     return absl::InvalidArgumentError(
         absl::StrFormat("Unsupported oneDNN operation target: `%s`", target));

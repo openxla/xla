@@ -459,6 +459,9 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
 class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   absl::Status HandleAdd(HloInstruction* instr) override {
+    // TODO(intel-tf): remove this restriction after adding oneDNN layernorm
+    // support in thunk runtime.
+    return absl::OkStatus();
     HloInstruction *src, *scale, *bias;
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
