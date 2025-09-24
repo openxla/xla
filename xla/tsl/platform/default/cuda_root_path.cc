@@ -68,7 +68,9 @@ std::vector<std::string> CandidateCudaRoots() {
   const char* cuda_home = getenv("CUDA_HOME");
   if (cuda_home)
     roots.emplace_back(cuda_home);
-  roots.push_back(TF_CUDA_TOOLKIT_PATH);
+  std::string cuda_toolkit_path = TF_CUDA_TOOLKIT_PATH;
+  if (!cuda_toolkit_path.empty())
+    roots.push_back(std::move(cuda_toolkit_path));
   roots.emplace_back(std::string("/usr/local/cuda"));
   roots.emplace_back(std::string("/opt/cuda"));
 
