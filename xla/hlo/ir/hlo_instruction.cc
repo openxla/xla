@@ -3598,6 +3598,8 @@ absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
                                   /*accept_different_shape=*/true);
   }
 
+  new_producer->CopyOriginalValue(/*instruction=*/this, /*clone=*/false);
+
   return absl::OkStatus();
 }
 
