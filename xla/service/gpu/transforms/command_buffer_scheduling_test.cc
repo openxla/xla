@@ -57,9 +57,13 @@ class CommandBufferSchedulingTest : public HloTestBase {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.set_xla_gpu_graph_min_graph_size(2);
+    // Needed for ConvolutionCustomCallAndCollectivePermute test
+    debug_options.add_legacy_command_buffer_custom_call_targets(
+        "__cudnn$convBiasActivationForward");
     return debug_options;
   }
 
@@ -311,6 +315,89 @@ TEST_F(CommandBufferSchedulingTest, ReduceScatterStartFollowedByDone) {
                             });
 }
 
+TEST_F(CommandBufferSchedulingTest, CollectivePermuteStartFollowedByDone) {
+  const char* hlo = R"(
+    HloModule TestModule, is_scheduled=true
+
+    ENTRY main (a: s32[2]) -> s32[2] {
+      a = s32[2] parameter(0)
+
+      start = (s32[2]{0}, s32[2]{0}) collective-permute-start(a),
+        channel_id=555, source_target_pairs={{1,0},{3,2},{2,1},{0,3}}, 
+        backend_config={"collective_backend_config": {"is_sync":true}}
+
+      ROOT done = s32[2]{0} collective-permute-done(start)
+    })";
+
+  const char* expected = R"(
+    CHECK: %command_buffer ([[P0:.+]]: s32[2]) -> s32[2] {
+    CHECK:   %[[P0]] = s32[2]{0} parameter(0)
+    CHECK:   %[[START:.+]] = {{.*}} collective-permute-start(%[[P0]])
+    CHECK:   ROOT %[[DONE:.+]] = s32[2]{0} collective-permute-done(%[[START]])
+    CHECK: }
+
+    CHECK: ENTRY %main (a: s32[2]) -> s32[2] {
+    CHECK:   %[[A:.+]] = s32[2]{0} parameter(0)
+    CHECK:   ROOT %[[CALL:.+]] = s32[2]{0} call(%[[A]]),
+    CHECK:     to_apply=%command_buffer
+    CHECK: })";
+
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
+                            expected, [](HloModule* module) {
+                              EXPECT_TRUE(module->has_schedule());
+                              TF_CHECK_OK(module->schedule().Verify());
+                            });
+}
+
+TEST_F(CommandBufferSchedulingTest,
+       CollectivePermuteStartFollowedByAnotherStart) {
+  const char* hlo = R"(
+    HloModule TestModule, is_scheduled=true
+
+    ENTRY main (a: s32[2], b: s32[2]) -> (s32[2], s32[2]) {
+      a = s32[2] parameter(0)
+      b = s32[2] parameter(1)
+
+      start.1 = (s32[2]{0}, s32[2]{0}) collective-permute-start(a),
+        channel_id=555, source_target_pairs={{1,0},{3,2},{2,1},{0,3}}, 
+        backend_config={"collective_backend_config": {"is_sync":true}}
+
+      start.2 = (s32[2]{0}, s32[2]{0}) collective-permute-start(b),
+        channel_id=555, source_target_pairs={{1,2},{3,0},{2,3},{0,1}}, 
+        backend_config={"collective_backend_config": {"is_sync":true}}
+
+      done.1 = s32[2]{0} collective-permute-done(start.1)
+      done.2 = s32[2]{0} collective-permute-done(start.2)
+      ROOT tuple = (s32[2]{0}, s32[2]{0}) tuple(done.1, done.2)
+    })";
+
+  // ROOT %tuple = (s32[2]{0}, s32[2]{0}) tuple(%done.1, %done.2)
+
+  const char* expected = R"(
+    CHECK: %command_buffer ([[P0:.+]]: s32[2], [[P1:.+]]: s32[2]) -> (s32[2], s32[2]) {
+    CHECK:   %[[P0]] = s32[2]{0} parameter(0)
+    CHECK:   %[[P1]] = s32[2]{0} parameter(1)
+    CHECK:   %[[START1:.+]] = {{.*}} collective-permute-start(%[[P0]])
+    CHECK:   %[[START2:.+]] = {{.*}} collective-permute-start(%[[P1]])
+    CHECK:   %[[DONE1:.+]] = s32[2]{0} collective-permute-done(%[[START1]])
+    CHECK:   %[[DONE2:.+]] = s32[2]{0} collective-permute-done(%[[START2]])
+    CHECK:   ROOT %[[tuple:.+]] = (s32[2]{0}, s32[2]{0}) tuple(%[[DONE1]], %[[DONE2]])
+    CHECK: }
+
+    CHECK: ENTRY %main (a: s32[2], b: s32[2]) -> (s32[2], s32[2]) {
+    CHECK:   %[[A:.+]] = s32[2]{0} parameter(0)
+    CHECK:   %[[B:.+]] = s32[2]{0} parameter(1)
+    CHECK:   %[[CALL:.+]] = (s32[2]{0}, s32[2]{0}) call(%[[A]], %[[B]]),
+    CHECK:     to_apply=%command_buffer
+    CHECK: })";
+
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
+                            expected, [](HloModule* module) {
+                              EXPECT_TRUE(module->has_schedule());
+                              TF_CHECK_OK(module->schedule().Verify());
+                            });
+}
+
 TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
   const char* hlo = R"(
     HloModule TestModule, is_scheduled=true
@@ -450,6 +537,52 @@ TEST_F(CommandBufferSchedulingTest, DoNotCaptureUnmatchedAsyncDone) {
     CHECK:   %[[DONE1:.+]] = s32[4]{0} all-reduce-done(%[[START1]])
     CHECK:   %[[DONE2:.+]] = s32[4]{0} all-reduce-done(%[[START2]])
     CHECK:   %call = s32[] call(%b, %c), to_apply=%command_buffer
+    CHECK: })";
+
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
+                            expected, [](HloModule* module) {
+                              EXPECT_TRUE(module->has_schedule());
+                              TF_CHECK_OK(module->schedule().Verify());
+                            });
+}
+
+TEST_F(CommandBufferSchedulingTest, ConvolutionCustomCallAndCollectivePermute) {
+
+  const char* hlo = R"(
+    HloModule TestModule, is_scheduled=true
+
+    ENTRY main {
+      a = bf16[4,16,3,68,120]{4,3,2,1,0} parameter(0)
+      b = bf16[768,16,1,2,2]{4,3,2,1,0} parameter(1)
+      c = bf16[768]{0} parameter(2)
+
+      start = (bf16[768]{0}, bf16[768]{0}) collective-permute-start(c),
+        channel_id=555, source_target_pairs={{1,0},{3,2},{2,1},{0,3}}, 
+        backend_config={"collective_backend_config": {"is_sync":true}}
+
+      done = bf16[768]{0} collective-permute-done(start)
+      ROOT %cudnn-conv-bias-activation = (bf16[4,768,3,34,60]{4,3,2,1,0}, u8[783360]{0}) 
+            custom-call(a, b, done), window={size=1x2x2 stride=1x2x2}, 
+            dim_labels=bf012_oi012->bf012, 
+            custom_call_target="__cudnn$convBiasActivationForward"
+    })";
+
+  const char* expected = R"(
+    CHECK: %command_buffer ([[P0:.+]]: bf16[768], [[P1:.+]]: bf16[4,16,3,68,120], [[P2:.+]]: bf16[768,16,1,2,2]) -> {{.*}} {
+    CHECK:   %[[P0]] = bf16[768]{0} parameter(0)
+    CHECK:   %[[P1]] = bf16[4,16,3,68,120]{4,3,2,1,0} parameter(1)
+    CHECK:   %[[P2]] = bf16[768,16,1,2,2]{4,3,2,1,0} parameter(2)
+    CHECK:   %[[START:.+]] = {{.*}} collective-permute-start(%[[P0]])
+    CHECK:   %[[DONE:.+]] = bf16[768]{0} collective-permute-done(%[[START]])
+    CHECK:   ROOT %[[CUDNN:.+]] =  {{.*}} custom-call(%[[P1]], %[[P2]], %[[DONE]])
+    CHECK: }
+
+    CHECK: ENTRY %{{.*}} {
+    CHECK:   %[[A:.+]] = bf16[4,16,3,68,120]{4,3,2,1,0} parameter(0)
+    CHECK:   %[[B:.+]] = bf16[768,16,1,2,2]{4,3,2,1,0} parameter(1)
+    CHECK:   %[[C:.+]] = bf16[768]{0} parameter(2)
+    CHECK:   ROOT %[[CALL:.+]] =  {{.*}} call(%[[C]], %[[A]], %[[B]]),
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),

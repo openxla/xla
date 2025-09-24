@@ -99,8 +99,8 @@ static bool IsNoOp(const HloInstruction* hlo) {
 
 static bool IsAsyncStartCommand(const HloInstruction* hlo,
                                 const CommandBufferConfig& config) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
-          hlo)) {
+  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart,
+                       HloOpcode::kCollectivePermuteStart>(hlo)) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
@@ -136,8 +136,8 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
 
 static bool IsAsyncDoneCommand(const HloInstruction* hlo,
                                const CommandBufferConfig& config) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceDone, HloOpcode::kAllGatherDone>(
-          hlo)) {
+  if (HloPredicateIsOp<HloOpcode::kAllReduceDone, HloOpcode::kAllGatherDone,
+                       HloOpcode::kCollectivePermuteDone>(hlo)) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
@@ -169,8 +169,8 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
 
 // Finds an async-done HLO operation corresponding on an async-start one.
 static HloInstruction* FindAsyncDoneCommand(const HloInstruction* start) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
-          start)) {
+  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart,
+                       HloOpcode::kCollectivePermuteStart>(start)) {
     CHECK(start->users().size() == 1);  // NOLINT, checked by HLO verifier
     return start->users().front();
   } else if (HloPredicateIsOp<HloOpcode::kAsyncStart>(start)) {
@@ -227,11 +227,26 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
     return true;
   }
 
-  if (config.enabled_commands.contains(DebugOptions::CUDNN) &&
-      IsCustomCallTofMHA(*hlo)) {
-    VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
-            << " into command buffer.";
-    return true;
+  if (config.enabled_commands.contains(DebugOptions::CUDNN)) {
+    if (IsCustomCallToBlockScaledDot(*hlo)) {
+      VLOG(3) << "Recording BlockScaledDot, target "
+              << hlo->custom_call_target() << " into command buffer.";
+      return true;
+    }
+    if (IsCustomCallTofMHA(*hlo)) {
+      VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
+              << " into command buffer.";
+      return true;
+    }
+    // Not all convolution custom calls can be captured, therefore we capture
+    // only those convolutions which are explicitly enabled by the user.
+    if (IsCustomCallToDnnConvolution(*hlo) && 
+        config.enabled_legacy_custom_call_targets.contains(
+              hlo->custom_call_target())) {
+      VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
+              << " into command buffer.";
+      return true;
+    }
   }
 
   if (!config.enabled_commands.contains(DebugOptions::CUSTOM_CALL)) {
@@ -379,7 +394,9 @@ CommandBufferScheduling::CollectCommandBufferSequences(
   int64_t num_commands_in_current_seq = 0;
 
   // Adds `current_seq` to `sequences` if it has enough commands in it.
-  auto collect_current_seq = [&]() {
+  auto collect_current_seq = [&](HloInstruction* instr) {
+    VLOG(1) << "Stopped at: " << (instr ? instr->ToString() : "<end>")
+            << " commands: " << num_commands_in_current_seq;
     if (num_commands_in_current_seq >= std::max(1, min_num_commands)) {
       RemoveTrailingNoOps(current_seq);
       sequences.push_back(std::move(current_seq));
@@ -524,11 +541,11 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 
     // If we didn't find the next command, collect the current sequence and
     // start a new one.
-    collect_current_seq();
+    collect_current_seq(inst);
   }
 
   // Don't forget to collect the final command sequence.
-  collect_current_seq();
+  collect_current_seq(nullptr);
   return sequences;
 }
 

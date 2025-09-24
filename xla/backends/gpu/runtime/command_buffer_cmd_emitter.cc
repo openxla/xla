@@ -4,7 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
+#include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
@@ -194,6 +195,13 @@ static absl::StatusOr<Command> Convert(const AllGatherStartThunk& thunk) {
 }
 
 static absl::StatusOr<Command> Convert(
+    const CollectivePermuteStartThunk& thunk) {
+  return std::make_unique<CollectivePermuteCmd>(
+      thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
+      thunk.GetP2PConfig(), thunk.buffers());
+}
+
+static absl::StatusOr<Command> Convert(
     const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdExecutor embedded_cmds,
@@ -240,6 +248,10 @@ static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
 static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk) {
   return std::make_unique<CuDnnCmd>(thunk.execution_stream_id(),
                                     thunk.arguments(), thunk.graph());
+}
+
+static absl::StatusOr<Command> Convert(const ConvolutionThunk& thunk) {
+  return std::make_unique<ConvolutionCmd>(thunk.execution_stream_id(), thunk);
 }
 
 //===----------------------------------------------------------------------===//
@@ -297,6 +309,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       return append(Convert<ReduceScatterStartThunk>(thunk));
     case Thunk::Kind::kAllToAllStart:
       return append(Convert<AllToAllStartThunk>(thunk));
+    case Thunk::Kind::kCollectivePermuteStart:
+      return append(Convert<CollectivePermuteStartThunk>(thunk));
     case Thunk::Kind::kPartitionId:
       return append(Convert<PartitionIdThunk>(thunk));
     case Thunk::Kind::kReplicaId:
@@ -305,6 +319,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
       return append(Convert<CuDnnThunk>(thunk));
+    case Thunk::Kind::kConvolution:
+      return append(Convert<ConvolutionThunk>(thunk));
     case Thunk::Kind::kDynamicSlice:
       return append(Convert<DynamicSliceThunk>(thunk, options));
 
@@ -321,6 +337,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
     case Thunk::Kind::kAllReduceDone:
     case Thunk::Kind::kReduceScatterDone:
     case Thunk::Kind::kAllToAllDone:
+    case Thunk::Kind::kCollectivePermuteDone:
+      return absl::OkStatus();
     case Thunk::Kind::kWaitForStreams:
       return absl::OkStatus();
 

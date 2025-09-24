@@ -43,6 +43,14 @@ namespace xla {
 namespace gpu {
 
 ConvolutionThunk::ConvolutionThunk(
+    const ConvolutionThunk& rhs) :
+  Thunk(Kind::kConvolution, {}),
+  operand_buffers_(rhs.operand_buffers_),
+  result_buffers_(rhs.result_buffers_),
+  scratch_buffer_(rhs.scratch_buffer_),
+  config_(rhs.config_) {} 
+
+ConvolutionThunk::ConvolutionThunk(
     ThunkInfo thunk_info, GpuConvConfig config,
     std::vector<BufferAllocation::Slice> operand_slices,
     std::vector<BufferAllocation::Slice> result_slices,
@@ -56,19 +64,21 @@ ConvolutionThunk::ConvolutionThunk(
 GenericConvRunner& ConvolutionThunk::GetOrCreateRunner(
     const stream_executor::Stream* stream, bool* runner_created) {
   absl::MutexLock lock(&mu_);
-  auto it = runner_cache_.find(stream);
-  *runner_created = (it == runner_cache_.end());
-  if (*runner_created) {
-    it = runner_cache_
-             .insert({stream, std::make_unique<GenericConvRunner>(config_)})
-             .first;
+  auto [it, inserted] = runner_cache_.emplace(stream->parent(), 
+          std::unique_ptr<GenericConvRunner>{});
+  if (inserted) {
+    if (runner_created) *runner_created = true;
+    it->second = std::make_unique<GenericConvRunner>(config_);
   }
   return *it->second;
 }
 
-absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
-  const auto& buffer_allocations = *params.buffer_allocations;
+absl::Status ConvolutionThunk::Initialize(const InitializeParams& params) {
+  
+  bool runner_created = false;
+  GetOrCreateRunner(params.stream, &runner_created);
 
+  const auto& buffer_allocations = *params.buffer_allocations;
   std::vector<se::DeviceMemoryBase> operand_se_buffers, result_se_buffers;
   operand_se_buffers.reserve(operand_buffers_.size());
   for (BufferAllocation::Slice buffer : operand_buffers_) {
@@ -79,13 +89,6 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
   for (BufferAllocation::Slice buffer : result_buffers_) {
     result_se_buffers.push_back(buffer_allocations.GetDeviceAddress(buffer));
   }
-
-  se::DeviceMemoryBase scratch =
-      buffer_allocations.GetDeviceAddress(scratch_buffer_);
-
-  bool runner_created = false;
-  RunConvOptions opts;
-  opts.runner_cache = &GetOrCreateRunner(params.stream, &runner_created);
 
   if (runner_created && std::holds_alternative<se::RocmComputeCapability>(
                             params.stream->parent()
@@ -118,6 +121,29 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
         conv_params.output_buf, config_.conv_desc, &scratch_allocator,
         &profile_results);
   }
+  return absl::OkStatus();
+}
+
+absl::Status ConvolutionThunk::ExecuteOnStreamInternal(se::Stream *stream, 
+                                      const ExecuteParams& params) {
+  const auto& buffer_allocations = *params.buffer_allocations;
+
+  std::vector<se::DeviceMemoryBase> operand_se_buffers, result_se_buffers;
+  operand_se_buffers.reserve(operand_buffers_.size());
+  for (BufferAllocation::Slice buffer : operand_buffers_) {
+    operand_se_buffers.push_back(buffer_allocations.GetDeviceAddress(buffer));
+  }
+
+  result_se_buffers.reserve(result_buffers_.size());
+  for (BufferAllocation::Slice buffer : result_buffers_) {
+    result_se_buffers.push_back(buffer_allocations.GetDeviceAddress(buffer));
+  }
+
+  se::DeviceMemoryBase scratch =
+      buffer_allocations.GetDeviceAddress(scratch_buffer_);
+
+  RunConvOptions opts;
+  opts.runner_cache = &GetOrCreateRunner(params.stream);
 
   TF_RETURN_IF_ERROR(RunGpuConv(config_, absl::MakeSpan(operand_se_buffers),
                                 absl::MakeSpan(result_se_buffers), scratch,
