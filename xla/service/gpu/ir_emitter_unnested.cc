@@ -155,10 +155,15 @@ limitations under the License.
 #include "xla/service/gpu/ir_emitter_nested.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
+#ifdef GOOGLE_CUDA
+#include "xla/service/gpu/kernels/ptx_custom_kernel.h"
+#endif
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/kernel_call.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_call.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
@@ -174,6 +179,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/gpu_solver_context.h"
@@ -1034,6 +1040,42 @@ absl::Status IrEmitterUnnested::EmitCuDnnThunk(
       kernel_arguments.GetArgumentBufferSlices(),
       kernel_arguments.GetArgumentOutputFlags(), dropout_seed));
   return absl::OkStatus();
+}
+
+absl::Status IrEmitterUnnested::EmitPtxCustomCall(
+    const HloCustomCallInstruction* instr) {
+#ifdef GOOGLE_CUDA
+  absl::string_view backend_config_str = instr->raw_backend_config_string();
+  if (backend_config_str.empty()) {
+    return Internal("PTX custom call backend config is empty");
+  }
+
+  TF_ASSIGN_OR_RETURN(KernelCall call,
+                      KernelCall::Parse(backend_config_str,
+                                        ir_emitter_context_->mlir_context()));
+
+  if (call.kernel_type != KernelCall::KernelType::kPtxSource) {
+    return Internal("PTX custom call backend config is not a PTX source");
+  }
+  emitters::KernelArguments::BufferAlignment buffer_alignment =
+      GetDefaultBufferAlignment();
+  TF_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
+                      emitters::KernelArguments::Create(
+                          ir_emitter_context_->buffer_assignment(),
+                          buffer_alignment, instr, call.output_indices));
+
+  TF_ASSIGN_OR_RETURN(
+      CustomKernel ptx_custom_kernel,
+      kernel::GetOwnedPtxCustomKernel(
+          call.name, call.kernel_data, kernel_arguments.args().size(),
+          call.block_dim, call.thread_dim, call.shared_mem));
+  auto thunk = std::make_unique<CustomKernelThunk>(instr, ptx_custom_kernel,
+                                                   kernel_arguments);
+  AddThunkToThunkSequence(std::move(thunk));
+  return absl::OkStatus();
+#else
+  return Unimplemented("PTX custom calls are only available in CUDA builds. ");
+#endif
 }
 
 absl::StatusOr<BufferAllocation::Slice>
@@ -3340,6 +3382,9 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       if (IsCustomCallTofMHA(*instr) || IsCustomCallTofMHAF8(*instr) ||
           IsCustomCallToBlockScaledDot(*instr)) {
         return EmitCuDnnThunk(custom_call);
+      }
+      if (IsCustomCallToPtxKernel(*instr)) {
+        return EmitPtxCustomCall(custom_call);
       }
       if (IsCustomCallToTopK(*instr)) {
         return EmitTopKCustomCall(custom_call);
