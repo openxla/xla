@@ -12,14 +12,14 @@ alias(
 
 whl_filegroup(
     name = "numpy_includes",
-    pattern = "numpy/core/include/numpy",
+    pattern = "numpy/_?core/include/numpy",
     whl = "@pypi//numpy:whl",
 )
 
 cc_library(
     name = "headers",
     hdrs = [":numpy_includes"],
-    includes = ["numpy_includes/numpy/core/include"],
+    includes = ["numpy_includes/numpy/_core/include", "numpy_includes/numpy/core/include"],
     deps = ["@rules_python//python/cc:current_py_cc_headers"],
 )
 
