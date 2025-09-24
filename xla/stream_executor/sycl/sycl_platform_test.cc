@@ -18,18 +18,14 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::sycl {
+namespace {
 
-static Platform* NewPlatform() {
+TEST(SyclPlatformTest, TestPlatformName) {
   TF_ASSERT_OK_AND_ASSIGN(
       Platform * platform,
       stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
-  return platform;
+  EXPECT_EQ(platform->Name(), "SYCL");
 }
 
-TEST(SyclPlatformTest, Name) {
-  auto platform = NewPlatform();
-  auto name = platform->Name();
-  EXPECT_EQ(name, "SYCL");
-}
-
+}  // namespace
 }  // namespace stream_executor::sycl
