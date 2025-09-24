@@ -1658,6 +1658,32 @@ TEST_F(MatmulTest, WeightsPrepackAndScratch) {
   )");
 }
 
+TEST_F(MatmulTest, PrepackLarge2DWeights) {
+  const char* matmul_module_str = R"(
+  HloModule matmul.weights_prepack_large.f32
+
+  ENTRY matmul.weights_prepack_large.f32 {
+    lhs = f32[2,4096] parameter(0), parameter_replication={false}
+    c = f32[] constant(1)
+    rhs = f32[4096,4096] broadcast(c), dimensions={}
+    ROOT dot = f32[2,4096] dot(lhs, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+
+  MatchOptimizedHlo(matmul_module_str,
+                    R"(
+  ; CHECK: %matmul.weights_prepack_large.f32
+  ; CHECK:     custom_call_target="__onednn$matmul",
+  ; CHECK:       backend_config={
+  ; CHECK-DAG:     "onednn_matmul_config":{
+  ; CHECK-DAG:       "optimization_config":{
+  ; CHECK-DAG:         "weights_prepacked":true,
+  ; CHECK-DAG:         "user_scratchpad":true
+  ; CHECK-DAG:       }
+  ; CHECK-DAG:     }
+  ; CHECK:       }
+  )");
+}
+
 TEST_F(MatmulTest, ColMajorBF16DotBeforeLayoutAssignment) {
   if (!IsSupportedType(PrimitiveType::BF16)) {
     GTEST_SKIP() << "CPU does not support BF16.";
