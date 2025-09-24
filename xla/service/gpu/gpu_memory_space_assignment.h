@@ -115,6 +115,12 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
           value->set_color(BufferValue::Color(memory_space));
           continue;
         }
+      } else if (defining_position.shape().IsTuple()) {
+        // Tuples do not have layout while downstream allocation consistency
+        // check will assume default memory space for them, force assign to
+        // avoid downstream errors.
+        value->set_color(0);
+        continue;
       }
 
       auto& buffer = alias_analysis->GetBufferContainingValue(*value);
