@@ -68,26 +68,32 @@ BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.6.0"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 
+SCRIPT_DIR=$(realpath $(dirname $0))
+TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),gpu,-multigpu,-multi_gpu_h100,requires-gpu-amd
+
 SANITIZER_ARGS=()
 if [[ $1 == "asan" ]]; then
-    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
-    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=${SCRIPT_DIR}/asan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=${SCRIPT_DIR}/lsan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--config=asan")
+    TAG_FILTERS=$TAG_FILTERS,-noasan
     shift
 elif [[ $1 == "tsan" ]]; then
-    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=${SCRIPT_DIR}/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--config=tsan")
+    TAG_FILTERS=$TAG_FILTERS,-notsan
     shift
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
+    --config=rocm_ci \
+    --config=xla_sgpu \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --profile=/tf/pkg/profile.json.gz \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
-    "${SANITIZER_ARGS[@]}" \
-    --config=rocm_ci \
-    --config=xla_sgpu \
+    --build_tag_filters=$TAG_FILTERS \
+    --test_tag_filters=$TAG_FILTERS \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
     --test_output=errors \
@@ -102,6 +108,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --test_env=MIOPEN_FIND_ENFORCE=5 \
     --test_env=MIOPEN_FIND_MODE=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${SANITIZER_ARGS[@]}" \
     "$@"
 
 # clean up bazel disk_cache

@@ -216,24 +216,6 @@ build:dbg --per_file_copt=+.*,-xla.*@-g0
 # AWS SDK must be compiled in release mode. see: https://github.com/tensorflow/tensorflow/issues/37498
 build:dbg --copt -DDEBUG_BUILD
 
-build:asan --strip=never
-build:asan --copt -fsanitize=address
-build:asan --copt -DADDRESS_SANITIZER
-build:asan --copt -O1
-build:asan --copt -g
-build:tsan --linkopt -g
-build:asan --copt -fno-omit-frame-pointer
-build:asan --linkopt -fsanitize=address
-build:asan --//build_tools/rocm:sanitizer=asan
-
-build:tsan --strip=never
-build:tsan --copt -fsanitize=thread
-build:tsan --copt -g
-build:tsan --copt -fno-omit-frame-pointer
-build:tsan --linkopt -fsanitize=thread
-build:tsan --linkopt -g
-build:tsan --//build_tools/rocm:sanitizer=tsan
-
 build:rocm_base --copt=-Wno-gnu-offsetof-extensions
 build:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm_base --define=using_rocm_hipcc=true

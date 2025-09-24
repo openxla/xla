@@ -64,30 +64,34 @@ EXCLUDED_TESTS=(
   RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/async_decomposer
 )
 
+SCRIPT_DIR=$(realpath $(dirname $0))
+TAG_FILTERS="$($SCRIPT_DIR/rocm_tag_filters.sh)"
+
 SANITIZER_ARGS=()
 if [[ $1 == "asan" ]]; then
-    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=$(realpath $(dirname $0))/asan_ignore_list.txt:use_sigaltstack=0")
-    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/lsan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=${SCRIPT_DIR}/asan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=${SCRIPT_DIR}/lsan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=asan")
+    TAG_FILTERS="$TAG_FILTERS,-noasan"
     shift
 elif [[ $1 == "tsan" ]]; then
-    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=$(realpath $(dirname $0))/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=${SCRIPT_DIR}/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=tsan")
+    TAG_FILTERS="$TAG_FILTERS,-notsan"
     shift
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
-    "${SANITIZER_ARGS[@]}" \
     --config=rocm_ci \
     --config=xla_mgpu \
+    --build_tag_filters=${TAG_FILTERS} \
+    --test_tag_filters=${TAG_FILTERS} \
     --profile=/tf/pkg/profile.json.gz \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
     --experimental_guard_against_concurrent_changes \
-    --build_tag_filters=${TAGS_FILTER} \
-    --test_tag_filters=${TAGS_FILTER} \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
     --test_output=errors \
@@ -99,6 +103,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${SANITIZER_ARGS[@]}" \
     "$@"
 
 # clean up bazel disk_cache
