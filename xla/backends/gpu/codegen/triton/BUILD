@@ -5,6 +5,10 @@ load(
     "if_cuda_or_rocm_is_configured",
     "if_gpu_is_configured",
 )
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 
@@ -263,7 +267,6 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
-        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
         "//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:triton_fusion_analysis",
@@ -278,6 +281,8 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@triton//:TritonTransforms",
+    ]) + if_cuda_is_configured([
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
     ]),
 )
 
