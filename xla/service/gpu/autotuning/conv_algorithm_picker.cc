@@ -432,7 +432,7 @@ absl::StatusOr<AutotuneResult> GpuConvAlgorithmPicker::PickBestAlgorithmNoCache(
   // utilities are not used in ROCm routine
   se::Platform::Id platform_id = stream_exec->GetPlatform()->id();
   if (platform_id == se::rocm::kROCmPlatformId) {
-    result_or = PickBestAlgorithmNoCacheRocm(instr);
+    result_or = PickBestAlgorithmNoCacheRocm(instr, instr->GetModule()->config());
   } else if (platform_id == se::cuda::kCudaPlatformId) {
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
     result_or = PickBestAlgorithmNoCacheCuda(instr);
@@ -928,16 +928,86 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
 #endif
 
 absl::StatusOr<AutotuneResult>
+GpuConvAlgorithmPicker::PickBestAlgorithmForFusionNoCacheRocm(
+    const HloCustomCallInstruction* instr, const HloModuleConfig& hlo_config) {
+  TF_ASSIGN_OR_RETURN(GpuConvConfig config, GetGpuConvConfig(instr));
+
+  CHECK(config.kind == CudnnConvKind::kForwardActivation);
+
+  TF_ASSIGN_OR_RETURN(se::dnn::DataType dtype,
+                      GetDNNDataTypeFromPrimitiveType(config.output_type));
+
+  TF_ASSIGN_OR_RETURN(se::Stream* const stream, config_.GetStream());
+  se::StreamExecutor* stream_exec = config_.GetExecutor();
+  auto dnn = stream_exec->AsDnn();
+  if (dnn == nullptr) {
+    return absl::InvalidArgumentError("No DNN in stream executor.");
+  }
+
+  std::vector<std::unique_ptr<const se::dnn::FusedConvRunner>> runners;
+  TF_RETURN_IF_ERROR(dnn->GetFusedConvolveRunners(
+      /* use_cudnn_frontend */ false, se::dnn::ConvolutionKind::FORWARD, dtype,
+      dtype, dtype, config.conv_result_scale, config.fusion->side_input_scale,
+      config.fusion->leakyrelu_alpha, stream, config.input_descriptor,
+      config.filter_descriptor, config.bias_descriptor,
+      config.output_descriptor, config.conv_desc,
+      /* use_fallback */ false, config.fusion->mode, /* numeric_options */ {},
+      &runners));
+
+  CHECK(runners.size() < 2);
+
+  if (runners.size() == 1) {
+    AutotuneResult result;
+    TF_ASSIGN_OR_RETURN(auto alg, runners[0]->ToAlgorithmDesc());
+    auto algorithm_proto = alg.ToProto();
+    *result.mutable_algorithm() = algorithm_proto;
+    result.set_scratch_bytes(runners[0]->GetWorkspaceSize());
+    *result.mutable_run_time() =
+        tsl::proto_utils::ToDurationProto(absl::Milliseconds(-1));
+    return result;
+  }
+
+  // No algorithm found. Try finding algorithm for unfused conv.
+
+  CHECK(config.conv_result_scale == 1.0 &&
+        config.fusion->side_input_scale == 0.0 &&
+        instr->operands().size() == 3);
+
+  absl::InlinedVector<HloInstruction*, 3> new_operands(
+      instr->operands().begin(), instr->operands().end());
+  new_operands.pop_back();
+
+  auto new_conv =
+      instr->CloneWithNewOperands(instr->shape(), new_operands);
+  new_conv->set_custom_call_target(kCudnnConvForwardCallTarget);
+
+  TF_ASSIGN_OR_RETURN(auto gpu_config,
+                      new_conv->backend_config<GpuBackendConfig>());
+  CudnnConvBackendConfig& backend_config =
+      *gpu_config.mutable_cudnn_conv_backend_config();
+  backend_config.set_activation_mode(se::dnn::ActivationMode::kNone);
+
+  return PickBestAlgorithmNoCacheRocm(
+      static_cast<HloCustomCallInstruction*>(new_conv.get()), hlo_config);
+}
+
+absl::StatusOr<AutotuneResult>
 GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheRocm(
-    const HloCustomCallInstruction* instr) {
+    const HloCustomCallInstruction* instr, const HloModuleConfig& hlo_config) {
   XLA_SCOPED_LOGGING_TIMER(absl::StrCat(
       "GpuConvAlgorithmPicker::PickBestAlgorithmImpl for ", instr->ToString()));
+
+  if (instr->custom_call_target() == kCudnnConvBiasActivationForwardCallTarget) {
+    return PickBestAlgorithmForFusionNoCacheRocm(instr, hlo_config);
+  }
 
   const bool allow_tf32 = absl::c_all_of(
       instr->precision_config().operand_precision(),
       [](int precision) { return precision <= PrecisionConfig::HIGH; });
+
   const se::NumericOptions numeric_options{
-      RequireDeterminism(instr->GetModule()->config()), allow_tf32};
+      RequireDeterminism(hlo_config),
+      allow_tf32};
 
   se::StreamExecutor* stream_exec = config_.GetExecutor();
   const auto device_ordinal = stream_exec->device_ordinal();
@@ -994,8 +1064,9 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheRocm(
                           &scratch_allocator, stream, numeric_options));
 
   std::vector<AutotuneResult> profile_results;
-
-  if (runners.size() == 1) {
+  // If using TF_ROCM_USE_IMMEDIATE_MODE but user doesn't want autotuning, choose the first
+  // algo.
+  if (runners.size() == 1 || !IsEnabled(instr->GetModule())) {
     TF_ASSIGN_OR_RETURN(auto alg, runners[0]->ToAlgorithmDesc());
     auto algorithm_proto = alg.ToProto();
     profile_results.emplace_back();
@@ -1061,7 +1132,7 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheRocm(
 
   TF_ASSIGN_OR_RETURN(AutotuneResult selected_algorithm,
                       PickBestResult(profile_results, instr->ToString(),
-                                     instr->GetModule()->config()));
+                                     hlo_config));
   return selected_algorithm;
 }
 
@@ -1180,7 +1251,8 @@ absl::StatusOr<bool> GpuConvAlgorithmPicker::Run(
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrCat("GpuConvAlgorithmPicker for ", module->name()));
 
-  if (!IsEnabled(module)) {
+  if (!IsEnabled(module) && !std::holds_alternative<se::RocmComputeCapability>(
+                                config_.GetGpuComputeCapability())) {
     VLOG(3) << "Convolution auto-tuning disabled, GpuConvAlgorithmPicker "
                "returning early.";
     return false;

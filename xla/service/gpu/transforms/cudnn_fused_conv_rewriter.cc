@@ -97,7 +97,7 @@ bool IsNonDepthwiseConvCustomCall(const HloInstruction* instr) {
   return IsConvCustomCall(instr) && !IsConvDepthwise(instr);
 }
 
-bool IsROCm(se::GpuComputeCapability cc) {
+bool IsROCm(const se::GpuComputeCapability& cc) {
   return std::holds_alternative<se::RocmComputeCapability>(cc);
 }
 
@@ -111,7 +111,7 @@ bool IsROCm(se::GpuComputeCapability cc) {
 // Note that as of writing, xla_gpu_use_runtime_fusion is disabled by default
 // due to apparent bugs in cudnn 8.9.0.  See debug_options_flags.cc for details.
 bool ShouldUseCudnnRuntimeFusion(const DebugOptions& debug_opts,
-                                 se::GpuComputeCapability cc) {
+                                 const se::GpuComputeCapability& cc) {
   const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&cc);
   if (cuda_cc != nullptr)
     return debug_opts.xla_gpu_use_runtime_fusion() && cuda_cc->IsAtLeast(7, 5);
@@ -312,7 +312,9 @@ absl::StatusOr<bool> FuseRemoveConvertInConv(HloComputation* comp) {
 
 // alpha * gte(custom-call(...)) ->
 // gte(custom-call(..., backend_config={alpha})).
-absl::StatusOr<bool> FuseConvAlpha(HloComputation* comp) {
+absl::StatusOr<bool> FuseConvAlpha(HloComputation* comp,
+                                   const se::GpuComputeCapability& cc) {
+  if (IsROCm(cc)) return false;
   bool changed = false;
   for (auto instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* conv = nullptr;
@@ -960,7 +962,8 @@ absl::StatusOr<bool> F8GraphConv(HloComputation* comp,
   return changed;
 }
 
-absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
+absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp,
+                                         const se::GpuComputeCapability& cc) {
   bool changed = false;
   for (auto instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* conv = nullptr;
@@ -985,15 +988,6 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
       continue;
     }
 
-    // If it's a vanilla forward conv, upgrade it to a bias-activation conv.  We
-    // only want to do this if the fusion will succeed, but we're guaranteed
-    // that it will, because the only reason we'll bail at this point is if
-    // !can_accept_bias && !can_accept_side_input, and our shiny new
-    // bias-activation conv will be able to accept both.
-    if (conv->custom_call_target() == kCudnnConvForwardCallTarget) {
-      TF_ASSIGN_OR_RETURN(conv, EnsureIsConvBiasActivation(conv));
-    }
-
     // Can't fuse bias or side-input if the conv already has a relu (or other
     // activation), because bias and side-input are added before the activation
     // is applied.
@@ -1008,8 +1002,9 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
     // Does `conv` already have a (nonzero) bias?  Does it already have a
     // side_input?
     bool can_accept_bias =
+        conv->operand_count() < 3 ||
         Match(conv->operand(2), m::Broadcast(m::ConstantEffectiveScalar(0)));
-    bool can_accept_side_input = conv->operand_count() < 4;
+    bool can_accept_side_input = conv->operand_count() < 4 && !IsROCm(cc);
 
     // The addend can be fused as a bias if
     //  - it is 1D broadcasted in the output feature dimension, and
@@ -1029,6 +1024,13 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
         HloPredicateIsOp<HloOpcode::kBroadcast>(addend) &&
         addend->dimensions().empty() &&
         IsLosslesslyConvertibleTo(addend, bias_ty);
+
+    // ROCM can only support bias form for now
+    if (!addend_may_be_rank1_bias && !addend_may_be_rank0_bias && IsROCm(cc)) {
+      continue;
+    }
+
+    TF_ASSIGN_OR_RETURN(conv, EnsureIsConvBiasActivation(conv));
 
     absl::InlinedVector<HloInstruction*, 4> new_operands(
         conv->operands().begin(), conv->operands().end());
@@ -1074,7 +1076,9 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp) {
 //
 // where `reshape` can be an arbitrary chain of reshapes+transposes.  This idiom
 // is created by the ReshapeMover pass.
-absl::StatusOr<bool> FuseSideInputAlpha(HloComputation* comp) {
+absl::StatusOr<bool> FuseSideInputAlpha(HloComputation* comp,
+                                        const se::GpuComputeCapability& cc) {
+  if (IsROCm(cc)) return false;
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* conv;
@@ -1182,7 +1186,7 @@ absl::StatusOr<bool> FuseSideInputAlpha(HloComputation* comp) {
 }
 
 absl::StatusOr<bool> FuseElu(HloComputation* comp,
-                             se::GpuComputeCapability cc) {
+                             const se::GpuComputeCapability& cc) {
   if (!ShouldUseCudnnRuntimeFusion(comp->parent()->config().debug_options(),
                                    cc)) {
     return false;
@@ -1283,7 +1287,7 @@ absl::StatusOr<bool> FuseRelu(HloComputation* comp) {
 }
 
 absl::StatusOr<bool> FuseRelu6(HloComputation* comp,
-                               se::GpuComputeCapability cc) {
+                               const se::GpuComputeCapability& cc) {
   if (!ShouldUseCudnnRuntimeFusion(comp->parent()->config().debug_options(),
                                    cc)) {
     return false;
@@ -1332,7 +1336,7 @@ absl::StatusOr<bool> FuseRelu6(HloComputation* comp,
 }
 
 absl::StatusOr<bool> FuseLeakyRelu(HloComputation* comp,
-                                   se::GpuComputeCapability cc) {
+                                   const se::GpuComputeCapability& cc) {
   if (!ShouldUseCudnnRuntimeFusion(comp->parent()->config().debug_options(),
                                    cc)) {
     return false;
@@ -1453,7 +1457,7 @@ absl::StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
 }
 
 absl::StatusOr<bool> FuseConvertToS8(HloComputation* comp,
-                                     se::GpuComputeCapability cc) {
+                                     const se::GpuComputeCapability& cc) {
   if (IsROCm(cc)) return false;
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
@@ -1708,18 +1712,18 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::Run(
     TF_ASSIGN_OR_RETURN(changed, FuseRemoveConvertInConv(comp));
     any_changed |= changed;
 
-    TF_ASSIGN_OR_RETURN(changed, FuseConvAlpha(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseConvAlpha(comp, compute_capability_));
     any_changed |= changed;
 
     // s8 convs' bias and side-input appear before conversion to s8.
     //
     // Run FuseBiasOrSideInput twice, so we get both the bias and the side
     // input, if both are present.
-    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    TF_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp, compute_capability_));
     any_changed |= changed;
 
     // Relu might appear before or after convert-to-f16/s8, so we check in both
@@ -1740,11 +1744,11 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::Run(
     any_changed |= changed;
 
     // f16 convs' bias+side-input can appear before or after conversion to f16.
-    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    TF_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp));
+    TF_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp, compute_capability_));
     any_changed |= changed;
 
     TF_ASSIGN_OR_RETURN(changed, FuseRelu(comp));

@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/transforms/cudnn_fused_conv_rewriter.h"
+#include "xla/service/gpu/transforms/cudnn_fused_conv_decomposer.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_module_config.h"
@@ -122,9 +123,8 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
       stream_executor::RocmSolverContext::Create);
   pipeline.AddPass<ConvRewriter>(gpu_version);
   pipeline.AddPass<ConvPaddingLegalization>();
-  //TODO(rocm): Until #12613 is fixed.
-  // auto rcc = std::get<se::RocmComputeCapability>(gpu_version);
-  // pipeline.AddPass<CudnnFusedConvRewriter>(rcc, dnn_version, toolkit_version);
+  const auto& rcc = std::get<se::RocmComputeCapability>(gpu_version);
+  pipeline.AddPass<CudnnFusedConvRewriter>(rcc, dnn_version, toolkit_version);
 
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
@@ -213,7 +213,7 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 // enabled.
 bool AMDGPUCompiler::RequiresCollectiveScheduleLinearizer(
     const HloModule* module, se::StreamExecutor* stream_exec) {
-  if (stream_exec == nullptr || !GpuConvAlgorithmPicker::IsEnabled(module)) {
+  if (stream_exec == nullptr) {
     return false;
   }
   for (const HloComputation* comp : module->MakeNonfusionComputations()) {
@@ -231,9 +231,10 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
     HloPassPipeline* pipeline, const se::GpuComputeCapability& gpu_version,
     const CompileOptions& options, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool) {
-  if (GpuConvAlgorithmPicker::IsEnabled(hlo_module)) {
-    pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
-  }
+  //We do autotuning irrespective of --xla_gpu_autotune_level.
+  pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
+  // Undo CudnnFusedConvRewriter work if no algorithm was found.
+  pipeline->AddPass<CudnnFusedConvDecomposer>();
   pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
   return absl::OkStatus();
 }

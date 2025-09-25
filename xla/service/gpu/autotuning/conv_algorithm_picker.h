@@ -143,7 +143,9 @@ class GpuConvAlgorithmPicker : public HloModulePass {
 #endif
 
   absl::StatusOr<AutotuneResult> PickBestAlgorithmNoCacheRocm(
-      const HloCustomCallInstruction* instr);
+      const HloCustomCallInstruction* instr, const HloModuleConfig& hlo_config);
+  absl::StatusOr<AutotuneResult> PickBestAlgorithmForFusionNoCacheRocm(
+      const HloCustomCallInstruction* instr, const HloModuleConfig& hlo_config);
 
  private:
   AutotuneConfig config_;

@@ -2070,6 +2070,7 @@ cc_library(
         "//xla/service/gpu/transforms:conv_padding_legalization",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:cublas_pad_for_gemms",
+        "//xla/service/gpu/transforms:cudnn_fused_conv_decomposer",
         "//xla/service/gpu/transforms:cudnn_fused_conv_rewriter",
         "//xla/service/gpu/transforms:gpusolver_rewriter",
         "//xla/service/gpu/transforms:triangular_solve_rewriter",
