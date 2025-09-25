@@ -72,7 +72,7 @@ const char* GetRocmTracerEventTypeName(const RocmTracerEventType& type) {
     OO(Memset)
     OO(Synchronization)
     OO(Generic)
-    default:;
+    default: {};
   }
 #undef OO
   DCHECK(false);

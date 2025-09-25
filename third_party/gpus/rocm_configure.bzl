@@ -334,6 +334,7 @@ def _find_libs(repository_ctx, rocm_config, bash_bin):
             ("hipsolver", repo_path),
             ("hipblas", repo_path),
             ("hipblaslt", repo_path),
+	    ("rocprofiler-sdk", rep_path),
         ]
     ]
 
