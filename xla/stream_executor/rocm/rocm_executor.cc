@@ -404,16 +404,12 @@ std::string GetPCIBusID(hipDevice_t device) {
   return pci_bus_id;
 }
 
-bool IsEccEnabled(hipDevice_t device, bool* result) {
-  int value = -1;
-  auto status = ToStatus(wrap::hipDeviceGetAttribute(
-      &value, hipDeviceAttributeEccEnabled, device));
-  if (!status.ok()) {
-    LOG(ERROR) << "failed to query ECC status: " << status;
-    return false;
-  }
-  *result = value;
-  return true;
+absl::StatusOr<bool> IsEccEnabled(hipDevice_t device) {
+  int value = 0;
+  TF_RETURN_IF_ERROR(ToStatus(
+      wrap::hipDeviceGetAttribute(&value, hipDeviceAttributeEccEnabled, device),
+      "hipDeviceGetAttribute(hipDeviceAttributeEccEnabled) failed"));
+  return value != 0;
 }
 
 bool GetDeviceProperties(hipDeviceProp_t* device_properties,
@@ -1105,9 +1101,13 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   }
 
   {
-    bool ecc_enabled = false;
-    IsEccEnabled(device, &ecc_enabled);
-    desc.set_ecc_enabled(ecc_enabled);
+    auto ecc_enabled_or = IsEccEnabled(device);
+    if (!ecc_enabled_or.ok()) {
+      LOG(ERROR) << "Device " << device_ordinal
+                 << ": ECC status query failed: " << ecc_enabled_or.status();
+      return ecc_enabled_or.status();
+    }
+    desc.set_ecc_enabled(*ecc_enabled_or);
   }
 
   uint64_t device_memory_size = -1;
@@ -1146,7 +1146,10 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
       GetMaxThreadsPerMultiprocessor(device).value());
   desc.set_registers_per_block_limit(GetMaxRegistersPerBlock(device).value());
   desc.set_threads_per_warp(GetThreadsPerWarp(device).value());
-  desc.set_registers_per_core_limit(GetMaxRegistersPerMultiprocessor(device).value());
+  {
+    TF_ASSIGN_OR_RETURN(int64_t regs_per_mp, GetMaxRegistersPerMultiprocessor(device));
+    desc.set_registers_per_core_limit(regs_per_mp);
+  }
   desc.set_compile_time_toolkit_version(
       SemanticVersion{HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH});
   int32_t runtime_version;
