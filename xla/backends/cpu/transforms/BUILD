@@ -21,7 +21,7 @@ cc_library(
     name = "dot_library_rewriter",
     srcs = ["dot_library_rewriter.cc"],
     hdrs = ["dot_library_rewriter.h"],
-    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
+    defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
     deps = [
         ":library_matcher",
         ":onednn_matcher",
