@@ -384,13 +384,6 @@ cc_library(
     name = "rocm_collector",
     srcs = ["rocm_collector.cc"],
     hdrs = ["rocm_collector.h"],
-    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    linkopts = select({
-        "//conditions:default": [
-            "-L/opt/rocm/lib",      # search path for all ROCm shared objects
-            "-lrocprofiler-sdk",    # the library that owns the missing symbols
-        ],
-    }),
     tags = [
         "gpu",
         "rocm-only",
@@ -424,6 +417,7 @@ cc_library(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
+        "@local_config_rocm//rocm:rocprofiler-sdk",
     ],
 )
 
@@ -431,13 +425,6 @@ cc_library(
     name = "rocm_tracer",
     srcs = ["rocm_tracer.cc"],
     hdrs = ["rocm_tracer.h"],
-    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    linkopts = select({
-        "//conditions:default": [
-            "-L/opt/rocm/lib",      # search path for all ROCm shared objects
-            "-lrocprofiler-sdk",    # the library that owns the missing symbols
-        ],
-    }),
     tags = [
         "gpu",
         "rocm-only",
@@ -473,6 +460,7 @@ cc_library(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
+        "@local_config_rocm//rocm:rocprofiler-sdk",
     ],
 )
 

@@ -61,9 +61,8 @@ TEST(RocmCollectorTest, TestAddKernelEventAndExport) {
   api_event.name = "test_rocm_kernel";
   api_event.correlation_id = kCorrelationId;
   api_event.thread_id = 999;
-  api_event.kernel_info = {.registers_per_thread = 32,
-                           .static_shared_memory_usage = 1024,
-                           .dynamic_shared_memory_usage = 0,
+  api_event.kernel_info = {.private_segment_size = 32,
+                           .group_segment_size = 1024,
                            .block_x = 256,
                            .block_y = 1,
                            .block_z = 1,

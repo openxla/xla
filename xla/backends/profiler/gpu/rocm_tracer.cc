@@ -19,8 +19,8 @@ limitations under the License.
 // keep the compiler and linker happy.  Once real logging is implemented, you
 // can replace the stubs with the actual logic.
 
-#include "xla/backends/profiler/gpu/rocm_tracer.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
+#include "xla/backends/profiler/gpu/rocm_tracer.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 
 #include <cstdint>
@@ -29,24 +29,15 @@ limitations under the License.
 #include <mutex>
 #include <sstream>
 #include <string>
-#include <unordered_map>
-#include <vector>
 #include <time.h>
 #include <unistd.h>
-#include <chrono>
-#include <unistd.h>  // For standard sysconf
+#include <unordered_map>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "xla/tsl/profiler/utils/time_utils.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/stacktrace.h"
 
 // for rocprofiler-sdk
 namespace xla {
@@ -97,8 +88,7 @@ bool isCopyApi(uint32_t id) {
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipMemcpyToSymbolAsync:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipMemcpyWithStream:
       return true;
-      break;
-    default:;
+    default: {};
   }
   return false;
 }
@@ -262,9 +252,9 @@ void RocmTracer::MemcpyEvent(const rocprofiler_record_header_t* hdr,
   };
 
   VLOG(2) << "copy bytes: " << trace_event->memcpy_info.num_bytes
-            << " stream: " << trace_event->stream_id << " src_id "
-            << trace_event->device_id << " dst_id "
-            << trace_event->memcpy_info.destination;
+          << " stream: " << trace_event->stream_id << " src_id "
+          << trace_event->device_id << " dst_id "
+          << trace_event->memcpy_info.destination;
 }
 
 void RocmTracer::KernelEvent(const rocprofiler_record_header_t* hdr,
@@ -287,12 +277,11 @@ void RocmTracer::KernelEvent(const rocprofiler_record_header_t* hdr,
   trace_event->thread_id = rec.thread_id;
   trace_event->stream_id = kinfo.queue_id.handle;
   trace_event->kernel_info = KernelDetails{
-      .registers_per_thread = 0,
-      .static_shared_memory_usage = 0,
-      .dynamic_shared_memory_usage = 0,
-      .block_x = kinfo.workgroup_size.x,
-      .block_y = kinfo.workgroup_size.y,
-      .block_z = kinfo.workgroup_size.z,
+      .private_segment_size = kinfo.private_segment_size,
+      .group_segment_size = kinfo.group_segment_size,
+      .workgroup_x = kinfo.workgroup_size.x,
+      .workgroup_y = kinfo.workgroup_size.y,
+      .workgroup_z = kinfo.workgroup_size.z,
       .grid_x = kinfo.grid_size.x,
       .grid_y = kinfo.grid_size.y,
       .grid_z = kinfo.grid_size.z,
