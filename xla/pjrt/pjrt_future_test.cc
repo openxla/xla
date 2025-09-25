@@ -52,6 +52,15 @@ TEST(PjRtFutureTest, StatelessFuture) {
       [](absl::Status status) { EXPECT_EQ(status, absl::OkStatus()); });
 }
 
+TEST(PjRtFutureTest, CreateFutureFromPromise) {
+  auto [promise, _] = PjRtFuture<int32_t>::MakePromise();
+  PjRtFuture<int32_t> future = promise.future();
+
+  EXPECT_FALSE(future.IsReady());
+  promise.Set(42);
+  EXPECT_EQ(*future.Await(), 42);
+}
+
 TEST(PjRtFutureTest, StatefulFutureToStateless) {
   auto [promise, future] = PjRtFuture<int32_t>::MakePromise();
   PjRtFuture<> ready_future = future.GetReadyFuture();
@@ -264,8 +273,7 @@ TEST(PjRtFutureTest, MapMoveOnlyWithInplaceConstructor) {
 }
 
 TEST(PjRtFutureTest, MapUnusedResult) {
-  auto promise = PjRtFuture<int>::CreatePromise();
-  PjRtFuture<int> future(promise);
+  auto [promise, future] = PjRtFuture<int>::MakePromise();
 
   bool called = false;
   future.Map([&](int) {
@@ -277,8 +285,7 @@ TEST(PjRtFutureTest, MapUnusedResult) {
 }
 
 TEST(PjRtFutureTest, MapStatusUnusedResult) {
-  auto promise = PjRtFuture<>::CreatePromise();
-  PjRtFuture<> future(promise);
+  auto [promise, future] = PjRtFuture<>::MakePromise();
 
   bool called = false;
   future.Map([&]() {
@@ -380,8 +387,7 @@ TEST(PjRtFutureTest, TryMapMoveOnlyFutureCreateError) {
 }
 
 TEST(PjRtFutureTest, TryMapUnusedResult) {
-  auto promise = PjRtFuture<int>::CreatePromise();
-  PjRtFuture<int> future(promise);
+  auto [promise, future] = PjRtFuture<int>::MakePromise();
 
   bool called = false;
   future.TryMap([&](int) -> absl::StatusOr<int> {
@@ -393,8 +399,7 @@ TEST(PjRtFutureTest, TryMapUnusedResult) {
 }
 
 TEST(PjRtFutureTest, TryMapStatusUnusedResult) {
-  auto promise = PjRtFuture<>::CreatePromise();
-  PjRtFuture<> future(promise);
+  auto [promise, future] = PjRtFuture<>::MakePromise();
 
   bool called = false;
   future.TryMap([&]() -> absl::StatusOr<int> {
@@ -602,6 +607,51 @@ TEST(PjRtFutureTest, JoinErrors) {
   promise1.Set(absl::InternalError("error #1"));
   EXPECT_TRUE(join_two.IsReady());
   EXPECT_EQ(join_two.Await(), absl::InternalError("error #0"));
+}
+
+TEST(PjRtFutureTest, WithProfiling) {
+  auto [promise, future] = PjRtFuture<int32_t>::MakePromise(
+      [&] { return PjRtFutureHelpers::ProfilingKeys{}; },
+      [&](PjRtFutureHelpers::ProfilingKeys) {});
+
+  auto update_profiling = PjRtFutureHelpers::WithProfiling(
+      std::move(future), [&] { return PjRtFutureHelpers::ProfilingKeys{}; },
+      [&](PjRtFutureHelpers::ProfilingKeys) {});
+
+  EXPECT_FALSE(update_profiling.IsReady());
+
+  promise.Set(42);
+
+  EXPECT_TRUE(update_profiling.IsReady());
+  EXPECT_EQ(*update_profiling.Await(), 42);
+}
+
+TEST(PjRtFutureTest, MakeSharedPromise) {
+  {  // Stateless future.
+    auto [promise, future] = PjRtFuture<>::MakePromise();
+
+    auto shared_promise = std::move(promise).ToShared();
+    shared_promise->Set();
+
+    // NOLINTNEXTLINE(bugprone-use-after-move)
+    EXPECT_FALSE(static_cast<bool>(promise));
+
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await(), absl::OkStatus());
+  }
+
+  {  // Stateful future.
+    auto [promise, future] = PjRtFuture<int32_t>::MakePromise();
+
+    auto shared_promise = std::move(promise).ToShared();
+    shared_promise->Set(42);
+
+    // NOLINTNEXTLINE(bugprone-use-after-move)
+    EXPECT_FALSE(static_cast<bool>(promise));
+
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(*future.Await(), 42);
+  }
 }
 
 //===----------------------------------------------------------------------===//

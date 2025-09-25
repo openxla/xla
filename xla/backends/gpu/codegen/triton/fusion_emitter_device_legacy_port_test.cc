@@ -131,9 +131,9 @@ class TritonTest : public GpuCodegenTest {
   GetModuleAndNestedFusionMetadata(absl::string_view hlo_text) {
     TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text));
-    TF_ASSIGN_OR_RETURN(
-        bool fusion_was_nested,
-        NestGemmFusion(GpuComputeCapability()).Run(module.get()));
+    TF_ASSIGN_OR_RETURN(bool fusion_was_nested,
+                        NestGemmFusion(GpuComputeCapability(), &mlir_context_)
+                            .Run(module.get()));
     if (!fusion_was_nested) {
       return absl::InternalError("Failed to nest the GEMM fusion.");
     }
@@ -154,6 +154,8 @@ class TritonTest : public GpuCodegenTest {
   const stream_executor::DeviceDescription& device_desc() {
     return backend().default_stream_executor()->GetDeviceDescription();
   }
+
+  mlir::MLIRContext mlir_context_;
 };
 
 class TritonGemmTest : public TritonTest {
@@ -3273,7 +3275,8 @@ class TritonScaledDotGemmTest
     : public TritonGemmTest,
       public ::testing::WithParamInterface<ScaleDotTestParams> {};
 
-TEST_P(TritonScaledDotGemmTest, Fp8ScaledDotDoesNotCrash) {
+TEST_P(TritonScaledDotGemmTest,
+       FP8ScaledDotCompilesToPtxIntrinsicsWhenAvailable) {
   const ScaleDotTestParams& params = GetParam();
   constexpr absl::string_view kHloTextTemplate = R"hlo(
 HloModule m
@@ -3299,8 +3302,8 @@ triton_dot {
       "fusion_backend_config":{
         "kind":"__triton_nested_gemm_fusion",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["16","32"]}],
-          "num_warps":"1",
+          "output_tiles":[{"sizes":["128","128"]}],
+          "num_warps":"4",
           "num_stages":"1",
           "num_ctas":"1",
         }
@@ -3314,8 +3317,8 @@ triton_dot {
       "fusion_backend_config":{
         "kind":"__triton_nested_gemm_fusion",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["16","1"]}],
-          "num_warps":"1",
+          "output_tiles":[{"sizes":["128","128"]}],
+          "num_warps":"4",
           "num_stages":"1",
           "num_ctas":"1",
         }
@@ -3329,8 +3332,8 @@ triton_dot {
       "fusion_backend_config":{
         "kind":"__triton_nested_gemm_fusion",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["16","32"]}],
-          "num_warps":"1",
+          "output_tiles":[{"sizes":["128","256"]}],
+          "num_warps":"4",
           "num_stages":"1",
           "num_ctas":"1",
         }
@@ -3344,8 +3347,8 @@ triton_dot {
       "fusion_backend_config":{
         "kind":"__triton_nested_gemm_fusion",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["16","1"]}],
-          "num_warps":"1",
+          "output_tiles":[{"sizes":["128", "256"]}],
+          "num_warps":"4",
           "num_stages":"1",
           "num_ctas":"1",
         }
@@ -3368,8 +3371,8 @@ ENTRY e {
       "fusion_backend_config": {
         kind: "__triton_scaled_dot_fusion",
         "block_level_fusion_config":{
-          "output_tiles":[{"sizes":["16", "16"]}],
-          "num_warps":"1",
+          "output_tiles":[{"sizes":["128", "256"]}],
+          "num_warps":"4",
           "num_stages":"1",
           "num_ctas":"1"
         }
@@ -3380,7 +3383,7 @@ ENTRY e {
 
   auto hlo_text = params.PrepareHloText(kHloTextTemplate);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
 
   auto debug_options = module->config().debug_options();
@@ -3389,9 +3392,9 @@ ENTRY e {
 
   constexpr absl::string_view kExpectedTritonIrTmpl = R"(
       CHECK: tt.dot_scaled
-      CHECK: tensor<16x32x$triton_type>, tensor<16x1xi8>
-      CHECK: tensor<32x16x$triton_type>, tensor<1x16xi8>
-      CHECK: -> tensor<16x16xf32>
+      CHECK: tensor<128x128x$triton_type>, tensor<128x4xi8>
+      CHECK: tensor<128x256x$triton_type>, tensor<256x4xi8>
+      CHECK: -> tensor<128x256xf32>
   )";
   auto expected_triton_ir = absl::StrReplaceAll(
       kExpectedTritonIrTmpl, {{"$triton_type", params.expected_triton_type}});
@@ -3399,24 +3402,72 @@ ENTRY e {
       CreateTritonIrAndFileCheck(*module->GetComputationWithName("triton_dot"),
                                  /*block_level_parameters=*/
                                  {
-                                     {{16, 16}},
-                                     1,
+                                     {{128, 256}},
+                                     4,
                                      1,
                                      1,
                                      true,
                                  },
                                  expected_triton_ir),
       absl_testing::IsOk());
+  if (GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    CompileAndOptionallyVerifyPtx(
+        std::move(module), R"(CHECK: mxf8f6f4.block_scale.scale_vec::1X)");
+  }
+}
+
+TEST_P(TritonScaledDotGemmTest, FP8ScaledDotGetsFusedAndExecutesCorrectly) {
+  const ScaleDotTestParams& params = GetParam();
+  if (!GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "Skipping test for pre-Blackwell GPUs.";
+  }
+  constexpr absl::string_view kHloTextTemplate = R"hlo(
+HloModule FP8ScaledDotGetsFused
+
+ENTRY e {
+  lhs = $lhs_type parameter(0)
+  lhs_scale = $lhs_scale_type parameter(1)
+  rhs = $rhs_type parameter(2)
+  rhs_scale = $rhs_scale_type parameter(3)
+  ROOT _ = $output_type{1,0} scaled-dot(lhs, lhs_scale, rhs, rhs_scale),
+    lhs_contracting_dims={1},
+    rhs_contracting_dims={0}
+}
+)hlo";
+
+  auto hlo_text = params.PrepareHloText(kHloTextTemplate);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+
+  auto debug_options = module->config().debug_options();
+  debug_options.set_xla_gpu_experimental_scaled_dot_with_triton(true);
+  debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+  module->mutable_config().set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                          GetOptimizedModule(std::move(module)));
+  MatchOptimizedHlo(optimized_module->ToString(), R"(
+    CHECK: fusion
+    CHECK: ROOT {{.*}} scaled-dot
+    CHECK: ENTRY
+    CHECK: __triton_nested_gemm_fusion
+  )");
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     TritonScaledDotGemmTest, TritonScaledDotGemmTest,
-    ::testing::Values(ScaleDotTestParams{"f8e4m3fn[64,512]", "f8e8m0fnu[64,16]",
-                                         "f8e4m3fn[512,64]", "f8e8m0fnu[16,64]",
-                                         "f32[64,64]", "f8E4M3FN"},
-                      ScaleDotTestParams{"f8e5m2[64,512]", "f8e8m0fnu[64,16]",
-                                         "f8e5m2[512,64]", "f8e8m0fnu[16,64]",
-                                         "f32[64,64]", "f8E5M2"}),
+    ::testing::Values(ScaleDotTestParams{"f8e4m3fn[128,128]",
+                                         "f8e8m0fnu[128,4]",
+                                         "f8e4m3fn[128,256]",
+                                         "f8e8m0fnu[4,256]", "bf16[128,256]",
+                                         "f8E4M3FN"},
+                      ScaleDotTestParams{"f8e5m2[128,128]", "f8e8m0fnu[128,4]",
+                                         "f8e5m2[128,256]", "f8e8m0fnu[4,256]",
+                                         "bf16[128,256]", "f8E5M2"}),
     ScaleDotTestParams::ToString);
 
 }  // namespace gpu

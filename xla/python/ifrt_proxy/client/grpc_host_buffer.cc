@@ -20,6 +20,7 @@
 #include <string>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -28,7 +29,6 @@
 #include "absl/strings/string_view.h"
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/client_callback.h"
-#include "grpcpp/support/status.h"
 #include "grpcpp/support/sync_stream.h"
 #include "xla/pjrt/distributed/util.h"
 #include "xla/pjrt/semaphore.h"
@@ -37,6 +37,9 @@
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/prof_util.h"
+#include "xla/python/ifrt_proxy/common/transfer_util.h"
+#include "xla/python/ifrt_proxy/common/versions.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/protobuf/status.pb.h"
 #include "tsl/platform/unbounded_work_queue.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -91,9 +94,59 @@ GrpcClientHostBufferStore::~GrpcClientHostBufferStore() {
   LOG(INFO) << "Destructed HostBufferStoreLookupsWorkQueue.";
 }
 
+Future<> GrpcClientHostBufferStore::StoreToDisk(uint64_t handle,
+                                                absl::string_view data) {
+  auto [promise, future] = Future<>::MakePromise();
+
+  XFlowHelper flow("GrpcClientHostBufferStore::StoreToDisk");
+  flow.InstantActivity<XFlowHelper::kSend>();
+
+  work_queue_->Schedule([this, handle, promise = std::move(promise).ToShared(),
+                         data, flow]() mutable -> void {
+    auto span = flow.Span<XFlowHelper::kRecv>();
+
+    GrpcHostBufferReadFromDiskRequest request;
+    request.mutable_metadata()->set_session_id(session_id_);
+    request.mutable_metadata()->set_handle(handle);
+    request.mutable_metadata()->set_buffer_size(data.size());
+    VLOG(3) << "GrpcClientHostBufferStore::StoreToDisk start "
+            << request.ShortDebugString();
+
+    auto file_path = LargeTransferFilePath(handle);
+    if (file_path == std::nullopt) {
+      promise->Set(absl::FailedPreconditionError(
+          "IFRT proxy: cannot retrieve file path for StoreToDisk()."));
+      return;
+    }
+    if (auto s = tsl::WriteStringToFile(tsl::Env::Default(), *file_path, data);
+        !s.ok()) {
+      LOG(WARNING) << "Failed to write to file " << *file_path << ": " << s;
+      promise->Set(std::move(s));
+      return;
+    }
+
+    ::grpc::ClientContext context;
+    GrpcHostBufferReadFromDiskResponse response;
+    promise->Set(xla::FromGrpcStatus(
+        stub_->HostBufferReadFromDisk(&context, request, &response)));
+    VLOG(3) << "GrpcClientHostBufferStore::StoreToDisk done "
+            << request.ShortDebugString();
+  });
+  return std::move(future);
+}
+
 Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
                                           absl::string_view data) {
-  auto promise = Future<>::CreatePromise();
+  if (version_.protocol_version() >=
+      protocol_version::kGrpcAllowLargeTransferOptimizationViaSharedDirectory) {
+    int64_t threshold = GetGlobalClientFlags()
+                            ->grpc_large_transfer_optimization_threshold_bytes;
+    if (data.size() >= threshold) {
+      return StoreToDisk(handle, data);
+    }
+  }
+
+  auto [promise, future] = Future<>::MakePromise();
 
   XFlowHelper flow("GrpcClientHostBufferStore::StoreAsync");
   flow.InstantActivity<XFlowHelper::kSend>();
@@ -102,7 +155,8 @@ Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
 
   auto reservation = ScopedAcquireSemaphore(store_throttler_);
   work_queue_->Schedule([this, reservation = std::move(reservation), handle,
-                         promise, data, flow]() mutable -> void {
+                         promise = std::move(promise).ToShared(), data,
+                         flow]() mutable -> void {
     auto span = flow.Span<XFlowHelper::kRecv>();
     GrpcHostBufferStoreMetadata metadata;
     metadata.set_session_id(session_id_);
@@ -131,7 +185,7 @@ Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
 
       if (!writer->WritesDone()) {
         absl::Status s = xla::FromGrpcStatus(writer->Finish());
-        promise.Set(absl::InternalError(absl::StrCat(
+        promise->Set(absl::InternalError(absl::StrCat(
             "Failed to write all host buffer chunks, Finish() returned: ",
             s.ToString())));
         return;
@@ -140,9 +194,9 @@ Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
 
     VLOG(3) << "GrpcClientHostBufferStore::Store done "
             << metadata.ShortDebugString();
-    promise.Set(xla::FromGrpcStatus(writer->Finish()));
+    promise->Set(xla::FromGrpcStatus(writer->Finish()));
   });
-  return Future<>(promise);
+  return std::move(future);
 }
 
 Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
@@ -193,14 +247,15 @@ Future<> GrpcClientHostBufferStore::Store(uint64_t handle,
 }
 
 Future<absl::Cord> GrpcClientHostBufferStore::Lookup(uint64_t handle) {
-  auto promise = Future<absl::Cord>::CreatePromise();
+  auto [promise, future] = Future<absl::Cord>::MakePromise();
 
   XFlowHelper flow("GrpcClientHostBufferStore::Lookup");
   flow.InstantActivity<XFlowHelper::kSend>();
 
   auto reservation = ScopedAcquireSemaphore(lookup_throttler_);
   work_queue_->Schedule([this, reservation = std::move(reservation), handle,
-                         promise, flow]() mutable -> void {
+                         promise = std::move(promise).ToShared(),
+                         flow]() mutable -> void {
     auto span = flow.Span<XFlowHelper::kRecv>();
     GrpcHostBufferLookupRequest request;
     request.set_handle(handle);
@@ -221,15 +276,15 @@ Future<absl::Cord> GrpcClientHostBufferStore::Lookup(uint64_t handle) {
 
     absl::Status status = xla::FromGrpcStatus(stream->Finish());
     if (status.ok()) {
-      promise.Set(std::move(data));
+      promise->Set(std::move(data));
     } else {
-      promise.Set(status);
+      promise->Set(status);
     }
     VLOG(3) << "GrpcClientHostBufferStore::Lookup done "
             << request.ShortDebugString();
   });
 
-  return Future<absl::Cord>(promise);
+  return std::move(future);
 }
 
 Future<> GrpcClientHostBufferStore::Delete(uint64_t handle) {

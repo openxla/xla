@@ -331,13 +331,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
       absl::Status error, const Shape& shape, PjRtMemorySpace* memory) override;
 
-  absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
-      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
-      std::optional<absl::Span<int64_t const>> byte_strides,
-      HostBufferSemantics host_buffer_semantics,
-      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-      PjRtMemorySpace* memory_space, const Layout* device_layout) override;
-
   using PjRtClient::BufferFromHostLiteral;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtMemorySpace* memory_space,
@@ -371,7 +364,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
     return should_stage_host_to_device_transfers_;
   }
 
-  virtual gpu::GpuExecutableRunOptions* gpu_run_options() {
+  virtual gpu::GpuExecutableRunOptions* gpu_run_options(
+      const ExecuteOptions& options) {
     return gpu_run_options_.get();
   }
 
@@ -516,14 +510,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
       CompileOptions compile_options, bool dump);
-
-  absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternal(
-      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
-      std::optional<absl::Span<int64_t const>> byte_strides,
-      HostBufferSemantics host_buffer_semantics,
-      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-      PjRtDevice* device, const Layout* device_layout,
-      PjRtMemorySpace* memory_space);
 
   const PjRtPlatformId platform_id_;
   const std::string platform_name_;

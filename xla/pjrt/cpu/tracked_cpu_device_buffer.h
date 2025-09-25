@@ -201,6 +201,9 @@ class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
   std::vector<tsl::RCReference<tsl::AsyncValue>> GetAsyncValueDefinitionEvents()
       override;
 
+  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> GetDefinitionEvent(
+      PjRtMemorySpace* memory_space) override;
+
   tsl::RCReference<CommonPjRtRawBuffer> GetRawBuffer(
       PjRtMemorySpace* memory_space) override;
 
@@ -208,8 +211,7 @@ class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
 
   void Delete(PjRtMemorySpace* memory_space) override;
 
-  PjRtFuture<>::Promise GetReadyFuturePromise(
-      PjRtMemorySpace* memory_space) override;
+  PjRtFuture<> GetReadyFuture(PjRtMemorySpace* memory_space) override;
 
   absl::Status BlockForOperationsToComplete(
       PjRtMemorySpace* memory_space) override;

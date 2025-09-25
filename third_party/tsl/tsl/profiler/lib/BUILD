@@ -369,6 +369,7 @@ cc_library(
         "@xla//xla/backends/profiler/plugin:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
         "@xla//xla/backends/profiler/cpu:__pkg__",
+        "@xla//xla/backends/profiler/subprocess:__pkg__",
     ]),
     deps = [
         ":profiler_interface",

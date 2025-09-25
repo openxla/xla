@@ -38,12 +38,11 @@ License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
 namespace {
-
-using ::absl_testing::IsOkAndHolds;
 
 bool HasTritonBlockLevelFusionConfig(const HloInstruction* fusion) {
   return HloPredicateIsOp<HloOpcode::kFusion>(fusion) &&

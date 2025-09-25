@@ -62,11 +62,9 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -253,7 +251,7 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
                       normalization_fusion->backend_config<GpuBackendConfig>());
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kTritonFusionKind));
+  backend_config.set_kind(kTritonFusionKind);
   TF_RETURN_IF_ERROR(normalization_fusion->set_backend_config(gpu_config));
   return xla::Cast<HloFusionInstruction>(normalization_fusion);
 }
@@ -268,7 +266,8 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
 // passes that rewrite and split reductions.
 absl::Status RunFusionPipeline(
     HloModule* module, const se::DeviceDescription& device_info,
-    const HloCostAnalysis::ShapeSizeFunction& shape_size) {
+    const HloCostAnalysis::ShapeSizeFunction& shape_size,
+    mlir::MLIRContext* mlir_context) {
   HloPassPipeline reduction_pipeline("reduction_pipeline");
   // Passes that run after SoftmaxRewriterTriton and before PriorityFusion and
   // transform reductions.
@@ -281,7 +280,7 @@ absl::Status RunFusionPipeline(
   TF_RETURN_IF_ERROR(reduction_pipeline.Run(module).status());
 
   return FusionPipeline(module->config().debug_options(), shape_size,
-                        /*thread_pool=*/nullptr, device_info)
+                        /*thread_pool=*/nullptr, device_info, mlir_context)
       .Run(module)
       .status();
 }
@@ -299,14 +298,15 @@ absl::StatusOr<absl::Duration>
 EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
     const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
-    const HloCostAnalysis::ShapeSizeFunction& shape_size) {
+    const HloCostAnalysis::ShapeSizeFunction& shape_size,
+    mlir::MLIRContext* mlir_context) {
   auto new_module = ExtractComputationIntoNewModule(
       *fusion->fused_instructions_computation());
 
   // After this call, the `new_module` will have instruction fused without
   // SoftmaxRewriterTriton.
-  TF_RETURN_IF_ERROR(
-      RunFusionPipeline(new_module.get(), device_info, shape_size));
+  TF_RETURN_IF_ERROR(RunFusionPipeline(new_module.get(), device_info,
+                                       shape_size, mlir_context));
 
   VLOG(3) << "priority fusion module: " << new_module->ToString();
 
@@ -321,7 +321,7 @@ EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
 
   absl::Duration total_run_time = absl::ZeroDuration();
 
-  GpuPerformanceModelOwning gpu_performance_model(device_info);
+  GpuPerformanceModelOwning gpu_performance_model(device_info, mlir_context);
   for (const HloInstruction* instr : entry_computation->instructions()) {
     total_run_time += gpu_performance_model.Get()
                           .EstimateRunTimeForInstruction(instr, &cost_analysis)
@@ -346,7 +346,7 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
     GpuPerformanceModelWithIndexingAnalysis& indexing_performance_model,
     const se::DeviceDescription& device_info,
     const HloCostAnalysis::ShapeSizeFunction& shape_size,
-    bool use_cost_model_to_evaluate_fusions) {
+    mlir::MLIRContext* mlir_context, bool use_cost_model_to_evaluate_fusions) {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(normalization_fusion);
 
   TF_ASSIGN_OR_RETURN(
@@ -363,9 +363,10 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
       std::get<TiledRunTimeData>(std::move(tiled_runtime_data_or));
 
   if (use_cost_model_to_evaluate_fusions) {
-    TF_ASSIGN_OR_RETURN(absl::Duration run_time_without_softmax_rewriter,
-                        EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
-                            normalization_fusion, device_info, shape_size));
+    TF_ASSIGN_OR_RETURN(
+        absl::Duration run_time_without_softmax_rewriter,
+        EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
+            normalization_fusion, device_info, shape_size, mlir_context));
 
     VLOG(2) << "run time estimate if normalization diamond fused together: "
             << tiled_runtime_data.runtime_data.exec_time;
@@ -397,7 +398,7 @@ absl::StatusOr<bool> MaybeFuseDiamondImpl(
     GpuPerformanceModelWithIndexingAnalysis& indexing_performance_model,
     const se::DeviceDescription& device_info,
     const HloCostAnalysis::ShapeSizeFunction& shape_size,
-    bool use_cost_model_to_evaluate_fusions) {
+    mlir::MLIRContext* mlir_context, bool use_cost_model_to_evaluate_fusions) {
   TF_ASSIGN_OR_RETURN(HloFusionInstruction * normalization_fusion,
                       MakeFusionForDiamond(diamond));
   HloInstruction* root = diamond.root;
@@ -408,7 +409,7 @@ absl::StatusOr<bool> MaybeFuseDiamondImpl(
       FusionDecision fusion_decision,
       DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
           normalization_fusion, indexing_performance_model, device_info,
-          shape_size, use_cost_model_to_evaluate_fusions));
+          shape_size, mlir_context, use_cost_model_to_evaluate_fusions));
 
   if (!fusion_decision.CanFuse()) {
     VLOG(2) << "Not fusing: " << fusion_decision.Explain();
@@ -633,10 +634,11 @@ absl::StatusOr<bool> SoftmaxRewriterTriton::MaybeFuseNormalizationDiamond(
     const DiamondDescriptor& diamond) {
   HloFusionAnalysisCache fusion_analysis_cache(device_info_);
   GpuPerformanceModelWithIndexingAnalysis indexing_performance_model(
-      &device_info_, &fusion_analysis_cache, shape_size_, &mlir_context_);
+      &device_info_, &fusion_analysis_cache, shape_size_, mlir_context_);
 
   return MaybeFuseDiamondImpl(diamond, indexing_performance_model, device_info_,
-                              shape_size_, use_cost_model_to_evaluate_fusions_);
+                              shape_size_, mlir_context_,
+                              use_cost_model_to_evaluate_fusions_);
 }
 
 absl::StatusOr<bool> SoftmaxRewriterTriton::Run(

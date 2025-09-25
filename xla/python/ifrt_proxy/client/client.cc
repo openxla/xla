@@ -401,12 +401,12 @@ xla::ifrt::Future<> Client::GetReadyFuture(
     }
   }
 
-  auto promise = Future<>::CreatePromise();
+  auto [promise, future] = Future<>::MakePromise();
   rpc_helper_->CheckValueReady(std::move(req))
-      .OnReady(
-          [promise](absl::StatusOr<std::shared_ptr<CheckValueReadyResponse>>
-                        resp) mutable { promise.Set(resp.status()); });
-  futures.push_back(Future<>(std::move(promise)));
+      .OnReady([promise = std::move(promise)](
+                   absl::StatusOr<std::shared_ptr<CheckValueReadyResponse>>
+                       resp) mutable { promise.Set(resp.status()); });
+  futures.push_back(std::move(future));
 
   return JoinFutures(futures);
 }
@@ -454,7 +454,7 @@ Client::GetDefaultPjRtLayout(xla::ifrt::DType dtype,
       /*device_summary=*/device_summary(llvm::dyn_cast<Device>(device))};
 
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (auto it = layout_cache_.find(key); it != layout_cache_.end()) {
       return it->second;
     }
@@ -476,7 +476,7 @@ Client::GetDefaultPjRtLayout(xla::ifrt::DType dtype,
   TF_ASSIGN_OR_RETURN(auto layout, xla::PjRtLayout::Deserialize(
                                        response->serialized_pjrt_layout()));
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     layout_cache_.insert({key, layout});
   }
   return layout;

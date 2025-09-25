@@ -321,7 +321,7 @@ HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
   auto event = tsl::MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
       std::move(host_to_device_stream_event));
 
-  absl::MutexLock lock(&events_mu_);
+  absl::MutexLock lock(events_mu_);
   auto [it, inserted] =
       events_.emplace(std::make_pair(executor, run_id), event);
 
@@ -340,7 +340,7 @@ HostExecuteAsyncEvents::ExtractEvent(se::StreamExecutor* executor,
   VLOG(6) << "Extracting event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 
-  absl::MutexLock lock(&events_mu_);
+  absl::MutexLock lock(events_mu_);
   auto it = events_.find(std::make_pair(executor, run_id));
   if (it == events_.end()) {
     return FailedPrecondition(
@@ -452,10 +452,15 @@ absl::Status HostExecuteStartThunk::ExecuteOnStream(
     auto execute_event = executable_->Execute(
         call_frame->parameters(), call_frame->result(), execute_options);
 
-    tsl::BlockUntilReady(execute_event);
-    if (execute_event.IsError()) {
-      shared_execute_event.SetError(execute_event.GetError());
-      return;
+    {
+      tsl::profiler::TraceMe block_until_ready_trace(
+          "HostExecuteStartThunk::ExecuteOnStream::execute BlockUntilReady");
+
+      tsl::BlockUntilReady(execute_event);
+      if (execute_event.IsError()) {
+        shared_execute_event.SetError(execute_event.GetError());
+        return;
+      }
     }
     auto publish_result_status = std::move(*call_frame).PublishResult();
     if (!publish_result_status.ok()) {

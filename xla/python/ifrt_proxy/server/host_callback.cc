@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -50,7 +51,7 @@ namespace proxy {
 RemoteLoadedHostCallbackQueue::~RemoteLoadedHostCallbackQueue() { Close(); }
 
 absl::Status RemoteLoadedHostCallbackQueue::Push(ExecutionRequest request) {
-  absl::MutexLock l(&mu_);
+  absl::MutexLock l(mu_);
   if (closed_) {
     return absl::CancelledError(
         "RemoteLoadedHostCallback has stopped accepting new execution "
@@ -65,7 +66,7 @@ RemoteLoadedHostCallbackQueue::Pop() {
   auto not_empty = [this]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     return !requests_.empty() || closed_;
   };
-  absl::MutexLock l(&mu_, absl::Condition(&not_empty));
+  absl::MutexLock l(mu_, absl::Condition(&not_empty));
   if (closed_) {
     return std::nullopt;
   }
@@ -77,7 +78,7 @@ RemoteLoadedHostCallbackQueue::Pop() {
 void RemoteLoadedHostCallbackQueue::Close() {
   std::deque<ExecutionRequest> requests;
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (!closed_) {
       requests.swap(requests_);
     }
@@ -163,8 +164,8 @@ absl::Status RemoteLoadedHostCallback::Execute(void** result_ptrs,
   to_buffer(host_callback().operands, operand_ptrs, request.operands);
   to_buffer(host_callback().results, result_ptrs, request.results);
 
-  request.status = Future<>::CreatePromise();
-  Future<> status(request.status);
+  Future<> status;
+  std::tie(request.status, status) = Future<>::MakePromise();
 
   // Enqueue the execution request. `IfrtBackend` retrieves this by calling
   // `PopExecutionRequest` and fulfills the `results` promise.

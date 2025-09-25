@@ -291,7 +291,7 @@ class LoadedExecutable::OutputSpecCache {
 
   // Returns the cached output spec if already cached, and std::nullopt if not.
   std::optional<absl::Span<const ArraySpec>> Retrieve() {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (!data_.has_value()) {
       return std::nullopt;
     }
@@ -304,7 +304,7 @@ class LoadedExecutable::OutputSpecCache {
   absl::Status Cache(const tsl::protobuf::RepeatedPtrField<
                      LoadedExecutableExecuteResponse_Output>& outputs) {
     {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       if (data_.has_value()) {
         return absl::OkStatus();
       }
@@ -320,7 +320,7 @@ class LoadedExecutable::OutputSpecCache {
                                /*sharding=*/std::move(sharding)});
     }
     {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       if (!data_.has_value()) {
         data_.emplace(std::move(data));
       }
@@ -376,15 +376,16 @@ LoadedExecutable::LoadedExecutable(
   // eagerly schedule this fetch since, in some implementations, it may take a
   // long time for sharding information to be available.
 
-  auto promise = Future<std::shared_ptr<Metadata>>::CreatePromise();
-  metadata_future_ = Future<std::shared_ptr<Metadata>>(promise);
+  auto [promise, future] = Future<std::shared_ptr<Metadata>>::MakePromise();
+  metadata_future_ = std::move(future);
 
   auto req = std::make_unique<LoadedExecutableMetadataRequest>();
   req->set_loaded_executable_handle(handle_);
 
-  auto on_done = [promise](absl::StatusOr<
-                           std::shared_ptr<LoadedExecutableMetadataResponse>>
-                               response) mutable {
+  auto on_done = [promise = std::move(promise)](
+                     absl::StatusOr<
+                         std::shared_ptr<LoadedExecutableMetadataResponse>>
+                         response) mutable {
     if (!response.ok()) {
       LOG(ERROR) << "LoadedExecutableMetadata: Got " << response.status();
       promise.Set(response.status());

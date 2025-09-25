@@ -945,7 +945,13 @@ PjRtCpuClient::LinearizeHostBufferInto(
 
 absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> PjRtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Layout& layout,
+    HostBufferSemantics host_buffer_semantics,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+  if (host_buffer_semantics ==
+      PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall) {
+    return absl::UnimplementedError(
+        "ImmutableOnlyDuringCall semantics is not supported on CPU.");
+  }
   return tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromLiteral(literal, layout, async_work_runner());
 }
@@ -995,7 +1001,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
       std::make_unique<TrackedCpuDeviceBuffer>(
           /*owns_buffers=*/raw_buffer_is_mutable,
           tsl::down_cast<CpuRawBuffer*>(raw_buffer.get())->buffer(),
-          std::move(definition_events)),
+          ShapeUtil::ByteSizeOf(on_device_shape), std::move(definition_events)),
       raw_buffer->memory_space()));
 }
 
@@ -1008,6 +1014,73 @@ PjRtCpuClient::AllocateRawBuffer(PjRtMemorySpace* memory_space,
                                       "PjRtCpuClient.";
   return xla::CpuRawBuffer::Allocate(memory_space, on_device_bytes_count,
                                      *allocator_);
+}
+
+absl::StatusOr<std::tuple<tsl::RCReference<CommonPjRtRawBuffer>,
+                          tsl::RCReference<PjRtDeviceEvent>,
+                          PjRtFulfillAliasBufferCallback>>
+PjRtCpuClient::CreateRawBufferChannel(const Shape& shape,
+                                      PjRtMemorySpace* memory_space) {
+  auto buffer_promise = tsl::MakeIndirectAsyncValue();
+  auto raw_buffer = tsl::MakeRef<CpuRawBuffer>(
+      memory_space, tsl::AsyncValueRef<CpuDeviceMemory>(buffer_promise));
+
+  tsl::RCReference<xla::PjRtDeviceEventPromise> definition_event_promise;
+  tsl::RCReference<xla::PjRtDeviceEvent> definition_event;
+  TF_ASSIGN_OR_RETURN(
+      std::tie(definition_event_promise, definition_event),
+      CreateLinkedEventPromise(memory_space, "CreateRawBufferChannel"));
+
+  PjRtFulfillAliasBufferCallback fulfill_alias_buffer_cb =
+      [buffer_promise = std::move(buffer_promise),
+       definition_event_promise = std::move(definition_event_promise),
+       memory_space,
+       shape](absl::StatusOr<xla::PjRtBuffer*> buffer_or) mutable {
+        tsl::RCReference<xla::PjRtDeviceEvent> device_event;
+        if (!buffer_or.ok()) {
+          definition_event_promise->SetError(buffer_or.status());
+          buffer_promise->SetError(buffer_or.status());
+          return buffer_or.status();
+        }
+        xla::PjRtBuffer* buffer = buffer_or.value();
+        if (buffer->on_device_shape() != shape) {
+          auto status = absl::InvalidArgumentError(absl::StrFormat(
+              "Shape mismatch in CreateRawBufferChannel fulfill: expected %s, "
+              "got "
+              "%s",
+              shape.ToString(), buffer->on_device_shape().ToString()));
+          definition_event_promise->SetError(status);
+          buffer_promise->SetError(status);
+          return status;
+        }
+        xla::CommonPjRtBuffer* common_buffer =
+            dynamic_cast<xla::CommonPjRtBuffer*>(buffer);
+        if (common_buffer == nullptr) {
+          auto status =
+              absl::InternalError("Failed to cast to CommonPjRtBuffer");
+          definition_event_promise->SetError(status);
+          buffer_promise->SetError(status);
+          return status;
+        }
+        xla::CommonPjRtBuffer::ScopedHold hold =
+            common_buffer->GetBufferWithHold(
+                xla::CommonPjRtBuffer::ScopedHold::kDonation);
+        TF_ASSIGN_OR_RETURN(device_event,
+                            hold.buffer()->GetDefinitionEvent(memory_space));
+
+        auto* tracked_cpu_buffer =
+            tensorflow::down_cast<TrackedCpuDeviceBuffer*>(hold.buffer());
+        tsl::AsyncValueRef<CpuDeviceMemory> real_cpu_buffer =
+            tracked_cpu_buffer->buffer();
+
+        buffer_promise->ForwardTo(real_cpu_buffer.CopyRCRef());
+        definition_event_promise->Set(device_event);
+        hold.ConfirmDonation();
+        return absl::OkStatus();
+      };
+
+  return std::make_tuple(std::move(raw_buffer), std::move(definition_event),
+                         std::move(fulfill_alias_buffer_cb));
 }
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
@@ -1830,19 +1903,20 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
     res.push_back(std::move(output_buffer));
   }
 
-  std::optional<PjRtFuture<>> future;
   if (fill_future) {
-    PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-    execute_event.AndThen([promise, event = execute_event.CopyRef()]() mutable {
+    auto [promise, future] = PjRtFuture<>::MakePromise();
+    execute_event.AndThen([promise = std::move(promise),
+                           event = execute_event.CopyRef()]() mutable {
       if (auto* error = event.GetErrorIfPresent()) {
         promise.Set(Internal("Compute error: %s", error->message()));
       } else {
         promise.Set();
       }
     });
-    future = PjRtFuture<>(std::move(promise));
+    return Result({std::move(future), /*buffers=*/std::move(res)});
   }
-  return Result({/*future=*/std::move(future), /*buffers=*/std::move(res)});
+
+  return Result({/*future=*/std::nullopt, std::move(res)});
 }
 
 static void MaybeDumpHloSnapshot(
@@ -1987,7 +2061,7 @@ PjRtCpuExecutable::Execute(
           }
         }
 
-        absl::MutexLock lock(&mu);
+        absl::MutexLock lock(mu);
         --running;
         if (!statusor.ok()) {
           if (failed == 0) {
@@ -2009,7 +2083,7 @@ PjRtCpuExecutable::Execute(
         mu.AssertHeld();
         return running == 0;
       };
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       mu.Await(absl::Condition(&done_running));
     }
 

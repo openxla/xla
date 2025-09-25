@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -67,11 +68,8 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
     return absl::InvalidArgumentError("Got buffers_ future is invalid");
   }
 
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
-
-  auto ready_promise = Future<>::CreatePromise();
-  auto ready_future = Future<>(ready_promise);
+  auto [buffers_promise, buffers_future] = Future<Buffers>::MakePromise();
+  auto [ready_promise, ready_future] = Future<>::MakePromise();
 
   // Buffers when the become ready must be consistent with the sharding. For
   // instance, Buffers.size() (the number of per-shard spans of absl::Cords)
@@ -133,12 +131,12 @@ Future<> BasicStringArray::Delete() {
 }
 
 bool BasicStringArray::IsDeleted() const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   return is_deleted_;
 }
 
 void BasicStringArray::DeleteInternal() {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return;
   }
@@ -150,7 +148,7 @@ void BasicStringArray::DeleteInternal() {
 
 Future<> BasicStringArray::GetReadyFuture() const {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return Future<>(
         absl::FailedPreconditionError("Array has already been deleted"));
@@ -171,7 +169,7 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
         *sharding_->devices());
   }
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
@@ -214,8 +212,8 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   on_done_with_buffer_callbacks.reserve(num_shards);
 
   for (int i = 0; i < num_shards; ++i) {
-    buffer_promises.push_back(Future<Buffers>::CreatePromise());
-    buffer_futures.push_back(Future<Buffers>(buffer_promises.back()));
+    std::tie(buffer_promises.emplace_back(), buffer_futures.emplace_back()) =
+        Future<Buffers>::MakePromise();
 
     auto current_shard_strings = std::make_shared<PerShardStringStore>();
     per_shard_strings.push_back(current_shard_strings);
@@ -265,7 +263,7 @@ Future<> BasicStringArray::CopyToHostBuffer(
     void* data, std::optional<absl::Span<const int64_t>> byte_strides,
     ArrayCopySemantics semantics) {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return Future<>(
         absl::FailedPreconditionError("Array has already been deleted"));
@@ -278,8 +276,8 @@ Future<> BasicStringArray::CopyToHostBuffer(
         sharding_->devices()->size())));
   }
 
-  auto copy_completion_promise = Future<>::CreatePromise();
-  auto copy_completion_future = Future<>(copy_completion_promise);
+  auto [copy_completion_promise, copy_completion_future] =
+      Future<>::MakePromise();
 
   buffers_.OnReady(
       [copy_completion_promise = std::move(copy_completion_promise),
@@ -303,7 +301,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
     std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
@@ -331,8 +329,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
+  auto [buffers_promise, buffers_future] = Future<Buffers>::MakePromise();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](
@@ -358,7 +355,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
 // Makes a single sharded BasicStringArray from the first shard.
 absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
     ArrayCopySemantics semantics) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (is_deleted_) {
     return absl::FailedPreconditionError("Array has already been deleted");
   }
@@ -381,8 +378,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto buffers_promise = Future<Buffers>::CreatePromise();
-  auto buffers_future = Future<Buffers>(buffers_promise);
+  auto [buffers_promise, buffers_future] = Future<Buffers>::MakePromise();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](

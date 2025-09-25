@@ -332,6 +332,10 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space) override;
 
+  absl::StatusOr<
+      std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
+  CreateAliasBuffer(const Shape& shape, PjRtMemorySpace* memory_space) override;
+
   absl::StatusOr<const PjRtTopologyDescription*> GetTopologyDescription()
       const override;
 
@@ -514,6 +518,8 @@ class PjRtCApiBuffer : public PjRtBuffer {
   // `readiness_promise` is destroyed before `readiness_event`, and the callback
   // we set on `readiness_event` modifies `readiness_promise_`.
   std::shared_ptr<PjRtFuture<>::Promise> readiness_promise_;
+  // Future tied to the `readiness_promise_`.
+  PjRtFuture<> readiness_future_;
   // Set and cached the first time layout() is called.
   mutable std::shared_ptr<const PjRtLayout> layout_;
   // Set and cached the first time is_dynamic_dimension() is called.
@@ -708,19 +714,31 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     std::vector<RecvCallbackFunction> recv_callback_functions;
   };
 
-  // Gets common Execute_Args between Execute, ExecuteSharded and
-  // ExecutePortable. device_complete_events in the return is set if the input
+  // Returns the number of outputs of the executable.
+  absl::StatusOr<size_t> GetNumOutputs() const;
+
+  // Allocates memory for the `Execute` output.
+  // These functions are a little verbose, but allocating the correct amount of
+  // memory on initialization (thus avoiding `resize` calls) provides a
+  // significant performance optimization.
+  absl::StatusOr<std::vector<std::vector<PJRT_Buffer*>>>
+  InitializeOutputListsStorage(size_t outer_size) const;
+  absl::StatusOr<std::vector<PJRT_Buffer**>> InitializeOutputLists(
+      std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage) const;
+
+  // Gets common Execute_Args for use in various Execute* functions.
+  // device_complete_events in the return is set if the input
   // device_complete_events has value.
   absl::StatusOr<PJRT_LoadedExecutable_Execute_Args> GetCommonExecuteArgs(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options, PJRT_ExecuteOptions& c_options,
       std::vector<std::vector<PJRT_Buffer*>>& c_argument_lists_storage,
       std::vector<PJRT_Buffer**>& c_arguments,
-      std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage,
-      std::vector<PJRT_Buffer**>& c_output_lists,
       std::optional<std::vector<PJRT_Event*>>& device_complete_events,
       SendRecvCallbackData& send_recv_callback_data,
-      std::vector<int64_t>& non_donatable_input_indices_storage) const;
+      std::vector<int64_t>& non_donatable_input_indices_storage,
+      std::vector<int>& task_ids_storage,
+      std::vector<int64_t>& incarnation_ids_storage) const;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   ExecuteWithSingleDevice(absl::Span<PjRtBuffer* const> argument_handles,

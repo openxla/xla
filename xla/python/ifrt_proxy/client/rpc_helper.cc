@@ -58,7 +58,7 @@ class BatchedOps {
   using BatchOperation = RpcHelper::BatchOperation;
 
   void Add(BatchOperation op, ArrayHandle handle) {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     batched_[op].push_back(handle);
   }
 
@@ -69,7 +69,7 @@ class BatchedOps {
 
   IfrtRequests Consume() {
     IfrtRequests result;
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (!batched_[BatchOperation::kDeleteArray].empty()) {
       result.delete_req = std::make_unique<IfrtRequest>();
       for (const auto& arr_handle : batched_[BatchOperation::kDeleteArray]) {
@@ -114,7 +114,7 @@ class RpcHelper::Batcher {
   // that have been previously enqueued.
   Future<ClientSession::Response> Immediate(
       std::unique_ptr<IfrtRequest> request) {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     if (finished_) {
       LOG(WARNING) << "After RpcHelper::Finish(): " << request->DebugString();
       return Future<ClientSession::Response>(
@@ -134,7 +134,7 @@ class RpcHelper::Batcher {
   void Finish(absl::Status s) {
     LOG(INFO) << "RpcHelper::Batcher::Finish() starting: " << s;
     {
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       finished_ = true;
       auto remaining = batched_.Consume();
       if (remaining.delete_req != nullptr) {
@@ -157,7 +157,7 @@ class RpcHelper::Batcher {
   void PeriodicFlusher() {
     while (true) {
       absl::SleepFor(kPeriodicFlushInterval);
-      absl::MutexLock l(&mu_);
+      absl::MutexLock l(mu_);
       if (finished_) {
         return;
       }
@@ -251,8 +251,9 @@ Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
   XFlowHelper x_flow_helper(profiling_name);
   auto traceme = x_flow_helper.Span<XFlowHelper::kSend>();
 
-  auto promise = Future<std::shared_ptr<Resp>>::CreatePromise();
-  auto on_ready = [promise, has_resp, get_resp, profiling_name, x_flow_helper](
+  auto [promise, future] = Future<std::shared_ptr<Resp>>::MakePromise();
+  auto on_ready = [promise = std::move(promise), has_resp, get_resp,
+                   profiling_name, x_flow_helper](
                       absl::StatusOr<std::shared_ptr<IfrtResponse>> r) mutable {
     if (!r.ok()) {
       VLOG(3) << profiling_name << " response: " << r.status();
@@ -307,9 +308,9 @@ Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
     promise.Set(std::move(result));
   };
   VLOG(3) << ifrt_req->ShortDebugString();
-  batcher->Immediate(std::move(ifrt_req)).OnReady(on_ready);
+  batcher->Immediate(std::move(ifrt_req)).OnReady(std::move(on_ready));
 
-  return Future<std::shared_ptr<Resp>>(promise);
+  return std::move(future);
 }
 
 #define RPC(METHOD, PROPERTY)                                                 \
@@ -352,13 +353,13 @@ Future<> RpcHelper::CheckFuture(uint64_t handle) {
   auto req = std::make_unique<CheckFutureRequest>();
   req->set_future_handle(handle);
 
-  auto promise = Future<>::CreatePromise();
+  auto [promise, future] = Future<>::MakePromise();
   CheckFuture(std::move(req))
-      .OnReady(
-          [promise](absl::StatusOr<std::shared_ptr<CheckFutureResponse>>
-                        response) mutable { promise.Set(response.status()); });
+      .OnReady([promise = std::move(promise)](
+                   absl::StatusOr<std::shared_ptr<CheckFutureResponse>>
+                       response) mutable { promise.Set(response.status()); });
 
-  return Future<>(std::move(promise));
+  return std::move(future);
 }
 
 RpcHelper::RpcHelper(IfrtProxyVersion version,

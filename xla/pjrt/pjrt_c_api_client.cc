@@ -562,6 +562,96 @@ PjRtCApiClient::CreateUninitializedBuffer(const Shape& shape,
   return buffer;
 }
 
+absl::Status FulfillAliasBuffer(
+    const PJRT_Api* pjrt_c_api, absl::StatusOr<PjRtBuffer*> real_buffer_or,
+    PJRT_FulfillAliasBufferCallback* fulfill_alias_buffer_cb) {
+  if (pjrt_c_api->pjrt_api_version.major_version == 0 &&
+      pjrt_c_api->pjrt_api_version.minor_version < 76) {
+    return absl::UnimplementedError(
+        "PJRT_Client_FulfillAliasBuffer requires PJRT C API version 0.76 or "
+        "higher.");
+  }
+  PJRT_Client_FulfillAliasBuffer_Args args;
+  args.struct_size = PJRT_Client_FulfillAliasBuffer_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.fulfill_alias_buffer_cb = fulfill_alias_buffer_cb;
+
+  if (real_buffer_or.ok()) {
+    // We have a real buffer, make sure it's a PjRtCApiBuffer and pass it to the
+    // C API.
+    PjRtCApiBuffer* c_buffer =
+        tensorflow::down_cast<PjRtCApiBuffer*>(real_buffer_or.value());
+    args.buffer = c_buffer->c_buffer();
+    args.status_code = PJRT_Error_Code_OK;
+    args.error_message = nullptr;
+    args.error_message_size = 0;
+  } else {
+    // If the real buffer is an error, then we need to fulfill that alias
+    // buffer with a nullptr.
+    args.buffer = nullptr;
+    args.status_code =
+        pjrt::StatusCodeToPjrtErrorCode(real_buffer_or.status().code());
+    args.error_message = real_buffer_or.status().message().data();
+    args.error_message_size = real_buffer_or.status().message().size();
+  }
+
+  PJRT_Error* error = pjrt_c_api->PJRT_Client_FulfillAliasBuffer(&args);
+  if (error != nullptr) {
+    return pjrt::PjrtErrorToStatus(error, pjrt_c_api);
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<
+    std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
+PjRtCApiClient::CreateAliasBuffer(const Shape& shape,
+                                  PjRtMemorySpace* memory_space) {
+  if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&
+      pjrt_c_api()->pjrt_api_version.minor_version < 76) {
+    return absl::UnimplementedError(
+        "PJRT_Client_CreateBufferAlias requires PJRT C API version 0.76 or "
+        "higher.");
+  }
+
+  PJRT_Client_CreateAliasBuffer_Args args;
+  args.struct_size = PJRT_Client_CreateAliasBuffer_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+
+  args.shape_dims = shape.dimensions().data();
+  args.shape_num_dims = shape.dimensions().size();
+  args.shape_element_type = pjrt::ConvertToPjRtBufferType(shape.element_type());
+
+  pjrt::BufferMemoryLayoutData c_layout_data;
+  if (shape.has_layout()) {
+    TF_ASSIGN_OR_RETURN(c_layout_data,
+                        pjrt::ConvertToBufferMemoryLayoutData(shape.layout()));
+    args.shape_layout = &c_layout_data.c_layout;
+  } else {
+    args.shape_layout = nullptr;
+  }
+
+  args.memory =
+      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.alias_buffer = nullptr;
+
+  RETURN_STATUS_IF_PJRT_ERROR(c_api_->PJRT_Client_CreateAliasBuffer(&args),
+                              c_api_);
+
+  std::unique_ptr<PjRtBuffer> alias_buffer(
+      std::make_unique<PjRtCApiBuffer>(this, args.alias_buffer));
+
+  PjRtFulfillAliasBufferCallback fulfill_alias_buffer_cb =
+      [pjrt_c_api = pjrt_c_api(),
+       fulfill_alias_buffer_cb = args.fulfill_alias_buffer_cb](
+          absl::StatusOr<PjRtBuffer*> real_buffer) -> absl::Status {
+    return FulfillAliasBuffer(pjrt_c_api, real_buffer, fulfill_alias_buffer_cb);
+  };
+
+  return std::make_pair(std::move(alias_buffer),
+                        std::move(fulfill_alias_buffer_cb));
+}
+
 absl::StatusOr<const PjRtTopologyDescription*>
 PjRtCApiClient::GetTopologyDescription() const {
   if (!topo_desc_.ok()) {
@@ -1958,17 +2048,47 @@ static void CppRecvCallbackListsToC(
   }
 }
 
+absl::StatusOr<size_t> PjRtCApiLoadedExecutable::GetNumOutputs() const {
+  PJRT_Executable_NumOutputs_Args args;
+  args.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.executable = c_executable();
+  RETURN_STATUS_IF_PJRT_ERROR(pjrt_c_api()->PJRT_Executable_NumOutputs(&args),
+                              pjrt_c_api());
+  return args.num_outputs;
+}
+
+absl::StatusOr<std::vector<std::vector<PJRT_Buffer*>>>
+PjRtCApiLoadedExecutable::InitializeOutputListsStorage(
+    size_t outer_size) const {
+  TF_ASSIGN_OR_RETURN(size_t inner_size, GetNumOutputs());
+  std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage(
+      outer_size, std::vector<PJRT_Buffer*>(inner_size));
+  return c_output_lists_storage;
+}
+
+absl::StatusOr<std::vector<PJRT_Buffer**>>
+PjRtCApiLoadedExecutable::InitializeOutputLists(
+    std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage) const {
+  size_t outer_size = c_output_lists_storage.size();
+  std::vector<PJRT_Buffer**> c_output_lists(outer_size);
+  for (int i = 0; i < outer_size; ++i) {
+    c_output_lists[i] = c_output_lists_storage[i].data();
+  }
+  return c_output_lists;
+}
+
 absl::StatusOr<PJRT_LoadedExecutable_Execute_Args>
 PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options, PJRT_ExecuteOptions& c_options,
     std::vector<std::vector<PJRT_Buffer*>>& c_argument_lists_storage,
     std::vector<PJRT_Buffer**>& c_arguments,
-    std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage,
-    std::vector<PJRT_Buffer**>& c_output_lists,
     std::optional<std::vector<PJRT_Event*>>& device_complete_events,
     SendRecvCallbackData& callback_data,
-    std::vector<int64_t>& non_donatable_input_indices_storage) const {
+    std::vector<int64_t>& non_donatable_input_indices_storage,
+    std::vector<int>& task_ids_storage,
+    std::vector<int64_t>& incarnation_ids_storage) const {
   bool using_host_callbacks =
       !options.send_callbacks.empty() || !options.recv_callbacks.empty();
   if (using_host_callbacks &&
@@ -1992,6 +2112,17 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
   args.options->non_donatable_input_indices =
       non_donatable_input_indices_storage.data();
   args.num_devices = argument_handles.size();
+  if (pjrt_c_api()->pjrt_api_version.minor_version >= 76) {
+    args.options->call_location = options.call_location.c_str();
+  }
+
+  for (const auto& [task_id, incarnation_id] : options.incarnations) {
+    task_ids_storage.push_back(task_id);
+    incarnation_ids_storage.push_back(incarnation_id.value());
+  }
+  args.options->num_tasks = options.incarnations.size();
+  args.options->task_ids = task_ids_storage.data();
+  args.options->incarnation_ids = incarnation_ids_storage.data();
 
   // If the executable has no addressable devices, `num_args` cannot be
   // determined but it is unused. 0 serves as a placeholder.
@@ -2010,25 +2141,6 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     c_arguments.push_back(argument_list.data());
   }
   args.argument_lists = c_arguments.data();
-
-  // Allocates memory for output. `c_buffer_lists_storage` and `c_buffer_lists`
-  // needs to stay alive during the call of `PJRT_LoadedExecutable_Execute`.
-
-  PJRT_Executable_NumOutputs_Args numoutputs_args;
-  numoutputs_args.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
-  numoutputs_args.extension_start = nullptr;
-  numoutputs_args.executable = c_executable();
-  RETURN_STATUS_IF_PJRT_ERROR(
-      pjrt_c_api()->PJRT_Executable_NumOutputs(&numoutputs_args), pjrt_c_api());
-  size_t outer_size = args.num_devices;
-  size_t inner_size = numoutputs_args.num_outputs;
-  c_output_lists_storage.resize(outer_size);
-  c_output_lists.resize(outer_size);
-  for (int i = 0; i < outer_size; ++i) {
-    c_output_lists_storage[i].resize(inner_size);
-    c_output_lists[i] = c_output_lists_storage[i].data();
-  }
-  args.output_lists = c_output_lists.data();
 
   // Allocates memory for callbacks. `callback_data` needs to stay alive during
   // the execution.
@@ -2100,9 +2212,9 @@ PjRtCApiLoadedExecutable::Execute(
     const ExecuteOptions& options,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) const {
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
-  std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
-  std::vector<PJRT_Buffer**> c_output_lists;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::vector<int> task_ids_storage;
+  std::vector<int64_t> incarnation_ids_storage;
   std::vector<PJRT_Buffer**> c_arguments;
   std::optional<std::vector<PJRT_Event*>> device_complete_events;
   if (returned_futures.has_value()) {
@@ -2130,9 +2242,18 @@ PjRtCApiLoadedExecutable::Execute(
       PJRT_LoadedExecutable_Execute_Args args,
       GetCommonExecuteArgs(argument_handles, options, c_options,
                            c_argument_lists_storage, c_arguments,
-                           c_output_lists_storage, c_output_lists,
                            device_complete_events, *callback_data,
-                           non_donatable_input_indices_storage));
+                           non_donatable_input_indices_storage,
+                           task_ids_storage, incarnation_ids_storage));
+
+  // Allocates memory for output. `c_output_lists_storage` and `c_output_lists`
+  // need to stay alive during the call of `PJRT_LoadedExecutable_Execute`.
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage,
+      InitializeOutputListsStorage(args.num_devices));
+  TF_ASSIGN_OR_RETURN(std::vector<PJRT_Buffer**> c_output_lists,
+                      InitializeOutputLists(c_output_lists_storage));
+  args.output_lists = c_output_lists.data();
 
   args.execute_device = nullptr;
   PJRT_Profiler_Extension profiler_extension =
@@ -2185,9 +2306,9 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
       {argument_handles.begin(), argument_handles.end()}};
 
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
-  std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
-  std::vector<PJRT_Buffer**> c_output_lists;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::vector<int> task_ids_storage;
+  std::vector<int64_t> incarnation_ids_storage;
   std::vector<PJRT_Buffer**> c_arguments;
   std::optional<std::vector<PJRT_Event*>> device_complete_events;
   if (fill_future) {
@@ -2201,9 +2322,18 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
       PJRT_LoadedExecutable_Execute_Args args,
       GetCommonExecuteArgs(argument_handles_vec, options, c_options,
                            c_argument_lists_storage, c_arguments,
-                           c_output_lists_storage, c_output_lists,
                            device_complete_events, *callback_data,
-                           non_donatable_input_indices_storage));
+                           non_donatable_input_indices_storage,
+                           task_ids_storage, incarnation_ids_storage));
+
+  // Allocates memory for output. `c_output_lists_storage` and `c_output_lists`
+  // need to stay alive during the call of `PJRT_LoadedExecutable_Execute`.
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage,
+      InitializeOutputListsStorage(args.num_devices));
+  TF_ASSIGN_OR_RETURN(std::vector<PJRT_Buffer**> c_output_lists,
+                      InitializeOutputLists(c_output_lists_storage));
+  args.output_lists = c_output_lists.data();
 
   args.execute_device =
       tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
@@ -2652,11 +2782,12 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 
 PjRtFuture<> PjRtCApiBuffer::GetReadyFuture() {
   if (readiness_promise_ == nullptr) {
-    readiness_promise_ =
-        std::make_shared<PjRtFuture<>::Promise>(PjRtFuture<>::CreatePromise());
+    auto [promise, future] = PjRtFuture<>::MakePromise();
+    readiness_promise_ = std::move(promise).ToShared();
+    readiness_future_ = std::move(future);
     MakePromiseTrackEvent();
   }
-  return PjRtFuture<>{*readiness_promise_};
+  return readiness_future_;
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer::ExternalReference>>

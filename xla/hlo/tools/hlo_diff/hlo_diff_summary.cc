@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -28,16 +29,23 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/bind_front.h"
 #include "absl/log/log.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
+#include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
+#include "xla/hlo/tools/hlo_diff/graph/utils/hlo_gumgraph_dfs.h"
 #include "xla/hlo/tools/hlo_diff/hlo_diff_result.h"
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_mappings.h"
+#include "xla/hlo/tools/hlo_diff/proto/diff_result.pb.h"
 #include "xla/hlo/tools/hlo_diff/utils/bidirectional_map.h"
 #include "xla/hlo/tools/hlo_diff/utils/connected_components.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/fingerprint.h"
 
 namespace xla {
@@ -295,6 +303,47 @@ ComputationSummaryMap GetComputationSummary(const HloModule& left_module,
   return summary;
 }
 
+// Returns the instruction summary.
+InstructionSummaryMap GetInstructionSummary(const HloGumgraph& left_graph,
+                                            const HloGumgraph& right_graph,
+                                            const DiffResult& diff_result) {
+  InstructionSummaryMap summaries;
+  auto instruction_summary = [&](const DiffSide side,
+                                 const HloInstructionNode& node) {
+    if (node.is_root) {
+      return true;
+    }
+    InstructionSummary summary;
+    summary.side = side;
+    summary.subgraph_unchanged = true;
+    const absl::flat_hash_map<const HloInstruction*, DiffType>& diff_codes =
+        side == DiffSide::kLeft ? diff_result.left_diff_codes
+                                : diff_result.right_diff_codes;
+    if (auto it = diff_codes.find(node.instruction);
+        it == diff_codes.end() || it->second != DiffType::kUnchanged) {
+      summary.subgraph_unchanged = false;
+      summaries.insert({node.instruction, std::move(summary)});
+      return true;
+    }
+    for (const HloInstructionNode* child : node.children) {
+      if (auto it = summaries.find(child->instruction);
+          it != summaries.end() && !it->second.subgraph_unchanged) {
+        summary.subgraph_unchanged = false;
+        break;
+      }
+    }
+    summaries.insert({node.instruction, std::move(summary)});
+    return true;
+  };
+  HloGumgraphDfs(left_graph.GetRoot(),
+                 absl::bind_front(instruction_summary, DiffSide::kLeft),
+                 DfsTraversalOrder::kPostOrder, left_graph.GetNodeCount());
+  HloGumgraphDfs(right_graph.GetRoot(),
+                 absl::bind_front(instruction_summary, DiffSide::kRight),
+                 DfsTraversalOrder::kPostOrder, right_graph.GetNodeCount());
+  return summaries;
+}
+
 // Logs the computation group.
 void LogComputationGroup(const ComputationGroup& computation_group) {
   std::vector<std::string> computations_str(
@@ -331,19 +380,33 @@ void LogComputationDiffPattern(const ComputationDiffPattern& diff_pattern) {
 }  // namespace
 
 std::unique_ptr<const DiffSummary> ConstructDiffSummary(
-    const HloModule& left_module, const HloModule& right_module,
+    const HloGumgraph& left_graph, const HloGumgraph& right_graph,
     const DiffResult& diff_result) {
   auto summary = std::make_unique<DiffSummary>();
 
   // Summarize the computations.
-  summary->computation_summary =
-      GetComputationSummary(left_module, right_module, diff_result);
+  summary->computation_summary = GetComputationSummary(
+      left_graph.GetHloModule(), right_graph.GetHloModule(), diff_result);
 
   // Group the computations by their diff fingerprint.
   summary->computation_diff_patterns =
       FindComputationDiffPatterns(summary->computation_summary, diff_result);
 
+  // Summarize the instructions.
+  summary->instruction_summary =
+      GetInstructionSummary(left_graph, right_graph, diff_result);
+
   return summary;
+}
+
+absl::StatusOr<std::unique_ptr<const DiffSummary>> ConstructDiffSummary(
+    const HloModule& left_module, const HloModule& right_module,
+    const DiffResult& diff_result) {
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> graph_l,
+                      HloGumgraph::Create(&left_module));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> graph_r,
+                      HloGumgraph::Create(&right_module));
+  return ConstructDiffSummary(*graph_l, *graph_r, diff_result);
 }
 
 void LogDiffSummary(const DiffSummary& diff_summary) {
@@ -389,6 +452,44 @@ void PrintTo(const ComputationDiffPattern& diff_pattern, std::ostream* os) {
       << diff_pattern.diff_metrics.right_unmatched_instruction_count
       << " right unmatched }";
   *os << " }";
+}
+
+DiffSummaryProto DiffSummary::ToProto() const {
+  DiffSummaryProto proto;
+  for (const auto& diff_pattern : computation_diff_patterns) {
+    ComputationDiffPatternProto* diff_pattern_proto =
+        proto.add_computation_diff_patterns();
+    diff_pattern_proto->set_fingerprint(diff_pattern.fingerprint);
+    diff_pattern_proto->set_changed_instruction_count(
+        diff_pattern.diff_metrics.changed_instruction_count);
+    diff_pattern_proto->set_left_unmatched_instruction_count(
+        diff_pattern.diff_metrics.left_unmatched_instruction_count);
+    diff_pattern_proto->set_right_unmatched_instruction_count(
+        diff_pattern.diff_metrics.right_unmatched_instruction_count);
+    for (const auto& computation_group : diff_pattern.computation_groups) {
+      ComputationGroupProto* group_proto =
+          diff_pattern_proto->add_computation_group();
+      for (const HloComputation* computation :
+           computation_group.left_computations) {
+        ComputationDetailsProto* details_proto =
+            group_proto->add_left_computations();
+        details_proto->set_name(computation->name());
+        for (const HloInstruction* instruction : computation->instructions()) {
+          details_proto->add_instructions(instruction->name());
+        }
+      }
+      for (const HloComputation* computation :
+           computation_group.right_computations) {
+        ComputationDetailsProto* details_proto =
+            group_proto->add_right_computations();
+        details_proto->set_name(computation->name());
+        for (const HloInstruction* instruction : computation->instructions()) {
+          details_proto->add_instructions(instruction->name());
+        }
+      }
+    }
+  }
+  return proto;
 }
 
 }  // namespace hlo_diff

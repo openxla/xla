@@ -215,6 +215,9 @@ const HloInstruction* PickRepresentativeOperand(
       }
       return nullptr;
     case HloOpcode::kAbs:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAcos:
+    case HloOpcode::kAcosh:
     case HloOpcode::kAdd:
     case HloOpcode::kAnd:
     case HloOpcode::kAtan2:
@@ -228,6 +231,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kConvert:
     case HloOpcode::kCopy:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kAllGather:
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
@@ -260,6 +264,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kSelect:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kTopK:
     case HloOpcode::kSort:
     case HloOpcode::kSqrt:

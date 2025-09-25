@@ -1,5 +1,17 @@
 # PJRT C API changelog
 
+## 0.78
+
+* Add incarnations to `PJRT_ExecuteOptions`.
+
+## 0.77
+
+* Added buffer aliasing support to the PJRT C API
+
+## 0.76
+
+* Added `call_location` to `PJRT_ExecuteOptions`
+
 ## 0.75
 
 * Added `PJRT_TopologyDescription_Deserialize.`

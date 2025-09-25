@@ -46,8 +46,9 @@ namespace xla::gpu {
 // nested fusions, each with their own BlockLevelFusionConfig.
 class NestGemmFusion : public HloModulePass {
  public:
-  explicit NestGemmFusion(const se::GpuComputeCapability& compute_capability)
-      : compute_capability_(compute_capability) {}
+  explicit NestGemmFusion(const se::GpuComputeCapability& compute_capability,
+                          mlir::MLIRContext* mlir_context)
+      : compute_capability_(compute_capability), mlir_context_(mlir_context) {}
 
   absl::string_view name() const override { return "nest_gemm_fusion"; }
 
@@ -58,6 +59,7 @@ class NestGemmFusion : public HloModulePass {
 
  private:
   const se::GpuComputeCapability compute_capability_;
+  mlir::MLIRContext* mlir_context_;
   absl::StatusOr<bool> RunOnModule(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
@@ -75,7 +77,7 @@ namespace detail {
 // function can be removed once `GpuDotFusionCostModel::EstimateRunTimeForDotOp`
 // is implemented.
 absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
-    HloDotInstruction* dot, const TritonGemmConfig& config,
+    HloInstruction* dot, const TritonGemmConfig& config,
     mlir::MLIRContext* ctx);
 
 }  // namespace detail

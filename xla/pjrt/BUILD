@@ -109,6 +109,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -361,6 +362,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
+        "//xla/service:global_device_id",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
@@ -1217,6 +1219,8 @@ cc_library(
             "@llvm-project//mlir:ToLLVMIRTranslation",
             "@llvm-project//mlir:Transforms",
             "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+            "//xla/stream_executor:device_description",
+            "//xla/stream_executor/cuda:cuda_compute_capability",
             "//xla/tsl/platform:errors",
             "//xla/tsl/platform:statusor",
             "@triton//:TritonDialects",
@@ -1235,6 +1239,7 @@ cc_library(
 cc_library(
     name = "device_event",
     hdrs = ["device_event.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":pjrt_future",
         "//xla/tsl/concurrency:async_value",
@@ -1250,6 +1255,7 @@ cc_library(
     name = "raw_buffer",
     srcs = ["raw_buffer.cc"],
     hdrs = ["raw_buffer.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":async_work_runner",
         ":device_event",

@@ -1023,6 +1023,12 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       return {MapHloOp<mhlo::AbsOp>(
           PrimitiveTypeToMlirType(element_type, builder), arg_types, operands,
           /*attributes=*/{}, builder)};
+    case HloOpcode::kAcos:
+      return MapElementwiseOp<mhlo::AcosOp>(arg_types, operands, builder);
+    case HloOpcode::kAcosh:
+      return MapElementwiseOp<mhlo::AcoshOp>(arg_types, operands, builder);
+    case HloOpcode::kAsin:
+      return MapElementwiseOp<mhlo::AsinOp>(arg_types, operands, builder);
     case HloOpcode::kAdd:
       if (element_type == PRED) {
         return MapElementwiseOp<mhlo::OrOp>(arg_types, operands, builder);
@@ -1048,6 +1054,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
           /*attributes=*/{}, builder);
     case HloOpcode::kCos:
       return MapElementwiseOp<mhlo::CosineOp>(arg_types, operands, builder);
+    case HloOpcode::kCosh:
+      return MapElementwiseOp<mhlo::CoshOp>(arg_types, operands, builder);
     case HloOpcode::kDivide:
       return MapElementwiseOp<mhlo::DivOp>(arg_types, operands, builder);
     case HloOpcode::kErf:
@@ -1155,6 +1163,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       return MapElementwiseOp<mhlo::SignOp>(arg_types, operands, builder);
     case HloOpcode::kSin:
       return MapElementwiseOp<mhlo::SineOp>(arg_types, operands, builder);
+    case HloOpcode::kSinh:
+      return MapElementwiseOp<mhlo::SinhOp>(arg_types, operands, builder);
     case HloOpcode::kSqrt:
       return MapElementwiseOp<mhlo::SqrtOp>(arg_types, operands, builder);
     case HloOpcode::kSubtract:

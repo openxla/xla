@@ -68,6 +68,11 @@ enum class TargetDeviceFunctionID {
   kTan,
   kTanh,
   kErf,
+  kAcosh,
+  kAcos,
+  kSinh,
+  kAsin,
+  kCosh,
 };
 
 // HLO opcode -> TargetDeviceFunctionID mapping. Returns std::nullopt if there
