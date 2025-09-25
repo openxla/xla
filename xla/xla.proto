@@ -602,7 +602,7 @@ message DebugOptions {
   optional bool xla_gpu_experimental_enable_alltoall_windowed_einsum = 360;
 
   // Maximum number of collective streams.
-  optional int32 xla_gpu_experimental_collective_stream_count = 411;
+  optional bool xla_gpu_experimental_enable_collective_multi_streaming = 411;
 
   // Enables an experimental feature for command buffer conversion on thunks.
   optional bool xla_gpu_experimental_enable_command_buffer_on_thunks = 394;

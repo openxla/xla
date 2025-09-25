@@ -1907,7 +1907,7 @@ TEST_F(CollectiveOpsTestE2E, CollectiveMultiStreaming) {
 
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_experimental_parallel_collective_overlap_limit(2);
-  debug_options.set_xla_gpu_experimental_collective_stream_count(2);
+  debug_options.set_xla_gpu_experimental_enable_collective_multi_streaming(true);
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   config.set_debug_options(debug_options);
