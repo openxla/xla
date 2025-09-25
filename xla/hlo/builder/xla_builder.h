@@ -1764,6 +1764,9 @@ class XlaBuilder {
   friend XlaOp Clz(XlaOp operand);
   friend XlaOp Cos(XlaOp operand,
                    const std::optional<ResultAccuracy>& result_accuracy);
+  friend XlaOp Cosh(XlaOp x,
+                    const std::optional<ResultAccuracy>& result_accuracy,
+                    bool expand);
   friend XlaOp Sin(XlaOp operand,
                    const std::optional<ResultAccuracy>& result_accuracy);
   friend XlaOp Tan(XlaOp operand,
