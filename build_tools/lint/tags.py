@@ -94,6 +94,7 @@ _TAGS_TO_DOCUMENTATION_MAP = {
     "multi_gpu_h100": (
         "Used by `xla_test` to signal that multiple H100s are needed."
     ),
+    "skip_rocprofiler_sdk": "used to skip rocmtracer test as it calls rocprofiler-sdk via rocprofiler_force_configure",
 }
 
 

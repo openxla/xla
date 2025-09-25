@@ -246,12 +246,6 @@ cc_library(
         "manual",
         "rocm-only",
     ],
-  linkopts = [
-    "-Wl,--no-as-needed",
-    "-L/opt/rocm/lib",
-    "-Wl,-rpath,/opt/rocm/lib",
-    "-lhsa-runtime64",
-  ],
   deps = [
     "//xla/tsl/profiler/backends/cpu:annotation_stack",
     "//xla/tsl/profiler/utils:time_utils",
@@ -266,6 +260,7 @@ cc_library(
     "@tsl//tsl/platform:errors",
     "@tsl//tsl/platform:logging",
     "@tsl//tsl/platform:macros",
+    "@local_config_rocm//rocm:rocprofiler-sdk",
   ],
   visibility = ["//visibility:public"],
 )
@@ -274,13 +269,6 @@ cc_library(
     name = "rocm_collector",
     srcs = ["rocm_collector.cc"],
     hdrs = ["rocm_collector.h"],
-    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    linkopts = select({
-        "//conditions:default": [
-            "-L/opt/rocm/lib",      # search path for all ROCm shared objects
-            "-lrocprofiler-sdk",    # the library that owns the missing symbols
-        ],
-    }),
     tags = [
         "gpu",
         "rocm-only",
@@ -315,6 +303,7 @@ cc_library(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
+        "@local_config_rocm//rocm:rocprofiler-sdk",
     ],
 )
 
@@ -401,6 +390,7 @@ xla_test(
     tags = [
         "gpu",
         "rocm-only",
+        "skip_rocprofiler_sdk",   # due to rocprofiler-sdk's rocprofiler_force_configure
     ] + if_google([
         # Optional: only run internally if ROCm config is enabled
         "manual",
