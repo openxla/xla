@@ -96,6 +96,7 @@ use_repo(third_party,
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(python_version = "3.11")
 python.toolchain(python_version = "3.11")
+use_repo(python, "pythons_hub")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
