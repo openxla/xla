@@ -62,6 +62,8 @@ inline bool HasAMXTile() {
   return TestCPUFeature(tsl::port::CPUFeature::AMX_TILE);
 }
 
+#if defined(INTEL_MKL)
+
 struct FusedOperandsRef {
   const std::vector<void*>& bufs;
   std::vector<std::pair<int, dnnl::memory>>& postop_args;
@@ -94,6 +96,8 @@ dnnl::post_ops PopulateOneDnnPostOps(
     const OneDnnFusionConfig* fusion_config,
     FusedOperandsRef* fused_operands_ref = nullptr,
     dnnl::memory::desc* bias_md = nullptr);
+
+#endif  // INTEL_MKL
 
 }  // namespace cpu
 }  // namespace xla
