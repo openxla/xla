@@ -7,12 +7,15 @@ load(
     "PYTHON_BIN_PATH",
     "PYTHON_LIB_PATH",
 )
-load("//third_party/py:python_init_toolchains.bzl", "get_toolchain_name_per_python_version")
+
+load("@pythons_hub//:versions.bzl", "DEFAULT_PYTHON_VERSION")
+load("@pythons_hub//:interpreters.bzl", "INTERPRETER_LABELS")
 
 def _get_python_interpreter():
-    return "@{}_host//:python".format(
-        get_toolchain_name_per_python_version("python"),
+    python_toolchain_name = "python_{version}_host".format(
+        version = DEFAULT_PYTHON_VERSION.replace(".", "_"),
     )
+    return str(INTERPRETER_LABELS[python_toolchain_name])
 
 def _create_local_python_repository(repository_ctx):
     """Creates the repository containing files set up to build with Python."""
