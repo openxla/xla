@@ -1556,7 +1556,10 @@ cc_library(
     name = "compiler",
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
-    visibility = internal_visibility(["//xla/internal:hwi_internal"]),
+    visibility = internal_visibility([
+        "//xla/internal:hwi_internal",
+        "//xla/backends/gpu/runtime:__subpackages__",
+    ]),
     deps = [
         ":buffer_assignment",
         ":buffer_value",
