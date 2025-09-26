@@ -311,6 +311,16 @@ Build(
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
 )
 
+Build(
+    type_=BuildType.XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("warnings", "nonccl", "rbe_linux_cpu", "bzlmod"),
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
+    build_tag_filters=cpu_x86_tag_filter,
+    test_tag_filters=cpu_x86_tag_filter,
+    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
+)
+
 cpu_arm_tag_filter = (
     "-no_oss",
     "-gpu",
