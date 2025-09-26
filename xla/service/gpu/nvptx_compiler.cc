@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
@@ -336,14 +337,14 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
     HloPassPipeline* pipeline, const se::GpuComputeCapability& gpu_version,
     const CompileOptions& options, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
-    se::StreamExecutor* stream_exec) {
+    se::StreamExecutor* stream_exec,
+    const Compiler::TargetConfig* target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   if (hlo_module->config()
           .debug_options()
           .xla_gpu_experimental_disable_binary_libraries() ||
       debug_options.xla_gpu_autotune_level() == 0 ||
-      debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      stream_exec == nullptr) {
+      debug_options.xla_gpu_exclude_nondeterministic_ops()) {
     return absl::OkStatus();
   }
 
@@ -351,20 +352,26 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
   // loaded in the GpuConvAlgorithmPicker but should be loaded in the autotuner.
   pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
 
+  if (stream_exec == nullptr) {
+    return absl::OkStatus();
+  }
+
   std::vector<std::unique_ptr<CodegenBackend>> backends;
-  backends.push_back(
-      std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
-  backends.push_back(
-      std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this));
+  backends.push_back(std::make_unique<CublasBackend>(
+      stream_exec, &debug_options, this, target_config));
+  backends.push_back(std::make_unique<CublasLtBackend>(
+      stream_exec, &debug_options, this, target_config));
   auto should_autotune = [](const HloInstruction& instruction) -> bool {
     return instruction.opcode() == HloOpcode::kCustomCall &&
            IsCublasGemm(instruction);
   };
+
+  bool cache_only = stream_exec == nullptr;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
-                            thread_pool, should_autotune,
-                            options.device_allocator));
+                            thread_pool, should_autotune, target_config,
+                            options.device_allocator, cache_only));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
@@ -376,7 +383,8 @@ absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     const se::SemanticVersion& toolkit_version,
     se::StreamExecutor* stream_executor) {
   pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
-                                         thread_pool, key_value_store);
+                                         thread_pool, key_value_store,
+                                         mlir_context());
   return absl::OkStatus();
 }
 
@@ -395,6 +403,12 @@ bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
   if (fusion->fusion_kind() == HloInstruction::FusionKind::kCustom) {
     return false;
   }
+  // Scatter can't go through the block-level emitter and runs into comparator
+  // issues in the autotuner as different runs can produce different results.
+  if (absl::c_any_of(fusion->fused_instructions_computation()->instructions(),
+                     HloPredicateIsOp<HloOpcode::kScatter>)) {
+    return false;
+  }
   return absl::c_any_of(
       fusion->fused_instructions_computation()->instructions(),
       HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>);
@@ -406,6 +420,7 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
     HloPassPipeline* pipeline, HloModule* hlo_module,
     const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
     stream_executor::StreamExecutor* stream_executor,
+    const Compiler::TargetConfig* target_config,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
   if (stream_executor == nullptr) {
     return absl::OkStatus();
@@ -419,16 +434,17 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<BlockLevelEmitterBackend>(
-      stream_executor, &debug_options, this, shape_size_fn,
+      &debug_options, this, shape_size_fn, target_config,
       /*use_default_config=*/true));
   backends.push_back(std::make_unique<NativeEmitterBackend>(
-      stream_executor, &debug_options, this));
+      &debug_options, this, target_config));
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<AutotunerPass> autotuner_pass,
-      AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
-                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                            options.device_allocator));
+  bool cache_only = stream_executor == nullptr;
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<AutotunerPass> autotuner_pass,
+                      AutotunerPass::Create(
+                          std::move(backends), debug_options, stream_executor,
+                          thread_pool, ShouldAutotuneBetweenFusionEmitters,
+                          target_config, options.device_allocator, cache_only));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
@@ -719,7 +735,7 @@ absl::StatusOr<bool> NVPTXCompiler::CanUseLinkModules(
 
 absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
     const stream_executor::DeviceDescription& device_description,
-    se::StreamExecutor* stream_exec, std::vector<std::vector<uint8_t>> modules,
+    std::vector<std::vector<uint8_t>> modules,
     const DebugOptions& debug_options) {
   if (modules.empty()) {
     return std::vector<uint8_t>{};

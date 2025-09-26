@@ -61,7 +61,7 @@ class ThreadSafePjRtChunkQueue {
       queue_.push_back(std::move(chunk));
       return;
     }
-    auto pop_promise = promises_.front();
+    auto& pop_promise = promises_.front();
     pop_promise.Set(std::move(chunk));
     promises_.pop_front();
   }
@@ -70,9 +70,9 @@ class ThreadSafePjRtChunkQueue {
   PjRtFuture<PjRtChunk> Pop() {
     absl::MutexLock lock(&mu_);
     if (queue_.empty()) {
-      auto promise = PjRtFuture<PjRtChunk>::CreatePromise();
-      promises_.push_back(promise);
-      return PjRtFuture<PjRtChunk>(std::move(promise));
+      auto [promise, future] = PjRtFuture<PjRtChunk>::MakePromise();
+      promises_.push_back(std::move(promise));
+      return std::move(future);
     }
 
     auto chunk = PjRtFuture<PjRtChunk>(std::move(queue_.front()));

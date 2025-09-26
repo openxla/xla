@@ -118,11 +118,14 @@ HloSchedule ScheduleFromInstructionOrder(HloModule* module) {
 bool CanInferShape(HloOpcode code) {
   switch (code) {
     case HloOpcode::kAbs:
+    case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAsin:
     case HloOpcode::kAdd:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAfterAll:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kBatchNormGrad:
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
@@ -139,6 +142,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kConvolution:
     case HloOpcode::kCopy:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kDivide:
     case HloOpcode::kDomain:
@@ -187,6 +191,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kShiftRightLogical:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kSqrt:
     case HloOpcode::kCbrt:
     case HloOpcode::kReduceWindow:
@@ -1643,7 +1648,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           *shape, operands[0], *k, (largest.has_value() ? *largest : true)));
     }
     // Unary ops with result accuracy.
+    case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAtanh:
     case HloOpcode::kExpm1:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
@@ -1654,7 +1662,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     case HloOpcode::kTanh:
     case HloOpcode::kErf:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kTan:
     case HloOpcode::kExp: {
       return create_unary_instruction_with_result_accuracy();

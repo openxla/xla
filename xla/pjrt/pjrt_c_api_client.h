@@ -332,6 +332,10 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space) override;
 
+  absl::StatusOr<
+      std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
+  CreateAliasBuffer(const Shape& shape, PjRtMemorySpace* memory_space) override;
+
   absl::StatusOr<const PjRtTopologyDescription*> GetTopologyDescription()
       const override;
 
@@ -398,9 +402,15 @@ class PjRtCApiClient : public PjRtClient {
   using CrossHostRecvNotifierFunction =
       std::function<void(PJRT_Error*, const char**, size_t*, size_t)>;
 
+  template <typename ExtType>
+  ExtType* FindExtension(PJRT_Extension_Type type) const {
+    return reinterpret_cast<ExtType*>(FindExtensionImpl(type));  // NOLINT
+  }
+
  private:
   void InitDevicesAndMemorySpaces();
   void InitAttributes();
+  PJRT_Extension_Base* FindExtensionImpl(PJRT_Extension_Type type) const;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternalImpl(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
@@ -424,6 +434,7 @@ class PjRtCApiClient : public PjRtClient {
   // (e.g. unimplemented). Save the error during client init so we can return it
   // from GetTopologyDescription().
   absl::StatusOr<const PjRtCApiTopologyDescription> topo_desc_;
+  absl::flat_hash_map<PJRT_Extension_Type, PJRT_Extension_Base*> extensions_;
 
   const std::string platform_version_;
   const std::string platform_name_;
@@ -710,19 +721,31 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     std::vector<RecvCallbackFunction> recv_callback_functions;
   };
 
-  // Gets common Execute_Args between Execute, ExecuteSharded and
-  // ExecutePortable. device_complete_events in the return is set if the input
+  // Returns the number of outputs of the executable.
+  absl::StatusOr<size_t> GetNumOutputs() const;
+
+  // Allocates memory for the `Execute` output.
+  // These functions are a little verbose, but allocating the correct amount of
+  // memory on initialization (thus avoiding `resize` calls) provides a
+  // significant performance optimization.
+  absl::StatusOr<std::vector<std::vector<PJRT_Buffer*>>>
+  InitializeOutputListsStorage(size_t outer_size) const;
+  absl::StatusOr<std::vector<PJRT_Buffer**>> InitializeOutputLists(
+      std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage) const;
+
+  // Gets common Execute_Args for use in various Execute* functions.
+  // device_complete_events in the return is set if the input
   // device_complete_events has value.
   absl::StatusOr<PJRT_LoadedExecutable_Execute_Args> GetCommonExecuteArgs(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options, PJRT_ExecuteOptions& c_options,
       std::vector<std::vector<PJRT_Buffer*>>& c_argument_lists_storage,
       std::vector<PJRT_Buffer**>& c_arguments,
-      std::vector<std::vector<PJRT_Buffer*>>& c_output_lists_storage,
-      std::vector<PJRT_Buffer**>& c_output_lists,
       std::optional<std::vector<PJRT_Event*>>& device_complete_events,
       SendRecvCallbackData& send_recv_callback_data,
-      std::vector<int64_t>& non_donatable_input_indices_storage) const;
+      std::vector<int64_t>& non_donatable_input_indices_storage,
+      std::vector<int>& task_ids_storage,
+      std::vector<int64_t>& incarnation_ids_storage) const;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   ExecuteWithSingleDevice(absl::Span<PjRtBuffer* const> argument_handles,

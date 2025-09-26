@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
-#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -186,7 +185,7 @@ class PjRtLoadedExecutable final
   // xla::PjRtLoadedExecutable has fixed output dtypes/shapes/shardings.
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
   static absl::StatusOr<LoadedExecutableRef> Create(
-      PjRtCompatibleClient* client,
+      PjRtClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
       DeviceListRef executable_devices);
@@ -197,7 +196,7 @@ class PjRtLoadedExecutable final
   // allow_spmd_sharding_propagation_to_output enabled,
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
   static absl::StatusOr<LoadedExecutableRef> Create(
-      PjRtCompatibleClient* client, mlir::ModuleOp module,
+      PjRtClient* client, mlir::ModuleOp module,
       xla::CompileOptions compile_options,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
       DeviceListRef executable_devices);
@@ -262,6 +261,11 @@ class PjRtLoadedExecutable final
 
   absl::StatusOr<std::optional<std::string>> Fingerprint() const override;
 
+  absl::StatusOr<std::unique_ptr<xla::ifrt::ExecutableVersion>>
+  executable_version() const override {
+    return absl::UnimplementedError("Not implemented");
+  }
+
   absl::StatusOr<std::string> Serialize() const override;
 
   int num_devices() const override {
@@ -290,7 +294,7 @@ class PjRtLoadedExecutable final
     return pjrt_loaded_executable_->GetOutputMemoryKinds();
   }
 
-  PjRtCompatibleClient* client() const override {
+  PjRtClient* client() const override {
     DCHECK(this);
     return client_;
   }
@@ -315,7 +319,7 @@ class PjRtLoadedExecutable final
 
  private:
   static absl::StatusOr<LoadedExecutableRef> CreateInternal(
-      PjRtCompatibleClient* client,
+      PjRtClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       absl::Span<const xla::PrimitiveType> result_element_types,
       absl::Span<const xla::DimensionVector> result_dimensions,
@@ -325,7 +329,7 @@ class PjRtLoadedExecutable final
       DeviceListRef executable_devices);
 
   PjRtLoadedExecutable(
-      PjRtCompatibleClient* client,
+      PjRtClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       DeviceListRef devices, std::vector<Device*> addressable_devices,
       std::vector<tsl::RCReference<LoadedHostCallback>>
@@ -335,7 +339,7 @@ class PjRtLoadedExecutable final
       std::vector<DType> output_dtypes, std::vector<Shape> output_shapes,
       std::vector<ShardingRef> output_shardings);
 
-  PjRtCompatibleClient* client_;
+  PjRtClient* client_;
   std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable_;
   // Devices that `pjrt_loaded_executable_` runs on. Empty if the executable is
   // portable.

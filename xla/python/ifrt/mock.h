@@ -208,6 +208,10 @@ class MockCompiler : public llvm::RTTIExtends<MockCompiler, Compiler> {
               (std::unique_ptr<Program> program,
                std::unique_ptr<CompileOptions> options),
               (final));
+  MOCK_METHOD(absl::Status, IsExecutableVersionCompatible,
+              (const xla::ifrt::ExecutableVersion& executable_version,
+               const xla::ifrt::DeviceListRef& devices),
+              (const, final));
   MOCK_METHOD(absl::StatusOr<LoadedExecutableRef>, DeserializeLoadedExecutable,
               (absl::string_view serialized,
                std::unique_ptr<DeserializeExecutableOptions> options),
@@ -241,6 +245,26 @@ class MockDevice : public Device {
 
  private:
   Device* const delegated_ = nullptr;
+};
+
+// device_list.h
+
+class MockDeviceList : public DeviceList {
+ public:
+  MockDeviceList() = default;
+  ~MockDeviceList() override = default;
+
+  MOCK_METHOD(absl::Span<Device* const>, devices, (), (const final));
+  MOCK_METHOD(DeviceList*, AddressableDeviceList, (), (const final));
+
+  MOCK_METHOD(bool, EqualEqualOperator, (const DeviceList& other),
+              (const final));
+  bool operator==(const DeviceList& other) const override {
+    return EqualEqualOperator(other);
+  }
+  MOCK_METHOD(uint64_t, hash, (), (const final));
+  MOCK_METHOD(uint64_t, fingerprint, (), (const final));
+  MOCK_METHOD(std::string, ToString, (), (const final));
 };
 
 // memory.h
@@ -299,6 +323,8 @@ class MockLoadedExecutable
   MOCK_METHOD(absl::string_view, name, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::optional<std::string>>, Fingerprint, (),
               (const, final));
+  MOCK_METHOD(absl::StatusOr<std::unique_ptr<xla::ifrt::ExecutableVersion>>,
+              executable_version, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::string>, Serialize, (), (const, final));
   MOCK_METHOD(UserContextRef, user_context, (), (const, final));
   MOCK_METHOD(Future<>, GetReadyFuture, (), (const, override));

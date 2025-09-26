@@ -419,6 +419,13 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "future",
+    hdrs = ["future.h"],
+    visibility = ["//visibility:public"],
+    deps = ["//xla/tsl/concurrency:future"],
+)
+
+cc_library(
     name = "shape_util",
     srcs = [
         "index_util.cc",
@@ -1467,33 +1474,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
-    name = "debug_me_context_util",
-    srcs = ["debug_me_context_util.cc"],
-    hdrs = ["debug_me_context_util.h"],
-    deps = [
-        "//xla/hlo/pass:hlo_pass",
-        "//xla/tsl/platform:debug_me_context",
-        "@com_google_absl//absl/strings",
-    ],
-)
-
-xla_cc_test(
-    name = "debug_me_context_util_test",
-    srcs = ["debug_me_context_util_test.cc"],
-    deps = [
-        ":debug_me_context_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
-        "//xla/hlo/pass:hlo_pass",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 

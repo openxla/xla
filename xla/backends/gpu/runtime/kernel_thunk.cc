@@ -34,6 +34,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
@@ -138,7 +139,7 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
 }
 
 absl::Status KernelThunk::Initialize(const InitializeParams& params) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   // Load the kernel into the device if necessary.
   //
@@ -185,6 +186,11 @@ void PrintBufferContents(se::Stream* stream, int input_idx,
   VLOG(100) << "BUF(" << input_idx << ") = " << buffer_contents;
 }
 
+void PrintBufferContents(se::Stream*, int input_idx, int64_t int_arg) {
+  VLOG(100) << "INT(" << input_idx << ") = ";
+  VLOG(100) << absl::StrFormat("%x ", int_arg);
+}
+
 static void PrintBufferContents(
     se::Stream* stream, absl::Span<const se::KernelArgument> kernel_args) {
   for (const auto& [input_idx, arg] : llvm::enumerate(kernel_args)) {
@@ -208,7 +214,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       GetStreamForExecution(Thunk::execution_stream_id(), params));
 
   {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto it = kernel_cache_.find(executor);
     CHECK(it != kernel_cache_.end())
         << "Initialize() not called for StreamExecutor " << executor;
@@ -227,7 +233,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
         it != tma_metadata_.arg_index_to_tma_info.end()) {
       // TMA descriptor argument.
-      stream_executor::gpu::TmaDescriptor tma_desc = it->second;
+      const se::gpu::TmaDescriptor& tma_desc = it->second;
       TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
                           executor->CreateTensorMap(tma_desc, buf.opaque()));
       VLOG(3) << "[" << device_ordinal << "]  Using TensorMap for arg #" << idx
@@ -255,9 +261,9 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
 
 CustomKernelThunk::CustomKernelThunk(
     const HloInstruction* instr, CustomKernel custom_kernel,
-    const emitters::KernelArguments& kernel_arguments)
+    const emitters::KernelArguments& kernel_arguments, ThunkId thunk_id)
     : Thunk(Kind::kCustomKernel,
-            Thunk::ThunkInfo::WithProfileAnnotation(instr)),
+            Thunk::ThunkInfo::WithProfileAnnotation(instr, thunk_id)),
       args_(kernel_arguments.GetArgumentBufferSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
       custom_kernel_(std::move(custom_kernel)) {}
@@ -267,7 +273,7 @@ std::string CustomKernelThunk::ToString(int indent) const {
 }
 
 absl::Status CustomKernelThunk::Initialize(const InitializeParams& params) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   if (!kernel_cache_.contains(params.executor)) {
     TF_ASSIGN_OR_RETURN(
@@ -283,7 +289,7 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
 
   se::Kernel* kernel = [&] {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     return kernel_cache_[executor].get();
   }();
 

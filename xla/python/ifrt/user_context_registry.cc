@@ -20,7 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/no_destructor.h"
-#include "absl/log/check.h"
+#include "absl/base/nullability.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/python/ifrt/user_context.h"
 
@@ -32,55 +32,69 @@ UserContextRegistry& UserContextRegistry::Get() {
   return *registry;
 }
 
-TrackedUserContextRef UserContextRegistry::Register(
-    UserContextRef user_context) {
+absl_nullable TrackedUserContextRef
+UserContextRegistry::Register(absl_nullable UserContextRef user_context) {
+  if (user_context == nullptr) {
+    return nullptr;
+  }
   const UserContextId id = user_context->Id();
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   auto it = registry_.find(id);
   if (it != registry_.end()) {
     // If the user context is already registered, return the existing
     // `TrackedUserContextRef`. This will avoid duplicate `Unregister()` calls
     // for the same user context ID.
-    TrackedUserContextRef tracked_user_context = it->second.lock();
-    CHECK(tracked_user_context != nullptr)
-        << "Unexpected dangling reference for user context ID: " << id;
-    return tracked_user_context;
+    TrackedUserContextRef tracked_user_context = it->second.first.lock();
+    if (tracked_user_context != nullptr) {
+      return tracked_user_context;
+    }
+    // We can fail to obtain a shared pointer when `TrackedUserContext` just has
+    // lost the last reference, but it has not called `Unregister()` yet. We
+    // proactively unregister the stale entry and proceed to register a new one.
+    registry_.erase(it);
   }
   auto tracked_user_context = std::shared_ptr<TrackedUserContext>(
       new TrackedUserContext(id, std::move(user_context)));
-  registry_.insert(
-      {id, std::weak_ptr<TrackedUserContext>(tracked_user_context)});
+  registry_.insert({id,
+                    {std::weak_ptr<TrackedUserContext>(tracked_user_context),
+                     tracked_user_context.get()}});
   return tracked_user_context;
 }
 
-TrackedUserContextRef UserContextRegistry::Lookup(UserContextId id) const {
-  absl::MutexLock lock(&mu_);
+absl_nullable TrackedUserContextRef
+UserContextRegistry::Lookup(UserContextId id) const {
+  absl::MutexLock lock(mu_);
   auto it = registry_.find(id);
   if (it != registry_.end()) {
-    TrackedUserContextRef tracked_user_context = it->second.lock();
-    CHECK(tracked_user_context != nullptr)
-        << "Unexpected dangling reference for user context ID: " << id;
-    return tracked_user_context;
+    // This may return `nullptr` if the `TrackedUserContext` has been destroyed
+    // but `Unregister()` has not been called yet. This is acceptable behavior
+    // because `nullptr` means that no matching `UserContext` is found.
+    return it->second.first.lock();
   }
   return nullptr;
 }
 
-std::vector<TrackedUserContextRef> UserContextRegistry::LookupAll() const {
-  absl::MutexLock lock(&mu_);
-  std::vector<TrackedUserContextRef> tracked_user_contexts;
+std::vector<absl_nonnull TrackedUserContextRef> UserContextRegistry::LookupAll()
+    const {
+  absl::MutexLock lock(mu_);
+  std::vector<absl_nonnull TrackedUserContextRef> tracked_user_contexts;
   tracked_user_contexts.reserve(registry_.size());
   for (auto it = registry_.begin(); it != registry_.end(); ++it) {
-    TrackedUserContextRef tracked_user_context = it->second.lock();
-    CHECK(tracked_user_context != nullptr)
-        << "Unexpected dangling reference for user context ID: " << it->first;
-    tracked_user_contexts.push_back(std::move(tracked_user_context));
+    TrackedUserContextRef tracked_user_context = it->second.first.lock();
+    if (tracked_user_context != nullptr) {
+      tracked_user_contexts.push_back(std::move(tracked_user_context));
+    }
   }
   return tracked_user_contexts;
 }
 
-void UserContextRegistry::Unregister(UserContextId id) {
-  absl::MutexLock lock(&mu_);
-  CHECK_EQ(registry_.erase(id), 1);
+void UserContextRegistry::Unregister(
+    UserContextId id, const TrackedUserContext* tracked_user_context) {
+  absl::MutexLock lock(mu_);
+  auto it = registry_.find(id);
+  if (it != registry_.end() && it->second.second == tracked_user_context) {
+    registry_.erase(it);
+  }
 }
 
 }  // namespace ifrt

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -321,7 +322,7 @@ HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
   auto event = tsl::MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
       std::move(host_to_device_stream_event));
 
-  absl::MutexLock lock(&events_mu_);
+  absl::MutexLock lock(events_mu_);
   auto [it, inserted] =
       events_.emplace(std::make_pair(executor, run_id), event);
 
@@ -340,7 +341,7 @@ HostExecuteAsyncEvents::ExtractEvent(se::StreamExecutor* executor,
   VLOG(6) << "Extracting event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 
-  absl::MutexLock lock(&events_mu_);
+  absl::MutexLock lock(events_mu_);
   auto it = events_.find(std::make_pair(executor, run_id));
   if (it == events_.end()) {
     return FailedPrecondition(
@@ -353,6 +354,37 @@ HostExecuteAsyncEvents::ExtractEvent(se::StreamExecutor* executor,
 }
 
 // HostExecuteStartThunk
+
+absl::StatusOr<std::unique_ptr<HostExecuteStartThunk>>
+HostExecuteStartThunk::Create(
+    Thunk::ThunkInfo thunk_info,
+    const HostOffloadingExecutableProto& host_offloading_executable_proto,
+    absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> args,
+    absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> results) {
+  auto thunk = absl::WrapUnique(new HostExecuteStartThunk(
+      std::move(thunk_info), host_offloading_executable_proto, std::move(args),
+      std::move(results)));
+  if (host_offloading_executable_proto.has_aot_compilation_result()) {
+    TF_RETURN_IF_ERROR(thunk->LoadExecutable());
+  }
+  return thunk;
+}
+
+absl::Status HostExecuteStartThunk::LoadExecutable() {
+  if (executable_ != nullptr) {
+    return Internal("Host offloading executable was already loaded.");
+  }
+  if (!executable_proto_.has_aot_compilation_result()) {
+    return Internal(
+        "Host offloading executable proto does not have aot "
+        "compilation result.");
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      executable_,
+      HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_));
+  return absl::OkStatus();
+}
 
 HostExecuteStartThunk::HostExecuteStartThunk(
     Thunk::ThunkInfo thunk_info, const HloModule& hlo_module,
@@ -368,6 +400,17 @@ HostExecuteStartThunk::HostExecuteStartThunk(
       HostOffloadingExecutableProto::EXECUTABLE_TYPE_NANORT);
   executable_proto_ = std::move(host_offloading_executable_proto);
 }
+
+HostExecuteStartThunk::HostExecuteStartThunk(
+    Thunk::ThunkInfo thunk_info,
+    const HostOffloadingExecutableProto& host_offloading_executable_proto,
+    absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> args,
+    absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> results)
+    : Thunk(Thunk::Kind::kHostExecuteStart, std::move(thunk_info)),
+      args_(std::move(args)),
+      results_(std::move(results)),
+      executable_proto_(host_offloading_executable_proto),
+      async_events_(std::make_shared<HostExecuteAsyncEvents>()) {}
 
 std::string HostExecuteStartThunk::ToString(int indent) const { return ""; }
 
@@ -397,11 +440,13 @@ absl::Status HostExecuteStartThunk::Initialize(const InitializeParams& params) {
   // when locking llvm command line options.
   absl::Status initialization_status = absl::OkStatus();
   absl::call_once(executable_init_flag_, [this, &initialization_status]() {
-    auto executable_or_status =
-        HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_);
-    initialization_status = executable_or_status.status();
-    if (initialization_status.ok()) {
-      executable_ = std::move(executable_or_status.value());
+    if (executable_ == nullptr) {
+      auto executable_or_status =
+          HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_);
+      initialization_status = executable_or_status.status();
+      if (initialization_status.ok()) {
+        executable_ = std::move(executable_or_status.value());
+      }
     }
   });
 
@@ -452,10 +497,15 @@ absl::Status HostExecuteStartThunk::ExecuteOnStream(
     auto execute_event = executable_->Execute(
         call_frame->parameters(), call_frame->result(), execute_options);
 
-    tsl::BlockUntilReady(execute_event);
-    if (execute_event.IsError()) {
-      shared_execute_event.SetError(execute_event.GetError());
-      return;
+    {
+      tsl::profiler::TraceMe block_until_ready_trace(
+          "HostExecuteStartThunk::ExecuteOnStream::execute BlockUntilReady");
+
+      tsl::BlockUntilReady(execute_event);
+      if (execute_event.IsError()) {
+        shared_execute_event.SetError(execute_event.GetError());
+        return;
+      }
     }
     auto publish_result_status = std::move(*call_frame).PublishResult();
     if (!publish_result_status.ok()) {

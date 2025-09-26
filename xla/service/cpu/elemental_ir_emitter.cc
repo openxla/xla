@@ -44,6 +44,11 @@ absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitAtan2(
   return xla::cpu::EmitAtan2(module(), *b(), prim_type, lhs, rhs);
 }
 
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitAtanh(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return Unimplemented("atanh");
+}
+
 absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitTanh(
     PrimitiveType prim_type, llvm::Value* value) {
   if (prim_type == F32 || prim_type == F64 || prim_type == F16) {
@@ -55,9 +60,29 @@ absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitTanh(
   return xla::cpu::EmitTanh(module(), *b(), prim_type, value);
 }
 
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitAcos(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return Unimplemented("acos");
+}
+
 absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitAcosh(
     PrimitiveType prim_type, llvm::Value* value) {
   return Unimplemented("acosh");
+}
+
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitCosh(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return Unimplemented("cosh");
+}
+
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitSinh(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return Unimplemented("sinh");
+}
+
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitAsin(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return Unimplemented("asin");
 }
 
 absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitErf(

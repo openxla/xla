@@ -218,6 +218,22 @@ def MHLO_AbsOp: MHLO_UnaryElementwiseOp<"abs",
   let hasFolder = 1;
 }
 
+def MHLO_AcosOp : MHLO_UnaryElementwiseOp<"acos",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Acos operation";
+
+  let description = [{
+     Performs element-wise acos operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.acos %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
 def MHLO_AcoshOp : MHLO_UnaryElementwiseOp<"acosh",
     [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
   let summary = "Acosh operation";
@@ -229,6 +245,22 @@ def MHLO_AcoshOp : MHLO_UnaryElementwiseOp<"acosh",
     Example:
     ```mlir
     %result = mhlo.acosh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
+def MHLO_AsinOp : MHLO_UnaryElementwiseOp<"asin",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Asin operation";
+
+  let description = [{
+     Performs element-wise asin operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.asin %operand : tensor<2x2xf32>
     ```
   }];
   let hasFolder = 1;
@@ -334,6 +366,22 @@ def MHLO_CosineOp: MHLO_UnaryElementwiseOp<"cosine",
   let hasVerifier = 1;
   let hasFolder = 1;
   let hasCustomHLOConverter = 1;
+}
+
+def MHLO_CoshOp : MHLO_UnaryElementwiseOp<"cosh",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Cosh operation";
+
+  let description = [{
+     Performs element-wise cosh operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.cosh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
 }
 
 def MHLO_ErfOp: MHLO_UnaryElementwiseOp<"erf",
@@ -693,6 +741,22 @@ def MHLO_SineOp: MHLO_UnaryElementwiseOp<"sine",
   let hasCustomHLOConverter = 1;
 }
 
+def MHLO_SinhOp : MHLO_UnaryElementwiseOp<"sinh",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Sinh operation";
+
+  let description = [{
+     Performs element-wise sinh operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.sinh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
 def MHLO_TanOp: MHLO_UnaryElementwiseOp<"tan",
     [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpOrComplexTensor> {
   let summary = "Tan operation";
@@ -831,6 +895,23 @@ def MHLO_Atan2Op : MHLO_BinaryElementwiseOp<"atan2",
     ```
   }];
 }
+
+def MHLO_AtanhOp : MHLO_UnaryElementwiseOp<"atanh",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Atanh operation";
+
+  let description = [{
+     Performs element-wise atanh operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.atanh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
 
 def MHLO_ComplexOp: MHLO_BinaryElementwiseOp<"complex", [Pure,
     SameOperandsElementType, SameOperandsAndResultShape,
@@ -1352,7 +1433,7 @@ def MHLO_AsyncStartOp : MHLO_Op<"async_start", []> {
   }];
 
   let arguments = (ins
-    Variadic<MHLO_TensorOrTokenOrTuple>:$inputs,
+    Variadic<MHLO_TensorOrAnyTokenOrTuple>:$inputs,
     FlatSymbolRefAttr:$called_computation,
     StrAttr:$execution_thread
   );
@@ -1396,7 +1477,7 @@ def MHLO_AsyncDoneOp : MHLO_Op<"async_done", [DeclareOpInterfaceMethods<InferTyp
 
   let arguments = (ins MHLO_AsyncBundle:$bundle);
 
-  let results = (outs Variadic<MHLO_TensorOrTokenOrTuple>);
+  let results = (outs Variadic<MHLO_TensorOrAnyTokenOrTuple>);
   let hasVerifier = 1;
   let hasCustomHLOConverter = 1;
 }

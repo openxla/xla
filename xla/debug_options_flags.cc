@@ -204,6 +204,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_annotate_with_emitter_loc(false);
   opts.set_xla_debug_buffer_assignment_show_max(15);
   opts.set_xla_cpu_use_onednn(false);
+  opts.set_xla_cpu_experimental_onednn_custom_call(false);
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
@@ -283,8 +284,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_temp_buffer_use_separate_color(false);
   opts.set_xla_gpu_require_exclusive_lock(false);
 
-  // Set 4GB space limit for redzone scratch allocator.
-  opts.set_xla_gpu_redzone_scratch_max_megabytes(1LL << 12);
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
   opts.set_xla_gpu_shape_checks(DebugOptions::RUNTIME);
   opts.set_xla_dump_latency_hiding_schedule(false);
@@ -363,7 +362,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
   opts.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(-1);
 
-  opts.set_xla_gpu_enable_triton_hopper(false);
   opts.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(false);
 
   opts.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
@@ -452,6 +450,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detect_unstable_reductions(
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
+  opts.set_xla_gpu_experimental_use_raft_select_k(false);
   return opts;
 }
 
@@ -1048,6 +1047,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_cpu_use_onednn(),
                 "Call oneDNN thunks for matmul and convolution fusions in the "
                 "CPU backend."));
+  flag_list->push_back(
+      tsl::Flag("xla_cpu_experimental_onednn_custom_call",
+                bool_setter_for(
+                    &DebugOptions::set_xla_cpu_experimental_onednn_custom_call),
+                debug_options->xla_cpu_experimental_onednn_custom_call(),
+                "Call oneDNN custom call thunks in the CPU backend."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_onednn_fusion_type",
       SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
@@ -1667,13 +1672,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_dump_full_hlo_config(),
                 "Enable dumping the full HloModuleConfig proto."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_custom_fusions_re",
-      string_setter_for(&DebugOptions::set_xla_gpu_enable_custom_fusions_re),
-      debug_options->xla_gpu_enable_custom_fusions_re(),
-      "Limits custom fusion only to fusions which match this regular "
-      "expression. Default is all custom fusions registerered in a current "
-      "process."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_dynamic_slice_fusion",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_dynamic_slice_fusion),
       debug_options->xla_gpu_enable_dynamic_slice_fusion(),
@@ -1744,12 +1742,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Maximum number of ranks associated with a root rank to initialize a "
       "NCCL communicator via ncclCommInitRankScalable. "
       "A value of zero will lead to a single root."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_redzone_scratch_max_megabytes",
-      int64_setter_for(
-          &DebugOptions::set_xla_gpu_redzone_scratch_max_megabytes),
-      debug_options->xla_gpu_redzone_scratch_max_megabytes(),
-      "Max size (in megabytes) for the GPU redzone scratch allocator."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_redzone_padding_bytes",
       int64_setter_for(&DebugOptions::set_xla_gpu_redzone_padding_bytes),
@@ -2119,11 +2111,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If set >= 0, xla_gpu_threshold_for_windowed_einsum_mib is ignored."
       "Default is -1"));
 
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_triton_hopper",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_hopper),
-      debug_options->xla_gpu_enable_triton_hopper(),
-      "Currently used to enable MMA_V3 for Hopper in Triton"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_fusion_block_level_rewriter",
       bool_setter_for(
@@ -2543,6 +2530,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "that checks for unstable reductions in HLO computations. "
                 "Acceptable values are: 'none', 'log', and 'crash'. 'none' is "
                 "the default."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_use_raft_select_k",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_use_raft_select_k),
+      debug_options->xla_gpu_experimental_use_raft_select_k(),
+      "If true, use the raft::matrix::select_k implementation of TopK."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_scaled_dot_with_triton",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_scaled_dot_with_triton),
+      debug_options->xla_gpu_experimental_scaled_dot_with_triton(),
+      "If true, use the Triton emitter for scaled dot."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

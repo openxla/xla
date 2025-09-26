@@ -10,6 +10,8 @@ lit_test_suite(
     name = "all_tests",
     srcs = enforce_glob(
         [
+            "acos.mlir",
+            "acosh.mlir",
             "add.mlir",
             "attributes.mlir",
             "call.mlir",

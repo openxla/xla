@@ -31,7 +31,6 @@ cc_library(
         ":gpu_collective_performance_model",
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model",
-        ":gpu_performance_model_base",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
@@ -41,6 +40,7 @@ cc_library(
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/time",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -77,6 +77,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -106,6 +107,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -155,11 +157,15 @@ xla_test(
         "amdgpu_any",
     ],
     tags =
-        if_google([
-            # TODO(b/414617899): Reenable once NVML works
-            "manual",
-            "notap",
-        ]),
+        if_google(
+            [
+                # TODO(b/414617899): Reenable once NVML works
+                "manual",
+                "notap",
+            ],
+            # TODO(b/435404154): Reenable once this is fixed.
+            ["no_oss"],
+        ),
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",
@@ -219,7 +225,6 @@ cc_library(
     deps = [
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model",
-        ":gpu_performance_model_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_cost_analysis",
@@ -228,7 +233,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:status",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -236,7 +241,6 @@ xla_cc_test(
     name = "gpu_cost_model_stats_collection_test",
     srcs = ["gpu_cost_model_stats_collection_test.cc"],
     deps = [
-        ":fusion_analysis_cache",
         ":gpu_cost_model_stats_collection",
         ":gpu_hlo_cost_analysis",
         "//xla/hlo/ir:hlo",
@@ -246,6 +250,7 @@ xla_cc_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -325,6 +330,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -345,6 +351,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -371,6 +378,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -991,6 +999,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -1029,6 +1038,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda([
         # keep sorted
+        "//xla/backends/profiler/gpu:cupti_buffer_events",
         "//xla/backends/profiler/gpu:cupti_collector",
         "//xla/backends/profiler/gpu:cupti_tracer",
     ]),
@@ -1063,11 +1073,9 @@ xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1122,6 +1130,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -1140,6 +1149,7 @@ xla_cc_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
     ],
 )
 

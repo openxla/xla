@@ -197,6 +197,8 @@ defvar CustomHloConverterOps = [
 
   // MHLO ops.
   // go/keep-sorted start
+  MHLO_AcosOp,
+  MHLO_AcoshOp,
   MHLO_AddDependencyOp,
   MHLO_AllGatherOp,
   MHLO_AllReduceOp,

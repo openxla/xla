@@ -207,6 +207,10 @@ xla_test(
     name = "gpu_spmd_e2e_compile_test",
     size = "small",
     srcs = ["gpu_spmd_e2e_compile_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
@@ -302,6 +306,10 @@ xla_test(
     srcs = [
         "gpu_compilation_parallelism_test.cc",
     ],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
@@ -315,6 +323,10 @@ xla_test(
 xla_test(
     name = "gpu_copy_test",
     srcs = ["gpu_copy_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
@@ -597,6 +609,7 @@ lit_test_suite(
     name = "hlo_lit_tests",
     srcs = enforce_glob(
         [
+            "bitcast-convert.hlo",
             "calling_convention.hlo",
             "dot_bf16.hlo",
             "kernel_reuse.hlo",
@@ -662,6 +675,7 @@ lit_test_suite(
 #     name = "xla-opt",
 #     srcs = ["xla-opt.cc"],
 #     deps = [
+#         "@llvm-project//llvm:Support",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
 #         "@llvm-project//mlir:FuncDialect",
@@ -669,14 +683,20 @@ lit_test_suite(
 #         "@llvm-project//mlir:LLVMIRTransforms",
 #         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
 #         "@llvm-project//mlir:MlirOptLib",
+#         "@llvm-project//mlir:Pass",
 #         "@llvm-project//mlir:RegisterAllExtensions",
+#         "@llvm-project//mlir:Support",
 #         "@llvm-project//mlir:TensorDialect",
 #         "//xla/backends/gpu/codegen/emitters/transforms:passes",
+#         "//xla/backends/gpu/codegen/triton:compilation_pipeline",
 #         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
 #         "//xla/backends/gpu/codegen/triton/transforms:passes",
 #         "//xla/codegen/emitters/ir:xla",
 #         "//xla/codegen/emitters/transforms:passes",
+#         "//xla/stream_executor:device_description",
+#         "//xla/stream_executor/cuda:cuda_compute_capability",
 #         "@triton//:AllPassesAndDialects",
+#         "@triton//:TritonNvidiaGPUTransforms",
 #         "@triton//third_party/amd:TestAMDAnalysis",
 #     ],
 # )
@@ -789,6 +809,10 @@ xla_test(
 xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = [
         "a100",
         "h100",

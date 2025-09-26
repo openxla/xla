@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
@@ -65,28 +66,34 @@ class UserContextRegistry {
 
   // Ensures that `user_context` is registered in the registry (if not) and
   // returns `TrackedUserContextRef` for `user_context`.
-  TrackedUserContextRef Register(UserContextRef user_context);
+  absl_nullable TrackedUserContextRef
+  Register(absl_nullable UserContextRef user_context);
 
   // Returns `TrackedUserContextRef` for `id`.
   // If no such `id` is found, returns `nullptr`.
-  TrackedUserContextRef Lookup(UserContextId id) const;
+  absl_nullable TrackedUserContextRef Lookup(UserContextId id) const;
 
   // Returns all `TrackedUserContextRef`s in the registry. Note that since the
   // registry is process-wide, the result will contain `TrackedUserContextRef`s
   // seen from all local IFRT client instances.
-  std::vector<TrackedUserContextRef> LookupAll() const;
+  std::vector<absl_nonnull TrackedUserContextRef> LookupAll() const;
 
  private:
   friend TrackedUserContext;
 
-  // Removes a `TrackedUserContext` entry identified by `id` from the
-  // registry.
-  void Unregister(UserContextId id);
+  // Removes a `TrackedUserContext` entry identified by `id` from the registry.
+  // If the existing entry does not point to `tracked_user_context`, this is a
+  // no-op.
+  void Unregister(UserContextId id,
+                  const TrackedUserContext* tracked_user_context);
 
   mutable absl::Mutex mu_;
-  // A map from `UserContext::Fingerprint()` to a weak reference of
-  // `TrackedUserContext`.
-  absl::flat_hash_map<UserContextId, std::weak_ptr<TrackedUserContext>>
+  // A map from `UserContext::Id()` to a weak reference of `TrackedUserContext`.
+  // The raw pointer is used for handling a race condition between `Register()`
+  // and destruction of `TrackedUserContext` for the same ID.
+  absl::flat_hash_map<
+      UserContextId,
+      std::pair<std::weak_ptr<TrackedUserContext>, const TrackedUserContext*>>
       registry_ ABSL_GUARDED_BY(mu_);
 };
 
@@ -98,18 +105,21 @@ class TrackedUserContext {
   TrackedUserContext(const TrackedUserContext&) = delete;
   TrackedUserContext(TrackedUserContext&&) = delete;
 
-  ~TrackedUserContext() { UserContextRegistry::Get().Unregister(id_); }
+  ~TrackedUserContext() { UserContextRegistry::Get().Unregister(id_, this); }
 
-  const UserContextRef& user_context() const { return user_context_; }
+  absl_nonnull const UserContextRef& user_context() const {
+    return user_context_;
+  }
 
  private:
   friend UserContextRegistry;
 
-  explicit TrackedUserContext(UserContextId id, UserContextRef user_context)
+  explicit TrackedUserContext(UserContextId id,
+                              absl_nonnull UserContextRef user_context)
       : id_(id), user_context_(std::move(user_context)) {}
 
   const UserContextId id_;
-  const UserContextRef user_context_;
+  absl_nonnull const UserContextRef user_context_;
 };
 
 }  // namespace ifrt

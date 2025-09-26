@@ -567,6 +567,10 @@ xla_cc_test(
 xla_test(
     name = "gpu_kernel_test",
     srcs = ["gpu_kernel_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     deps = [
         ":gpu_test_kernels",
@@ -854,9 +858,15 @@ cc_library(
     name = "all_reduce_kernel",
     hdrs = ["all_reduce_kernel.h"],
     deps = [
+        ":collective_kernel_metadata",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:kernel",
     ],
+)
+
+cc_library(
+    name = "collective_kernel_metadata",
+    hdrs = ["collective_kernel_metadata.h"],
 )
 
 cc_library(

@@ -362,6 +362,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
+        "//xla/service:global_device_id",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
@@ -793,35 +794,13 @@ xla_cc_test(
 
 cc_library(
     name = "pjrt_future",
-    srcs = ["pjrt_future.cc"],
     hdrs = ["pjrt_future.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla:future",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
-        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:no_destructor",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/meta:type_traits",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@com_google_absl//absl/utility",
-    ],
-)
-
-xla_cc_test(
-    name = "pjrt_future_test",
-    srcs = ["pjrt_future_test.cc"],
-    deps = [
-        ":pjrt_future",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -1217,7 +1196,9 @@ cc_library(
             "@llvm-project//mlir:SCFToControlFlow",
             "@llvm-project//mlir:ToLLVMIRTranslation",
             "@llvm-project//mlir:Transforms",
-            "//xla/backends/gpu/codegen/triton:compilation_pipeline_cuda",
+            "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+            "//xla/stream_executor:device_description",
+            "//xla/stream_executor/cuda:cuda_compute_capability",
             "//xla/tsl/platform:errors",
             "//xla/tsl/platform:statusor",
             "@triton//:TritonDialects",
@@ -1236,6 +1217,7 @@ cc_library(
 cc_library(
     name = "device_event",
     hdrs = ["device_event.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":pjrt_future",
         "//xla/tsl/concurrency:async_value",
@@ -1251,6 +1233,7 @@ cc_library(
     name = "raw_buffer",
     srcs = ["raw_buffer.cc"],
     hdrs = ["raw_buffer.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":async_work_runner",
         ":device_event",

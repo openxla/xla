@@ -95,6 +95,10 @@ def LoadInt4RewritePass
   let dependentDialects = [
     "triton::TritonDialect"
   ];
+  let options = [
+    Option<"enable_bf16x2_", "enable_bf16x2", "bool", "true",
+           "Whether to enable bf16x2.">,
+  ];
 }
 
 def RoundF32ToTF32ForTf32DotRewritePass
@@ -158,6 +162,32 @@ def TritonXLAConvertUnsupportedTypesPass
     specific ops, such as loads, stores, or bitcasts).
   }];
   let constructor = "CreateTritonXLAConvertUnsupportedTypesPass()";
+}
+
+def TritonXLALowerRemoteAccessPass
+    : Pass<"triton-xla-remote-access", "mlir::ModuleOp"> {
+  let summary = "Lower triton_xla.get_rank/get_peer operations used to remote access kernels.";
+  let description = [{
+    This pass lowers collective operations (get_rank, get_peer).
+  }];
+  let constructor = "CreateTritonXLALowerRemoteAccessPass()";
+}
+
+def TritonXLAUnswitchLoopsPass :
+   Pass<"triton-xla-unswitch-loops", "mlir::ModuleOp"> {
+  let summary = "Hoists scf.if out of scf.for.";
+
+  let description = [{
+      Hoists a single scf.if out of scf.for when the condition is loop invariant.
+      That removes the conditional from the loop body but increases the code size.
+      Pass expects to run after loop-invariant-code-motion.
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect", "mlir::scf::SCFDialect"
+  ];
+
+  let constructor = "CreateTritonXLAUnswitchLoopsPass()";
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_
