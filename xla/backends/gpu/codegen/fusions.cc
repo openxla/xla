@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/copy.h"
 #include "xla/backends/gpu/codegen/cudnn.h"
 #include "xla/backends/gpu/codegen/custom.h"
+#include "xla/backends/gpu/codegen/prefetch.h"
 #include "xla/backends/gpu/codegen/emitters/concatenate.h"
 #include "xla/backends/gpu/codegen/emitters/in_place_dynamic_update_slice.h"
 #include "xla/backends/gpu/codegen/emitters/loop.h"
@@ -127,6 +128,8 @@ std::unique_ptr<FusionInterface> GetFusionEmitter(const FusionInfo& fusion_info,
       return std::make_unique<TritonFusion>(analysis);
     case HloFusionAnalysis::EmitterFusionKind::kCuDnn:
       return std::make_unique<CuDnnFusion>(analysis);
+    case HloFusionAnalysis::EmitterFusionKind::kL2Prefetch:
+      return std::make_unique<L2PrefetchFusion>(analysis);
   }
 }
 
