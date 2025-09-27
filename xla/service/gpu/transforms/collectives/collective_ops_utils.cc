@@ -176,18 +176,26 @@ bool EnableHeuristicCollectiveCombining(
   if (!cc.IsAtLeastAmpere()) {
     return false;
   }
-  int hlo_device_count = config.num_partitions() * config.replica_count();
-  if (hlo_device_count <= nvlink_slice_size) {
+  if (IsIntraNVLinkDomain(config, nvlink_slice_size)) {
     VLOG(1) << "Disabled heuristic collective combining for intra-NVLink "
                "domain communication: HLO device count "
-            << hlo_device_count << " <= NVLink slice size "
-            << nvlink_slice_size;
+            << (config.num_partitions() * config.replica_count())
+            << " <= NVLink slice size " << nvlink_slice_size;
     return false;
   }
   VLOG(1) << "Enabled heuristic collective combining for inter-NVLink domain "
              "communication: HLO device count "
-          << hlo_device_count << " > NVLink slice size " << nvlink_slice_size;
+          << (config.num_partitions() * config.replica_count())
+          << " > NVLink slice size " << nvlink_slice_size;
   return true;
+}
+
+bool IsIntraNVLinkDomain(const HloModuleConfig& config, int64_t slice_size) {
+  int device_count = config.num_partitions() * config.replica_count();
+  bool is_intra = device_count <= slice_size;
+  VLOG(1) << "IsIntraNVLinkDomain: device_count=" << device_count
+          << " slice_size=" << slice_size << " is_intra=" << is_intra;
+  return is_intra;
 }
 
 }  // namespace gpu
