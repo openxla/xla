@@ -17,7 +17,7 @@ def get_toolchain_name_per_python_version(name):
         version = HERMETIC_PYTHON_VERSION.replace(".", "_"),
     )
 
-def python_init_toolchains(name = "python", python_version = None, **kwargs):
+def python_init_toolchains(name = "python", python_version = None, register_toolchains=True, **kwargs):
     """Register hermetic python toolchains.
 
     Args:
@@ -35,6 +35,7 @@ def python_init_toolchains(name = "python", python_version = None, **kwargs):
         python_register_toolchains(
             name = get_toolchain_name_per_python_version(name),
             python_version = python_version,
+            register_toolchains = register_toolchains,
             **kwargs
         )
     elif HERMETIC_PYTHON_URL:
@@ -48,7 +49,6 @@ def python_init_toolchains(name = "python", python_version = None, **kwargs):
             # Avoid obscure platforms for now just in case
             if "aarch64" in platform or "x86_64" in platform:
                 sha256s[platform] = HERMETIC_PYTHON_SHA256
-
         python_register_toolchains(
             name = get_toolchain_name_per_python_version(name),
             base_url = url_components[0] + "://",
@@ -61,6 +61,7 @@ def python_init_toolchains(name = "python", python_version = None, **kwargs):
                     "strip_prefix": HERMETIC_PYTHON_PREFIX,
                 },
             },
+            register_toolchains = register_toolchains,
             # minor_mapping = {HERMETIC_PYTHON_VERSION: tool_version}
         )
     elif HERMETIC_PYTHON_VERSION in MINOR_MAPPING:
@@ -69,4 +70,5 @@ def python_init_toolchains(name = "python", python_version = None, **kwargs):
             ignore_root_user_error = True,
             python_version = HERMETIC_PYTHON_VERSION,
             python_version_kind = HERMETIC_PYTHON_VERSION_KIND,
+            register_toolchains = register_toolchains,
         )
