@@ -511,7 +511,7 @@ class PjRtCApiBuffer : public PjRtBuffer {
  private:
   // Gets the raw pointer to `readiness_event_`. If `readiness_event_` has not
   // yet been initialized, this function does so before returning the pointer.
-  PJRT_Event* GetReadyEvent();
+  PJRT_Event* GetReadyEvent() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   // `MakePromiseTrackEvent` sets `readiness_promise_` up to track
   // `readiness_event_`. This is used to implement `GetReadyFuture()`.
