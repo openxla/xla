@@ -6,6 +6,7 @@ load(
     "if_oss",
     "internal_visibility",
 )
+load("//xla:py_strict.bzl", "py_strict_binary")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -120,12 +121,40 @@ cc_library(
     ],
 )
 
+py_strict_binary(
+    name = "generate_amdgpu_device_lib_data_tool",
+    srcs = ["generate_amdgpu_device_lib_data_tool.py"],
+)
+
+genrule(
+    name = "generate_amdgpu_device_lib_data",
+    srcs = [
+        "@rocm_device_libs//:ockl",
+        "@rocm_device_libs//:ocml",
+    ],
+    outs = ["amdgpu_device_lib_data.h"],
+    cmd = "$(location {}) --llvm_link_bin $(location {}) $(SRCS) -o $@ --cpp_identifier=kAMDGPUDeviceLibData".format(
+            ":generate_amdgpu_device_lib_data_tool", "@llvm-project//llvm:llvm-link"),
+    tools = [":generate_amdgpu_device_lib_data_tool", "@llvm-project//llvm:llvm-link"],
+)
+
+cc_library(
+    name = "amdgpu_device_lib_data",
+    hdrs = [
+        ":generate_amdgpu_device_lib_data",
+    ],
+    deps = [
+        "@llvm-project//llvm:Support",
+    ]
+)
+
 cc_library(
     name = "amdgpu_backend",
     srcs = ["amdgpu_backend.cc"],
     hdrs = ["amdgpu_backend.h"],
     local_defines = if_oss(["HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY=1"]),
     deps = [
+        ":amdgpu_device_lib_data",
         ":llvm_gpu_backend",
         ":load_ir_module",
         "//xla:util",
@@ -229,6 +258,27 @@ xla_cc_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "amdgpu_bitcode_link_test",
+    size = "small",
+    srcs = ["amdgpu_bitcode_link_test.cc"],
+    tags = [
+        "rocm-only",
+        "gpu",
+    ],
+    data = [
+        "tests_data/amdgpu.ll",
+    ],
+    deps = [
+        ":load_ir_module",
+        ":amdgpu_backend",
+        "//xla/tests:xla_internal_test_main",
+        "@llvm-project//llvm:ir_headers",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:test",
     ],
 )
 
