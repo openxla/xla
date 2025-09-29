@@ -15,7 +15,6 @@
 #include "xla/python/ifrt_proxy/server/host_buffer.h"
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -26,7 +25,7 @@
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "xla/python/ifrt/future.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"
 
@@ -59,7 +58,7 @@ TEST(HostBufferStoreTest, WriteAfterReadStarted) {
   const uint64_t kHandle = 1;
 
   auto [lookup_promise, lookup_fut] =
-      Future<std::shared_ptr<const std::string>>::MakePromise();
+      tsl::Future<HostBufferStore::MemRegion>::MakePromise();
 
   absl::Notification closure_started;
   tsl::Env::Default()->SchedClosure(
@@ -81,7 +80,7 @@ TEST(HostBufferStoreTest, ShutdownAfterReadStarted) {
   const uint64_t kHandle = 1;
 
   auto [lookup_promise, lookup_fut] =
-      Future<std::shared_ptr<const std::string>>::MakePromise();
+      tsl::Future<HostBufferStore::MemRegion>::MakePromise();
 
   absl::Notification closure_started;
   tsl::Env::Default()->SchedClosure([&, promise = std::move(

@@ -39,10 +39,12 @@ std::unique_ptr<mlir::Pass> CreateInt4ToPackedInt4RewritePass(
     bool enable_bf16x2);
 std::unique_ptr<mlir::Pass> CreateRoundF32ToTF32ForTf32DotRewritePass();
 std::unique_ptr<mlir::Pass> CreateExtractTmaInfoPass();
+std::unique_ptr<mlir::Pass> CreateTritonXLAUnswitchLoopsPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerGetTidPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerAtomicsPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerBlockBarrierPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLAConvertUnsupportedTypesPass();
+std::unique_ptr<mlir::Pass> CreateTritonXLALowerRemoteAccessPass();
 
 // Returns true if the `op` contains an operation in it's regions that satisfies
 // the `fn`.

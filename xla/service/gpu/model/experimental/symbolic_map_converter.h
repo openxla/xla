@@ -20,12 +20,16 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/experimental/symbolic_map.h"
 
 namespace xla {
 namespace gpu {
+
+// Helper function to convert mlir::AffineExpr to xla::gpu::SymbolicExpr.
+SymbolicExpr AffineToSymbolicExpr(::mlir::AffineExpr affine_expr,
+                                  SymbolicExprContext* context, int num_dims);
 
 // Converts an mlir::AffineMap to xla::gpu::SymbolicMap.
 SymbolicMap AffineMapToSymbolicMap(const mlir::AffineMap& affine_map,

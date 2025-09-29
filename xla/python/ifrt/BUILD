@@ -99,10 +99,10 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
-        "//xla/pjrt:pjrt_future",
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/service:computation_placer_hdr",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:bitmap",
         "//xla/tsl/lib/gtl:int_type",
@@ -164,6 +164,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -176,6 +177,10 @@ xla_cc_test(
         ":serdes_test_util",
         ":serdes_version",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -235,6 +240,7 @@ xla_cc_test(
     srcs = ["future_test.cc"],
     deps = [
         ":ifrt",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
@@ -478,6 +484,7 @@ cc_library(
         "//xla:shape_util",
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt/ir:sharding_param",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
@@ -581,6 +588,7 @@ cc_library(
         "//xla/hlo/testlib:test",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_layout",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/base:no_destructor",
@@ -1110,7 +1118,6 @@ cc_library(
     deps = [
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/gtl:int_type",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
@@ -1119,7 +1126,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:random",
     ],
 )

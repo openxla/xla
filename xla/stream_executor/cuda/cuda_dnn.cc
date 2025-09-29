@@ -263,7 +263,7 @@ class CudnnAccess {
   }
 
   ~CudnnAccess() {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     cudnnDestroy(handle_);
 
     if (compilation_handle_) {
@@ -311,7 +311,7 @@ class CudnnAccess {
   void NotifyStreamDestroyed(Stream* stream) {
     CUstream cu_stream =
         absl::bit_cast<CUstream>(stream->platform_specific_handle().stream);
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (current_stream_ && cu_stream == *current_stream_) {
       current_stream_.reset();
     }
@@ -4795,9 +4795,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     DCHECK(bias_descriptor != std::nullopt);
     auto bias_dims = bias_descriptor->dimensions();
     auto bias_strides = bias_descriptor->GetLogicalStrides();
-    auto b = bias_dims[0];
-    auto n = bias_dims[1];
-    auto q_n = q_dims[1];
     auto bias_tensor = graph.tensor(Tensor_attributes()
                                         .set_name("bias")
                                         .set_dim(bias_dims)
@@ -4805,11 +4802,10 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
                                         .set_uid(next_uid()));
     sdpa_backward_options.set_bias(bias_tensor);
 
-    // shapes [1, 1, s, s], [b, 1, s, s], [b, h, s, s] are not supported for
-    // dbias calculation but they are supported for forward bias calculation
+    // shapes [1, 1, s, s], [1, h, s, s], [b, 1, s, s], [b, h, s, s] are
+    // supported for dbias calculation.
     // Set UID later: this is the last output tuple element.
     if (dbias_descriptor != std::nullopt) {
-      DCHECK(b == 1 && n == q_n);
       d_bias_tensor =
           graph.tensor(Tensor_attributes()
                            .set_name("dBias")

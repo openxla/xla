@@ -52,6 +52,9 @@ class CpuElementalIrEmitter final : public ElementalIrEmitter {
                                          llvm::Value* lhs, llvm::Value* rhs,
                                          absl::string_view) override;
 
+  absl::StatusOr<llvm::Value*> EmitAtanh(PrimitiveType prim_type,
+                                         llvm::Value* value) override;
+
   absl::StatusOr<llvm::Value*> EmitTanh(PrimitiveType prim_type,
                                         llvm::Value* value) override;
 
@@ -60,6 +63,14 @@ class CpuElementalIrEmitter final : public ElementalIrEmitter {
 
   absl::StatusOr<llvm::Value*> EmitAcosh(PrimitiveType prim_type,
                                          llvm::Value* value) override;
+  absl::StatusOr<llvm::Value*> EmitSinh(PrimitiveType prim_type,
+                                        llvm::Value* value) override;
+
+  absl::StatusOr<llvm::Value*> EmitAsin(PrimitiveType prim_type,
+                                        llvm::Value* value) override;
+
+  absl::StatusOr<llvm::Value*> EmitCosh(PrimitiveType prim_type,
+                                        llvm::Value* value) override;
 
   absl::StatusOr<llvm::Value*> EmitErf(PrimitiveType prim_type,
                                        llvm::Value* value) override;

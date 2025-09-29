@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -55,7 +56,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 #include "xla/pjrt/raw_buffer.h"
@@ -188,7 +188,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
   CollectiveLaunchEvent GetLastCollectiveLaunchEvent(
       size_t num_addressable_devices) {
     tsl::CountDownAsyncValueRef<CpuEvent> count_down(num_addressable_devices);
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     auto last_launch = std::move(last_collective_launch_event_);
     last_collective_launch_event_ = count_down.AsRef();
     return std::make_pair(std::move(last_launch), std::move(count_down));
@@ -198,6 +198,12 @@ class PjRtCpuClient final : public CommonPjRtClient {
       const override {
     return &topology_;
   }
+
+  absl::StatusOr<std::tuple<tsl::RCReference<CommonPjRtRawBuffer>,
+                            tsl::RCReference<PjRtDeviceEvent>,
+                            PjRtFulfillAliasBufferCallback>>
+  CreateRawBufferChannel(const Shape& shape,
+                         PjRtMemorySpace* memory_space) override;
 
   absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
@@ -380,21 +386,18 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
-      const override;
+      std::optional<std::vector<Future<>>>& returned_futures) const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
       bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
       bool fill_future) const override;
 
   void Delete() override;
