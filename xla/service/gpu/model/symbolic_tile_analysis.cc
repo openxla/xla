@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/constraint_expression.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
@@ -424,11 +425,8 @@ class OrderedUniquePtrValueHashSet {
 bool IsWithinNestedGemmFusion(const HloInstruction* hlo) {
   const HloComputation* computation = hlo->parent();
   if (computation->IsFusionComputation()) {
-    const GpuBackendConfig backend_config =
-        *computation->FusionInstruction()->backend_config<GpuBackendConfig>();
-    absl::string_view fusion_kind =
-        backend_config.fusion_backend_config().kind();
-    return fusion_kind == kTritonNestedGemmFusionKind;
+    return IsFusionKind(*computation->FusionInstruction(),
+                        kTritonNestedGemmFusionKind);
   }
 
   return false;

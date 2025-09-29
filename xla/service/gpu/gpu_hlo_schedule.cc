@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
-
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -56,6 +55,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -548,12 +548,8 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
     if (hlo->IsCustomCall("__cublas$gemm")) {
       return true;
     }
-    if (hlo->opcode() == HloOpcode::kFusion && hlo->has_backend_config() &&
-        hlo->backend_config<GpuBackendConfig>().ok()) {
-      GpuBackendConfig gpu_config =
-          hlo->backend_config<GpuBackendConfig>().value();
-      return gpu_config.has_fusion_backend_config() &&
-             gpu_config.fusion_backend_config().kind() == kTritonGemmFusionKind;
+    if (hlo->opcode() == HloOpcode::kFusion) {
+      return IsFusionKind(*hlo, kTritonGemmFusionKind);
     }
     return false;
   };
