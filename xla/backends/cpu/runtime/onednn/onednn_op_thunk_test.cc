@@ -130,24 +130,25 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnConvolutionThunk) {
   // 1 2 3
   // 4 5 6
   // 7 8 9
-  Literal input_literal = LiteralUtil::CreateR4FromArray4D<float>(
-    Array4D<float>(1, 3, 3, 1, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}));
+  Literal input_literal =
+      LiteralUtil::CreateR4FromArray4D<float>(Array4D<float>(
+          1, 3, 3, 1, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}));
 
   // 2x2 kernel:
   // 1 0
   // 0 1
   Literal weight_literal = LiteralUtil::CreateR4FromArray4D<float>(
-    Array4D<float>(2, 2, 1, 1, {1.f, 0.f, 0.f, 1.f}));
+      Array4D<float>(2, 2, 1, 1, {1.f, 0.f, 0.f, 1.f}));
 
   // Output buffer init zeros
   Literal output_literal = LiteralUtil::CreateR4FromArray4D<float>(
-    Array4D<float>(1, 2, 2, 1, {0.f, 0.f, 0.f, 0.f}));
+      Array4D<float>(1, 2, 2, 1, {0.f, 0.f, 0.f, 0.f}));
 
   // Expected convolution (valid):
   // [[ (1*1 +2*0 +4*0 +5*1)=6,  (2*1 +3*0 +5*0 +6*1)=8 ],
   //  [ (4*1 +5*0 +7*0 +8*1)=12, (5*1 +6*0 +8*0 +9*1)=14 ]]
   Literal expected_literal = LiteralUtil::CreateR4FromArray4D<float>(
-    Array4D<float>(1, 2, 2, 1, {6.f, 8.f, 12.f, 14.f}));
+      Array4D<float>(1, 2, 2, 1, {6.f, 8.f, 12.f, 14.f}));
 
   // Buffer allocations
   auto [input_alloc, weight_alloc, output_alloc] =
@@ -228,7 +229,8 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnConvolutionThunk) {
 
   auto exec_event = thunk->Execute(params);
   tsl::BlockUntilReady(exec_event);
-  ASSERT_FALSE(exec_event.IsError()) << "OneDnnOpThunk convolution execution failed";
+  ASSERT_FALSE(exec_event.IsError())
+      << "OneDnnOpThunk convolution execution failed";
 
   EXPECT_EQ(output_literal, expected_literal);
 }
