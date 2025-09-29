@@ -1,0 +1,4 @@
+race:libhsa-runtime64.so
+race:libamdhip64.so
+race:hipStreamSynchronize
+race:race:libabsl_*
