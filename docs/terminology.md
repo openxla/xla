@@ -45,7 +45,7 @@ definitions.
   is being evaluated for deprecation, and new users of the dialect should prefer
   to use StableHLO instead.
 - **HLO**
-  - HLO is an internal graph representation (IR) for the XLA compiler (and also
+  - HLO (High Level Optimizer) is an internal graph representation (IR) for the XLA compiler (and also
   supported input). It is **not** based on MLIR, and has its own textual syntax
   and binary (protobuf based) representation.
 - **MLIR**
