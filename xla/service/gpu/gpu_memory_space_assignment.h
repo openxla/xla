@@ -34,6 +34,7 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+inline constexpr int64_t kDefaultMemorySpaceColor = 0;
 inline constexpr int64_t kCollectiveMemorySpaceColor = 1;
 inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
 
@@ -116,10 +117,8 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
           continue;
         }
       } else if (defining_position.shape().IsTuple()) {
-        // Tuples do not have layout while downstream allocation consistency
-        // check will assume default memory space for them, force assign to
-        // avoid downstream errors.
-        value->set_color(0);
+        // Making sure tuples live in default memory space.
+        value->set_color(kDefaultMemorySpaceColor);
         continue;
       }
 
@@ -131,7 +130,7 @@ inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
         }
       }
       if (!value->has_color()) {
-        value->set_color(0);
+        value->set_color(kDefaultMemorySpaceColor);
       }
     }
     return absl::OkStatus();
