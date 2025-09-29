@@ -1306,7 +1306,9 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       case HloOpcode::kAsin:
       case HloOpcode::kAcos:
       case HloOpcode::kAcosh:
+      case HloOpcode::kAtanh:
       case HloOpcode::kCos:
+      case HloOpcode::kCosh:
       case HloOpcode::kErf:
       case HloOpcode::kExp:
       case HloOpcode::kExpm1:
@@ -1499,7 +1501,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAtanh:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
@@ -2725,6 +2729,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kAsin:
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kRoundNearestAfz:
@@ -2737,6 +2742,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
@@ -3195,6 +3201,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAdd:
     case HloOpcode::kBitcast:
     case HloOpcode::kBitcastConvert:
@@ -3208,6 +3215,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kCopyStart:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kDivide:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kErf:
@@ -3823,6 +3831,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAtanh:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
     case HloOpcode::kCeil:
@@ -3831,6 +3840,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCopy:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
@@ -4527,6 +4537,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleAsin(this);
     case HloOpcode::kAtan2:
       return visitor->HandleAtan2(this);
+    case HloOpcode::kAtanh:
+      return visitor->HandleAtanh(this);
     case HloOpcode::kRoundNearestAfz:
       return visitor->HandleRound(this);
     case HloOpcode::kRoundNearestEven:
@@ -4667,6 +4679,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleTanh(this);
     case HloOpcode::kCos:
       return visitor->HandleCos(this);
+    case HloOpcode::kCosh:
+      return visitor->HandleCosh(this);
     case HloOpcode::kSin:
       return visitor->HandleSin(this);
     case HloOpcode::kSinh:
@@ -5230,15 +5244,30 @@ bool IsValidResultAccuracy(const ResultAccuracy& accuracy) {
 }
 
 bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
-  return opcode == HloOpcode::kAsin || opcode == HloOpcode::kAcos ||
-         opcode == HloOpcode::kAcosh || opcode == HloOpcode::kExp ||
-         opcode == HloOpcode::kExpm1 || opcode == HloOpcode::kLog ||
-         opcode == HloOpcode::kLog1p || opcode == HloOpcode::kRsqrt ||
-         opcode == HloOpcode::kSqrt || opcode == HloOpcode::kCbrt ||
-         opcode == HloOpcode::kTanh || opcode == HloOpcode::kCos ||
-         opcode == HloOpcode::kSin || opcode == HloOpcode::kTan ||
-         opcode == HloOpcode::kErf || opcode == HloOpcode::kLogistic ||
-         opcode == HloOpcode::kSinh;
+  return
+      // clang-format off
+    // go/keep-sorted start
+    opcode == HloOpcode::kAcos ||
+    opcode == HloOpcode::kAcosh ||
+    opcode == HloOpcode::kAsin ||
+    opcode == HloOpcode::kAtanh ||
+    opcode == HloOpcode::kCbrt ||
+    opcode == HloOpcode::kCos ||
+    opcode == HloOpcode::kCosh ||
+    opcode == HloOpcode::kErf ||
+    opcode == HloOpcode::kExp ||
+    opcode == HloOpcode::kExpm1 ||
+    opcode == HloOpcode::kLog ||
+    opcode == HloOpcode::kLog1p ||
+    opcode == HloOpcode::kLogistic ||
+    opcode == HloOpcode::kRsqrt ||
+    opcode == HloOpcode::kSin ||
+    opcode == HloOpcode::kSinh ||
+    opcode == HloOpcode::kSqrt ||
+    opcode == HloOpcode::kTan ||
+    opcode == HloOpcode::kTanh;
+    // go/keep-sorted end
+  // clang-format on
 }
 
 std::string AlgorithmToString(const PrecisionConfig::Algorithm& algorithm) {

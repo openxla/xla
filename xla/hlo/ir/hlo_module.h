@@ -26,13 +26,16 @@ limitations under the License.
 #include <random>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -68,6 +71,8 @@ inline constexpr absl::string_view kOriginalValuePlaceholderDelimiter = "__ovp";
 using LayoutCanonicalizationCallback =
     std::function<absl::StatusOr<std::pair<std::vector<Shape>, Shape>>(
         const HloModule& module)>;
+
+using NumericOrString = std::variant<std::string, int64_t, double>;
 
 // Describes a compilation unit at the HLO level.
 //
@@ -438,14 +443,25 @@ class HloModule {
   bool is_dynamic() const { return is_dynamic_; }
   void set_is_dynamic(bool is_dynamic) { is_dynamic_ = is_dynamic; }
 
+ private:
+  void PrintComputations(Printer* printer,
+                         const HloPrintOptions& options) const;
+  void PrintConfig(Printer* printer, const HloModuleConfig& config) const;
+
+ public:
   // Prints a string representation of the module.
   //
   // (We express the default options using an overload rather than a default
   // param because gdb ignores default params, but does resolve overloads.)
   void Print(Printer* printer) const {
-    return Print(printer, HloPrintOptions::Default());
+    return Print(printer, HloPrintOptions::Default(), {});
   }
-  void Print(Printer* printer, const HloPrintOptions& options) const;
+  void Print(Printer* printer, const HloPrintOptions& options) const {
+    return Print(printer, options, {});
+  }
+  void Print(
+      Printer* printer, const HloPrintOptions& options,
+      const absl::btree_map<std::string, NumericOrString>& custom_fields) const;
 
   // Return a string representation of the module.
   //
@@ -462,22 +478,37 @@ class HloModule {
   absl::Cord ToCord(const HloPrintOptions& options) const;
 
   // Returns a stable fingerprint of the module using the given print options.
-  uint64_t ToFingerprint(const HloPrintOptions& options) const;
+  //
+  // (We express the default options using an overload rather than a default
+  // param because gdb ignores default params, but does resolve overloads.)
+  uint64_t ToFingerprint(const HloPrintOptions& options) const {
+    return ToFingerprint(options, {});
+  }
+  uint64_t ToFingerprint(
+      const HloPrintOptions& options,
+      const absl::btree_map<std::string, NumericOrString>& custom_fields) const;
 
   // Remaps the instruction ids in the proto to be consecutive. This is useful
-  // for loading a proto that had its ids manually created or created
-  // incorrectly.
+  // for loading a proto that had its ids manually created, created incorrectly
+  // or in an older version of the compiler. Instructions will only have the
+  // local id in the id field.
   static absl::StatusOr<HloModuleProto> RemapInstructionIds(
       const HloModuleProto& proto);
 
-  // Updates the instruction ids in the module's schedules to match the new
-  // instruction ids as defined by the old_instr_id_to_new_id map.
-  static absl::Status UpdateIdsInSchedules(
-      HloModuleProto& proto,
+  // Updates the instruction ids in the computation's schedule to match the new
+  // instruction ids as defined by the old_instr_id_to_new_id map. The map only
+  // needs to be consistent and unique within the computation level.
+  static absl::Status UpdateIdsInSchedule(
+      HloModuleProto& proto, int64_t computation_proto_id,
       absl::flat_hash_map<int64_t, int64_t>& old_instr_id_to_new_id);
 
   // Convert an HloModule to or from a proto.
   HloModuleProto ToProto() const;
+
+  // Converts an HloModuleProto to an HloModule. If the module had its ids
+  // manually changed or was created in an older version of the compiler, it
+  // might be necessary to call RemapInstructionIds to make the ids consistent
+  // and compact.
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateFromProto(
       const HloModuleProto& proto, const HloModuleConfig& module_config,
       bool prohibit_empty_literal = true,

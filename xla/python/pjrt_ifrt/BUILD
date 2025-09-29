@@ -65,7 +65,7 @@ tf_proto_library(
     srcs = ["xla_host_callback.proto"],
     protodeps = [
         "//xla:xla_data_proto",
-    ] + if_google(["@com_google_protobuf//:any"]),
+    ] + if_google(["@com_google_protobuf//:any_proto"]),
 )
 
 tf_proto_library(
@@ -232,6 +232,7 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/hash:hash_testing",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
@@ -264,6 +265,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",

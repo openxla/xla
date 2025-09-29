@@ -51,7 +51,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/service:metrics_proto",
-    ] + if_google(["@com_google_protobuf//:any"]),
+    ] + if_google(["@com_google_protobuf//:any_proto"]),
     visibility = ["//visibility:public"],
 )
 
@@ -78,9 +78,9 @@ tf_proto_library(
     srcs = ["metrics.proto"],
     make_default_target_header_only = True,
     protodeps = if_google([
-        "@com_google_protobuf//:any",
-        "@com_google_protobuf//:duration",
-        "@com_google_protobuf//:timestamp",
+        "@com_google_protobuf//:any_proto",
+        "@com_google_protobuf//:duration_proto",
+        "@com_google_protobuf//:timestamp_proto",
     ]),
     visibility = ["//visibility:public"],
 )
@@ -1220,6 +1220,7 @@ cc_library(
         "//xla/service/heap_simulator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -1555,7 +1556,10 @@ cc_library(
     name = "compiler",
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
-    visibility = internal_visibility(["//xla/internal:hwi_internal"]),
+    visibility = internal_visibility([
+        "//xla/internal:hwi_internal",
+        "//xla/backends/gpu/runtime:__subpackages__",
+    ]),
     deps = [
         ":buffer_assignment",
         ":buffer_value",
@@ -3499,7 +3503,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/platform:logging",
+        "@com_google_absl//absl/log:check",
     ],
 )
 
@@ -6027,7 +6031,7 @@ tf_proto_library(
     protodeps = [
         ":hlo_proto",
         "//xla/tsl/protobuf:status_proto",
-    ] + if_google(["@com_google_protobuf//:duration"]),
+    ] + if_google(["@com_google_protobuf//:duration_proto"]),
     visibility = ["//visibility:public"],
 )
 

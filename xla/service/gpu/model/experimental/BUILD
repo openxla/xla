@@ -247,6 +247,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
 )
@@ -269,7 +270,7 @@ cc_library(
     deps = [
         ":symbolic_expr",
         ":symbolic_map",
-        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -283,10 +284,12 @@ xla_cc_test(
         ":symbolic_expr",
         ":symbolic_map",
         ":symbolic_map_converter",
-        "//xla/hlo/analysis:indexing_analysis",
-        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/analysis:interval",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

@@ -569,10 +569,13 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })";
 
+  // To check for splitk, we check that two fusions are created - one for dot
+  // and the second for reduce.
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: reduce
 ; CHECK: ENTRY
-; CHECK: ROOT {{.*}} fusion({{.*}}), kind=kLoop
+; CHECK: f32[16,7,18]{2,1,0} fusion({{.*}})
+; CHECK: ROOT {{.*}} f16[7,18]{1,0} fusion({{.*}})
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));
@@ -594,6 +597,9 @@ ENTRY e {
     backend_config={"fusion_backend_config":{kind: "__triton_gemm", triton_gemm_config: {"block_m":16,"block_n":64,"block_k":32,"split_k":3,"num_stages":1,"num_warps":2,"num_ctas":1}}}
 })";
 
+  // Check for tiling and splitk.
+  // To check for splitk, we check that two fusions are created - one for dot
+  // and the second for reduce.
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: f16[55,3,40]{2,1,0} fusion
 ; CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
@@ -602,7 +608,8 @@ ENTRY e {
 ; CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
 ; CHECK-SAME: "sizes":["1","32","64"]
 ; CHECK: ENTRY
-; CHECK: ROOT {{.*}} f16[55,20]{1,0} fusion({{.*}}), kind=kLoop
+; CHECK: f32[3,55,20]{2,1,0} fusion({{.*}})
+; CHECK: ROOT {{.*}} f16[55,20]{1,0} fusion({{.*}})
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1758,6 +1765,39 @@ TEST_F(GemmFusionAutotunerTest, ScaledDotConfigsAreGenerated) {
   std::set<TritonGemmConfig> blackwell_configs_set(blackwell_configs.begin(),
                                                    blackwell_configs.end());
   EXPECT_GT(blackwell_configs_set.size(), 0);
+}
+
+TEST_F(GemmFusionAutotunerTest, ScaledDotConfigsHaveCuBlasFallback) {
+  if (isRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
+
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    fusion_computation {
+      p0 = f32[1024,1024] parameter(0)
+      p0_scale = f32[1024,8] parameter(1)
+      p1 = f32[1024,1024] parameter(2)
+      p1_scale = f32[8,1024] parameter(3)
+      ROOT r = f32[1024,1024] scaled-dot(p0, p0_scale, p1, p1_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+
+    ENTRY e {
+      p0 = f32[1024,1024] parameter(0)
+      p0_scale = f32[1024,8] parameter(1)
+      p1 = f32[1024,1024] parameter(2)
+      p1_scale = f32[8,1024] parameter(3)
+      ROOT r = f32[1024,1024] fusion(p0, p0_scale, p1, p1_scale),
+        kind=kCustom, calls=fusion_computation
+    })")
+                                                  .value();
+
+  auto configs = GetPossibleMatmulAutotuneConfigs(*module);
+  EXPECT_TRUE(hasCublasConfig(configs.value()))
+      << "There should be at least one config with cublas fallback for "
+         "scaled-dot.";
 }
 
 // TODO(b/315957220): Remove the experimental flags once TMA is enabled by

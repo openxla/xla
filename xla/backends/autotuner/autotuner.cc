@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/autotuner/autotuner.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -309,6 +310,16 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
     std::vector<ConfigResult>& results) {
+  if (autotune_config_.exclude_cublas_config) {
+    results.erase(
+        std::remove_if(results.begin(), results.end(),
+                       [](const ConfigResult& result) {
+                         return result.config.codegen_backend->name() ==
+                                "cublas";
+                       }),
+        results.end());
+  }
+
   absl::Duration min_duration = absl::InfiniteDuration();
   ConfigResult* best_result = nullptr;
   for (ConfigResult& result : results) {
@@ -334,6 +345,9 @@ absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
 
   if (best_result == nullptr) {
     return absl::InternalError("No valid config found!");
+  }
+  if (autotune_config_.select_first_config) {
+    return std::move(results[0]);
   }
 
   return std::move(*best_result);
@@ -462,6 +476,9 @@ AutotuneResult Autotuner::ConfigResult::ToProto() const {
   } else if (config.backend_config
                  ->Is<stream_executor::dnn::AlgorithmProto>()) {
     config.backend_config->UnpackTo(result.mutable_algorithm());
+  } else {
+    result.mutable_other()->set_name(config.codegen_backend->name());
+    *result.mutable_other()->mutable_config() = *config.backend_config;
   }
   if (failure.has_value()) {
     *result.mutable_failure() = failure->ToProto();

@@ -13,22 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_CLONE_MANUAL_COMPUTATION_CALLS_H_
-#define XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_CLONE_MANUAL_COMPUTATION_CALLS_H_
+#ifndef XLA_BACKENDS_GPU_RUNTIME_THUNK_ID_H_
+#define XLA_BACKENDS_GPU_RUNTIME_THUNK_ID_H_
 
-#include <memory>
+#include <cstdint>
 
-#include "mlir/Pass/Pass.h"
+#include "xla/tsl/lib/gtl/int_type.h"
 
-namespace xla {
-namespace sdy {
+namespace xla::gpu {
 
-std::unique_ptr<mlir::Pass> createSdyRoundTripCloneManualComputationCallsPass();
+// Unique identifier for a thunk. When creating a thunk graph it's up to the
+// emitter to generate unique IDs.
+TSL_LIB_GTL_DEFINE_INT_TYPE(ThunkId, uint64_t);
 
-// Registers the xla-sdy-round-trip-clone-manual-computation-calls pass.
-void registerSdyRoundTripCloneManualComputationCallsPass();
+// Generates unique IDs for thunks. This class is thread-compatible.
+class ThunkIdGenerator {
+ public:
+  ThunkId GetNextThunkId() { return ThunkId(next_thunk_id_++); }
 
-}  // namespace sdy
-}  // namespace xla
+ private:
+  uint64_t next_thunk_id_ = 1;
+};
 
-#endif  // XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_CLONE_MANUAL_COMPUTATION_CALLS_H_
+}  // namespace xla::gpu
+
+#endif  // XLA_BACKENDS_GPU_RUNTIME_THUNK_ID_H_

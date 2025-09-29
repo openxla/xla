@@ -432,7 +432,7 @@ HloRunnerPjRt::ExecuteWithDeviceBuffers(
       PjRtLoadedExecutable * pjrt_executable,
       wrapped_executable->GetOrLoadExecutable(pjrt_client_.get()));
   std::vector<PjRtBuffer*> argument_ptrs = BufferVecToPointerVec(arguments);
-  std::optional<PjRtFuture<>> returned_future = {};
+  std::optional<Future<>> returned_future = {};
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<PjRtBuffer>> buffers,
       pjrt_executable->ExecuteSharded(
@@ -474,7 +474,7 @@ HloRunnerPjRt::ExecuteWithExecutable(OpaqueExecutable* executable,
       continue;
     }
     results.push_back(TransferLiteralsFromDevice(
-        *std::move(output_buffers), execute_options.untuple_result));
+        *std::move(output_buffers), module.result_shape().IsTuple()));
   }
   return results;
 }
@@ -629,7 +629,7 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
                     DeviceIdForInvocation(*device_assignment, i)));
             pool.Schedule([&per_replica_results, i, pjrt_executable,
                            args = argument_buffer_slices[i], device_ptr]() {
-              std::optional<PjRtFuture<>> returned_future = {};
+              std::optional<Future<>> returned_future = {};
               xla::ExecuteOptions options;
               options.untuple_result = true;
               per_replica_results[i] = pjrt_executable->ExecuteSharded(

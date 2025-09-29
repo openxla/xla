@@ -59,14 +59,18 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/cpu/nanort/nanort_client.h"
+#include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
+#include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -143,6 +147,7 @@ limitations under the License.
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_permute_decomposer.h"
@@ -152,6 +157,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/copy_insertion.h"
+#include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu_gpu_shape_verifier.h"
 #include "xla/service/debug/unstable_reduction_detector.h"
 #include "xla/service/dump.h"
@@ -166,6 +172,7 @@ limitations under the License.
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/fusion_dispatch_pipeline.h"
@@ -921,23 +928,12 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<WhileLoopSimplifier>();
     pipeline.AddPass<SliceSinker>();
 
-    ReshapeMoverOptions reshape_mover_options;
-    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
-    pipeline.AddPass<ReshapeMover>(reshape_mover_options);
     pipeline.AddPass<HloConstantFolding>();
     pipeline.AddPass<ConditionalSimplifier>();
     pipeline.AddPass<RealImagExpander>();
     pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot);
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
-  }();
-
-  // ConvertMover and ReshapeMover fight with each other: ConvertMover wants
-  // to move some converts down the graph, but ReshapeMover wants to move them
-  // up the graph.  As a compromise, let ReshapeMover run to a fixed point,
-  // and then run ConvertMover + algsimp to a fixed point.
-  [&, &pipeline =
-          pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification-2")] {
     pipeline.AddPass<ConvertMover>();
     pipeline.AddPass<GpuAlgebraicSimplifier>(layout_insensitive_algsimp_opts,
                                              gpu_version);
@@ -1605,7 +1601,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
     HloPassPipeline pipeline("autotune-fusion-emitters");
     TF_RETURN_IF_ERROR(AddFusionAutotuningPass(
         &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
-        ShapeSizeBytesFunction()));
+        &gpu_target_config, ShapeSizeBytesFunction()));
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
@@ -1863,7 +1859,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPasses(
       &pipeline, gpu_version, options, hlo_module, autotune_config, thread_pool,
-      stream_exec));
+      stream_exec, &gpu_target_config));
 
   // The GEMM fusion autotuner can insert new bf16 reductions that need to be
   // normalized again.
@@ -1871,9 +1867,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // Match the location of this pass in `gemm_fusion_autotuner.cc` to make sure
   // that there is no discrepancy.
-  pipeline.AddPass<NestGemmFusion>(
-      gpu_target_config.device_description.gpu_compute_capability(),
-      &mlir_context_);
+  pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
+                                   &mlir_context_);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
@@ -2251,8 +2246,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     const HloModuleConfig& module_config,
     CompileModuleResults& compile_module_results,
     const se::DeviceDescription& device_description,
-    se::StreamExecutor* stream_exec, const CompileOptions& options,
-    const HloModule* debug_module) {
+    const CompileOptions& options, const HloModule* debug_module) {
   tsl::profiler::TraceMe traceme("CompileAndLink");
   llvm::Module* llvm_module = &*compile_module_results.llvm_module;
 
@@ -2461,7 +2455,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   }
 
   auto maybe_backend_result =
-      LinkModules(device_description, stream_exec, std::move(binaries_to_link),
+      LinkModules(device_description, std::move(binaries_to_link),
                   module_config.debug_options());
   if (!maybe_backend_result.ok()) {
     LOG(ERROR) << "The CUDA linking API did not work. Please use XLA_FLAGS="
@@ -2476,15 +2470,30 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   return BackendCompileResult{ptx_snippets, std::move(*maybe_backend_result)};
 }
 
+namespace {
+absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
+    const HloModuleProto& hlo_proto) {
+  xla::cpu::NanoRtClient client;
+  XlaComputation computation(hlo_proto);
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::cpu::NanoRtExecutable> executable,
+                      client.Compile(computation));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<AotCompilationResult> result,
+                      client.Export(executable.get()));
+  xla::cpu::CpuAotCompilationResult* cpu_aot_compilation_result =
+      tsl::down_cast<xla::cpu::CpuAotCompilationResult*>(result.get());
+  return cpu_aot_compilation_result->proto();
+}
+}  // namespace
+
 absl::StatusOr<GpuCompiler::CompileResultWithMetadata>
 GpuCompiler::CompileToBackendResult(
     HloModule* module, llvm::LLVMContext* llvm_context,
-    se::StreamExecutor* executor, const CompileOptions& options,
+    const CompileOptions& options,
     const se::DeviceDescription& gpu_device_info) {
   tsl::profiler::TraceMe traceme("CompileToBackendResult");
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
-  TF_RETURN_IF_ERROR(RunPreSchedulingPasses(module, executor, gpu_device_info,
-                                            alias_info.get()));
+  TF_RETURN_IF_ERROR(
+      RunPreSchedulingPasses(module, gpu_device_info, alias_info.get()));
   TF_ASSIGN_OR_RETURN(ScheduleMetadata schedule_metadata,
                       ScheduleGpuModule(module, pointer_size_, gpu_device_info,
                                         &mlir_context_, alias_info.get()));
@@ -2505,12 +2514,8 @@ GpuCompiler::CompileToBackendResult(
             ". Are you missing gpu_plugin or stream_executor dependency?"));
   }
 
-  // Test whether LinkModules is supported.
-  bool can_use_link_modules = (executor != nullptr);
-  if (can_use_link_modules) {
-    TF_ASSIGN_OR_RETURN(can_use_link_modules,
-                        CanUseLinkModules(module->config(), gpu_device_info));
-  }
+  TF_ASSIGN_OR_RETURN(bool can_use_link_modules,
+                      CanUseLinkModules(module->config(), gpu_device_info));
   const bool split_modules =
       can_use_link_modules &&
       module->config()
@@ -2555,10 +2560,9 @@ GpuCompiler::CompileToBackendResult(
   // TODO(anlunx): Enable multi-threading once deviceless AOT compilation is
   // enabled.
   if (split_modules) {
-    TF_ASSIGN_OR_RETURN(
-        backend_result,
-        CompileAndLink(module->config(), compile_module_results,
-                       gpu_device_info, executor, options, module));
+    TF_ASSIGN_OR_RETURN(backend_result,
+                        CompileAndLink(module->config(), compile_module_results,
+                                       gpu_device_info, options, module));
   } else {
     CHECK(compile_module_results.llvm_module_constants == nullptr);
     TF_ASSIGN_OR_RETURN(
@@ -2573,6 +2577,26 @@ GpuCompiler::CompileToBackendResult(
     DumpToFileInDirOrStdout(
         *module, "", "thunk_sequence.txt",
         compile_module_results.executable->ToString(/*indent=*/0));
+  }
+
+  // Host executable has to be compiled the GPU compilation is done to
+  // avoid a deadlock on the LLVM command line options lock. We can then load
+  // it.
+  for (auto& thunk : compile_module_results.executable->thunks()) {
+    if (thunk->kind() == Thunk::Kind::kHostExecuteStart) {
+      auto* host_execute_start_thunk =
+          tsl::down_cast<HostExecuteStartThunk*>(thunk.get());
+      TF_ASSIGN_OR_RETURN(
+          xla::cpu::CompilationResultProto cpu_compilation_result,
+          GetCpuCompilationResult(
+              host_execute_start_thunk->executable_proto().hlo_module()));
+
+      *host_execute_start_thunk->mutable_executable_proto()
+           ->mutable_aot_compilation_result() =
+          std::move(cpu_compilation_result);
+
+      TF_RETURN_IF_ERROR(host_execute_start_thunk->LoadExecutable());
+    }
   }
 
   return CompileResultWithMetadata{std::move(backend_result),
@@ -2644,10 +2668,9 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      CompileResultWithMetadata res,
-      CompileToBackendResult(module.get(), &llvm_context, stream_exec, options,
-                             gpu_device_info));
+  TF_ASSIGN_OR_RETURN(CompileResultWithMetadata res,
+                      CompileToBackendResult(module.get(), &llvm_context,
+                                             options, gpu_device_info));
 
   if (DumpingEnabledForHloModule(*module)) {
     DumpToFileInDirOrStdout(
@@ -2766,7 +2789,7 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     llvm::LLVMContext llvm_context;
     TF_ASSIGN_OR_RETURN(
         CompileResultWithMetadata res,
-        CompileToBackendResult(module.get(), &llvm_context, options.executor(),
+        CompileToBackendResult(module.get(), &llvm_context,
                                {options.device_allocator()}, gpu_device_info));
 
     // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
@@ -2798,8 +2821,7 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
 }
 
 absl::Status GpuCompiler::RunPreSchedulingPasses(
-    HloModule* module, se::StreamExecutor* stream_exec,
-    const se::DeviceDescription& gpu_device_info,
+    HloModule* module, const se::DeviceDescription& gpu_device_info,
     const GpuAliasInfo* alias_info) {
   tsl::profiler::TraceMe traceme("RunPreSchedulingPasses");
   HloPassPipeline pipeline("pre-scheduling-passes");
@@ -2911,7 +2933,7 @@ HloRematerialization::Options CreateRematOpts(
 absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloModule* module, int64_t scheduler_mem_limit,
     const se::DeviceDescription& gpu_device_info,
-    const GpuAliasInfo* alias_info) const {
+    const GpuAliasInfo* alias_info) {
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
   TF_RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
   HloPassPipeline main_pipeline("post-scheduling-passes");
@@ -2965,8 +2987,8 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
-    main_pipeline.AddPass<HloPassPipeline>(
-        FusionDispatchPipeline(gpu_device_info, ShapeSizeBytesFunction()));
+    main_pipeline.AddPass<HloPassPipeline>(FusionDispatchPipeline(
+        gpu_device_info, ShapeSizeBytesFunction(), mlir_context()));
   }
 
   // Pipeline with passes which wrap a scheduled module into command buffers.

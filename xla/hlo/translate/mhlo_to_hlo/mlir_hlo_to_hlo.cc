@@ -83,6 +83,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
@@ -1298,6 +1299,22 @@ void BuildGetTupleElementsForTupleResults(
     mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
     llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
     unsigned num_implicit_results = 0) {
+  auto get_tuple_element_original_value_proto =
+      [&builder](int64_t index) -> std::optional<xla::OriginalValueProto> {
+    auto original_value_proto = builder->original_value();
+    if (original_value_proto.has_value()) {
+      auto original_value =
+          xla::OriginalValue::FromProto(*original_value_proto);
+      auto subtree = original_value->tree().Subtree({index});
+      if (subtree.ok()) {
+        auto element_original_value =
+            std::make_shared<xla::OriginalValue>(std::move(subtree.value()));
+        return element_original_value->ToProto();
+      }
+    }
+    return std::nullopt;
+  };
+
   const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
@@ -1309,11 +1326,19 @@ void BuildGetTupleElementsForTupleResults(
       xla::XlaScopedShardingAssignment scoped_sharding(
           builder,
           is_tuple_sharding ? sharding->tuple_shardings(index) : sharding);
+      // Set the original value for the get-tuple-element.
+      xla::XlaScopedOriginalValueAssignment original_value(
+          builder,
+          get_tuple_element_original_value_proto(static_cast<int64_t>(index)));
       values[result] = xla::GetTupleElement(tuple, index);
     }
   } else {
     xla::XlaScopedShardingAssignment scoped_sharding(builder, std::nullopt);
     for (auto [index, result] : llvm::enumerate(op->getResults())) {
+      // Set the original value for the get-tuple-element.
+      xla::XlaScopedOriginalValueAssignment original_value(
+          builder,
+          get_tuple_element_original_value_proto(static_cast<int64_t>(index)));
       values[result] = xla::GetTupleElement(tuple, index);
     }
   }
@@ -3007,8 +3032,7 @@ LogicalResult ExportXlaOp(SelectAndScatterOp op, OpLoweringContext ctx) {
 // available through xla::RemoveDynamicDimension, so to avoid changing MHLO
 // semantics we explicitly check for that case here.  However, we should
 // consider adding a RemoveDynamicDimensionOp to HLO and MHLO.
-mlir::LogicalResult ExportXlaOp(mlir::stablehlo::SetDimensionSizeOp op,
-                                OpLoweringContext ctx) {
+mlir::LogicalResult ExportXlaOp(SetDimensionSizeOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   auto result = op.getResult();
   xla::XlaOp array;
@@ -3020,8 +3044,8 @@ mlir::LogicalResult ExportXlaOp(mlir::stablehlo::SetDimensionSizeOp op,
     return op.emitError(shape_or.status().ToString());
   }
   xla::XlaOp xla_result;
-  if (auto constant = llvm::dyn_cast_or_null<mlir::mhlo::ConstantOp>(
-          op.getSize().getDefiningOp());
+  if (auto constant =
+          llvm::dyn_cast_or_null<ConstantOp>(op.getSize().getDefiningOp());
       constant != nullptr) {
     auto value = constant.getValue();
     auto values = value.getValues<mlir::IntegerAttr>();
@@ -5177,26 +5201,30 @@ LogicalResult ExportXlaOp(UniformDequantizeOp op, OpLoweringContext ctx) {
   return failure();
 }
 
-LogicalResult ExportXlaOp(AcosOp op, OpLoweringContext ctx) {
+template <typename Op,
+          xla::XlaOp OpFunc(xla::XlaOp,
+                            const std::optional<xla::ResultAccuracy>&, bool)>
+LogicalResult ExportElementwiseXlaOp(Op op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
     return failure();
   }
   value_map[op] =
-      xla::Acos(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
+      OpFunc(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
   return success();
 }
 
+LogicalResult ExportXlaOp(AcosOp op, OpLoweringContext ctx) {
+  return ExportElementwiseXlaOp<AcosOp, xla::Acos>(op, ctx);
+}
+
 LogicalResult ExportXlaOp(AcoshOp op, OpLoweringContext ctx) {
-  auto& value_map = *ctx.values;
-  xla::XlaOp operand;
-  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
-    return failure();
-  }
-  value_map[op] =
-      xla::Acosh(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
-  return success();
+  return ExportElementwiseXlaOp<AcoshOp, xla::Acosh>(op, ctx);
+}
+
+LogicalResult ExportXlaOp(AtanhOp op, OpLoweringContext ctx) {
+  return ExportElementwiseXlaOp<AtanhOp, xla::Atanh>(op, ctx);
 }
 
 LogicalResult ExportXlaOp(TopKOp op, OpLoweringContext ctx) {
@@ -5913,8 +5941,8 @@ LogicalResult ConvertToHloModule::RunOnFunction(mlir::func::FuncOp f) {
     // means no replication. This avoids the need for unrelated tests to handle
     // this field.
     if (!any_arg_replicated) entry_args_same_across_replicas.clear();
-    ExtractFrontendAttributesFromFunction(f, &arg_fe_attrs);
   }
+  ExtractFrontendAttributesFromFunction(f, &arg_fe_attrs);
   ExtractShardingsFromFunction(f, &arg_shardings, &ret_shardings,
                                entry_function);
   xla::XlaComputationId computation;

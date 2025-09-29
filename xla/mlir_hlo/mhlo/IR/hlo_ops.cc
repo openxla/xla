@@ -361,12 +361,14 @@ INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AcoshOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AsinOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AndOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(Atan2Op)
+INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AtanhOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CbrtOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CeilOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(ClzOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CollectiveBroadcastOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CollectivePermuteOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CopyOp)
+INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CoshOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CosineOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(CrossReplicaSumOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(DivOp)
@@ -2792,10 +2794,17 @@ class BroadcastInDimSimplifier : public OpRewritePattern<BroadcastInDimOp> {
                                                op.getOperand());
         return success();
       }
-      // BroadcastInDim equivalent to transpose
+      // BroadcastInDim equivalent to transpose, except that the index values
+      // are reversed; broadcast_dim[i] == j <=> transpose[j] == i
       if (operandType.getRank() == resultType.getRank() && sameTotalElements) {
+        SmallVector<int64_t> permutation(operandType.getRank());
+        for (int64_t i = 0; i < operandType.getRank(); ++i) {
+          permutation[bsDimIndices[i]] = i;
+        }
+        auto permutationAttr = DenseIntElementsAttr::get(
+            op.getBroadcastDimensions().getType(), permutation);
         rewriter.replaceOpWithNewOp<TransposeOp>(
-            op, op.getType(), op.getOperand(), op.getBroadcastDimensions());
+            op, op.getType(), op.getOperand(), permutationAttr);
         return success();
       }
     }
@@ -5122,6 +5131,8 @@ UNARY_FOLDER_FLOAT(RoundOp, Round)
 UNARY_FOLDER_UPCAST_TO_F64(AcosOp, std::acos, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(AcoshOp, std::acosh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(AsinOp, std::asin, AnyValue)
+UNARY_FOLDER_UPCAST_TO_F64(AtanhOp, std::atanh, AnyValue)
+UNARY_FOLDER_UPCAST_TO_F64(CoshOp, std::cosh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(CosineOp, std::cos, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(ErfOp, std::erf, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(ExpOp, std::exp, AnyValue)

@@ -7,6 +7,10 @@ load(
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -139,6 +143,7 @@ cc_library(
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
         "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",
+        "//xla/codegen/emitters/transforms:passes",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
@@ -171,6 +176,20 @@ cc_library(
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:NVHopperTransforms",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
+    ],
+)
+
+xla_cc_test(
+    name = "compilation_pipeline_test",
+    srcs = ["compilation_pipeline_test.cc"],
+    tags = ["gpu"],
+    deps = [
+        ":compilation_pipeline",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
     ],
 )
 
@@ -277,6 +296,8 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@triton//:TritonTransforms",
+    ]) + if_cuda_is_configured([
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
     ]),
 )
 
@@ -811,12 +832,11 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
@@ -1015,10 +1035,9 @@ xla_cc_test(
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",

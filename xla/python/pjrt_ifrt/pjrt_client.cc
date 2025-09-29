@@ -1386,7 +1386,7 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
     TF_ASSIGN_OR_RETURN(ShardingRef new_sharding,
                         arrays[i]->shared_ptr_sharding()->WithDeviceAssignment(
                             dst_devices, memory_kind));
-    TF_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->layout());
+    TF_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->pjrt_layout());
     TF_ASSIGN_OR_RETURN(
         new_arrays.emplace_back(),
         PjRtArray::Create(this, arrays[i]->dtype(), arrays[i]->shape(),
@@ -1507,7 +1507,7 @@ absl::Status PjRtClient::CrossHostSendBuffers(
   // TODO(emilyaf): Use an async version of KeyValueStore::Get or query batched
   // keys together to reduce the number of threads used.
   for (int i = 0; i < keys.size(); ++i) {
-    auto [promise, descriptor_future] = PjRtFuture<std::string>::MakePromise();
+    auto [promise, descriptor_future] = Future<std::string>::MakePromise();
     work_queue_->Schedule(
         [this, k = keys[i], promise = std::move(promise).ToShared()]() mutable {
           std::string key = absl::StrCat(kKeyPrefix, k);
