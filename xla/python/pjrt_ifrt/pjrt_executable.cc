@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -208,7 +209,7 @@ absl::StatusOr<std::string> PjRtExecutable::Serialize() const {
 }
 
 absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
-    PjRtCompatibleClient* client,
+    PjRtClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
     DeviceListRef executable_devices) {
@@ -249,7 +250,7 @@ static absl::StatusOr<std::vector<xla::Shape>> ResultShapesOfModule(
 }
 
 absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
-    PjRtCompatibleClient* client, mlir::ModuleOp module,
+    PjRtClient* client, mlir::ModuleOp module,
     xla::CompileOptions compile_options,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
     DeviceListRef executable_devices) {
@@ -321,7 +322,7 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
 }
 
 absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::CreateInternal(
-    PjRtCompatibleClient* client,
+    PjRtClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
     absl::Span<const xla::PrimitiveType> result_element_types,
     absl::Span<const xla::DimensionVector> result_dimensions,
@@ -491,7 +492,7 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::CreateInternal(
 }
 
 PjRtLoadedExecutable::PjRtLoadedExecutable(
-    PjRtCompatibleClient* client,
+    PjRtClient* client,
     std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
     DeviceListRef devices, std::vector<Device*> addressable_devices,
     std::vector<tsl::RCReference<LoadedHostCallback>> all_loaded_host_callbacks,
@@ -571,6 +572,13 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
   opts.use_major_to_minor_data_layout_for_callbacks = true;
   opts.non_donatable_input_indices = options.non_donatable_input_indices;
   opts.execution_stream_id = options.execution_stream_id;
+  absl::StatusOr<absl::flat_hash_map<int, IncarnationId>> incarnations =
+      client()->Incarnations();
+  if (incarnations.ok()) {
+    opts.incarnations = *std::move(incarnations);
+  } else {
+    VLOG(3) << "Unable to get incarnations: " << incarnations.status();
+  }
 
   if (options.custom_options.has_value()) {
     const auto& attributes = options.custom_options->map();
@@ -651,7 +659,7 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
   std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> pjrt_outputs;
   xla::ifrt::Future<> status;
   if (portable_execution) {
-    std::optional<PjRtFuture<>> returned_pjrt_future;
+    std::optional<Future<>> returned_pjrt_future;
     TF_RET_CHECK(portable_execution_device->IsAddressable());
     TF_ASSIGN_OR_RETURN(
         std::vector<std::unique_ptr<PjRtBuffer>> single_device_pjrt_results,
@@ -663,7 +671,7 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     pjrt_outputs.push_back(std::move(single_device_pjrt_results));
     status = *std::move(returned_pjrt_future);
   } else {
-    std::optional<std::vector<PjRtFuture<>>> returned_pjrt_futures;
+    std::optional<std::vector<Future<>>> returned_pjrt_futures;
     returned_pjrt_futures.emplace();
 
     TF_ASSIGN_OR_RETURN(
@@ -726,7 +734,7 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
           layout = std::make_shared<xla::PjRtLayout>(xla::Layout());
         } else {
           TF_ASSIGN_OR_RETURN(layout,
-                              client_->GetDefaultLayout(
+                              client_->GetDefaultPjRtLayout(
                                   output_dtypes_[i], output_shapes_[i].dims(),
                                   devices_->devices().front(),
                                   output_shardings_[i]->memory_kind()));

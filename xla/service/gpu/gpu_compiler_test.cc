@@ -120,9 +120,10 @@ class GpuCompilerTest : public HloTestBase {
     GpuCompiler* gpu_compiler = tensorflow::down_cast<GpuCompiler*>(compiler);
     std::unique_ptr<GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(gpu_device_info);
-    TF_RETURN_IF_ERROR(
-        ScheduleGpuModule(module, 4, gpu_device_info, alias_info.get())
-            .status());
+    TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info,
+                                         gpu_compiler->mlir_context(),
+                                         alias_info.get())
+                           .status());
     return gpu_compiler->RunPostSchedulingPipelines(
         module, 4 * 1024 * 1024, gpu_device_info, alias_info.get());
   }
@@ -2132,6 +2133,146 @@ TEST_F(GpuCompilerTest, NoCudnnVectorizationOnHopperAndBeyond) {
               absl_testing::IsOkAndHolds(true));
 }
 
+TEST_F(GpuCompilerTest, BitcastConvertSimplificationToBitcastIsValid) {
+  const std::string kHloText = R"(
+m {
+  a = s4[3,5,2]{2,1,0} parameter(0)
+  b = s8[3,5]{1,0} bitcast-convert(a)
+  c = s8[3,5]{1,0} copy(b)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                          GetOptimizedModule(kHloText));
+  EXPECT_THAT(optimized_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Copy(m::Bitcast(m::Parameter()))));
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.add_xla_disable_hlo_passes("algsimp");
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> ref_module,
+                          ParseAndReturnVerifiedModule(kHloText, config));
+  TF_ASSERT_OK_AND_ASSIGN(ref_module,
+                          GetOptimizedModule(std::move(ref_module)));
+  EXPECT_THAT(ref_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter())));
+
+  EXPECT_TRUE(RunAndCompareTwoModules(std::move(optimized_module),
+                                      std::move(ref_module), std::nullopt,
+                                      /*run_hlo_passes=*/false));
+}
+
+// Define a test-specific enum for expected TopK implementations.
+enum class TopKImpl {
+  kCustomKernel,  // Custom GPU kernel
+  kSelectK,       // raft::select_k
+  kSort           // Fallback Sort+Slice
+};
+
+// Test fixture for verifying GPU TopK lowering to SelectK or custom kernel.
+class GpuCompilerSelectKTest
+    : public GpuCompilerTest,
+      public ::testing::WithParamInterface<std::tuple<int, int, TopKImpl>> {};
+
+// Test lowering of TopK to different GPU implementations
+// (CustomKernel, raft::select_k, or Sort+Slice (LLVM/CUBSort)).
+TEST_P(GpuCompilerSelectKTest, SelectKOrCustomKernelThunk) {
+  auto [n, k, expected_impl] = GetParam();
+
+  // Generate HLO text with parameters substituted.
+  std::string hlo_text = absl::Substitute(R"(
+HloModule m
+
+ENTRY main {
+  p = f32[8,$0]{1,0} parameter(0)
+  ROOT t = (f32[8,$1]{1,0}, s32[8,$1]{1,0}) topk(p), k=$1, largest=true
+}
+)",
+                                          n, k);
+
+  // Configure module with debug options for experimental raft select_k.
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_use_raft_select_k(true);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> compiled_module,
+      backend().compiler()->RunHloPasses(module->Clone(),
+                                         backend().default_stream_executor(),
+                                         /*device_allocator=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      backend().compiler()->RunBackend(std::move(compiled_module),
+                                       backend().default_stream_executor(),
+                                       {/*device_allocator=*/nullptr,
+                                        /*thread_pool=*/nullptr,
+                                        /*layout_canonicalization_callback=*/{},
+                                        /*is_autotuning_compilation=*/false}));
+
+  // Downcast to GPU executable
+  xla::gpu::GpuExecutable* gpu_executable =
+      tensorflow::down_cast<xla::gpu::GpuExecutable*>(executable.get());
+  ASSERT_NE(gpu_executable, nullptr);
+
+  // Get the thunk sequence and check its size and type
+  const SequentialThunk& seq_thunk = gpu_executable->GetThunk();
+  std::vector<Thunk::Kind> kinds;
+  kinds.reserve(seq_thunk.thunks().size());
+  for (const auto& thunk : seq_thunk.thunks()) {
+    kinds.push_back(thunk->kind());
+  }
+
+  using ::testing::ElementsAre;
+
+  switch (expected_impl) {
+    case TopKImpl::kCustomKernel:
+      EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCustomKernel));
+      break;
+
+    case TopKImpl::kSelectK:
+      EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kSelectK));
+      break;
+
+    case TopKImpl::kSort: {
+      if (kinds.size() == 1) {
+        // LLVM
+        EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCommandBuffer));
+      } else if (kinds.size() == 4) {
+        // CUBSort
+        EXPECT_THAT(kinds,
+                    ElementsAre(Thunk::Kind::kKernel, Thunk::Kind::kCubSort,
+                                Thunk::Kind::kKernel, Thunk::Kind::kKernel));
+      } else {
+        FAIL() << "Unexpected thunk sequence size: " << kinds.size();
+      }
+      break;
+    }
+
+    default:
+      FAIL() << "Unexpected TopKImpl: " << static_cast<int>(expected_impl);
+  }
+}
+
+auto SelectKTestParams() {
+  // Depending on N and K, XLA chooses different TopK implementations:
+  // CustomKernel, raft::select_k, or Sort+Slice.
+  // The heuristic for selecting between TopK CustomKernel and
+  // raft::matrix::select_k was developed as part of the initial research
+  // described in b/409009349.
+  return ::testing::Values(std::make_tuple(1023, 4, TopKImpl::kSelectK),
+                           std::make_tuple(1024, 4, TopKImpl::kCustomKernel),
+                           std::make_tuple(1024, 16, TopKImpl::kSelectK),
+                           std::make_tuple(8192, 24, TopKImpl::kSelectK),
+                           std::make_tuple(8192, 512, TopKImpl::kSort));
+}
+// Instantiate the test suite with (n, k, expected_kind) pairs.
+INSTANTIATE_TEST_SUITE_P(SelectKOrCustomKernel, GpuCompilerSelectKTest,
+                         SelectKTestParams());
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -462,8 +463,22 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
       }
       return result;
     }
-    default:
-      return ResourcesVector{};
+    default: {
+      // At this point we are dealing with sync instructions that did not fall
+      // into any of the cases above. We model their resources as a
+      // kResourceOccupy and a kResourceRelease that follows immediately after.
+      ResourcesVector res;
+      if (config_.track_sync_op_resource_usage) {
+        ResourceType type = get_resource_for_op(hlo.opcode());
+        if (type != ResourceType::kNoResource) {
+          res.push_back(std::make_pair(ResourceTypeToIndex(type),
+                                       ResourceUsageType::kResourceOccupy));
+          res.push_back(std::make_pair(ResourceTypeToIndex(type),
+                                       ResourceUsageType::kResourceRelease));
+        }
+      }
+      return res;
+    }
   }
 }
 

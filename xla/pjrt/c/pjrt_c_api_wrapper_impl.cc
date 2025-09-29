@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -34,6 +35,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -41,6 +43,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -56,11 +59,12 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -692,7 +696,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
       "PJRT_AsyncHostToDeviceTransferManager_TransferData_Args",
       PJRT_AsyncHostToDeviceTransferManager_TransferData_Args_STRUCT_SIZE,
       args->struct_size));
-  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
+  auto [promise, future] = xla::Future<>::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
   PJRT_RETURN_IF_ERROR(
@@ -936,6 +940,68 @@ PJRT_Error* PJRT_Client_CreateUninitializedBuffer(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_CreateAliasBuffer(
+    PJRT_Client_CreateAliasBuffer_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_CreateAliasBuffer_Args",
+      PJRT_Client_CreateAliasBuffer_Args_STRUCT_SIZE, args->struct_size));
+  int64_t traceme_context_id = pjrt::GetTracemeContextId(args);
+  tsl::profiler::TraceMeConsumer consumer(
+      "PJRT_Client_CreateBufferAlias",
+      tsl::profiler::ContextType::kPjrtLibraryCall, traceme_context_id);
+
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape shape,
+      pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
+                               args->shape_num_dims, args->shape_layout));
+
+  PJRT_ASSIGN_OR_RETURN(auto alias_buffer,
+                        args->client->client->CreateAliasBuffer(
+                            shape, args->memory->memory_space));
+
+  args->fulfill_alias_buffer_cb =
+      new PJRT_FulfillAliasBufferCallback{std::move(alias_buffer.second)};
+  args->alias_buffer =
+      new PJRT_Buffer{std::move(alias_buffer.first), args->client};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Client_FulfillAliasBuffer(
+    PJRT_Client_FulfillAliasBuffer_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_FulfillAliasBuffer_Args",
+      PJRT_Client_FulfillAliasBuffer_Args_STRUCT_SIZE, args->struct_size));
+  if (args->fulfill_alias_buffer_cb == nullptr) {
+    return new PJRT_Error{absl::InvalidArgumentError(
+        "PJRT_Client_FulfillAliasBuffer_Args.fulfill_alias_buffer_cb is null")};
+  }
+  std::unique_ptr<PJRT_FulfillAliasBufferCallback>
+      fulfill_alias_buffer_cb_owner(args->fulfill_alias_buffer_cb);
+  xla::PjRtFulfillAliasBufferCallback fulfill_alias_buffer_cb =
+      std::move(fulfill_alias_buffer_cb_owner->fulfill_alias_buffer_cb);
+
+  absl::StatusOr<xla::PjRtBuffer*> real_buffer_or;
+  if (args->status_code == 0) {  // PJRT_Error_Code_OK
+    if (args->buffer == nullptr) {
+      return new PJRT_Error{absl::InvalidArgumentError(
+          "Buffer passed to fulfillment callback is null")};
+    }
+    real_buffer_or = args->buffer->buffer.get();
+  } else {
+    real_buffer_or = absl::Status(
+        pjrt::PjrtErrorCodeToStatusCode(args->status_code),
+        absl::string_view(args->error_message, args->error_message_size));
+  }
+
+  absl::Status status = std::move(fulfill_alias_buffer_cb)(real_buffer_or);
+  if (!status.ok()) {
+    LOG(ERROR) << "PJRT_Client_FulfillAliasBuffer: Callback returned error: "
+               << status;
+    return new PJRT_Error{status};
+  }
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
@@ -974,7 +1040,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     }
   }
 
-  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
+  auto [promise, future] = xla::Future<>::MakePromise();
 
   absl::AnyInvocable<void() &&> on_done_with_host_buffer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
@@ -1528,7 +1594,7 @@ PJRT_Error* PJRT_Executable_GetCostAnalysis(
       PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE, args->struct_size));
 
   {
-    absl::MutexLock lock(&args->executable->mutex);
+    absl::MutexLock lock(args->executable->mutex);
     if (!args->executable->cost_analysis_ran) {
       PJRT_RETURN_IF_ERROR(PopulateExecutableCostAnalysis(args->executable));
       args->executable->cost_analysis_ran = true;
@@ -1552,7 +1618,7 @@ PJRT_Error* PJRT_Executable_OutputElementTypes(
       PJRT_Executable_OutputElementTypes_Args_STRUCT_SIZE, args->struct_size));
 
   {
-    absl::MutexLock lock(&args->executable->mutex);
+    absl::MutexLock lock(args->executable->mutex);
     if (!args->executable->out_type_ran) {
       PJRT_RETURN_IF_ERROR(
           PopulateExecutableOutputElementTypes(args->executable));
@@ -1572,7 +1638,7 @@ PJRT_Error* PJRT_Executable_OutputDimensions(
       PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE, args->struct_size));
 
   {
-    absl::MutexLock lock(&args->executable->mutex);
+    absl::MutexLock lock(args->executable->mutex);
     if (!args->executable->out_dimension_ran) {
       PJRT_RETURN_IF_ERROR(
           PopulateExecutableOutputDimensions(args->executable));
@@ -1593,7 +1659,7 @@ PJRT_Error* PJRT_Executable_OutputMemoryKinds(
       PJRT_Executable_OutputMemoryKinds_Args_STRUCT_SIZE, args->struct_size));
 
   {
-    absl::MutexLock lock(&args->executable->mutex);
+    absl::MutexLock lock(args->executable->mutex);
     if (!args->executable->memory_kind_ran) {
       PJRT_RETURN_IF_ERROR(
           PopulateExecutableOutputMemoryKinds(args->executable));
@@ -1749,6 +1815,12 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     }
   }
 
+  for (size_t i = 0; i < args->options->num_tasks; ++i) {
+    int task_id = args->options->task_ids[i];
+    int64_t incarnation_id = args->options->incarnation_ids[i];
+    options.incarnations.insert({task_id, xla::IncarnationId(incarnation_id)});
+  }
+
   std::vector<std::vector<xla::PjRtBuffer*>> cpp_argument_lists =
       Convert2DCBuffersToCppBuffers(args->argument_lists, args->num_devices,
                                     args->num_args);
@@ -1777,7 +1849,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;
     if (args->device_complete_events != nullptr ||
         !cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
-      std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
+      std::optional<std::vector<xla::Future<>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
                             args->executable->get()->Execute(
@@ -1786,7 +1858,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 
       // We assume that these OnReady callbacks will fire even if
       // returned_futures is destroyed first. This is true for the
-      // AsyncValue-based implementation of PjRtFuture.
+      // AsyncValue-based implementation of Future.
       if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
         for (int i = 0; i < returned_futures->size(); ++i) {
           (*returned_futures)[i].OnReady(
@@ -1831,7 +1903,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     }
 
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
-    std::optional<xla::PjRtFuture<>> returned_future;
+    std::optional<xla::Future<>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
     PJRT_ASSIGN_OR_RETURN(
         xla::CompileOptions compile_options,
@@ -1984,7 +2056,7 @@ PJRT_Error* PJRT_Buffer_UnpaddedDimensions(
   std::optional<std::vector<int64_t>>& unpadded_dims =
       args->buffer->unpadded_dims;
   {
-    absl::MutexLock lock(&args->buffer->mu);
+    absl::MutexLock lock(args->buffer->mu);
     if (!unpadded_dims.has_value()) {
       PJRT_ASSIGN_OR_RETURN(std::vector<int64_t> dims,
                             args->buffer->buffer->logical_dimensions());
@@ -2006,7 +2078,7 @@ PJRT_Error* PJRT_Buffer_DynamicDimensionIndices(
   std::optional<std::vector<size_t>>& dyn_dim_indices =
       args->buffer->dynamic_dim_indices;
   {
-    absl::MutexLock lock(&args->buffer->mu);
+    absl::MutexLock lock(args->buffer->mu);
     if (!dyn_dim_indices.has_value()) {
       std::vector<size_t>& dyn_dim_indices_value = dyn_dim_indices.emplace();
       for (int i = 0; i < is_dyn_dim.size(); ++i) {
@@ -2030,7 +2102,7 @@ PJRT_Error* PJRT_Buffer_GetMemoryLayout(
   std::optional<BufferMemoryLayoutData>& layout_data =
       args->buffer->layout_data;
   {
-    absl::MutexLock lock(&args->buffer->mu);
+    absl::MutexLock lock(args->buffer->mu);
     if (!layout_data.has_value()) {
       // TODO(skyewm): change PJRT C API to also use opaque layout type
       std::shared_ptr<const xla::PjRtLayout> pjrt_layout =
@@ -2103,7 +2175,7 @@ PJRT_Error* PJRT_Buffer_CopyRawToHost(PJRT_Buffer_CopyRawToHost_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_CopyRawToHost_Args",
       PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE, args->struct_size));
-  xla::PjRtFuture<> wrapped_promise = args->buffer->buffer->CopyRawToHost(
+  xla::Future<> wrapped_promise = args->buffer->buffer->CopyRawToHost(
       args->dst, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
   return nullptr;
@@ -2180,7 +2252,7 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
 
   auto literal = std::make_unique<xla::MutableBorrowingLiteral>(
       static_cast<char*>(args->dst), host_shape);
-  xla::PjRtFuture<> future = args->src->buffer->ToLiteral(literal.get());
+  xla::Future<> future = args->src->buffer->ToLiteral(literal.get());
 
   args->event = new PJRT_Event{std::move(future)};
   args->event->future.OnReady(
@@ -2203,7 +2275,7 @@ PJRT_Error* PJRT_Buffer_ReadyEvent(PJRT_Buffer_ReadyEvent_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_ReadyEvent_Args", PJRT_Buffer_ReadyEvent_Args_STRUCT_SIZE,
       args->struct_size));
-  xla::PjRtFuture<> wrapped_promise = args->buffer->buffer->GetReadyFuture();
+  xla::Future<> wrapped_promise = args->buffer->buffer->GetReadyFuture();
   args->event = new PJRT_Event{std::move(wrapped_promise)};
   return nullptr;
 }
@@ -2281,7 +2353,7 @@ PJRT_Error* PJRT_CopyToDeviceStream_AddChunk(
       "PJRT_CopyToDeviceStream_AddChunk_Args",
       PJRT_CopyToDeviceStream_AddChunk_Args_STRUCT_SIZE, args->struct_size));
 
-  xla::PjRtFuture<> future =
+  xla::Future<> future =
       args->stream->stream->AddChunk(ConvertToCppChunk(*args->chunk));
   args->transfer_complete = new PJRT_Event{std::move(future)};
   return nullptr;
@@ -2968,6 +3040,10 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_Client_UpdateGlobalProcessInfo,
       /*PJRT_TopologyDescription_Deserialize=*/
       pjrt::PJRT_TopologyDescription_Deserialize,
+      /*PJRT_Client_CreateAliasBuffer=*/
+      pjrt::PJRT_Client_CreateAliasBuffer,
+      /*PJRT_Client_FulfillAliasBuffer=*/
+      pjrt::PJRT_Client_FulfillAliasBuffer,
   };
 }
 

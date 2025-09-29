@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
+#include "xla/service/global_device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -663,7 +664,7 @@ absl::StatusOr<ArrayRef> AssembleStringArrayFromSingleDeviceStringArrays(
                         promise = std::move(buffers_promise).ToShared()](
                            absl::StatusOr<BasicStringArray::Buffers> strbuf,
                            int shard_index) mutable {
-    absl::MutexLock lock(&state->mu);
+    absl::MutexLock lock(state->mu);
     if (state->num_buffers_to_copy == 0) {
       // Nothing to be done. We get here if the buffers of a single
       // device array became ready with a an error previously.
@@ -892,7 +893,7 @@ PjRtClient::PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client)
       attributes_(MakeAttributeMap(pjrt_client_.get())) {}
 
 PjRtClient::~PjRtClient() {
-  absl::MutexLock lock(&shutting_down_mu_);
+  absl::MutexLock lock(shutting_down_mu_);
   shutting_down_ = true;
 }
 
@@ -1385,7 +1386,7 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
     TF_ASSIGN_OR_RETURN(ShardingRef new_sharding,
                         arrays[i]->shared_ptr_sharding()->WithDeviceAssignment(
                             dst_devices, memory_kind));
-    TF_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->layout());
+    TF_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->pjrt_layout());
     TF_ASSIGN_OR_RETURN(
         new_arrays.emplace_back(),
         PjRtArray::Create(this, arrays[i]->dtype(), arrays[i]->shape(),
@@ -1411,7 +1412,7 @@ PjRtClient::CopyArraysForCrossHostFallback(
     absl::Span<ArrayRef> arrays, DeviceListRef src_devices,
     DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind) {
   {
-    absl::MutexLock lock(&(transfer_server_mu_));
+    absl::MutexLock lock(transfer_server_mu_);
     TF_RETURN_IF_ERROR(InitializeTransferServer());
   }
   return (*transfer_server_)
@@ -1439,14 +1440,14 @@ absl::Status PjRtClient::WatchGlobalProcessInfo(
         [this, &response,
          &done](absl::StatusOr<tensorflow::WatchJobStateResponse> r) {
           response = std::move(r);
-          absl::MutexLock lock(&shutting_down_mu_);
+          absl::MutexLock lock(shutting_down_mu_);
           done = true;
         });
 
     {
       // Wait for the WatchJobStateAsync call to finish or for us to shut down,
       // whichever happens first.
-      absl::MutexLock lock(&shutting_down_mu_);
+      absl::MutexLock lock(shutting_down_mu_);
       auto done_or_shutting_down = [this, &done]() {
         shutting_down_mu_.AssertHeld();
         return done || shutting_down_;
@@ -1506,7 +1507,7 @@ absl::Status PjRtClient::CrossHostSendBuffers(
   // TODO(emilyaf): Use an async version of KeyValueStore::Get or query batched
   // keys together to reduce the number of threads used.
   for (int i = 0; i < keys.size(); ++i) {
-    auto [promise, descriptor_future] = PjRtFuture<std::string>::MakePromise();
+    auto [promise, descriptor_future] = Future<std::string>::MakePromise();
     work_queue_->Schedule(
         [this, k = keys[i], promise = std::move(promise).ToShared()]() mutable {
           std::string key = absl::StrCat(kKeyPrefix, k);
@@ -1657,6 +1658,16 @@ absl::Status PjRtClient::TransferFromOutfeed(PjRtDevice* device,
         device->DebugString());
   }
   return device->pjrt_device()->TransferFromOutfeed(literal);
+}
+
+absl::StatusOr<absl::flat_hash_map<int, IncarnationId>>
+PjRtClient::Incarnations() const {
+  if (!distributed_client_) {
+    return absl::FailedPreconditionError("missing distributed client");
+  }
+  TF_ASSIGN_OR_RETURN(tsl::CoordinationServiceAgent * agent,
+                      distributed_client_->GetCoordinationServiceAgent());
+  return agent->Incarnations();
 }
 
 }  // namespace ifrt
