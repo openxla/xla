@@ -68,6 +68,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/redzone_buffers.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion.h"
@@ -563,14 +564,7 @@ bool IsScaledDotFusion(const HloInstruction* fusion_instr) {
   if (fusion_instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
     return false;
   }
-  auto config = fusion_instr->backend_config<GpuBackendConfig>();
-  if (!config.ok()) {
-    return false;
-  }
-  if (config->fusion_backend_config().kind() != kTritonScaledDotFusionKind) {
-    return false;
-  }
-  return true;
+  return IsFusionKind(*fusion_instr, kTritonScaledDotFusionKind);
 }
 
 absl::Status RewriteGemmFusionToCall(HloInstruction* fusion_instr) {
@@ -763,15 +757,6 @@ absl::Status GemmFusionAutotunerRewriterVisitor::HandleFusion(
   TF_RETURN_IF_ERROR(fusion_instr->set_backend_config(gpu_config));
   MarkAsChanged();
   return absl::OkStatus();
-}
-
-bool GemmFusionAutotunerImpl::IsFusionKind(const HloInstruction& hlo,
-                                           absl::string_view kind) {
-  auto gpu_config = hlo.backend_config<GpuBackendConfig>();
-  if (!gpu_config.ok()) {
-    return false;
-  }
-  return gpu_config->fusion_backend_config().kind() == kind;
 }
 
 // Methods required for sorting the configs.
