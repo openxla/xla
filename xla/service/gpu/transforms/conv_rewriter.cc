@@ -140,6 +140,30 @@ bool MaybeConv1dToConv2d(HloInstruction* conv) {
   return false;
 }
 
+bool LooksLikeForwardConvolution(const HloInstruction* conv) {
+  const ConvolutionDimensionNumbers& dnums =
+      conv->convolution_dimension_numbers();
+  const Shape& lhs_shape = conv->operand(0)->shape();
+  const Shape& rhs_shape = conv->operand(1)->shape();
+  const Shape& result_shape = conv->shape();
+
+  // Compare batch and output feature counts. Backward-filter convolutions swap
+  // these, so matching values are a strong signal that this is a forward
+  // convolution, even if it has dilation.
+  int64_t lhs_batches = lhs_shape.dimensions(dnums.input_batch_dimension());
+  int64_t result_batches =
+      result_shape.dimensions(dnums.output_batch_dimension());
+  if (lhs_batches != result_batches) {
+    return false;
+  }
+
+  int64_t rhs_output_features =
+      rhs_shape.dimensions(dnums.kernel_output_feature_dimension());
+  int64_t result_output_features =
+      result_shape.dimensions(dnums.output_feature_dimension());
+  return rhs_output_features == result_output_features;
+}
+
 bool CanImplementAsGpuForwardConv(HloInstruction* conv) {
   const ConvolutionDimensionNumbers& dnums =
       conv->convolution_dimension_numbers();
@@ -193,6 +217,12 @@ ConvolutionMatch MatchBackwardFilter(HloInstruction* conv) {
   //              Convolution
   //                 conv
   CHECK_EQ(HloOpcode::kConvolution, conv->opcode());
+  if (LooksLikeForwardConvolution(conv)) {
+    VLOG(1) << "Convolution " << conv->ToString()
+            << " looks like a forward convolution; skipping backward filter "
+               "rewrite.";
+    return std::nullopt;
+  }
 
   // Step 2: match paddings and dimension numbers of the forward convolution.
   const ConvolutionDimensionNumbers& conv_dnums =
