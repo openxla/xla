@@ -521,7 +521,9 @@ filegroup(
     name = "toolchain_data",
     srcs = glob([
         "%{rocm_root}/bin/hipcc",
-        "%{rocm_root}/lib/llvm/bin/clang*",
+        "%{rocm_root}/lib/llvm/**",
+        "%{rocm_root}/share/hip/**",
+        "%{rocm_root}/amdgcn/**",
     ]),
     visibility = ["//visibility:public"],
 )

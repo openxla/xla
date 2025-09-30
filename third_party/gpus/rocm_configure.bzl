@@ -645,7 +645,7 @@ def _create_local_rocm_repository(repository_ctx):
     rocm_defines = {}
     rocm_defines["%{builtin_sysroot}"] = tf_sysroot
     rocm_defines["%{compiler}"] = "clang"
-    host_compiler_prefix = get_host_environ(repository_ctx, _GCC_HOST_COMPILER_PREFIX, "/usr/bin")
+    host_compiler_prefix = "/usr/bin"
     rocm_defines["%{host_compiler_prefix}"] = host_compiler_prefix
     rocm_defines["%{linker_bin_path}"] = rocm_config.rocm_toolkit_path + host_compiler_prefix
     rocm_defines["%{extra_no_canonical_prefixes_flags}"] = ""
