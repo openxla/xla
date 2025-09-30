@@ -62,6 +62,13 @@ single_version_override(
   patch_strip = 1,
 )
 
+# Use an unreleased version of googletest
+archive_override(
+  module_name = "googletest",
+  urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
+  strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
+)
+
 ##############################################################
 # C++ dependencies
 
