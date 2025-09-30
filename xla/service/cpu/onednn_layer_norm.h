@@ -30,10 +30,6 @@ void ExecuteOneDnnLayerNorm(absl::Span<MemrefInfoHandler> arguments,
                             dnnl::stream& onednn_stream,
                             OneDnnResources& resources);
 
-extern "C" {
-extern void __xla_cpu_runtime_OneDnnLayerNorm(void* result, void** args);
-}  // extern "C"
-
 }  // namespace cpu
 }  // namespace xla
 
