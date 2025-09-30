@@ -177,6 +177,7 @@ cc_library(
         ":all_reduce_thunk",
         ":all_to_all_thunk",
         ":collective_thunk",
+        ":collective_permute_thunk",
         ":command_buffer_cmd",
         ":conditional_thunk",
         ":copy_thunk",
