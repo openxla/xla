@@ -4,6 +4,7 @@ module(name = "xla")
 # Bazel module dependencies
 
 bazel_dep(name = "abseil-cpp", version = "20250814.0", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-py", version = "2.1.0", repo_name = "absl_py")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
 bazel_dep(name = "boringssl", version = "0.20250818.0")
@@ -30,12 +31,12 @@ bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 bazel_dep(name = "grpc-java", version = "1.75.0", repo_name = "DO_NOT_USE_grpc_java")
 
 # TODO: publish an official version of rules_ml_toolchain to BCR
-# https://github.com/google-ml-infra/rules_ml_toolchain/pull/85
+# https://github.com/google-ml-infra/rules_ml_toolchain/pull/94
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/bb7915966180d7a1eeac037f755f0923f09bffb8.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-bb7915966180d7a1eeac037f755f0923f09bffb8",
+  urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/694c2991ff0f1053b1b7bb47458a19f63a4b7a7f.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-694c2991ff0f1053b1b7bb47458a19f63a4b7a7f",
 )
 
 # TODO: Upstream the patch?
@@ -65,7 +66,6 @@ single_version_override(
 # TODO: most of them can be Bazel modules, but need a release strategy for them
 third_party = use_extension("//third_party/extensions:third_party.bzl", "third_party_extension")
 use_repo(third_party,
-    "absl_py",
     "cpuinfo",
     "cudnn_frontend_archive",
     "ducc",
@@ -100,13 +100,42 @@ python.toolchain(python_version = "3.11")
 use_repo(python, "pythons_hub")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+pip.whl_mods(
+    hub_name = "pypi_mods",
+    whl_name = "numpy",
+    additive_build_content = """
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+cc_library(
+    name = "numpy_headers_2",
+    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"]),
+    strip_include_prefix="site-packages/numpy/_core/include/",
+)
+cc_library(
+    name = "numpy_headers_1",
+    hdrs = glob(["site-packages/numpy/core/include/**/*.h"]),
+    strip_include_prefix="site-packages/numpy/core/include/",
+)
+cc_library(
+    name = "numpy_headers",
+    deps = [":numpy_headers_2", ":numpy_headers_1"],
+)
+""",
+)
+
 pip.parse(
     hub_name = "xla_pypi",
     python_version = "3.11",
     requirements_lock = "//:requirements_lock_3_11.txt",
+    whl_modifications = {
+        "@pypi_mods//:numpy.json": "numpy",
+    },
+    extra_hub_aliases = {
+        "numpy": ["numpy_headers"],
+    }
 )
 
-use_repo(pip, pypi = "xla_pypi")
+use_repo(pip, "pypi_mods", "xla_pypi_311_numpy", pypi = "xla_pypi")
 
 python_version_ext = use_extension("//third_party/extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
@@ -129,16 +158,22 @@ pybind11_internal_configure = use_extension(
 )
 use_repo(pybind11_internal_configure, "pybind11")
 
-### RBE config
+### RBE
 rbe_config = use_extension("//third_party/extensions:rbe_config.bzl", "rbe_config_ext")
 use_repo(rbe_config, "ml_build_config_platform")
 
-### From @rules_ml_toolchain
-cuda_extension = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_extension.bzl", "cuda_extension")
-use_repo(cuda_extension, "local_config_cuda")
+remote_execution_configure = use_extension("//third_party/extensions:remote_execution_configure.bzl", "remote_execution_configure_ext")
+use_repo(remote_execution_configure, "local_config_remote_execution")
 
-nccl_configure_ext = use_extension("@rules_ml_toolchain//third_party/extensions:nccl_configure_ext.bzl", "nccl_configure_ext")
-use_repo(nccl_configure_ext, "local_config_nccl")
+### From @rules_ml_toolchain
+cuda_configure = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_configure.bzl", "cuda_configure_ext")
+use_repo(cuda_configure, "local_config_cuda")
+
+nccl_configure = use_extension("@rules_ml_toolchain//third_party/extensions:nccl_configure.bzl", "nccl_configure_ext")
+use_repo(nccl_configure, "local_config_nccl")
+
+sycl_configure = use_extension("@rules_ml_toolchain//third_party/extensions:sycl_configure.bzl", "sycl_configure_ext")
+use_repo(sycl_configure, "local_config_sycl")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
@@ -149,14 +184,8 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
 ### Other local config repos
-rocm = use_extension("//third_party/extensions:rocm.bzl", "rocm_extension")
-use_repo(rocm, "local_config_rocm")
+rocm_configure = use_extension("//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
+use_repo(rocm_configure, "local_config_rocm")
 
-remote_execution = use_extension("//third_party/extensions:remote_execution.bzl", "remote_execution_extension")
-use_repo(remote_execution, "local_config_remote_execution")
-
-tensorrt = use_extension("//third_party/extensions:tensorrt.bzl", "tensorrt_extension")
-use_repo(tensorrt, "local_config_tensorrt")
-
-sycl = use_extension("//third_party/extensions:sycl.bzl", "sycl_extension")
-use_repo(sycl, "local_config_sycl")
+tensorrt_configure = use_extension("//third_party/extensions:tensorrt_configure.bzl", "tensorrt_configure_ext")
+use_repo(tensorrt_configure, "local_config_tensorrt")
