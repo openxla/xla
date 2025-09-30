@@ -596,6 +596,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleDivide(HloInstruction* divide_instr) override {
+    // NOLINTBEGIN(clang-diagnostic-unreachable-code)
     // TODO(intel-tf): remove this restriction after adding oneDNN softmax
     // support in thunk runtime.
     return absl::OkStatus();
@@ -621,6 +622,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(ReplaceInstruction(divide_instr, softmax_call));
 
     return absl::OkStatus();
+    // NOLINTEND(clang-diagnostic-unreachable-code)
   }
 };
 
