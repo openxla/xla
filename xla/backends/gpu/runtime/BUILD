@@ -64,7 +64,6 @@ cc_library(
         ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
-        ":convolution_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
