@@ -8,12 +8,12 @@ load(
     "PYTHON_LIB_PATH",
 )
 
-load("@pythons_hub//:versions.bzl", "DEFAULT_PYTHON_VERSION")
+load("@python_version_repo//:versions.bzl", "HERMETIC_PYTHON_VERSION")
 load("@pythons_hub//:interpreters.bzl", "INTERPRETER_LABELS")
 
 def _get_python_interpreter():
     python_toolchain_name = "python_{version}_host".format(
-        version = DEFAULT_PYTHON_VERSION.replace(".", "_"),
+        version = HERMETIC_PYTHON_VERSION.replace(".", "_"),
     )
     return str(INTERPRETER_LABELS[python_toolchain_name])
 
