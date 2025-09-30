@@ -107,6 +107,7 @@ class BuildType(enum.Enum):
   """
 
   XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
