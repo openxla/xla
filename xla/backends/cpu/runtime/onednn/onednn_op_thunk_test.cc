@@ -167,7 +167,7 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnLayerNormThunk) {
   params.buffer_allocations = &allocations;
   params.intra_op_threadpool = &device;
 
-  auto exec_event = thunk->Execute(params);
+  tsl::AsyncValueRef<Thunk::ExecuteEvent> exec_event = thunk->Execute(params);
   tsl::BlockUntilReady(exec_event);
   ASSERT_FALSE(exec_event.IsError()) << "oneDNN LayerNorm thunk failed";
 
@@ -177,8 +177,8 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnLayerNormThunk) {
       Array2D<float>({{-ref, 0.f, ref}, {-ref, 0.f, ref}}));
 
   // Compare with tolerance
-  auto exp_view = expected.data<float>();
-  auto out_view = out_literal.data<float>();
+  const float* exp_view = expected.data<float>().data();
+  float* out_view = out_literal.data<float>().data();
   for (int i = 0; i < 6; ++i) {
     EXPECT_NEAR(out_view[i], exp_view[i], 1e-4)
         << "Mismatch at index " << i << ": got " << out_view[i] << " expected "
