@@ -30,7 +30,7 @@ load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
 
-def _third_party_extension_impl(mctx):
+def _third_party_ext_impl(mctx):
     benchmark()
     dlpack()
     ducc()
@@ -110,6 +110,6 @@ def _third_party_extension_impl(mctx):
         urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.13.0.zip"),
     )
 
-third_party_extension = module_extension(
-    implementation = _third_party_extension_impl,
+third_party_ext = module_extension(
+    implementation = _third_party_ext_impl,
 )
