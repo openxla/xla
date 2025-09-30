@@ -92,7 +92,7 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnMatMulThunk) {
   params.intra_op_threadpool = &device;
 
   // Execute the thunk
-  auto exec_event = thunk->Execute(params);
+  tsl::AsyncValueRef<Thunk::ExecuteEvent> exec_event = thunk->Execute(params);
   tsl::BlockUntilReady(exec_event);
   ASSERT_FALSE(exec_event.IsError()) << "OneDnnOpThunk execution failed";
 
@@ -227,7 +227,7 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnConvolutionThunk) {
   params.buffer_allocations = &allocations;
   params.intra_op_threadpool = &device;
 
-  auto exec_event = thunk->Execute(params);
+  tsl::AsyncValueRef<Thunk::ExecuteEvent> exec_event = thunk->Execute(params);
   tsl::BlockUntilReady(exec_event);
   ASSERT_FALSE(exec_event.IsError())
       << "OneDnnOpThunk convolution execution failed";
