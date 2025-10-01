@@ -136,8 +136,12 @@ class CudaExecutor : public GpuExecutor {
                                             void* global_address) override;
   absl::StatusOr<std::unique_ptr<MemoryAllocator>> CreateMemoryAllocator(
       MemoryType type) override;
-
  private:
+
+  absl::Status VmmDeallocateMemory(void* ptr);
+
+  absl::StatusOr<void*> VmmAllocateMemory(uint64_t bytes);
+
   // Loads a module in cubin format.
   absl::StatusOr<ModuleHandle> LoadModuleFromCuBin(const char* cubin)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
@@ -151,6 +155,10 @@ class CudaExecutor : public GpuExecutor {
 
   // Returns true if a delay kernel is supported.
   absl::StatusOr<bool> DelayKernelIsSupported();
+
+  bool is_vmm_supported_ = false;
+
+  bool is_rdma_supported_ = false;
 
   // Guards the in-memory-module mapping.
   absl::Mutex in_memory_modules_mu_;
