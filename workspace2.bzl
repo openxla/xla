@@ -140,9 +140,9 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "f6f066e1b200f643977ca3dbf2a43564587f2a5e99df86859e8177981fb4de12",
-        strip_prefix = "XNNPACK-0b09b1fd1a4b60716b2b8b5ebfd71e9a5c634e67",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/0b09b1fd1a4b60716b2b8b5ebfd71e9a5c634e67.zip"),
+        sha256 = "d36a005c707c0cf26696acfb5ef27d55a37551a49ed2eeb5979815a61138f07d",
+        strip_prefix = "XNNPACK-ea1906f8df2faf8172da1b341c563bf9115581dd",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/ea1906f8df2faf8172da1b341c563bf9115581dd.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
@@ -440,7 +440,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "nccl_archive",
-        build_file = "//third_party:nccl/archive.BUILD",
+        build_file = "//third_party/nccl:archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
         sha256 = "98e6262bd55932c51e7c8ffc50cc764f019e4b94a8fd6694d839ae828ec8d128",
         strip_prefix = "nccl-2.27.7-1",

@@ -203,6 +203,7 @@ cc_library(
     hdrs = ["protobuf.h"],
     deps = [
         ":platform",
+        ":tstring",
         "@xla//xla/tsl/platform:types",
     ] + tsl_protobuf_deps(),
 )
@@ -1330,7 +1331,7 @@ tsl_cc_test(
         ":platform_port",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:env_impl",
+        "@xla//xla/tsl/platform:env_time",
         "@xla//xla/tsl/platform:test",
     ],
 )

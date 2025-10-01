@@ -1164,7 +1164,11 @@ XlaOp RoundToEven(XlaOp x) {
 //           pi                                if x == -1
 // For complex:
 // acos(x) = -(i * log(x + i * sqrt((1 + x) * (1 - x))))
-XlaOp Acos(XlaOp x) {
+XlaOp Acos(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
+           bool expand) {
+  if (!expand) {
+    return x.builder()->UnaryOp(HloOpcode::kAcos, x, result_accuracy);
+  }
   XlaBuilder* b = x.builder();
   return b->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1327,7 +1331,11 @@ XlaOp Asinh(XlaOp x) {
 
 // atanh(x) = 0.5 * log((1 + x) / (1 - x)) if abs(x) <= 1
 // atanh(x) = nan                          otherwise
-XlaOp Atanh(XlaOp x) {
+XlaOp Atanh(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
+            bool expand) {
+  if (!expand) {
+    return x.builder()->UnaryOp(HloOpcode::kAtanh, x, result_accuracy);
+  }
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));

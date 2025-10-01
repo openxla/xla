@@ -43,6 +43,7 @@ xla_cc_binary(
         "//xla/python/ifrt/ir",
         "//xla/python/ifrt/ir:atom_program_compiler",
         "//xla/python/ifrt/ir:ifrt_ir_program",
+        "//xla/python/ifrt/ir/conversions/mpmd:lower_to_ifrt",
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
         "//xla/tsl/platform:test",
@@ -58,6 +59,8 @@ xla_cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@llvm-project//mlir:RegisterAllDialects",  # buildcleaner: keep
         "@llvm-project//mlir:RegisterAllPasses",  # buildcleaner: keep
+        "@shardy//shardy/dialect/mpmd/ir:dialect",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
     ],
