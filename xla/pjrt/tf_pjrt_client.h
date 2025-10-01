@@ -101,11 +101,7 @@ class TfPjRtBuffer : public PjRtBuffer {
   bool IsDeleted() const override { return wrapped_->IsDeleted(); }
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override {
-    wrapped_->CopyToRemoteDevice(std::move(serialized_descriptor),
-                                 std::move(on_done));
-  }
+
   Future<> GetReadyFuture() override { return wrapped_->GetReadyFuture(); }
   bool IsOnCpu() const override { return wrapped_->IsOnCpu(); }
 

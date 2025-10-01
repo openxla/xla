@@ -419,13 +419,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   friend class PjRtStreamExecutorBuffer;
   friend class PjRtStreamExecutorRawBuffer;
 
-  virtual void CopyToRemoteDevice(PjRtBuffer* buffer,
-                                  absl::string_view serialized_descriptor,
-                                  PjRtBuffer::RemoteSendCallback on_done) {
-    on_done(Unimplemented("Cross host sends not implemented."),
-            /*sends_were_enqueued=*/false);
-  }
-
   virtual Future<> CopyRawSubBufferToHost(PjRtBuffer* buffer, Future<void*> dst,
                                           int64_t offset,
                                           int64_t transfer_size) {
@@ -650,9 +643,6 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
-
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override;
 
   Future<> GetReadyFuture() override;
 
