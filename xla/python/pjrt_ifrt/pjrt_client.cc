@@ -1313,17 +1313,17 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
                                    std::optional<MemoryKind> memory_kind) {
   std::vector<ArrayRef> new_arrays;
   new_arrays.reserve(arrays.size());
-  std::vector<PjRtBuffers> recv_buffers;
+
+  std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> recv_buffers;
   recv_buffers.reserve(dst_devices->AddressableDeviceList()->size());
+
+  auto on_transfer_done = [](absl::Status status) {
+    CHECK_OK(status);
+  };
+
   int j = 0;  // Counter for the addressable buffers.
   for (int i = 0; i < dst_devices->size(); ++i) {
-    // TODO(emilyaf): Extend CreateNewTransferKey to take N and return N keys
-    // as a performance optimization.
-    std::vector<int64_t> transfer_keys;
-    transfer_keys.reserve(arrays.size());
-    for (int k = 0; k < arrays.size(); ++k) {
-      transfer_keys.push_back(CreateNewTransferKey());
-    }
+    CrossHostTransferKey transfer_key = CreateNewTransferKey();
 
     if (src_devices->devices()[i]->IsAddressable()) {
       if (dst_devices->devices()[i]->IsAddressable()) {
@@ -1337,12 +1337,22 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
             dst_devices->devices()[i]->DebugString()));
       }
 
-      PjRtArray::PjRtBuffers send_buffers;
+      // Create vector of dst devices; we send each array to
+      // dst_devices->devices()[i].
+      TF_ASSIGN_OR_RETURN(
+          xla::PjRtGlobalDeviceId dst_global_device_id,
+          GetPjRtGlobalDeviceId(dst_devices->devices()[i]->Id()));
+      std::vector<PjRtGlobalDeviceId> dst_global_device_ids(
+          arrays.size(), dst_global_device_id);
+
+      // Create send buffers.
+      std::vector<PjRtBuffer*> send_buffers;
       send_buffers.reserve(arrays.size());
+
       for (ArrayRef& array : arrays) {
         if (auto* const pjrt_array = llvm::dyn_cast<PjRtArray>(array.get())) {
           auto buffers = pjrt_array->pjrt_buffers();
-          send_buffers.push_back(buffers[j]);
+          send_buffers.push_back(buffers[j].get());
         } else {
           // TODO(emilyaf): Support string arrays.
           return absl::InvalidArgumentError(
@@ -1350,12 +1360,20 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
               "PjRtClient::CopyArraysForCrossHost");
         }
       }
-      TF_RETURN_IF_ERROR(
-          CrossHostSendBuffers(send_buffers, std::move(transfer_keys)));
+
+      std::vector<Future<>> send_futures = pjrt_client_->CrossHostSendBuffers(
+          send_buffers, dst_global_device_ids, transfer_key);
+      for (Future<>& send_future : send_futures) {
+        send_future.OnReady(on_transfer_done);
+      }
+
       ++j;
+
     } else if (dst_devices->devices()[i]->IsAddressable()) {
+      // Create vector of shapes to receive.
       std::vector<xla::Shape> recv_shapes;
       recv_shapes.reserve(arrays.size());
+
       for (const ArrayRef& array : arrays) {
         if (auto* const pjrt_array = llvm::dyn_cast<PjRtArray>(array.get())) {
           TF_ASSIGN_OR_RETURN(auto dtype, ToPrimitiveType(pjrt_array->dtype()));
@@ -1371,14 +1389,32 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
               "PjRtClient::CopyArraysForCrossHost");
         }
       }
+
+      // Get the dst device we receive into.
       TF_ASSIGN_OR_RETURN(
           xla::PjRtGlobalDeviceId pjrt_global_device_id,
           GetPjRtGlobalDeviceId(dst_devices->devices()[i]->Id()));
       TF_ASSIGN_OR_RETURN(xla::PjRtDevice * pjrt_device,
                           pjrt_client_->LookupDevice(pjrt_global_device_id));
-      TF_ASSIGN_OR_RETURN(recv_buffers.emplace_back(),
-                          CrossHostReceiveBuffers(recv_shapes, pjrt_device,
-                                                  std::move(transfer_keys)));
+
+      // Create vector of src devices; we receive each array from
+      // src_devices->devices()[i].
+      TF_ASSIGN_OR_RETURN(
+          xla::PjRtGlobalDeviceId src_global_device_id,
+          GetPjRtGlobalDeviceId(src_devices->devices()[i]->Id()));
+      std::vector<PjRtGlobalDeviceId> src_global_device_ids(
+          arrays.size(), src_global_device_id);
+
+      TF_ASSIGN_OR_RETURN(
+          std::vector<std::unique_ptr<PjRtBuffer>> received_buffers,
+          pjrt_client_->CrossHostReceiveBuffers(
+              recv_shapes, pjrt_device, src_global_device_ids, transfer_key));
+
+      for (std::unique_ptr<PjRtBuffer>& received_buffer : received_buffers) {
+        received_buffer->GetReadyFuture().OnReady(on_transfer_done);
+      }
+
+      recv_buffers.push_back(std::move(received_buffers));
     }
   }
 
@@ -1428,7 +1464,9 @@ PjRtClient::CopyArraysForCrossHostFallback(
                                memory_kind);
 }
 
-int64_t PjRtClient::CreateNewTransferKey() { return next_transfer_key_++; }
+CrossHostTransferKey PjRtClient::CreateNewTransferKey() {
+  return CrossHostTransferKey(next_transfer_key_++);
+}
 
 absl::Status PjRtClient::WatchGlobalProcessInfo(
     tsl::CoordinationServiceAgent& agent) {
@@ -1504,92 +1542,6 @@ absl::Status PjRtClient::WatchGlobalProcessInfo(
     // Update the client with the job state.
     pjrt_client_->UpdateGlobalProcessInfo(absl::MakeSpan(state));
   }
-}
-
-absl::Status PjRtClient::CrossHostSendBuffers(
-    PjRtBuffers buffers, const std::vector<int64_t>& keys) {
-  if (keys.size() != buffers.size()) {
-    return absl::InternalError(
-        "CrossHostSendBuffers: keys must be the same size as buffers.");
-  }
-  // TODO(emilyaf): Use an async version of KeyValueStore::Get or query batched
-  // keys together to reduce the number of threads used.
-  for (int i = 0; i < keys.size(); ++i) {
-    auto [promise, descriptor_future] = tsl::Future<std::string>::MakePromise();
-    work_queue_->Schedule(
-        [this, k = keys[i], promise = std::move(promise).ToShared()]() mutable {
-          std::string key = absl::StrCat(kKeyPrefix, k);
-          absl::StatusOr<std::string> descriptor =
-              kv_store_->Get(key, cross_host_transfer_timeout_);
-          if (!descriptor.ok()) {
-            LOG(FATAL) << "Failed to get descriptor for key " << key << ": "
-                       << descriptor.status();
-          }
-          promise->Set(std::move(*descriptor));
-        });
-    auto on_done = [](absl::Status status, bool sends_were_enqueued) {
-      CHECK_OK(status);
-    };
-    buffers[i]->CopyToRemoteDevice(std::move(descriptor_future), on_done);
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<PjRtArray::PjRtBuffers> PjRtClient::CrossHostReceiveBuffers(
-    absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
-    std::vector<int64_t> keys) {
-  auto notifier = [this, keys = std::move(keys)](
-                      absl::StatusOr<xla::PjRtCrossHostRecvState> recv_state) {
-    if (!recv_state.ok()) {
-      LOG(FATAL) << "Invalid PjRtCrossHostRecvState passed to "
-                    "xla::PjRtCrossHostRecvNotifier callback in "
-                    "xla::PjRtClient::MakeCrossHostReceiveBuffers: "
-                 << recv_state.status();
-    }
-    auto on_canceled = [](const absl::Status& status) {
-      if (!status.ok()) {
-        LOG(FATAL) << "Invalid status passed to `on_canceled` callback in "
-                      "xla::PjRtCrossHostSendCancelNotifier in "
-                      "xla::PjRtClient::MakeCrossHostReceiveBuffers: "
-                   << status;
-      }
-    };
-    if (recv_state->descriptors.size() != keys.size()) {
-      absl::Status error_status = absl::InternalError(absl::StrFormat(
-          "Descriptors must be the same size as keys. Descriptors: %d, "
-          "keys: %d",
-          recv_state->descriptors.size(), keys.size()));
-      CHECK_NOTNULL(recv_state->cancel_notifier);
-      for (auto& descriptor : recv_state->descriptors) {
-        recv_state->cancel_notifier(descriptor.serialized_descriptors.front(),
-                                    error_status, on_canceled);
-      }
-      return;
-    }
-    for (int i = 0, n = keys.size(); i < n; ++i) {
-      std::string key = absl::StrCat(kKeyPrefix, keys[i]);
-      absl::Status kv_status = kv_store_->Set(
-          key, recv_state->descriptors[i].serialized_descriptors.front());
-      if (!kv_status.ok()) {
-        CHECK_NOTNULL(recv_state->cancel_notifier);
-        absl::Status error_status = absl::InternalError(absl::StrFormat(
-            "Failed to set key %s: %s", key, kv_status.message()));
-        recv_state->cancel_notifier(
-            recv_state->descriptors[i].serialized_descriptors.front(),
-            error_status, on_canceled);
-        return;
-      }
-    }
-  };
-  TF_ASSIGN_OR_RETURN(auto recv_buffers,
-                      pjrt_client_->MakeCrossHostReceiveBuffers(
-                          shapes, device, std::move(notifier)));
-  PjRtArray::PjRtBuffers buffers;
-  buffers.reserve(recv_buffers.size());
-  for (auto& recv_buffer : recv_buffers) {
-    buffers.push_back(std::move(recv_buffer));
-  }
-  return buffers;
 }
 
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::RemapArrays(

@@ -144,19 +144,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
                                   int64_t offset,
                                   int64_t transfer_size) override;
 
-  void ScheduleRemoteSend(
-      PjRtMemorySpace* memory_space,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
-      tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
-      Future<std::string> serialized_descriptor,
-      PjRtBuffer::RemoteSendCallback on_done) override;
-
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
-                              PjRtDevice* device,
-                              PjRtCrossHostRecvNotifier notifier) override;
-
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override;
 
@@ -181,6 +168,27 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::Status UpdateCompileOptionsInternal(
       CompileOptions* options, ExecutableExtras* returned_extras,
       bool lookup_addressable_devices) override;
+
+  absl::StatusOr<std::unique_ptr<Communicator>> CreateTransferCommunicator(
+      gpu::GpuCollectives* gpu_collectives, LocalDeviceState* local_device,
+      std::string cross_host_transfer_name, bool is_sender);
+
+  absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
+
+  std::vector<Future<>> CrossHostSendBuffers(
+      const std::vector<PjRtBuffer*> buffers,
+      const std::vector<PjRtGlobalDeviceId>& dst_global_device_ids,
+      CrossHostTransferKey transfer_key) override;
+
+  Future<> CopyToRemoteDevice(PjRtBuffer* buffer,
+                              PjRtGlobalDeviceId dst_global_device_id,
+                              CrossHostTransferKey transfer_key);
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  CrossHostReceiveBuffers(
+      absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
+      const std::vector<PjRtGlobalDeviceId>& src_global_device_ids,
+      CrossHostTransferKey transfer_key) override;
 
  private:
   absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>

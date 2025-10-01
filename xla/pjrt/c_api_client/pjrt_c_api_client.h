@@ -372,14 +372,20 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::uintptr_t> UnsafeBufferPointer(
       PjRtBuffer* buffer) override;
 
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
-                              PjRtDevice* device,
-                              PjRtCrossHostRecvNotifier notifier) override;
-
   absl::Status DmaMap(void* data, size_t size) override;
 
   absl::Status DmaUnmap(void* data) override;
+
+  std::vector<Future<>> CrossHostSendBuffers(
+      const std::vector<PjRtBuffer*> buffers,
+      const std::vector<PjRtGlobalDeviceId>& dst_global_device_ids,
+      CrossHostTransferKey transfer_key) override;
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  CrossHostReceiveBuffers(
+      absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
+      const std::vector<PjRtGlobalDeviceId>& src_global_device_ids,
+      CrossHostTransferKey transfer_key) override;
 
   const PJRT_Api* pjrt_c_api() const;
 
@@ -500,9 +506,6 @@ class PjRtCApiBuffer : public PjRtBuffer {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
-
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override;
 
   Future<> GetReadyFuture() override;
 
