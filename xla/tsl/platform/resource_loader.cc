@@ -32,7 +32,7 @@ std::string GetDataDependencyFilepath(const std::string& relative_path) {
     std::string error;
     std::unique_ptr<Runfiles> runfiles(Runfiles::CreateForTest(&error));
     if (runfiles == nullptr) {
-      LOG(FATAL) << "Could not initialize runfiles: " <<  error.c_str();
+      LOG(FATAL) << "Could not initialize runfiles: " << error.c_str();
     }
 
     std::string full_path = runfiles->Rlocation(relative_path);
