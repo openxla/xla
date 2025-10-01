@@ -51,8 +51,21 @@ limitations under the License.
 namespace xla::cpu {
 namespace {
 
-static absl::Duration kWarnStuckTimeout = absl::Seconds(5);
-static absl::Duration kTerminateTimeout = absl::Seconds(10);
+static absl::Duration WarnStuckTimeout() {
+  static const int64_t warn_stuck_timeout =
+      xla::GetDebugOptionsFromFlags()
+          .xla_cpu_collective_call_warn_stuck_timeout_seconds();
+  return (warn_stuck_timeout >= 0) ? absl::Seconds(warn_stuck_timeout)
+                                    : absl::InfiniteDuration();
+}
+
+static absl::Duration TerminateTimeout() {
+  static const int64_t terminate_timeout =
+      xla::GetDebugOptionsFromFlags()
+          .xla_cpu_collective_call_terminate_timeout_seconds();
+  return (terminate_timeout >= 0) ? absl::Seconds(terminate_timeout)
+                                  : absl::InfiniteDuration();
+}
 
 // In-process collective operation participants.
 //
@@ -414,8 +427,8 @@ InProcessCommunicator::AllReduce(se::DeviceMemoryBase send_buffer,
   TF_ASSIGN_OR_RETURN(
       auto op, Rendezvous<OpParticipants<AllReduceParticipant>>(
                    name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<AllReduceParticipant>, kWarnStuckTimeout,
-                   kTerminateTimeout));
+                   CollectParticipants<AllReduceParticipant>, WarnStuckTimeout(),
+                   TerminateTimeout()));
 
   TF_RETURN_IF_ERROR(
       op->Invoke(AllReduceOp, rank_, dtype, count, reduction_kind));
@@ -439,7 +452,7 @@ InProcessCommunicator::ReduceScatter(se::DeviceMemoryBase send_buffer,
                       Rendezvous<OpParticipants<ReduceScatterParticipant>>(
                           name, key, partiticipant, key.num_local_participants,
                           CollectParticipants<ReduceScatterParticipant>,
-                          kWarnStuckTimeout, kTerminateTimeout));
+                          WarnStuckTimeout(), TerminateTimeout());
 
   TF_RETURN_IF_ERROR(
       op->Invoke(ReduceScatterOp, rank_, dtype, count, reduction_kind));
@@ -465,7 +478,7 @@ InProcessCommunicator::CollectivePermute(se::DeviceMemoryBase send_buffer,
                       Rendezvous<OpParticipants<CollectivePermuteParticipant>>(
                           name, key, partiticipant, key.num_local_participants,
                           CollectParticipants<CollectivePermuteParticipant>,
-                          kWarnStuckTimeout, kTerminateTimeout));
+                          WarnStuckTimeout(), TerminateTimeout());
 
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
@@ -490,8 +503,8 @@ InProcessCommunicator::AllToAll(
   TF_ASSIGN_OR_RETURN(
       auto op, Rendezvous<OpParticipants<AllToAllParticipant>>(
                    name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<AllToAllParticipant>, kWarnStuckTimeout,
-                   kTerminateTimeout));
+                   CollectParticipants<AllToAllParticipant>, WarnStuckTimeout(),
+                   TerminateTimeout()));
 
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
@@ -514,8 +527,8 @@ InProcessCommunicator::AllGather(se::DeviceMemoryBase send_buffer,
   TF_ASSIGN_OR_RETURN(
       auto op, Rendezvous<OpParticipants<AllGatherParticipant>>(
                    name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<AllGatherParticipant>, kWarnStuckTimeout,
-                   kTerminateTimeout));
+                   CollectParticipants<AllGatherParticipant>, WarnStuckTimeout(),
+                   TerminateTimeout()));
 
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
