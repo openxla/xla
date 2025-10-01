@@ -918,41 +918,31 @@ PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
     const PJRT_Api* c_api, xla::PjRtCrossHostRecvNotifier cpp_notifier) {
   auto notifier_function = new PjRtCApiClient::CrossHostRecvNotifierFunction(
       [cpp_notifier = std::move(cpp_notifier), c_api](
-          PJRT_Error* error, const char** serialized_descriptors,
-          size_t* descriptors_sizes, size_t num_descriptors) {
+          PJRT_Error* error, CrossHostTransferId transfer_id) {
         if (error != nullptr) {
           absl::Status state = ::pjrt::PjrtErrorToStatus(error, c_api);
           return cpp_notifier(std::move(state));
         }
         xla::PjRtCrossHostRecvState state;
-        state.descriptors.reserve(num_descriptors);
-        for (int i = 0; i < num_descriptors; ++i) {
-          xla::PjRtCrossHostRecvDescriptors descriptors;
-          descriptors.serialized_descriptors.push_back(
-              std::string(serialized_descriptors[i], descriptors_sizes[i]));
-          state.descriptors.push_back(std::move(descriptors));
-        }
 
         // TODO(emilyaf): Support cancellation.
         xla::PjRtCrossHostSendCancelNotifier cancel_notifier =
-            [](absl::string_view, absl::Status,
-               std::function<void(absl::Status)>) {
+            [](int64_t, absl::Status, std::function<void(absl::Status)>) {
               LOG(FATAL) << "MakeCrossHostReceiveBuffers: Cancellation is not "
                             "supported in PJRT C API.";
             };
+        state.transfer_id = transfer_id;
         state.cancel_notifier = cancel_notifier;
         return cpp_notifier(std::move(state));
       });
   return PJRT_Transfers_CrossHostRecvNotifierInfo{
       /*user_arg=*/notifier_function,
       /*notifier=*/
-      [](PJRT_Error* error, const char** serialized_descriptors,
-         size_t* descriptors_sizes, size_t num_descriptors, void* user_arg) {
+      [](PJRT_Error* error, CrossHostTransferId transfer_id, void* user_arg) {
         PjRtCApiClient::CrossHostRecvNotifierFunction* notifier_fn =
             reinterpret_cast<PjRtCApiClient::CrossHostRecvNotifierFunction*>(
                 user_arg);
-        (*notifier_fn)(error, serialized_descriptors, descriptors_sizes,
-                       num_descriptors);
+        (*notifier_fn)(error, transfer_id);
         delete notifier_fn;
       }};
 }
@@ -960,6 +950,8 @@ PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiClient::MakeCrossHostReceiveBuffers(
     absl::Span<const Shape> shapes, PjRtDevice* device,
+    PjRtGlobalDeviceId src_global_device_id,
+    absl::Span<CrossHostTransferId> transfer_ids,
     PjRtCrossHostRecvNotifier notifier) {
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
@@ -981,9 +973,12 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
   layout_list.reserve(shapes.size());
   std::vector<const int64_t*> num_dims;
   num_dims.reserve(shapes.size());
+  std::vector<CrossHostTransferId> c_api_transfer_ids;
+  c_api_transfer_ids.reserve(shapes.size());
   std::vector<PJRT_Buffer_Type> element_type_list;
   element_type_list.reserve(shapes.size());
   for (int i = 0; i < shapes.size(); ++i) {
+    c_api_transfer_ids.push_back(transfer_ids[i]);
     shape_num_dims.push_back(shapes[i].dimensions().size());
 
     num_dims.push_back(shapes[i].dimensions().data());
@@ -1001,6 +996,8 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
   }
   args.shape_num_dims = shape_num_dims.data();
   args.num_dims = num_dims.data();
+  args.src_global_device_id = src_global_device_id.value();
+  args.transfer_ids = c_api_transfer_ids.data();
   args.element_types = element_type_list.data();
   args.layouts = layout_list.data();
 
@@ -2841,7 +2838,9 @@ PjRtCApiBuffer::AcquireExternalReference() {
 }
 
 void PjRtCApiBuffer::CopyToRemoteDevice(
-    Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
+    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferId transfer_id,
+    PjRtBuffer::RemoteSendCallback on_done) {
+  const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
       client_->FindExtension<PJRT_CrossHostTransfers_Extension>(
           PJRT_Extension_Type::PJRT_Extension_Type_CrossHostTransfers);
@@ -2854,12 +2853,8 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
       PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.buffer = c_buffer();
-  // TODO(emilyaf): Support async instead of awaiting here.
-  absl::StatusOr<std::string> descriptor = serialized_descriptor.Await();
-  CHECK_OK(descriptor) << "Failed to copy buffer to remote device: "
-                       << descriptor.status();
-  args.serialized_descriptor = descriptor->c_str();
-  args.serialized_descriptor_size = descriptor->size();
+  args.dst_global_device_id = dst_global_device_id;
+  args.transfer_id = transfer_id;
   extension->PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice(&args);
 }
 

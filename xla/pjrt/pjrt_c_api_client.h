@@ -373,6 +373,8 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
                               PjRtDevice* device,
+                              PjRtGlobalDeviceId src_global_device_id,
+                              absl::Span<int64_t> transfer_run_ids,
                               PjRtCrossHostRecvNotifier notifier) override;
 
   absl::Status DmaMap(void* data, size_t size) override;
@@ -401,7 +403,7 @@ class PjRtCApiClient : public PjRtClient {
   }
 
   using CrossHostRecvNotifierFunction =
-      std::function<void(PJRT_Error*, const char**, size_t*, size_t)>;
+      std::function<void(PJRT_Error*, int64_t)>;
 
   template <typename ExtType>
   ExtType* FindExtension(PJRT_Extension_Type type) const {
@@ -497,8 +499,9 @@ class PjRtCApiBuffer : public PjRtBuffer {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
 
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override;
+  void CopyToRemoteDevice(PjRtGlobalDeviceId dst_global_device_id,
+                          CrossHostTransferId transfer_id,
+                          PjRtBuffer::RemoteSendCallback on_done) override;
 
   Future<> GetReadyFuture() override;
 

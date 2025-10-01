@@ -310,7 +310,8 @@ absl::StatusOr<xla::Shape> CommonPjRtClient::MakeDefaultShapeForMemorySpace(
 }
 
 void CommonPjRtBufferImpl::CopyToRemoteDevice(
-    Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
+    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferId transfer_id,
+    PjRtBuffer::RemoteSendCallback on_done) {
   auto* common_client = tensorflow::down_cast<CommonPjRtClient*>(client());
   std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events;
   tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
@@ -351,8 +352,8 @@ void CommonPjRtBufferImpl::CopyToRemoteDevice(
 
   common_client->ScheduleRemoteSend(
       memory_space(), std::move(raw_buffer), std::move(definition_events),
-      std::move(usage_event_promise), std::move(serialized_descriptor),
-      std::move(on_done));
+      std::move(usage_event_promise), std::move(dst_global_device_id),
+      transfer_id, std::move(on_done));
 }
 
 void CommonPjRtClient::ScheduleRemoteSend(
@@ -360,7 +361,7 @@ void CommonPjRtClient::ScheduleRemoteSend(
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
     std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
     tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
-    Future<std::string> serialized_descriptor,
+    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferId transfer_id,
     PjRtBuffer::RemoteSendCallback on_done) {
   auto error = absl::UnimplementedError(
       absl::StrCat("ScheduleRemoteSend is not implemented for %s",

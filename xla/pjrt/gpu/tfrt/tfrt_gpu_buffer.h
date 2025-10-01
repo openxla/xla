@@ -85,7 +85,8 @@ class TfrtGpuBuffer final : public PjRtBuffer {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
 
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
+  void CopyToRemoteDevice(PjRtGlobalDeviceId dst_global_device_id,
+                          CrossHostTransferId transfer_id,
                           RemoteSendCallback on_done) override {
     on_done(Unimplemented("CopyToRemoteDevice not implemented."),
             /*sends_were_enqueued=*/false);

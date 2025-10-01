@@ -35,8 +35,7 @@ extern "C" {
 // ---------------------------------- Methods ----------------------------------
 
 typedef void (*PJRT_Transfers_CrossHostRecvNotifier)(
-    PJRT_Error* error, const char** serialized_descriptors,
-    size_t* descriptors_sizes, size_t num_descriptors, void* user_arg);
+    PJRT_Error* error, xla::CrossHostTransferId transfer_id, void* user_arg);
 
 struct PJRT_Transfers_CrossHostRecvNotifierInfo {
   void* user_arg;
@@ -51,6 +50,8 @@ struct PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args {
   size_t num_shapes;
   size_t* shape_num_dims;
   const int64_t** num_dims;
+  int32_t src_global_device_id;
+  xla::CrossHostTransferId* transfer_ids;
   PJRT_Buffer_Type* element_types;
   PJRT_Buffer_MemoryLayout** layouts;
   PJRT_Device* device;
@@ -68,11 +69,11 @@ struct PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
   PJRT_Buffer* buffer;
-  const char* serialized_descriptor;
-  size_t serialized_descriptor_size;
+  xla::PjRtGlobalDeviceId dst_global_device_id;
+  xla::CrossHostTransferId transfer_id;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args,
-                          serialized_descriptor_size);
+                          transfer_id);
 
 typedef void PJRT_Buffer_CopyToRemoteDevice(
     PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args* args);

@@ -237,7 +237,7 @@ class CommonPjRtClient : public PjRtClient {
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
       std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
       tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
-      Future<std::string> serialized_descriptor,
+      PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferId transfer_id,
       PjRtBuffer::RemoteSendCallback on_done);
 };
 
@@ -278,8 +278,9 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
   // device to host transfer to read the metadata of dynamic shape.
   absl::StatusOr<Shape> logical_on_device_shape() override;
 
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override;
+  void CopyToRemoteDevice(PjRtGlobalDeviceId dst_global_device_id,
+                          CrossHostTransferId transfer_id,
+                          PjRtBuffer::RemoteSendCallback on_done) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;

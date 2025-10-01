@@ -40,21 +40,9 @@ static xla::PjRtCrossHostRecvNotifier CCrossHostRecvNotifierToCpp(
              absl::StatusOr<xla::PjRtCrossHostRecvState> recv_state) {
     if (!recv_state.ok()) {
       auto error = new PJRT_Error{recv_state.status()};
-      return notifier(error, nullptr, nullptr, 0, user_arg);
+      return notifier(error, -1, user_arg);
     }
-    auto& descriptors = recv_state->descriptors;
-    std::vector<size_t> descriptors_sizes;
-    descriptors_sizes.reserve(descriptors.size());
-    std::vector<const char*> serialized_descriptors;
-    serialized_descriptors.reserve(descriptors.size());
-    for (int i = 0; i < descriptors.size(); ++i) {
-      serialized_descriptors.push_back(
-          descriptors[i].serialized_descriptors.front().c_str());
-      descriptors_sizes.push_back(
-          descriptors[i].serialized_descriptors.front().size());
-    }
-    return notifier(nullptr, serialized_descriptors.data(),
-                    descriptors_sizes.data(), descriptors.size(), user_arg);
+    return notifier(nullptr, recv_state->transfer_id, user_arg);
   };
 }
 }  // namespace
@@ -65,6 +53,8 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
       "PJRT_Client_MakeCrossHostReceiveBuffers_Args",
       PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args_STRUCT_SIZE,
       args->struct_size));
+  // Construct the shapes that we need to receive with
+  // MakeCrossHostReceiveBuffers.
   std::vector<xla::Shape> shapes;
   shapes.reserve(args->num_shapes);
   for (int i = 0; i < args->num_shapes; ++i) {
@@ -74,12 +64,26 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
                                  args->shape_num_dims[i], args->layouts[i]));
     shapes.push_back(std::move(shape));
   }
+
+  // Construct the run IDs that identify the transfers.
+  std::vector<xla::CrossHostTransferId> transfer_ids;
+  transfer_ids.reserve(args->num_shapes);
+  for (int i = 0; i < args->num_shapes; ++i) {
+    transfer_ids.push_back(args->transfer_ids[i]);
+  }
+
+  // Construct the notifier we will use to see if the transfer was enqueued
+  // correctly.
   xla::PjRtCrossHostRecvNotifier notifier =
       CCrossHostRecvNotifierToCpp(args->notifier);
   PJRT_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> buffers,
       args->client->client->MakeCrossHostReceiveBuffers(
-          absl::MakeSpan(shapes), args->device->device, std::move(notifier)));
+          absl::MakeSpan(shapes), args->device->device,
+          static_cast<xla::PjRtGlobalDeviceId>(args->src_global_device_id),
+          absl::MakeSpan(transfer_ids), std::move(notifier)));
+
+  // Move the created receive buffers into args.
   args->num_buffers = buffers.size();
   for (int i = 0; i < buffers.size(); ++i) {
     args->buffers[i] = new PJRT_Buffer{std::move(buffers[i]), args->client};
@@ -89,14 +93,11 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
 
 void PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice(
     PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args* args) {
-  std::string serialized_descriptor = std::string(
-      args->serialized_descriptor, args->serialized_descriptor_size);
-  xla::Future<std::string> descriptor_future(std::move(serialized_descriptor));
-
   // TODO(emilyaf): Support on_done callback.
   xla::PjRtBuffer::RemoteSendCallback on_done =
       [](absl::Status status, bool sends_were_enqueued) { CHECK_OK(status); };
-  args->buffer->buffer->CopyToRemoteDevice(descriptor_future, on_done);
+  args->buffer->buffer->CopyToRemoteDevice(args->dst_global_device_id,
+                                           args->transfer_id, on_done);
 }
 
 PJRT_CrossHostTransfers_Extension CreateCrossHostTransfersExtension(

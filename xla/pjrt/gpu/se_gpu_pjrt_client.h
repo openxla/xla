@@ -145,12 +145,15 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
                                   int64_t transfer_size) override;
 
   void CopyToRemoteDevice(PjRtBuffer* buffer,
-                          absl::string_view serialized_descriptor,
+                          PjRtGlobalDeviceId dst_global_device_id,
+                          CrossHostTransferId transfer_id,
                           PjRtBuffer::RemoteSendCallback on_done) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
                               PjRtDevice* device,
+                              PjRtGlobalDeviceId src_global_device_id,
+                              absl::Span<CrossHostTransferId> transfer_ids,
                               PjRtCrossHostRecvNotifier notifier) override;
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
@@ -181,6 +184,12 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
  private:
   absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
   GetLatestIncarnations(const ExecuteOptions& options);
+
+  absl::StatusOr<std::unique_ptr<Communicator>> CreateTransferCommunicator(
+      gpu::GpuCollectives* gpu_collectives, LocalDeviceState* local_device,
+      std::string cross_host_transfer_name, bool is_sender);
+
+  absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
 
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;

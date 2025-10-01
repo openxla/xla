@@ -155,6 +155,8 @@ class PjRtCpuClient final : public CommonPjRtClient {
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
                               PjRtDevice* device,
+                              PjRtGlobalDeviceId src_global_device_id,
+                              absl::Span<CrossHostTransferId> transfer_ids,
                               PjRtCrossHostRecvNotifier notifier) override {
     return Unimplemented("MakeCrossHostReceiveBuffers not implemented.");
   }

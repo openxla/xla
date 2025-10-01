@@ -360,16 +360,16 @@ class PjRtClient final
       absl::Span<ArrayRef> arrays, DeviceListRef src_devices,
       DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind);
 
-  // Extracts receive descriptors from a key-value store and sends buffers to a
-  // remote device.
-  absl::Status CrossHostSendBuffers(PjRtBuffers buffers,
-                                    const std::vector<int64_t>& keys);
+  // Sends buffers to a remote device.
+  absl::Status CrossHostSendBuffers(
+      PjRtBuffers buffers, PjRtGlobalDeviceId dst_global_device_id,
+      std::vector<CrossHostTransferId> transfer_ids);
 
-  // Populates a key-value store with receive descriptors and places buffers
-  // from a cross-host send onto device.
+  // Places buffers from a cross-host send onto device.
   absl::StatusOr<PjRtBuffers> CrossHostReceiveBuffers(
       absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
-      std::vector<int64_t> keys);
+      PjRtGlobalDeviceId src_global_device_id,
+      std::vector<CrossHostTransferId> transfer_ids);
 
   // Copies arrays from source to destination devices when at least one of the
   // (source, destination) pairs is cross-host using an experimental DCN
@@ -382,14 +382,14 @@ class PjRtClient final
   // Creates a unique identifier for each cross-host transfer. Every process
   // must call it, regardless of whether it participates in the cross-host
   // transfer, so that the returned value must be the same in all processes.
-  int64_t CreateNewTransferKey();
+  int64_t CreateNewTransferId();
 
   // If true, the backend implements the cross-host transfer APIs.
   bool pjrt_supports_cross_host_transfers_ = false;
 
   absl::Status WatchGlobalProcessInfo(tsl::CoordinationServiceAgent& agent);
 
-  std::atomic<int64_t> next_transfer_key_ = 0;
+  std::atomic<int64_t> next_transfer_id_ = 0;
   std::shared_ptr<xla::DistributedRuntimeClient> distributed_client_;
   std::shared_ptr<xla::KeyValueStoreInterface> kv_store_;
   absl::Duration cross_host_transfer_timeout_;

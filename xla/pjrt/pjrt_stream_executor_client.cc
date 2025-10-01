@@ -1943,14 +1943,11 @@ PjRtStreamExecutorBuffer::CopyToMemorySpace(PjRtMemorySpace* dst_memory_space) {
 }
 
 void PjRtStreamExecutorBuffer::CopyToRemoteDevice(
-    Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
+    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferId transfer_id,
+    RemoteSendCallback on_done) {
   VLOG(3) << "PjRtStreamExecutorBuffer::CopyToRemoteDevice";
-  auto desc = serialized_descriptor.Await();
-  if (desc.ok()) {
-    client_->CopyToRemoteDevice(this, *desc, std::move(on_done));
-  } else {
-    on_done(desc.status(), /*sends_enqueued=*/false);
-  }
+  client_->CopyToRemoteDevice(this, dst_global_device_id, transfer_id,
+                              std::move(on_done));
 }
 
 Future<> PjRtStreamExecutorBuffer::GetReadyFuture() {
