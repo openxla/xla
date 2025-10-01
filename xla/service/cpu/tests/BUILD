@@ -418,8 +418,10 @@ xla_cc_test(
     deps = [
         "//xla:error_spec",
         "//xla/service:cpu_plugin",
+        "//xla/service/cpu:onednn_util",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],

@@ -101,6 +101,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
 #include "xla/backends/cpu/transforms/collectives/all_reduce_combiner.h"
 #include "xla/backends/cpu/transforms/library_rewriter.h"
+#include "xla/backends/cpu/transforms/onednn_dot_canonicalizer.h"
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 #include "xla/backends/cpu/xnn_support.h"
 #include "xla/cpu_function_runtime.h"
@@ -940,6 +941,15 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
            .xla_cpu_experimental_onednn_fusion_type(),
       /*xnn_fusion_types=*/
       &module->config().debug_options().xla_cpu_experimental_xnn_fusion_type()};
+
+  // TODO(intel-tf): Refactor and use passes in this pipeline for oneDNN
+  // primitive based code path as well.
+  if (options.use_onednn && !options.use_xnnpack) {
+    HloPassPipeline pre_onednn_pipeline("pre-onednn-passes");
+    pre_onednn_pipeline.AddPass<OneDnnDotCanonicalizer>();
+    TF_RETURN_IF_ERROR(pre_onednn_pipeline.Run(module).status());
+  }
+
   if (options.use_onednn || options.use_xnnpack) {
     HloPassPipeline lib_pipeline("dot-library-passes");
     lib_pipeline.AddPass<DotDecomposer>();
