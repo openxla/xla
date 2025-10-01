@@ -833,6 +833,7 @@ cc_library(
     hdrs = ["kernel_thunk.h"],
     deps = [
         ":thunk",
+        ":thunk_buffer",
         ":thunk_id",
         ":thunk_proto_cc",
         "//xla:shape_util",
@@ -880,14 +881,20 @@ xla_test(
         ":kernel_thunk",
         ":sequential_thunk",
         ":thunk",
+        ":thunk_buffer",
+        ":thunk_id",
         ":thunk_proto_cc",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/codegen/emitters:kernel_arguments",
+        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
@@ -1620,10 +1627,32 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "thunk_buffer",
+    srcs = ["thunk_buffer.cc"],
+    hdrs = ["thunk_buffer.h"],
+    deps = [
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+xla_cc_test(
+    name = "thunk_buffer_test",
+    srcs = ["thunk_buffer_test.cc"],
+    deps = [
+        ":thunk_buffer",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
     deps = [
+        ":thunk_buffer",
         ":thunk_id",
         ":thunk_proto_cc",
         "//xla:executable_run_options",

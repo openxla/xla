@@ -405,7 +405,6 @@ cc_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:threadpool_async_executor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
     ] + if_llvm_aarch64_available([
@@ -470,6 +469,7 @@ cc_library(
         "cpu_compiler_pure",
         ":cpu_aot_compilation_result",
         ":executable_proto_cc",
+        ":thunk_emitter",
         "//xla:util",
         "//xla/backends/cpu/codegen:ir_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
@@ -1665,6 +1665,7 @@ xla_cc_test(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:statusor",
     ],
 )

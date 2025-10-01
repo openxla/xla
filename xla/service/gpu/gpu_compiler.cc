@@ -1867,9 +1867,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // Match the location of this pass in `gemm_fusion_autotuner.cc` to make sure
   // that there is no discrepancy.
-  pipeline.AddPass<NestGemmFusion>(
-      gpu_target_config.device_description.gpu_compute_capability(),
-      &mlir_context_);
+  pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
+                                   &mlir_context_);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
@@ -2583,22 +2582,24 @@ GpuCompiler::CompileToBackendResult(
   // Host executable has to be compiled the GPU compilation is done to
   // avoid a deadlock on the LLVM command line options lock. We can then load
   // it.
-  for (auto& thunk : compile_module_results.executable->thunks()) {
+  compile_module_results.executable->ForAllThunksMutable([&](Thunk* thunk) {
     if (thunk->kind() == Thunk::Kind::kHostExecuteStart) {
       auto* host_execute_start_thunk =
-          tsl::down_cast<HostExecuteStartThunk*>(thunk.get());
-      TF_ASSIGN_OR_RETURN(
-          xla::cpu::CompilationResultProto cpu_compilation_result,
+          tsl::down_cast<HostExecuteStartThunk*>(thunk);
+      absl::StatusOr<xla::cpu::CompilationResultProto> cpu_compilation_result =
           GetCpuCompilationResult(
-              host_execute_start_thunk->executable_proto().hlo_module()));
+              host_execute_start_thunk->executable_proto().hlo_module());
+
+      CHECK_OK(cpu_compilation_result) << "Failed to compile host executable.";
 
       *host_execute_start_thunk->mutable_executable_proto()
            ->mutable_aot_compilation_result() =
-          std::move(cpu_compilation_result);
+          std::move(cpu_compilation_result.value());
 
-      TF_RETURN_IF_ERROR(host_execute_start_thunk->LoadExecutable());
+      CHECK_OK(host_execute_start_thunk->LoadExecutable())
+          << "Failed to load host executable.";
     }
-  }
+  });
 
   return CompileResultWithMetadata{std::move(backend_result),
                                    std::move(compile_module_results)};
