@@ -85,6 +85,7 @@ limitations under the License.
 #include "xla/pjrt/worker_thread.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu/resource_requests.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
@@ -947,100 +948,76 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
   return absl::OkStatus();
 }
 
-std::string CrossHostTransferName(PjRtGlobalDeviceId src_global_device_id,
-                                  PjRtGlobalDeviceId dst_global_device_id,
-                                  RunId transfer_run_id) {
-  std::stringstream ss;
-  ss << "cross_host_transfer-" << src_global_device_id.value() << "_to_"
-     << dst_global_device_id.value() << "-run_" << transfer_run_id.ToInt();
-  return ss.str();
-}
+absl::StatusOr<StreamExecutorGpuClient::GpuTransferContext>
+StreamExecutorGpuClient::GetGpuTransferContext(
+    PjRtDevice* device, PjRtGlobalDeviceId peer_global_device_id,
+    RunId transfer_run_id, bool is_sender) {
+  PjRtGlobalDeviceId src_global_device_id;
+  PjRtGlobalDeviceId dst_global_device_id;
 
-absl::StatusOr<std::unique_ptr<Communicator>>
-StreamExecutorGpuClient::CreateTransferCommunicator(
-    gpu::GpuCollectives* gpu_collectives, LocalDeviceState* local_device,
-    std::string cross_host_transfer_name, bool is_sender) {
-  VLOG(2) << "Creating a new communicator for cross host transfer "
-          << cross_host_transfer_name << ", is_sender = " << is_sender;
-
-  // Obtain the descriptor / CliqueId for the communicator.
-  CliqueId clique_id;
-
-  // If we are the sender, read from the KV store.
   if (is_sender) {
-    TF_ASSIGN_OR_RETURN(
-        std::string descriptor,
-        kv_store_->Get(cross_host_transfer_name, cross_host_transfer_timeout_));
-    clique_id = CliqueId(descriptor);
+    src_global_device_id = device->global_device_id();
+    dst_global_device_id = peer_global_device_id;
+  } else {
+    src_global_device_id = peer_global_device_id;
+    dst_global_device_id = device->global_device_id();
   }
 
-  // If we are the receiver, create a new clique ID and set it in the KV
-  // store.
-  else {
-    TF_ASSIGN_OR_RETURN(clique_id, gpu_collectives->CreateUniqueCliqueId());
-    std::string descriptor = clique_id.ToString();
-    kv_store_->Set(cross_host_transfer_name, descriptor);
-  }
+  // Get local device and stream.
+  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
+                      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+                          ->GetLocalDeviceState());
+  se::Stream* stream = local_device->GetDeviceToDeviceStream();
 
-  // Create the communicator.
-  //
-  // TODO(mwhittaker): The way we are constructing GpuCliqueKeys is a
-  // big hack. This code doesn't know the GlobalDeviceId of the sending
-  // process. Instead, we use two arbitrary GlobalDeviceIds. This
-  // works because NcclCommunicators don't actually use the
-  // GlobalDeviceIds. Instead, they just need to the know the number
-  // of devices (2 in this case).
-  gpu::GpuCliqueKey clique_key(
-      /*devices=*/{GlobalDeviceId(0), GlobalDeviceId(1)},
-      /*num_local_participants=*/1);
-  CliqueIds clique_ids(clique_id);
-  gpu::GpuCollectives::Device collectives_device(local_device->executor());
-  std::vector<Collectives::DeviceRank> ranks = {
-      Collectives::DeviceRank(&collectives_device, RankId(is_sender ? 1 : 0))};
-  gpu::GpuCollectives::Config config;
+  // Get clique key.
+  gpu::GpuCliqueKey gpu_clique_key(
+      /*devices=*/{GlobalDeviceId(src_global_device_id.value()),
+                   GlobalDeviceId(dst_global_device_id.value())},
+      /*num_local_participants=*/1,
+      /*is_p2p=*/true);
 
-  TF_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<Communicator>> communicators,
-                      gpu_collectives->CreateCommunicators(
-                          clique_key, clique_ids, ranks, config));
-  CHECK_EQ(communicators.size(), 1);
+  // Get collectives.
+  TF_ASSIGN_OR_RETURN(xla::Collectives * collectives,
+                      xla::CollectivesRegistry::Default("gpu"));
+  xla::gpu::GpuCollectives* gpu_collectives =
+      tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
 
-  return std::move(communicators[0]);
+  // Get GPU clique.
+  const ExecuteOptions dummy_execute_options;
+  gpu::GpuExecutableRunOptions* dummy_gpu_run_options =
+      gpu_run_options(dummy_execute_options);
+
+  gpu::AcquiredCliquesMap acquired_cliques_map;
+
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<gpu::LockableGpuClique::Lock> gpu_clique,
+      AcquireGpuClique(
+          gpu_collectives, /*executor=*/stream->parent(), transfer_run_id,
+          gpu_clique_key, dummy_gpu_run_options->clique_id_callback(),
+          /*rank=*/is_sender ? RankId(0) : RankId(1), acquired_cliques_map,
+          /*max_nchannels=*/0));
+
+  return GpuTransferContext{local_device, stream, std::move(gpu_clique)};
 }
 
 void StreamExecutorGpuClient::CopyToRemoteDevice(
     PjRtBuffer* buffer, PjRtGlobalDeviceId dst_global_device_id,
     CrossHostTransferId transfer_id, PjRtBuffer::RemoteSendCallback on_done) {
-  // Get the default GpuCollectives instance.
-  absl::StatusOr<Collectives*> collectives =
-      CollectivesRegistry::Default("gpu");
-  if (!collectives.ok()) {
-    on_done(collectives.status(), /*sends_were_enqueued=*/false);
-  }
-  gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(*collectives);
-  if (gpu_collectives == nullptr) {
-    on_done(absl::InternalError("Failed to get GPU collectives"),
-            /*sends_were_enqueued=*/false);
-  }
+  absl::StatusOr<GpuTransferContext> gpu_transfer_context =
+      GetGpuTransferContext(buffer->device(), dst_global_device_id,
+                            RunId(transfer_id),
+                            /*is_sender=*/true);
 
-  // Get the local device and its id.
-  PjRtStreamExecutorDevice* pjrt_se_device =
-      tensorflow::down_cast<PjRtStreamExecutorDevice*>(buffer->device());
-  absl::StatusOr<LocalDeviceState*> local_device =
-      pjrt_se_device->GetLocalDeviceState();
-  if (!local_device.ok()) {
-    on_done(local_device.status(), /*sends_were_enqueued=*/false);
+  if (!gpu_transfer_context.ok()) {
+    on_done(gpu_transfer_context.status(), /*sends_were_enqueued=*/false);
+    return;
   }
-  PjRtGlobalDeviceId src_global_device_id = pjrt_se_device->global_device_id();
-
-  // Get the name of the transfer.
-  std::string cross_host_transfer_name = CrossHostTransferName(
-      src_global_device_id, dst_global_device_id, RunId(transfer_id));
 
   // Get the buffer's shape.
   absl::StatusOr<Shape> shape = buffer->HostShape();
   if (!shape.ok()) {
     on_done(shape.status(), /*sends_were_enqueued=*/false);
+    return;
   }
 
   // Acquire a hold on the buffer.
@@ -1053,30 +1030,31 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
   // Get the definition events to await on before we can perform the send.
   auto definition_events = hold->definition_events();
 
-  auto send = [this, gpu_collectives, on_done, mem = hold->device_memory(),
-               local_device = *local_device, cross_host_transfer_name,
-               shape = *shape, dtype = buffer->element_type(),
-               stream = (*local_device)->GetDeviceToDeviceStream(),
+  auto send = [this, on_done, mem = hold->device_memory(),
+               gpu_transfer_context = *gpu_transfer_context, shape = *shape,
+               dtype = buffer->element_type(),
                definition_events = std::move(definition_events),
                usage_event = std::move(usage_event)]() mutable {
     auto f = [&]() -> absl::Status {
       // Wait until the buffer we want to send is fully materialized.
       WaitForBufferDefinitionEventsOnStream(absl::MakeSpan(definition_events),
-                                            stream);
+                                            gpu_transfer_context.stream);
 
-      // Create a communicator.
-      TF_ASSIGN_OR_RETURN(
-          std::unique_ptr<Communicator> communicator,
-          CreateTransferCommunicator(gpu_collectives, local_device,
-                                     cross_host_transfer_name,
-                                     /*is_sender=*/true));
+      // By convention, the sender is always rank 0 and the receiver is rank 1.
+      std::optional<Communicator*> maybe_communicator =
+          (*gpu_transfer_context.gpu_clique)->comm(RankId(0));
+      if (!maybe_communicator.has_value()) {
+        return absl::InternalError("Unable to get communicator for sender.");
+      }
 
       // Send data to the receiver.
-      tsl::AsyncValueRef<Communicator::Event> send_event = communicator->Send(
-          mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
-          RankId(0), gpu::GpuCollectives::On(*stream));
+      tsl::AsyncValueRef<Communicator::Event> send_event =
+          (*maybe_communicator)
+              ->Send(mem->mem(), shape.element_type(),
+                     ShapeUtil::ElementsIn(shape), RankId(1),
+                     gpu::GpuCollectives::On(*gpu_transfer_context.stream));
 
-      // Wait for the send to finish.
+      // Wait for the send_event to be fulfilled.
       tsl::BlockUntilReady(send_event);
       if (send_event.IsError()) {
         return send_event.GetError();
@@ -1085,11 +1063,12 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
       // Keep mem alive until the Send has finished executing. Note that
       // send_event is fulfilled when the send is enqueued, but not necessarily
       // executed.
-      TF_RETURN_IF_ERROR(local_device->ThenRelease(stream, mem));
+      TF_RETURN_IF_ERROR(gpu_transfer_context.local_device->ThenRelease(
+          gpu_transfer_context.stream, mem));
 
-      // Mark send as done.
       TF_RETURN_IF_ERROR(
-          AllocateAndRecordEvent(usage_event, local_device, stream));
+          AllocateAndRecordEvent(usage_event, gpu_transfer_context.local_device,
+                                 gpu_transfer_context.stream));
 
       return absl::OkStatus();
     };
@@ -1101,7 +1080,8 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
     }
   };
 
-  (*local_device)->execute_thread()->Schedule(std::move(send));
+  gpu_transfer_context->local_device->execute_thread()->Schedule(
+      std::move(send));
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -1124,7 +1104,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
   }
   if (transfer_ids.size() != shapes.size()) {
     return InvalidArgument(
-        "shapes and transfer_run_ids parameters to "
+        "shapes and transfer_ids parameters to "
         "MakeCrossHostReceiveBuffers must have the same length, but got %d and "
         "%d",
         shapes.size(), transfer_ids.size());
@@ -1132,41 +1112,28 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
   Shape shape = shapes[0];
   RunId transfer_run_id = RunId(transfer_ids[0]);
 
-  // Get the default GpuCollectives instance.
-  TF_ASSIGN_OR_RETURN(Collectives * collectives,
-                      CollectivesRegistry::Default("gpu"));
-  gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(collectives);
-  if (gpu_collectives == nullptr) {
-    return absl::InternalError("Failed to get GPU collectives");
-  }
-
-  // Get the name of the transfer.
-  PjRtGlobalDeviceId dst_global_device_id = device->global_device_id();
-  std::string cross_host_transfer_name = CrossHostTransferName(
-      src_global_device_id, dst_global_device_id, transfer_run_id);
+  // Get the GpuTransferContext for the transfer.
+  TF_ASSIGN_OR_RETURN(
+      GpuTransferContext gpu_transfer_context,
+      GetGpuTransferContext(device, src_global_device_id, transfer_run_id,
+                            /*is_sender=*/false));
 
   // Allocate an uninitialized buffer. The buffer will be populated with data
   // received from the sending process.
-  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
-                      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-                          ->GetLocalDeviceState());
-  se::Stream* stream = local_device->GetDeviceToDeviceStream();
   BufferSequencingEventRef definition_event =
       BufferSequencingEvent::Create(this->thread_pool());
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<PjRtStreamExecutorBuffer> buffer,
-      AllocateDestinationBuffer(shape, device, local_device,
-                                /*copy_stream=*/stream,
-                                /*is_uninitialized_create=*/true, this,
-                                definition_event));
+      AllocateDestinationBuffer(
+          shape, device, gpu_transfer_context.local_device,
+          /*copy_stream=*/gpu_transfer_context.stream,
+          /*is_uninitialized_create=*/true, this, definition_event));
 
   // Acquire a hold on the buffer to access the underlying memory.
   PjRtStreamExecutorBuffer::ScopedHold hold = buffer->GetBufferWithUsageHold();
 
-  auto recv = [this, gpu_collectives, cross_host_transfer_name, transfer_run_id,
-               notifier, local_device, definition_event, stream,
-               mem = hold->device_memory(), shape,
+  auto recv = [this, notifier, gpu_transfer_context, transfer_run_id,
+               definition_event, mem = hold->device_memory(), shape = shapes[0],
                dtype = buffer->element_type()]() mutable {
     auto f = [&]() -> absl::Status {
       // Notify the caller with the cancel notifier.
@@ -1175,19 +1142,21 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       notifier(PjRtCrossHostRecvState{transfer_run_id.ToInt(),
                                       /*cancel_notifier=*/nullptr});
 
-      // Create a communicator.
-      TF_ASSIGN_OR_RETURN(
-          std::unique_ptr<Communicator> communicator,
-          CreateTransferCommunicator(gpu_collectives, local_device,
-                                     cross_host_transfer_name,
-                                     /*is_sender=*/false));
+      // By convention, the sender is always rank 0 and the receiver is rank 1.
+      std::optional<Communicator*> maybe_communicator =
+          (*gpu_transfer_context.gpu_clique)->comm(RankId(1));
+      if (!maybe_communicator.has_value()) {
+        return absl::InternalError("Unable to get communicator for receiver.");
+      }
 
       // Receive data from the sender.
-      tsl::AsyncValueRef<Communicator::Event> recv_event = communicator->Recv(
-          mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
-          RankId(1), gpu::GpuCollectives::On(*stream));
+      tsl::AsyncValueRef<Communicator::Event> recv_event =
+          (*maybe_communicator)
+              ->Recv(mem->mem(), shape.element_type(),
+                     ShapeUtil::ElementsIn(shape), RankId(0),
+                     gpu::GpuCollectives::On(*gpu_transfer_context.stream));
 
-      // Wait for the receive to finish.
+      // Wait for recv_event to be fulfilled.
       tsl::BlockUntilReady(recv_event);
       if (recv_event.IsError()) {
         return recv_event.GetError();
@@ -1196,11 +1165,13 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       // Keep mem alive until the Recv has finished executing. Note that
       // recv_event is fulfilled when the receive is enqueued, but not
       // necessarily executed.
-      TF_RETURN_IF_ERROR(local_device->ThenRelease(stream, mem));
+      TF_RETURN_IF_ERROR(gpu_transfer_context.local_device->ThenRelease(
+          gpu_transfer_context.stream, mem));
 
       // Set definition event.
-      TF_RETURN_IF_ERROR(
-          AllocateAndRecordEvent(definition_event, local_device, stream));
+      TF_RETURN_IF_ERROR(AllocateAndRecordEvent(
+          definition_event, gpu_transfer_context.local_device,
+          gpu_transfer_context.stream));
 
       return absl::OkStatus();
     };
@@ -1209,7 +1180,8 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       SetEventAsError(definition_event, s);
     }
   };
-  local_device->execute_thread()->Schedule(std::move(recv));
+  gpu_transfer_context.local_device->execute_thread()->Schedule(
+      std::move(recv));
 
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
   buffers.push_back(std::move(buffer));

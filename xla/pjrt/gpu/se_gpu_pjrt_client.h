@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
@@ -185,12 +187,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
   GetLatestIncarnations(const ExecuteOptions& options);
 
-  absl::StatusOr<std::unique_ptr<Communicator>> CreateTransferCommunicator(
-      gpu::GpuCollectives* gpu_collectives, LocalDeviceState* local_device,
-      std::string cross_host_transfer_name, bool is_sender);
-
-  absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
-
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;
   std::optional<xla::StreamExecutorGpuTopologyDescription> topology_;
@@ -199,6 +195,20 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::Mutex task_state_infos_mu_;
   std::vector<tensorflow::CoordinatedTaskStateInfo> task_state_infos_
       ABSL_GUARDED_BY(task_state_infos_mu_);
+
+  // Encapsulates data needed on both the sender and receiver side for
+  // cross-process data transfers.
+  struct GpuTransferContext {
+    LocalDeviceState* local_device;
+    se::Stream* stream;
+    std::shared_ptr<gpu::LockableGpuClique::Lock> gpu_clique;
+  };
+
+  // Helper function to set up the GpuTransferContext for a cross-process
+  // transfer.
+  absl::StatusOr<GpuTransferContext> GetGpuTransferContext(
+      PjRtDevice* device, PjRtGlobalDeviceId peer_global_device_id,
+      RunId transfer_run_id, bool is_sender);
 };
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
