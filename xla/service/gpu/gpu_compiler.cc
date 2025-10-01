@@ -457,17 +457,7 @@ GpuThunkAotCompilationResult::LoadExecutable(
       std::unique_ptr<HloModule> hlo_module,
       HloModule::CreateFromProtoWithConfig(proto_.hlo_module_with_config()));
 
-  ExecutionStreamAssignment execution_stream_assignment(
-      hlo_module.get(),
-      {
-          /*number_of_compute_execution_streams=*/4,
-          /*number_of_collective_execution_streams=*/
-          hlo_module->config()
-                  .debug_options()
-                  .xla_gpu_experimental_enable_collective_multi_streaming()
-              ? 2
-              : 1,
-      });
+  ExecutionStreamAssignment execution_stream_assignment(hlo_module.get());
 
   std::vector<uint8_t> binary(proto_.binary().begin(), proto_.binary().end());
 
