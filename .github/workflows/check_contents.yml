@@ -27,6 +27,13 @@ on:
     branches:
       - main
 
+env:
+  # A bit tricky here: this lets us invoke python files outside of `bazel run`
+  # as long as the python file has imports as if it expects bazel to invoke it,
+  # and only depends on other python files in this workspace or the standard
+  # library.
+  PYTHONPATH: "."
+
 jobs:
   check-contents:
     runs-on: ubuntu-22.04
