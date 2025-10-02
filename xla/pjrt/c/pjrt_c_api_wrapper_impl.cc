@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -58,12 +59,12 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -205,6 +206,16 @@ static absl::Status PopulateExecutableOutputDimensions(
     }
   }
 
+  return absl::OkStatus();
+}
+
+static absl::Status EnsureExecutableOutputDimensionsPopulated(
+    PJRT_Executable* executable) {
+  absl::MutexLock lock(&executable->mutex);
+  if (!executable->out_dimension_ran) {
+    TF_RETURN_IF_ERROR(PopulateExecutableOutputDimensions(executable));
+    executable->out_dimension_ran = true;
+  }
   return absl::OkStatus();
 }
 
@@ -695,7 +706,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
       "PJRT_AsyncHostToDeviceTransferManager_TransferData_Args",
       PJRT_AsyncHostToDeviceTransferManager_TransferData_Args_STRUCT_SIZE,
       args->struct_size));
-  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
+  auto [promise, future] = xla::Future<>::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
   PJRT_RETURN_IF_ERROR(
@@ -994,6 +1005,8 @@ PJRT_Error* PJRT_Client_FulfillAliasBuffer(
 
   absl::Status status = std::move(fulfill_alias_buffer_cb)(real_buffer_or);
   if (!status.ok()) {
+    LOG(ERROR) << "PJRT_Client_FulfillAliasBuffer: Callback returned error: "
+               << status;
     return new PJRT_Error{status};
   }
   return nullptr;
@@ -1037,7 +1050,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     }
   }
 
-  auto [promise, future] = xla::PjRtFuture<>::MakePromise();
+  auto [promise, future] = xla::Future<>::MakePromise();
 
   absl::AnyInvocable<void() &&> on_done_with_host_buffer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
@@ -1473,26 +1486,9 @@ PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_NumOutputs_Args",
       PJRT_Executable_NumOutputs_Args_STRUCT_SIZE, args->struct_size));
-  PJRT_ASSIGN_OR_RETURN(std::vector<xla::Shape> output_shapes,
-                        args->executable->get()->GetOutputShapes());
-  if (output_shapes.empty()) {
-    return new PJRT_Error{
-        xla::InvalidArgument("Can't get number of executable outputs, output "
-                             "shapes is empty for executable %s.",
-                             args->executable->get()->name())};
-  }
-  if (output_shapes.size() != 1) {
-    return new PJRT_Error{
-        xla::Unimplemented("MPMD execution not supported by PJRT C API (in "
-                           "function PJRT_Executable_NumOutputs).")};
-  }
-  const xla::Shape& shape = output_shapes[0];
-  if (shape.IsTuple()) {
-    args->num_outputs = shape.tuple_shapes().size();
-  } else {
-    // The output size is 1, as it is not a tuple.
-    args->num_outputs = 1;
-  }
+  PJRT_RETURN_IF_ERROR(
+      EnsureExecutableOutputDimensionsPopulated(args->executable));
+  args->num_outputs = args->executable->out_dimension_sizes.size();
   return nullptr;
 }
 
@@ -1634,14 +1630,8 @@ PJRT_Error* PJRT_Executable_OutputDimensions(
       "PJRT_Executable_OutputDimensions_Args",
       PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE, args->struct_size));
 
-  {
-    absl::MutexLock lock(args->executable->mutex);
-    if (!args->executable->out_dimension_ran) {
-      PJRT_RETURN_IF_ERROR(
-          PopulateExecutableOutputDimensions(args->executable));
-      args->executable->out_dimension_ran = true;
-    }
-  }
+  PJRT_RETURN_IF_ERROR(
+      EnsureExecutableOutputDimensionsPopulated(args->executable));
 
   args->num_outputs = args->executable->out_dimension_sizes.size();
   args->dim_sizes = args->executable->out_dimension_sizes.data();
@@ -1769,10 +1759,12 @@ static std::vector<std::vector<xla::PjRtBuffer*>> Convert2DCBuffersToCppBuffers(
   std::vector<std::vector<xla::PjRtBuffer*>> cpp_lists;
   cpp_lists.reserve(outer_size);
   for (int i = 0; i < outer_size; ++i) {
-    auto& cpp_list = cpp_lists.emplace_back();
-    cpp_list.reserve(inner_size);
+    // Since this function gets called very frequently, we initialize the inner
+    // vector with the correct size to avoid resizing and maximize performance.
+    cpp_lists.emplace_back(inner_size);
+    auto& inner_list = cpp_lists.back();
     for (int j = 0; j < inner_size; ++j) {
-      cpp_list.push_back(c_lists[i][j]->buffer.get());
+      inner_list[j] = c_lists[i][j]->buffer.get();
     }
   }
   return cpp_lists;
@@ -1812,6 +1804,12 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     }
   }
 
+  for (size_t i = 0; i < args->options->num_tasks; ++i) {
+    int task_id = args->options->task_ids[i];
+    int64_t incarnation_id = args->options->incarnation_ids[i];
+    options.incarnations.insert({task_id, xla::IncarnationId(incarnation_id)});
+  }
+
   std::vector<std::vector<xla::PjRtBuffer*>> cpp_argument_lists =
       Convert2DCBuffersToCppBuffers(args->argument_lists, args->num_devices,
                                     args->num_args);
@@ -1840,7 +1838,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;
     if (args->device_complete_events != nullptr ||
         !cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
-      std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
+      std::optional<std::vector<xla::Future<>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
                             args->executable->get()->Execute(
@@ -1849,7 +1847,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 
       // We assume that these OnReady callbacks will fire even if
       // returned_futures is destroyed first. This is true for the
-      // AsyncValue-based implementation of PjRtFuture.
+      // AsyncValue-based implementation of Future.
       if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
         for (int i = 0; i < returned_futures->size(); ++i) {
           (*returned_futures)[i].OnReady(
@@ -1894,7 +1892,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     }
 
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
-    std::optional<xla::PjRtFuture<>> returned_future;
+    std::optional<xla::Future<>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
     PJRT_ASSIGN_OR_RETURN(
         xla::CompileOptions compile_options,
@@ -2166,7 +2164,7 @@ PJRT_Error* PJRT_Buffer_CopyRawToHost(PJRT_Buffer_CopyRawToHost_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_CopyRawToHost_Args",
       PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE, args->struct_size));
-  xla::PjRtFuture<> wrapped_promise = args->buffer->buffer->CopyRawToHost(
+  xla::Future<> wrapped_promise = args->buffer->buffer->CopyRawToHost(
       args->dst, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
   return nullptr;
@@ -2243,7 +2241,7 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
 
   auto literal = std::make_unique<xla::MutableBorrowingLiteral>(
       static_cast<char*>(args->dst), host_shape);
-  xla::PjRtFuture<> future = args->src->buffer->ToLiteral(literal.get());
+  xla::Future<> future = args->src->buffer->ToLiteral(literal.get());
 
   args->event = new PJRT_Event{std::move(future)};
   args->event->future.OnReady(
@@ -2266,7 +2264,7 @@ PJRT_Error* PJRT_Buffer_ReadyEvent(PJRT_Buffer_ReadyEvent_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_ReadyEvent_Args", PJRT_Buffer_ReadyEvent_Args_STRUCT_SIZE,
       args->struct_size));
-  xla::PjRtFuture<> wrapped_promise = args->buffer->buffer->GetReadyFuture();
+  xla::Future<> wrapped_promise = args->buffer->buffer->GetReadyFuture();
   args->event = new PJRT_Event{std::move(wrapped_promise)};
   return nullptr;
 }
@@ -2344,7 +2342,7 @@ PJRT_Error* PJRT_CopyToDeviceStream_AddChunk(
       "PJRT_CopyToDeviceStream_AddChunk_Args",
       PJRT_CopyToDeviceStream_AddChunk_Args_STRUCT_SIZE, args->struct_size));
 
-  xla::PjRtFuture<> future =
+  xla::Future<> future =
       args->stream->stream->AddChunk(ConvertToCppChunk(*args->chunk));
   args->transfer_complete = new PJRT_Event{std::move(future)};
   return nullptr;
@@ -2569,6 +2567,57 @@ PJRT_Error* PJRT_TopologyDescription_Deserialize(
 
   args->topology =
       pjrt::CreateWrapperDeviceTopology(std::move(deserialized_topology));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_LoadedExecutable_GetDeviceAssignment(
+    PJRT_LoadedExecutable_GetDeviceAssignment_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_LoadedExecutable_GetDeviceAssignment_Args",
+      PJRT_LoadedExecutable_GetDeviceAssignment_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  // A portable executable doesn't have a device assignment. Return an empty
+  // assignment and no-op deleter in this case.
+  PJRT_ASSIGN_OR_RETURN(
+      xla::CompileOptions compile_options,
+      args->executable->executable->GetExecutable()->GetCompileOptions());
+  if (compile_options.compile_portable_executable) {
+    args->serialized_bytes_size = 0;
+    args->serialized_device_assignment = nullptr;
+    args->serialized_device_assignment_deleter =
+        +[](PJRT_DeviceAssignmentSerialized* serialized_device_assignment) {};
+    return nullptr;
+  }
+
+  const xla::DeviceAssignment& device_assignment =
+      args->executable->executable->device_assignment();
+
+  xla::DeviceAssignmentProto proto;
+  device_assignment.Serialize(&proto);
+
+  std::string serialized_proto;
+  if (!proto.SerializeToString(&serialized_proto)) {
+    return new PJRT_Error{xla::ResourceExhausted(
+        "%s: Device assignment serialization failed, likely due to exceeding "
+        "the max supported protobuf size of 2 GiB.",
+        __func__)};
+  }
+
+  PJRT_DeviceAssignmentSerialized* serialized_da =
+      new PJRT_DeviceAssignmentSerialized;
+  if (serialized_da == nullptr) {
+    return new PJRT_Error{xla::ResourceExhausted(
+        "Out of memory for `PJRT_LoadedExecutable_GetDeviceAssignment()`")};
+  }
+  serialized_da->serialized = std::move(serialized_proto);
+  args->serialized_device_assignment = serialized_da;
+  args->serialized_bytes = serialized_da->serialized.data();
+  args->serialized_bytes_size = serialized_da->serialized.size();
+  args->serialized_device_assignment_deleter =
+      +[](PJRT_DeviceAssignmentSerialized* serialized_device_assignment) {
+        delete serialized_device_assignment;
+      };
   return nullptr;
 }
 
@@ -3035,6 +3084,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_Client_CreateAliasBuffer,
       /*PJRT_Client_FulfillAliasBuffer=*/
       pjrt::PJRT_Client_FulfillAliasBuffer,
+      /*PJRT_LoadedExecutable_GetDeviceAssignment=*/
+      pjrt::PJRT_LoadedExecutable_GetDeviceAssignment,
   };
 }
 

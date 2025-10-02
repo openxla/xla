@@ -28,12 +28,13 @@ namespace gpu {
 
 absl::StatusOr<bool> ThunkPassPipeline::Run(
     SequentialThunk* root_thunk, const DebugOptions& debug_options,
-    const se::DeviceDescription& device_info) {
+    const se::DeviceDescription& device_info,
+    ThunkPassBufferAllocator& allocator) {
   bool changed = false;
   for (const auto& pass : passes_) {
     VLOG(1) << "Running ThunkPass: " << pass->name();
-    TF_ASSIGN_OR_RETURN(bool pass_changed,
-                        pass->Run(root_thunk, debug_options, device_info));
+    TF_ASSIGN_OR_RETURN(bool pass_changed, pass->Run(root_thunk, debug_options,
+                                                     device_info, allocator));
     changed |= pass_changed;
   }
   return changed;

@@ -22,10 +22,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
@@ -98,12 +98,6 @@ double BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
 // memory transactions.
 bool IsTiledReadCoalescedHeuristic(const TiledHloInstruction& operand,
                                    const se::DeviceDescription& device_info);
-
-// Returns the indexing map from logical to linearized physical shape for each
-// operand.
-llvm::SmallVector<IndexingMap, 4> MapLogicalToLinearizedPhysicalShape(
-    absl::Span<const HloInstruction* const> operands,
-    mlir::MLIRContext* mlir_context);
 
 }  // namespace xla::gpu
 

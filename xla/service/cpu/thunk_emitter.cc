@@ -116,9 +116,9 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
 #if XLA_ONEDNN_USE_GRAPH_API
 #include "xla/backends/cpu/onednn_emitter.h"
@@ -129,91 +129,6 @@ limitations under the License.
 namespace xla::cpu {
 
 namespace {
-
-bool ShouldDisableLoopUnrollingForReduce(const HloInstruction* instruction) {
-  bool disable_loop_unrolling = true;
-  auto* reduce = Cast<HloReduceInstruction>(instruction);
-  auto reduce_dimensions = reduce->dimensions();
-  // All inputs have the same shape.
-  auto reduce_input_shape = reduce->inputs()[0]->shape();
-  auto reduce_input_rank = reduce_input_shape.dimensions().size();
-
-  // If reduce happens over outer dimensions we turn on loop unrolling.
-  for (auto it = reduce_dimensions.rbegin(); it != reduce_dimensions.rend();
-       ++it) {
-    if (*it != --reduce_input_rank) {
-      disable_loop_unrolling = false;
-      break;
-    }
-  }
-
-  return disable_loop_unrolling;
-}
-
-bool ShouldDisableLoopUnrollingForReduceWindow(
-    const HloInstruction* instruction,
-    const TargetMachineFeatures& target_machine_features) {
-  bool disable_loop_unrolling = true;
-  auto* reduce_window = Cast<HloReduceWindowInstruction>(instruction);
-
-  auto max_simd_width_bytes = [&]() -> std::optional<int> {
-    auto features = target_machine_features.get_target_feature_string();
-    constexpr int kAvx512 = 512;
-    constexpr int kAvx = 256;
-    constexpr int kSse = 128;
-    constexpr int kBitsInByte = 8;
-    if (absl::StrContains(features, "+avx512")) {
-      return kAvx512 / kBitsInByte;
-    }
-    if (absl::StrContains(features, "+avx")) {
-      return kAvx / kBitsInByte;
-    }
-    if (absl::StrContains(features, "+sse")) {
-      return kSse / kBitsInByte;
-    }
-    return std::nullopt;
-  }();
-
-  std::vector<int64_t> strides;
-  strides.reserve(reduce_window->window().dimensions_size());
-
-  for (const auto& dim : reduce_window->window().dimensions()) {
-    strides.push_back(dim.stride());
-  }
-
-  auto input_type = reduce_window->inputs()[0]->shape().element_type();
-  // If the innermost stride is lesser than the size of the vectorization
-  // for the given platform we turn on loop unrolling.
-  if (max_simd_width_bytes.has_value() &&
-      *max_simd_width_bytes >
-          strides.back() * ShapeUtil::ByteSizeOfPrimitiveType(input_type)) {
-    disable_loop_unrolling = false;
-  }
-
-  return disable_loop_unrolling;
-}
-
-absl::Status HandleReduceAndReduceWindowElementalKernelCompilationOptions(
-    const HloInstruction* instruction, llvm::Module& llvm_module,
-    const TargetMachineFeatures& target_machine_features) {
-  bool disable_loop_unrolling = true;
-
-  if (instruction->opcode() == HloOpcode::kReduce) {
-    disable_loop_unrolling = ShouldDisableLoopUnrollingForReduce(instruction);
-  } else if (instruction->opcode() == HloOpcode::kReduceWindow) {
-    disable_loop_unrolling = ShouldDisableLoopUnrollingForReduceWindow(
-        instruction, target_machine_features);
-  } else {
-    return absl::InvalidArgumentError(
-        absl::StrCat("Unsupported HLO instruction: ", instruction->ToString()));
-  }
-
-  LlvmKernelOptions llvm_kernel_options;
-  llvm_kernel_options.set_disable_loop_unrolling(disable_loop_unrolling);
-  SetXlaCpuBackendOptions(llvm_module, llvm_kernel_options);
-
-  return absl::OkStatus();
-}
 
 absl::StatusOr<std::string> GetFusionFingerprint(
     const HloFusionInstruction& fusion,
@@ -312,6 +227,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitEntryComputation(
 
 absl::StatusOr<std::vector<ThunkEmitter::EmittedKernel>>
 ThunkEmitter::ConsumeKernels() {
+  tsl::profiler::TraceMe trace("ThunkEmitter::ConsumeKernels");
   TF_ASSIGN_OR_RETURN(std::vector<LlvmKernelDefinition> fusion_kernels,
                       parallel_fusion_emitter_.ConsumeKernels());
 
@@ -417,6 +333,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kAdd:
     case HloOpcode::kAnd:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kBroadcast:
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCbrt:
@@ -427,6 +344,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kComplex:
     case HloOpcode::kConvert:
     case HloOpcode::kCos:
+    case HloOpcode::kCosh:
     case HloOpcode::kDivide:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
@@ -895,17 +813,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitElementalKernelThunk(
   kernels_.push_back(
       {kernel_spec.name(), std::move(kernel_source).thread_safe_module()});
 
-  // AOT compiled kernels get linked together, so we aren't allowed to change
-  // module flags as that will break linking.
-  if (!options_.is_aot_compilation &&
-      (instruction->opcode() == HloOpcode::kReduce ||
-       instruction->opcode() == HloOpcode::kReduceWindow)) {
-    TF_RETURN_IF_ERROR(
-        HandleReduceAndReduceWindowElementalKernelCompilationOptions(
-            instruction, *kernels_.back().module.getModuleUnlocked(),
-            target_machine_features_));
-  }
-
   return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
                                  /*min_alignment=*/MinAlign());
 }
@@ -964,9 +871,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
                           emitters::GetKernelSpec(
                               kernel_spec.name(), *fusion, &buffer_assignment_,
                               kernel_spec.work_dimensions()));
-      return MakeKernelThunkSequence(
-          instruction, new_kernel_spec,
-          /*min_alignment=*/cpu_function_runtime::MinAlign());
+      return MakeKernelThunkSequence(instruction, new_kernel_spec,
+                                     /*min_alignment=*/MinAlign());
     }
 
     TF_ASSIGN_OR_RETURN(KernelSpec kernel_spec,
@@ -1299,7 +1205,7 @@ static absl::StatusOr<OpBuffers> GetOpBuffers(
   };
 }
 
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
     const HloInstruction* instruction) {
   auto custom_call = Cast<HloCustomCallInstruction>(instruction);
@@ -1322,7 +1228,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   return ThunkSequence::Of<OneDnnOpThunk>(
       custom_call_target, ThunkInfo(custom_call), op_buffers, config);
 }
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
 static bool IsValidCustomCallApiVersion(CustomCallApiVersion api_version) {
   switch (api_version) {
@@ -1353,11 +1259,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
   } else if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
   } else if (absl::StartsWith(custom_call->custom_call_target(), "__onednn$")) {
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
     return EmitOneDnnOpThunk(instruction);
 #else
     return Unimplemented("XLA is not built with oneDNN.");
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
   }
 
   // Check the API version.

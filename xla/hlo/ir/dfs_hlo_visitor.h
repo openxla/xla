@@ -177,6 +177,9 @@ class DfsHloVisitorBase {
   virtual absl::Status HandleAtan2(HloInstructionPtr hlo) {
     return HandleElementwiseBinary(hlo);
   }
+  virtual absl::Status HandleAtanh(HloInstructionPtr hlo) {
+    return HandleElementwiseUnary(hlo);
+  }
   virtual absl::Status HandleRound(HloInstructionPtr hlo) {
     return HandleElementwiseUnary(hlo);
   }
@@ -217,6 +220,9 @@ class DfsHloVisitorBase {
     return HandleElementwiseUnary(hlo);
   }
   virtual absl::Status HandleCos(HloInstructionPtr hlo) {
+    return HandleElementwiseUnary(hlo);
+  }
+  virtual absl::Status HandleCosh(HloInstructionPtr hlo) {
     return HandleElementwiseUnary(hlo);
   }
   virtual absl::Status HandleSin(HloInstructionPtr hlo) {

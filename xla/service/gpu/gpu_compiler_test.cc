@@ -120,9 +120,10 @@ class GpuCompilerTest : public HloTestBase {
     GpuCompiler* gpu_compiler = tensorflow::down_cast<GpuCompiler*>(compiler);
     std::unique_ptr<GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(gpu_device_info);
-    TF_RETURN_IF_ERROR(
-        ScheduleGpuModule(module, 4, gpu_device_info, alias_info.get())
-            .status());
+    TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info,
+                                         gpu_compiler->mlir_context(),
+                                         alias_info.get())
+                           .status());
     return gpu_compiler->RunPostSchedulingPipelines(
         module, 4 * 1024 * 1024, gpu_device_info, alias_info.get());
   }
@@ -1135,10 +1136,13 @@ ENTRY main {
   ROOT fusion = f32[1024,1024,1024] fusion(p0), kind=kLoop, calls=transpose
 })";
 
+  // Disable autotuning as this test is attempting to test a heuristic, but
+  // autotuning tests both cases, and is not guaranteed to be deterministic.
+  auto config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_autotune_level(0);
   TF_ASSERT_OK_AND_ASSIGN(
       auto module_and_executable,
-      GetOptimizedModuleForExecutable(transpose_fusion_module,
-                                      GetModuleConfigForTest()));
+      GetOptimizedModuleForExecutable(transpose_fusion_module, config));
   const HloModule* optimized_module = module_and_executable.first;
 
   if (cc.IsAtLeastAmpere()) {
@@ -1173,11 +1177,13 @@ ENTRY main {
   reshape = f32[1024,1024,4]{2,1,0} reshape(p0)
   ROOT transpose = f32[4,1024,1024]{2,1,0} transpose(reshape), dimensions={2,1,0}
 })";
-
+  // Disable autotuning as this test is attempting to test a heuristic, but
+  // autotuning tests both cases, and is not guaranteed to be deterministic.
+  auto config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_autotune_level(0);
   TF_ASSERT_OK_AND_ASSIGN(
       auto rewritable_transpose_module_and_executable,
-      GetOptimizedModuleForExecutable(rewritable_transpose_string,
-                                      GetModuleConfigForTest()));
+      GetOptimizedModuleForExecutable(rewritable_transpose_string, config));
   const HloModule* rewritable_transpose_optimized_module =
       rewritable_transpose_module_and_executable.first;
   EXPECT_TRUE(HasBlockLevelFusionConfig(
@@ -1199,8 +1205,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto unrewritable_transpose_module_and_executable,
-      GetOptimizedModuleForExecutable(unrewritable_transpose_string,
-                                      GetModuleConfigForTest()));
+      GetOptimizedModuleForExecutable(unrewritable_transpose_string, config));
   const HloModule* unrewritable_transpose_optimized_module =
       unrewritable_transpose_module_and_executable.first;
   EXPECT_FALSE(HasBlockLevelFusionConfig(
@@ -2178,6 +2183,15 @@ class GpuCompilerSelectKTest
 TEST_P(GpuCompilerSelectKTest, SelectKOrCustomKernelThunk) {
   auto [n, k, expected_impl] = GetParam();
 
+  bool is_rocm = std::holds_alternative<stream_executor::RocmComputeCapability>(
+      backend()
+          .default_stream_executor()
+          ->GetDeviceDescription()
+          .gpu_compute_capability());
+
+  if (is_rocm && expected_impl == TopKImpl::kSelectK) {
+    GTEST_SKIP() << "raft::select_k is not supported in ROCm.";
+  }
   // Generate HLO text with parameters substituted.
   std::string hlo_text = absl::Substitute(R"(
 HloModule m

@@ -38,6 +38,7 @@ License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -67,6 +68,7 @@ class FusionBlockLevelRewriterTest : public HloHardwareIndependentTestBase {
         true);
     return debug_options;
   }
+  mlir::MLIRContext mlir_context_;
 };
 
 TEST_F(FusionBlockLevelRewriterTest,
@@ -86,7 +88,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   EXPECT_THAT(
-      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize)
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
           .Run(module.get()),
       absl_testing::IsOkAndHolds(false));
 }
@@ -107,7 +110,8 @@ ENTRY entry {
                           ParseAndReturnVerifiedModule(hlo_text));
 
   EXPECT_THAT(
-      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize)
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
           .Run(module.get()),
       absl_testing::IsOkAndHolds(true));
   const HloInstruction* root = module->entry_computation()->root_instruction();
@@ -137,7 +141,8 @@ ENTRY entry {
       SymbolicTileAnalysis::AnalyzeComputation(
           *module->GetComputationWithName("fusion_computation"), &ctx)));
   EXPECT_THAT(
-      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize)
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
           .Run(module.get()),
       absl_testing::IsOkAndHolds(false));
 }
@@ -161,12 +166,13 @@ ENTRY entry {
       *module->GetComputationWithName("fusion_computation"),
       device_info_.gpu_compute_capability()));
   EXPECT_THAT(
-      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize)
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
           .Run(module.get()),
       absl_testing::IsOkAndHolds(false));
 }
 
-TEST_F(HloHardwareIndependentTestBase, RewritesS32ReductionFusions) {
+TEST_F(FusionBlockLevelRewriterTest, RewritesS32ReductionFusions) {
   constexpr absl::string_view kHloText = R"(
 
 %scalar_add_computation {
@@ -196,8 +202,8 @@ ENTRY entry  {
                           ParseAndReturnVerifiedModule(kHloText));
   se::DeviceDescription device_info{TestGpuDeviceInfo::RTXA6000DeviceInfo(
       se::CudaComputeCapability::Ampere())};
-  FusionBlockLevelRewriter rewriter(device_info,
-                                    HloCostAnalysis::DefaultShapeSize);
+  FusionBlockLevelRewriter rewriter(
+      device_info, HloCostAnalysis::DefaultShapeSize, &mlir_context_);
   EXPECT_THAT(rewriter.Run(module.get()), absl_testing::IsOkAndHolds(true));
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kFusion);

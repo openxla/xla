@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <set>
@@ -25,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -43,6 +45,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_checksum_tracing_pass.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -95,6 +98,61 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace {
+
+// Chooses the correct allocations to be used within the GpuExecutable code.
+std::vector<const BufferAllocation*> GatherAllocationPtrs(
+    const GpuExecutable::Params& params,
+    const std::deque<BufferAllocation>& thunk_pass_allocations) {
+  const std::vector<BufferAllocation>* allocation_vec = nullptr;
+  if (params.mlir_allocations.has_value()) {
+    allocation_vec = &params.mlir_allocations.value();
+  } else if (params.buffer_assignment != nullptr) {
+    allocation_vec = &params.buffer_assignment->Allocations();
+  }
+
+  std::vector<const BufferAllocation*> alloc_ptrs;
+  if (allocation_vec != nullptr) {
+    alloc_ptrs.reserve(allocation_vec->size());
+    for (const BufferAllocation& alloc : *allocation_vec) {
+      alloc_ptrs.push_back(&alloc);
+    }
+  }
+
+  if (!thunk_pass_allocations.empty()) {
+    alloc_ptrs.reserve(alloc_ptrs.size() + thunk_pass_allocations.size());
+    for (const BufferAllocation& alloc : thunk_pass_allocations) {
+      alloc_ptrs.push_back(&alloc);
+    }
+  }
+
+  return alloc_ptrs;
+}
+
+class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
+ public:
+  ~GpuExecutableThunkPassBufferAllocator() override = default;
+
+  explicit GpuExecutableThunkPassBufferAllocator(
+      BufferAllocation::Index start_idx)
+      : next_idx_(start_idx) {}
+
+  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+      int64_t size) override {
+    allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
+    return &allocations_.back();
+  }
+
+  std::deque<BufferAllocation>& MutableAllocations() { return allocations_; }
+
+ private:
+  BufferAllocation::Index next_idx_ = 0;
+  // std::deque is used to ensure pointer stability.
+  std::deque<BufferAllocation> allocations_;
+};
+
+}  // namespace
+
 using ::tsl::profiler::ScopedAnnotation;
 
 // Returns the set of `ExecutionStreamIds` requested by all `Thunks` in the
@@ -114,13 +172,17 @@ static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
 static absl::Status RunThunkPasses(const DebugOptions& debug_options,
                                    const se::DeviceDescription& device_info,
                                    SequentialThunk* root_thunk,
-                                   HloModule* hlo_module) {
+                                   HloModule* hlo_module,
+                                   ThunkPassBufferAllocator& allocator) {
   ThunkPassPipeline pipeline("thunk-passes");
+  if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks()) {
+    pipeline.AddPass(std::make_unique<ThunkChecksumTracingPass>());
+  }
   if (debug_options.xla_gpu_experimental_enable_command_buffer_on_thunks()) {
     pipeline.AddPass(std::make_unique<CommandBufferConversionPass>());
   }
-  TF_ASSIGN_OR_RETURN(bool changed,
-                      pipeline.Run(root_thunk, debug_options, device_info));
+  TF_ASSIGN_OR_RETURN(bool changed, pipeline.Run(root_thunk, debug_options,
+                                                 device_info, allocator));
   if (changed) {
     VLOG(3) << "Thunk passes changed the thunk tree.";
     if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
@@ -135,15 +197,28 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
 
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     Params params) {
-  TF_RETURN_IF_ERROR(
-      RunThunkPasses(params.debug_options, params.device_description,
-                     params.executable.get(), params.debug_module.get()));
-  return std::unique_ptr<GpuExecutable>(new GpuExecutable(std::move(params)));
+  int64_t next_idx = 0;
+  if (params.mlir_allocations.has_value()) {
+    next_idx = params.mlir_allocations->size();
+  } else if (params.buffer_assignment != nullptr) {
+    next_idx = params.buffer_assignment->Allocations().size();
+  }
+
+  GpuExecutableThunkPassBufferAllocator allocator(next_idx);
+
+  TF_RETURN_IF_ERROR(RunThunkPasses(
+      params.debug_options, params.device_description, params.executable.get(),
+      params.debug_module.get(), allocator));
+
+  return std::unique_ptr<GpuExecutable>(new GpuExecutable(
+      std::move(params), std::move(allocator.MutableAllocations())));
 }
 
 // Implementation note: HLO profiling is always enabled for GPU executables,
 // since we can use timers around thunks.
-GpuExecutable::GpuExecutable(GpuExecutable::Params params)
+GpuExecutable::GpuExecutable(
+    GpuExecutable::Params params,
+    std::deque<BufferAllocation> thunk_pass_allocations)
     : Executable(std::move(params.debug_module)),
       text_(std::move(params.asm_text)),
       binary_(std::move(params.binary)),
@@ -153,8 +228,10 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
       execution_stream_ids_(GetExecutionStreamIds(*thunks_)),
       module_name_(params.module_name),
       program_shape_(params.program_shape),
+      allocation_ptrs_(GatherAllocationPtrs(params, thunk_pass_allocations)),
       allocations_(std::move(params.mlir_allocations)),
       buffer_assignment_(std::move(params.buffer_assignment)),
+      thunk_pass_allocations_(std::move(thunk_pass_allocations)),
       alias_info_(std::move(params.alias_info)),
       debug_buffer_assignment_show_max_(
           params.debug_options.xla_debug_buffer_assignment_show_max()),
@@ -253,6 +330,10 @@ absl::Status ExecuteThunksImpl(
   se::StreamExecutor* executor = main_stream->parent();
   stream_executor::StreamPriority stream_priority =
       stream_executor::StreamPriority::Default;
+  // TODO(intel-tf): Enable stream priorities for sycl backend.
+  if (executor->GetPlatform()->id() == stream_executor::sycl::kSyclPlatformId) {
+    use_highest_priority_for_async_stream = false;
+  }
   if (use_highest_priority_for_async_stream) {
     stream_priority = stream_executor::StreamPriority::Highest;
   }
@@ -675,16 +756,16 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
 
-  absl::Span<const BufferAllocation> allocations = GetAllocations();
+  absl::Span<const BufferAllocation* const> allocations = GetAllocations();
   const int64_t num_buffers = allocations.size();
   std::vector<se::DeviceMemoryBase> buffers;
   buffers.reserve(num_buffers);
   for (int64_t i = 0; i < num_buffers; ++i) {
-    const BufferAllocation& allocation = allocations[i];
+    const BufferAllocation& allocation = *allocations[i];
     TF_ASSIGN_OR_RETURN(
         buffers.emplace_back(),
-        BufferForAllocation(arguments, globals, allocations[i],
-                            memory_allocator, device_ordinal, i));
+        BufferForAllocation(arguments, globals, allocation, memory_allocator,
+                            device_ordinal, i));
     TF_RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return {{buffers, device_ordinal, memory_allocator}};
@@ -753,7 +834,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       GenerateBufferAllocations(arguments, globals, memory_allocator,
                                 device_ordinal));
   VLOG(3) << buffer_allocations.ToString();
-  absl::Span<const BufferAllocation> allocations = GetAllocations();
+  absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
   std::set<se::DeviceMemoryBase> buffers_in_result;
 
@@ -777,7 +858,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     }
     const OutputInfo& output_info = output_info_.at(index);
     const BufferAllocation* allocation =
-        &allocations[output_info.allocation_index];
+        allocations[output_info.allocation_index];
     se::DeviceMemoryBase& result_buffer = p.second;
 
     VLOG(4) << "Looking at: allocation " << output_info.allocation_index
@@ -950,9 +1031,9 @@ int64_t GpuExecutable::SizeOfGeneratedCodeInBytes() const {
     return -1;
   }
   int64_t size = binary().size();
-  for (const auto& allocation : GetAllocations()) {
-    if (allocation.is_constant()) {
-      size += allocation.size();
+  for (const BufferAllocation* allocation : GetAllocations()) {
+    if (allocation->is_constant()) {
+      size += allocation->size();
     }
   }
   return size;
