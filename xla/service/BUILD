@@ -1499,7 +1499,6 @@ cc_library(
     deps = [
         ":buffer_assignment",
         ":computation_layout",
-        ":dump",
         ":hlo_execution_profile",
         ":hlo_module_config",
         ":hlo_proto_cc",
