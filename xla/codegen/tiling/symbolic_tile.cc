@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/symbolic_tile.h"
+#include "xla/codegen/tiling/symbolic_tile.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -37,13 +37,12 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/affine_map_evaluator.h"
+#include "xla/codegen/tiling/constraint_expression.h"
+#include "xla/codegen/tiling/size_and_stride_expression.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
-#include "xla/service/gpu/model/constraint_expression.h"
-#include "xla/service/gpu/model/size_and_stride_expression.h"
 
 namespace xla {
-namespace gpu {
 namespace {
 
 using ::llvm::SmallVector;
@@ -351,5 +350,4 @@ llvm::SmallVector<int64_t> EvaluateTileStrides(
                            /*dim_values=*/clamped_parameters);
 }
 
-}  // namespace gpu
 }  // namespace xla

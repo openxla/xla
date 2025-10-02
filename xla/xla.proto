@@ -258,11 +258,11 @@ message DebugOptions {
   reserved 298;  // Was xla_cpu_use_thunk_runtime
 
   // The number of seconds to wait before terminating a rendezvous call
-  optional int32 xla_cpu_collective_call_terminate_timeout_seconds = 415;
+  optional int32 xla_cpu_collective_call_terminate_timeout_seconds = 416;
 
   // The number of seconds to wait before warning about a rendezvous call that
   // has not yet timed out.
-  optional int32 xla_cpu_collective_call_warn_stuck_seconds = 414;
+  optional int32 xla_cpu_collective_call_warn_stuck_seconds = 415;
 
   //--------------------------------------------------------------------------//
   // XLA:GPU options.
@@ -602,6 +602,10 @@ message DebugOptions {
   // This feature is still experimental and effective only
   // xla_gpu_multi_streamed_windowed_einsum is set to true.
   optional bool xla_gpu_experimental_enable_alltoall_windowed_einsum = 360;
+
+  // Enables an experimental feature to record checksums of selected thunk
+  // inputs/outputs.
+  optional bool xla_gpu_experimental_enable_checksum_tracing_on_thunks = 414;
 
   // Enables an experimental feature for command buffer conversion on thunks.
   optional bool xla_gpu_experimental_enable_command_buffer_on_thunks = 394;
@@ -1343,7 +1347,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 416
+  // Next id: 417
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

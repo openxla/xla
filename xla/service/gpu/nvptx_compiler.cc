@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
+#include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -338,30 +339,24 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
     return absl::OkStatus();
   }
 
-  // TODO(b/407495801): Cached Gemm as well as Conv autotuning results are
-  // loaded in the GpuConvAlgorithmPicker but should be loaded in the autotuner.
-  pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
-
-  if (stream_exec == nullptr) {
-    return absl::OkStatus();
-  }
-
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<CublasBackend>(
       stream_exec, &debug_options, this, target_config));
   backends.push_back(std::make_unique<CublasLtBackend>(
       stream_exec, &debug_options, this, target_config));
+  backends.push_back(std::make_unique<CudnnBackend>(stream_exec, &debug_options,
+                                                    this, target_config));
   auto should_autotune = [](const HloInstruction& instruction) -> bool {
     return instruction.opcode() == HloOpcode::kCustomCall &&
-           IsCublasGemm(instruction);
+           (IsCublasGemm(instruction) ||
+            IsCustomCallToDnnConvolution(instruction));
   };
 
-  bool cache_only = stream_exec == nullptr;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
                             thread_pool, should_autotune, target_config,
-                            options.device_allocator, cache_only));
+                            options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
@@ -429,12 +424,11 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       &debug_options, this, target_config));
 
-  bool cache_only = stream_executor == nullptr;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<AutotunerPass> autotuner_pass,
-                      AutotunerPass::Create(
-                          std::move(backends), debug_options, stream_executor,
-                          thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                          target_config, options.device_allocator, cache_only));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<AutotunerPass> autotuner_pass,
+      AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
+                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
+                            target_config, options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }

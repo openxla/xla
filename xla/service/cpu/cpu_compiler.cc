@@ -253,12 +253,12 @@ limitations under the License.
 #include "llvm/TargetParser/X86TargetParser.h"
 #endif
 
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
 #include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
 #include "xla/service/cpu/onednn_float_support.h"
 #include "xla/service/cpu/onednn_ops_rewriter.h"
-#endif
+#endif  // XLA_ONEDNN
 
 namespace xla {
 namespace {
@@ -679,7 +679,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<DotDecomposer>();
 
   // Rewrite to custom calls with target as oneDNN library calls.
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
   // This pass is not supported in the thunk runtime yet.
   bool is_thunk_runtime = true;
   bool use_onednn_custom_call =
@@ -695,7 +695,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // but in future plan to rename oneDNNrewriter to specific to onednn matmul
     pipeline.AddPass<OneDnnOpsRewriter>();
   }
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
   // Promote BF16 all-reduce to F32.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
@@ -706,7 +706,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // BF16/F8 lowering for most ops.
   CpuFloatSupport bf16_support(BF16, call_library_for_dot,
                                target_machine_features);
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
   OneDnnFloatSupport onednn_bf16_support(BF16);
   if (is_onednn_compatible) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
@@ -715,7 +715,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 #else
   pipeline.AddPass<FloatNormalization>(&bf16_support);
-#endif
+#endif  // XLA_ONEDNN
   FloatSupport f8e5m2_support(F8E5M2, F16);
   pipeline.AddPass<FloatNormalization>(&f8e5m2_support);
   FloatSupport f8e4m3_support(F8E4M3, F16);
@@ -903,7 +903,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
           ? module->config().intra_op_parallelism_threads()
           : tsl::port::NumSchedulableCPUs();
 
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
   // AOT compiled code runs in single thread.
   bool use_onednn_custom_call =
       debug_options.xla_cpu_experimental_onednn_custom_call() &&
@@ -923,7 +923,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
       pipeline.AddPass<SimplifyFPConversions>();
     }
   }
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
   // Guard this experimental pipeline with flags until we make sure that
   // calling `DotDecomposer` early is okay.
@@ -1156,11 +1156,20 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
     const CompileOptions& options) {
   auto& config = module->config();
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<llvm::TargetMachine> jit_target_machine,
-      IrCompiler::InferTargetMachine(
-          CompilerTargetOptions(config), IrCompiler::GetCodeGenOptLevel(config),
-          CpuFeatureFromString(config.debug_options().xla_cpu_max_isa())));
+  std::unique_ptr<llvm::TargetMachine> jit_target_machine;
+
+  {
+    auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
+        module->config().debug_options().xla_backend_extra_options());
+    llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
+
+    TF_ASSIGN_OR_RETURN(
+        jit_target_machine,
+        IrCompiler::InferTargetMachine(
+            CompilerTargetOptions(config),
+            IrCompiler::GetCodeGenOptLevel(config),
+            CpuFeatureFromString(config.debug_options().xla_cpu_max_isa())));
+  }
 
   TF_RETURN_IF_ERROR(RunHloPasses(module.get(), /*is_aot_compile=*/false,
                                   jit_target_machine.get(),
@@ -1920,16 +1929,16 @@ CpuCompiler::CompileCpuExecutable(
 
   VLOG(3) << "Collected " << compiled_symbols.size() << " compiled symbols";
 
-  TraceMe trace_codegen([&] {
-    return TraceMeEncode("Codegen",
-                         {{"num_default_parts", num_default_parts},
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<FunctionLibrary> function_library, std::invoke([&] {
+        TraceMe trace_codegen([&] {
+          return TraceMeEncode(
+              "Codegen", {{"num_default_parts", num_default_parts},
                           {"num_extra_parts", num_extra_parts},
                           {"num_compiled_functions", num_compiled_functions}});
-  });
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<FunctionLibrary> function_library,
-      std::move(*llvm_module_compiler).Compile(compiled_symbols));
+        });
+        return std::move(*llvm_module_compiler).Compile(compiled_symbols);
+      }));
 
   // Create constant allocations from the buffer assignment.
   TF_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
