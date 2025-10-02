@@ -86,6 +86,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/global_device_id.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
@@ -123,7 +124,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -567,55 +567,6 @@ static absl::flat_hash_map<std::string, PjRtDeviceAttribute> GetAttrsForDevices(
   return attrs;
 }
 
-// Aborts all NCCL collectives when a task fails, as reported by the
-// JobStateUpdate.
-absl::Status AbortOnFailure(
-    absl::Span<const tensorflow::CoordinatedTaskStateInfo> previous_state,
-    absl::Span<const tensorflow::CoordinatedTaskStateInfo> current_state) {
-  if (previous_state.empty()) {
-    // When a job first starts, there is no previous job state.
-    return absl::OkStatus();
-  }
-
-  // We expect previous_state and current_state to have the same size, and we
-  // expect for every i, previous_state[i] and current_state[i] correspond to
-  // the same task.
-  if (previous_state.size() != current_state.size()) {
-    return FailedPrecondition(
-        "Previous and current job states have different sizes: %d vs %d",
-        previous_state.size(), current_state.size());
-  }
-
-  std::vector<IncarnationId> failed_incarnations;
-  for (int i = 0; i < previous_state.size(); ++i) {
-    const tensorflow::CoordinatedTaskStateInfo& previous = previous_state[i];
-    const tensorflow::CoordinatedTaskStateInfo& current = current_state[i];
-    if (previous.task().task_id() != current.task().task_id()) {
-      return FailedPrecondition(
-          "Previous and current job states have mismatched task ids: %d vs %d",
-          previous.task().task_id(), current.task().task_id());
-    }
-    if (previous.state() !=
-        tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED) {
-      // A task that was not previously connected cannot fail.
-      continue;
-    }
-    if (current.state() !=
-            tensorflow::CoordinatedTaskState::TASKSTATE_CONNECTED ||
-        previous.incarnation() != current.incarnation()) {
-      // The task is either failed, or restarted with a different incarnation.
-      VLOG(1) << "Task " << previous.task().task_id() << " (incarnation "
-              << previous.incarnation() << ") failed";
-      failed_incarnations.push_back(IncarnationId(previous.incarnation()));
-    }
-  }
-
-  if (!failed_incarnations.empty()) {
-    return xla::gpu::AbortCliquesWithIncarnations(failed_incarnations);
-  }
-  return absl::OkStatus();
-}
-
 StreamExecutorGpuClient::StreamExecutorGpuClient(
     std::string platform_name, LocalClient* client,
     std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
@@ -698,12 +649,10 @@ void StreamExecutorGpuClient::UpdateGlobalProcessInfo(
   if (!abort_collectives_on_failure_) {
     return;
   }
-
-  absl::MutexLock lock(task_state_infos_mu_);
-  if (absl::Status s = AbortOnFailure(task_state_infos_, infos); !s.ok()) {
-    LOG(ERROR) << s;
+  absl::Status s = ::xla::gpu::UpdateGlobalProcessInfo(infos);
+  if (!s.ok()) {
+    LOG(WARNING) << s;
   }
-  task_state_infos_ = {infos.begin(), infos.end()};
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
@@ -1323,9 +1272,10 @@ GetStreamExecutorGpuDeviceAllocator(
             CreateCudaAsyncAllocator(
                 *(ordinal_and_device.second), allocator_config.memory_fraction,
                 allocator_config.preallocate, false, false, true));
-        allocators.emplace_back(std::move(async_allocator),
-                                ordinal_and_device.second->compute_stream(),
-                                /*memory_space=*/0);
+        allocators.emplace_back(
+            std::move(async_allocator),
+            ordinal_and_device.second->compute_stream(),
+            /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault);
       }
       break;
     }
@@ -1340,9 +1290,10 @@ GetStreamExecutorGpuDeviceAllocator(
                                allocator_config.memory_fraction,
                                allocator_config.preallocate,
                                allocator_config.gpu_system_memory_size));
-        allocators.emplace_back(std::move(bfc_allocator),
-                                ordinal_and_device.second->compute_stream(),
-                                /*memory_space=*/0);
+        allocators.emplace_back(
+            std::move(bfc_allocator),
+            ordinal_and_device.second->compute_stream(),
+            /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault);
       }
       break;
     }
@@ -1367,9 +1318,10 @@ GetStreamExecutorGpuDeviceAllocator(
             ordinal_and_device.second->executor(),
             /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
             allocator_config.collective_memory_size));
-    allocators.emplace_back(std::move(collective_bfc_allocator),
-                            ordinal_and_device.second->compute_stream(),
-                            /*memory_space=*/1);
+    allocators.emplace_back(
+        std::move(collective_bfc_allocator),
+        ordinal_and_device.second->compute_stream(),
+        /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective);
   }
 
   for (const auto& ordinal_and_device : addressable_devices) {
@@ -1395,7 +1347,7 @@ GetStreamExecutorGpuDeviceAllocator(
       allocators.emplace_back(
           std::move(async_allocator),
           ordinal_and_device.second->compute_stream(),
-          /*memory_space=*/gpu::kTempBufferMemorySpaceColor);
+          /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kTempBuffer);
     }
   }
 #endif
@@ -1874,7 +1826,8 @@ StreamExecutorGpuClient::RunAsync(
         globals, gpu_exec->ResolveConstantGlobals(run_options->stream()));
   }
 
-  absl::Span<const BufferAllocation> allocations = gpu_exec->GetAllocations();
+  absl::Span<const BufferAllocation* const> allocations =
+      gpu_exec->GetAllocations();
 
   std::vector<se::DeviceMemoryBase> buffers(allocations.size());
   {
@@ -1883,7 +1836,7 @@ StreamExecutorGpuClient::RunAsync(
         tsl::profiler::TraceMeLevel::kInfo);
     const int64_t num_buffers = allocations.size();
     for (int64_t i = 0; i < num_buffers; ++i) {
-      const BufferAllocation& allocation = allocations[i];
+      const BufferAllocation& allocation = *allocations[i];
       se::DeviceMemoryBase& buffer = buffers[i];
       if (allocation.is_thread_local()) {
         // buffer = se::DeviceMemoryBase{};
@@ -1941,7 +1894,7 @@ StreamExecutorGpuClient::RunAsync(
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
     const BufferAllocation* allocation =
-        &allocations[output_info.allocation_index];
+        allocations[output_info.allocation_index];
     se::DeviceMemoryBase result_buffer;
 
     VLOG(4) << "[" << device_ordinal << "] Looking at: allocation "

@@ -61,6 +61,8 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/extensions/cross_host_transfers/pjrt_c_api_cross_host_transfers_extension.h"
 #include "xla/pjrt/extensions/executable_metadata/executable_metadata_extension.h"
+#include "xla/pjrt/extensions/host_allocator/host_allocator_extension.h"
+#include "xla/pjrt/extensions/host_allocator/host_allocator_interface_impl.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -123,6 +125,17 @@ InitExtensions(const PJRT_Api* c_api) {
   return extensions;
 }
 
+static absl::StatusOr<std::unique_ptr<PjRtClient::HostAllocator>>
+InitHostAllocator(const PJRT_Api* c_api, PJRT_Client* c_client) {
+  PJRT_HostAllocator_Extension* extension =
+      pjrt::FindExtension<PJRT_HostAllocator_Extension>(
+          c_api, PJRT_Extension_Type::PJRT_Extension_Type_HostAllocator);
+  if (extension == nullptr) {
+    return absl::UnimplementedError("HostAllocator extension not found");
+  }
+  return std::make_unique<HostAllocatorInterfaceImpl>(c_client, extension);
+}
+
 PjRtCApiClient::PjRtCApiClient(
     const PJRT_Api* c_api, PJRT_Client* c_client,
     std::unique_ptr<pjrt::PJRT_KeyValueCallbackData> kv_callback_data)
@@ -132,6 +145,7 @@ PjRtCApiClient::PjRtCApiClient(
       kv_callback_data_(std::move(kv_callback_data)),
       topo_desc_(InitClientTopoDesc(c_api, c_client)),
       extensions_(InitExtensions(c_api)),
+      host_allocator_(InitHostAllocator(c_api, c_client)),
       // Example platform version string:
       //   PJRT C API
       //   TFRT TPU v2
@@ -678,6 +692,14 @@ PjRtCApiClient::GetTopologyDescription() const {
     return topo_desc_.status();
   }
   return &(*topo_desc_);
+}
+
+absl::StatusOr<PjRtClient::HostAllocator*> PjRtCApiClient::GetHostAllocator()
+    const {
+  if (!host_allocator_.ok()) {
+    return host_allocator_.status();
+  }
+  return host_allocator_->get();
 }
 
 absl::StatusOr<std::uintptr_t> PjRtCApiClient::UnsafeBufferPointer(
@@ -1822,6 +1844,7 @@ PjRtCApiLoadedExecutable::PjRtCApiLoadedExecutable(
   executable_ =
       std::make_unique<PjRtCApiExecutable>(pjrt_c_api(), args.executable);
   InitDevices();
+  InitDeviceAssignment();
 }
 
 void PjRtCApiLoadedExecutable::InitDevices() {
@@ -1844,6 +1867,45 @@ void PjRtCApiLoadedExecutable::InitDevices() {
     PjRtCApiDevice* c_api_device = client_->GetCppDevice(device);
     addressable_devices_.push_back(c_api_device);
   }
+}
+
+void PjRtCApiLoadedExecutable::InitDeviceAssignment() {
+  if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&
+      pjrt_c_api()->pjrt_api_version.minor_version < 79) {
+    device_assignment_ = nullptr;
+    return;
+  }
+  PJRT_LoadedExecutable_GetDeviceAssignment_Args args;
+  args.struct_size = PJRT_LoadedExecutable_GetDeviceAssignment_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.executable = c_loaded_executable();
+
+  const PJRT_Api* api = pjrt_c_api();
+
+  pjrt::LogFatalIfPjrtError(
+      api->PJRT_LoadedExecutable_GetDeviceAssignment(&args), api);
+
+  absl::Cleanup cleanup = [&args] {
+    args.serialized_device_assignment_deleter(
+        args.serialized_device_assignment);
+  };
+
+  // If `serialized_bytes_size` is 0, this executable is portable and has no
+  // device assignment.
+  if (args.serialized_bytes_size == 0) {
+    device_assignment_ = nullptr;
+    return;
+  }
+
+  std::string serialized_proto(args.serialized_bytes,
+                               args.serialized_bytes_size);
+  DeviceAssignmentProto proto;
+  CHECK(proto.ParseFromString(serialized_proto));
+
+  absl::StatusOr<std::unique_ptr<DeviceAssignment>> device_assignment =
+      DeviceAssignment::Deserialize(proto);
+  CHECK_OK(device_assignment.status());
+  device_assignment_ = std::move(*device_assignment);
 }
 
 static std::vector<std::vector<PJRT_Buffer*>> Convert2DCppBuffersToCBuffers(

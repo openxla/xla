@@ -271,6 +271,7 @@ cc_library(
         ":pjrt_executable",
         ":pjrt_future",
         ":pjrt_layout",
+        ":scoped_async_tracking_event",
         ":utils",
         "//xla:future",
         "//xla:literal",
@@ -809,6 +810,17 @@ cc_library(
 )
 
 cc_library(
+    name = "scoped_async_tracking_event",
+    hdrs = ["scoped_async_tracking_event.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "//xla:future",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+    ],
+)
+
+cc_library(
     name = "host_memory_spaces",
     srcs = ["host_memory_spaces.cc"],
     hdrs = ["host_memory_spaces.h"],
@@ -959,6 +971,8 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/extensions/cross_host_transfers:pjrt_c_api_cross_host_transfer_extension",
         "//xla/pjrt/extensions/executable_metadata:executable_metadata_extension",
+        "//xla/pjrt/extensions/host_allocator:host_allocator_extension",
+        "//xla/pjrt/extensions/host_allocator:host_allocator_interface_impl",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/proto:topology_description_proto_cc",
         "//xla/service:computation_placer_hdr",

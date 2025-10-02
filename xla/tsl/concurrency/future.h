@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/utility/utility.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace tsl {
@@ -201,6 +202,15 @@ class FutureBase : public FutureMoveControl<is_move_only> {
     Promise(Promise&& other) = default;
     Promise& operator=(Promise&& other) = default;
 
+    ~Promise() {
+      if (promise_ && !IsUniqueReference() && promise_.IsUnavailable()) {
+        // At this point, we know that the underlying AsyncValueRef will
+        // otherwise not fulfilled ever because `Promise` is move-only.
+        promise_.emplace(
+            absl::InternalError("Promise destroyed without being set"));
+      }
+    }
+
     explicit operator bool() const { return static_cast<bool>(promise_); }
 
     // Returns if this promise is the unique reference to the underlying value.
@@ -218,6 +228,7 @@ class FutureBase : public FutureMoveControl<is_move_only> {
     // debugging easier. Also, be aware that the current promise may still be
     // used to mint a future.
     bool IsUniqueReference() const {
+      CHECK(promise_) << "Promise must wrap an async value";
       return promise_.IsUnique() && !promise_.HasWaiter();
     }
 
@@ -227,7 +238,9 @@ class FutureBase : public FutureMoveControl<is_move_only> {
 
     template <typename... Args>
     void emplace(Args&&... args) const {
-      DCHECK(promise_) << "Promise must wrap an async value";
+      CHECK(promise_) << "Promise must wrap an async value";
+      CHECK(promise_.IsUnavailable())
+          << "Promise must not be fulfilled more than once";
       promise_.template emplace<Args...>(std::forward<Args>(args)...);
     }
 
@@ -464,6 +477,18 @@ class Future : public internal::FutureBase<absl::StatusOr<T>> {
     Future<T> future(promise, std::move(on_block_start),
                      std::move(on_block_end));
     return std::make_pair(std::move(promise), std::move(future));
+  }
+
+  // Returns a future that is constructed from the result of invoking functor
+  // `f` on the given `executor`.
+  template <typename F, typename R = std::invoke_result_t<F>,
+            std::enable_if_t<std::is_constructible_v<absl::StatusOr<T>, R>>* =
+                nullptr>
+  static Future<T> MakeOn(Executor& executor, F&& f) {
+    auto [promise, future] = MakePromise();
+    executor.Execute([promise = std::move(promise),
+                      f = std::forward<F>(f)]() mutable { promise.Set(f()); });
+    return std::move(future);
   }
 
   using Base::Await;
@@ -754,6 +779,17 @@ class Future<void> : public internal::FutureBase<absl::Status> {
     Future<> future(promise, std::move(on_block_start),
                     std::move(on_block_end));
     return std::make_pair(std::move(promise), std::move(future));
+  }
+
+  // Returns a future that is constructed from the result of invoking functor
+  // `f` on the given `executor`.
+  template <typename F, typename R = std::invoke_result_t<F>,
+            std::enable_if_t<std::is_same_v<R, absl::Status>>* = nullptr>
+  static Future<> MakeOn(Executor& executor, F&& f) {
+    auto [promise, future] = MakePromise();
+    executor.Execute([promise = std::move(promise),
+                      f = std::forward<F>(f)]() mutable { promise.Set(f()); });
+    return std::move(future);
   }
 
   using Base::Await;

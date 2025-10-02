@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
+#include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -57,7 +58,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/dot_dimension_merger.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
-#include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/call_inliner.h"
@@ -90,7 +90,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/service/gpu/transforms/cudnn_simplify_padding.h"
-#include "xla/service/gpu/transforms/cudnn_vectorize_convolutions.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -209,14 +208,6 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
                                              dnn_version, toolkit_version);
     pipeline.AddPass<ConvPaddingLegalization>();
     pipeline.AddPass<CudnnPadForConvolutions>(cuda_compute_capability);
-    if (!cuda_compute_capability.IsAtLeast(
-            se::CudaComputeCapability::CudaComputeCapabilities::kHopper)) {
-      // CUDNN vectorization is not performant on Hopper and later.
-      // The official guidance is not to use the vectorized layouts anymore on
-      // these newer architectures.
-      pipeline.AddPass<CudnnVectorizeConvolutions>(cuda_compute_capability,
-                                                   dnn_version);
-    }
   }
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
@@ -348,30 +339,24 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
     return absl::OkStatus();
   }
 
-  // TODO(b/407495801): Cached Gemm as well as Conv autotuning results are
-  // loaded in the GpuConvAlgorithmPicker but should be loaded in the autotuner.
-  pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
-
-  if (stream_exec == nullptr) {
-    return absl::OkStatus();
-  }
-
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<CublasBackend>(
       stream_exec, &debug_options, this, target_config));
   backends.push_back(std::make_unique<CublasLtBackend>(
       stream_exec, &debug_options, this, target_config));
+  backends.push_back(std::make_unique<CudnnBackend>(stream_exec, &debug_options,
+                                                    this, target_config));
   auto should_autotune = [](const HloInstruction& instruction) -> bool {
     return instruction.opcode() == HloOpcode::kCustomCall &&
-           IsCublasGemm(instruction);
+           (IsCublasGemm(instruction) ||
+            IsCustomCallToDnnConvolution(instruction));
   };
 
-  bool cache_only = stream_exec == nullptr;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
                             thread_pool, should_autotune, target_config,
-                            options.device_allocator, cache_only));
+                            options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
@@ -439,12 +424,11 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       &debug_options, this, target_config));
 
-  bool cache_only = stream_executor == nullptr;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<AutotunerPass> autotuner_pass,
-                      AutotunerPass::Create(
-                          std::move(backends), debug_options, stream_executor,
-                          thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                          target_config, options.device_allocator, cache_only));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<AutotunerPass> autotuner_pass,
+      AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
+                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
+                            target_config, options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }

@@ -29,7 +29,6 @@ cc_library(
     name = "pjrt_c_api_hdrs",
     hdrs = ["pjrt_c_api.h"],
     visibility = ["//visibility:public"],
-    deps = ["@com_google_absl//absl/status"],
 )
 
 cc_library(
@@ -568,6 +567,7 @@ xla_test(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:custom_call_target_registry",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/tests:literal_test_util",
@@ -575,6 +575,7 @@ xla_test(
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

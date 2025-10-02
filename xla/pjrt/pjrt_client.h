@@ -51,8 +51,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
@@ -700,6 +700,35 @@ class PjRtClient {
     return absl::UnimplementedError(
         absl::StrFormat("GetTopologyDescription not supported on platform %s",
                         platform_name()));
+  }
+
+  // An allocator for host-side memory.
+  //
+  // This is used to allocate memory that lives on the host that may have
+  // performance benefits when used for certain operations (e.g. premapped
+  // memory when transferring data to a device via DMA).
+  //
+  // This interface is just for host memory, it has nothing to with device
+  // memory allocation.
+  //
+  // Implementations must be thread-safe.
+  class HostAllocator {
+   public:
+    virtual ~HostAllocator() = default;
+
+    // Returns the preferred alignment for allocations.
+    virtual size_t GetPreferredAlignment() const = 0;
+
+    // Allocates `size` bytes of memory.
+    virtual void* Allocate(size_t size, size_t alignment) = 0;
+
+    // Frees `ptr` allocated by this allocator.
+    virtual void Free(void* ptr) = 0;
+  };
+
+  // Returns the host allocator for the client if supported.
+  virtual absl::StatusOr<HostAllocator*> GetHostAllocator() const {
+    return absl::UnimplementedError("GetHostAllocator is not supported.");
   }
 
   // A client may want to create a buffer, and hand the buffer to other PjRt
