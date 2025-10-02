@@ -28,7 +28,9 @@ def ChloLegalizeToHighLevelMhloPass : Pass<"chlo-legalize-to-high-level-mhlo", "
     Option<"enable_acos_", "enable-acos", "bool", /*default=*/"false",
            "Enable chlo.acos to mhlo.acos lowering.">,
     Option<"enable_atanh_", "enable-atanh", "bool", /*default=*/"false",
-           "Enable chlo.atanh to mhlo.atanh lowering.">
+           "Enable chlo.atanh to mhlo.atanh lowering.">,
+    Option<"enable_cosh_", "enable-cosh", "bool", /*default=*/"false",
+           "Enable chlo.cosh to mhlo.cosh lowering.">
   ];
   let dependentDialects = ["mhlo::MhloDialect"];
 }
@@ -45,11 +47,6 @@ def ChloLegalizeToHloPass : Pass<"chlo-legalize-to-hlo", "func::FuncOp"> {
     "mlir::stablehlo::StablehloDialect",
     "mlir::tensor::TensorDialect"
   ];
-}
-
-def HloLegalizeToArithmeticPass :Pass<"hlo-legalize-to-arithmetic", "ModuleOp"> {
-  let summary = "Legalize from HLO dialect to arithmetic dialect.";
-  let constructor = "createLegalizeToArithmeticPass()";
 }
 
 def LegalizeDotToDotGeneralPass : Pass<"mhlo-legalize-dot-to-dot-general", "func::FuncOp"> {
@@ -71,15 +68,6 @@ def LegalizeTorchIndexSelectToGatherPass : Pass<"mhlo-legalize-torch-index-selec
 def LegalizeTanhToApproximationPass : Pass<"mhlo-legalize-trigonometric-to-approximation", "func::FuncOp"> {
   let summary = "Legalize trigonometric operations from standard dialect to an approximation.";
   let constructor = "createLegalizeTrigonometricToApproximationPass()";
-}
-
-def HloLegalizeToLinalgPass : Pass<"hlo-legalize-to-linalg", "func::FuncOp"> {
-  let summary = "Legalize from HLO dialect to Linalg dialect.";
-  let constructor = "createLegalizeHloToLinalgPass()";
-  let options = [Option<"enablePrimitiveOps", "enable-primitive-ops", "bool",
-                        /*default=*/"false",
-                        "Lower to primitive Linalg ops (map, reduce and "
-                        "transpose) when possible, instead of linalg.generic">];
 }
 
 def TestMaterializeBroadcastsPass : Pass<"mhlo-test-materialize-broadcasts", "func::FuncOp"> {

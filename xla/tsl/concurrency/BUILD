@@ -15,6 +15,7 @@ filegroup(
         "async_value_ref.h",
         "chain.h",
         "concurrent_vector.h",
+        "executor.h",
         "ref_count.h",
     ],
     compatible_with = get_compatible_with_portable(),
@@ -143,6 +144,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":async_value",
+        ":executor",
         ":ref_count",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
@@ -161,6 +163,7 @@ tsl_cc_test(
     name = "future_test",
     srcs = ["future_test.cc"],
     deps = [
+        ":executor",
         ":future",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
