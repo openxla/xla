@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -100,6 +101,9 @@ limitations under the License.
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/tiling/tiled_hlo_computation.h"
+#include "xla/codegen/tiling/tiled_hlo_fusion_instruction.h"
+#include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -119,9 +123,8 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
-#include "xla/service/gpu/model/tiled_hlo_computation.h"
-#include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/hlo_module_config.h"
@@ -214,17 +217,6 @@ absl::StatusOr<SmallVector<Value>> ComputeOffsetsForTile(
   }
   return emitters::ApplyIndexing(dim_only_tiling, /*dims=*/dims,
                                  /*symbols=*/{}, b);
-}
-
-SmallVector<Value> CreateIndexValues(EmitterLocOpBuilder builder,
-                                     const ArrayRef<int64_t>& values) {
-  SmallVector<Value> result;
-  result.reserve(values.size());
-  for (int64_t value : values) {
-    result.push_back(
-        CreateConst(builder, builder.getIndexType(), value).UnwrapScalar());
-  }
-  return result;
 }
 
 // Constructs and holds information needed to construct a tile. This information
@@ -641,8 +633,16 @@ absl::StatusOr<ScalarOrTensor> EmitTiledReshape(EmitterLocOpBuilder b,
   }
 
   // At this point we know that neither the input nor the output are 0D tensors.
-  Type output_tensor_type = mlir::RankedTensorType::get(
+  auto output_tensor_type = mlir::RankedTensorType::get(
       padded_tile_sizes, input_shaped_type.getElementType());
+
+  if (input_shaped_type.getNumElements() !=
+      output_tensor_type.getNumElements()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Reshape input and output shapes must be the same, got ",
+                     absl::StrJoin(input_shaped_type.getShape(), "x"), " -> ",
+                     absl::StrJoin(output_tensor_type.getShape(), "x")));
+  }
 
   // Conservatively prevent Triton from reordering elements within the tile.
   // TODO(b/353637689): see if this restriction can be lifted.
@@ -1617,7 +1617,7 @@ absl::StatusOr<ScalarOrTensor> EmitScope(
       TF_RET_CHECK(values.contains(hlo)) << hlo->ToString();
       continue;
     } else if (hlo->opcode() == HloOpcode::kConstant) {
-      return EmitConstant(b, *hlo);
+      TF_ASSIGN_OR_RETURN(result, EmitConstant(b, *hlo));
     } else if (hlo->opcode() == HloOpcode::kBroadcast) {
       return absl::InvalidArgumentError(
           "Broadcast is not yet supported in EmitScope().");
@@ -1887,7 +1887,8 @@ absl::Status CreateInternalError(absl::string_view message,
 void AppendFuncArgType(absl::Span<const int64_t> dims, Type ir_type,
                        SmallVector<Type>& fn_arg_types) {
   fn_arg_types.push_back(ttir::PointerType::get(
-      StorageType(ir_type), mlir::NVVM::kGlobalMemorySpace));
+      StorageType(ir_type),
+      static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::Global)));
 }
 
 // Legacy emitter works with tt.func. New emitter works with func.func.

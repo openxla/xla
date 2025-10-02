@@ -34,7 +34,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "stablehlo/dialect/Version.h"
-#include "xla/cpu_function_runtime.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -348,6 +348,35 @@ TEST(PjRtClientTest, CanQueryMemoryDescriptions) {
       EXPECT_GE(memory->kind_id(), 0);
     }
   }
+}
+
+TEST(PjRtCApiClientTest, GetDeviceAssignment) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  ASSERT_GT(client->addressable_devices().size(), 1);
+
+  XlaBuilder builder("Identity");
+  Shape shape = ShapeUtil::MakeShape(S32, {2, 3});
+  auto input = Parameter(&builder, 0, shape, "input");
+  auto computation = builder.Build(input).value();
+
+  DeviceAssignment device_assignment(1, 2);
+  device_assignment(0, 0) = 0;
+  device_assignment(0, 1) = 1;
+
+  CompileOptions options;
+  options.executable_build_options.set_device_assignment(device_assignment);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                          client->CompileAndLoad(computation, options));
+
+  const DeviceAssignment& retrieved_assignment =
+      executable->device_assignment();
+  EXPECT_EQ(retrieved_assignment.replica_count(), 1);
+  EXPECT_EQ(retrieved_assignment.computation_count(), 2);
+  EXPECT_EQ(retrieved_assignment(0, 0), 0);
+  EXPECT_EQ(retrieved_assignment(0, 1), 1);
 }
 
 TEST(PjRtCApiClientTest, WrapClientAroundCApi) {

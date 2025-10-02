@@ -159,6 +159,9 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
   virtual absl::StatusOr<llvm::Value*> EmitSinh(PrimitiveType prim_type,
                                                 llvm::Value* value);
 
+  virtual absl::StatusOr<llvm::Value*> EmitAtanh(PrimitiveType prim_type,
+                                                 llvm::Value* value);
+
   virtual absl::StatusOr<llvm::Value*> EmitLog(PrimitiveType prim_type,
                                                llvm::Value* value);
 
@@ -179,6 +182,9 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
 
   virtual absl::StatusOr<llvm::Value*> EmitCos(PrimitiveType prim_type,
                                                llvm::Value* value);
+
+  virtual absl::StatusOr<llvm::Value*> EmitCosh(PrimitiveType prim_type,
+                                                llvm::Value* value);
 
   virtual absl::StatusOr<llvm::Value*> EmitCosm1(PrimitiveType prim_type,
                                                  llvm::Value* value);

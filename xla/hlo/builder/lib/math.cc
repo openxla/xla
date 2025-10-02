@@ -1331,7 +1331,11 @@ XlaOp Asinh(XlaOp x) {
 
 // atanh(x) = 0.5 * log((1 + x) / (1 - x)) if abs(x) <= 1
 // atanh(x) = nan                          otherwise
-XlaOp Atanh(XlaOp x) {
+XlaOp Atanh(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
+            bool expand) {
+  if (!expand) {
+    return x.builder()->UnaryOp(HloOpcode::kAtanh, x, result_accuracy);
+  }
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1361,7 +1365,11 @@ XlaOp Atanh(XlaOp x) {
 // +/-89.4159851, due to rounding error when computing x +/- log(1/2).  The
 // correct answer of 3.40281961e+38 (0x7f7fffec) is very close to max-float, so
 // we deem this acceptable.
-XlaOp Cosh(XlaOp x) {
+XlaOp Cosh(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
+           bool expand) {
+  if (!expand) {
+    return x.builder()->UnaryOp(HloOpcode::kCosh, x, result_accuracy);
+  }
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));

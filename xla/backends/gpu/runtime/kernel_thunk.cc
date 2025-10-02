@@ -34,6 +34,8 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_buffer.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
@@ -51,6 +53,23 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+std::vector<ThunkBuffer> ThunkBuffersFromKernelArguments(
+    absl::Span<const BufferAllocation::Slice> args,
+    const std::vector<bool>& written) {
+  std::vector<ThunkBuffer> buffers;
+  buffers.reserve(args.size());
+  for (int i = 0; i < args.size(); ++i) {
+    buffers.push_back(ThunkBuffer{
+        /*slice=*/args[i],
+        // We assume that any buffer is either an input or an output of the
+        // kernel, and inout buffers are represented as 2 separate arguments.
+        /*is_content_defined_on_input=*/!written[i],
+        /*is_content_defined_on_output=*/written[i],
+    });
+  }
+  return buffers;
+}
 
 //===----------------------------------------------------------------------===//
 // KernelThunk
@@ -185,6 +204,11 @@ void PrintBufferContents(se::Stream* stream, int input_idx,
   VLOG(100) << "BUF(" << input_idx << ") = " << buffer_contents;
 }
 
+void PrintBufferContents(se::Stream*, int input_idx, int64_t int_arg) {
+  VLOG(100) << "INT(" << input_idx << ") = ";
+  VLOG(100) << absl::StrFormat("%x ", int_arg);
+}
+
 static void PrintBufferContents(
     se::Stream* stream, absl::Span<const se::KernelArgument> kernel_args) {
   for (const auto& [input_idx, arg] : llvm::enumerate(kernel_args)) {
@@ -249,15 +273,19 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       launch_dimensions_, cluster_dim_, stream);
 }
 
+std::vector<ThunkBuffer> KernelThunk::GetBuffers() const {
+  return ThunkBuffersFromKernelArguments(absl::MakeConstSpan(args_), written_);
+}
+
 //===----------------------------------------------------------------------===//
 // CustomKernelThunk
 //===----------------------------------------------------------------------===//
 
 CustomKernelThunk::CustomKernelThunk(
     const HloInstruction* instr, CustomKernel custom_kernel,
-    const emitters::KernelArguments& kernel_arguments)
+    const emitters::KernelArguments& kernel_arguments, ThunkId thunk_id)
     : Thunk(Kind::kCustomKernel,
-            Thunk::ThunkInfo::WithProfileAnnotation(instr)),
+            Thunk::ThunkInfo::WithProfileAnnotation(instr, thunk_id)),
       args_(kernel_arguments.GetArgumentBufferSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
       custom_kernel_(std::move(custom_kernel)) {}
@@ -315,6 +343,10 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   return kernel->Launch(custom_kernel_.thread_dims(),
                         custom_kernel_.block_dims(),
                         custom_kernel_.cluster_dims(), params.stream, args);
+}
+
+std::vector<ThunkBuffer> CustomKernelThunk::GetBuffers() const {
+  return ThunkBuffersFromKernelArguments(absl::MakeConstSpan(args_), written_);
 }
 
 }  // namespace gpu
