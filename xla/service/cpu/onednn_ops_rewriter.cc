@@ -500,6 +500,8 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     // TODO(intel-tf): remove this restriction after adding oneDNN layernorm
     // support in thunk runtime.
     return absl::OkStatus();
+
+    // NOLINTBEGIN(clang-diagnostic-unreachable-code)
     HloInstruction *src, *scale, *bias;
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
@@ -559,6 +561,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     return absl::OkStatus();
+    // NOLINTEND(clang-diagnostic-unreachable-code)
   }
 
   absl::Status HandleConvert(HloInstruction* instr) override {

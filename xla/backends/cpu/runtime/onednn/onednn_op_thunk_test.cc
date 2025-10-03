@@ -279,7 +279,7 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnSoftmaxThunk) {
   softmax_cfg.set_softmax_axis(1);
   OneDnnOpThunk::OneDnnOpConfig variant_cfg = softmax_cfg;
 
-  // Create thunk (softmax)
+  // Create thunk for Softmax
   TF_ASSERT_OK_AND_ASSIGN(
       auto thunk,
       OneDnnOpThunk::Create("__onednn$softmax", Thunk::Info(), op_buffers, variant_cfg));
