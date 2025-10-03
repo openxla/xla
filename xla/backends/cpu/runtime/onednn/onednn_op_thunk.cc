@@ -205,4 +205,3 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
 }
 
 }  // namespace xla::cpu
-
