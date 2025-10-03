@@ -135,6 +135,9 @@ class CommandBufferScheduling : public HloModulePass {
   se::DeviceDescription device_description_;
 };
 
+absl::StatusOr<bool> MoveGTEsRightAfterTupleDefinition(
+    HloComputation* computation);
+
 }  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_TRANSFORMS_COMMAND_BUFFER_SCHEDULING_H_
