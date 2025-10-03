@@ -67,9 +67,9 @@ e {
 TEST_F(SubByteCollectiveNormalizationTest, SkipVariadic) {
   TF_ASSERT_OK(RunAndCheckHloRewrite(R"(
 e {
- a = s4[4,8]{1,0:E(4)} parameter(0)
- b = s16[5,6]{1,0} parameter(1)
- c = (s4[8,8]{1,0:E(4)}, s16[10,6]{1,0}) all-gather(a, b), dimensions={0}
+ a = s4[2]{0:E(4)} parameter(0)
+ b = s4[2]{0:E(4)} parameter(1)
+ c = (s4[2]{0:E(4)}, s4[2]{0:E(4)}) all-to-all(a, b), replica_groups={{2,1},{3,0}}
 })",
                                      SubByteCollectiveNormalization(),
                                      /*expect_change=*/false));
