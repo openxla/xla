@@ -438,9 +438,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   bool is_first_rendezvous_needed = false;
   if (IsAsync()) {
     // Launch collective operation on an async stream.
-    se::Stream* async_stream =
-        params.collective_params->async_streams.at(
-            Thunk::execution_stream_id().value());
+    se::Stream* async_stream = params.collective_params->async_streams.at(
+        Thunk::execution_stream_id().value());
 
     // Override the async stream if set by the thunk.
     auto stream_id = GetStreamIdOverride();
