@@ -105,10 +105,14 @@ XlaOp Acosh(XlaOp x,
 XlaOp Asinh(XlaOp x);
 
 // Computes the inverse hyperbolic tangent of 'x'.
-XlaOp Atanh(XlaOp x);
+XlaOp Atanh(XlaOp x,
+            const std::optional<ResultAccuracy>& result_accuracy = std::nullopt,
+            bool expand = true);
 
 // Computes the hyperbolic cosine of 'x'.
-XlaOp Cosh(XlaOp x);
+XlaOp Cosh(XlaOp x,
+           const std::optional<ResultAccuracy>& result_accuracy = std::nullopt,
+           bool expand = true);
 
 // Computes the hyperbolic sine of 'x'.
 XlaOp Sinh(XlaOp x);

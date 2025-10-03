@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -55,7 +57,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 #include "xla/pjrt/raw_buffer.h"
@@ -68,7 +69,6 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
-#include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -200,10 +200,11 @@ class PjRtCpuClient final : public CommonPjRtClient {
     return &topology_;
   }
 
-  absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-  CreateRawBufferAsyncValue(
-      PjRtMemorySpace* memory_space,
-      tsl::RCReference<tsl::IndirectAsyncValue> buffer_promise) override;
+  absl::StatusOr<std::tuple<tsl::RCReference<CommonPjRtRawBuffer>,
+                            tsl::RCReference<PjRtDeviceEvent>,
+                            PjRtFulfillAliasBufferCallback>>
+  CreateRawBufferChannel(const Shape& shape,
+                         PjRtMemorySpace* memory_space) override;
 
   absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
@@ -233,7 +234,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
 
   absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeInto(
-      const LiteralSlice& literal, const xla::Layout& layout,
+      const LiteralSlice& literal, const xla::Shape& device_shape,
       HostBufferSemantics host_buffer_semantics,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
 
@@ -288,14 +289,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   // temporary allocations passed to XLA:CPU executable.
   std::shared_ptr<CpuDeviceMemory::Allocator> allocator_;
 
-  // TODO(zhangqiaorjc): Use tsl::compat::EigenHostContextThreadPool.
-  std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool_;
-  std::unique_ptr<Eigen::ThreadPoolDevice> eigen_intraop_device_;
-
-  // Thread pool for running PjRtClient tasks.
-  std::unique_ptr<tsl::thread::ThreadPool> pjrt_client_thread_pool_;
-  std::unique_ptr<AsyncWorkRunner> async_work_runner_;
-
   // Launching collectives are prone to deadlock when we use fixed-sized
   // threadpools since ExecuteHelper will block until all replicas reach the
   // barrier. We ensure that
@@ -326,6 +319,19 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   // A callback to customize the HloModuleConfig for each compiled module.
   std::function<void(HloModuleConfig&)> customize_hlo_module_config_;
+
+  // IMPORTANT: All thread pools must be destroyed first, because thread pool
+  // destruction guarantees that all scheduled tasks are completed. Otherwise,
+  // we might get use-after-free races when dispatched executables try to access
+  // the member variables of this class that are already destroyed.
+
+  // TODO(zhangqiaorjc): Use tsl::compat::EigenHostContextThreadPool.
+  std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool_;
+  std::unique_ptr<Eigen::ThreadPoolDevice> eigen_intraop_device_;
+
+  // Thread pool for running PjRtClient tasks.
+  std::unique_ptr<tsl::thread::ThreadPool> pjrt_client_thread_pool_;
+  std::unique_ptr<AsyncWorkRunner> async_work_runner_;
 };
 
 class PjRtCpuExecutable final : public PjRtLoadedExecutable {
@@ -386,21 +392,18 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
-      std::optional<std::vector<PjRtFuture<>>>& returned_futures)
-      const override;
+      std::optional<std::vector<Future<>>>& returned_futures) const override;
 
   using PjRtLoadedExecutable::ExecuteSharded;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
       bool fill_future) const override;
 
   using PjRtLoadedExecutable::ExecutePortable;
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options,
-      std::optional<PjRtFuture<>>& returned_future,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
       bool fill_future) const override;
 
   void Delete() override;

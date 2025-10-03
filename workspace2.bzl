@@ -5,29 +5,36 @@ load("@bazel_skylib//lib:versions.bzl", "versions")
 load("@bazel_tools//tools/build_defs/repo:java.bzl", "java_import_external")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@io_bazel_rules_closure//closure:defs.bzl", "filegroup_external")
+load("@rules_ml_toolchain//gpu/sycl:sycl_configure.bzl", "sycl_configure")
+load("@rules_ml_toolchain//gpu/sycl:sycl_init_repository.bzl", "sycl_init_repository")
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 load("//third_party/absl:workspace.bzl", absl = "repo")
 load("//third_party/benchmark:workspace.bzl", benchmark = "repo")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
+load("//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
+load("//third_party/cudnn_frontend:workspace.bzl", cudnn_frontend = "repo")
 load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 load("//third_party/ducc:workspace.bzl", ducc = "repo")
 load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
 load("//third_party/farmhash:workspace.bzl", farmhash = "repo")
 load("//third_party/fmt:workspace.bzl", fmt = "repo")
 load("//third_party/FP16:workspace.bzl", FP16 = "repo")
+load("//third_party/fxdiv:workspace.bzl", fxdiv = "repo")
 load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/gloo:workspace.bzl", gloo = "repo")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
-load("//third_party/gpus:sycl_configure.bzl", "sycl_configure")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
 load("//third_party/llvm:workspace.bzl", llvm = "repo")
+load("//third_party/llvm_openmp:workspace.bzl", llvm_openmp = "repo")
+load("//third_party/mkl_dnn:workspace.bzl", onednn = "repo")
 load("//third_party/mpitrampoline:workspace.bzl", mpitrampoline = "repo")
 load("//third_party/nanobind:workspace.bzl", nanobind = "repo")
 load("//third_party/nasm:workspace.bzl", nasm = "repo")
 load("//third_party/nvshmem:workspace.bzl", nvshmem = "repo")
+load("//third_party/pthreadpool:workspace.bzl", pthreadpool = "repo")
 load("//third_party/py:python_configure.bzl", "python_configure")
 load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
 load("//third_party/pybind11_abseil:workspace.bzl", pybind11_abseil = "repo")
@@ -43,6 +50,7 @@ load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
+load("//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
 load("//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
 load("//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
@@ -56,23 +64,29 @@ def _initialize_third_party():
     FP16()
     absl()
     benchmark()
+    cpuinfo()
+    cudnn_frontend()
     dlpack()
     ducc()
     eigen3()
     farmhash()
     fmt()
+    fxdiv()
     gemmlowp()
     gloo()
     highwayhash()
     hwloc()
     implib_so()
+    llvm_openmp()
     ml_dtypes()
     mpitrampoline()
     nanobind()
     nasm()
     nvshmem()
+    onednn()
     pybind11_abseil()
     pybind11_bazel()
+    pthreadpool()
     raft()
     rapids_logger()
     rmm()
@@ -83,6 +97,7 @@ def _initialize_third_party():
     tensorrt()
     triton()
     uv()
+    xnnpack()
 
     # copybara: tsl vendor
 
@@ -101,6 +116,7 @@ def _tf_toolchains():
     git_configure(name = "local_config_git")
     python_configure(name = "local_config_python")
     rocm_configure(name = "local_config_rocm")
+    sycl_init_repository()
     sycl_configure(name = "local_config_sycl")
     remote_execution_configure(name = "local_config_remote_execution")
 
@@ -137,50 +153,11 @@ def _tf_repositories():
     #    curl -L <url> | sha256sum
     # and update the sha256 with the result.
 
-    # LINT.IfChange
-    tf_http_archive(
-        name = "XNNPACK",
-        sha256 = "f6f066e1b200f643977ca3dbf2a43564587f2a5e99df86859e8177981fb4de12",
-        strip_prefix = "XNNPACK-0b09b1fd1a4b60716b2b8b5ebfd71e9a5c634e67",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/0b09b1fd1a4b60716b2b8b5ebfd71e9a5c634e67.zip"),
-    )
-    # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
-
     tf_http_archive(
         name = "KleidiAI",
         sha256 = "42155cfc084bf1f80e9ef486470f949502ea8d1b845b2f1bebd58978a1b540aa",
         strip_prefix = "kleidiai-8ca226712975f24f13f71d04cda039a0ee9f9e2f",
         urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/8ca226712975f24f13f71d04cda039a0ee9f9e2f.zip"),
-    )
-
-    tf_http_archive(
-        name = "FXdiv",
-        sha256 = "3d7b0e9c4c658a84376a1086126be02f9b7f753caa95e009d9ac38d11da444db",
-        strip_prefix = "FXdiv-63058eff77e11aa15bf531df5dd34395ec3017c8",
-        urls = tf_mirror_urls("https://github.com/Maratyszcza/FXdiv/archive/63058eff77e11aa15bf531df5dd34395ec3017c8.zip"),
-    )
-
-    tf_http_archive(
-        name = "cpuinfo",
-        sha256 = "c0254ce97f7abc778dd2df0aaca1e0506dba1cd514fdb9fe88c07849393f8ef4",
-        strip_prefix = "cpuinfo-8a9210069b5a37dd89ed118a783945502a30a4ae",
-        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/8a9210069b5a37dd89ed118a783945502a30a4ae.zip"),
-    )
-
-    tf_http_archive(
-        name = "pthreadpool",
-        sha256 = "8b1d13195842c9b7e8ef5aa7d9b44ca4168a41b8ae97b4e50db4fcc562211f5b",
-        strip_prefix = "pthreadpool-d561aae9dfeab38ff595a0ae3e6bbd90b862c5f8",
-        urls = tf_mirror_urls("https://github.com/google/pthreadpool/archive/d561aae9dfeab38ff595a0ae3e6bbd90b862c5f8.zip"),
-    )
-
-    tf_http_archive(
-        name = "onednn",
-        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
-        patch_file = ["//third_party/mkl_dnn:setting_init.patch"],
-        sha256 = "071f289dc961b43a3b7c8cbe8a305290a7c5d308ec4b2f586397749abdc88296",
-        strip_prefix = "oneDNN-3.7.3",
-        urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.7.3.tar.gz"),
     )
 
     tf_http_archive(
@@ -380,16 +357,6 @@ def _tf_repositories():
     # but provides a script for setting up build rules via overlays.
     llvm("llvm-raw")
 
-    # Intel openMP that is part of LLVM sources.
-    tf_http_archive(
-        name = "llvm_openmp",
-        build_file = "//third_party/llvm_openmp:BUILD.bazel",
-        patch_file = ["//third_party/llvm_openmp:openmp_switch_default_patch.patch"],
-        sha256 = "d19f728c8e04fb1e94566c8d76aef50ec926cd2f95ef3bf1e0a5de4909b28b44",
-        strip_prefix = "openmp-10.0.1.src",
-        urls = tf_mirror_urls("https://github.com/llvm/llvm-project/releases/download/llvmorg-10.0.1/openmp-10.0.1.src.tar.xz"),
-    )
-
     tf_http_archive(
         name = "jsoncpp_git",
         sha256 = "f409856e5920c18d0c2fb85276e24ee607d2a09b5e7d5f0a371368903c275da2",
@@ -422,15 +389,6 @@ def _tf_repositories():
     )
 
     tf_http_archive(
-        name = "cudnn_frontend_archive",
-        build_file = "//third_party:cudnn_frontend.BUILD",
-        patch_file = ["//third_party:cudnn_frontend_header_fix.patch"],
-        sha256 = "257b3b7f8a99abc096094abc9e5011659117b647d55293bcd2c5659f9181b99e",
-        strip_prefix = "cudnn-frontend-1.13.0",
-        urls = tf_mirror_urls("https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.13.0.zip"),
-    )
-
-    tf_http_archive(
         name = "cutlass_archive",
         build_file = "//third_party:cutlass.BUILD",
         sha256 = "a7739ca3dc74e3a5cb57f93fc95224c5e2a3c2dff2c16bb09a5e459463604c08",
@@ -440,7 +398,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "nccl_archive",
-        build_file = "//third_party:nccl/archive.BUILD",
+        build_file = "//third_party/nccl:archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
         sha256 = "98e6262bd55932c51e7c8ffc50cc764f019e4b94a8fd6694d839ae828ec8d128",
         strip_prefix = "nccl-2.27.7-1",

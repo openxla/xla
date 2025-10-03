@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/autotuner.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/codegen_backend.h"
@@ -82,7 +83,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> GetModule(
 }
 
 absl::Status Autotune(HloModule& module, const std::string& cache_dir,
-                      const std::string& autotune_cache_mode_str) {
+                      const std::string& autotune_cache_mode_str,
+                      mlir::MLIRContext* mlir_context) {
   TF_ASSIGN_OR_RETURN(std::string platform_name,
                       PlatformUtil::CanonicalPlatformName("gpu"));
 
@@ -97,12 +99,14 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
                       xla::Compiler::GetForPlatform(platform));
   se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
   DebugOptions debug_options = GetDebugOptionsFromFlags();
+  Compiler::TargetConfig target_config(stream_executor);
 
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
   TF_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
                       registry.FindObject<GetCodegenBackends>(platform->id()));
   std::vector<std::unique_ptr<CodegenBackend>> backends =
-      get_codegen_backends(stream_executor, &debug_options, compiler.get());
+      get_codegen_backends(stream_executor, &debug_options, compiler.get(),
+                           &target_config, mlir_context);
 
   std::unique_ptr<se::DeviceMemoryAllocator> allocator =
       std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
@@ -129,8 +133,8 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
 
   std::unique_ptr<AutotunerCacheInterface> cache;
   if (!cache_dir.empty()) {
-    cache = std::make_unique<LegacyCache>(
-        cache_dir, it->second, stream_executor->GetDeviceDescription());
+    cache = std::make_unique<LegacyCache>(cache_dir, it->second,
+                                          target_config.device_description);
   }
 
   AutotuneConfig autotune_config;
@@ -176,7 +180,9 @@ int main(int argc, char* argv[]) {
   tsl::port::InitMain(usage_string.c_str(), &argc, &argv);
   auto module = xla::gpu::GetModule(hlo_file);
   CHECK_OK(module.status());
-  CHECK_OK(xla::gpu::Autotune(*module.value(), cache_dir, autotune_cache_mode));
+  mlir::MLIRContext mlir_context;
+  CHECK_OK(xla::gpu::Autotune(*module.value(), cache_dir, autotune_cache_mode,
+                              &mlir_context));
   std::cout << module.value()->ToString() << std::endl;
   return 0;
 }

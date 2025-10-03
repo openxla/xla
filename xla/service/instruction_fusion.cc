@@ -180,10 +180,12 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kAddDependency:
     case HloOpcode::kAfterAll:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncUpdate:
     case HloOpcode::kAsyncDone:
     case HloOpcode::kBatchNormGrad:
+    case HloOpcode::kCosh:
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
     case HloOpcode::kCall:
@@ -799,8 +801,6 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
     // fusions.
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
   }
-  fusion_instruction->set_called_computations_execution_thread(
-      computation->execution_thread());
   return fusion_instruction;
 }
 

@@ -1,6 +1,7 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -28,10 +29,10 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/codegen/tiling:constraint_expression",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
-        "//xla/service/gpu/model:constraint_expression",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -239,6 +240,7 @@ cc_library(
     name = "symbolic_expr",
     srcs = ["symbolic_expr.cc"],
     hdrs = ["symbolic_expr.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
@@ -247,6 +249,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
 )
@@ -269,7 +272,7 @@ cc_library(
     deps = [
         ":symbolic_expr",
         ":symbolic_map",
-        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -283,10 +286,12 @@ xla_cc_test(
         ":symbolic_expr",
         ":symbolic_map",
         ":symbolic_map_converter",
-        "//xla/hlo/analysis:indexing_analysis",
-        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/analysis:interval",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

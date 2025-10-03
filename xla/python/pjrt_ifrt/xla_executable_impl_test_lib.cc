@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pjrt_ifrt/xla_executable_version.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -233,6 +233,42 @@ module @add_sub attributes {
                     StatusIs(absl::StatusCode::kUnimplemented)));
 }
 
+TEST_P(LoadedExecutableImplTest, GetHloModules) {
+  bool serialize = GetParam();
+
+  if (serialize) {
+    GTEST_SKIP()
+        << "GetHloModules is not supported for serialized executables.";
+  }
+
+  static constexpr absl::string_view kModule = R"(
+module @add attributes {
+  mhlo.num_replicas = 1 : i32,
+  mhlo.num_partitions = 2 : i32
+} {
+  func.func @main(
+    %arg0: tensor<2x3xi32> {mhlo.sharding = "{devices=[2,1]<=[2]}"}
+  ) -> (tensor<2x3xi32> {mhlo.sharding = "{devices=[2,1]<=[2]}"}) {
+    %0 = stablehlo.add %arg0, %arg0 : tensor<2x3xi32>
+    return %0 : tensor<2x3xi32>
+  }
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+  Compiler* compiler = client->GetDefaultCompiler();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      const LoadedExecutableRef executable,
+      CompileOnDevices(client.get(), compiler, kModule,
+                       {client->addressable_devices().front()},
+                       /*replicated=*/false, serialize));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
+      executable->GetHloModules());
+  ASSERT_EQ(hlo_modules.size(), 1);
+  EXPECT_EQ(hlo_modules.front()->name(), "add");
+}
+
 TEST_P(LoadedExecutableImplTest, Analysis) {
   bool serialize = GetParam();
 
@@ -264,12 +300,6 @@ module @add attributes {
   TF_ASSERT_OK_AND_ASSIGN(const xla::CompiledMemoryStats compiled_memory_stats,
                           executable->GetCompiledMemoryStats());
   EXPECT_GT(compiled_memory_stats.argument_size_in_bytes, 0);
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      const std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
-      executable->GetHloModules());
-  ASSERT_EQ(hlo_modules.size(), 1);
-  EXPECT_EQ(hlo_modules.front()->name(), "add");
 
   TF_ASSERT_OK_AND_ASSIGN(const auto cost_analysis,
                           executable->GetCostAnalysis());
@@ -548,7 +578,7 @@ module @add_sub {
   // Enqueue a read operation just before donation. The scheduler must not
   // reorder read and donation.
   std::vector<int32_t> data(6);
-  Future<> copy_future =
+  tsl::Future<> copy_future =
       arrays[0]->CopyToHostBuffer(data.data(), /*byte_strides=*/std::nullopt,
                                   ArrayCopySemantics::kAlwaysCopy);
 
@@ -838,7 +868,7 @@ TEST(ExecutableTest, ExecutableSerialization) {
 
   {
     std::vector<int32_t> out_data(6);
-    xla::ifrt::Future<> future = result.outputs[0]->CopyToHostBuffer(
+    tsl::Future<> future = result.outputs[0]->CopyToHostBuffer(
         out_data.data(), /*byte_strides=*/std::nullopt,
         xla::ifrt::ArrayCopySemantics::kAlwaysCopy);
     TF_ASSERT_OK(future.Await());

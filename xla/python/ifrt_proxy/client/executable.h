@@ -43,10 +43,10 @@
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
 
@@ -62,7 +62,7 @@ class LoadedExecutable final
                    std::string name, int num_devices, DeviceListRef devices,
                    std::vector<xla::ifrt::Device*> addressable_devices,
                    absl::StatusOr<std::optional<std::string>> fingerprint,
-                   Future<> ready_future,
+                   tsl::Future<> ready_future,
                    std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
                        loaded_host_callbacks,
                    std::vector<uint64_t> loaded_host_callback_handles);
@@ -80,7 +80,7 @@ class LoadedExecutable final
   xla::ifrt::UserContextRef user_context() const override {
     return user_context_;
   }
-  Future<> GetReadyFuture() const override;
+  tsl::Future<> GetReadyFuture() const override;
 
   int num_devices() const override;
   int64_t SizeOfGeneratedCodeInBytes() const override;
@@ -150,7 +150,7 @@ class LoadedExecutable final
   const DeviceListRef devices_;
   const std::vector<xla::ifrt::Device*> addressable_devices_;
   const absl::StatusOr<std::optional<std::string>> fingerprint_;
-  const Future<> ready_future_;
+  const tsl::Future<> ready_future_;
   const xla::ifrt::UserContextRef user_context_;
 
   class OutputSpecCache;
@@ -158,7 +158,14 @@ class LoadedExecutable final
 
   // Metadata queried when the executable is created. Declared as `mutable`
   // since `Future::Await()` is not const.
-  mutable Future<std::shared_ptr<Metadata>> metadata_future_;
+  mutable tsl::Future<std::shared_ptr<Metadata>> metadata_future_;
+
+  // The cached value of `GetCostAnalysis()`. The value is obtained from the
+  // proxy-server the first time that the user invokes `GetCostAnalysis()`, and
+  // is cached afterwards.
+  mutable absl::Mutex cost_analysis_mu_;
+  mutable std::optional<absl::StatusOr<xla::ifrt::AttributeMap>>
+      cost_analysis_response_ ABSL_GUARDED_BY(cost_analysis_mu_);
 };
 
 }  // namespace proxy

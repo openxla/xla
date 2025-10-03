@@ -368,6 +368,22 @@ def MHLO_CosineOp: MHLO_UnaryElementwiseOp<"cosine",
   let hasCustomHLOConverter = 1;
 }
 
+def MHLO_CoshOp : MHLO_UnaryElementwiseOp<"cosh",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Cosh operation";
+
+  let description = [{
+     Performs element-wise cosh operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.cosh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
 def MHLO_ErfOp: MHLO_UnaryElementwiseOp<"erf",
     [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpTensor> {
   let summary = "Erf operation";
@@ -879,6 +895,23 @@ def MHLO_Atan2Op : MHLO_BinaryElementwiseOp<"atan2",
     ```
   }];
 }
+
+def MHLO_AtanhOp : MHLO_UnaryElementwiseOp<"atanh",
+    [HLO_CompatibleOperandsAndResultType], HLO_AnyFpOrComplexTensor> {
+  let summary = "Atanh operation";
+
+  let description = [{
+     Performs element-wise atanh operation on `operand` tensor and produces a
+    `result` tensor.
+
+    Example:
+    ```mlir
+    %result = mhlo.atanh %operand : tensor<2x2xf32>
+    ```
+  }];
+  let hasFolder = 1;
+}
+
 
 def MHLO_ComplexOp: MHLO_BinaryElementwiseOp<"complex", [Pure,
     SameOperandsElementType, SameOperandsAndResultShape,

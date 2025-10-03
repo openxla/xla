@@ -1,6 +1,6 @@
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/service/cpu:build_defs.bzl", "runtime_copts")
-load("//xla/tsl:tsl.bzl", "if_google", "if_windows", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -151,7 +151,8 @@ tf_proto_library(
         "//xla/service:buffer_assignment_proto",
         "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-    ] + if_google(["@com_google_protobuf//:any"]),
+        "@com_google_protobuf//:any_proto",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -345,6 +346,7 @@ cc_library(
     deps = [
         ":collective_thunk",
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/core/collectives:communicator",
@@ -467,6 +469,7 @@ cc_library(
     deps = [
         ":collective_thunk",
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:util",
         "//xla/backends/cpu/collectives:cpu_collectives",
@@ -494,6 +497,7 @@ cc_library(
     deps = [
         ":collective_thunk",
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/collectives:cpu_collectives",
@@ -519,6 +523,7 @@ cc_library(
     deps = [
         ":collective_thunk",
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -545,6 +550,7 @@ cc_library(
     deps = [
         ":collective_thunk",
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -575,6 +581,7 @@ cc_library(
     hdrs = ["collective_thunk.h"],
     deps = [
         ":thunk",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -584,6 +591,7 @@ cc_library(
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
+        "//xla/hlo/ir:collective_op_group_mode",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",

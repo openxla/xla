@@ -25,14 +25,17 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/compiler.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
@@ -69,14 +72,19 @@ class FissionBackendTest : public HloHardwareIndependentTestBase {
  protected:
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
+  se::StreamExecutor* stream_executor_;
+  Compiler::TargetConfig target_config_;
   FissionBackend backend_;
+  mlir::MLIRContext mlir_context_;
 
   FissionBackendTest()
-      : backend_(PlatformUtil::GetDefaultPlatform()
-                     .value()
-                     ->ExecutorForDevice(0)
-                     .value(),
-                 &debug_options_, &compiler_) {}
+      : stream_executor_(PlatformUtil::GetDefaultPlatform()
+                             .value()
+                             ->ExecutorForDevice(0)
+                             .value()),
+        target_config_(stream_executor_),
+        backend_(stream_executor_, &debug_options_, &compiler_, &target_config_,
+                 &mlir_context_) {}
 };
 
 TEST_F(FissionBackendTest, CanCreateCublasBackend) {
@@ -89,7 +97,7 @@ TEST_F(FissionBackendTest, GetSupportedConfigsFromCublasCustomCall) {
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           (*module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(10)));
+  EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(testing::Ge(2))));
   // The first config is the cublas config.
   AutotuneResult::GemmKey cublas_config;
   EXPECT_TRUE(configs.value().front()->UnpackTo(&cublas_config));

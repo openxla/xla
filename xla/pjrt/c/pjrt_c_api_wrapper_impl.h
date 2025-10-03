@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/future.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/shape.h"
 
@@ -203,10 +203,14 @@ struct PJRT_FulfillAliasBufferCallback {
 };
 
 struct PJRT_Event {
-  xla::PjRtFuture<> future;
+  xla::Future<> future;
 };
 
 struct PJRT_SerializedExecutable {
+  std::string serialized;
+};
+
+struct PJRT_DeviceAssignmentSerialized {
   std::string serialized;
 };
 
@@ -384,6 +388,8 @@ PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
 // until the next major version upgrade.
 PJRT_Error* PJRT_LoadedExecutable_Fingerprint(
     PJRT_LoadedExecutable_Fingerprint_Args* args);
+PJRT_Error* PJRT_LoadedExecutable_GetDeviceAssignment(
+    PJRT_LoadedExecutable_GetDeviceAssignment_Args* args);
 
 PJRT_Error* PJRT_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args);
 PJRT_Error* PJRT_Buffer_ElementType(PJRT_Buffer_ElementType_Args* args);

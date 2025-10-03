@@ -68,6 +68,7 @@ typedef enum {
   PJRT_Extension_Type_CrossHostTransfers,
   PJRT_Extension_Type_ExecutableMetadata,
   PJRT_Extension_Type_Callback,
+  PJRT_Extension_Type_HostAllocator,  // Experimental.
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -102,7 +103,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 77
+#define PJRT_API_MINOR 80
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1503,6 +1504,35 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_LoadedExecutable_GetExecutable_Args, executable);
 typedef PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
     PJRT_LoadedExecutable_GetExecutable_Args* args);
 
+typedef struct PJRT_DeviceAssignmentSerialized PJRT_DeviceAssignmentSerialized;
+
+struct PJRT_LoadedExecutable_GetDeviceAssignment_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_LoadedExecutable* executable;
+
+  // Lives only as long as serialized_device_assignment
+  const char* serialized_bytes;  // out
+  size_t serialized_bytes_size;  // out
+
+  PJRT_DeviceAssignmentSerialized*
+      serialized_device_assignment;  // backs serialized_bytes.
+  // cleanup fn must be called to free the backing memory for serialized_bytes.
+  // Should only be called once on serialized_device_assignment.
+  void (*serialized_device_assignment_deleter)(
+      PJRT_DeviceAssignmentSerialized* da);  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_LoadedExecutable_GetDeviceAssignment_Args,
+                          serialized_device_assignment_deleter);
+
+// Retrieves the serialized DeviceAssignmentProto for a given
+// PJRT_LoadedExecutable. The implementation allocates the serialized data,
+// which is valid as long as `serialized_device_assignment` is alive. The
+// caller must call `serialized_device_assignment_deleter` to free the
+// backing memory.
+typedef PJRT_Error* PJRT_LoadedExecutable_GetDeviceAssignment(
+    PJRT_LoadedExecutable_GetDeviceAssignment_Args* args);
+
 struct PJRT_Executable_Name_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
@@ -1704,8 +1734,14 @@ struct PJRT_ExecuteOptions {
   // null-terminated string. It is only valid for the duration of the C API
   // call. The plugin must copy the string if it needs to be stored.
   const char* call_location;
+
+  // The incarnation id for every task. For every 0 <= i < num_tasks,
+  // task task_ids[i] has incarnation incarnation_ids[i].
+  size_t num_tasks;
+  int* task_ids;
+  int64_t* incarnation_ids;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, call_location);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, incarnation_ids);
 
 struct PJRT_LoadedExecutable_Execute_Args {
   size_t struct_size;
@@ -2641,11 +2677,12 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_TopologyDescription_Deserialize);
   _PJRT_API_STRUCT_FIELD(PJRT_Client_CreateAliasBuffer);
   _PJRT_API_STRUCT_FIELD(PJRT_Client_FulfillAliasBuffer);
+  _PJRT_API_STRUCT_FIELD(PJRT_LoadedExecutable_GetDeviceAssignment);
 } PJRT_Api;
 
 enum {
   PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_FulfillAliasBuffer)
+      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_LoadedExecutable_GetDeviceAssignment)
 };
 
 #undef _PJRT_API_STRUCT_FIELD
