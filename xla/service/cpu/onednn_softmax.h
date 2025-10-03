@@ -30,12 +30,6 @@ void ExecuteOneDnnSoftmax(absl::Span<MemrefInfoHandler> arguments,
                           dnnl::stream& onednn_stream,
                           OneDnnResources& resources);
 
-extern "C" {
-extern void __xla_cpu_runtime_OneDnnSoftmax(const void* run_options_ptr,
-                                            void* input, void* result,
-                                            void* softmax_config_ptr);
-}  // extern "C"
-
 }  // namespace cpu
 }  // namespace xla
 
