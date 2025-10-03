@@ -671,13 +671,6 @@ StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
 
 absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
 StreamExecutorGpuClient::GetLatestIncarnations(const ExecuteOptions& options) {
-  // Get the latest incarnation for every task.
-  if (!num_nodes_.has_value()) {
-    return FailedPrecondition("Unknown number of nodes");
-  }
-  std::vector<int> tasks(*num_nodes_);
-  std::iota(tasks.begin(), tasks.end(), 0);
-
   // Map every device to its incarnation.
   absl::flat_hash_map<GlobalDeviceId, IncarnationId> device_incarnations;
   for (const PjRtDevice* device : devices()) {
@@ -961,15 +954,10 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
       std::unique_ptr<Communicator> communicator = std::move(communicators[0]);
 
       // Send data to the receiver.
-      tsl::AsyncValueRef<Communicator::Event> send_event = communicator->Send(
+      Future<> send_future = communicator->Send(
           mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
           RankId(0), gpu::GpuCollectives::On(*stream));
-
-      // Wait for the send to finish.
-      tsl::BlockUntilReady(send_event);
-      if (send_event.IsError()) {
-        return send_event.GetError();
-      }
+      TF_RETURN_IF_ERROR(send_future.Await());
 
       // Keep mem alive until the Send has finished executing. Note that
       // send_event is fulfilled when the send is enqueued, but not necessarily
@@ -1074,15 +1062,10 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       std::unique_ptr<Communicator> communicator = std::move(communicators[0]);
 
       // Receive data from the sender.
-      tsl::AsyncValueRef<Communicator::Event> recv_event = communicator->Recv(
+      Future<> recv_future = communicator->Recv(
           mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
           RankId(1), gpu::GpuCollectives::On(*stream));
-
-      // Wait for the receive to finish.
-      tsl::BlockUntilReady(recv_event);
-      if (recv_event.IsError()) {
-        return recv_event.GetError();
-      }
+      TF_RETURN_IF_ERROR(recv_future.Await());
 
       // Keep mem alive until the Recv has finished executing. Note that
       // recv_event is fulfilled when the receive is enqueued, but not

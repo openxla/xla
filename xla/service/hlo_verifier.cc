@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -1516,11 +1517,16 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
     const Shape& operand_subshape = ShapeUtil::GetSubshape(
         custom_call->operand(pair.second.first)->shape(), pair.second.second);
     if (opts_.layout_sensitive) {
-      TF_RET_CHECK(Shape::Equal().IgnoreBuffer(ignore_buffer)(operand_subshape,
-                                                              output_subshape))
-          << "Different aliasing shapes: "
-          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
-          << output_subshape.ToString(/*print_layout=*/true);
+      bool operand_is_scalar = operand_subshape.IsArray() &&
+                               ShapeUtil::ElementsIn(operand_subshape) == 1;
+      auto shape_equal_checker = Shape::Equal().IgnoreBuffer(ignore_buffer);
+      if (operand_is_scalar) {
+        shape_equal_checker.IgnoreMemorySpaceInLayout();
+      }
+      TF_RET_CHECK(shape_equal_checker(operand_subshape, output_subshape))
+          << absl::Substitute("Different aliasing shapes: $0 vs $1",
+                              operand_subshape.ToString(/*print_layout=*/true),
+                              output_subshape.ToString(/*print_layout=*/true));
     } else {
       TF_RET_CHECK(
           Shape::Equal().IgnoreDynamicDimension().IgnoreLayout().IgnoreBuffer(
@@ -1720,13 +1726,10 @@ absl::Status CheckCallableInstructionThreadName(
     const HloInstruction* instruction) {
   for (const HloComputation* computation : instruction->called_computations()) {
     if (instruction->parent() != nullptr) {
-      if (xla::GetInstructionCallContext(instruction->opcode()) !=
-              CallContext::kEmbedded &&
-          instruction->parent()->execution_thread() !=
-              computation->execution_thread()) {
+      if (instruction->parent()->execution_thread() !=
+          computation->execution_thread()) {
         return Internal(
-            "Non-Embedded context callable instruction %s expects parent "
-            "computation thread name "
+            "Callable instruction %s expects parent computation thread name "
             "same as called computation's thread name (%s vs %s).",
             instruction->ToString(), instruction->parent()->execution_thread(),
             computation->execution_thread());
@@ -3747,13 +3750,10 @@ absl::Status InstructionVerifier::Preprocess(HloInstruction* instruction) {
 
   if (opts_.verify_call_nested_computation_thread_name &&
       instruction->has_to_apply() &&
-      xla::GetInstructionCallContext(instruction->opcode()) !=
-          xla::CallContext::kEmbedded &&
       instruction->to_apply()->execution_thread() !=
           instruction->parent()->execution_thread()) {
     return Internal(
-        "Non-Embedded context callable instruction %s to_apply computation "
-        "execution thread does not match (%s vs %s)",
+        "%s to_apply computation execution thread does not match (%s vs %s)",
         instruction->name(), instruction->to_apply()->execution_thread(),
         instruction->parent()->execution_thread());
   }
