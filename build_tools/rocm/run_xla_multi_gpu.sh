@@ -45,55 +45,72 @@ if [[ $TF_GPU_COUNT -lt 4 ]]; then
     exit
 fi
 
-TF_TESTS_PER_GPU=1
-N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
 amdgpuname=(`rocminfo | grep gfx | head -n 1`)
 AMD_GPU_GFX_ID=${amdgpuname[1]}
-echo ""
-echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s) for gpu ${AMD_GPU_GFX_ID}."
-echo ""
-
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
 
 export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
-TAGS_FILTER="-requires-gpu-nvidia,-oss_excluded,-oss_serial"
-UNSUPPORTED_GPU_TAGS="$(echo -requires-gpu-sm{60,70,80,86,89,90}{,-only})"
-TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
+export ROCM_PATH="/opt/rocm"
 
-bazel \
-    test \
-    --define xnn_enable_avxvnniint8=false \
-    --define xnn_enable_avx512fp16=false \
-    --config=rocm_gcc \
-    --build_tag_filters=${TAGS_FILTER} \
-    --test_tag_filters=${TAGS_FILTER} \
+GPU_NAME=(`rocminfo | grep -m 1 gfx`)
+GPU_NAME=${GPU_NAME[1]}
+
+BAZEL_DISK_CACHE_SIZE=100G
+BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.7.1"
+mkdir -p ${BAZEL_DISK_CACHE_DIR}
+if [ ! -d /tf/pkg ]; then
+	mkdir -p /tf/pkg
+fi
+
+EXCLUDED_TESTS=(
+  CollectiveOpsTestE2E.MemcpyP2pLargeMessage
+  RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/sync_decomposer
+  RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/async_decomposer
+)
+
+SCRIPT_DIR=$(realpath $(dirname $0))
+TAG_FILTERS="$($SCRIPT_DIR/rocm_tag_filters.sh)"
+
+SANITIZER_ARGS=()
+if [[ $1 == "asan" ]]; then
+    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=${SCRIPT_DIR}/asan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=${SCRIPT_DIR}/lsan_ignore_list.txt:use_sigaltstack=0")
+    SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
+    SANITIZER_ARGS+=("--config=asan")
+    TAG_FILTERS="$TAG_FILTERS,-noasan"
+    shift
+elif [[ $1 == "tsan" ]]; then
+    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=${SCRIPT_DIR}/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
+    SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
+    SANITIZER_ARGS+=("--config=tsan")
+    TAG_FILTERS="$TAG_FILTERS,-notsan"
+    shift
+fi
+
+bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
+    --config=rocm_ci \
+    --config=xla_mgpu \
+    --profile=/tf/pkg/profile.json.gz \
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
+    --experimental_guard_against_concurrent_changes \
+    --build_tag_filters=$TAG_FILTERS \
+    --test_tag_filters=$TAG_FILTERS \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
     --test_output=errors \
     --flaky_test_attempts=3 \
     --keep_going \
-    --local_test_jobs=${N_TEST_JOBS} \
-    --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-    --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-    --action_env=TF_ROCM_AMDGPU_TARGETS=${AMD_GPU_GFX_ID} \
+    --test_strategy=exclusive \
+    --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
-    -- //xla/tests:collective_ops_e2e_test \
-       //xla/tests:collective_ops_test \
-       //xla/tests:collective_pipeline_parallelism_test \
-       //xla/tests:replicated_io_feed_test \
-       //xla/tools/multihost_hlo_runner:functional_hlo_runner_test \
-       //xla/pjrt/distributed:topology_util_test \
-       //xla/pjrt/distributed:client_server_test
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${SANITIZER_ARGS[@]}" \
+    "$@"
+
+# clean up bazel disk_cache
+bazel shutdown \
+  --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+  --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}
