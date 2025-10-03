@@ -260,11 +260,10 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnSoftmaxThunk) {
       Array2D<float>({{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}}));
 
   // Buffer allocations
-  auto in_alloc = CreateBufferAllocation(0, in_literal);
-  auto out_alloc = CreateBufferAllocation(1, out_literal);
+  auto [in_alloc, out_alloc] =
+      CreateBufferAllocation(in_literal, out_literal);
 
-  auto in_slice = CreateBufferAllocationSlice(in_alloc);
-  auto out_slice = CreateBufferAllocationSlice(out_alloc);
+  auto [in_slice, out_slice] = CreateBufferAllocationSlice(in_alloc, out_alloc);
 
   BufferAllocations allocations = CreateBufferAllocations(in_literal, out_literal);
 
@@ -290,7 +289,7 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnSoftmaxThunk) {
   params.buffer_allocations = &allocations;
   params.intra_op_threadpool = &device;
 
-  auto exec_event = thunk->Execute(params);
+  tsl::AsyncValueRef<Thunk::ExecuteEvent> exec_event = thunk->Execute(params);
   tsl::BlockUntilReady(exec_event);
   ASSERT_FALSE(exec_event.IsError()) << "OneDnnOpThunk softmax execution failed";
 
@@ -300,8 +299,8 @@ TEST(OneDnnOpThunkTest, SimpleOneDnnSoftmaxThunk) {
     float s = ea + eb + ec;
     return std::array<float,3>{ea/s, eb/s, ec/s};
   };
-  auto r0 = softmax_row(1.f,2.f,3.f);
-  auto r1 = softmax_row(4.f,5.f,6.f);
+  std::array<float, 3> r0 = softmax_row(1.f, 2.f, 3.f);
+  std::array<float, 3> r1 = softmax_row(4.f,5.f,6.f);
 
   const float kTol = 1e-5f;
   // Validate results
