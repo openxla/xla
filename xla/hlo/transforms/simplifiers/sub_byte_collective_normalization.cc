@@ -122,6 +122,11 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleAllGather(
 
 absl::Status SubByteCollectiveNormalizationVisitor::HandleAllToAll(
     HloInstruction* hlo) {
+  if (hlo->operand_count() != 1) {
+    // Variadic ones are not supported yet.
+    return absl::OkStatus();
+  }
+
   const int64_t ratio = primitive_util::BitWidth(casted_type_) /
                         primitive_util::BitWidth(hlo->shape().element_type());
   const auto* all_to_all = Cast<HloAllToAllInstruction>(hlo);
