@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/onednn/onednn_threadpool.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/service/cpu/onednn_convolution.h"
 #include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_softmax.h"
@@ -101,6 +102,10 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(
     const auto& matmul_config = std::get<OneDnnMatMulConfig>(config);
     ExecuteOneDnnMatMul(arguments, results, matmul_config, cpu_engine,
                         onednn_stream, resources);
+  } else if (target == "__onednn$convolution") {
+    const auto& conv_config = std::get<OneDnnConvolutionConfig>(config);
+    ExecuteOneDnnConvolution(arguments, results, conv_config, cpu_engine,
+                             onednn_stream, resources);
   } else if (target == "__onednn$softmax") {
     const auto& softmax_config = std::get<OneDnnSoftmaxConfig>(config);
     ExecuteOneDnnSoftmax(arguments, results, softmax_config, cpu_engine,

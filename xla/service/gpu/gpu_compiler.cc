@@ -240,6 +240,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_decomposer.h"
+#include "xla/service/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
 #include "xla/service/gpu/transforms/reduce_scatter_creator.h"
 #include "xla/service/gpu/transforms/reduction_degenerate_dim_remover.h"
 #include "xla/service/gpu/transforms/reduction_dimension_grouper.h"
@@ -947,7 +948,7 @@ absl::Status RunOptimizationPasses(
 }
 
 absl::Status RunCollectiveOptimizationPasses(
-    HloModule* hlo_module,
+    HloModule* hlo_module, const GpuCompiler::CompileOptions& options,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
     se::GpuComputeCapability gpu_version, int num_visible_devices_per_process,
     int64_t pointer_size) {
@@ -967,6 +968,26 @@ absl::Status RunCollectiveOptimizationPasses(
   if (debug_options.xla_gpu_unsupported_enable_ragged_all_to_all_decomposer()) {
     collectives_pipeline.AddPass<RaggedAllToAllDecomposer>();
   }
+
+  int64_t fast_interconnect_slice_size = [&]() {
+    if (debug_options
+            .xla_gpu_unsupported_override_fast_interconnect_slice_size() > 0) {
+      return debug_options
+          .xla_gpu_unsupported_override_fast_interconnect_slice_size();
+    }
+    return options.slice_size;
+  }();
+
+  // `fast_interconnect_slice_size` can be 0 if CompileOptions were not set up
+  // by the runner and the override flag is not set. In this case, we should not
+  // run the RaggedAllToAllMultiHostDecomposer.
+  if (debug_options
+          .xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer() &&  // NOLINT
+      fast_interconnect_slice_size > 0) {
+    collectives_pipeline.AddPass<RaggedAllToAllMultiHostDecomposer>(
+        fast_interconnect_slice_size);
+  }
+
   collectives_pipeline.AddPass<AllReduceSimplifier>();
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<AllReduceSplitter>();
@@ -1540,7 +1561,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
   TF_RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
-      hlo_module, layout_insensitive_algsimp_opts, gpu_version,
+      hlo_module, options, layout_insensitive_algsimp_opts, gpu_version,
       platform->VisibleDeviceCount(), pointer_size_));
 
   // Run target-specific HLO optimization passes for convolution
@@ -2530,13 +2551,15 @@ GpuCompiler::CompileToBackendResult(
   {
     xla::llvm_ir::LLVMCommandLineOptionsLock llvm_options_lock(
         GetLLVMCommandLineOptions(module->config().debug_options()));
+    BufferValue::SizeFunction buffer_size_bytes_function =
+        BufferSizeBytesFunction();
     // Compile the module to thnks and llvm IR.
-    TF_ASSIGN_OR_RETURN(
-        compile_module_results,
-        CompileModuleToLlvmIr(module, llvm_context, target_triple_,
-                              data_layout_, *platform, gpu_device_info,
-                              alias_info.get(), BufferSizeBytesFunction(),
-                              /*split_constants_module=*/use_cache));
+    TF_ASSIGN_OR_RETURN(compile_module_results,
+                        CompileModuleToLlvmIr(
+                            module, llvm_context, target_triple_, data_layout_,
+                            *platform, gpu_device_info, alias_info.get(),
+                            std::move(buffer_size_bytes_function),
+                            /*split_constants_module=*/use_cache));
   }
 
   if (user_pre_optimization_hook_) {

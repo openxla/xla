@@ -1898,30 +1898,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "hlo_module_group_util",
-    srcs = ["hlo_module_group_util.cc"],
-    hdrs = ["hlo_module_group_util.h"],
-    deps = [
-        ":hlo_module_group_metadata",
-        "//xla:status_macros",
-        "//xla:types",
-        "//xla:util",
-        "//xla/hlo/analysis:hlo_reachability",
-        "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-    ],
-)
-
 xla_cc_test(
     name = "hlo_schedule_test",
     srcs = ["hlo_schedule_test.cc"],
@@ -4969,7 +4945,6 @@ cc_library(
     hdrs = ["while_loop_fusible_sinking.h"],
     deps = [
         ":pattern_matcher",
-        ":while_loop_simplifier",
         ":while_util",
         "//xla:comparison_util",
         "//xla:shape_util",
@@ -4978,7 +4953,6 @@ cc_library(
         "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
-        "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/utils:hlo_query",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -6058,9 +6032,14 @@ xla_cc_test(
     deps = [
         ":call_inliner",
         ":instruction_fusion",
+        "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
