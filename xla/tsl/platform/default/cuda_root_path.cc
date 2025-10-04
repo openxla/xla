@@ -56,14 +56,21 @@ std::vector<std::string> CandidateCudaRoots() {
   // The CUDA candidate root for python targets.
   std::string runfiles_dir = tsl::Env::Default()->GetRunfilesDir();
   std::size_t runfiles_ind = runfiles_dir.rfind(runfiles_suffix);
-  for (const std::string& cuda_dir_name : cuda_dir_names) {
-    std::string cuda_dir = io::JoinPath(
-        runfiles_dir.substr(0, runfiles_ind + runfiles_suffix.length()),
-        cuda_dir_name);
-    roots.push_back(cuda_dir);
+  if (runfiles_ind != std::string::npos) {
+    for (const std::string& cuda_dir_name : cuda_dir_names) {
+      std::string cuda_dir = io::JoinPath(
+          runfiles_dir.substr(0, runfiles_ind + runfiles_suffix.length()),
+          cuda_dir_name);
+      roots.push_back(cuda_dir);
+    }
   }
 
-  roots.push_back(TF_CUDA_TOOLKIT_PATH);
+  const char* cuda_home = getenv("CUDA_HOME");
+  if (cuda_home)
+    roots.emplace_back(cuda_home);
+  std::string cuda_toolkit_path = TF_CUDA_TOOLKIT_PATH;
+  if (!cuda_toolkit_path.empty())
+    roots.push_back(std::move(cuda_toolkit_path));
   roots.emplace_back(std::string("/usr/local/cuda"));
   roots.emplace_back(std::string("/opt/cuda"));
 
