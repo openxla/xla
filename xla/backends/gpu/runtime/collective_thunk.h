@@ -137,8 +137,7 @@ class CollectiveDoneThunk;
 // Thunk base class for XLA:GPU collective operations.
 class CollectiveThunk : public Thunk {
  public:
-  CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
-                  AsyncStreamKind stream_kind);
+  CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync, bool is_p2p);
 
   struct Buffer {
     int64_t element_count;
@@ -193,16 +192,6 @@ class CollectiveThunk : public Thunk {
     async_events_ = async_events;
   }
 
-  CollectiveStreamId nccl_stream_id() const {
-    return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamId(),
-                                           GetAsyncStreamKind());
-  }
-
-  ExecutionStreamId nccl_execution_stream_id() const {
-    return ExecutionStreamId(execution_stream_id().value() +
-                             nccl_stream_id().value());
-  }
-
  protected:
   // Run collective operation on a given stream and return if the first call
   // rendezvous with other participants is needed.
@@ -218,12 +207,14 @@ class CollectiveThunk : public Thunk {
                                              se::Stream& stream,
                                              CommunicatorHandle comm) = 0;
   virtual const CollectiveConfig& config() const = 0;
-  virtual AsyncStreamKind GetAsyncStreamKind() const { return stream_kind_; }
   virtual CollectiveStreamId GetAsyncStreamId() const { return stream_id_; }
+  virtual const std::optional<ExecutionStreamId> GetStreamIdOverride() const {
+    return std::nullopt;
+  }
   bool IsAsync() const { return async_events_ != nullptr; }
+  bool IsP2PCollective() const { return is_p2p_; }
 
  private:
-  const AsyncStreamKind stream_kind_;
   // NCCL stream id assigned by execution stream assignment.
   CollectiveStreamId stream_id_ = CollectiveStreamId(0);
 
@@ -238,6 +229,7 @@ class CollectiveThunk : public Thunk {
   // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
   // sure that all NCCL resources are allocated just once.
   RendezvousFlag first_call_rendezvous_flag_;
+  bool is_p2p_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -248,19 +240,9 @@ class CollectiveDoneThunk : public Thunk {
  public:
   CollectiveDoneThunk(
       Thunk::Kind kind, ThunkInfo thunk_info,
-      std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
-      AsyncStreamKind async_stream_kind);
+      std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
-
-  // return the execution stream id wheer previous async operator was launched
-  // to.
-  ExecutionStreamId nccl_execution_stream_id() const {
-    return ExecutionStreamId(
-        execution_stream_id().value() +
-        xla::gpu::GetCollectiveStreamId(true, stream_id_, stream_kind_)
-            .value());
-  }
 
   std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
 
@@ -272,7 +254,6 @@ class CollectiveDoneThunk : public Thunk {
 
  private:
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
-  AsyncStreamKind stream_kind_ = AsyncStreamKind::kCollective;
   // NCCL stream id assigned by execution stream assignment.
   CollectiveStreamId stream_id_ = CollectiveStreamId(1);
 };
@@ -318,8 +299,7 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind,
-    bool use_nccl = true);
+    CollectiveOpGroupMode group_mode, bool is_p2p, bool use_nccl = true);
 
 // Helper over GetGpuCliqueKey that builds key for AsyncStreamKind::kCollective.
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
@@ -331,7 +311,7 @@ absl::StatusOr<CommunicatorHandle> GetComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, AsyncStreamKind stream_kind);
+    CollectiveOpGroupMode group_mode, bool is_p2p);
 
 struct DeviceBufferPair {
   PrimitiveType element_type;

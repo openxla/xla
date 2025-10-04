@@ -1287,8 +1287,7 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
           /*thunk_info=*/
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context.GetNextThunkId()),
-          /*async_events=*/async_events,
-          /*async_stream_kind=*/AsyncStreamKind::kCollective);
+          /*async_events=*/async_events);
       seq.emplace_back(std::move(collective_done_thunk));
     }
   } else {

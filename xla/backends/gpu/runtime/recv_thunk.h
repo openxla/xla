@@ -44,6 +44,9 @@ class RecvThunk : public CollectiveThunk {
 
  protected:
   const CollectiveConfig& config() const override { return config_.config; }
+  const std::optional<ExecutionStreamId> GetStreamIdOverride() const override {
+    return stream_id_override_;
+  }
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
                                      se::Stream& stream,
                                      CommunicatorHandle comm_handle) override;
@@ -53,6 +56,7 @@ class RecvThunk : public CollectiveThunk {
   const Buffer buffer_;
   std::shared_ptr<ExecutionCounters> execution_counters_;
   std::string hlo_name_;
+  std::optional<ExecutionStreamId> stream_id_override_;
 };
 
 absl::Status RunRecv(GpuCollectives* collectives,
