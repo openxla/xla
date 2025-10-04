@@ -148,8 +148,8 @@ static bool AsyncStartOrDoneCommandIsSupported(
 
 static bool IsAsyncStartCommand(const HloInstruction* hlo,
                                 const CommandBufferConfig& config) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
-          hlo)) {
+  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart,
+                    HloOpcode::kCollectivePermuteStart>(hlo)) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
@@ -166,8 +166,8 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
 
 static bool IsAsyncDoneCommand(const HloInstruction* hlo,
                                const CommandBufferConfig& config) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceDone, HloOpcode::kAllGatherDone>(
-          hlo)) {
+  if (HloPredicateIsOp<HloOpcode::kAllReduceDone, HloOpcode::kAllGatherDone,
+                       HloOpcode::kCollectivePermuteDone>(hlo)) {
     return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
   }
 
@@ -180,7 +180,8 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
 
 // Finds an async-done HLO operation corresponding on an async-start one.
 static HloInstruction* FindAsyncDoneCommand(const HloInstruction* start) {
-  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
+  if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart,
+                       HloOpcode::kCollectivePermuteStart>(
           start)) {
     CHECK(start->users().size() == 1);  // NOLINT, checked by HLO verifier
     return start->users().front();
