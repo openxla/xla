@@ -828,6 +828,7 @@ cc_library(
     deps = [
         ":logging",
         ":test",
+        "@bazel_tools//tools/cpp/runfiles",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
     ],

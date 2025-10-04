@@ -22,10 +22,27 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
+#include "tools/cpp/runfiles/runfiles.h"
 
 namespace tsl {
 
 std::string GetDataDependencyFilepath(const std::string& relative_path) {
+  if (kIsOpenSource) {
+    using bazel::tools::cpp::runfiles::Runfiles;
+    std::string error;
+    std::unique_ptr<Runfiles> runfiles(Runfiles::CreateForTest(&error));
+    if (runfiles == nullptr) {
+      LOG(FATAL) << "Could not initialize runfiles: " << error.c_str();
+    }
+
+    std::string full_path = runfiles->Rlocation(relative_path);
+    if (full_path.empty()) {
+      LOG(FATAL) << "Could not find runfile " << relative_path;
+    }
+
+    return full_path;
+  }
+
   // TODO(ddunleavy): replace this with `TensorFlowSrcRoot()` from `test.h`.
   const char* srcdir = std::getenv("TEST_SRCDIR");
   if (!srcdir) {
@@ -37,9 +54,7 @@ std::string GetDataDependencyFilepath(const std::string& relative_path) {
     LOG(FATAL) << "Environment variable TEST_WORKSPACE unset!";  // Crash OK
   }
 
-  return kIsOpenSource
-             ? io::JoinPath(srcdir, workspace, relative_path)
-             : io::JoinPath(srcdir, workspace, "third_party", relative_path);
+  return io::JoinPath(srcdir, workspace, "third_party", relative_path);
 }
 
 }  // namespace tsl

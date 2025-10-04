@@ -50,7 +50,7 @@ absl::StatusOr<bool> RunFileCheckWithPatternFile(
   tsl::io::AppendDotExeIfWindows(binary_name);
   std::string file_check_path = tsl::GetDataDependencyFilepath(
       tsl::kIsOpenSource
-          ? tsl::io::JoinPath("external", "llvm-project", "llvm", binary_name)
+          ? tsl::io::JoinPath("llvm-project", "llvm", binary_name)
           : tsl::io::JoinPath("llvm", "llvm-project", "llvm", binary_name));
 
   tsl::SubProcess file_check_process;
@@ -74,7 +74,8 @@ absl::StatusOr<bool> RunFileCheckWithPatternFile(
   file_check_process.SetChannelAction(tsl::CHAN_STDIN, tsl::ACTION_PIPE);
   file_check_process.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
   if (!file_check_process.Start()) {
-    return absl::InternalError("couldn't start FileCheck");
+    return absl::InternalError("couldn't start FileCheck at " +
+                               file_check_path);
   }
 
   std::string standard_error;

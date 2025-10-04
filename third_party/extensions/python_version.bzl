@@ -1,0 +1,28 @@
+def _python_version_repo_impl(repository_ctx):
+    version = repository_ctx.os.environ.get("HERMETIC_PYTHON_VERSION", "3.11")
+    use_pywrap_rules = bool(
+        repository_ctx.os.environ.get("USE_PYWRAP_RULES", False),
+    )
+    repository_ctx.file("BUILD", "")
+    repository_ctx.file(
+        "py_version.bzl",
+        """
+HERMETIC_PYTHON_VERSION = "{version}"
+USE_PYWRAP_RULES = {use_pywrap_rules}
+""".format(
+            version = version,
+            use_pywrap_rules = use_pywrap_rules,
+        )
+    )
+
+python_version_repo = repository_rule(
+    implementation = _python_version_repo_impl,
+    environ = [
+        "HERMETIC_PYTHON_VERSION",
+        "USE_PYWRAP_RULES",
+    ],
+)
+
+python_version_ext = module_extension(
+    implementation = lambda mctx: python_version_repo(name = "python_version_repo"),
+)
