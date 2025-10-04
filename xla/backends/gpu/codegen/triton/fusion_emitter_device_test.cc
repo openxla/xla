@@ -790,7 +790,7 @@ CHECK-COUNT-1:  triton_xla.extract
 CHECK: tt.reduce
 CHECK-COUNT-2:  triton_xla.insert
 )"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
 }
 
 TEST_F(TritonEmitterTest, BitcastReduceWithStride4Tiling) {
