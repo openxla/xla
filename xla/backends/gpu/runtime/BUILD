@@ -63,6 +63,7 @@ cc_library(
         ":annotation",
         ":collective_broadcast_thunk",
         ":collective_thunk",
+        ":convolution_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
