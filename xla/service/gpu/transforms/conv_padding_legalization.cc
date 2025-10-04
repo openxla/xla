@@ -52,7 +52,10 @@ bool IsForwardConvolutionCanonical(const HloInstruction& conv) {
         conv.custom_call_target() == kCudnnConvForwardGraphCallTarget);
   return window_util::HasSymmetricPadding(conv.window()) &&
          !window_util::HasNegativePadding(conv.window()) &&
-         !window_util::HasDilation(conv.window());
+         !window_util::HasBaseDilation(conv.window());
+  // Allow window dilation for forward convolutions since cuDNN supports
+  // it natively. Only reject base dilation, which requires explicit
+  // padding.
 }
 
 // If the (positive and negative) padding on the input operand of a convolution
@@ -139,8 +142,10 @@ HloInstruction* MaybePaddedAndSlicedInput(
 // operand.
 HloInstruction* MaybePaddedKernel(const Window& conv_window,
                                   const ConvolutionDimensionNumbers& conv_dnums,
-                                  HloInstruction* kernel) {
-  if (!window_util::HasWindowDilation(conv_window)) {
+                                  HloInstruction* kernel,
+                                  bool preserve_window_dilation = false) {
+  if (!window_util::HasWindowDilation(conv_window) ||
+      preserve_window_dilation) {
     return kernel;
   }
 
@@ -172,6 +177,15 @@ bool ConvPaddingLegalization::CanonicalizeForwardConvolution(
     return false;
   }
 
+  // Check if this convolution has window dilation but is otherwise canonical.
+  // In this case, we want to preserve the window dilation and only fix other
+  // non-canonical aspects like asymmetric padding or base dilation.
+  bool has_window_dilation = window_util::HasWindowDilation(conv->window());
+  bool preserve_window_dilation =
+      has_window_dilation && window_util::HasSymmetricPadding(conv->window()) &&
+      !window_util::HasNegativePadding(conv->window()) &&
+      !window_util::HasBaseDilation(conv->window());
+
   // Insert slices and/or pads between the convolution and its input and/or
   // kernel operand.
   Window new_conv_window = conv->window();
@@ -180,17 +194,20 @@ bool ConvPaddingLegalization::CanonicalizeForwardConvolution(
       conv->mutable_operand(0));
   HloInstruction* new_kernel =
       MaybePaddedKernel(new_conv_window, conv->convolution_dimension_numbers(),
-                        conv->mutable_operand(1));
+                        conv->mutable_operand(1), preserve_window_dilation);
 
-  // Remove the window dilation from convolution's window field. These paddings
-  // are made explicit with the pads inserted by MaybePaddedKernel().
+  // Remove the window dilation from convolution's window field only if we
+  // padded the kernel. When preserving window dilation, the kernel size hasn't
+  // changed and cuDNN will handle the dilation natively.
   for (size_t i = 0; i < new_conv_window.dimensions_size(); ++i) {
     WindowDimension* dim = new_conv_window.mutable_dimensions(i);
 
     // The size of the kernel may have changed so update the Window to match.
     dim->set_size(new_kernel->shape().dimensions(
         conv->convolution_dimension_numbers().kernel_spatial_dimensions(i)));
-    dim->set_window_dilation(1);
+    if (!preserve_window_dilation) {
+      dim->set_window_dilation(1);
+    }
   }
 
   // The conv CustomCall returns a tuple (conv_result, scratch_buffer).  Extract
