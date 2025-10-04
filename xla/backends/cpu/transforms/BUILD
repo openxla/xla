@@ -21,7 +21,7 @@ cc_library(
     name = "library_rewriter",
     srcs = ["library_rewriter.cc"],
     hdrs = ["library_rewriter.h"],
-    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
+    defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
     deps = [
         ":library_matcher",
         ":onednn_matcher",
@@ -80,6 +80,23 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+onednn_graph_cc_library(
+    name = "onednn_dot_canonicalizer",
+    srcs = ["onednn_dot_canonicalizer.cc"],
+    hdrs = ["onednn_dot_canonicalizer.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:pattern_matcher",
+        "//xla/tsl/mkl:onednn",
+        "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
