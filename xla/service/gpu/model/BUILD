@@ -650,6 +650,7 @@ cc_library(
         "//xla/service:instruction_fusion",
         "//xla/service:name_uniquer",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

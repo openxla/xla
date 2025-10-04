@@ -32,6 +32,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind);
+
 class HloFusionAnalysis {
  public:
   // The type of emitted fusion.
