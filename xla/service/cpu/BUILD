@@ -613,7 +613,6 @@ cc_library(
         ":onednn_convolution",
         ":onednn_layer_norm",
         ":onednn_matmul",
-        ":onednn_softmax",
     ]),
 )
 
@@ -1825,7 +1824,6 @@ onednn_cc_library(
     srcs = ["onednn_softmax.cc"],
     hdrs = [
         "onednn_softmax.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],

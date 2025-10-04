@@ -131,6 +131,7 @@ cc_library(
         "//xla/service/cpu:onednn_convolution",
         "//xla/service/cpu:onednn_matmul",
         "//xla/service/cpu:onednn_memory_util",
+        "//xla/service/cpu:onednn_softmax",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/mkl:onednn",

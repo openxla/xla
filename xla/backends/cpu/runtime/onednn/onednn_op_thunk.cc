@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/cpu/onednn_convolution.h"
 #include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_softmax.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/logging.h"
@@ -105,6 +106,10 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(
     const auto& conv_config = std::get<OneDnnConvolutionConfig>(config);
     ExecuteOneDnnConvolution(arguments, results, conv_config, cpu_engine,
                              onednn_stream, resources);
+  } else if (target == "__onednn$softmax") {
+    const auto& softmax_config = std::get<OneDnnSoftmaxConfig>(config);
+    ExecuteOneDnnSoftmax(arguments, results, softmax_config, cpu_engine,
+                         onednn_stream, resources);
   } else {
     return absl::InvalidArgumentError(
         absl::StrFormat("Unsupported oneDNN operation target: `%s`", target));
