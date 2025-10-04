@@ -1862,7 +1862,6 @@ onednn_cc_library(
         "onednn_contraction_rewriter.h",
         "onednn_convolution.h",
         "onednn_matmul.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
@@ -1873,6 +1872,7 @@ onednn_cc_library(
         ":onednn_memory_util",
         ":onednn_pattern_utils",
         ":onednn_util",
+        "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
