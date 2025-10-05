@@ -143,6 +143,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
+        "@com_google_protobuf//:protobuf_lite",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:hash",
         "@tsl//tsl/platform:protobuf",
