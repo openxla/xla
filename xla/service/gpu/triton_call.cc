@@ -24,6 +24,9 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/service/gpu/triton_call_args.pb.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/logging.h"
 
 namespace xla::gpu {
 
@@ -44,7 +47,20 @@ TritonCall TritonCall::Parse(absl::string_view backend_config,
       attrs.getAs<mlir::IntegerAttr>("num_stages").getValue().getSExtValue();
   auto num_warps =
       attrs.getAs<mlir::IntegerAttr>("num_warps").getValue().getSExtValue();
-  return TritonCall{std::move(name), std::move(ir), num_stages, num_warps,
+  auto attr_smd = attrs.getAs<mlir::StringAttr>("serialized_metadata");
+  int64_t waves_per_eu = 0;
+  if (attr_smd) {
+    TritonCallArgs triton_call_args_proto;
+    auto sermetadata = attr_smd.getValue().str();
+    if (tsl::protobuf::TextFormat::ParseFromString(
+        sermetadata, &triton_call_args_proto)) {
+        waves_per_eu = triton_call_args_proto.waves_per_eu();
+    } else {
+        // Parsing error: set default value
+        waves_per_eu = 0;
+    }
+  }
+  return TritonCall{std::move(name), std::move(ir), num_stages, num_warps, waves_per_eu,
                     grid_x,          grid_y,        grid_z};
 }
 

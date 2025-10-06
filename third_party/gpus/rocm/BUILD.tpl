@@ -171,13 +171,11 @@ cc_library(
     ],
     strip_include_prefix = "%{rocm_root}",
     deps = [
-        ":amd_comgr",
-        ":hsa_rocr",
         ":rocm_config",
-        ":rocm_smi",
         ":rocprofiler_register",
         ":system_libs",
     ],
+    visibility = ["//visibility:public"],
 )
 
 # Used by jax_rocm_plugin to minimally link to hip runtime.
@@ -259,8 +257,8 @@ cc_library(
 cc_library(
     name = "miopen",
     hdrs = glob(["%{rocm_root}/include/miopen/**"]),
+    srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     data = glob([
-        "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
     ]),
     include_prefix = "rocm",

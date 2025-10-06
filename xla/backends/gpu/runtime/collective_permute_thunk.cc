@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -182,9 +183,9 @@ CollectivePermuteStartThunk::CollectivePermuteStartThunk(
 absl::Status CollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  device_count_ = params.local_device_count;
-  CHECK_GT(device_count_, 0);
-  VLOG(5) << "Local device count: " << device_count_;
+  device_count_.store(params.local_device_count, std::memory_order_relaxed);
+  CHECK_GT(params.local_device_count, 0);
+  VLOG(5) << "Local device count: " << params.local_device_count;
 
   if (p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(const int64_t current_id,
@@ -259,8 +260,9 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
 
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
+  const auto device_count = device_count_.load(std::memory_order_relaxed);
   bool is_local_peer =
-      IsLocalPeerTransfer(source_target, current_id, device_count_);
+      IsLocalPeerTransfer(source_target, current_id, device_count);
   VLOG(5) << "Is local peer : " << (is_local_peer ? "true" : "false");
 
   bool use_memcpy = is_local_peer && recv_ptr_map_.IsInitialized(current_id) &&

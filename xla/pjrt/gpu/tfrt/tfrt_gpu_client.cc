@@ -114,8 +114,6 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#elif TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
 #endif
 
 #if defined(PLATFORM_WINDOWS)

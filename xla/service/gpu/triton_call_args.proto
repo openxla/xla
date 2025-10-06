@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package xla.gpu;
+
+// Arguments for triton calls for XLA:GPU.
+
+message TritonCallArgs {
+    optional int32 waves_per_eu = 1;
+}
