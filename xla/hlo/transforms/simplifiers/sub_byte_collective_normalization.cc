@@ -164,9 +164,7 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleCollectivePermute(
 absl::Status
 SubByteCollectiveNormalizationVisitor::ProcessCollectiveInstruction(
     HloInstruction& hlo) {
-  // HandleAllToAll already calls ShouldProcessInstruction, the other handlers
-  // don't.
-  if (hlo.opcode() != HloOpcode::kAllToAll && !ShouldProcessInstruction(hlo)) {
+  if (!ShouldProcessInstruction(hlo)) {
     return absl::OkStatus();
   }
 
