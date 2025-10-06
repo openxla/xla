@@ -11,7 +11,7 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "docker://rocm/tensorflow-build:latest-jammy-python3.10-rocm6.4.0@sha256:9c2fbc861570735fc86dbf39dd3cefef6a13fcf6ae08358271af52f1aebd4248",
+        "container-image": "docker://rocm/tensorflow-build:2.19-jammy-python3.9-rocm6.4.0@sha256:7b42dafbe5401fd84cf951a63f16dd44a84c64a6ba2eeb7675fd0919f03b2bdf",
         "OSFamily": "Linux",
     },
 )
