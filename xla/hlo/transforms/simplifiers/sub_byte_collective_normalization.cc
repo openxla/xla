@@ -126,6 +126,9 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleAllToAll(
     // Variadic ones are not supported yet.
     return absl::OkStatus();
   }
+  if (!CanBeRepresentedAs(hlo->operand(0)->shape(), casted_type_)) {
+    return absl::OkStatus();
+  }
 
   const int64_t ratio = primitive_util::BitWidth(casted_type_) /
                         primitive_util::BitWidth(hlo->shape().element_type());
@@ -161,13 +164,12 @@ SubByteCollectiveNormalizationVisitor::ProcessCollectiveInstruction(
     // Variadic ones are not supported yet.
     return absl::OkStatus();
   }
-
-  const int64_t ratio = primitive_util::BitWidth(casted_type_) /
-                        primitive_util::BitWidth(hlo.shape().element_type());
-
   if (!CanBeRepresentedAs(hlo.operand(0)->shape(), casted_type_)) {
     return absl::OkStatus();
   }
+
+  const int64_t ratio = primitive_util::BitWidth(casted_type_) /
+                        primitive_util::BitWidth(hlo.shape().element_type());
 
   std::vector<int64_t> new_collective_dimensions(
       hlo.shape().dimensions().begin(), hlo.shape().dimensions().end());
