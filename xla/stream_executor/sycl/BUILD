@@ -264,7 +264,6 @@ sycl_library(
     deps = [
         ":sycl_status",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/strings",
     ],
 )

@@ -73,5 +73,68 @@ class SyclDevicePool {
   SyclDevicePool() = delete;
 };
 
+using StreamPtr = std::shared_ptr<::sycl::queue>;
+using StreamPool = std::vector<StreamPtr>;
+using StreamPoolMap = std::unordered_map<int, StreamPool>;
+
+// TODO(intel-tf): kMaxStreamsPerDevice is the maximum number of streams that
+// can be created per device via GetOrCreateStream when multiple streams are
+// enabled.
+//
+// For now, we set it to 8 so that there is no unbounded growth. However, it can
+// be adjusted based on the device capabilities and workload requirements.
+//
+// This feature will be enabled by default in the future once the performance
+// implications are better understood.
+constexpr int kMaxStreamsPerDevice = 8;
+
+// Manages pools of SYCL streams (queues) per device. All methods are static and
+// thread-safe via a global mutex. For high concurrency workloads, consider
+// refactoring to use per-device mutexes.
+// This class cannot be instantiated and is intended to be used as a
+// static utility.
+class SyclStreamPool {
+ public:
+  // Returns the default (first in the pool) SYCL stream for the given device
+  // ordinal. Returns an error if the device ordinal is invalid or the stream
+  // pool is empty.
+  static absl::StatusOr<StreamPtr> GetDefaultStream(int device_ordinal);
+
+  // Returns a SYCL stream for the given device ordinal.
+  //
+  // If multiple streams are not enabled, returns the default (first in the
+  // pool) SYCL stream. If the stream pool is empty, returns an error.
+  //
+  // If multiple streams are enabled (via enable_multiple_streams), creates
+  // a new stream up to the maximum limit (kMaxStreamsPerDevice). Returns an
+  // error if the limit is reached.
+  static absl::StatusOr<StreamPtr> GetOrCreateStream(
+      int device_ordinal, bool enable_multiple_streams);
+
+  // Synchronizes all streams associated with the given device ordinal.
+  static absl::Status SynchronizeStreamPool(int device_ordinal);
+
+  // Destroys a previously created SYCL stream for the given device ordinal.
+  static absl::Status DestroyStream(int device_ordinal,
+                                    StreamPtr& stream_handle);
+
+ private:
+  // Global mutex protecting the stream pool.
+  // TODO(intel-tf): We should consider using a more fine-grained locking
+  // mechanism (ex. per-device mutex) in the future to avoid performance issues.
+  static absl::Mutex stream_pool_mu_;
+
+  // The underlying stream pool for each device. The device ordinal
+  // is used as the key.
+  static StreamPoolMap stream_pool_map_ ABSL_GUARDED_BY(stream_pool_mu_);
+
+  // Initializes and returns a pointer to the stream pool for the given device
+  // ordinal.
+  static absl::StatusOr<StreamPool*> InitStreamPool(int device_ordinal);
+
+  // Prevent instantiation: this class is intended to be a static utility only
+  SyclStreamPool() = delete;
+};
+
 }  // namespace stream_executor::sycl
 #endif  // XLA_STREAM_EXECUTOR_SYCL_SYCL_GPU_RUNTIME_H_
