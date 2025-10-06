@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
+#include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -60,6 +61,8 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/constant_value.h"
+#include "xla/service/host_offload_utils.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/scheduling_annotations_util.h"
 #include "xla/service/value_range.h"
 #include "xla/shape.h"
@@ -527,6 +530,35 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
         return !IsLoopIterator(instr, loop_iter) &&
                !loop_invariant_params.count(instr);
       };
+
+  // Check if this is a MoveToDevice custom call that follows a dynamic-slice
+  // This is a special case for backward pipelining with host offloading
+  if (instr->IsCustomCall(memory_annotations::kMoveToDeviceCustomCallTarget)) {
+    std::vector<HloInstruction*> to_check = {instr->mutable_operand(0)};
+    std::set<HloInstruction*> visited;
+
+    while (!to_check.empty()) {
+      HloInstruction* current = to_check.back();
+      to_check.pop_back();
+
+      if (visited.insert(current).second) {
+        if (current->opcode() == HloOpcode::kDynamicSlice) {
+          if (visited_set.insert(current).second) {
+            stack.emplace_back(current, 0);
+          }
+          break;
+        }
+        if (current->opcode() == HloOpcode::kReshape ||
+            current->opcode() == HloOpcode::kBroadcast ||
+            current->opcode() == HloOpcode::kTranspose) {
+          for (HloInstruction* operand : current->operands()) {
+            to_check.push_back(operand);
+          }
+        }
+      }
+    }
+  }
+
   while (!stack.empty()) {
     auto& curr = stack.back();
     if (curr.second == curr.first->operand_count()) {
@@ -1612,6 +1644,81 @@ HloInstruction* CreateZero(HloComputation* comp, const Shape& shape,
               HloInstruction::CreateConstant(LiteralUtil::Zero(ptype))),
           {}));
   return zero_constant;
+}
+
+// Recursively finds GTE indices used in DS/DUS and marks them as dynamic
+// variables.
+absl::flat_hash_set<int64_t> FindTupleIndicesInOperand(
+    const HloInstruction* operand) {
+  absl::flat_hash_set<int64_t> indices;
+
+  if (operand->opcode() == HloOpcode::kGetTupleElement) {
+    indices.insert(operand->tuple_index());
+  } else if (operand->opcode() == HloOpcode::kCopy &&
+             operand->operand_count() == 1) {
+    auto copy_indices = FindTupleIndicesInOperand(operand->operand(0));
+    indices.insert(copy_indices.begin(), copy_indices.end());
+  } else if (operand->opcode() == HloOpcode::kAdd ||
+             operand->opcode() == HloOpcode::kSubtract ||
+             operand->opcode() == HloOpcode::kMultiply ||
+             operand->opcode() == HloOpcode::kDivide) {
+    for (int i = 0; i < operand->operand_count(); ++i) {
+      auto op_indices = FindTupleIndicesInOperand(operand->operand(i));
+      indices.insert(op_indices.begin(), op_indices.end());
+    }
+  }
+
+  return indices;
+}
+
+// Scans while loop body for DS/DUS, traces their index operands back to GTEs
+// and marks corresponding tuple indices as dynamic variables.
+absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
+  if (while_loop->opcode() != HloOpcode::kWhile) {
+    return absl::OkStatus();
+  }
+
+  if (!while_loop->while_body()) {
+    return absl::OkStatus();
+  }
+
+  if (!host_offload_utils::HasHostOffloadingOperations(
+          while_loop->while_body())) {
+    return absl::OkStatus();
+  }
+
+  WhileLoopBackendConfig config;
+  TF_ASSIGN_OR_RETURN(config,
+                      while_loop->backend_config<WhileLoopBackendConfig>());
+
+  config.clear_dynamic_variable_tuple_indices();
+
+  absl::flat_hash_set<int64_t> dynamic_slice_indices;
+
+  for (auto* instr : while_loop->while_body()->instructions()) {
+    if (instr->opcode() == HloOpcode::kDynamicUpdateSlice ||
+        instr->opcode() == HloOpcode::kDynamicSlice) {
+      int first_index_operand =
+          (instr->opcode() == HloOpcode::kDynamicUpdateSlice)
+              ? Cast<HloDynamicUpdateSliceInstruction>(instr)
+                    ->first_index_operand_number()
+              : Cast<HloDynamicSliceInstruction>(instr)
+                    ->first_index_operand_number();
+
+      for (int i = first_index_operand; i < instr->operand_count(); ++i) {
+        auto* index_op = instr->operand(i);
+        auto op_indices = FindTupleIndicesInOperand(index_op);
+        dynamic_slice_indices.insert(op_indices.begin(), op_indices.end());
+      }
+    }
+  }
+
+  for (int64_t tuple_idx : dynamic_slice_indices) {
+    config.add_dynamic_variable_tuple_indices(tuple_idx);
+  }
+
+  TF_RETURN_IF_ERROR(while_loop->set_backend_config(config));
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -3234,6 +3341,7 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
       if (instruction->opcode() != HloOpcode::kWhile) {
         continue;
       }
+
       if (std::none_of(instruction->while_body()->instructions().begin(),
                        instruction->while_body()->instructions().end(),
                        config_.should_process)) {
@@ -3340,6 +3448,16 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
   // Run necessary cleanup to make sure unused code doesn't trigger HloVerifier.
   if (changed) {
     TF_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
+
+    // Mark dynamic variables after transformation to identify tuple indices
+    // used in DS/DUS. This enables FusionDynamicMemcpyRewriter to optimize
+    // memory access patterns in CollectivePipeliner-transformed loops.
+    for (HloComputation* computation : module->MakeComputationPostOrder()) {
+      for (HloInstruction* instruction :
+           computation->MakeInstructionPostOrder()) {
+        TF_RETURN_IF_ERROR(MarkDynamicVariables(instruction));
+      }
+    }
   }
 
   return changed;

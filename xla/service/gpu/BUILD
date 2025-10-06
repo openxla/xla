@@ -1691,6 +1691,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
         "//xla/service:hlo_verifier",
+        "//xla/service:host_offload_utils",
         "//xla/service:layout_assignment",
         "//xla/service:layout_normalization",
         "//xla/service:llvm_compiler",

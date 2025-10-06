@@ -667,6 +667,27 @@ bool IsInductionVariable(const HloInstruction* maybe_variable,
          maybe_variable->tuple_index() == loop.induction_variable_index;
 }
 
+// Returns true if `maybe_variable` is marked as a dynamic variable.
+bool IsDynamicVariable(const HloInstruction* maybe_variable,
+                       const VerifiedLoop& loop) {
+  if (!IsLoopCarriedVariable(maybe_variable, loop)) {
+    return false;
+  }
+
+  auto config = loop.loop->backend_config<xla::WhileLoopBackendConfig>();
+  if (!config.ok()) {
+    return false;
+  }
+
+  int64_t tuple_idx = maybe_variable->tuple_index();
+  for (int64_t dynamic_idx : config->dynamic_variable_tuple_indices()) {
+    if (dynamic_idx == tuple_idx) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Attempts to find the induction variable of `loop` in `dependencies`. If there
 // are any dependencies on non-induction variable loop-carried variables,
 // returns nullopt.
@@ -682,6 +703,17 @@ std::optional<const HloInstruction*> VerifyInductionVariable(
         return std::nullopt;
       }
       induction_var = gte;
+    } else if (IsDynamicVariable(gte, loop)) {
+      // Dynamic variables are also acceptable because they represent tuple
+      // indices used in DS/DUS that can be optimized by
+      // FusionDynamicMemcpyRewriter.
+      if (induction_var) {
+        // This should never happen.
+        VLOG(5) << "Found non-unique GTEs for the dynamic variable. Did "
+                   "HloCSE run?";
+        return std::nullopt;
+      }
+      induction_var = gte;
     } else if (IsLoopCarriedVariable(gte, loop)) {
       // Other dependencies on loop-carried variables are not allowed.
       VLOG(5) << "Found illegal dependency on loop-carried variable.";
@@ -692,7 +724,7 @@ std::optional<const HloInstruction*> VerifyInductionVariable(
     // side-effecting dependencies in GetLeafDependencies.
   }
   if (!induction_var) {
-    VLOG(5) << "Did not find an induction variable.";
+    VLOG(5) << "Did not find an induction variable or dynamic variable.";
     return std::nullopt;
   }
   return induction_var;

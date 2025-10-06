@@ -18,6 +18,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -292,6 +293,78 @@ void SetHostComputeFrontendAttribute(HloInstruction& host_instruction) {
   frontend_attributes.mutable_map()->insert(
       {kXlaComputeTypeAttr, kXlaComputeTypeHost});
   host_instruction.set_frontend_attributes(frontend_attributes);
+}
+
+bool IsHostOffloadingInstruction(const HloInstruction* instr) {
+  if (!instr) {
+    return false;
+  }
+
+  if (instr->IsCustomCall("MoveToHost")) {
+    // Check if MoveToHost is used by DynamicUpdateSlice (forward pattern)
+    std::vector<const HloInstruction*> to_check = {instr};
+    std::set<const HloInstruction*> visited;
+
+    while (!to_check.empty()) {
+      const HloInstruction* current = to_check.back();
+      to_check.pop_back();
+
+      if (visited.insert(current).second) {
+        for (const HloInstruction* user : current->users()) {
+          if (!user) {
+            continue;
+          }
+          if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
+            return true;
+          }
+          if (user->opcode() == HloOpcode::kReshape ||
+              user->opcode() == HloOpcode::kBroadcast ||
+              user->opcode() == HloOpcode::kTranspose) {
+            to_check.push_back(user);
+          }
+        }
+      }
+    }
+  } else if (instr->IsCustomCall("MoveToDevice")) {
+    // Check if MoveToDevice uses DynamicSlice (backward pattern)
+    std::vector<const HloInstruction*> to_check = {instr};
+    std::set<const HloInstruction*> visited;
+
+    while (!to_check.empty()) {
+      const HloInstruction* current = to_check.back();
+      to_check.pop_back();
+
+      if (visited.insert(current).second) {
+        for (const HloInstruction* operand : current->operands()) {
+          if (!operand) {
+            continue;
+          }
+          if (operand->opcode() == HloOpcode::kDynamicSlice) {
+            return true;
+          }
+          if (operand->opcode() == HloOpcode::kReshape ||
+              operand->opcode() == HloOpcode::kBroadcast ||
+              operand->opcode() == HloOpcode::kTranspose) {
+            to_check.push_back(operand);
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool HasHostOffloadingOperations(const HloComputation* computation) {
+  if (!computation) {
+    return false;
+  }
+
+  for (const HloInstruction* instr : computation->instructions()) {
+    if (IsHostOffloadingInstruction(instr)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace host_offload_utils
