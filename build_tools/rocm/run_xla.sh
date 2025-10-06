@@ -92,6 +92,7 @@ BasicDotAlgorithmEmitterTestSuite/BasicDotAlgorithmEmitterTest.BasicAlgorithmIsE
 CommandBufferTests/CommandBufferTest.IndexConditional/*
 CommandBufferTests/CommandBufferTest.WhileLoop/*
 CommandBufferTests/CommandBufferTest.TrueFalseConditional/*
+BufferComparatorTest.VeryLargeArray_Device_U8_Aligned
 )
 
 BAZEL_DISK_CACHE_SIZE=100G
