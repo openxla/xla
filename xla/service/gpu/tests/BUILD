@@ -211,10 +211,6 @@ xla_test(
     name = "gpu_spmd_e2e_compile_test",
     size = "small",
     srcs = ["gpu_spmd_e2e_compile_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
@@ -981,6 +977,23 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
+    name = "ptx_kernel_test",
+    srcs = ["ptx_kernel_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "cuda-only",
+        "test_migrated_to_hlo_runner_pjrt",
+    ],
+    deps = [
+        "//xla:literal",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

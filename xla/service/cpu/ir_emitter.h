@@ -60,9 +60,9 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/xla_data.pb.h"
 
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
 #include "xla/service/cpu/onednn_memory_util.h"
-#endif
+#endif  // XLA_ONEDNN
 
 namespace xla {
 namespace cpu {
@@ -336,7 +336,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   absl::Status HandleTopK(HloInstruction* hlo) override;
   absl::Status HandleAllReduceSingleReplica(HloInstruction* crs);
   absl::Status HandleAllReduceMultipleReplica(HloInstruction* crs);
-#if defined(INTEL_MKL)
+#ifdef XLA_ONEDNN
   std::vector<StackAlloca> EmitOneDnnOperandsAlloca(HloInstruction* custom_call,
                                                     llvm::Value*& args_val,
                                                     int& arg_indx);
@@ -346,8 +346,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
                                        std::string runtime_symbol_name);
   absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);
   absl::Status HandleOneDnnLayerNorm(HloInstruction* hlo);
-  absl::Status HandleOneDnnConvolution(HloInstruction* hlo);
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
   // Private helper to initialize an IR function for the computation.
   void InitializeIrFunction(const std::string& function_name);
 
@@ -869,7 +868,8 @@ absl::Status EmitFastConcatenate(
     const HloInstruction* instr,
     absl::Span<const llvm_ir::IrArray> source_arrays,
     const llvm_ir::IrArray& target_array, llvm::Module* module,
-    llvm::IRBuilderBase& b);
+    llvm::IRBuilderBase& b, llvm::Value* workgroup_id = nullptr,
+    int64_t num_workgroups = -1);
 
 // For each called computation called by the instruction, determines if that
 // computation calls a custom-call function, either directly or transitively.

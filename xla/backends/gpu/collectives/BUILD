@@ -165,6 +165,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/functional:function_ref",
@@ -214,6 +215,7 @@ cc_library(
     name = "gpu_communicator",
     hdrs = ["gpu_communicator.h"],
     deps = [
+        "//xla:future",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:collective_ops_utils",
@@ -358,6 +360,7 @@ cc_library(
         ":gpu_communicator",
         ":nccl_errors",
         ":single_threaded_executor",
+        "//xla:future",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -377,6 +380,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
@@ -424,7 +428,9 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
+        "//xla:future",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
@@ -461,10 +467,6 @@ cc_library(
 xla_test(
     name = "nccl_communicator_test",
     srcs = ["nccl_communicator_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     local_defines =
         if_rocm_is_configured([
@@ -487,6 +489,7 @@ xla_test(
         ":nccl_collectives",
         ":nccl_communicator",
         ":nccl_errors",
+        "//xla:future",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:collective_ops_utils",
@@ -497,6 +500,7 @@ xla_test(
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/utility",
@@ -547,9 +551,9 @@ cc_library(
     srcs = ["single_threaded_executor.cc"],
     hdrs = ["single_threaded_executor.h"],
     deps = [
-        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:threadpool_async_executor",
+        "//xla/tsl/platform:threadpool_executor",
     ],
 )
 

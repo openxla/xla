@@ -17,15 +17,21 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 
 namespace tsl {
+
+using ::absl_testing::IsOk;
+using ::testing::Not;
 
 TEST(FutureTest, StatusConstructedFuture) {
   Future<> future = Future<>(absl::OkStatus());
@@ -162,6 +168,22 @@ TEST(FutureTest, OnReadyMoveOnlyFuture) {
   });
 }
 
+TEST(FutureTest, PromiseNotSet) {
+  Future<> future;
+  {
+    Promise<> promise;
+    std::tie(promise, future) = Future<>::MakePromise();
+  }
+  ASSERT_TRUE(future.IsReady());
+  EXPECT_THAT(future.Await(), Not(IsOk()));
+}
+
+TEST(FutureTest, PromiseSetTwice) {
+  auto [promise, future] = Future<>::MakePromise();
+  promise.Set();
+  EXPECT_DEATH(promise.Set(), "Promise must not be fulfilled more than once");
+}
+
 TEST(FutureTest, UnlinkedPromiseIsUnique) {
   auto [promise, future] = Future<>::MakePromise();
   EXPECT_FALSE(promise.IsUniqueReference());
@@ -296,10 +318,26 @@ TEST(FutureTest, MapStatusUnusedResult) {
   EXPECT_FALSE(called);
 }
 
+TEST(FutureTest, TryMapCopyableFutureToStateless) {
+  auto [promise, future] = Future<int32_t>::MakePromise();
+  promise.Set(42);
+
+  {
+    Future<> mapped = future.Map([](int32_t) { return absl::OkStatus(); });
+    EXPECT_EQ(mapped.Await(), absl::OkStatus());
+  }
+
+  {
+    Future<> mapped =
+        future.Map([](int32_t) { return absl::InternalError("test"); });
+    EXPECT_EQ(mapped.Await(), absl::InternalError("test"));
+  }
+}
+
 TEST(FutureTest, TryMapCopyableFuture) {
   auto [promise, future] = Future<int32_t>::MakePromise();
-  Future<float> mapped = future.TryMap(
-      [](int32_t v) -> absl::StatusOr<float> { return v * 2.0f; });
+  Future<float> mapped =
+      future.Map([](int32_t v) -> absl::StatusOr<float> { return v * 2.0f; });
 
   EXPECT_FALSE(future.IsReady());
   EXPECT_FALSE(mapped.IsReady());
@@ -311,15 +349,15 @@ TEST(FutureTest, TryMapCopyableFuture) {
   EXPECT_EQ(*future.Await(), 42);
   EXPECT_EQ(*mapped.Await(), 84.0f);
 
-  Future<int32_t> mapped_again = std::move(mapped).TryMap(
+  Future<int32_t> mapped_again = std::move(mapped).Map(
       [](float v) -> absl::StatusOr<int32_t> { return v; });
   EXPECT_EQ(*mapped_again.Await(), 84);
 }
 
 TEST(FutureTest, TryMapCopyableFutureForwardError) {
   auto [promise, future] = Future<int32_t>::MakePromise();
-  Future<float> mapped = future.TryMap(
-      [](int32_t v) -> absl::StatusOr<float> { return v * 2.0f; });
+  Future<float> mapped =
+      future.Map([](int32_t v) -> absl::StatusOr<float> { return v * 2.0f; });
 
   promise.Set(absl::InternalError("test"));
   EXPECT_TRUE(mapped.IsReady());
@@ -328,7 +366,7 @@ TEST(FutureTest, TryMapCopyableFutureForwardError) {
 
 TEST(FutureTest, TryMapCopyableFutureCreateError) {
   auto [promise, future] = Future<int32_t>::MakePromise();
-  Future<float> mapped = future.TryMap([](int32_t v) -> absl::StatusOr<float> {
+  Future<float> mapped = future.Map([](int32_t v) -> absl::StatusOr<float> {
     return absl::InternalError("test");
   });
 
@@ -337,10 +375,19 @@ TEST(FutureTest, TryMapCopyableFutureCreateError) {
   EXPECT_EQ(mapped.Await().status(), absl::InternalError("test"));
 }
 
+TEST(FutureTest, TryMapMoveOnlyFutureToStateless) {
+  auto [promise, future] = Future<std::unique_ptr<int32_t>>::MakePromise();
+  promise.Set(std::make_unique<int32_t>(42));
+
+  Future<> mapped = std::move(future).Map(
+      [](std::unique_ptr<int32_t>) { return absl::OkStatus(); });
+  EXPECT_EQ(mapped.Await(), absl::OkStatus());
+}
+
 TEST(FutureTest, TryMapMoveOnlyFuture) {
   auto [promise, future] = Future<std::unique_ptr<int32_t>>::MakePromise();
 
-  Future<std::unique_ptr<float>> mapped = std::move(future).TryMap(
+  Future<std::unique_ptr<float>> mapped = std::move(future).Map(
       [](std::unique_ptr<int32_t> v) -> absl::StatusOr<std::unique_ptr<float>> {
         return std::make_unique<float>(*v * 2.0f);
       });
@@ -356,7 +403,7 @@ TEST(FutureTest, TryMapMoveOnlyFuture) {
 TEST(FutureTest, TryMapMoveOnlyFutureForwardError) {
   auto [promise, future] = Future<std::unique_ptr<int32_t>>::MakePromise();
 
-  Future<std::unique_ptr<float>> mapped = std::move(future).TryMap(
+  Future<std::unique_ptr<float>> mapped = std::move(future).Map(
       [](std::unique_ptr<int32_t> v) -> absl::StatusOr<std::unique_ptr<float>> {
         return std::make_unique<float>(*v * 2.0f);
       });
@@ -369,10 +416,30 @@ TEST(FutureTest, TryMapMoveOnlyFutureForwardError) {
   EXPECT_EQ(mapped.Await().status(), absl::InternalError("test"));
 }
 
+TEST(FutureTest, MapFutureCopies) {
+  auto [promise, future] = Future<std::shared_ptr<int32_t>>::MakePromise();
+  promise.Set(std::make_shared<int32_t>(42));
+
+  Future<std::shared_ptr<int32_t>> future0 = future;
+  Future<std::shared_ptr<int32_t>> future1 = future;
+
+  Future<> future2 = std::move(future0).Map(
+      [](std::shared_ptr<int32_t>) { return absl::OkStatus(); });
+  Future<> future3 = std::move(future1).Map(
+      [](std::shared_ptr<int32_t>) { return absl::OkStatus(); });
+
+  EXPECT_EQ(future2.Await(), absl::OkStatus());
+  EXPECT_EQ(future3.Await(), absl::OkStatus());
+
+  // Check that future holds a valid shared pointer, and it was not actually
+  // moved to any of the functors.
+  EXPECT_EQ(**future.Await(), 42);
+}
+
 TEST(FutureTest, TryMapMoveOnlyFutureCreateError) {
   auto [promise, future] = Future<std::unique_ptr<int32_t>>::MakePromise();
 
-  Future<std::unique_ptr<float>> mapped = std::move(future).TryMap(
+  Future<std::unique_ptr<float>> mapped = std::move(future).Map(
       [](std::unique_ptr<int32_t> v) -> absl::StatusOr<std::unique_ptr<float>> {
         return absl::InternalError("test");
       });
@@ -389,7 +456,7 @@ TEST(FutureTest, TryMapUnusedResult) {
   auto [promise, future] = Future<int>::MakePromise();
 
   bool called = false;
-  future.TryMap([&](int) -> absl::StatusOr<int> {
+  future.Map([&](int) -> absl::StatusOr<int> {
     called = true;
     return 2;
   });
@@ -397,16 +464,31 @@ TEST(FutureTest, TryMapUnusedResult) {
   EXPECT_FALSE(called);
 }
 
-TEST(FutureTest, TryMapStatusUnusedResult) {
-  auto [promise, future] = Future<>::MakePromise();
+TEST(FutureTest, MapWithVoidFunctor) {
+  {
+    auto [promise, future] = Future<>::MakePromise();
+    promise.Set(absl::OkStatus());
 
-  bool called = false;
-  future.TryMap([&]() -> absl::StatusOr<int> {
-    called = true;
-    return 2;
-  });
-  promise.Set();
-  EXPECT_FALSE(called);
+    Future<> mapped = future.Map([] {});
+    EXPECT_EQ(mapped.Await(), absl::OkStatus());
+  }
+
+  {
+    auto [promise, future] = Future<int32_t>::MakePromise();
+    promise.Set(42);
+
+    Future<> mapped = future.Map([](int32_t value) { EXPECT_EQ(value, 42); });
+    EXPECT_EQ(mapped.Await(), absl::OkStatus());
+  }
+
+  {
+    auto [promise, future] = Future<std::unique_ptr<int32_t>>::MakePromise();
+    promise.Set(std::make_unique<int32_t>(42));
+
+    Future<> mapped = std::move(future).Map(
+        [](std::unique_ptr<int32_t> value) { EXPECT_EQ(*value, 42); });
+    EXPECT_EQ(mapped.Await(), absl::OkStatus());
+  }
 }
 
 TEST(FutureTest, StatelessError) {
@@ -457,6 +539,32 @@ TEST(FutureTest, MapStatelessFuture) {
   EXPECT_EQ(*mapped.Await(), 42.0f);
 }
 
+TEST(FutureTest, MapStatelessToStatus) {
+  auto [promise, future] = Future<>::MakePromise();
+  promise.Set(absl::OkStatus());
+
+  {
+    Future<> mapped = future.Map([] { return absl::OkStatus(); });
+    EXPECT_TRUE(mapped.IsReady());
+    EXPECT_EQ(mapped.Await(), absl::OkStatus());
+  }
+
+  {
+    Future<> mapped = future.Map([] { return absl::InternalError("test"); });
+    EXPECT_TRUE(mapped.IsReady());
+    EXPECT_EQ(mapped.Await(), absl::InternalError("test"));
+  }
+}
+
+TEST(FutureTest, MapStatelessErrorToStatus) {
+  auto [promise, future] = Future<>::MakePromise();
+  promise.Set(absl::InternalError("test"));
+
+  Future<> mapped = future.Map([] { return absl::OkStatus(); });
+  EXPECT_TRUE(mapped.IsReady());
+  EXPECT_EQ(mapped.Await(), absl::InternalError("test"));
+}
+
 TEST(FutureTest, MapStatelessFutureError) {
   auto [promise, future] = Future<>::MakePromise();
   Future<float> mapped = future.Map([]() { return 42.0f; });
@@ -472,10 +580,10 @@ TEST(FutureTest, MapStatelessFutureError) {
   EXPECT_EQ(mapped.Await().status(), absl::InternalError("test"));
 }
 
-TEST(FutureTest, TryMapStatelessFuture) {
+TEST(FutureTest, MapStatelessFutureToStatusOr) {
   auto [promise, future] = Future<>::MakePromise();
   Future<float> mapped =
-      future.TryMap([]() -> absl::StatusOr<float> { return 42.0f; });
+      future.Map([]() -> absl::StatusOr<float> { return 42.0f; });
 
   EXPECT_FALSE(future.IsReady());
   EXPECT_FALSE(mapped.IsReady());
@@ -488,19 +596,19 @@ TEST(FutureTest, TryMapStatelessFuture) {
   EXPECT_EQ(*mapped.Await(), 42.0f);
 }
 
-TEST(FutureTest, TryMapStatelessFutureForwardError) {
+TEST(FutureTest, MapStatelessFutureForwardError) {
   auto [promise, future] = Future<>::MakePromise();
   Future<float> mapped =
-      future.TryMap([]() -> absl::StatusOr<float> { return 42.0f; });
+      future.Map([]() -> absl::StatusOr<float> { return 42.0f; });
 
   promise.Set(absl::InternalError("test"));
   EXPECT_TRUE(mapped.IsReady());
   EXPECT_EQ(mapped.Await().status(), absl::InternalError("test"));
 }
 
-TEST(FutureTest, TryMapStatelessFutureCreateError) {
+TEST(FutureTest, MapStatelessFutureCreateError) {
   auto [promise, future] = Future<>::MakePromise();
-  Future<float> mapped = future.TryMap(
+  Future<float> mapped = future.Map(
       []() -> absl::StatusOr<float> { return absl::InternalError("test"); });
 
   promise.Set(absl::OkStatus());
@@ -653,6 +761,62 @@ TEST(FutureTest, MakeSharedPromise) {
   }
 }
 
+struct InlineExecutor : public Executor {
+  void Execute(Task task) final { std::move(task)(); }
+};
+
+TEST(FutureTest, MakeOnStateless) {
+  InlineExecutor e;
+
+  {
+    auto future = Future<>::MakeOn(e, [] { return absl::OkStatus(); });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await(), absl::OkStatus());
+  }
+
+  {
+    auto future =
+        Future<>::MakeOn(e, [] { return absl::InternalError("test"); });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await(), absl::InternalError("test"));
+  }
+}
+
+TEST(FutureTest, MakeOnStateful) {
+  InlineExecutor executor;
+
+  struct Foo {
+    Foo(int32_t value) : value(value) {}  // NOLINT
+    int32_t value;
+  };
+
+  {
+    auto future = Future<int32_t>::MakeOn(executor, [] { return 42; });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(*future.Await(), 42);
+  }
+
+  {
+    auto future = Future<Foo>::MakeOn(executor, [] { return 42; });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await()->value, 42);
+  }
+
+  {
+    auto future = Future<std::unique_ptr<int32_t>>::MakeOn(
+        executor, [] { return std::make_unique<int32_t>(42); });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(**future.Await(), 42);
+  }
+
+  {
+    auto future = Future<int32_t>::MakeOn(
+        executor, [] { return absl::InternalError("test"); });
+    EXPECT_TRUE(future.IsReady());
+    EXPECT_EQ(future.Await().status(), absl::InternalError("test"));
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Performance benchmarks.
 //===----------------------------------------------------------------------===//
@@ -664,17 +828,68 @@ static void BM_CreateOkFuture(benchmark::State& state) {
   }
 }
 
-static void BM_StatelessMapTo(benchmark::State& state) {
-  std::shared_ptr<float> value = std::make_shared<float>(42.0f);
+static void BM_CopyFuture(benchmark::State& state) {
+  Future<> future(absl::OkStatus());
 
   for (auto _ : state) {
-    Future<> future(absl::OkStatus());
-    Future<std::shared_ptr<float>> mapped = future.MapTo(value);
+    Future<> copy = future;
+    benchmark::DoNotOptimize(copy);
+  }
+}
+
+static void BM_MapStatelessFuture(benchmark::State& state) {
+  Future<> future(absl::OkStatus());
+
+  for (auto _ : state) {
+    Future<int32_t> mapped = future.Map([] { return 42; });
+    benchmark::DoNotOptimize(mapped);
+  }
+}
+
+static void BM_TryMapStatelessFuture(benchmark::State& state) {
+  Future<> future(absl::OkStatus());
+
+  for (auto _ : state) {
+    Future<int32_t> mapped =
+        future.Map([]() -> absl::StatusOr<int32_t> { return 42; });
+    benchmark::DoNotOptimize(mapped);
+  }
+}
+
+static void BM_MapToFromStatelessFuture(benchmark::State& state) {
+  Future<> future(absl::OkStatus());
+
+  for (auto _ : state) {
+    Future<int32_t> mapped = future.MapTo(42);
+    benchmark::DoNotOptimize(mapped);
+  }
+}
+
+static void BM_MapStatefulFuture(benchmark::State& state) {
+  Future<int32_t> future(42);
+
+  for (auto _ : state) {
+    Future<int32_t> mapped = future.Map([](int32_t x) { return x + 1; });
+    benchmark::DoNotOptimize(mapped);
+  }
+}
+
+static void BM_TryMapStatefulFuture(benchmark::State& state) {
+  Future<int32_t> future(42);
+
+  for (auto _ : state) {
+    Future<int32_t> mapped =
+        future.Map([](int32_t x) -> absl::StatusOr<int32_t> { return x + 1; });
     benchmark::DoNotOptimize(mapped);
   }
 }
 
 BENCHMARK(BM_CreateOkFuture);
-BENCHMARK(BM_StatelessMapTo);
+BENCHMARK(BM_CopyFuture);
+BENCHMARK(BM_MapStatelessFuture);
+BENCHMARK(BM_TryMapStatelessFuture);
+BENCHMARK(BM_MapToFromStatelessFuture);
+BENCHMARK(BM_MapStatefulFuture);
+BENCHMARK(BM_TryMapStatefulFuture);
 
 }  // namespace tsl

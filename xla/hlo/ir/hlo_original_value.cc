@@ -246,13 +246,16 @@ std::shared_ptr<OriginalValue> OriginalValue::CreateFromInstruction(
 }
 
 void CopyOriginalValue(const HloInstruction* src_instruction,
-                       HloInstruction* dest_instruction, bool clone) {
-  // This is not expected to happen in practice.
+                       HloInstruction* dest_instruction, bool clone,
+                       bool issue_warning) {
   if (!src_instruction || !dest_instruction ||
       !ShapeUtil::Compatible(src_instruction->shape(),
                              dest_instruction->shape())) {
-    VLOG(1) << "Expect the new instruction to have the same shape with the old "
-               "instruction when moving over original_value";
+    if (issue_warning) {
+      LOG(WARNING)
+          << "Expect the new instruction to have the same shape with the old "
+             "instruction when moving over original_value";
+    }
     return;
   }
 
@@ -304,6 +307,26 @@ bool OriginalValue::IsCompatibleWith(const Shape& shape) const {
     return true;
   }
   return tree().IsStructurallyCompatible(shape);
+}
+
+std::optional<std::string> OriginalValue::GetOriginalCallLikeInstructions()
+    const {
+  if (is_synthetic_call()) {
+    // Synthetic call are transparent and hence resulting in empty call
+    // instructions.
+    return "";
+  }
+  if (IsEmpty()) {
+    // Currently we don't track original call information separately and rely
+    // on the first leaf to find the original call information. So if there are
+    // no leaves we return std::nullopt.
+    return std::nullopt;
+  }
+  auto original_array = original_arrays().begin()->second;
+  if (!original_array.has_value()) {
+    return std::nullopt;
+  }
+  return original_array->instruction_name;
 }
 
 }  // namespace xla

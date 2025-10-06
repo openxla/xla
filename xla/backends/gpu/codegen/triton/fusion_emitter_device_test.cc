@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -204,6 +203,33 @@ ENTRY entry {
       hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
+TEST_F(TritonEmitterTest, PredicateAddIsEmittedCorrectly) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+fused_add {
+  param_0 = pred[] parameter(0)
+  param_1 = pred[] parameter(1)
+  ROOT add = pred[] add(param_0, param_1)
+}
+
+ENTRY main {
+  c0 = pred[] constant(1)
+  c1 = pred[] constant(1)
+  ROOT add = pred[] fusion(c0, c1), kind=kCustom, calls=fused_add,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "num_warps":"1","output_tiles":[{"sizes":[]}],
+        "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
+}
+)";
+  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_add", R"(
+CHECK: arith.ori {{.*}} : i1
+)"));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
 // TODO(bchetioui): turn this into a general binary elementwise test.
 TEST_F(TritonEmitterTest, MinimumIsEmittedCorrectly) {
   constexpr absl::string_view kHloText = R"(
@@ -266,6 +292,46 @@ ENTRY entry_computation {
 CHECK:  "tt.reduce"(%[[LOAD:.*]]) <{axis = 1 : i32}>
 )"));
 
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
+// Regression test for b/448150702 - reduction with a constant inside returned
+// early, not fully emitting the reduction.
+TEST_F(TritonEmitterTest, ComplexReductionIsEmittedCorrectly) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+unusual {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  add = f32[] add(lhs, rhs)
+  eight = f32[] constant(8)
+  ROOT minimum = f32[] minimum(add, eight)
+}
+
+fused_reduce {
+  p0 = f32[2,2]{1,0} parameter(0)
+  zero = f32[] constant(0)
+  ROOT reduce = f32[2]{0} reduce(p0, zero), dimensions={1}, to_apply=unusual
+}
+
+ENTRY entry_computation {
+  p0 = f32[2,2]{1,0} parameter(0)
+  ROOT input_reduce_fusion = f32[2]{0} fusion(p0),
+    kind=kCustom, calls=fused_reduce,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{
+        "num_warps":"1","output_tiles":[{"sizes":["1"]}],
+        "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
+}
+)";
+  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_reduce", R"(
+CHECK: "tt.reduce"
+CHECK: ^bb0(%[[ARG0:.*]]: f32, %[[ARG1:.*]]: f32)
+CHECK: %[[ADD:.*]] = arith.addf %[[ARG0]], %[[ARG1]]
+CHECK: %[[MIN:.*]] = arith.minimumf %[[ADD]]
+CHECK: tt.reduce.return %[[MIN]]
+)"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 

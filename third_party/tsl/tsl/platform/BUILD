@@ -118,14 +118,6 @@ cc_library(
 )
 
 cc_library(
-    name = "threadpool_async_executor",
-    hdrs = ["threadpool_async_executor.h"],
-    deps = [
-        "@xla//xla/tsl/platform:threadpool_async_executor",
-    ],
-)
-
-cc_library(
     name = "env_impl",
     deps = [
         "@xla//xla/tsl/platform:env_impl",

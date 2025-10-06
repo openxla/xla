@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/core/host_offloading/host_offloading_buffer.h"
 #include "xla/core/host_offloading/host_offloading_executable.h"
+#include "xla/core/host_offloading/host_offloading_executable.pb.h"
 #include "xla/core/host_offloading/host_offloading_layout_analysis.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -142,7 +143,10 @@ HostOffloadingNanoRtExecutable::LoadFromProto(
   TF_RET_CHECK(proto.executable_type() ==
                HostOffloadingExecutableProto::EXECUTABLE_TYPE_NANORT);
 
-  auto& hlo_module_proto = proto.hlo_module();
+  auto& hlo_module_proto =
+      proto.has_aot_compilation_result()
+          ? proto.aot_compilation_result().hlo_module().hlo_module()
+          : proto.hlo_module();
 
   VLOG(3) << "Load NanoRt host offloading executable: name="
           << hlo_module_proto.name();
@@ -154,18 +158,14 @@ HostOffloadingNanoRtExecutable::LoadFromProto(
 
   // We keep program shape and alias config of the original HLO module and not
   // the destination-passing-style module with extra output parameters.
-  TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
-                      ProgramShape::FromProto(proto.aot_compilation_result()
-                                                  .hlo_module()
-                                                  .hlo_module()
-                                                  .host_program_shape()));
+  TF_ASSIGN_OR_RETURN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(hlo_module_proto.host_program_shape()));
 
-  TF_ASSIGN_OR_RETURN(auto alias_config,
-                      HloInputOutputAliasConfig::CreateFromProto(
-                          program_shape.result(), proto.aot_compilation_result()
-                                                      .hlo_module()
-                                                      .hlo_module()
-                                                      .input_output_alias()));
+  TF_ASSIGN_OR_RETURN(
+      auto alias_config,
+      HloInputOutputAliasConfig::CreateFromProto(
+          program_shape.result(), hlo_module_proto.input_output_alias()));
 
   std::unique_ptr<xla::cpu::NanoRtExecutable> executable;
 
@@ -198,12 +198,20 @@ HostOffloadingNanoRtExecutable::LoadFromProto(
       },
       &num_replicas, &num_partitions, &device_assignment));
 
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                      HloModule::CreateFromProto(
+                          proto.hlo_module(), HloModuleConfig(program_shape)));
+
+  TF_ASSIGN_OR_RETURN(
+      bool needs_layout_conversion,
+      HostOffloadingLayoutAnalysis::NeedsLayoutConversion(hlo_module.get()));
+
   return absl::WrapUnique(new HostOffloadingNanoRtExecutable(
       hlo_module_proto.name(),
       executable->program_shape() ? *executable->program_shape()
                                   : program_shape,
-      std::move(alias_config), std::move(executable),
-      /*needs_layout_conversion=*/false, std::move(device_assignment)));
+      std::move(alias_config), std::move(executable), needs_layout_conversion,
+      std::move(device_assignment)));
 }
 
 tsl::AsyncValueRef<HostOffloadingExecutable::ExecuteEvent>

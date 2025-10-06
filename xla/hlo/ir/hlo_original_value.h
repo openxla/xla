@@ -135,6 +135,12 @@ class OriginalValue {
     return !(*this == other);
   }
 
+  // Gets the (partial) call hierarchy string of the original call instructions
+  // that this OriginalValue is associated with. Returns std::nullopt if this
+  // OriginalValue is not associated with a call instruction or the call
+  // hierarchy is lost (e.g., after complicated optimizations).
+  std::optional<std::string> GetOriginalCallLikeInstructions() const;
+
   template <typename H>
   friend H AbslHashValue(H h, const OriginalValue& value) {
     h = H::combine(std::move(h), value.is_synthetic_call());
@@ -159,11 +165,13 @@ class OriginalValue {
       data_;
 };
 
-// Copies the original value of the source to the destination instruction. This
-// performs a deep copy if clone is set to true. Otherwise, it performs a
-// shallow copy.
+// Copies the original value of the source to the destination instruction if the
+// shapes of the source and destination are compatible. This performs a deep
+// copy if clone is set to true. Otherwise, it performs a shallow copy. Print a
+// warning if the shapes are not compatible and issue_warning is set to true.
 void CopyOriginalValue(const HloInstruction* src_instruction,
-                       HloInstruction* dest_instruction, bool clone);
+                       HloInstruction* dest_instruction, bool clone,
+                       bool issue_warning);
 
 // Removes duplicates of original value objects referenced in the module to save
 // memory storage.
