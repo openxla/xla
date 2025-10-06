@@ -1,0 +1,46 @@
+From d539916e4d49cca93f54a5f99f7822050205432c Mon Sep 17 00:00:00 2001
+From: Jungwook Park <jungwook.park@amd.com>
+Date: Thu, 7 Aug 2025 06:34:49 -0500
+Subject: [PATCH] [AMD] Quick fix disabling transposed load used as different
+ type.
+
+Disabling transposedLoad if dot is using it as a different element type.
+Otherwise it's picking wrong vectorsize when lowering.
+---
+ .../lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp
+index 661a17678..6bda3a818 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp
+@@ -214,6 +214,26 @@ private:
+       return false;
+     }
+ 
++    // transposed load can be used only when it's consumed by dot with the
++    // loaded data type.
++    int opIdx = 0;
++    triton::gpu::LocalLoadOp lLoad = cast<triton::gpu::LocalLoadOp>(localLoad);
++    if (auto dotEnc = lLoad.getSrc().getType().getEncoding())
++      opIdx = cast<triton::gpu::DotOperandEncodingAttr>(dotEnc).getOpIdx();
++    else
++      return false;
++
++    SetVector<Operation *> slice;
++    getForwardSlice(localLoad, &slice);
++    for (auto op : slice) {
++      if (auto dotOp = dyn_cast<triton::DotOp>(op)) {
++        auto inputMat = (opIdx == 0) ? dotOp.getA() : dotOp.getB();
++        auto bitwidthMat = inputMat.getType().getElementTypeBitWidth();
++        if (bitwidth != bitwidthMat)
++          return false;
++      }
++    }
++
+     return true;
+   }
+ 
+-- 
+2.34.1
+

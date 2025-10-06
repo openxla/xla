@@ -326,7 +326,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // default value of the command line flag in `MakeDebugOptionsFlags`.
   opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
       DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
-  opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
+  opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(false);
+  opts.set_xla_gpu_enable_triton_softmax_fusion(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
@@ -1274,6 +1275,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "optimizations. debug_options are written to the --xla_dump_to "
                 "dir, or, if no dir is specified, to stdout. Ignored unless "
                 "xla_dump_hlo_as_text is true."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_triton_softmax_fusion",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_softmax_fusion),
+                debug_options->xla_gpu_enable_triton_softmax_fusion(),
+                "Enable fusion of the softmax function to triton"
+                "default value is true"));
   flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_proto",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_proto),
