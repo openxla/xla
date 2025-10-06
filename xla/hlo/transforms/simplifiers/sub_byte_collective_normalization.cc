@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
@@ -111,9 +112,16 @@ class SubByteCollectiveNormalizationVisitor : public DfsHloRewriteVisitor {
   absl::Status HandleCollectivePermute(HloInstruction* hlo) override;
 
  private:
+  bool ShouldProcessInstruction(const HloInstruction& hlo) const;
   absl::Status ProcessCollectiveInstruction(HloInstruction& hlo);
   static constexpr PrimitiveType casted_type_ = S8;
 };
+
+bool SubByteCollectiveNormalizationVisitor::ShouldProcessInstruction(
+    const HloInstruction& hlo) const {
+  return hlo.operand_count() == 1 &&
+         CanBeRepresentedAs(hlo.operand(0)->shape(), casted_type_);
+}
 
 absl::Status SubByteCollectiveNormalizationVisitor::HandleAllGather(
     HloInstruction* hlo) {
@@ -122,11 +130,7 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleAllGather(
 
 absl::Status SubByteCollectiveNormalizationVisitor::HandleAllToAll(
     HloInstruction* hlo) {
-  if (hlo->operand_count() != 1) {
-    // Variadic ones are not supported yet.
-    return absl::OkStatus();
-  }
-  if (!CanBeRepresentedAs(hlo->operand(0)->shape(), casted_type_)) {
+  if (!ShouldProcessInstruction(*hlo)) {
     return absl::OkStatus();
   }
 
@@ -160,11 +164,9 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleCollectivePermute(
 absl::Status
 SubByteCollectiveNormalizationVisitor::ProcessCollectiveInstruction(
     HloInstruction& hlo) {
-  if (hlo.operand_count() != 1) {
-    // Variadic ones are not supported yet.
-    return absl::OkStatus();
-  }
-  if (!CanBeRepresentedAs(hlo.operand(0)->shape(), casted_type_)) {
+  // HandleAllToAll already calls ShouldProcessInstruction, the other handlers
+  // don't.
+  if (hlo.opcode() != HloOpcode::kAllToAll && !ShouldProcessInstruction(hlo)) {
     return absl::OkStatus();
   }
 
