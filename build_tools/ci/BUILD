@@ -45,4 +45,5 @@ diff_test(
 sh_binary(
     name = "parallel_gpu_execute",
     srcs = ["parallel_gpu_execute.sh"],
+    deps = ["//build_tools/rocm:sanitizer_ignore_lists"],
 )
