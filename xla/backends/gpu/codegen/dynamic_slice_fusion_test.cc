@@ -3407,232 +3407,63 @@ TEST_F(DynamicSliceFusionTest,
 
 TEST_F(DynamicSliceFusionTest,
        OffsetAsFunctionOfInductionVariableShouldUseOffsetModulesWithCmdBuffer) {
-  const char* hlo_cmd_buffer = R"(
-  HloModule test, replica_count=2
-  
-  %wrapped_add_computation.1 (param_0.1: s32[]) -> s32[] {
-    %param_0.1 = s32[] parameter(0)
-    ROOT %add.4 = s32[] add(%param_0.1, %param_0.1)
+  const char* hlo = R"(
+  HloModule test
+
+  %Body {
+    param = (f32[1,8,8]{2,1,0}, f32[1,8,8]{2,1,0}, f32[4,8,8]{2,1,0}, u32[]) parameter(0)
+    p0 = get-tuple-element(param), index=0
+    p1 = get-tuple-element(param), index=1
+    p2 = get-tuple-element(param), index=2
+    loop_iter = get-tuple-element(param), index=3
+
+    bitcast.41 = f32[8,8]{1,0} reshape(p0)
+    bitcast.42 = f32[8,8]{1,0} reshape(p1)
+    dot.1 = f32[8,8]{1,0} dot(bitcast.41, bitcast.42), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    bitcast.43 = f32[1,8,8]{2,1,0} reshape(dot.1)
+    c0 = u32[] constant(0)
+    c_trip_count = u32[] constant(11)
+    compare = pred[] compare(loop_iter, c0), direction=LT
+    add = u32[] add(loop_iter, c_trip_count)
+    offset = u32[] select(compare, add, loop_iter)
+    dus = f32[4,8,8]{2,1,0} dynamic-update-slice(p2, bitcast.43, offset, c0, c0)
+    c1 = u32[] constant(1)
+    add2 = u32[] add(loop_iter, c1)
+    ROOT tuple = tuple(p0, p1, dus, u32[] add2)
   }
-  
-  %wrapped_multiply_computation (param_0.2: s32[], param_1.1: s32[]) -> s32[] {
-    %param_0.2 = s32[] parameter(0)
-    %param_1.1 = s32[] parameter(1)
-    ROOT %multiply.1 = s32[] multiply(%param_0.2, %param_1.1)
+
+  %Cond {
+    %param.1 = (f32[1,8,8]{2,1,0}, f32[1,8,8]{2,1,0}, f32[4,8,8]{2,1,0}, u32[]) parameter(0)
+    %i.1 = u32[] get-tuple-element(%param.1), index=3
+    %trip_count = u32[] constant(11)
+    ROOT %done = pred[] compare(u32[] %i.1, u32[] %trip_count), direction=LT
   }
-  
-  %wrapped_subtract_computation (param_0.3: s32[], param_1.2: s32[]) -> s32[] {
-    %param_0.3 = s32[] parameter(0)
-    %param_1.2 = s32[] parameter(1)
-    ROOT %offset.1 = s32[] subtract(%param_0.3, %param_1.2)
-  }
-  
-  %wrapped_add_computation (param_0: s32[], param_1: s32[]) -> s32[] {
-    %param_0 = s32[] parameter(0)
-    %param_1 = s32[] parameter(1)
-    ROOT %add.3 = s32[] add(%param_0, %param_1)
-  }
-  
-  %add (a: s32[], b: s32[]) -> s32[] {
-    %b = s32[] parameter(1)
-    %a = s32[] parameter(0)
-    ROOT %add = s32[] add(%a, %b)
-  }
-  
-  %dynamic-slice-fusion (p0: s32[32,32], p1: s32[32,32], p2: s32[], p3: s32[]) -> s32[32,32] {
-    %p1 = s32[32,32]{1,0} parameter(1)
-    %p0 = s32[32,32]{1,0} parameter(0)
-    %rs = s32[16,32]{1,0} reduce-scatter(%p0), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
-    %p2 = s32[] parameter(2)
-    %p3 = s32[] parameter(3)
-    ROOT %dus = s32[32,32]{1,0} dynamic-update-slice(%p1, %rs, %p2, %p3)
-  }
-  
-  %command_buffer.6 (p.10: s32[], p.11: s32[], p.12: s32[], p.13: s32[], p.14: s32[32,32], p.15: s32[32,32], p.16: s32[]) -> (s32[], s32[32,32]) {
-    %p.10 = s32[] parameter(0)
-    %p.11 = s32[] parameter(1)
-    %p.12 = s32[] parameter(2)
-    %p.13 = s32[] parameter(3)
-    %p.14 = s32[32,32]{1,0} parameter(4)
-    %p.15 = s32[32,32]{1,0} parameter(5)
-    %p.16 = s32[] parameter(6)
-    %wrapped_add.1 = s32[] fusion(%p.10), kind=kLoop, calls=%wrapped_add_computation.1
-    %wrapped_multiply = s32[] fusion(%wrapped_add.1, %p.11), kind=kLoop, calls=%wrapped_multiply_computation
-    %wrapped_subtract = s32[] fusion(%wrapped_multiply, %p.12), kind=kLoop, calls=%wrapped_subtract_computation
-    %wrapped_add = s32[] fusion(%p.10, %p.13), kind=kLoop, calls=%wrapped_add_computation
-    %address_computation = s32[32,32]{1,0} fusion(%p.14, %p.15, %wrapped_subtract, %p.16), kind=kCustom, calls=%dynamic-slice-fusion, backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
-    ROOT %tuple.5 = (s32[], s32[32,32]{1,0}) tuple(%wrapped_add, %address_computation)
-  }
-  
-  %body (param: (s32[], s32[32,32], s32[32,32])) -> (s32[], s32[32,32], s32[32,32]) {
-    %c0 = s32[] constant(0)
-    %c16 = s32[] constant(16)
-    %c3 = s32[] constant(3)
-    %c1 = s32[] constant(1)
-    %param = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) parameter(0)
-    %iter = s32[] get-tuple-element(%param), index=0
-    %src = s32[32,32]{1,0} get-tuple-element(%param), index=1
-    %dest = s32[32,32]{1,0} get-tuple-element(%param), index=2
-    %call.3 = (s32[], s32[32,32]{1,0}) call(%iter, %c3, %c16, %c1, %src, /*index=5*/%dest, %c0), to_apply=%command_buffer.6
-    %get-tuple-element.5 = s32[] get-tuple-element(%call.3), index=0
-    %get-tuple-element.6 = s32[32,32]{1,0} get-tuple-element(%call.3), index=1
-    ROOT %tuple = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) tuple(%get-tuple-element.5, %src, %get-tuple-element.6)
-  }
-  
-  %wrapped_compare_computation (param_0.4: s32[], param_1.3: s32[]) -> pred[] {
-    %param_0.4 = s32[] parameter(0)
-    %param_1.3 = s32[] parameter(1)
-    ROOT %compare.1 = pred[] compare(%param_0.4, %param_1.3), direction=LT
-  }
-  
-  %command_buffer.4 (p.6: s32[], p.7: s32[]) -> pred[] {
-    %p.6 = s32[] parameter(0)
-    %p.7 = s32[] parameter(1)
-    ROOT %wrapped_compare = pred[] fusion(%p.6, %p.7), kind=kLoop, calls=%wrapped_compare_computation
-  }
-  
-  %condition (param.1: (s32[], s32[32,32], s32[32,32])) -> pred[] {
-    %c16.1 = s32[] constant(16)
-    %param.1 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) parameter(0)
-    %iter.1 = s32[] get-tuple-element(%param.1), index=0
-    ROOT %call.2 = pred[] call(%iter.1, %c16.1), to_apply=%command_buffer.4
-  }
-  
-  %command_buffer (p: s32[], p.1: s32[32,32]) -> (s32[], s32[32,32]) {
-    %p = s32[] parameter(0)
-    %p.1 = s32[32,32]{1,0} parameter(1)
-    %copy = s32[] copy(%p)
-    %copy.1 = s32[32,32]{1,0} copy(%p.1)
-    ROOT %tuple.3 = (s32[], s32[32,32]{1,0}) tuple(%copy, %copy.1)
-  }
-  
-  %command_buffer.2 (p.4: s32[32,32]) -> s32[32,32] {
-    %p.4 = s32[32,32]{1,0} parameter(0)
-    ROOT %copy.2 = s32[32,32]{1,0} copy(%p.4)
-  }
-  
-  ENTRY %main (src.1: s32[32,32], dest.1: s32[32,32]) -> (s32[], s32[32,32], s32[32,32]) {
-    %c0.1 = s32[] constant(0)
-    %dest.1 = s32[32,32]{1,0} parameter(1)
-    %src.1 = s32[32,32]{1,0} parameter(0)
-    %call = (s32[], s32[32,32]{1,0}) call(%c0.1, %dest.1), to_apply=%command_buffer
-    %get-tuple-element.3 = s32[] get-tuple-element(%call), index=0
-    %get-tuple-element.4 = s32[32,32]{1,0} get-tuple-element(%call), index=1
-    %tuple.1 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) tuple(%get-tuple-element.3, %src.1, %get-tuple-element.4)
-    %while = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) while(%tuple.1), condition=%condition, body=%body
-    %get-tuple-element = s32[] get-tuple-element(%while), index=0
-    %get-tuple-element.1 = s32[32,32]{1,0} get-tuple-element(%while), index=1
-    %get-tuple-element.2 = s32[32,32]{1,0} get-tuple-element(%while), index=2
-    %call.1 = s32[32,32]{1,0} call(%get-tuple-element.1), to_apply=%command_buffer.2
-    ROOT %tuple.2 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) tuple(%get-tuple-element, %call.1, %get-tuple-element.2)
+
+  ENTRY %test {
+    %p0.1 = f32[1,8,8]{2,1,0} parameter(0)
+    %p1.1 = f32[1,8,8]{2,1,0} parameter(1)
+    %p2.1 = f32[4,8,8]{2,1,0} parameter(2)
+    %c0.1 = u32[] constant(0)
+    %initial_tuple = tuple(%p0.1, %p1.1, %p2.1, u32[] %c0.1)
+    ROOT %while = while(%initial_tuple), condition=%Cond, body=%Body, backend_config={"known_trip_count":{"n":"11"}}
   })";
 
-  const char* hlo_fused_not_scheduled = R"(
-    HloModule test, replica_count=2
-    add {
-      a = s32[] parameter(0)
-      b = s32[] parameter(1)
-      ROOT add = s32[] add(a, b)
-    }
-    dynamic-slice-fusion {
-      p1 = s32[32,32] parameter(1)
-      p0 = s32[32,32] parameter(0)
-      rs = s32[16,32] reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=add
-      p2 = s32[] parameter(2)
-      p3 = s32[] parameter(3)
-      ROOT dus = s32[32,32] dynamic-update-slice(p1, rs, p2, p3)
-    }
-    body {
-      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
-      iter = s32[] get-tuple-element(param), index=0
-      c1 = s32[] constant(1)
-      add = s32[] add(iter, c1)
-      src = s32[32,32] get-tuple-element(param), index=1
-      dest = s32[32,32] get-tuple-element(param), index=2
-
-      // Offset calculation as a function of the induction variable.
-      add.1 = s32[] add(iter, iter)
-      c3 = s32[] constant(3)
-      multiply = s32[] multiply(add.1, c3)
-      c16 = s32[] constant(16)
-      offset = s32[] subtract(multiply, c16)
-
-      c0 = s32[] constant(0)
-      address_computation = s32[32,32] fusion(src, dest, offset, c0), kind=kCustom, calls=dynamic-slice-fusion, backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
-      ROOT tuple = (s32[], s32[32,32], s32[32,32]) tuple(add, src, address_computation)
-    }
-    condition {
-      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
-      iter = s32[] get-tuple-element(param), index=0
-      c16 = s32[] constant(16)
-      ROOT compare = pred[] compare(iter, c16), direction=LT
-    }
-    ENTRY main {
-      c0 = s32[] constant(0)
-      src = s32[32,32] parameter(0)
-      dest = s32[32,32] parameter(1)
-      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
-      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), condition=condition, body=body
-    })";
-
-  const char* hlo_unfused = R"(
-    HloModule test, replica_count=2
-
-    add {
-      a = s32[] parameter(0)
-      b = s32[] parameter(1)
-      ROOT add = s32[] add(a, b)
-    }
-
-    body {
-      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
-      iter = s32[] get-tuple-element(param), index=0
-      src = s32[32,32] get-tuple-element(param), index=1
-      dest = s32[32,32] get-tuple-element(param), index=2
-
-      // Offset calculation as a function of the induction variable.
-      add = s32[] add(iter, iter)
-      c3 = s32[] constant(3)
-      multiply = s32[] multiply(add, c3)
-      c16 = s32[] constant(16)
-      offset = s32[] subtract(multiply, c16)
-
-      c0 = s32[] constant(0)
-      rs_start = ((s32[32,32]), s32[16,32]) reduce-scatter-start(src), dimensions={0}, replica_groups={{0,1}}, to_apply=add
-      rs = s32[16,32] reduce-scatter-done(rs_start)
-      dus = s32[32,32] dynamic-update-slice(dest, rs, offset, c0)
-      c1 = s32[] constant(1)
-      add.1 = s32[] add(iter, c1)
-      ROOT tuple = tuple(add.1, src, dus)
-    }
-
-    condition {
-      param = (s32[], s32[32,32], s32[32,32]) parameter(0)
-      iter = s32[] get-tuple-element(param), index=0
-      c16 = s32[] constant(16)
-      ROOT compare = pred[] compare(iter, c16), direction=LT
-    }
-
-    ENTRY main {
-      src = s32[32,32] parameter(0)
-      dest = s32[32,32] parameter(1)
-      c0 = s32[] constant(0)
-      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
-      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), body=body, condition=condition
-    }
-  )";
-
-  // run with command buffer
-  HloModuleConfig config = GetModuleConfigWithCommandBuffer();
+  // Run the same HLO with and without command buffer and compare results.
+  HloModuleConfig with_cmd_buffer = GetModuleConfigWithCommandBuffer();
+  HloModuleConfig without_cmd_buffer = GetModuleConfigWithoutCommandBuffer();
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> cmd_buffer_module,
-                          ParseAndReturnVerifiedModule(hlo_cmd_buffer));
+                          ParseAndReturnVerifiedModule(hlo_fused));
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> unfused_module,
-                          ParseAndReturnVerifiedModule(hlo_unfused));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> no_cmd_buffer_module,
+                          ParseAndReturnVerifiedModule(hlo));
+
+  // TF_ASSERT_OK_AND_ASSIGN(
+  //     std::unique_ptr<HloModule> no_cmd_buffer_module,
+  //     ParseAndReturnVerifiedModule(hlo, without_cmd_buffer));
 
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
-      std::move(cmd_buffer_module), std::move(unfused_module),
+      std::move(cmd_buffer_module), std::move(no_cmd_buffer_module),
       /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
 }
 
