@@ -176,7 +176,6 @@ cc_library(
         ":rocprofiler_register",
         ":system_libs",
     ],
-    visibility = ["//visibility:public"],
 )
 
 # Used by jax_rocm_plugin to minimally link to hip runtime.
@@ -259,7 +258,6 @@ cc_library(
     name = "miopen",
     srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     hdrs = glob(["%{rocm_root}/include/miopen/**"]),
-    srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     data = glob([
         "%{rocm_root}/share/miopen/**",
     ]),
