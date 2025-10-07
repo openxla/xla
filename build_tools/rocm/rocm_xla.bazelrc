@@ -17,7 +17,6 @@ test:rocm_rbe --jobs=200
 test:rocm_rbe --remote_executor=grpcs://wardite.cluster.engflow.com
 test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --strategy=TestRunner=remote
-test:rocm_rbe --worker_sandboxing=true
 
 build:tsan --strip=never
 build:tsan --copt -fsanitize=thread
