@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -50,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -3945,16 +3945,16 @@ HloRaggedDotInstruction::CloneWithNewOperandsImpl(
 }
 
 HloScaledDotInstruction::HloScaledDotInstruction(
-    const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
-    HloInstruction* rhs, HloInstruction* rhs_scale,
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    HloInstruction* lhs_scale, HloInstruction* rhs_scale,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig& precision_config)
     : HloInstruction(HloOpcode::kScaledDot, shape),
       dot_dimension_numbers_(dimension_numbers),
       precision_config_(precision_config) {
   AppendOperand(lhs);
-  AppendOperand(lhs_scale);
   AppendOperand(rhs);
+  AppendOperand(lhs_scale);
   AppendOperand(rhs_scale);
 }
 

@@ -27,17 +27,18 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
-#include "xla/backends/gpu/runtime/thunk_buffer.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/literal.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
@@ -55,14 +56,15 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::tsl::proto_testing::EqualsProto;
+using ::tsl::proto_testing::ParseTextProtoOrDie;
 using Kind = Thunk::Kind;
 
 TEST(KernelThunkTest, CreateWithDefaultValues) {
@@ -269,7 +271,7 @@ TEST(KernelThunkTest, ToAndFromProto) {
   EXPECT_THAT(reconstructed_thunk->tma_metadata(), tma_metadata);
 }
 
-TEST(KernelThunkTest, GetBuffersReturnsCorrectBuffers) {
+TEST(KernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   BufferAllocation alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
   BufferAllocation::Slice slice0(&alloc, /*offset=*/0, /*size=*/512);
   BufferAllocation::Slice slice1(&alloc, /*offset=*/512, /*size=*/512);
@@ -282,17 +284,13 @@ TEST(KernelThunkTest, GetBuffersReturnsCorrectBuffers) {
                     LaunchDimensions(), se::ClusterDim(), /*shmem_bytes=*/0,
                     se::gpu::TmaMetadata());
 
-  std::vector<ThunkBuffer> buffers = thunk.GetBuffers();
+  Thunk::BufferUses buffers = thunk.buffer_uses();
 
-  ASSERT_THAT(buffers,
-              testing::UnorderedElementsAre(
-                  ThunkBuffer{slice0, /*is_content_defined_on_input=*/true,
-                              /*is_content_defined_on_output=*/false},
-                  ThunkBuffer{slice1, /*is_content_defined_on_input=*/false,
-                              /*is_content_defined_on_output=*/true}));
+  ASSERT_THAT(buffers, testing::UnorderedElementsAre(BufferUse::Read(slice0),
+                                                     BufferUse::Write(slice1)));
 }
 
-TEST(KernelThunkTest, GetBuffersReturnsBuffersInConsistentOrder) {
+TEST(KernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
   BufferAllocation alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
   BufferAllocation::Slice slice0(&alloc, /*offset=*/0, /*size=*/512);
   BufferAllocation::Slice slice1(&alloc, /*offset=*/512, /*size=*/512);
@@ -305,13 +303,13 @@ TEST(KernelThunkTest, GetBuffersReturnsBuffersInConsistentOrder) {
                     LaunchDimensions(), se::ClusterDim(), /*shmem_bytes=*/0,
                     se::gpu::TmaMetadata());
 
-  std::vector<ThunkBuffer> buffers1 = thunk.GetBuffers();
-  std::vector<ThunkBuffer> buffers2 = thunk.GetBuffers();
+  Thunk::BufferUses buffers1 = thunk.buffer_uses();
+  Thunk::BufferUses buffers2 = thunk.buffer_uses();
 
   ASSERT_THAT(buffers1, testing::ContainerEq(buffers2));
 }
 
-TEST(CustomKernelThunkTest, GetBuffersReturnsCorrectBuffers) {
+TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   CustomKernel kernel(
       /*name=*/"",
       se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
@@ -328,17 +326,13 @@ TEST(CustomKernelThunkTest, GetBuffersReturnsCorrectBuffers) {
   auto hlo = HloInstruction::CreateConstant(Literal());
   CustomKernelThunk thunk(hlo.get(), kernel, kernel_arguments, ThunkId{0});
 
-  std::vector<ThunkBuffer> buffers = thunk.GetBuffers();
+  Thunk::BufferUses buffers = thunk.buffer_uses();
 
-  ASSERT_THAT(buffers,
-              testing::UnorderedElementsAre(
-                  ThunkBuffer{slice0, /*is_content_defined_on_input=*/true,
-                              /*is_content_defined_on_output=*/false},
-                  ThunkBuffer{slice1, /*is_content_defined_on_input=*/false,
-                              /*is_content_defined_on_output=*/true}));
+  ASSERT_THAT(buffers, testing::UnorderedElementsAre(BufferUse::Read(slice0),
+                                                     BufferUse::Write(slice1)));
 }
 
-TEST(CustomKernelThunkTest, GetBuffersReturnsBuffersInConsistentOrder) {
+TEST(CustomKernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
   CustomKernel kernel(
       /*name=*/"",
       se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
@@ -355,8 +349,8 @@ TEST(CustomKernelThunkTest, GetBuffersReturnsBuffersInConsistentOrder) {
   auto hlo = HloInstruction::CreateConstant(Literal());
   CustomKernelThunk thunk(hlo.get(), kernel, kernel_arguments, ThunkId{0});
 
-  std::vector<ThunkBuffer> buffers1 = thunk.GetBuffers();
-  std::vector<ThunkBuffer> buffers2 = thunk.GetBuffers();
+  Thunk::BufferUses buffers1 = thunk.buffer_uses();
+  Thunk::BufferUses buffers2 = thunk.buffer_uses();
 
   ASSERT_THAT(buffers1, testing::ContainerEq(buffers2));
 }
@@ -429,9 +423,8 @@ class KernelThunkTmaPTXTest : public ::testing::TestWithParam<bool> {
       }
     )pb";
 
-    ThunkProto tma_kernel_thunk_proto;
-    tsl::protobuf::TextFormat::ParseFromString(tma_kernel_thunk,
-                                               &tma_kernel_thunk_proto);
+    ThunkProto tma_kernel_thunk_proto =
+        ParseTextProtoOrDie<ThunkProto>(tma_kernel_thunk);
 
     const size_t total_byte_size =
         tma_kernel_thunk_proto.kernel_thunk().args(0).size() +

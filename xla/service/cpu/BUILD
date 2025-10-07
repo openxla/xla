@@ -611,7 +611,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
     ] + if_onednn([
         ":onednn_convolution",
-        ":onednn_layer_norm",
         ":onednn_matmul",
     ]),
 )
@@ -1800,7 +1799,6 @@ onednn_cc_library(
     srcs = ["onednn_layer_norm.cc"],
     hdrs = [
         "onednn_layer_norm.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
@@ -1860,7 +1858,6 @@ onednn_cc_library(
         "onednn_contraction_rewriter.h",
         "onednn_convolution.h",
         "onednn_matmul.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
@@ -1877,6 +1874,7 @@ onednn_cc_library(
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
+        "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",

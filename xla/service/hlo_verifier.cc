@@ -88,32 +88,6 @@ absl::Status CheckOperandCount(const HloInstruction* hlo, int expected) {
   return absl::OkStatus();
 }
 
-int64_t GetSubgroupSize(HloCollectiveInstruction* hlo,
-                        CollectiveOpGroupMode group_mode) {
-  const HloModuleConfig& config = hlo->GetModule()->config();
-  switch (group_mode) {
-    case CollectiveOpGroupMode::kCrossReplica:
-    case CollectiveOpGroupMode::kCrossReplicaAndPartition: {
-      int64_t replica_subgroup_size =
-          hlo->replica_groups().empty()
-              ? config.replica_count()
-              : hlo->replica_groups()[0].replica_ids_size();
-      if (group_mode == CollectiveOpGroupMode::kCrossReplicaAndPartition) {
-        // Replicas from all partitions participate.
-        replica_subgroup_size *= config.num_partitions();
-      }
-      return replica_subgroup_size;
-    }
-    case CollectiveOpGroupMode::kFlattenedID:
-      // Empty replica groups not allowed in this mode.
-      return hlo->replica_groups()[0].replica_ids_size();
-    case CollectiveOpGroupMode::kCrossPartition:
-      return hlo->replica_groups().empty()
-                 ? config.num_partitions()
-                 : hlo->replica_groups()[0].replica_ids_size();
-  }
-}
-
 absl::Status CheckUnaryOpWithResultAccuracy(HloInstruction* unary) {
   HloOpcode opcode = unary->opcode();
   if (unary->has_result_accuracy()) {
@@ -330,9 +304,9 @@ absl::Status ShapeVerifier::HandleScaledDot(HloInstruction* scaled_dot) {
 
   TF_ASSIGN_OR_RETURN(auto dim_numbers,
                       DotOperandDims::FromScaledDot(scaled_dot));
-  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 0, 1));
-  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 2, 3));
-  if (ShapeUtil::IsScalar(scaled_dot->operand(1)->shape()) &&
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 0, 2));
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 1, 3));
+  if (ShapeUtil::IsScalar(scaled_dot->operand(2)->shape()) &&
       ShapeUtil::IsScalar(scaled_dot->operand(3)->shape())) {
     return absl::FailedPreconditionError(absl::StrFormat(
         "At least one of the scales should be not a scalar in %s",
@@ -341,7 +315,7 @@ absl::Status ShapeVerifier::HandleScaledDot(HloInstruction* scaled_dot) {
   TF_ASSIGN_OR_RETURN(
       const Shape expected,
       ShapeInference::InferDotOpShape(
-          scaled_dot->operand(0)->shape(), scaled_dot->operand(2)->shape(),
+          scaled_dot->operand(0)->shape(), scaled_dot->operand(1)->shape(),
           scaled_dot->dot_dimension_numbers(),
           /*preferred_element_type=*/scaled_dot->shape().element_type()));
   return CheckShape(scaled_dot, expected);

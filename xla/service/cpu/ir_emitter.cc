@@ -67,11 +67,11 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -2562,76 +2562,6 @@ absl::Status IrEmitter::HandleOneDnnMatMulCalls(
 
   return absl::OkStatus();
 }
-
-absl::Status IrEmitter::HandleOneDnnLayerNorm(HloInstruction* custom_call) {
-  //      args[0]: ptr to nargs
-  //      args[1]: ptr to ExecutableRunOptions
-  //      args[2]: ptr to OneDnnNormConfig
-  //      args[3...]: ptrs to operands
-
-  // First three arguments: nargs, ExecutableRunOptions, and
-  // OneDnnNormConfig.
-  const int nargs_offset = 3;
-  const int num_operands = custom_call->operand_count();
-  const int nargs = nargs_offset + num_operands;
-  int arg_indx = 0;
-
-  llvm::Type* i64_type = b()->getInt64Ty();
-  llvm::Type* ptr_type = b()->getPtrTy();
-  llvm::ArrayType* ptr_array_type = llvm::ArrayType::get(ptr_type, nargs);
-  llvm::Value* args_val = llvm::UndefValue::get(ptr_array_type);
-
-  // Insert nargs.
-  llvm::Value* nargs_val = b()->getInt64(nargs);
-  llvm::Value* nargs_ptr =
-      llvm_ir::EmitAllocaAtFunctionEntry(i64_type, "nargs", b());
-  b()->CreateLifetimeStart(nargs_ptr);
-  b()->CreateStore(nargs_val, nargs_ptr);
-  args_val = b()->CreateInsertValue(args_val, nargs_ptr, arg_indx++);
-
-  // Insert ExecutableRunOptions.
-  llvm::Value* run_opts_val = GetExecutableRunOptionsArgument();
-  args_val = b()->CreateInsertValue(args_val, run_opts_val, arg_indx++);
-
-  // Insert OneDnnNormConfig.
-  auto typed_custom_call = Cast<HloCustomCallInstruction>(custom_call);
-  auto backend_config = typed_custom_call->backend_config<BackendConfig>();
-  OneDnnNormConfig ln_config;
-  ln_config.CopyFrom(backend_config->onednn_layer_norm_config());
-  std::string str_config;
-  ln_config.SerializeToString(&str_config);
-  llvm::Value* ln_config_val =
-      b()->CreateGlobalStringPtr(llvm_ir::AsStringRef(str_config));
-  args_val = b()->CreateInsertValue(args_val, ln_config_val, arg_indx++);
-
-  // Insert operands.
-  auto operands_stack_alloca =
-      EmitOneDnnOperandsAlloca(custom_call, args_val, arg_indx);
-  TF_RET_CHECK(nargs == arg_indx)
-      << "Number of arguments don't equal the last argument index.";
-
-  llvm::Value* args_ptr =
-      llvm_ir::EmitAllocaAtFunctionEntry(ptr_array_type, "layernorm.args", b());
-  b()->CreateLifetimeStart(args_ptr);
-  b()->CreateStore(args_val, args_ptr);
-
-  TF_RETURN_IF_ERROR(EmitTargetAddressForOp(custom_call));
-  llvm_ir::IrArray result_array = GetIrArrayFor(custom_call);
-  auto result_stack_alloca = GetAllocaAndEmitMemrefInfo(*b(), result_array);
-
-  EmitCallToFunc(runtime::kOneDnnLayerNormSymbolName,
-                 {result_stack_alloca.value, args_ptr}, b()->getVoidTy());
-
-  // Lifetime ends for all stack allocations.
-  b()->CreateLifetimeEnd(nargs_ptr);
-  for (int i = 0; i < num_operands; ++i) {
-    operands_stack_alloca[i].EmitLifetimeEnd();
-  }
-  b()->CreateLifetimeEnd(args_ptr);
-  result_stack_alloca.EmitLifetimeEnd();
-
-  return absl::OkStatus();
-}
 #endif  // XLA_ONEDNN
 
 absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
@@ -2648,9 +2578,6 @@ absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
   if (custom_call->custom_call_target() == "__onednn$matmul") {
     return HandleOneDnnMatMulCalls(custom_call,
                                    runtime::kOneDnnMatMulSymbolName);
-  }
-  if (custom_call->custom_call_target() == "__onednn$layernorm") {
-    return HandleOneDnnLayerNorm(custom_call);
   }
   if (custom_call->custom_call_target() == "__onednn$matmul_reorder") {
     return HandleOneDnnMatMulCalls(custom_call,
@@ -2904,17 +2831,22 @@ absl::Status IrEmitter::EmitFastConcatenate(
     absl::Span<const llvm_ir::IrArray> source_arrays,
     const llvm_ir::IrArray& target_array) {
   return ::xla::cpu::EmitFastConcatenate(instr, source_arrays, target_array,
-                                         module_, *b());
+                                         module_, *b())
+      .status();
 }
 
-absl::Status EmitFastConcatenate(
+absl::StatusOr<bool> EmitFastConcatenate(
     const HloInstruction* instr,
     absl::Span<const llvm_ir::IrArray> source_arrays,
     const llvm_ir::IrArray& target_array, llvm::Module* module,
-    llvm::IRBuilderBase& b) {
+    llvm::IRBuilderBase& b, llvm::Value* workgroup_id, int64_t num_workgroups) {
   // We split the dimensions into three categories: the dimension over which we
   // are concatenating (concat_dim), the dimensions that are minor to it
   // (inner_dims) and the dimensions that are major to it (outer_dims).
+
+  if (workgroup_id != nullptr && num_workgroups <= 0) {
+    return absl::UnimplementedError("Missing number of workgroups");
+  }
 
   auto* concatenate = Cast<HloConcatenateInstruction>(instr);
   const Shape& output_shape = concatenate->shape();
@@ -2929,8 +2861,46 @@ absl::Status EmitFastConcatenate(
                                   output_min2maj.end());
 
   llvm_ir::ForLoopNest loops(IrName(concatenate), &b);
+
+  bool has_workgroup_id = workgroup_id != nullptr;
+  bool has_multiple_workers = num_workgroups > 1;
+  bool has_outer_dims = !outer_dims.empty();
+  bool is_parallel = has_workgroup_id && has_multiple_workers && has_outer_dims;
+
+  llvm::Value* workgroup_ind_var = nullptr;
+  if (is_parallel) {
+    int64_t outer_dim_size = output_shape.dimensions(outer_dims.back());
+    int64_t workgroup_size = CeilOfRatio(outer_dim_size, num_workgroups);
+    llvm::Value* workgroup_size_value =
+        llvm::ConstantInt::get(b.getInt64Ty(), workgroup_size);
+    llvm::Value* constant_1 = llvm::ConstantInt::get(b.getInt64Ty(), 1);
+    llvm::Value* constant_dim_size =
+        llvm::ConstantInt::get(b.getInt64Ty(), outer_dim_size);
+    llvm::Value* workgroup_start_idx =
+        b.CreateMul(workgroup_id, workgroup_size_value);
+    llvm::Value* workgroup_end_idx = b.CreateBinaryIntrinsic(
+        llvm::Intrinsic::smin,
+        b.CreateMul(b.CreateAdd(workgroup_id, constant_1),
+                    workgroup_size_value),
+        constant_dim_size);
+
+    auto workgroup_loop =
+        loops.AddLoop("workgroup", workgroup_start_idx, workgroup_end_idx);
+    workgroup_ind_var = workgroup_loop->GetIndVarValue();
+  }
+
   std::vector<llvm::Value*> target_multi_index =
-      loops.AddLoopsForShapeOnDimensions(output_shape, outer_dims, "concat");
+      loops.AddLoopsForShapeOnDimensions(
+          output_shape,
+          workgroup_ind_var
+              ? absl::MakeSpan(outer_dims).first(outer_dims.size() - 1)
+              : absl::MakeSpan(outer_dims),
+          "concat");
+
+  if (workgroup_ind_var) {
+    target_multi_index[outer_dims.back()] = workgroup_ind_var;
+  }
+
   absl::c_replace(target_multi_index, static_cast<llvm::Value*>(nullptr),
                   static_cast<llvm::Value*>(b.getInt64(0)));
   llvm_ir::IrArray::Index target_index(target_multi_index, output_shape,
@@ -2982,7 +2952,7 @@ absl::Status EmitFastConcatenate(
   if (!outer_dims.empty()) {
     SetToFirstInsertPoint(loops.GetOuterLoopExitBasicBlock(), &b);
   }
-  return absl::OkStatus();
+  return is_parallel;
 }
 
 llvm::Value* IrEmitter::EmitPrintf(absl::string_view fmt,
@@ -3262,8 +3232,10 @@ absl::Status IrEmitter::HandleConcatenate(HloInstruction* concatenate) {
     for (HloInstruction* operand : concatenate->operands()) {
       source_arrays.emplace_back(GetIrArrayFor(operand));
     }
-    TF_RETURN_IF_ERROR(::xla::cpu::EmitFastConcatenate(
-        concatenate, source_arrays, target_array, module_, *b()));
+    TF_RETURN_IF_ERROR(
+        ::xla::cpu::EmitFastConcatenate(concatenate, source_arrays,
+                                        target_array, module_, *b())
+            .status());
     VLOG(1) << "Emitted fast concatenate for " << concatenate->ToString();
     return absl::OkStatus();
   }

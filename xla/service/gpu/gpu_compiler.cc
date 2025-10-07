@@ -135,6 +135,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
 #include "xla/hlo/transforms/simplifiers/slice_sinker.h"
 #include "xla/hlo/transforms/simplifiers/sort_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/sub_byte_collective_normalization.h"
 #include "xla/hlo/transforms/simplifiers/sub_byte_normalization.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
@@ -217,6 +218,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/service/gpu/transforms/command_buffer_scheduling.h"
+#include "xla/service/gpu/transforms/composite_rewriter.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
@@ -615,6 +617,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
   pre_spmd_pipeline.AddPass<CuDnnCustomCallConverter>();
+  pre_spmd_pipeline.AddPass<CompositeRewriter>();
   pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
   pre_spmd_pipeline.AddPass<FlattenCallGraph>();
   pre_spmd_pipeline.AddPass<CallInliner>(
@@ -929,12 +932,23 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<WhileLoopSimplifier>();
     pipeline.AddPass<SliceSinker>();
 
+    ReshapeMoverOptions reshape_mover_options;
+    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
+    pipeline.AddPass<ReshapeMover>(reshape_mover_options);
     pipeline.AddPass<HloConstantFolding>();
     pipeline.AddPass<ConditionalSimplifier>();
     pipeline.AddPass<RealImagExpander>();
     pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot);
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
+  }();
+
+  // ConvertMover and ReshapeMover fight with each other: ConvertMover wants
+  // to move some converts down the graph, but ReshapeMover wants to move them
+  // up the graph.  As a compromise, let ReshapeMover run to a fixed point,
+  // and then run ConvertMover + algsimp to a fixed point.
+  [&, &pipeline =
+          pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification-2")] {
     pipeline.AddPass<ConvertMover>();
     pipeline.AddPass<GpuAlgebraicSimplifier>(layout_insensitive_algsimp_opts,
                                              gpu_version);
@@ -1840,6 +1854,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                      .VerifyBroadcastDimensionsOrder()
                      .VerifyReshapeIsBitcast(),
                  /*debug_only=*/true);
+
+  pipeline.AddPass<SubByteCollectiveNormalization>();
 
   // Triton compilation needs normalized operations on bf16 (i.e. converted to
   // f32).
@@ -2769,38 +2785,29 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
-GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
+GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                 const AotCompilationOptions& options) {
   tsl::profiler::TraceMe traceme("CompileAheadOfTime");
   // Check that we are on the platform (CUDA or ROCm) that was chosen for AOT
   // compilation.
   CHECK_EQ(options.PlatformId(), PlatformId());
 
-  std::vector<std::unique_ptr<HloModule>> modules =
-      module_group->ConsumeModules();
+  std::unique_ptr<HloModule> optimized_module;
 
-  std::vector<std::unique_ptr<HloModule>> optimized_modules;
-  optimized_modules.reserve(modules.size());
-
-  for (std::unique_ptr<HloModule>& module : modules) {
-    if (!module->has_schedule()) {
-      tsl::profiler::ScopedAnnotation annotation{[&] {
-        return absl::StrFormat("XlaCompile:#module=%s,program_id=%d#",
-                               module->name(), module->unique_id());
-      }};
-      CompileOptions compile_options;
-      compile_options.device_allocator = options.device_allocator();
-      compile_options.target_config = options.target_config();
-      TF_ASSIGN_OR_RETURN(
-          std::unique_ptr<HloModule> optimized_module,
-          RunHloPasses(std::move(module), options.executor(), compile_options));
-      optimized_modules.push_back(std::move(optimized_module));
-    } else {
-      optimized_modules.push_back(std::move(module));
-    }
+  if (!hlo_module->has_schedule()) {
+    tsl::profiler::ScopedAnnotation annotation{[&] {
+      return absl::StrFormat("XlaCompile:#module=%s,program_id=%d#",
+                             hlo_module->name(), hlo_module->unique_id());
+    }};
+    CompileOptions compile_options;
+    compile_options.device_allocator = options.device_allocator();
+    compile_options.target_config = options.target_config();
+    TF_ASSIGN_OR_RETURN(optimized_module,
+                        RunHloPasses(std::move(hlo_module), options.executor(),
+                                     compile_options));
+  } else {
+    optimized_module = std::move(hlo_module);
   }
-
-  modules = std::move(optimized_modules);
 
   std::vector<std::unique_ptr<AotCompilationResult>> results;
 
@@ -2810,21 +2817,20 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   const se::DeviceDescription& gpu_device_info =
       target_config.has_value() ? target_config->device_description
                                 : options.executor()->GetDeviceDescription();
-  for (const std::unique_ptr<HloModule>& module : modules) {
-    llvm::LLVMContext llvm_context;
-    TF_ASSIGN_OR_RETURN(
-        CompileResultWithMetadata res,
-        CompileToBackendResult(module.get(), &llvm_context,
-                               {options.device_allocator()}, gpu_device_info));
+  llvm::LLVMContext llvm_context;
+  TF_ASSIGN_OR_RETURN(
+      CompileResultWithMetadata res,
+      CompileToBackendResult(optimized_module.get(), &llvm_context,
+                             {options.device_allocator()}, gpu_device_info));
 
-    // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
-    TF_ASSIGN_OR_RETURN(
-        results.emplace_back(),
-        GpuThunkAotCompilationResult::FromModule(
-            module.get(), res.compile_module_results.buffer_assignment.get(),
-            res.backend_result.asm_text, res.backend_result.binary,
-            res.backend_result.dnn_compiled_graphs, pointer_size_));
-  }
+  // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
+  TF_ASSIGN_OR_RETURN(
+      results.emplace_back(),
+      GpuThunkAotCompilationResult::FromModule(
+          optimized_module.get(),
+          res.compile_module_results.buffer_assignment.get(),
+          res.backend_result.asm_text, res.backend_result.binary,
+          res.backend_result.dnn_compiled_graphs, pointer_size_));
 
   return std::move(results);
 }

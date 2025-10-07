@@ -13,19 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/thunk_buffer.h"
+#ifndef XLA_PJRT_ERRORS_H_
+#define XLA_PJRT_ERRORS_H_
 
-#include <string>
+#include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 
-#include "absl/strings/str_format.h"
+namespace xla {
+// The payload attached to the absl::Status returned by the compilation
+// service when the compilation fails due to compilation errors.
+inline constexpr absl::string_view kCompilationErrorPayload =
+    "compilation_error";
 
-namespace xla::gpu {
+// Sets the payload of the compilation error status to the compilation error
+// payload. Useful to denote compilation errors separately from other errors.
+absl::Status SetCompilationErrorWithPayload(absl::Status status);
+}  // namespace xla
 
-std::string ThunkBuffer::ToString() const {
-  return absl::StrFormat(
-      "{slice:%v, is_content_defined_on_input:%v, "
-      "is_content_defined_on_output:%v}",
-      slice, is_content_defined_on_input, is_content_defined_on_output);
-}
-
-}  // namespace xla::gpu
+#endif  // XLA_PJRT_ERRORS_H_

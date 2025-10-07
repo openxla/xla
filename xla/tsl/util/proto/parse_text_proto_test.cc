@@ -13,30 +13,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/thunk_buffer.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 
 #include <gtest/gtest.h>
-#include "absl/strings/str_cat.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/tsl/util/proto/proto_matchers_test_protos.pb.h"
 
-namespace xla::gpu {
+namespace tsl::proto_testing {
 namespace {
 
-TEST(ThunkBufferTest, AbslStringify) {
-  BufferAllocation alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
-  BufferAllocation::Slice slice(&alloc, /*offset=*/123, /*size=*/456);
+TEST(ParseTextProtoOrDieTest, ParsesValidTextProto) {
+  Foo foo = ParseTextProtoOrDie<Foo>(R"pb(
+    s1: "hello" i2: 42 r3: "a" r3: "b"
+  )pb");
+  EXPECT_EQ(foo.s1(), "hello");
+  EXPECT_EQ(foo.i2(), 42);
+  ASSERT_EQ(foo.r3_size(), 2);
+  EXPECT_EQ(foo.r3(0), "a");
+  EXPECT_EQ(foo.r3(1), "b");
+}
 
-  const ThunkBuffer buffer{
-      /*slice=*/slice,
-      /*is_content_defined_on_input=*/true,
-      /*is_content_defined_on_output=*/false,
-  };
-
-  EXPECT_EQ(absl::StrCat(buffer),
-            "{slice:{index:0, offset:123, size:456}, "
-            "is_content_defined_on_input:true, "
-            "is_content_defined_on_output:false}");
+TEST(ParseTextProtoOrDieDeathTest, DiesOnInvalidTextProto) {
+  EXPECT_DEATH(ParseTextProtoOrDie<Foo>(R"pb(
+                 invalid_field: "hello"
+               )pb"),
+               "Failed to parse text proto");
 }
 
 }  // namespace
-}  // namespace xla::gpu
+}  // namespace tsl::proto_testing
