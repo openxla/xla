@@ -12,10 +12,10 @@ build:rocm_rbe --bes_timeout=600s
 build:rocm_rbe --tls_client_certificate="/tf/certificates/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/tf/certificates/ci-cert.key"
 build:rocm_rbe --spawn_strategy=local
+build:rocm_rbe --jobs=200
+build:rocm_rbe --remote_executor=grpcs://wardite.cluster.engflow.com
+build:rocm_rbe --remote_timeout=3600
 
-test:rocm_rbe --jobs=200
-test:rocm_rbe --remote_executor=grpcs://wardite.cluster.engflow.com
-test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --strategy=TestRunner=local
 test:rocm_rbe --worker_sandboxing=true
 

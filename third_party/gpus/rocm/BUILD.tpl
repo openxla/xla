@@ -170,6 +170,7 @@ cc_library(
         "%{rocm_root}/include",
     ],
     strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
     deps = [
         ":rocm_config",
         ":rocprofiler_register",
@@ -256,6 +257,7 @@ cc_library(
 
 cc_library(
     name = "miopen",
+    srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     hdrs = glob(["%{rocm_root}/include/miopen/**"]),
     srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     data = glob([
@@ -523,6 +525,17 @@ filegroup(
     srcs = [
         "%{rocm_root}/bin/clang-offload-bundler",
     ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "toolchain_data",
+    srcs = glob([
+        "%{rocm_root}/bin/hipcc",
+        "%{rocm_root}/lib/llvm/**",
+        "%{rocm_root}/share/hip/**",
+        "%{rocm_root}/amdgcn/**",
+    ]),
     visibility = ["//visibility:public"],
 )
 
