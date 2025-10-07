@@ -1,4 +1,3 @@
-
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +68,34 @@ TEST_F(ComputationCanonicalizersTest, MoveParametersToFront) {
           module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
           expected),
       absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(ComputationCanonicalizersTest, MoveGTEsRightAfterTupleDefinition) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule m, is_scheduled=true
+e {
+  a = s32[] parameter(0)
+  b = s32[] parameter(1)
+  t = tuple(a, b)
+  x = s32[] add(a, b)
+  g0 = s32[] get-tuple-element(t), index=0
+  g1 = s32[] get-tuple-element(t), index=1
+  r = s32[] multiply(g0, g1)
+})"));
+  EXPECT_THAT(MoveGTEsRightAfterTupleDefinition(*module->entry_computation()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(),
+                           R"(
+// CHECK:      parameter
+// CHECK-NEXT: parameter
+// CHECK-NEXT: tuple
+// CHECK-NEXT: get-tuple-element
+// CHECK-NEXT: get-tuple-element
+// CHECK-NEXT: add
+// CHECK-NEXT: multiply
+)"),
+              absl_testing::IsOkAndHolds(true));
 }
 
 }  // namespace

@@ -32,7 +32,6 @@ absl::StatusOr<bool> MoveParametersAndConstantsToFront(HloComputation&);
 // Moves GetTupleElement instructions to right after the instruction that
 // produces the tuple. Returns whether the computation was changed. This is run,
 // for instance, before command buffer scheduling.
-//
 absl::StatusOr<bool> MoveGTEsRightAfterTupleDefinition(HloComputation&);
 
 }  // namespace xla
