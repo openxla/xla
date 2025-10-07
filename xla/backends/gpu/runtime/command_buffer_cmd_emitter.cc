@@ -122,10 +122,9 @@ static absl::StatusOr<Command> Convert(
 }
 
 static absl::StatusOr<Command> Convert(const GemmThunk& thunk) {
-
-  return std::make_unique<GemmCmd>(
-      thunk.config(), thunk.lhs_buffer(), thunk.rhs_buffer(),
-      thunk.output_buffer(), thunk.workspace(), thunk.deterministic());
+  return std::make_unique<GemmCmd>(thunk.config(), thunk.lhs_buffer(),
+                                   thunk.rhs_buffer(), thunk.output_buffer(),
+                                   thunk.workspace(), thunk.deterministic());
 }
 
 static absl::StatusOr<Command> Convert(const CublasLtMatmulThunk& thunk) {
