@@ -3453,7 +3453,7 @@ TEST_F(DynamicSliceFusionTest,
   HloModuleConfig without_cmd_buffer = GetModuleConfigWithoutCommandBuffer();
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> cmd_buffer_module,
-                          ParseAndReturnVerifiedModule(hlo_fused));
+                          ParseAndReturnVerifiedModule(hlo));
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> no_cmd_buffer_module,
                           ParseAndReturnVerifiedModule(hlo));
