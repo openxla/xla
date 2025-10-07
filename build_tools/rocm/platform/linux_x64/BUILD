@@ -1,5 +1,19 @@
+# Copyright 2025 The OpenXLA Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+
 load("@rules_cc//cc:defs.bzl", "cc_toolchain", "cc_toolchain_suite")
-#load(":cc_toolchain_config.bzl", "cc_toolchain_config")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,7 +25,7 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "docker://rocm/tensorflow-build:2.19-jammy-python3.9-rocm6.4.0@sha256:7b42dafbe5401fd84cf951a63f16dd44a84c64a6ba2eeb7675fd0919f03b2bdf",
+        "container-image": "docker://rocm/tensorflow-build:latest-jammy-python3.10-rocm6.4.0@sha256:9c2fbc861570735fc86dbf39dd3cefef6a13fcf6ae08358271af52f1aebd4248",
         "OSFamily": "Linux",
     },
 )
