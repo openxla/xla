@@ -94,7 +94,7 @@ absl::Status CreateTritonPipeline(
   pm->addPass(mlir::createLoopInvariantCodeMotionPass());
   pm->addPass(mlir::createCanonicalizerPass());
 
-  if (cc.has_amd_matrix_core()) {
+  if (cc.has_amd_matrix_instr()) {
     pm->addPass(
         mlir::createTritonAMDGPUStreamPipeline({num_stages, 0, 0, false}));
     // TODO(ROCm) Modify when corresponding run time flags are introduced.
@@ -113,7 +113,7 @@ absl::Status CreateTritonPipeline(
     pm->addPass(mlir::createTritonAMDGPUInThreadTranspose());
     pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   }
-  if (cc.has_amd_matrix_core()) {
+  if (cc.has_amd_matrix_instr()) {
     pm->addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
   if (/*(use_block_pingpong == "none") ==*/false) {
