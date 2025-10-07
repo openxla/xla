@@ -902,7 +902,7 @@ class GemmCmd : public TracedCommandBufferCmd {
   GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
           const BufferAllocation::Slice& rhs_buffer,
           const BufferAllocation::Slice& output_buffer,
-          const BufferAllocation::Slice& workspace, bool deterministic);
+          std::optional<BufferAllocation::Slice> workspace, bool deterministic);
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
                           StateManager& state) override;
@@ -921,7 +921,7 @@ class GemmCmd : public TracedCommandBufferCmd {
   const BufferAllocation::Slice lhs_buffer_;
   const BufferAllocation::Slice rhs_buffer_;
   const BufferAllocation::Slice output_buffer_;
-  const BufferAllocation::Slice workspace_;
+  std::optional<BufferAllocation::Slice> workspace_;
   // Whether to run deterministically.
   const bool deterministic_;
 };

@@ -1601,7 +1601,8 @@ CommandBufferCmd::BufferUseVector WhileCmd::buffers() const {
 GemmCmd::GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
                  const BufferAllocation::Slice& rhs_buffer,
                  const BufferAllocation::Slice& output_buffer,
-                 const BufferAllocation::Slice& workspace, bool deterministic)
+                 std::optional<BufferAllocation::Slice> workspace,
+                 bool deterministic)
     : TracedCommandBufferCmd(CommandBufferCmdType::kGemmCmd),
       config_(std::move(config)),
       lhs_buffer_(lhs_buffer),
@@ -1628,14 +1629,18 @@ absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
       execute_params.buffer_allocations->GetDeviceAddress(rhs_buffer_);
   se::DeviceMemoryBase out =
       execute_params.buffer_allocations->GetDeviceAddress(output_buffer_);
-  se::DeviceMemoryBase workspace =
-      execute_params.buffer_allocations->GetDeviceAddress(workspace_);
+
+  se::DeviceMemoryBase workspace(/*opaque=*/nullptr, /*size=*/0);
+  if (workspace_.has_value()) {
+    workspace =
+        execute_params.buffer_allocations->GetDeviceAddress(workspace_.value());
+  }
 
   VLOG(5) << "GemmCmd: deterministic=" << deterministic_;
   VLOG(5) << "  Lhs: " << lhs_buffer_ << " (" << lhs.opaque() << ")";
   VLOG(5) << "  Lhs: " << rhs_buffer_ << " (" << rhs.opaque() << ")";
   VLOG(5) << "  Out: " << output_buffer_ << " (" << out.opaque() << ")";
-  VLOG(5) << "  Workspace: " << workspace_ << " (" << workspace.opaque() << ")";
+  VLOG(5) << "  Workspace: " << workspace.opaque();
 
   return RecordTracedCommand(execute_params, record_params,
                              std::move(record_action), command_buffer,
@@ -1646,8 +1651,13 @@ absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
 }
 
 CommandBufferCmd::BufferUseVector GemmCmd::buffers() const {
+  if (workspace_.has_value()) {
+    return {BufferUse::Read(lhs_buffer_), BufferUse::Read(rhs_buffer_),
+            BufferUse::Write(output_buffer_),
+            BufferUse::Write(workspace_.value())};
+  }
   return {BufferUse::Read(lhs_buffer_), BufferUse::Read(rhs_buffer_),
-          BufferUse::Write(output_buffer_), BufferUse::Write(workspace_)};
+          BufferUse::Write(output_buffer_)};
 }
 
 //===----------------------------------------------------------------------===//

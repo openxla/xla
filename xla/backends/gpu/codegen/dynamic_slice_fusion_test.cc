@@ -85,6 +85,12 @@ class DynamicSliceFusionTest : public HloTestBase {
 
   HloModuleConfig GetModuleConfigWithCommandBuffer() {
     DebugOptions debug_options = GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_enable_cublaslt(false);
+    debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
+    debug_options.set_xla_gpu_enable_dynamic_slice_fusion(true);
+    debug_options.set_xla_gpu_triton_gemm_any(false);
+    debug_options.set_xla_gpu_enable_cublaslt(false);
+    debug_options.set_xla_gpu_cublas_fallback(true);
     debug_options.set_xla_gpu_graph_min_graph_size(1);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -3458,13 +3464,11 @@ TEST_F(DynamicSliceFusionTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> no_cmd_buffer_module,
                           ParseAndReturnVerifiedModule(hlo));
 
-  // TF_ASSERT_OK_AND_ASSIGN(
-  //     std::unique_ptr<HloModule> no_cmd_buffer_module,
-  //     ParseAndReturnVerifiedModule(hlo, without_cmd_buffer));
-
-  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
-      std::move(cmd_buffer_module), std::move(no_cmd_buffer_module),
-      /*run_hlo_passes=*/false, /*use_threads=*/true, std::nullopt));
+  ErrorSpec error_spec(1e-5, 1e-5);
+  EXPECT_TRUE(
+      RunAndCompareTwoModules(hlo, hlo, GetModuleConfigWithCommandBuffer(),
+                              GetModuleConfigWithoutCommandBuffer(), error_spec,
+                              /*run_hlo_passes=*/true));
 }
 
 TEST_F(DynamicSliceFusionTest, MultipleOffsetsAsFunctionOfInductionVariable) {
