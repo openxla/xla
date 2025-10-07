@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/transforms/cudnn_fused_conv_rewriter.h"
+#include "xla/service/gpu/transforms/cudnn_fused_conv_decomposer.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_module_config.h"
@@ -217,7 +218,7 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 // enabled.
 bool AMDGPUCompiler::RequiresCollectiveScheduleLinearizer(
     const HloModule* module, se::StreamExecutor* stream_exec) {
-  if (stream_exec == nullptr || !GpuConvAlgorithmPicker::IsEnabled(module)) {
+  if (stream_exec == nullptr) {
     return false;
   }
   for (const HloComputation* comp : module->MakeNonfusionComputations()) {
@@ -236,34 +237,11 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
     const CompileOptions& options, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
     se::StreamExecutor* stream_exec) {
-  const DebugOptions& debug_options = hlo_module->config().debug_options();
-  if (hlo_module->config()
-          .debug_options()
-          .xla_gpu_experimental_disable_binary_libraries() ||
-      debug_options.xla_gpu_autotune_level() == 0 ||
-      debug_options.xla_gpu_exclude_nondeterministic_ops()) {
-    return absl::OkStatus();
-  }
-
-  // TODO(b/407495801): Cached Gemm as well as Conv autotuning results are
-  // loaded in the GpuConvAlgorithmPicker but should be loaded in the autotuner.
+  //We do autotuning irrespective of --xla_gpu_autotune_level.
   pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
-
-  std::vector<std::unique_ptr<CodegenBackend>> backends;
-  // TODO: b/407494793 - Add proper support for ROCM. Currently the Cublas
-  // backend uses the same API as rocBLAS.
-  if (debug_options.xla_gpu_experimental_use_autotuner_pass()) {
-    backends.push_back(
-        std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<AutotunerPass> autotuner_pass,
-        AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
-                              thread_pool));
-    pipeline->AddPass(std::move(autotuner_pass));
-  } else {
-    pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
-  }
-
+  // Undo CudnnFusedConvRewriter work if no algorithm was found.
+  pipeline->AddPass<CudnnFusedConvDecomposer>();
+  pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
   return absl::OkStatus();
 }
 
