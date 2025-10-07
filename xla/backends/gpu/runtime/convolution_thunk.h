@@ -49,22 +49,30 @@ class ConvolutionThunk : public Thunk {
                    std::vector<BufferAllocation::Slice> result_slices,
                    BufferAllocation::Slice scratch_slice);
 
-  ConvolutionThunk(const ConvolutionThunk&) = delete;
   ConvolutionThunk& operator=(const ConvolutionThunk&) = delete;
 
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status Initialize(const InitializeParams& params) override;
 
- private:
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return ExecuteOnStreamInternal(params.stream, params);
+  }
+ protected:
+  // needed for ConvolutionCmd 
+  ConvolutionThunk(const ConvolutionThunk& rhs);
+
+  GenericConvRunner& GetOrCreateRunner(const se::Stream* stream,
+                                       bool* runner_created = nullptr);
+
+  absl::Status ExecuteOnStreamInternal(se::Stream *stream, 
+                                      const ExecuteParams& params);
+
   std::vector<BufferAllocation::Slice> operand_buffers_;
   std::vector<BufferAllocation::Slice> result_buffers_;
   BufferAllocation::Slice scratch_buffer_;
-  GenericConvRunner& GetOrCreateRunner(const stream_executor::Stream* stream,
-                                       bool* runner_created);
-
   // Convolution config
   const GpuConvConfig config_;
   absl::Mutex mu_;
-  absl::flat_hash_map<const stream_executor::Stream*,
+  absl::flat_hash_map<const se::StreamExecutor*,
                       std::unique_ptr<GenericConvRunner>>
       runner_cache_ ABSL_GUARDED_BY(mu_);
 };

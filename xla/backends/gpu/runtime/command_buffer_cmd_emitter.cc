@@ -4,7 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
+#include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
@@ -205,7 +206,8 @@ static absl::StatusOr<Command> Convert(const AllGatherStartThunk& thunk,
 }
 
 static absl::StatusOr<Command> Convert(
-    const DynamicSliceThunk& thunk, ResourceUseVector resources,
+    const DynamicSliceThunk& thunk,
+    ResourceUseVector resources,
     const ConvertToCommandsOptions& options) {
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdExecutor embedded_cmds,
@@ -253,6 +255,11 @@ static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk,
                                        ResourceUseVector resources) {
   return std::make_unique<CuDnnCmd>(thunk.arguments(), thunk.graph(),
                                     resources);
+}
+
+static absl::StatusOr<Command> Convert(const ConvolutionThunk& thunk,
+					ResourceUseVector resources) {
+  return std::make_unique<ConvolutionCmd>(thunk, resources);
 }
 
 //===----------------------------------------------------------------------===//
@@ -325,6 +332,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       return append(Convert<WhileThunk>(thunk, resources, options));
     case Thunk::Kind::kCuDnn:
       return append(Convert<CuDnnThunk>(thunk, resources));
+    case Thunk::Kind::kConvolution:
+      return append(Convert<ConvolutionThunk>(thunk, resources));
     case Thunk::Kind::kDynamicSlice:
       return append(Convert<DynamicSliceThunk>(thunk, resources, options));
 
@@ -354,6 +363,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
             absl::StatusOr<Command>(std::make_unique<EmptyCmd>(resources)));
       }
 
+    case Thunk::Kind::kCollectivePermuteDone:
+      return absl::OkStatus();
     case Thunk::Kind::kWaitForStreams:
       if (resources.empty()) {
         return absl::OkStatus();
