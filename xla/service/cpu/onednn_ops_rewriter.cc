@@ -497,11 +497,6 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
 class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   absl::Status HandleAdd(HloInstruction* instr) override {
-    // TODO(intel-tf): remove this restriction after adding oneDNN layernorm
-    // support in thunk runtime.
-    return absl::OkStatus();
-
-    // NOLINTBEGIN(clang-diagnostic-unreachable-code)
     HloInstruction *src, *scale, *bias;
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
@@ -561,7 +556,6 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     return absl::OkStatus();
-    // NOLINTEND(clang-diagnostic-unreachable-code)
   }
 
   absl::Status HandleConvert(HloInstruction* instr) override {
@@ -602,11 +596,6 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleDivide(HloInstruction* divide_instr) override {
-    // TODO(intel-tf): remove this restriction after adding oneDNN softmax
-    // support in thunk runtime.
-    return absl::OkStatus();
-
-    // NOLINTBEGIN(clang-diagnostic-unreachable-code)
     if (divide_instr->HasControlDependencies()) return absl::OkStatus();
     if (!IsSupportedType(divide_instr->shape().element_type())) {
       return absl::OkStatus();
@@ -629,7 +618,6 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(ReplaceInstruction(divide_instr, softmax_call));
 
     return absl::OkStatus();
-    // NOLINTEND(clang-diagnostic-unreachable-code)
   }
 };
 
