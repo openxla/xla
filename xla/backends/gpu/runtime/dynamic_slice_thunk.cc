@@ -111,6 +111,7 @@ DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata::FromProto(
   return OffsetAsFunctionOfIndvarModulesMetadata(
       std::move(indvar_init), std::move(indvar_update),
       std::move(extracted_offset_modules));
+}
 
 std::string DynamicSliceThunk::SliceDef::ToString() const {
   std::string result = "SliceDef{";
