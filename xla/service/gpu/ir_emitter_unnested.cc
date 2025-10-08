@@ -2424,7 +2424,6 @@ std::vector<const HloInstruction*> GetRealDependencyInstructions(
 absl::Status IrEmitterUnnested::EmitCollectiveGroupStartThunk(
     const HloInstruction* instr) {
   emit_group_thunks_ = true;
-  std::optional<ExecutionStreamId> maybe_stream_id;
   for (const HloInstruction* nested_instruction :
        instr->async_wrapped_computation()->instructions()) {
     TF_RETURN_IF_ERROR(EmitHloInstruction(nested_instruction));
