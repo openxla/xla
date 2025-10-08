@@ -74,9 +74,7 @@ def run(gemma_lm, tokenizer, max_len):
   output = gemma_lm.generate(_QUERY, max_length=total_output_len + 1)
   warmup_time = (time.time() - start) * 1000
   num_actual_output_tokens = len(tokenizer(output))
-  gen_tokens = 0
-  if num_actual_output_tokens > in_tokens_len:
-    gen_tokens = num_actual_output_tokens - in_tokens_len
+  gen_tokens = max(num_actual_output_tokens - in_tokens_len, 0)
 
   print(f"Warmup: Number of generated output tokens: ", gen_tokens)
 
@@ -92,9 +90,6 @@ def run(gemma_lm, tokenizer, max_len):
     elapsed_time = (time.time() - start) * 1000
     assert num_actual_output_tokens == len(tokenizer(output))
     times.append(elapsed_time)
-    gen_tokens = 0
-    if num_actual_output_tokens > in_tokens_len:
-      gen_tokens = num_actual_output_tokens - in_tokens_len
 
     if _VERBOSE:
       print("%d: %lf ms" % (i, elapsed_time))
@@ -112,8 +107,9 @@ def main():
   if _VERBOSE:
     print("Query: %s" % _QUERY)
 
-  gemma_lm = keras_nlp.models.GemmaCausalLM.from_preset("gemma2_2b_en")
-  tokenizer = keras_nlp.models.GemmaTokenizer.from_preset("gemma2_2b_en")
+  model_name = "gemma2_2b_en"
+  gemma_lm = keras_nlp.models.GemmaCausalLM.from_preset(model_name)
+  tokenizer = keras_nlp.models.GemmaTokenizer.from_preset(model_name)
   mean_1, diff_1, _ = run(gemma_lm, tokenizer, 1)
   mean_n, diff_n, num_output_tokens = run(gemma_lm, tokenizer, _NUM_OUTPUT_TOKENS)
 
